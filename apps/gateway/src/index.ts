@@ -28,7 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
-import { handleProfileEdit, handleProfileEditPage } from "./profile-edit-http.js";
+import { handleProfileEdit, handleProfileEditPage, shownProfileValue } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
@@ -190,7 +190,7 @@ export function createGatewayServer(
         if (typeof personId !== "string") return undefined;
         const result = await login.web.profiles.readOwn({ requesterPrincipalId: personId, targetPersonId: personId });
         const shown = result.kind === "found" ? result.profile.fields[fieldName] : undefined;
-        return shown?.state === "available" ? String(shown.value) : undefined;
+        return shown ? shownProfileValue(shown) : undefined;
       })) return;
     if (await handleProfileEdit(request, response, login?.profileEdit, login?.web?.origin)) return;
     if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,

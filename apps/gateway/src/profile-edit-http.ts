@@ -88,7 +88,12 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
   return true;
 }
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
+/** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
+  return field.state === "available" ? String(field.value)
+    : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
+}
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
 export function profileEditSummary(value: string): string {
