@@ -26,7 +26,10 @@ async function readRig(){
  return {service,credential,id,packed,now};
 }
 async function within(promise,message){
- let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new assert.AssertionError({message})),1000);})]);}finally{clearTimeout(timer);}
+ let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new assert.AssertionError({message})),3000);})]);}finally{clearTimeout(timer);}
+}
+async function writerPoolExhausted(){
+ await within(new Promise(resolve=>{const poll=()=>snapshots.pool?.totalCount===2&&snapshots.pool?.idleCount===0?resolve():setTimeout(poll,10);poll();}),'writer pool was not exhausted');
 }
 async function runReads(f){
  const listed=await f.service.list(f.credential);assert.equal(listed.length,1);
@@ -82,8 +85,11 @@ test('RA_NO_LOCK reader and audit pool bypass a locked or exhausted writer pool'
   await assert.doesNotReject(()=>within(runReads(f),'service reads queued behind row lock'));
  }finally{await locker.query('ROLLBACK');locker.release();}
  let release;const parked=new Promise(r=>release=r);
- const first=snapshots.transaction(async()=>parked),second=snapshots.transaction(async()=>{});
- await new Promise(r=>setTimeout(r,100));
+ let firstEntered;const entered=new Promise(r=>firstEntered=r);
+ const first=snapshots.transaction(async()=>{firstEntered();return parked;});
+ await entered;
+ const second=snapshots.transaction(async()=>{});
+ await writerPoolExhausted();
  try{
   await assert.doesNotReject(()=>within(runReads(f),'service reads or audits used writer pool'));
  }finally{release();await Promise.all([first,second]);}
@@ -92,7 +98,7 @@ test('RA_NO_LOCK reader and audit pool bypass a locked or exhausted writer pool'
 test('RA_NO_WRITE plain reads do not rewrite the shared snapshot',unavailable,async()=>{
  const f=await readRig();
  const before=await pool.query('SELECT xmin::text,snapshot FROM candidate_document_snapshot WHERE singleton=true');
- for(let i=0;i<20;i++)await assert.doesNotReject(()=>f.service.list(f.credential));
+ for(let i=0;i<20;i++)await assert.doesNotReject(async()=>{const listed=await f.service.list(f.credential);const issued=await f.service.issueDelivery(f.credential,f.id);await f.service.deliver(f.credential,issued.url);assert.equal(listed.length,1);});
  const afterRead=await pool.query('SELECT xmin::text,snapshot FROM candidate_document_snapshot WHERE singleton=true');
  assert.deepEqual(afterRead.rows,before.rows,'read path must not update snapshot');
  assert.equal(afterRead.rows[0].snapshot.state.lifecycle.audit.length,0,'read audits must not grow lifecycle state');

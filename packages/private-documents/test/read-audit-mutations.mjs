@@ -22,7 +22,9 @@ try{
   if(db&&!hasDb){console.log('SKIP '+label+': DATABASE_URL not set');continue;}
   const target=join(sandbox,'dist/packages/private-documents/src',file),original=await readFile(target,'utf8');assert.equal(original.split(from).length-1,1,label+': unique source anchor');
   try{await writeFile(target,original.replace(from,to));const result=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern=^'+name+' ',join(sandbox,'packages/private-documents/test',test)],{encoding:'utf8',timeout:30000,env:process.env});const output=result.stdout+result.stderr;
-   assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.notEqual(result.status,0,label+': survived');assert.match(output,/AssertionError|ERR_ASSERTION/,label+': no assertion failure\n'+output);assert.doesNotMatch(output,/SyntaxError|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/);console.log('KILLED '+label+' -> '+name);
+   assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.notEqual(result.status,0,label+': survived');assert.match(output,/AssertionError|ERR_ASSERTION/,label+': no assertion failure\n'+output);assert.doesNotMatch(output,/SyntaxError|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/);
+   assert.match(output,new RegExp('not ok \\d+ - '+name+' '),label+': named assertion absent\n'+output);
+   console.log('KILLED '+label+' -> '+name);
   }finally{await writeFile(target,original);}
  }
 }finally{await rm(sandbox,{recursive:true,force:true});}

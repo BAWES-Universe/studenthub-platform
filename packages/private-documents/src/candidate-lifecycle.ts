@@ -215,19 +215,40 @@ export class CandidateDocuments {
     s.lifecycle.audit.push({id:randomUUID(),operation,principalRef:hash(principalId),at:this.now()});
   }
   private async read<T>(credential:unknown,operation:'list'|'issueDelivery'|'deliver',fn:(s:DocumentState,principalId:string)=>Promise<T>):Promise<T>{
-    const principalId=await this.principal(credential),readPath=this.options.store.readPath;
-    if(!readPath)return this.options.store.transaction(async s=>{if(await this.principal(credential)!==principalId)return deny();const result=await fn(s,principalId);this.auditRead(s,principalId,operation);return result;});
+    const principalId=await this.principal(credential),readPath=this.options.store.readPath!;
     const result=await readPath.read(async s=>{if(await this.principal(credential)!==principalId)return deny();return fn(s,principalId);});
     try{await readPath.audit({operation,principalRef:hash(principalId),at:this.now()});}catch{throw new LifecycleError(503,'unavailable');}
     return result;
   }
   async issueDelivery(credential: unknown, id: unknown): Promise<{url:string;expiresAt:number}> {
+    if (!this.options.store.readPath) {
+      const principalId = await this.principal(credential);
+      return this.options.store.transaction(async s => {
+        if (await this.principal(credential) !== principalId) return deny();
+        this.own(s, principalId, id);
+        const result = await this.bound(s).issueDelivery(credential, id);
+        this.auditRead(s, principalId, 'issueDelivery');
+        return result;
+      });
+    }
     return this.read(credential,'issueDelivery',async(s,principalId)=>{
       this.own(s, principalId, id);
       return this.bound(s).issueDelivery(credential, id);
     });
   }
   async deliver(credential: unknown, link: string): Promise<{bytes:Buffer;headers:Record<string,string>}> {
+    if (!this.options.store.readPath) {
+      const principalId = await this.principal(credential);
+      return this.options.store.transaction(async s => {
+        if (await this.principal(credential) !== principalId) return deny();
+        const result = await this.bound(s).deliver(credential, link);
+        const payload = new URL(link).searchParams.get('t')!.split('.')[0]!;
+        const claim = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {id:string};
+        this.own(s, principalId, claim.id);
+        this.auditRead(s, principalId, 'deliver');
+        return result;
+      });
+    }
     return this.read(credential,'deliver',async(s,principalId)=>{
       const result = await this.bound(s).deliver(credential, link);
       // Parse only AFTER the primitive verified signature, exact URL shape and expiry.
@@ -238,6 +259,19 @@ export class CandidateDocuments {
     });
   }
   async list(credential: unknown): Promise<Metadata[]> {
+    if (!this.options.store.readPath) {
+      const principalId = await this.principal(credential);
+      return this.options.store.transaction(async s => {
+        if (await this.principal(credential) !== principalId) return deny();
+        const result: Metadata[] = [];
+        for (const type of CANDIDATE_DOCUMENT_TYPES) {
+          const d = this.current(s,principalId,type);
+          if (d) result.push(await this.bound(s).metadata(credential,d.id));
+        }
+        this.auditRead(s, principalId, 'list');
+        return result;
+      });
+    }
     return this.read(credential,'list',async(s,principalId)=>{
       const result: Metadata[] = [];
       for (const type of CANDIDATE_DOCUMENT_TYPES) {
