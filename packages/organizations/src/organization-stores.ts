@@ -29,6 +29,7 @@ export interface OrganizationStoreView {
   readonly brand: OrganizationStoreReference | null;
   readonly mall: OrganizationStoreReference | null;
 }
+export interface OrganizationGroupStoreView extends OrganizationStoreView { readonly orgId: string }
 export interface OrganizationStoreFields {
   readonly name: string;
   readonly location: string | null;
@@ -95,4 +96,20 @@ export function organizationStoresView(rows: readonly OrganizationStoreRow[]): O
       brand: row.brand_id !== null && row.brand_name !== null && row.brand_status === "active" ? { id: row.brand_id, name: row.brand_name } : null,
       mall: row.mall_id !== null && row.mall_name !== null && row.mall_status === "active" ? { id: row.mall_id, name: row.mall_name } : null,
     }));
+}
+
+export async function organizationGroupStores(
+  orgId: string,
+  list: (orgId: string) => Promise<readonly OrganizationStoreRow[] | null>,
+  children: (orgId: string) => Promise<readonly string[]>,
+): Promise<OrganizationGroupStoreView[] | null> {
+  const parent = await list(orgId);
+  if (parent === null) return null;
+  const result = organizationStoresView(parent).map((store) => ({ orgId, ...store }));
+  for (const id of await children(orgId)) {
+    const rows = await list(id);
+    if (rows === null) continue;
+    result.push(...organizationStoresView(rows).map((store) => ({ orgId: id, ...store })));
+  }
+  return result;
 }

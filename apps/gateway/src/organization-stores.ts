@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { isOrganizationStoreId, organizationStoresView, parseOrganizationStoreFields, type OrganizationStoreFields, type OrganizationStoreRow } from "@studenthub/organizations";
+import { isOrganizationStoreId, organizationGroupStores, organizationStoresView, parseOrganizationStoreFields, type OrganizationStoreFields, type OrganizationStoreRow } from "@studenthub/organizations";
 
 // SHU-165 O7a: HTTP surface for an organization's stores.
 //   POST /organization/stores/create  {orgId, store:{name, location?, brandId?, mallId?}}
@@ -15,6 +15,7 @@ export interface OrganizationStoresStore {
   update(principalId: string, orgId: string, storeId: string, store: OrganizationStoreFields): Promise<{ kind: "updated" | "unchanged" | "store_not_found" } | Refusal>;
   remove(principalId: string, orgId: string, storeId: string): Promise<{ kind: "removed" | "not_found" | "store_not_found" }>;
   list(principalId: string, orgId: string): Promise<OrganizationStoreRow[] | null>;
+  childOrganizations(orgId: string): Promise<readonly string[]>;
 }
 type Result = { status: 200; body: unknown } | { status: 400 | 401 | 403 | 404 | 503; body: { error: string } };
 export interface OrganizationStores {
@@ -22,6 +23,7 @@ export interface OrganizationStores {
   update(session: string | undefined, body: unknown): Promise<Result>;
   remove(session: string | undefined, body: unknown): Promise<Result>;
   list(session: string | undefined, orgId: string): Promise<Result>;
+  group(session: string | undefined, orgId: string): Promise<Result>;
 }
 
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -68,6 +70,13 @@ export function createOrganizationStores(p: { sessions: Pick<SessionStore, "get"
       const rows = await p.store.list(id, orgId);
       return rows ? { status: 200, body: { stores: organizationStoresView(rows) } } : refusal("not_found");
     },
+    async group(s, orgId) {
+      const id = await principal(s);
+      if (!id) return UNAUTHORIZED;
+      if (!org(orgId)) return BAD;
+      const stores = await organizationGroupStores(orgId, (o) => p.store.list(id, o), (o) => p.store.childOrganizations(o));
+      return stores ? { status: 200, body: { stores } } : refusal("not_found");
+    },
   };
 }
 
@@ -76,7 +85,7 @@ const WRITES: Readonly<Record<string, "create" | "update" | "remove">> = {
   "/organization/stores/update": "update",
   "/organization/stores/remove": "remove",
 };
-const LIST = /^\/organization\/stores\/([^/]+)$/, LIMIT = 4096;
+const LIST = /^\/organization\/stores\/([^/]+)$/, GROUP = /^\/organization\/stores\/([^/]+)\/group$/, LIMIT = 4096;
 
 function cookie(header: string | undefined) {
   for (const item of header?.split(";") ?? []) {
@@ -101,7 +110,8 @@ export async function handleOrganizationStores(req: IncomingMessage, res: Server
   const path = new URL(req.url ?? "/", "http://x").pathname;
   const write = Object.hasOwn(WRITES, path) ? WRITES[path] : undefined;
   const list = write ? null : LIST.exec(path);
-  if (!write && !list) return false;
+  const group = write || list ? null : GROUP.exec(path);
+  if (!write && !list && !group) return false;
   const send = (r: Result) => {
     res.writeHead(r.status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
     res.end(JSON.stringify(r.body));
@@ -114,6 +124,13 @@ export async function handleOrganizationStores(req: IncomingMessage, res: Server
       let id: string;
       try { id = decodeURIComponent(list[1]!); } catch { send(BAD); return true; }
       send(await s.list(session, id));
+      return true;
+    }
+    if (group) {
+      if (req.method !== "GET") { send({ status: 404, body: { error: "not_found" } }); return true; }
+      let id: string;
+      try { id = decodeURIComponent(group[1]!); } catch { send(BAD); return true; }
+      send(await s.group(session, id));
       return true;
     }
     if (req.method !== "POST") { send({ status: 404, body: { error: "not_found" } }); return true; }

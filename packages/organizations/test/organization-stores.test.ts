@@ -53,3 +53,29 @@ test("SHU-165/AC-05 view-whitelist exposes exact keys", () => {
   assert.deepEqual(Object.keys(view[0]!), ["storeId", "name", "location", "brand", "mall"]);
   for (const secret of ["secret-org", "f".repeat(64), "2025-01-01"]) assert.equal(JSON.stringify(view).includes(secret), false);
 });
+
+test("SHU331_GROUP_REFUSED refused parent stops before loading children", async () => {
+  let childrenCalled = false;
+  assert.equal(await subject.organizationGroupStores(ORG, async () => null, async () => { childrenCalled = true; return ["c1"]; }), null);
+  assert.equal(childrenCalled, false);
+});
+
+test("SHU331_GROUP_SCOPE refused children are omitted while authorized organizations remain", async () => {
+  const rows = new Map<string, readonly normal.OrganizationStoreRow[] | null>([
+    [ORG, [row({ store_id: "parent-store", name: "Parent" })]],
+    ["c1", [row({ store_id: "child-store", name: "Child" })]],
+    ["c2", null],
+  ]);
+  const stores = await subject.organizationGroupStores(ORG, async (id) => rows.get(id) ?? null, async () => ["c1", "c2"]);
+  assert.deepEqual(stores?.map((store) => [store.orgId, store.storeId]), [[ORG, "parent-store"], ["c1", "child-store"]]);
+  assert.equal(stores?.some((store) => store.orgId === "c2"), false);
+});
+
+test("SHU331_GROUP_VIEW exposes exact group keys, filters removed data and keeps parent first", async () => {
+  const stores = await subject.organizationGroupStores(ORG, async (id) => id === ORG
+    ? [row({ store_id: "parent", name: "Parent" }), row({ store_id: "removed", status: "deleted" })]
+    : [row({ store_id: "child", name: "Child", brand_status: "deleted" })], async () => ["c1"]);
+  assert.deepEqual(stores?.map((store) => store.storeId), ["parent", "child"]);
+  assert.deepEqual(Object.keys(stores![0]!), ["orgId", "storeId", "name", "location", "brand", "mall"]);
+  assert.equal(stores![1]!.brand, null);
+});

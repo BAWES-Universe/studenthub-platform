@@ -17,6 +17,8 @@ const mutations = [
   ["removed", "SHU-165/AC-04 removed-hidden", '.filter((row) => row.status === "active")', ""],
   ["reference-status", "SHU-165/AC-04 removed-hidden", 'row.brand_status === "active" ?', "true ?"],
   ["spread", "SHU-165/AC-05 view-whitelist", ".map((row) => ({", ".map((row) => ({ ...row,"],
+  ["group-parent", "SHU331_GROUP_REFUSED", "if (parent === null)\n        return null;", "if (false)\n        return null;"],
+  ["group-scope", "SHU331_GROUP_SCOPE", "if (rows === null)\n            continue;", "if (false)\n            continue;"],
 ];
 function run(pattern, module) {
   const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...(pattern ? [`--test-name-pattern=^${pattern} `] : []), suite], {
@@ -38,4 +40,4 @@ for (const [name, pattern, from, to] of mutations) {
   }
 }
 assert.equal(run().status, 0);
-process.stdout.write(`${mutations.length}/${mutations.length} SHU-165 mutations killed\n`);
+process.stdout.write(`${mutations.length}/${mutations.length} organization store mutations killed\n`);

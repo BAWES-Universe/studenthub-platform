@@ -44,6 +44,13 @@ export class PostgresOrganizationStoresStore {
     return new Map(rows.rows.map((row) => [row.org_id, row.count]));
   }
 
+  async childOrganizations(orgId: string): Promise<string[]> {
+    return (await this.#pool.query<{ id: string }>(
+      "SELECT id FROM organizations WHERE parent_org_id=$1 ORDER BY id",
+      [orgId],
+    )).rows.map((row) => row.id);
+  }
+
   async #allowed(c: Client, principalId: string, orgId: string, decision: Decision, lock = false): Promise<boolean> {
     // A missing or deleted organization answers exactly as a refused one.
     if (!await organizationLive(c, orgId, lock)) return false;
