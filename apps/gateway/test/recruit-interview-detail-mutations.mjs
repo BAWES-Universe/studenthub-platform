@@ -23,6 +23,10 @@ const cases = [
 ];
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Node's TAP reporter JSON-safes a less-than sign as `\u003c` on some
+// releases. Accept that serialization while still binding the failure to the
+// target assertion's complete, exact message.
+const tapMessage = (text) => escape(text).replaceAll("<", "(?:<|\\\\u003[cC])");
 function run(prefix, swaps) {
   const register = `import{register}from"node:module";register(${JSON.stringify(hook)},{data:${JSON.stringify(swaps)}});`;
   const result = spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(register)}`, "--test", "--test-reporter=tap", `--test-name-pattern=^${escape(prefix)}`, suite], { encoding: "utf8", timeout: 60000 });
@@ -43,7 +47,7 @@ for (const [name, prefix, message, from, to] of cases) {
     assert.notEqual(mutant.status, 0, `${name}: the mutant survived\n${mutant.output}`);
     assert.match(mutant.output, new RegExp(`\\nnot ok \\d+ - ${escape(prefix)}`), `${name}: its named test fails`);
     assert.match(mutant.output, /name: 'AssertionError'/, `${name}: it dies by an assertion\n${mutant.output}`);
-    assert.match(mutant.output, new RegExp(`error: (?:'|\\|-\\n\\s+)${escape(message)}`), `${name}: it dies on "${message}"\n${mutant.output}`);
+    assert.match(mutant.output, new RegExp(`error: (?:'|\\|-\\n\\s+)${tapMessage(message)}`), `${name}: it dies on "${message}"\n${mutant.output}`);
     assert.doesNotMatch(mutant.output, /SyntaxError|ERR_MODULE_NOT_FOUND/, `${name}: the mutant loads`);
     console.log(`KILLED ${name} -> ${message}`);
   } finally {
