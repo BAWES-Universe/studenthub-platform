@@ -19,7 +19,7 @@ export interface CompanyDirectoryPage {
   open(sessionId: string | undefined, query: URLSearchParams): Promise<CompanyDirectoryResult>;
 }
 
-const PARAMETERS = new Set(["org_id", "role", "q", "status", "approved", "currency", "page"]);
+const PARAMETERS = new Set(["org_id", "role", "q", "status", "approved", "currency", "manager", "page"]);
 const STATUSES = new Set<string>(["active", "under_review", "inactive"]);
 
 type Parsed =
@@ -37,7 +37,7 @@ export function parseCompanyDirectoryQuery(query: URLSearchParams): Parsed {
   const orgId = query.get("org_id");
   const role = query.get("role");
   if (!orgId || !role) return { ok: false };
-  const filters: { query?: string; status?: OrganizationStatus; approvedToHire?: boolean; currencyCode?: string } = {};
+  const filters: { query?: string; status?: OrganizationStatus; approvedToHire?: boolean; currencyCode?: string; accountManager?: string } = {};
   const text = query.get("q")?.trim();
   if (text) {
     if (text.length > 100) return { ok: false };
@@ -58,6 +58,11 @@ export function parseCompanyDirectoryQuery(query: URLSearchParams): Parsed {
     if (!/^[A-Z]{3}$/.test(currency)) return { ok: false };
     filters.currencyCode = currency;
   }
+  const manager = query.get("manager");
+  if (manager) {
+    if (manager !== "me" && !/^[A-Za-z0-9._:-]{1,128}$/.test(manager)) return { ok: false };
+    filters.accountManager = manager;
+  }
   const page = query.get("page");
   if (page !== null && !/^[1-9]\d{0,5}$/.test(page)) return { ok: false };
   return { ok: true, orgId, role, filters: Object.freeze(filters), page: page === null ? 1 : Number(page) };
@@ -77,9 +82,11 @@ export function createCompanyDirectory(
         }
         const parsed = parseCompanyDirectoryQuery(query);
         if (!parsed.ok) return { status: 400, body: { error: "invalid_directory_query" } };
+        // "me" always means the caller, so a principal whose id is exactly "me" cannot be named.
+        const filters = parsed.filters.accountManager === "me" ? Object.freeze({ ...parsed.filters, accountManager: session.personId }) : parsed.filters;
         // The repository re-resolves the context and the coverage from current grants.
         const result = await directory.listOrganizations({
-          principalId: session.personId, orgId: parsed.orgId, role: parsed.role, filters: parsed.filters, page: parsed.page,
+          principalId: session.personId, orgId: parsed.orgId, role: parsed.role, filters, page: parsed.page,
         });
         if (result.kind === "not_found") return { status: 403, body: { error: "context_forbidden" } };
         if (result.kind === "invalid") return { status: 400, body: { error: "invalid_directory_query" } };
@@ -88,7 +95,7 @@ export function createCompanyDirectory(
         if (!org) return { status: 403, body: { error: "context_forbidden" } };
         return { status: 200, body: {
           active: { orgId: org.id, role: parsed.role as WorkspaceContext["role"], organizationName: org.name },
-          filters: parsed.filters,
+          filters,
           directory: result.directory,
         } };
       } catch {

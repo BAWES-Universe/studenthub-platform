@@ -13,6 +13,8 @@ import {
   type OrganizationDirectoryFilters,
   type OrganizationDirectoryResult,
   type OrganizationStoreCounts,
+  type OrganizationAccountManagerRecords,
+  type OrganizationDeletionRecords,
 } from "../src/index.js";
 import * as builtIn from "../src/organizations.js";
 
@@ -32,6 +34,8 @@ async function setup(options: {
   readonly source?: ApprovedOrganizationAdapter;
   readonly extraOrganizations?: readonly { id: string; name: string; parentOrgId?: string }[];
   readonly storeCounts?: OrganizationStoreCounts;
+  readonly accountManagers?: OrganizationAccountManagerRecords;
+  readonly deletions?: OrganizationDeletionRecords;
 } = {}) {
   const store = new InMemoryAuthzStore({
     principals: PEOPLE,
@@ -58,7 +62,7 @@ async function setup(options: {
   const source = options.source ?? new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-a2", childA2], ["org-b", unrelatedB],
   ]));
-  return { store, repository: new OrganizationRepository({ store, source, storeCounts: options.storeCounts }) };
+  return { store, repository: new OrganizationRepository({ store, source, storeCounts: options.storeCounts, accountManagers: options.accountManagers, deletions: options.deletions }) };
 }
 
 function entries(result: OrganizationDirectoryResult): readonly OrganizationDirectoryEntry[] {
@@ -225,4 +229,50 @@ test("SHU168_STORE_COUNT_SCOPE batches only covered live top-level companies and
   assert.equal(calls.length, 2);
   const failing = await setup({ storeCounts: { countMany: async () => { throw new Error("store source down"); } } });
   assert.deepEqual(await failing.repository.listOrganizations(STAFF), { kind: "unavailable" });
+});
+
+test("SHU339_FILTER filters by manager before the existing directory filters", async () => {
+  const calls: string[][] = [];
+  const accountManagers: OrganizationAccountManagerRecords = { readMany: async (orgIds) => {
+    calls.push([...orgIds]); return new Map([["org-a", "staff-self-a"], ["org-b", "admin"]]);
+  } };
+  const { repository } = await setup({ accountManagers, extraOrganizations: [{ id: "org-c", name: "Organization C", parentOrgId: "root" }] });
+  const list = (accountManager: string, filters = {}) => repository.listOrganizations({ ...STAFF, filters: { accountManager, ...filters } });
+  const own = await list("staff-self-a"); assert.deepEqual(ids(own), ["org-a"]); assert.equal((own as any).directory.total, 1);
+  assert.deepEqual(ids(await list("admin")), ["org-b"]);
+  const none = await list("nobody"); assert.deepEqual(ids(none), []); assert.equal((none as any).directory.total, 0);
+  assert.deepEqual(ids(await list("staff-self-a", { query: "Organization" })), ["org-a"]);
+  assert.deepEqual(ids(await list("staff-self-a", { status: "inactive" })), []);
+  assert.deepEqual(ids(await list("staff-self-a", { currencyCode: "USD" })), []);
+  const before = calls.length; assert.deepEqual(ids(await repository.listOrganizations(STAFF)), ["org-a", "org-b", "org-c"]); assert.equal(calls.length, before);
+});
+
+test("SHU339_FILTER_SCOPE reads exactly live covered top-level companies once", async () => {
+  const calls: string[][] = [];
+  const accountManagers = { readMany: async (ids: readonly string[]) => { calls.push([...ids]); return new Map<string,string>(); } };
+  const { repository } = await setup({ accountManagers });
+  await repository.listOrganizations({ ...STAFF, filters: { accountManager: "staff" } });
+  assert.deepEqual(calls, [["org-a", "org-b"]]);
+  calls.length = 0;
+  const deletions: OrganizationDeletionRecords = { isDeleted: async () => false, deletedAmong: async () => new Set(["org-b"]) };
+  const deleted = await setup({ accountManagers, deletions });
+  await deleted.repository.listOrganizations({ ...STAFF, filters: { accountManager: "staff" } });
+  assert.deepEqual(calls, [["org-a"]]);
+});
+
+test("SHU339_FILTER_INVALID refuses malformed manager ids without reading the port", async () => {
+  let calls = 0; const accountManagers = { readMany: async () => { calls++; return new Map<string,string>(); } };
+  const { repository } = await setup({ accountManagers });
+  for (const accountManager of ["", "a b", "x/y", "x".repeat(129), 7])
+    assert.deepEqual(await repository.listOrganizations({ ...STAFF, filters: { accountManager } as any }), { kind: "invalid" });
+  assert.equal(calls, 0);
+});
+
+test("SHU339_FILTER_UNAVAILABLE refuses missing and failing ports after authorization", async () => {
+  const plain = await setup();
+  assert.deepEqual(await plain.repository.listOrganizations({ ...STAFF, filters: { accountManager: "staff" } }), { kind: "unavailable" });
+  assert.equal((await plain.repository.listOrganizations(STAFF)).kind, "found");
+  const failing = await setup({ accountManagers: { readMany: async () => { throw new Error("down"); } } });
+  assert.deepEqual(await failing.repository.listOrganizations({ ...STAFF, filters: { accountManager: "staff" } }), { kind: "unavailable" });
+  assert.deepEqual(await plain.repository.listOrganizations({ principalId: "owner-a-subtree", orgId: "org-a", role: "org-owner", filters: { accountManager: "staff" } }), { kind: "not_found" });
 });
