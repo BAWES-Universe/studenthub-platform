@@ -430,11 +430,11 @@ test("SHU360_SHOWN admin company card shows and preselects the assigned eligible
   const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:"person-1"});
   const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});
   await store.grantMany("person-1",[{orgId:"org-a",role:"admin"}]);
-  const managers={manager:async()=>({manager:{principalId:"private-staff-id",displayName:"Staff One"}}),history:async()=>[],eligibleManagers:async()=>[{principalId:"private-staff-id",displayName:"Staff One"}]};
+  const managers={manager:async()=>({manager:{principalId:"private-staff-id",displayName:"Staff One"}}),history:async()=>[{from_principal_id:null,from_display_name:null,from_principal_exists:false,to_principal_id:"private-staff-id",to_display_name:"Staff One",to_principal_exists:true,occurred_at:"2026-10-27T00:00:00Z"}],eligibleManagers:async()=>[{principalId:"private-staff-id",displayName:"Staff One"}]};
   const organizations=Object.assign(new OrganizationRepository({store,source:new InMemoryApprovedOrganizationAdapter(new Map())}),{accountManagers:managers});
   const result=await createContextNavigation(rig.sessions,store,organizations).open(SESSION,new URLSearchParams({org_id:"org-a",role:"admin"}));
   const page=renderWorkspace(result,{...rig.app,navigation:createContextNavigation(rig.sessions,store)});
-  assert.match(page,/Account manager<\/dt><dd>Staff One/);assert.match(page,/Assign account manager/);assert.match(page,/<option value="private-staff-id" selected>Staff One<\/option>/);assert.match(page,/<option value="none">No account manager<\/option>/);assert.doesNotMatch(page,/>private-staff-id</);assert.match(page,/action="\/workspace\/account-manager\/preview"/);
+  assert.match(page,/Account manager<\/dt><dd>Staff One/);assert.match(page,/Account manager history/);assert.match(page,/None → Staff One/);assert.match(page,/Assign account manager/);assert.match(page,/<option value="private-staff-id" selected>Staff One<\/option>/);assert.match(page,/<option value="none">No account manager<\/option>/);assert.doesNotMatch(page,/>private-staff-id</);assert.match(page,/action="\/workspace\/account-manager\/preview"/);
 });
 
 test("SHU360_FORM staff see no assignment form and admin listing failure shows a notice",async()=>{
