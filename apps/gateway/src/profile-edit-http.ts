@@ -91,11 +91,25 @@ export type ProfileEditPageWriter = (status: number, title: string, body: string
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
 export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
-  return field.state === "available" ? String(field.value)
+  return field.state === "available" ? field.value === true ? "Yes" : field.value === false ? "No"
+    : ({ male: "Male", female: "Female", other: "Other", not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(field.value)] ?? String(field.value)
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Job-search status" };
+const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
+  : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
+    : field === "jobSearchStatus" ? ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[value]!
+      : value;
+function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
+  const described = invalid ? ' aria-describedby="value-error"' : "";
+  if (selected === "gender") return `<select name="value"${described}><option value="male"${value === "male" ? " selected" : ""}>Male</option><option value="female"${value === "female" ? " selected" : ""}>Female</option><option value="other"${value === "other" ? " selected" : ""}>Other</option></select>`;
+  if (selected === "drivingLicence") return `<select name="value"${described}><option value="true"${value === "true" ? " selected" : ""}>Yes</option><option value="false"${value === "false" ? " selected" : ""}>No</option></select>`;
+  if (selected === "jobSearchStatus") return `<select name="value"${described}><option value="not_looking"${value === "not_looking" ? " selected" : ""}>Not looking</option><option value="active"${value === "active" ? " selected" : ""}>Actively looking</option><option value="open_to_offers"${value === "open_to_offers" ? " selected" : ""}>Open to offers</option></select>`;
+  if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
+  if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
+  return `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}"${described}>`;
+}
 export function profileEditSummary(value: string): string {
   let result = "", count = 0;
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) { const length = [...segment].length; if (count + length > 120) break; result += segment; count += length; }
@@ -103,7 +117,7 @@ export function profileEditSummary(value: string): string {
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
-  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
+  const label = FIELD_LABELS[selected], control = editControl(selected, value, true);
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
@@ -122,7 +136,7 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(values.value!)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, values.value!))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));

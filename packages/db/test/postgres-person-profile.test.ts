@@ -118,3 +118,20 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
   await pool.query("INSERT INTO person_profiles(principal_id,objective,objective_written_at) VALUES($1,'Concurrent',clock_timestamp())", [id]);
   assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
 });
+
+test("SHU413_WRITE Postgres writes every choice twice with stable text state", async () => {
+  const id = `shu413-${randomUUID()}`, authz = new PostgresAuthzStore(pool);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const store = new PostgresPersonProfileStore({ pool });
+  const writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32), clock: { now: () => new Date("2026-10-30T12:00:00.000Z") } });
+  for (const [field, value] of Object.entries({ gender: "female", birthDate: "2000-02-29", drivingLicence: "true", jobSearchStatus: "open_to_offers" })) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const change = { personRef: personRecordRef(id), field, value }, principalRef = safeWritePrincipalRef(id);
+      const preview = await writer().preview({ principalRef, change }); assert.ok(preview.ok, `${field} preview ${attempt}`);
+      if (preview.ok) assert.ok((await writer().confirm({ principalRef, change, token: preview.token })).ok, `${field} confirm ${attempt}`);
+    }
+  }
+  const preferences = await store.readOwnPreferences(id) as Record<string, { value: unknown }>;
+  assert.deepEqual(Object.fromEntries(Object.entries(preferences).filter(([key]) => ["gender", "birthDate", "drivingLicence", "jobSearchStatus"].includes(key)).map(([key, entry]) => [key, entry.value])),
+    { gender: "female", birthDate: "2000-02-29", drivingLicence: "true", jobSearchStatus: "open_to_offers" });
+});

@@ -184,7 +184,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -202,7 +202,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
   }
-  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const) {
+  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus"] as const) {
     const preference = preferences[name];
     if (!preference) continue;
     try {
@@ -212,11 +212,17 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
       } else {
-        fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
+        const stored = name === "drivingLicence" ? exactEnum(new Map([["true", true], ["false", false]]))(preference.value, profile.asOfDate)
+          : name === "gender" ? exactEnum<Gender>(new Map([["male", "male"], ["female", "female"], ["other", "other"]]))(preference.value, profile.asOfDate)
+            : name === "jobSearchStatus" ? exactEnum<JobSearchStatus>(new Map([["not_looking", "not_looking"], ["active", "active"], ["open_to_offers", "open_to_offers"]]))(preference.value, profile.asOfDate)
+              : name === "birthDate" ? dateOnly(preference.value) : preference.value;
+        fields[name] = written(PROFILE_FIELD_SPECS[name], stored as never, preference.updatedAt) as never;
+        if (name === "birthDate") fields.age = written(PROFILE_FIELD_SPECS.age, ageOn(dateOnly(preference.value), profile.asOfDate), preference.updatedAt);
       }
     } catch {
       fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
+      if (name === "birthDate") fields.age = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS.age.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) });
     }
   }
   // Imported completeness cannot describe a profile once a platform-owned

@@ -97,3 +97,45 @@ test("SHU372_OWNER another record and ownership lost after preview are refused",
   x.loseOwner();
   assert.deepEqual(await x.writer.confirm({ ...request, token: preview.token }), { ok: false, reason: "not_own_record" });
 });
+
+test("SHU413_AGE uses the service clock and the single minimum-age setting", async () => {
+  const x = writeFixture();
+  const store = x.writer;
+  void store;
+  const principalRef = "a".repeat(64), personRef = "b".repeat(64);
+  const values = new Map<string, string | null>();
+  const writer = createPersonSelfEdit({
+    store: { ownedRecord: async () => personRef, readField: async (_r, f) => values.get(f) ?? null, commit: async () => ({ ok: true }) },
+    secret: "s".repeat(32), clock: { now: () => new Date("2026-10-30T23:59:59.000Z") },
+  });
+  const preview = (value: string) => writer.preview({ principalRef, change: { personRef, field: "birthDate", value } });
+  assert.equal((await preview("2010-10-30")).ok, true);
+  assert.deepEqual(await preview("2010-10-31"), { ok: false, reason: "invalid_value" });
+  assert.deepEqual(await preview("2010-02-30"), { ok: false, reason: "invalid_value" });
+});
+
+test("SHU413_WRITE accepts only platform enums for the four choice fields", () => {
+  for (const [field, accepted, refused] of [
+    ["gender", ["male", "female", "other"], ["1", "Male"]],
+    ["drivingLicence", ["true", "false"], ["yes", "1"]],
+    ["jobSearchStatus", ["not_looking", "active", "open_to_offers"], ["looking", "1"]],
+  ] as const) {
+    for (const value of accepted) assert.equal(normalizePersonSelfEditValue(field, value, "2026-10-30"), value);
+    for (const value of refused) assert.equal(normalizePersonSelfEditValue(field, value, "2026-10-30"), null);
+  }
+});
+
+test("SHU413_WRITE a bad stored birth date makes only birth date and its age unavailable", async () => {
+  const repository = new OwnProfileRepository({
+    principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "linked", candidateRef: "candidate" }), readCandidate: async () => SYNTHETIC_PROFILE_FIXTURES.populated },
+    preferences: { readOwnPreferences: async () => ({ birthDate: { value: "bad", updatedAt: "2026-10-30T00:00:00.000Z" } }) } as never,
+    today: () => "2026-10-30",
+  });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
+  assert.equal(result.kind, "found");
+  if (result.kind !== "found") return;
+  assert.equal(result.profile.fields.birthDate.state, "unavailable");
+  assert.equal(result.profile.fields.age.state, "unavailable");
+  assert.equal(result.profile.fields.gender.state, "available");
+});
