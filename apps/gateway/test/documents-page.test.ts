@@ -62,7 +62,7 @@ function pdf(): Buffer {
   return Buffer.from(text);
 }
 async function finalize(f: Awaited<ReturnType<typeof rig>>, session = SESSION, type: 'resume'|'personal-photo' = 'resume') {
-  const bytes = type === 'resume' ? pdf() : Buffer.from('\x89PNG\r\n\x1a\nphoto');
+  const bytes = type === 'resume' ? pdf() : Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC', 'base64');
   const expectedVersion = (await f.service.list(session)).find(row => row.type === type)?.version ?? null;
   const authorized = await f.service.authorizeUpload(session, f.key(), { type, mime: type === 'resume' ? 'application/pdf' : 'image/png', size: bytes.length, expectedVersion });
   const ticket = authorized.body as { uploadId: string; objectKey: string; credential: string };
@@ -267,7 +267,7 @@ test('Q14_2_VIEW real delivery redirect serves owner bytes and refuses another p
 
 test('Q14_2_OWNER action authentication, origin and slot checks precede document reads', async t => {
   const f = await rig(t); const before = f.counts();
-  assert.equal((await f.get('/profile/documents/resume/remove', undefined)).status, 401);
+  assert.equal((await f.get('/profile/documents/resume/remove', '')).status, 401);
   assert.equal((await f.post('/profile/documents/resume/view', '', SESSION, 'https://wrong.invalid')).status, 403);
   assert.equal((await f.post('/profile/documents/not-a-slot/view')).status, 404);
   assert.deepEqual(f.counts(), before);
