@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import test, { type TestContext } from 'node:test';
 import { InMemoryAuthzStore } from '@studenthub/contracts';
 import { createSyntheticLoginRig } from '@studenthub/login-contract';
@@ -25,14 +26,15 @@ async function rig(t: TestContext, language = 'en') {
   const loginRig = createSyntheticLoginRig(createLoginApplication);
   await loginRig.sessions.put({ id: SESSION, personId: 'person-1' });
   await loginRig.sessions.put({ id: OTHER, personId: 'person-2' });
-  let transactions = 0, lists = 0, deliveries = 0, broken = false, profileBroken = false;
-  const now = 1_800_000_000_000;
+  let transactions = 0, lists = 0, deliveries = 0, broken = false, profileBroken = false, realDeliveries = false;
+  const now = Date.now();
   const service = new CandidateDocuments({ store: { transaction: fn => { transactions++; if (broken) throw new Error('RAW_ERROR private/key https://delivery.invalid?token=secret'); return disk.transaction(fn); } }, authz, origin, orgId: 'org-a', signingKey: randomBytes(32), now: () => now, authenticate: async credential => {
     const session = await loginRig.sessions.get(credential); return session ? { kind: 'principal', principalId: session.personId } : null;
   } });
   const originalList = service.list.bind(service);
   service.list = async credential => { lists++; return originalList(credential); };
-  service.issueDelivery = async () => { deliveries++; throw new Error('Unexpected delivery'); };
+  const originalIssueDelivery = service.issueDelivery.bind(service);
+  service.issueDelivery = async (credential, id) => { deliveries++; if (!realDeliveries) throw new Error('Unexpected delivery'); return originalIssueDelivery(credential, id); };
   const repository = new OwnProfileRepository({ principals: authz, source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnPreferences() { return { language: language === 'ar' ? 'ar' : 'en', updatedAt: '2026-11-05T00:00:00Z' }; } } });
   const profileReads: unknown[] = [], sessionReads: unknown[] = [];
   const login: BrowserLoginApplication = { ...loginRig.app, profile: async request => { sessionReads.push(request); return loginRig.app.profile(request); }, web: { origin, returnTo: `${origin}/profile`, profiles: { async readOwn(request) { profileReads.push(request); if (profileBroken) throw new Error('RAW_PROFILE_ERROR'); return repository.readOwn(request); } } } };
@@ -48,7 +50,13 @@ async function rig(t: TestContext, language = 'en') {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const url = `http://127.0.0.1:${address.port}`;
   const get = (path = '/profile/documents', session: string | undefined = SESSION, accept = 'text/html') => fetch(url + path, { headers: { accept, ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}) } });
-  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), unconfigure: () => { configured = false; }, missOrganization: () => { (service.options as { orgId: string }).orgId = 'missing-org'; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
+  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), enableDeliveries: () => { realDeliveries = true; }, unconfigure: () => { configured = false; }, missOrganization: () => { (service.options as { orgId: string }).orgId = 'missing-org'; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
+}
+function png(color = 0): Buffer {
+  const crc32 = (bytes: Buffer) => { let c=0xffffffff; for(const b of bytes){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^((c&1)?0xedb88320:0);}return (c^0xffffffff)>>>0; };
+  const chunk = (type:string,data:Buffer) => { const b=Buffer.alloc(data.length+12);b.writeUInt32BE(data.length);b.write(type,4);data.copy(b,8);b.writeUInt32BE(crc32(b.subarray(4,-4)),b.length-4);return b; };
+  const header=Buffer.alloc(13);header.writeUInt32BE(1,0);header.writeUInt32BE(1,4);header[8]=8;header[9]=2;
+  return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',header),chunk('IDAT',deflateSync(Buffer.from([0,color,0,0]))),chunk('IEND',Buffer.alloc(0))]);
 }
 function pdf(): Buffer {
   let text = '%PDF-1.4\n'; const offsets: number[] = [];
@@ -66,6 +74,12 @@ async function finalize(f: Awaited<ReturnType<typeof rig>>, session = SESSION) {
   const result = await f.service.finalize(session, f.key(), { uploadId: ticket.uploadId });
   assert.equal(result.status, 200);
   return { bytes, result, ticket };
+}
+async function finalizePhoto(f: Awaited<ReturnType<typeof rig>>, session = SESSION) {
+  const bytes=png(42), authorized=await f.service.authorizeUpload(session,f.key(),{type:'personal-photo',mime:'image/png',size:bytes.length,expectedVersion:null});
+  const ticket=authorized.body as {uploadId:string;objectKey:string;credential:string};assert.equal(authorized.status,201);
+  assert.equal((await f.service.put(session,f.key(),ticket.uploadId,ticket.objectKey,ticket.credential,bytes)).status,204);
+  const result=await f.service.finalize(session,f.key(),{uploadId:ticket.uploadId});assert.equal(result.status,200);return {bytes,result};
 }
 test('SHU366_PAGE finalized file appears once with closed slots and one list', async t => {
   const f = await rig(t), finalized = await finalize(f);
@@ -178,6 +192,45 @@ test('SHU366_PAGE real gateway mounts page without changing JSON list', async t 
   const body = await json.json() as { documents: Record<string, unknown>[] };
   assert.equal(body.documents.length, 1);
   assert.deepEqual(Object.keys(body.documents[0]!).sort(), ['id', 'mime', 'size', 'type', 'version']);
+});
+
+test('Q14_2_SHOWN real lifecycle view ownership, held removal, and profile avatar are end to end', async t => {
+  const f=await rig(t);f.enableDeliveries();const uploaded=await finalizePhoto(f);await finalizePhoto(f,OTHER);
+  const server=createGatewayServer(undefined,undefined,undefined,f.login,null,undefined,f.service);
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});
+  const address=server.address();assert.ok(address&&typeof address!=='string');const base=`http://127.0.0.1:${address.port}`;
+  const browser=(session=SESSION)=>({accept:'text/html',cookie:`__Host-studenthub_session=${session}`});
+
+  const beforeProfile=f.counts();const profile=await fetch(base+'/profile',{headers:browser()});const profileHtml=await profile.text();
+  assert.equal(profile.status,200);assert.equal(profile.headers.get('cache-control'),'no-store');
+  assert.match(profileHtml,/<img class="p-monogram p-avatar" src="https:\/\/documents\.test\.invalid\/private-documents\/delivery\?t=[^"]+" alt="">/);
+  assert.equal(f.counts().lists-beforeProfile.lists,1);assert.equal(f.counts().deliveries-beforeProfile.deliveries,1);
+
+  const page=await fetch(base+'/profile/documents',{headers:browser()});const pageHtml=await page.text();
+  assert.match(pageHtml,/id="document-personal-photo"[^]*?<strong>On file<\/strong>[^]*?>Remove<\/a>[^]*?\/personal-photo\/view"/);
+  const beforeView=f.counts();const viewed=await fetch(base+'/profile/documents/personal-photo/view',{method:'POST',redirect:'manual',headers:{...browser(),origin}});
+  assert.equal(viewed.status,303);const location=viewed.headers.get('location');assert.ok(location?.startsWith(origin+'/private-documents/delivery?t='));
+  assert.equal(f.counts().lists-beforeView.lists,1);assert.equal(f.counts().deliveries-beforeView.deliveries,1);
+  const deliveryPath=location!.slice(origin.length);const own=await fetch(base+deliveryPath,{headers:{cookie:browser().cookie}});
+  assert.equal(own.status,200);assert.deepEqual(Buffer.from(await own.arrayBuffer()),uploaded.bytes);assert.equal(own.headers.get('content-disposition'),'attachment');
+  assert.equal((await fetch(base+deliveryPath,{headers:{cookie:browser(OTHER).cookie}})).status,403);
+
+  const otherConfirm=await fetch(base+'/profile/documents/personal-photo/remove',{headers:browser(OTHER)});const otherHtml=await otherConfirm.text();
+  const foreignBody=new URLSearchParams({stamp:/name="stamp" value="([^"]+)"/.exec(otherHtml)![1]!,submission:/name="submission" value="([^"]+)"/.exec(otherHtml)![1]!});
+  const foreign=await fetch(base+'/profile/documents/personal-photo/remove',{method:'POST',redirect:'manual',headers:{...browser(),origin,'content-type':'application/x-www-form-urlencoded'},body:foreignBody});
+  assert.equal(foreign.status,409);
+
+  const confirm=await fetch(base+'/profile/documents/personal-photo/remove',{headers:browser()});const confirmHtml=await confirm.text();
+  const body=new URLSearchParams({stamp:/name="stamp" value="([^"]+)"/.exec(confirmHtml)![1]!,submission:/name="submission" value="([^"]+)"/.exec(confirmHtml)![1]!});
+  const beforeRemove=f.counts();const removed=await fetch(base+'/profile/documents/personal-photo/remove',{method:'POST',redirect:'manual',headers:{...browser(),origin,'content-type':'application/x-www-form-urlencoded'},body});
+  assert.equal(removed.status,303);assert.equal(f.counts().lists-beforeRemove.lists,1);
+  const state=await f.disk.transaction(async value=>structuredClone(value));
+  assert.equal(state.documents.filter(row=>row.scope.personId==='person-1'&&row.type==='personal-photo').length,0);
+  const retired=state.retired.find(row=>row.scope.personId==='person-1'&&row.type==='personal-photo');assert.ok(retired?.data,'removed object body remains retained');
+  assert.ok(state.lifecycle?.cleanup.some(entry=>entry.documentId===retired.id&&entry.version===retired.version&&entry.status==='held'));
+  const afterPage=await fetch(base+'/profile/documents',{headers:browser()});assert.match(await afterPage.text(),/id="document-personal-photo"[^]*?<strong>Not uploaded<\/strong>/);
+  const afterProfile=await fetch(base+'/profile',{headers:browser()});const afterProfileHtml=await afterProfile.text();assert.equal(afterProfile.status,200);
+  assert.match(afterProfileHtml,/<div class="p-monogram" aria-hidden="true">[^<]+<\/div>/);assert.doesNotMatch(afterProfileHtml,/p-avatar/);
 });
 
 test('SHU366_PAGE rejects ambiguous session cookies without store access', async t => {

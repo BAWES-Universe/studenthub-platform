@@ -27,6 +27,6 @@ test('Q14_2_AVATAR delivery failure is a best-effort empty avatar', async () => 
       async list() { return [{id:'photo-id',version:'version',type:'personal-photo',mime:'image/png',size:8}]; },
       async issueDelivery() { throw new Error('unavailable'); },
     } as never);
-    assert.equal(await currentProfileAvatarUrl(), undefined);
+    assert.equal(await currentProfileAvatarUrl().then(value => value, error => error), undefined);
   });
 });

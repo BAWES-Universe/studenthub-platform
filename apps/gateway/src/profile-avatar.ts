@@ -31,6 +31,7 @@ export function prepareProfileAvatar(request: IncomingMessage, service?: Candida
   if (traceId && credential && service) {
     renderAvatar.set(traceId, readProfileAvatar(service, credential).catch(() => undefined));
     response?.once('finish', () => renderAvatar.delete(traceId));
+    response?.once('close', () => renderAvatar.delete(traceId));
   }
 }
 export async function currentProfileAvatarUrl(): Promise<string | undefined> {
