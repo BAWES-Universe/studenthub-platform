@@ -188,11 +188,12 @@ export class CandidateDocuments {
       const metadata = previous ? await primitive.replace(credential,previous.id,data) : await primitive.upload(credential,data);
       if (previous) this.enqueue(s,previous);
       t.committed = true;
+      (t as UploadTicket & { finalizedAt?: number }).finalizedAt = this.now();
       // The committed document now owns these exact bytes in this transaction.
       // Release only its superseded journal duplicate, never retained/abandoned
       // bytes or R2 objects (their held reservations remain; D6 forbids purge).
       delete t.data; delete t.digest;
-      s.lifecycle!.audit.push({id:randomUUID(),operation:'finalize',principalRef:hash(principalId),at:this.now()});
+      s.lifecycle!.audit.push({id:randomUUID(),operation:'finalize',principalRef:hash(principalId),at:(t as UploadTicket & { finalizedAt: number }).finalizedAt});
       return {status:200,body:{metadata:{...metadata}}};
     });
   }
@@ -243,14 +244,16 @@ export class CandidateDocuments {
     return this.options.store.transaction(async s => {
       if (await this.principal(credential) !== principalId) return deny();
       const result: (Metadata & { finalizedAt?: number })[] = [];
-      const committed = s.lifecycle?.uploads.filter(ticket => ticket.committed) ?? [];
-      const finalized = s.lifecycle?.audit.filter(entry => entry.operation === 'finalize') ?? [];
       for (const type of CANDIDATE_DOCUMENT_TYPES) {
         const d = this.current(s,principalId,type);
         if (d) {
           const metadata = await this.bound(s).metadata(credential,d.id);
           let finalizedAt: number | undefined;
-          for (let index = committed.length - 1; index >= 0; index--) if (committed[index]!.principalId === principalId && committed[index]!.type === type) { finalizedAt = finalized[index]?.at; break; }
+          const uploads = s.lifecycle?.uploads ?? [];
+          for (let index = uploads.length - 1; index >= 0; index--) {
+            const ticket = uploads[index]! as UploadTicket & { finalizedAt?: number };
+            if (ticket.committed && ticket.principalId === principalId && ticket.type === type) { finalizedAt = ticket.finalizedAt; break; }
+          }
           result.push(!includeFinalizedAt || finalizedAt === undefined ? metadata : { ...metadata, finalizedAt });
         }
       }

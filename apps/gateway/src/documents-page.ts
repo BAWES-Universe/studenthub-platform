@@ -5,6 +5,7 @@ import { DocumentError, type Metadata } from '../../../packages/private-document
 import { pageDocument, wantsHtml, writeHtml, type BrowserLoginApplication } from './web-ui.js';
 import type { ProfileLanguage } from './ui/profile-copy.js';
 import { createHmac, randomUUID } from 'node:crypto';
+import { handleDocumentsUpload } from './documents-upload-http.js';
 
 const COPY = {
   en: { title: 'My documents', back: 'My profile', onFile: 'On file', missing: 'Not uploaded', accepted: 'Accepted formats', maximum: 'Maximum size', bytes: 'bytes', signIn: 'Sign in to view your documents', continue: 'Continue with Universe', unavailable: 'Documents are temporarily unavailable. Please try again.', slots: ['Personal photo', 'CV', 'Civil ID front', 'Civil ID back'] },
@@ -37,6 +38,7 @@ function sessionCookie(request: IncomingMessage): string | undefined {
   return match?.[1];
 }
 export async function handleDocumentsPage(request: IncomingMessage, response: ServerResponse, service?: CandidateDocuments, login?: BrowserLoginApplication): Promise<boolean> {
+  if (/^\/profile\/documents\/[^/]+\/upload(?:\?|$)/.test(request.url ?? '')) return handleDocumentsUpload(request, response, service, login);
   if ((request.url ?? '').split('?')[0] !== '/profile/documents') return false;
   if (request.method !== 'GET' || !wantsHtml(request.headers.accept)) {
     request.resume();

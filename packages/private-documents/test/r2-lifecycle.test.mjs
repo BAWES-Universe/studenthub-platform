@@ -71,8 +71,18 @@ async function fixture(t){
   const key=decodeURIComponent(new URL(url).pathname).slice(bucket.length+2);
   if(objects.has(key))return 412;objects.set(key,Buffer.from(bytes));return 200;
  }
- return {req,authorize,upload,key,service,store,r2,objects,requests,reserved,sessions,ports,snapshot:()=>structuredClone(packed),fail:()=>fail=true,uncertain:()=>uncertain=true,advance:ms=>now+=ms};
+ return {req,authorize,upload,key,service,store,r2,objects,requests,reserved,sessions,ports,url:`http://127.0.0.1:${server.address().port}`,snapshot:()=>structuredClone(packed),fail:()=>fail=true,uncertain:()=>uncertain=true,advance:ms=>now+=ms};
 }
+
+test('Q14_1_ONE_PATH R2 fake accepts the server-held page upload without exposing capability data',async t=>{
+ const f=await fixture(t),type='personal-photo',raw=`1800000000000.00000000-0000-4000-8000-000000000001`;
+ const submission=`${raw}.${createHmac('sha256',f.ports.signingKey).update(`documents-upload:${type}:${raw}`).digest('base64url')}`;
+ const form=new FormData();form.set('submission',submission);form.set('file',new Blob([png()],{type:'image/png'}),'browser-name.png');
+ const response=await fetch(`${f.url}/profile/documents/${type}/upload`,{method:'POST',redirect:'manual',headers:{cookie:`__Host-studenthub_session=${f.sessions.alice}`,origin,'sec-fetch-site':'same-origin','idempotency-key':'ignored'},body:form});
+ const body=await response.text();assert.equal(response.status,303);assert.equal(response.headers.get('location'),'/profile/documents');
+ assert.doesNotMatch(body,/browser-name|uploadId|objectKey|credential|X-Amz|r2\.cloudflarestorage/);
+ const snapshot=f.snapshot();assert.equal(snapshot.state.documents.length,1);assert.ok(snapshot.state.documents[0].data.startsWith('r2:'));
+});
 
 test('SHU-145/R2-01 direct signatures bind one key, exact headers, one write and expiry',async t=>{
  const f=await fixture(t),bytes=png(),ticket=(await f.authorize('personal-photo',bytes)).body;

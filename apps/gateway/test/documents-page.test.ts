@@ -147,6 +147,17 @@ test('SHU366_PAGE escapes dependency values and never serializes metadata', () =
   assert.match(html, /&lt;img src=x onerror=&quot;bad&quot;&gt;/); assert.match(html, /&lt;script&gt;bad&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<img|<script|FORBIDDEN_ID|FORBIDDEN_VERSION/);
 });
+
+test('UPL_DATE finalized time renders as a plain Asia/Kuwait date', () => {
+  const html = documentsPage([{ id:'hidden',version:'hidden',type:'resume',mime:'application/pdf',size:42,finalizedAt:1_800_000_000_000 }], 'en');
+  assert.match(html,/PDF · 42 bytes · 15 Jan 2027/);assert.doesNotMatch(html,/1800000000000|hidden/);
+});
+
+test('Q14_1_SHOWN one projected list renders an uploaded slot without per-row reads', () => {
+  const html = documentsPage([{ id:'hidden',version:'hidden',type:'civil-id-front',mime:'image/jpeg',size:81,finalizedAt:1_800_000_000_000 }], 'en');
+  assert.match(html,/id="document-civil-id-front"[^]*?<strong>On file<\/strong>[^]*?JPEG · 81 bytes/);
+  assert.equal((html.match(/<strong>On file<\/strong>/g)??[]).length,1);assert.doesNotMatch(html,/hidden/);
+});
 test('SHU366_PAGE methods and Accept are opt-in without store access', async t => {
   const f = await rig(t);
   for (const accept of ['*/*', 'application/json', 'text/html;q=0', 'application/json,text/html']) assert.equal((await f.get('/profile/documents', SESSION, accept)).status, 404);
@@ -210,5 +221,5 @@ test('Q14_1_UPLOAD plain form uploads and renders the finalized file', async t =
   assert.equal(uploaded.status, 303); assert.equal(uploaded.headers.get('location'), '/profile/documents');
   const shown = await (await f.get()).text();
   assert.match(shown, /id="document-personal-photo"[^]*?<strong>On file<\/strong>/);
-  assert.doesNotMatch(shown, /never-shown\.png/); assert.match(shown, /PNG/); assert.match(shown, /Nov 2027/);
+  assert.doesNotMatch(shown, /never-shown\.png/); assert.match(shown, /PNG/); assert.match(shown, /15 Jan 2027/);
 });

@@ -98,6 +98,29 @@ test('SHU-145/AC-05 replacement and removal queue idempotent held cleanup',async
  assert.ok(s.lifecycle.cleanup.every(c=>c.status==='held')); // Includes unresolved policy and every possible legal hold: no purge authority.
 });
 
+test('Q14_1_REPLACE failed browser-equivalent replacement retains old row and successful retry queues one hold',async t=>{
+ const f=await fixture(t),old=(await f.finalize(await f.upload())).body.metadata,next=await f.upload('personal-photo',png(31),old.version),key=f.key();
+ f.fail();await assert.rejects(f.service.finalize(f.tokens.alice,key,{uploadId:next.uploadId}),e=>e.status===503);
+ let state=await f.state();assert.deepEqual(state.documents.map(row=>row.version),[old.version]);assert.equal(state.cleanup?.length??state.lifecycle.cleanup.length,0);
+ assert.equal((await f.service.finalize(f.tokens.alice,key,{uploadId:next.uploadId})).status,200);
+ state=await f.state();assert.equal(state.documents[0].size,png(31).length);assert.equal(state.lifecycle.cleanup.length,1);
+});
+
+test('UPL_DATE finalized time stays attached to its principal and ticket when commits reorder',async t=>{
+ const f=await fixture(t),alice=await f.upload('personal-photo',png(11)),bob=await f.authorize('personal-photo',png(12),null,{actor:'bob'});
+ assert.equal(bob.status,201);assert.equal((await f.put(bob.body,png(12),{actor:'bob'})).status,204);
+ f.advance(1000);assert.equal((await f.finalize(bob.body,{actor:'bob'})).status,200);f.advance(2000);assert.equal((await f.finalize(alice)).status,200);
+ const aliceRows=await f.service.list(f.tokens.alice,true),bobRows=await f.service.list(f.tokens.bob,true);
+ assert.equal(aliceRows[0].finalizedAt,1800000003000);assert.equal(bobRows[0].finalizedAt,1800000001000);
+});
+
+test('UPL_NO_ORG list refuses closed before authentication, authorization or document store reads',async t=>{
+ const f=await fixture(t);let transactions=0,authentications=0,organizations=0;
+ const service=createCandidateDocuments({...f.ports,orgId:undefined,store:{transaction:async fn=>{transactions++;return f.store.transaction(fn);}},sessions:{...f.ports.sessions,get:async id=>{authentications++;return f.ports.sessions.get(id);}},authz:{...f.authz,getOrganization:async id=>{organizations++;return f.authz.getOrganization(id);}}});
+ await assert.rejects(service.list(f.tokens.alice),error=>error.status===503&&error.code==='unavailable');
+ assert.deepEqual({transactions,authentications,organizations},{transactions:0,authentications:0,organizations:0});
+});
+
 test('SHU-145/NC-AUTH anonymous, forged principal and cross-person are refused',async t=>{
  const f=await fixture(t),ticket=await f.upload();
  for(const actor of ['anonymous','employer']){

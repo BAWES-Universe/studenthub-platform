@@ -3,13 +3,93 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createIdempotencyKey } from '../../../packages/idempotency-contract/src/idempotency.js';
 import { CANDIDATE_DOCUMENT_ADMISSION, LifecycleError, type CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import { CANDIDATE_DOCUMENT_TYPES, type CandidateDocumentType } from '../../../packages/private-documents/src/lifecycle-state.js';
-import { pageDocument, writeHtml } from './web-ui.js';
+import { pageDocument, writeHtml, type BrowserLoginApplication } from './web-ui.js';
 
-const OVERHEAD = 64 * 1024;
-function cookie(r: IncomingMessage): string | undefined { const a=(r.headers.cookie?.split(';')??[]).map(x=>x.trim()).filter(x=>x.startsWith('__Host-studenthub_session=')); return a.length===1?/^[A-Za-z0-9_-]{43}$/.test(a[0]!.slice(26))?a[0]!.slice(26):undefined:undefined; }
-function label(t:CandidateDocumentType){return ({'personal-photo':'Personal photo',resume:'CV','civil-id-front':'Civil ID front','civil-id-back':'Civil ID back'})[t];}
-function html(res:ServerResponse,status:number,t:CandidateDocumentType,reason:string){writeHtml(res,status,pageDocument('Upload document',`<main id="main"><h1>${label(t)}</h1><p role="status">${reason}</p><a href="/profile/documents">Back to My documents</a></main>`));}
-async function read(r:IncomingMessage,limit:number):Promise<Buffer>{const n=Number(r.headers['content-length']);if(Number.isFinite(n)&&n>limit){r.resume();throw new LifecycleError(413,'too_large');}const chunks:Buffer[]=[];let size=0;for await(const c of r.iterator({destroyOnReturn:false})){const b=Buffer.from(c);size+=b.length;if(size>limit){r.resume();throw new LifecycleError(413,'too_large');}chunks.push(b);}return Buffer.concat(chunks);}
-function multipart(body:Buffer,contentType:string):{bytes:Buffer;mime:string;submission:string}{const m=/^multipart\/form-data;\s*boundary=([A-Za-z0-9'()+_,./:=?-]{1,70})$/.exec(contentType);if(!m)throw new LifecycleError(400,'invalid');const boundary=Buffer.from(`--${m[1]}`),parts:Buffer[]=[];let at=0;while(true){const start=body.indexOf(boundary,at);if(start<0)break;const next=body.indexOf(boundary,start+boundary.length);if(next<0)break;const p=body.subarray(start+boundary.length+2,next-2);if(p.length)parts.push(p);at=next;}let file:Buffer|undefined,mime='',submission='';for(const p of parts){const split=p.indexOf('\r\n\r\n');if(split<0||split>8192)throw new LifecycleError(400,'invalid');const h=p.subarray(0,split).toString('latin1'),data=p.subarray(split+4);const d=/^Content-Disposition: form-data; name="([^"]+)"(?:; filename="([^"]*)")?$/mi.exec(h);if(!d)throw new LifecycleError(400,'invalid');if(d[1]==='file'&&d[2]!==undefined){if(file||d[2]==='')throw new LifecycleError(400,d[2]===''?'no_file':'invalid');const ct=/^Content-Type:\s*([^\r\n]+)$/mi.exec(h);if(!ct)throw new LifecycleError(400,'invalid');file=data;mime=ct[1]!.trim();}else if(d[1]==='submission'&&d[2]===undefined&&!submission)submission=data.toString('utf8');else throw new LifecycleError(400,'invalid');}if(!file||!submission)throw new LifecycleError(400,file?'invalid':'no_file');return{bytes:file,mime,submission};}
-function keys(service:CandidateDocuments,type:CandidateDocumentType,value:string):string[]{const m=/^(\d{13})\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/.exec(value);if(!m)throw new LifecycleError(400,'invalid');const raw=`${m[1]}.${m[2]}`,expected=createHmac('sha256',service.options.signingKey).update(`documents-upload:${type}:${raw}`).digest();let supplied:Buffer;try{supplied=Buffer.from(m[3]!,'base64url');}catch{throw new LifecycleError(400,'invalid');}if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected))throw new LifecycleError(400,'invalid');return [0,1,2].map(i=>{const b=createHash('sha256').update(`${raw}:${i}`).digest().subarray(0,16);b[6]=(b[6]!&15)|64;b[8]=(b[8]!&63)|128;const x=b.toString('hex');return createIdempotencyKey(new Date(Number(m[1])),`${x.slice(0,8)}-${x.slice(8,12)}-${x.slice(12,16)}-${x.slice(16,20)}-${x.slice(20)}`);});}
-export async function handleDocumentsUpload(r:IncomingMessage,res:ServerResponse,service?:CandidateDocuments):Promise<boolean>{const match=/^\/profile\/documents\/([^/]+)\/upload$/.exec((r.url??'').split('?')[0]!);if(!match)return false;if(r.method!=='POST'||!CANDIDATE_DOCUMENT_TYPES.includes(match[1] as CandidateDocumentType)){r.resume();res.writeHead(404,{'cache-control':'no-store'});res.end();return true;}const type=match[1] as CandidateDocumentType;try{const session=cookie(r);if(!session){r.resume();html(res,401,type,'Sign in to upload a document.');return true;}if(!service){r.resume();html(res,503,type,'Documents are temporarily unavailable.');return true;}await service.principal(session);if(r.headers.origin!==service.options.origin||r.headers['sec-fetch-site']==='cross-site'){r.resume();html(res,403,type,'This upload was refused.');return true;}const parsed=multipart(await read(r,CANDIDATE_DOCUMENT_ADMISSION[type].maxBytes+OVERHEAD),String(r.headers['content-type']??''));const k=keys(service,type,parsed.submission);const current=(await service.list(session)).find(x=>x.type===type);const sha=createHash('sha256').update(parsed.bytes).digest('hex'),md5=createHash('md5').update(parsed.bytes).digest('base64');const a=await service.authorizeUpload(session,k[0],{type,mime:parsed.mime,size:parsed.bytes.length,expectedVersion:current?.version??null,...(service.options.directUploads?{sha256:sha,contentMd5:md5}:{})});const ticket=a.body as {uploadId:string;objectKey:string;credential:string;directUpload?:unknown};await service.put(session,k[1],ticket.uploadId,ticket.objectKey,ticket.credential,parsed.bytes);await service.finalize(session,k[2],{uploadId:ticket.uploadId});res.writeHead(303,{location:'/profile/documents','cache-control':'no-store'});res.end();}catch(e){const x=e instanceof LifecycleError?e:new LifecycleError(503,'unavailable');const reason=x.status===413?`The file is too large. Maximum size is ${CANDIDATE_DOCUMENT_ADMISSION[type].maxBytes/(1024*1024)} MiB.`:x.code==='no_file'?'Choose a file first.':x.status===409?'Your documents changed, try again.':x.status===400?'Choose a valid file in an accepted format.':x.status===403?'This upload was refused.':'Documents are temporarily unavailable.';html(res,x.status===401?401:x.status===403?403:x.status===409?409:x.status===413?413:x.status===400?400:503,type,reason);}return true;}
+const MULTIPART_OVERHEAD = 64 * 1024;
+class FormError extends Error { constructor(readonly status: 400 | 413, readonly reason: 'invalid' | 'no_file' | 'too_large') { super(reason); } }
+function cookie(request: IncomingMessage): string | undefined {
+  const matches = (request.headers.cookie?.split(';') ?? []).map(value => value.trim()).filter(value => value.startsWith('__Host-studenthub_session='));
+  if (matches.length !== 1) return undefined;
+  const value = matches[0]!.slice('__Host-studenthub_session='.length);
+  return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : undefined;
+}
+const labels = { en: { 'personal-photo': 'Personal photo', resume: 'CV', 'civil-id-front': 'Civil ID front', 'civil-id-back': 'Civil ID back' }, ar: { 'personal-photo': 'الصورة الشخصية', resume: 'السيرة الذاتية', 'civil-id-front': 'البطاقة المدنية (الوجه الأمامي)', 'civil-id-back': 'البطاقة المدنية (الوجه الخلفي)' } } as const;
+function refusal(response: ServerResponse, status: number, type: CandidateDocumentType, reason: string, signIn: boolean, language: 'en'|'ar'): void {
+  const action = signIn ? `<p><a class="p-button p-primary" href="/login/universe?return_to=%2Fprofile%2Fdocuments">${language === 'ar' ? 'المتابعة مع Universe' : 'Continue with Universe'}</a></p>` : '';
+  writeHtml(response, status, pageDocument(language === 'ar' ? 'رفع مستند' : 'Upload document', `<main id="main"><h1>${labels[language][type]}</h1><p role="status">${reason}</p>${action}<a href="/profile/documents">${language === 'ar' ? 'العودة إلى مستنداتي' : 'Back to My documents'}</a></main>`, language));
+}
+async function readBounded(request: IncomingMessage, limit: number): Promise<Buffer> {
+  const length = Number(request.headers['content-length']);
+  if (Number.isFinite(length) && length > limit) { request.resume(); throw new FormError(413, 'too_large'); }
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+    const bytes = Buffer.from(chunk); size += bytes.length;
+    if (size > limit) { request.resume(); throw new FormError(413, 'too_large'); }
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks);
+}
+function parseMultipart(body: Buffer, contentType: string): { bytes: Buffer; mime: string; submission: string } {
+  const match = /^multipart\/form-data;\s*boundary=(?:"([A-Za-z0-9'()+_,.\/:=?-]{1,70})"|([A-Za-z0-9'()+_,.\/:=?-]{1,70}))$/.exec(contentType);
+  if (!match) throw new FormError(400, 'invalid');
+  const token = match[1] ?? match[2]!; const boundary = Buffer.from(`--${token}`); const close = Buffer.from(`\r\n--${token}--`);
+  const trailing = body.subarray(-2).equals(Buffer.from('\r\n')) ? 2 : 0;
+  if (!body.subarray(0, boundary.length).equals(boundary) || !body.subarray(body.length - trailing - close.length, body.length - trailing).equals(close)) throw new FormError(400, 'invalid');
+  const raw = body.subarray(boundary.length + 2, body.length - trailing - close.length); const delimiter = Buffer.from(`\r\n--${token}\r\n`);
+  const parts: Buffer[] = []; let start = 0;
+  while (start <= raw.length) { const next = raw.indexOf(delimiter, start); parts.push(raw.subarray(start, next < 0 ? raw.length : next)); if (next < 0) break; start = next + delimiter.length; }
+  let file: Buffer | undefined; let mime = ''; let submission: string | undefined;
+  for (const part of parts) {
+    const split = part.indexOf('\r\n\r\n'); if (split < 0 || split > 8192) throw new FormError(400, 'invalid');
+    const headers = part.subarray(0, split).toString('latin1'); const data = part.subarray(split + 4);
+    const disposition = /^Content-Disposition: form-data; name="([^"]+)"(?:; filename="([^"]*)")?$/mi.exec(headers);
+    if (!disposition) throw new FormError(400, 'invalid');
+    if (disposition[1] === 'file' && disposition[2] !== undefined) {
+      if (file !== undefined) throw new FormError(400, 'invalid');
+      if (disposition[2] === '') throw new FormError(400, 'no_file');
+      const declared = /^Content-Type:\s*([^\r\n]+)$/mi.exec(headers); if (!declared) throw new FormError(400, 'invalid');
+      file = data; mime = declared[1]!.trim();
+    } else if (disposition[1] === 'submission' && disposition[2] === undefined && submission === undefined) submission = data.toString('utf8');
+    else throw new FormError(400, 'invalid');
+  }
+  if (file === undefined) throw new FormError(400, 'no_file');
+  if (!submission) throw new FormError(400, 'invalid');
+  return { bytes: file, mime, submission };
+}
+function serverKeys(service: CandidateDocuments, type: CandidateDocumentType, value: string): [string, string, string] {
+  const match = /^(\d{13})\.([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/.exec(value); if (!match) throw new FormError(400, 'invalid');
+  const raw = `${match[1]}.${match[2]}`; const expected = createHmac('sha256', service.options.signingKey).update(`documents-upload:${type}:${raw}`).digest();
+  const supplied = Buffer.from(match[3]!, 'base64url'); if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new FormError(400, 'invalid');
+  return [0, 1, 2].map(index => {
+    const uuid = createHash('sha256').update(`${raw}:${index}`).digest().subarray(0, 16); uuid[6] = (uuid[6]! & 15) | 64; uuid[8] = (uuid[8]! & 63) | 128;
+    const hex = uuid.toString('hex'); return createIdempotencyKey(new Date(Number(match[1])), `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`);
+  }) as [string, string, string];
+}
+export async function handleDocumentsUpload(request: IncomingMessage, response: ServerResponse, service?: CandidateDocuments, _login?: BrowserLoginApplication): Promise<boolean> {
+  const match = /^\/profile\/documents\/([^/]+)\/upload$/.exec((request.url ?? '').split('?')[0]!); if (!match) return false;
+  if (request.method !== 'POST' || !CANDIDATE_DOCUMENT_TYPES.includes(match[1] as CandidateDocumentType)) { request.resume(); response.writeHead(404, { 'cache-control': 'no-store' }); response.end(); return true; }
+  const type = match[1] as CandidateDocumentType; const session = cookie(request);
+  const language: 'en'|'ar' = String(request.headers['accept-language'] ?? '').toLowerCase().startsWith('ar') ? 'ar' : 'en';
+  if (!session) { request.resume(); refusal(response, 401, type, language === 'ar' ? 'سجّل الدخول لرفع مستند.' : 'Sign in to upload a document.', true, language); return true; }
+  if (!service) { request.resume(); refusal(response, 503, type, language === 'ar' ? 'المستندات غير متاحة مؤقتًا.' : 'Documents are temporarily unavailable.', false, language); return true; }
+  if (request.headers.origin !== service.options.origin || request.headers['sec-fetch-site'] === 'cross-site') { request.resume(); refusal(response, 403, type, language === 'ar' ? 'تم رفض هذا الرفع.' : 'This upload was refused.', false, language); return true; }
+  try {
+    const current = (await service.list(session)).find(document => document.type === type);
+    const parsed = parseMultipart(await readBounded(request, CANDIDATE_DOCUMENT_ADMISSION[type].maxBytes + MULTIPART_OVERHEAD), String(request.headers['content-type'] ?? ''));
+    const keys = serverKeys(service, type, parsed.submission);
+    const sha256 = createHash('sha256').update(parsed.bytes).digest('hex'); const contentMd5 = createHash('md5').update(parsed.bytes).digest('base64');
+    const authorization = await service.authorizeUpload(session, keys[0], { type, mime: parsed.mime, size: parsed.bytes.length, expectedVersion: current?.version ?? null, ...(service.options.directUploads ? { sha256, contentMd5 } : {}) });
+    const ticket = authorization.body as { uploadId: string; objectKey: string; credential: string };
+    await service.put(session, keys[1], ticket.uploadId, ticket.objectKey, ticket.credential, parsed.bytes);
+    await service.finalize(session, keys[2], { uploadId: ticket.uploadId });
+    response.writeHead(303, { location: '/profile/documents', 'cache-control': 'no-store' }); response.end();
+  } catch (error) {
+    const status = error instanceof FormError ? error.status : error instanceof LifecycleError ? error.status : 503;
+    const code = error instanceof FormError ? error.reason : error instanceof LifecycleError ? error.code : 'unavailable';
+    const reason = language === 'ar'
+      ? status === 413 ? `الملف كبير جدًا. الحد الأقصى ${CANDIDATE_DOCUMENT_ADMISSION[type].maxBytes / (1024 * 1024)} MiB.` : code === 'no_file' ? 'اختر ملفًا أولًا.' : status === 409 ? 'تغيّرت مستنداتك، حاول مرة أخرى.' : status === 400 ? 'اختر ملفًا صالحًا بإحدى الصيغ المقبولة.' : status === 403 ? 'تم رفض هذا الرفع.' : 'المستندات غير متاحة مؤقتًا.'
+      : status === 413 ? `The file is too large. Maximum size is ${CANDIDATE_DOCUMENT_ADMISSION[type].maxBytes / (1024 * 1024)} MiB.` : code === 'no_file' ? 'Choose a file first.' : status === 409 ? 'Your documents changed, try again.' : status === 400 ? 'Choose a valid file in an accepted format.' : status === 403 ? 'This upload was refused.' : 'Documents are temporarily unavailable.';
+    refusal(response, status === 400 || status === 403 || status === 409 || status === 413 ? status : 503, type, reason, false, language);
+  }
+  return true;
+}
