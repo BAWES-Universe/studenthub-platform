@@ -21,6 +21,7 @@ export interface CertificatesHttpService {
 
 export const OWN_CERTIFICATES_PATH = "/profile/certificates", STAFF_CERTIFICATES_PATH = "/workspace/certificates";
 const OWN_PDF = /^\/profile\/certificates\/([0-9a-f-]{36})\.pdf$/, STAFF_PDF = /^\/workspace\/certificates\/([0-9a-f-]{36})\.pdf$/;
+const OWN_DETAIL = /^\/profile\/certificates\/([^/]+)$/, ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const esc = (v: string) => v.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 function json(res: ServerResponse, status: number, body: unknown): true {
@@ -46,11 +47,16 @@ function listHtml(title: string, intro: string, list: { readonly name: string | 
 }
 const entryJson = (r: CertificateEntry) => ({ assignmentId: r.assignmentId, company: r.company, store: r.store, startDate: r.startDate, endDate: r.endDate, until: r.until, ongoing: r.ongoing });
 
+function detailHtml(row: CertificateEntry): string {
+  return `<main><h1>Experience certificate</h1><dl><dt>Company</dt><dd>${esc(row.company)}</dd><dt>Store</dt><dd>${esc(row.store)}</dd><dt>From</dt><dd>${esc(longDate(row.startDate))}</dd><dt>To</dt><dd>${esc(row.ongoing ? "Still working" : longDate(row.until))}</dd></dl><p><a href="${esc(`${OWN_CERTIFICATES_PATH}/${row.assignmentId}.pdf`)}">Certificate (PDF)</a></p><p><a href="${OWN_CERTIFICATES_PATH}">Back to your certificates</a></p></main>`;
+}
+
 /** Handles the certificate paths; false for any other path. `viewer` is the signed-in person, if any. */
 export async function handleCertificates(req: IncomingMessage, res: ServerResponse, service: CertificatesHttpService | undefined, path: string, viewer: () => Promise<string | undefined>,
   isStaff: (viewer: string) => Promise<boolean>): Promise<boolean> {
-  const own = path === OWN_CERTIFICATES_PATH, ownPdf = OWN_PDF.exec(path), staff = path === STAFF_CERTIFICATES_PATH, staffPdf = STAFF_PDF.exec(path);
-  if (!own && !ownPdf && !staff && !staffPdf) return false;
+  const own = path === OWN_CERTIFICATES_PATH, ownPdf = OWN_PDF.exec(path), ownDetail = !path.endsWith(".pdf") ? OWN_DETAIL.exec(path) : null;
+  const staff = path === STAFF_CERTIFICATES_PATH, staffPdf = STAFF_PDF.exec(path);
+  if (!own && !ownPdf && !ownDetail && !staff && !staffPdf) return false;
   req.resume();
   const person = service ? await viewer() : undefined;
   if (staff || staffPdf) {
@@ -71,7 +77,19 @@ export async function handleCertificates(req: IncomingMessage, res: ServerRespon
   if (req.method !== "GET") { res.writeHead(405, { allow: "GET" }); res.end(); return true; }
   if (!person) return reply(req, res, 401, { status: "unauthenticated" }, "Sign in", "Sign in to download your certificates.", `<p><a href="/profile">Go to your profile</a></p>`);
   if (ownPdf) { const bytes = await service.pdf(person, ownPdf[1]!); return bytes ? pdf(res, bytes) : notFound(req, res); }
-  const list = await service.own(person);
+  if (ownDetail && !ID.test(ownDetail[1]!)) return notFound(req, res);
+  let list: Awaited<ReturnType<CertificatesHttpService["own"]>>;
+  if (ownDetail) {
+    try { list = await service.own(person); }
+    catch { return reply(req, res, 503, { status: "unavailable" }, "Certificates unavailable", "Your certificates are temporarily unavailable. Please try again."); }
+  } else list = await service.own(person);
+  if (ownDetail) {
+    const row = list.rows.find(candidate => candidate.assignmentId === ownDetail[1]);
+    if (!row) return notFound(req, res);
+    if (!wantsHtml(req.headers.accept)) return json(res, 200, { status: "ok", row: entryJson(row) });
+    writeHtml(res, 200, pageDocument("Experience certificate", detailHtml(row)), { "cache-control": "no-store" });
+    return true;
+  }
   if (!wantsHtml(req.headers.accept)) return json(res, 200, { status: "ok", rows: list.rows.map(entryJson) });
   writeHtml(res, 200, pageDocument("Your experience certificates", listHtml("Your experience certificates", "A certificate of appreciation for each store you worked at through StudentHub.", list,
     id => `${OWN_CERTIFICATES_PATH}/${id}.pdf`, "You have no store assignments yet. A certificate becomes available once you start working at a store.")), { "cache-control": "no-store" });
