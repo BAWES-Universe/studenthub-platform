@@ -3,6 +3,7 @@ import pg from "pg";
 import type { CommitInput, CommitOutcome, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, safeWritePrincipalRef, SAFE_WRITE_OPERATION } from "./safe-write-store.js";
+const SELF_EDIT_CLEAR = "\u0000studenthub:clear-profile-field";
 
 const SELF_EDIT_FIELDS = ["display_name", "arabic_name", "objective", "intro", "preferred_time"] as const;
 type SelfEditField = typeof SELF_EDIT_FIELDS[number];
@@ -48,9 +49,10 @@ export class PostgresPersonProfileStore {
     try{await client.query("BEGIN");await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,5959))",[id]);
       if((await client.query("SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2",[SAFE_WRITE_OPERATION,tokenRef])).rows.length)throw new Refusal("token_already_used");
       if(!await this.#exists(client,id))throw new Refusal("not_own_record");
+      const stored=input.value===SELF_EDIT_CLEAR?null:input.value;
       const written=input.expectedBefore===null
-        ?await client.query(`INSERT INTO person_profiles(principal_id,${column}) VALUES($1,$2) ON CONFLICT(principal_id) DO UPDATE SET ${column}=EXCLUDED.${column},updated_at=clock_timestamp() WHERE person_profiles.${column} IS NULL RETURNING 1`,[id,input.value])
-        :await client.query(`UPDATE person_profiles SET ${column}=$2,updated_at=clock_timestamp() WHERE principal_id=$1 AND ${column}=$3 RETURNING 1`,[id,input.value,input.expectedBefore]);
+        ?await client.query(`INSERT INTO person_profiles(principal_id,${column}) VALUES($1,$2) ON CONFLICT(principal_id) DO UPDATE SET ${column}=EXCLUDED.${column},updated_at=clock_timestamp() WHERE person_profiles.${column} IS NULL RETURNING 1`,[id,stored])
+        :await client.query(`UPDATE person_profiles SET ${column}=$2,updated_at=clock_timestamp() WHERE principal_id=$1 AND ${column}=$3 RETURNING 1`,[id,stored,input.expectedBefore]);
       if(written.rows.length!==1)throw new Refusal("state_changed");
       await client.query(`INSERT INTO authorization_mutation_audit(request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary) VALUES($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)`,[input.receipt.receiptRef,input.receipt.principalRef,SAFE_WRITE_OPERATION,JSON.stringify({valuePresent:input.expectedBefore!==null}),JSON.stringify({contractVersion:input.receipt.contractVersion,personRef:input.receipt.personRef,changeSetDigest:input.receipt.changeSetDigest,fields:[field],committedAt:input.receipt.committedAt,tokenRef})]);
       await client.query("COMMIT");return{ok:true};

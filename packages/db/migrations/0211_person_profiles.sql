@@ -1,12 +1,26 @@
 -- SHU-372: platform-owned person profile text. Column names deliberately match
 -- the approved import mapping so SHU-103 writes into this same row.
+CREATE FUNCTION person_profile_text_valid(value text, maximum integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+ SELECT char_length(value) BETWEEN 1 AND maximum
+   AND value !~ '^[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]|[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$'
+   AND value !~ '[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]'
+$$;
+
+CREATE FUNCTION person_profile_name_valid(value text, arabic boolean) RETURNS boolean
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+ SELECT person_profile_text_valid(value,255)
+   AND value ~ '[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]'
+   AND (NOT arabic OR value ~ '[\u0620-\u064A\u066E-\u06D3\u06FA-\u06FC\u0750-\u077F\u08A0-\u08C9\uFB50-\uFBC2\uFBD3-\uFD8F\uFD92-\uFDC7\uFDF0-\uFDFB\uFE70-\uFEFC]')
+$$;
+
 CREATE TABLE person_profiles (
   principal_id text PRIMARY KEY REFERENCES principals(id),
-  candidate_name text CHECK (candidate_name IS NULL OR (char_length(candidate_name) BETWEEN 1 AND 255 AND btrim(candidate_name) <> '' AND btrim(candidate_name) ~ '[[:space:]]')),
-  candidate_name_ar text CHECK (candidate_name_ar IS NULL OR (char_length(candidate_name_ar) BETWEEN 1 AND 255 AND btrim(candidate_name_ar) <> '' AND btrim(candidate_name_ar) ~ '[[:space:]]')),
-  candidate_objective text CHECK (candidate_objective IS NULL OR (char_length(candidate_objective) BETWEEN 1 AND 100 AND btrim(candidate_objective) <> '')),
-  candidate_intro text CHECK (candidate_intro IS NULL OR (char_length(candidate_intro) BETWEEN 1 AND 5000 AND btrim(candidate_intro) <> '')),
-  candidate_preferred_time text CHECK (candidate_preferred_time IS NULL OR (char_length(candidate_preferred_time) BETWEEN 1 AND 100 AND btrim(candidate_preferred_time) <> '')),
+  candidate_name text CHECK (candidate_name IS NULL OR person_profile_name_valid(candidate_name,false)),
+  candidate_name_ar text CHECK (candidate_name_ar IS NULL OR person_profile_name_valid(candidate_name_ar,true)),
+  candidate_objective text CHECK (candidate_objective IS NULL OR person_profile_text_valid(candidate_objective,100)),
+  candidate_intro text CHECK (candidate_intro IS NULL OR person_profile_text_valid(candidate_intro,5000)),
+  candidate_preferred_time text CHECK (candidate_preferred_time IS NULL OR person_profile_text_valid(candidate_preferred_time,100)),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 

@@ -28,7 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
-import { handleProfileEditPage } from "./profile-edit-http.js";
+import { handleProfileEdit, handleProfileEditPage } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
@@ -181,6 +181,7 @@ export function createGatewayServer(
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
     if (await handleOrganizationDocuments(request, response, organizationDocuments)) return;
+    if (await handleProfileEdit(request,response,login?.profileEdit,login?.web?.origin)) return;
     if (await handleLanguagePreferencePage(request, response, login?.preferences, login?.web?.origin,
       (status, title, body) => writeHtml(response, status, status === 401 ? renderError(401, login) : pageDocument(title, body)),
       async (sessionId) => {
