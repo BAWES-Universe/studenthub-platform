@@ -157,6 +157,8 @@ export interface OrganizationStatusRecords {
   read(orgId:string):Promise<OrganizationStatusRecord>;
   readMany?(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationStatusRecord>>;
 }
+export type OrganizationCommercialTermRecord={readonly kind:"absent"}|{readonly kind:"cleared"}|{readonly kind:"value";readonly value:string};
+export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}>}
 
 export function deriveOrganizationStatus(row: Row, record?:OrganizationStatusRecord): OrganizationField<OrganizationStatus> {
   if (record?.kind === "status") return available("status", record.status);
@@ -194,6 +196,18 @@ function inheritedDecimal(name: "hourlyRate" | "bonusCommission", row: Row, pare
   return parent[sourceField] === null ? unavailable(name, "not_recorded") : available(name, decimal(parent[sourceField]));
 }
 
+function storedDecimal(name:"hourlyRate"|"bonusCommission",row:Row|undefined,parent:Row|null|undefined,own:OrganizationCommercialTermRecord,parentRecord:OrganizationCommercialTermRecord):OrganizationField<string>{
+  if(own.kind==="value")return available(name,decimal(own.value));
+  const ownField=own.kind==="absent"&&row!==undefined?inheritedDecimal(name,row,null):unavailable(name,"not_recorded");
+  if(ownField.state==="available")return ownField;
+  if(parent===null)return ownField;
+  if(parentRecord.kind==="value")return available(name,decimal(parentRecord.value));
+  if(parentRecord.kind==="cleared")return unavailable(name,"not_recorded");
+  if(parent===undefined)return unavailable(name,"not_imported");
+  const sourceField=ORGANIZATION_FIELD_CONTRACT[name].sourceField;
+  return parent[sourceField] === null ? unavailable(name, "not_recorded") : available(name, decimal(parent[sourceField]));
+}
+
 function observedAt(row: Row): string {
   const value = row.imported_at;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
@@ -227,6 +241,7 @@ export function projectOrganizationFields(
   row: Row | undefined,
   parent: Row | null | undefined,
   record?: OrganizationStatusRecord,
+  terms?:{readonly own:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord};readonly parent:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}},
 ): Readonly<Record<string, OrganizationField<unknown>>> {
   const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience];
   const fields: Record<string, OrganizationField<unknown>> = {};
@@ -235,6 +250,8 @@ export function projectOrganizationFields(
       fields[name] = deriveOrganizationStatus(row ?? {}, record);
     } else if (name === "statusOverride" && record !== undefined && record.kind !== "absent") {
       fields[name] = record.kind === "status" ? available("statusOverride", record.status) : unavailable("statusOverride", "not_recorded");
+    } else if ((name === "hourlyRate" || name === "bonusCommission") && terms) {
+      fields[name] = storedDecimal(name,row,parent,terms.own[name],terms.parent[name]);
     } else if (row === undefined) {
       fields[name] = unavailable(name, "not_imported");
     } else if (name === "status") {
@@ -336,17 +353,20 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #source: ApprovedOrganizationAdapter;
   readonly #operators: ReadonlySet<string>;
   readonly #statusRecords?: OrganizationStatusRecords;
+  readonly #commercialTerms?:OrganizationCommercialTermsRecords;
 
   constructor(options: {
     readonly store: AuthzStore;
     readonly source: ApprovedOrganizationAdapter;
     readonly operatorOrgIds?: readonly string[];
     readonly statusRecords?: OrganizationStatusRecords;
+    readonly commercialTerms?:OrganizationCommercialTermsRecords;
   }) {
     this.#store = options.store;
     this.#source = options.source;
     this.#operators = new Set(options.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS);
     this.#statusRecords = options.statusRecords;
+    this.#commercialTerms=options.commercialTerms;
   }
 
   /** The audience the caller may read at `orgId` right now, or undefined. */
@@ -375,12 +395,15 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const parentOrgId = companyParentOf(organizations, org.id, this.#operators);
       const snapshot = await this.#source.readSnapshot(org.id);
       const statusRecord = await this.#statusRecords?.read(org.id);
+      const absent={hourlyRate:{kind:"absent" as const},bonusCommission:{kind:"absent" as const}};
+      const ownTerms=await this.#commercialTerms?.read(org.id)??absent;
       const row = snapshotRow(snapshot, org.id, parentOrgId);
       let parent: Row | null | undefined = null;
       if (parentOrgId !== null) {
         const grandparent = companyParentOf(organizations, parentOrgId, this.#operators);
         parent = snapshotRow(await this.#source.readSnapshot(parentOrgId), parentOrgId, grandparent);
       }
+      const parentTerms=parentOrgId===null?absent:await this.#commercialTerms?.read(parentOrgId)??absent;
       const view = Object.freeze({
         version: ORGANIZATION_VIEW_VERSION,
         audience,
@@ -390,7 +413,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         snapshot: row === undefined
           ? Object.freeze({ kind: "not_imported" as const })
           : Object.freeze({ kind: "imported" as const, observedAt: observedAt(row) }),
-        fields: projectOrganizationFields(audience, row, parent, statusRecord),
+        fields: projectOrganizationFields(audience, row, parent, statusRecord,{own:ownTerms,parent:parentTerms}),
       }) as unknown as OrganizationView;
       return { kind: "found", organization: view };
     } catch {
