@@ -70,6 +70,9 @@ test("SHU104_COUNTS compares every table, migrations, and missing or unequal tab
   const report = await checkRestore(urlFor(sourceName), changed.url);
   assert.equal(report.ok, false);
   assert.equal(report.tables.find((row) => row.table === "grants")?.matches, false);
+  const cli = new URL("../src/restore-check-cli.js", import.meta.url);
+  await assert.rejects(execFileAsync(process.execPath, [cli.pathname, "--source", urlFor(sourceName), "--restored", changed.url]), (error: NodeJS.ErrnoException & { code?: number }) => error.code === 1);
+  await assert.rejects(execFileAsync(process.execPath, [cli.pathname, "--source", urlFor(sourceName), "--restored", urlFor(`${tag}_unsafe`)]), (error: NodeJS.ErrnoException & { code?: number }) => error.code === 1);
 
   const migrationChanged = await copy("migration_changed");
   const migrationPool = new pg.Pool({ connectionString: migrationChanged.url });
@@ -89,8 +92,10 @@ test("SHU104_COUNTS compares every table, migrations, and missing or unequal tab
 test("SHU104_INTEGRITY reports foreign-key, sequence, and append-only trigger failures by name", async () => {
   const brokenFk = await copy("fk");
   let pool = new pg.Pool({ connectionString: brokenFk.url });
-  await pool.query("SET session_replication_role = replica");
-  await pool.query("DELETE FROM organizations WHERE id = 'restore-parent'");
+  const client = await pool.connect();
+  await client.query("SET session_replication_role = replica");
+  await client.query("DELETE FROM organizations WHERE id = 'restore-parent'");
+  client.release();
   await pool.end();
   const fkReport = await checkRestore(urlFor(sourceName), brokenFk.url);
   assert.ok(fkReport.foreignKeys.some((row) => row.table === "grants" && !row.ok));
@@ -112,15 +117,28 @@ test("SHU104_INTEGRITY reports foreign-key, sequence, and append-only trigger fa
   await pool.end();
   const triggerReport = await checkRestore(urlFor(sourceName), brokenTrigger.url);
   assert.ok(triggerReport.triggers.some((row) => row.constraint === "authorization_mutation_audit_no_truncate" && !row.ok));
+
+  const missingObjects = await copy("missing_objects");
+  pool = new pg.Pool({ connectionString: missingObjects.url });
+  const fk = await pool.query<{ table_name: string; constraint_name: string }>(`SELECT rel.relname AS table_name, con.conname AS constraint_name
+    FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid JOIN pg_namespace n ON n.oid = rel.relnamespace
+    WHERE n.nspname = 'public' AND con.contype = 'f' ORDER BY rel.relname, con.conname LIMIT 1`);
+  assert.ok(fk.rows[0]);
+  const quote = (name: string): string => `"${name.replaceAll('"', '""')}"`;
+  await pool.query(`ALTER TABLE public.${quote(fk.rows[0]!.table_name)} DROP CONSTRAINT ${quote(fk.rows[0]!.constraint_name)}`);
+  await pool.query("DROP SEQUENCE authorization_mutation_audit_id_seq CASCADE");
+  await pool.end();
+  const missingObjectsReport = await checkRestore(urlFor(sourceName), missingObjects.url);
+  assert.ok(missingObjectsReport.foreignKeys.some((row) => row.constraint === fk.rows[0]!.constraint_name && !row.ok));
+  assert.ok(missingObjectsReport.sequences.some((row) => row.constraint === "authorization_mutation_audit_id_seq" && !row.ok));
 });
 
 test("SHU104_SAFE_TARGET enforces scratch target and records recovery timing", async () => {
-  const emittedModule = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/restore-check.js", import.meta.url), "utf8"));
-  assert.match(emittedModule, /default_transaction_read_only=on/, "the source connection must be pinned read-only");
   await assert.rejects(checkRestore(urlFor(sourceName), urlFor(sourceName)), /must differ/);
   await assert.rejects(checkRestore(urlFor(sourceName), urlFor(`${tag}_unsafe`)), /scratch suffix/);
   const restored = await copy("timing");
   const report = await checkRestore(urlFor(sourceName), restored.url);
+  assert.equal(report.sourceReadOnly, true, "the source session must behaviorally report read-only mode");
   assert.match(report.startedAt, /^\d{4}-/); assert.match(report.endedAt, /^\d{4}-/);
   assert.ok(report.elapsedSeconds >= 0);
 });

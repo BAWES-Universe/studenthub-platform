@@ -9,6 +9,7 @@ export interface RestoreCheckReport {
   startedAt: string;
   endedAt: string;
   elapsedSeconds: number;
+  sourceReadOnly: boolean;
   migrations: { sourceCount: number; restoredCount: number; matches: boolean };
   tables: CountCheck[];
   foreignKeys: IntegrityCheck[];
@@ -111,6 +112,8 @@ export async function checkRestore(sourceUrl: string, restoredUrl: string, optio
   const restored = new pg.Pool({ connectionString: restoredUrl, max: 1 });
   try {
     const [sourceTables, restoredTables] = await Promise.all([tables(source), tables(restored)]);
+    const readOnly = await source.query<{ default_transaction_read_only: string }>("SHOW default_transaction_read_only");
+    const sourceReadOnly = readOnly.rows[0]?.default_transaction_read_only === "on";
     const allTables = [...new Set([...sourceTables, ...restoredTables])].sort();
     const tableChecks: CountCheck[] = [];
     for (const table of allTables) {
@@ -123,17 +126,39 @@ export async function checkRestore(sourceUrl: string, restoredUrl: string, optio
     ]);
     const migrationCheck = { sourceCount: sourceMigrations.length, restoredCount: restoredMigrations.length, matches: JSON.stringify(sourceMigrations) === JSON.stringify(restoredMigrations) };
 
+    const [sourceForeignKeys, restoredForeignKeys] = await Promise.all([foreignKeys(source), foreignKeys(restored)]);
+    const sourceForeignKeyMap = new Map(sourceForeignKeys.map((fk) => [`${fk.table_name}\0${fk.constraint_name}`, fk]));
+    const restoredForeignKeyMap = new Map(restoredForeignKeys.map((fk) => [`${fk.table_name}\0${fk.constraint_name}`, fk]));
     const foreignKeyChecks: IntegrityCheck[] = [];
-    for (const fk of await foreignKeys(restored)) {
+    for (const key of new Set([...sourceForeignKeyMap.keys(), ...restoredForeignKeyMap.keys()])) {
+      const expected = sourceForeignKeyMap.get(key);
+      const fk = restoredForeignKeyMap.get(key);
+      if (!fk || (expected && JSON.stringify(fk) !== JSON.stringify(expected))) {
+        const named = expected ?? fk!;
+        foreignKeyChecks.push({ table: named.table_name, constraint: named.constraint_name, ok: false });
+        continue;
+      }
       const present = fk.columns.map((column) => `child.${ident(column)} IS NOT NULL`).join(" AND ");
       const join = fk.columns.map((column, index) => `parent.${ident(fk.referenced_columns[index]!)} = child.${ident(column)}`).join(" AND ");
       const result = await restored.query(`SELECT 1 FROM public.${ident(fk.table_name)} child WHERE ${present} AND NOT EXISTS (SELECT 1 FROM public.${ident(fk.referenced_table)} parent WHERE ${join}) LIMIT 1`);
       foreignKeyChecks.push({ table: fk.table_name, constraint: fk.constraint_name, ok: result.rowCount === 0 });
     }
 
+    const [sourceSequences, restoredSequences] = await Promise.all([sequences(source), sequences(restored)]);
+    const sourceSequenceMap = new Map(sourceSequences.map((sequence) => [`${sequence.table_name}\0${sequence.sequence_name}`, sequence]));
+    const restoredSequenceMap = new Map(restoredSequences.map((sequence) => [`${sequence.table_name}\0${sequence.sequence_name}`, sequence]));
     const sequenceChecks: SequenceCheck[] = [];
-    for (const sequence of await sequences(restored)) {
-      const result = await restored.query<{ ok: boolean }>(`SELECT COALESCE((SELECT last_value FROM public.${ident(sequence.sequence_name)}), 0) >= COALESCE((SELECT max(${ident(sequence.column_name)}) FROM public.${ident(sequence.table_name)}), 0) AS ok`);
+    for (const key of new Set([...sourceSequenceMap.keys(), ...restoredSequenceMap.keys()])) {
+      const expected = sourceSequenceMap.get(key);
+      const sequence = restoredSequenceMap.get(key);
+      if (!sequence || (expected && JSON.stringify(sequence) !== JSON.stringify(expected))) {
+        const named = expected ?? sequence!;
+        sequenceChecks.push({ table: named.table_name, constraint: named.sequence_name, ok: false });
+        continue;
+      }
+      const result = await restored.query<{ ok: boolean }>(`SELECT maximum.value IS NULL OR state.last_value > maximum.value OR (state.last_value = maximum.value AND state.is_called) AS ok
+        FROM public.${ident(sequence.sequence_name)} state
+        CROSS JOIN (SELECT max(${ident(sequence.column_name)}) AS value FROM public.${ident(sequence.table_name)}) maximum`);
       sequenceChecks.push({ table: sequence.table_name, constraint: sequence.sequence_name, ok: result.rows[0]!.ok });
     }
 
@@ -141,8 +166,8 @@ export async function checkRestore(sourceUrl: string, restoredUrl: string, optio
     const restoredTriggerSet = new Set(restoredTriggers.map((trigger) => `${trigger.table_name}\0${trigger.trigger_name}`));
     const triggerChecks = sourceTriggers.map((trigger) => ({ table: trigger.table_name, constraint: trigger.trigger_name, ok: restoredTriggerSet.has(`${trigger.table_name}\0${trigger.trigger_name}`) }));
     const ended = clock();
-    const checks = [...tableChecks.map((check) => check.matches), migrationCheck.matches, ...foreignKeyChecks.map((check) => check.ok), ...sequenceChecks.map((check) => check.ok), ...triggerChecks.map((check) => check.ok)];
-    return { ok: checks.every(Boolean), startedAt: started.toISOString(), endedAt: ended.toISOString(), elapsedSeconds: Math.max(0, (ended.getTime() - started.getTime()) / 1000), migrations: migrationCheck, tables: tableChecks, foreignKeys: foreignKeyChecks, sequences: sequenceChecks, triggers: triggerChecks };
+    const checks = [sourceReadOnly, ...tableChecks.map((check) => check.matches), migrationCheck.matches, ...foreignKeyChecks.map((check) => check.ok), ...sequenceChecks.map((check) => check.ok), ...triggerChecks.map((check) => check.ok)];
+    return { ok: checks.every(Boolean), startedAt: started.toISOString(), endedAt: ended.toISOString(), elapsedSeconds: Math.max(0, (ended.getTime() - started.getTime()) / 1000), sourceReadOnly, migrations: migrationCheck, tables: tableChecks, foreignKeys: foreignKeyChecks, sequences: sequenceChecks, triggers: triggerChecks };
   } finally {
     await Promise.allSettled([source.end(), restored.end()]);
   }

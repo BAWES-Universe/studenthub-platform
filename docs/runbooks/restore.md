@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Restore the managed PostgreSQL platform database into an isolated scratch database and produce evidence that the copy is complete and internally consistent. This procedure does not restore private document storage.
+Restore a verified PostgreSQL backup of the Compose-deployed `platform-postgres` service into an isolated scratch database and produce evidence that the copy is complete and internally consistent. This procedure does not restore private document storage.
 
 ## When to use
 
@@ -14,15 +14,28 @@ The platform operator performs the restore; platform-on-call reviews the report 
 
 ## Before you start (checks)
 
-1. In the managed PostgreSQL backup screen for the Coolify `platform-postgres` service, identify the approved full backup or point-in-time recovery point. Record its timestamp and immutable backup identifier in the incident or exercise record. Do not copy credentials into that record.
+1. Obtain the approved backup artifact from the restricted backup store. The artifact must have been exported directly from the Compose `platform-postgres` service with PostgreSQL 17 `pg_dump` (for example, `docker compose -f deploy/coolify/compose.yaml exec -T platform-postgres pg_dump -U "$PLATFORM_DB_USER" -d "$PLATFORM_DB_NAME" -Fc > platform-postgres.dump`) and transferred to that store under the separate backup process. Record its timestamp, immutable artifact identifier, format, and checksum in the incident or exercise record. Backup production, scheduling, retention, and storage are outside this runbook; if no verified artifact exists, stop.
 2. Choose a new database name ending in `_restore_check`. Confirm it is not the source database and is disposable.
 3. Obtain separate connection URLs for the source and restored scratch databases through the approved secret channel. The checker forces the source connection to `default_transaction_read_only=on` and never prints either URL.
-4. Record the restore start time. The checker measures its own verification time; the managed service's restore duration is measured from this restore start until the restore reports ready.
+4. Ensure PostgreSQL 17 client tools can reach the Compose `platform-postgres` service, then record the restore start time. The checker measures its own verification time; restore duration is measured from this time until the restore command completes.
 
 ## Steps
 
-1. In the managed PostgreSQL backup screen, select the recorded backup or recovery point and use **Restore to new database**. Name the new database with the approved `_restore_check` suffix. Do not restore over the source database or delete the persistent volume.
-2. Wait for the managed service to report the new database ready. Record that time and calculate restore duration.
+1. Create the new scratch database through the Compose PostgreSQL service, then restore the recorded artifact. Use exactly one command matching its recorded format; never use the source database name as `SCRATCH_DB`:
+
+   ```sh
+   docker compose -f deploy/coolify/compose.yaml exec -T platform-postgres \
+     createdb -U "$PLATFORM_DB_USER" "${SCRATCH_DB:?must end in _restore_check}"
+   # Custom-format archive:
+   docker compose -f deploy/coolify/compose.yaml exec -T platform-postgres \
+     pg_restore -U "$PLATFORM_DB_USER" -d "$SCRATCH_DB" --exit-on-error < "$BACKUP_ARTIFACT"
+   # Plain-SQL dump (use instead of pg_restore):
+   docker compose -f deploy/coolify/compose.yaml exec -T platform-postgres \
+     psql -U "$PLATFORM_DB_USER" -d "$SCRATCH_DB" -v ON_ERROR_STOP=1 < "$BACKUP_ARTIFACT"
+   ```
+
+   Before running these commands, verify `SCRATCH_DB` ends in `_restore_check`, differs from `PLATFORM_DB_NAME`, and does not already exist. Do not restore over the source database or delete `platform-postgres-data`.
+2. Record the completion time and calculate restore duration. Construct the scratch URL through the approved secret channel; the database host remains `platform-postgres` for callers inside the Compose network.
 3. Build the checked revision with `npm run build`, then run the machine-readable check:
 
    ```sh
@@ -37,7 +50,7 @@ The platform operator performs the restore; platform-on-call reviews the report 
 
 ## How to verify
 
-The command must exit zero and the report's `ok` value must be `true`. Review every public table's source/restored counts, identical migration-ledger counts, and all named foreign-key, sequence, and trigger checks. The short summary must say `PASS`. Platform-on-call signs off the stored JSON report and the recorded restore duration and data-loss window.
+The command must exit zero and the report's `ok` value must be `true`. Review every public table's source/restored counts, identical migration-ledger counts, and all named foreign-key, sequence, and trigger checks. A count of `-1` means that table is absent on that side and is always a failure. The short summary must say `PASS`. Platform-on-call signs off the stored JSON report and the recorded restore duration and data-loss window.
 
 ## If it goes wrong
 
