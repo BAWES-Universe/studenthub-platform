@@ -35,14 +35,26 @@ try {
     {
       name: "grants must be read again after revocation",
       pattern: "revocation denies the very next bookmarked request",
-      from: "export function createContextNavigation(sessions, store, organizationReader) {",
-      to: `export function createContextNavigation(sessions, store, organizationReader) {
+      from: "export function createContextNavigation(sessions, store, organizationReader, deletions) {",
+      to: `export function createContextNavigation(sessions, store, organizationReader, deletions) {
         const readGrants = store.listGrantsForPrincipal.bind(store);
         const cached = new Map();
         store.listGrantsForPrincipal = (id) => {
           if (!cached.has(id)) cached.set(id, readGrants(id));
           return cached.get(id);
         };`,
+    },
+    {
+      name: "deleted organization cannot be selected",
+      pattern: "SHU328_NAV_ACTIVE",
+      from: "if (deletions && await deletions.isDeleted(org.id)) {",
+      to: "if (false && await deletions.isDeleted(org.id)) {",
+    },
+    {
+      name: "deleted organizations must be removed from contexts",
+      pattern: "SHU328_NAV_LIST",
+      from: "if (deleted.has(contexts[index].orgId))",
+      to: "if (false && deleted.has(contexts[index].orgId))",
     },
   ];
   for (const mutant of mutants) {

@@ -2,7 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { OrganizationReader, OrganizationView } from "@studenthub/organizations";
+import type { OrganizationDeletionRecords, OrganizationReader, OrganizationView } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -34,6 +34,7 @@ export function createContextNavigation(
   sessions: Pick<SessionStore, "get">,
   store: AuthzStore,
   organizationReader?: OrganizationReader,
+  deletions?: OrganizationDeletionRecords,
 ): ContextNavigation {
   return {
     async open(sessionId, selection) {
@@ -63,6 +64,9 @@ export function createContextNavigation(
           // These are the resolver's output, not values trusted from the URL.
           const org = await store.getOrganization(resolution.context.orgId);
           if (!org) return { status: 403, body: { error: "context_forbidden" } };
+          if (deletions && await deletions.isDeleted(org.id)) {
+            return { status: 403, body: { error: "context_forbidden" } };
+          }
           active = { orgId: org.id, role: resolution.context.role, organizationName: org.name };
         }
         const effective = await listEffectiveContexts(identity, store);
@@ -71,6 +75,12 @@ export function createContextNavigation(
         for (const context of effective) {
           const org = organizations.get(context.orgId);
           if (org) contexts.push({ orgId: org.id, role: context.role, organizationName: org.name });
+        }
+        if (deletions && contexts.length > 0) {
+          const deleted = await deletions.deletedAmong([...new Set(contexts.map((context) => context.orgId))]);
+          for (let index = contexts.length - 1; index >= 0; index--) {
+            if (deleted.has(contexts[index]!.orgId)) contexts.splice(index, 1);
+          }
         }
         // Also reject a revocation observed while this request was being built.
         if (active && !contexts.some((c) => c.orgId === active.orgId && c.role === active.role)) {
