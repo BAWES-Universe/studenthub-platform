@@ -4,7 +4,7 @@ import { after, before, test } from "node:test";
 import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
 import { createSafeWrite } from "@studenthub/safe-write-contract";
-import { OwnProfileRepository, UnconfiguredApprovedProfileAdapter, parseSelfEditValue, selfEditMaxValueLength, type SelfEditField } from "@studenthub/profile";
+import { ARABIC_LETTER_CODE_POINT_RANGES, OwnProfileRepository, UnconfiguredApprovedProfileAdapter, parseSelfEditValue, selfEditMaxValueLength, type SelfEditField } from "@studenthub/profile";
 import { PostgresAuthzStore, PostgresPersonProfileStore, personRecordRef, runMigrations, safeWritePrincipalRef } from "@studenthub/db";
 
 const URL=process.env.DATABASE_URL??"",KEY="shu372-postgres-test-secret-at-least-thirty-two-bytes";
@@ -22,6 +22,13 @@ test("SHU372_WRITE migration runs, writes five fields atomically with value-free
 });
 
 test("SHU372_RULES database CHECK mirrors normalization, names, Arabic letters, forbidden points and code-point lengths",async()=>{const id=await person();const insert=(column:string,value:string)=>pool.query(`INSERT INTO person_profiles(principal_id,${column},written_fields) VALUES($1,$2,ARRAY['objective'])`,[id,value]);for(const [column,value] of [["display_name","One"],["display_name"," Two Names"],["arabic_name","Two Names"],["objective","x\u200b"],["objective","e\u0301"],["objective","😀".repeat(101)]] as const)await assert.rejects(insert(column,value),{code:"23514"},`${column} ${JSON.stringify(value)}`);await insert("objective","😀".repeat(100));});
+
+test("SHU372_RULES PostgreSQL and the application agree on every Arabic-script letter code point",async()=>{
+ const {rows}=await pool.query<{cp:number;ok:boolean}>(`SELECT cp,person_profile_arabic_letter(chr(cp)) AS ok FROM generate_series(1,1114111) cp WHERE cp NOT BETWEEN 55296 AND 57343`);
+ const expected=(cp:number)=>ARABIC_LETTER_CODE_POINT_RANGES.some(([low,high])=>cp>=low&&cp<=high);
+ assert.equal(rows.length,1_112_063);
+ assert.deepEqual(rows.filter(({cp,ok})=>ok!==expected(cp)).slice(0,50),[]);
+});
 
 test("SHU372_OWNER another principal cannot read a receipt or address the written row",async()=>{const id=await person(),other=await person();const done=await write(id,"objective","Owned objective");assert.ok(done.ok);assert.equal(await store.readReceipt(other,done.receipt.receiptRef),null);assert.equal(await store.forPrincipal(other).readField(personRecordRef(id),"objective"),null);});
 

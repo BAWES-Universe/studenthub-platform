@@ -29,7 +29,8 @@ test("SHU372_PAGE My profile shows all five written values, own dates, clear sta
   const projection={...base,fields:{...base.fields,displayName:own("displayName","Written Person","2026-10-01T00:00:00.000Z"),arabicName:own("arabicName","شخص مكتوب","2026-10-02T00:00:00.000Z"),objective:own("objective",null,"2026-10-03T00:00:00.000Z"),intro:own("intro","Written introduction","2026-10-04T00:00:00.000Z"),preferredTime:own("preferredTime","Written morning","2026-10-05T00:00:00.000Z")}} as never;
   const rig=createSyntheticLoginRig(createLoginApplication);const stub={preview:async()=>({status:503 as const,body:{error:"x"}}),confirm:async()=>({status:503 as const,body:{error:"x"}}),receipt:async()=>({status:404 as const,body:{error:"x"}})};
   const rendered=await profileDocument({status:200,body:projection}, {...rig.app,profileEdit:stub} as BrowserLoginApplication);
-  for(const shown of ["Written Person","شخص مكتوب","Written introduction","Written morning","Not recorded","2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05"])assert.match(rendered.html,new RegExp(shown));
+  for(const shown of ["Written Person","شخص مكتوب","Written introduction","Written morning","Not recorded","Updated by you","2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05"])assert.match(rendered.html,new RegExp(shown));
+  assert.match(rendered.html,/Objective[\s\S]*Not recorded[\s\S]*2026-10-03/);
   assert.equal((rendered.html.match(/action="\/profile\/edit\/preview"/g)??[]).length,5);
   assert.match(rendered.html,/editing isn’t enabled/);
 });
