@@ -286,6 +286,8 @@ test("HTML escapes hostile imported values and renders unavailable fields explic
   assert.match(await (await fetch(`${f.url}/profile`, { headers: BROWSER })).text(), /Unavailable means/);
 });
 
+test("SHU188_FEED notifications page shows bell count and safe current-data item",async()=>{const {renderNotifications}=await import("../src/web-ui.js");const html=renderNotifications({page:1,unreadCount:1,items:[{id:"opaque-id",text:"Renamed & Co status changed to Active.",href:"/workspace?org_id=org",createdAt:"2026-01-01T00:00:00.000Z",read:false}]});assert.match(html,/Notifications.*1/);assert.match(html,/Renamed &amp; Co/);assert.match(html,/notifications\/opaque-id\/read/)});
+
 test("unavailable profile dependencies render a safe retry state without killing the gateway", async (t) => {
   const f = await fixture(t);
   f.profiles.readOwn = async () => { throw new Error("database password=do-not-display"); };

@@ -20,6 +20,9 @@ import { wireProfile } from "./wiring/profile.js";
 import { wireOrganizations } from "./wiring/organizations.js";
 import { wirePayContracts } from "./wiring/pay-contracts.js";
 import { wireOps } from "./wiring/ops.js";
+import {PostgresNotificationsStore} from "@studenthub/db";
+import {NotificationsService} from "../../../packages/notifications/src/notifications.js";
+import {createNotificationsHttp} from "./notifications-http.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -228,6 +231,8 @@ export function createRuntimeLoginFromEnv(
     clockSkewSeconds: 60,
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
   });
+  const notificationStore=new PostgresNotificationsStore({connectionString:value("DATABASE_URL")});
+  const notifications=createNotificationsHttp(application,new NotificationsService(notificationStore,notificationStore,access.services.authzStore));
   return {
     application: {
       ...application,
@@ -235,6 +240,7 @@ export function createRuntimeLoginFromEnv(
       ...ops.services,
       ...profile.services.application,
       ...payContractArea.services,
+      notifications,
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
@@ -247,7 +253,7 @@ export function createRuntimeLoginFromEnv(
       },
     } as BrowserLoginApplication,
     async close() {
-      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close()]);
+      await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),notificationStore.close()]);
     },
   };
 }

@@ -26,9 +26,11 @@ import type { CompanyDirectoryPage, CompanyDirectoryResult } from "./company-dir
 import type { AssignedCompaniesResult, OrganizationAccountManager } from "./organization-account-manager.js";
 import type { ExportsHttp } from "./exports-http.js";
 import { CONTRIBUTIONS, type Contributions } from "./contributions/index.js";
+import type {NotificationPage} from "../../../packages/notifications/src/notifications.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
+  readonly notifications?: import("./notifications-http.js").NotificationsHttp;
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
   readonly exports?: ExportsHttp;
@@ -44,6 +46,9 @@ export interface BrowserLoginApplication extends LoginApplication {
     readonly profiles: OwnProfileReader;
   };
 }
+
+export function notificationBell(unread:number):string{return `<a class="nav-item" href="/notifications" aria-label="Notifications${unread?` (${unread} unread)`:""}">Notifications${unread?` <span class="badge">${unread}</span>`:""}</a>`}
+export function renderNotifications(page:NotificationPage):string{const items=page.items.map(item=>`<li class="profile-card"><a href="${escapeHtml(item.href)}">${escapeHtml(item.text)}</a>${item.read?"":`<form method="post" action="/notifications/${escapeHtml(item.id)}/read"><button type="submit">Mark read</button></form>`}</li>`).join("");return workspaceDocument("Notifications",`<header class="topbar">${brand}${notificationBell(page.unreadCount)}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out</button></form></header><main id="main" class="profile-main"><h1>Notifications<span class="accent">.</span></h1><form method="post" action="/notifications/read-all"><button type="submit">Mark all read</button></form><ol>${items}</ol></main>`)}
 
 /** HTML is opt-in. Missing, wildcard and JSON-preferred Accept keep the API. */
 export function wantsHtml(accept: string | undefined): boolean {

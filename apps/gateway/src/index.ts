@@ -6,6 +6,7 @@ import { type OrganizationDocumentsRuntime } from './organization-documents-http
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
+import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
 import { Telemetry, disabledTelemetry, telemetryMode, newSpan, inSpan, classifyJourney, type Fault } from '../../../packages/observability/src/index.js';
 import { randomBytes } from "node:crypto";
@@ -30,7 +31,7 @@ import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
 } from "./web-ui.js";
 import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
@@ -203,6 +204,10 @@ export function createGatewayServer(
       if(result.status===200){if(html)writeHtml(response,result.status,renderAdminJobs(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}
     }
     if(request.method==="GET"&&request.url&&requestPath(request.url)==="/admin/outbox"){const page=Number(new URL(request.url,"http://gateway.invalid").searchParams.get("page")??"1");const result=await(login as BrowserLoginApplication&{adminOutbox?:AdminOutboxPage}|undefined)?.adminOutbox?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"),page)??{status:404 as const,body:{error:"not_found" as const}};if(result.status===200){if(html)writeHtml(response,200,renderAdminOutbox(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}}
+
+    if(request.url&&requestPath(request.url)==="/notifications"&&request.method==="GET"){const result=await login?.notifications?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"),Number(new URL(request.url,"http://gateway.invalid").searchParams.get("page")??"1"))??{status:404 as const,body:{error:"not_found" as const}};if(result.status===200&&html)writeHtml(response,200,renderNotifications(result.body),{},true);else writeBrowserResponseSafely(response,result as unknown as BrowserResponse);return}
+    if(request.url&&request.method==="POST"&&requestPath(request.url)==="/notifications/read-all"){const result=await login?.notifications?.readAll(cookieValue(request.headers.cookie,"__Host-studenthub_session"))??{status:404 as const};response.writeHead(result.status===204?303:result.status,result.status===204?{location:"/notifications"}:{});response.end();return}
+    if(request.url&&request.method==="POST"&&/^\/notifications\/[^/]+\/read$/.test(requestPath(request.url))){const id=requestPath(request.url).split("/")[2]!;const result=await login?.notifications?.read(cookieValue(request.headers.cookie,"__Host-studenthub_session"),id)??{status:404 as const};response.writeHead(result.status===204?303:result.status,result.status===204?{location:"/notifications"}:{});response.end();return}
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
       const selected = new URL(request.url, "http://gateway.invalid").searchParams;
