@@ -1,6 +1,6 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresCivilIdOcrStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
@@ -39,6 +39,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
   const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
   const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
+  const civilVault = civilKey ? new CivilIdVault(civilKey) : undefined;
+  const civilSuggestionStore = civilId && civilVault ? new PostgresCivilIdOcrStore({ connectionString: databaseUrl }) : undefined;
+  const civilIdSuggestion = civilId && civilVault && civilSuggestionStore ? { store: civilSuggestionStore, civilId, vault: civilVault } : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -78,6 +81,14 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     const status = await legacyStore.status(request.targetPersonId);
     return { kind: "found", profile: Object.freeze({ ...result.profile, legacyLinkState: status.linked ? "linked" : "unlinked" }) };
   } } : profiles;
+  const suggestionProfiles: OwnProfileReader = { async readOwn(request) {
+    const result=await webProfiles.readOwn(request);if(result.kind!=="found")return result;
+    if (!civilSuggestionStore || request.requesterPrincipalId !== request.targetPersonId) return result;
+    const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kuwait",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+    const suggestion=await civilSuggestionStore.currentSuggestion(request.targetPersonId,today);
+    const profile={...result.profile};Object.defineProperty(profile,"civilIdSuggestion",{value:suggestion,enumerable:false});
+    return {kind:"found",profile:Object.freeze(profile)};
+  } };
   return {
     services: { application: {
       ...(safeWrites && safeWriteKey
@@ -128,9 +139,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
-      }, web: { profiles: webProfiles }, browserSessionPool, sessions,
+      }, web: { profiles: suggestionProfiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
   };
 }
