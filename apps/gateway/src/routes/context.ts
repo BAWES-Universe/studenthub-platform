@@ -19,6 +19,7 @@ import type { LegacyLinkService } from "../legacy-link-http.js";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "../area-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
+import type { CivilIdReviewRuntime } from "../civil-id-review-http.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilId?: CivilIdService;
@@ -45,6 +46,7 @@ export interface GatewayRouteContext {
   readonly catalogue: ReferenceCatalogue | undefined;
   readonly profileRecords: ProfileRecordsRuntime | undefined;
   readonly organizationDocuments: OrganizationDocumentsRuntime | undefined;
+  readonly civilIdReview?: CivilIdReviewRuntime;
   readonly writeHtml: typeof import("../web-ui.js").writeHtml;
   readonly pageDocument: typeof import("../web-ui.js").pageDocument;
   readonly renderError: typeof import("../web-ui.js").renderError;

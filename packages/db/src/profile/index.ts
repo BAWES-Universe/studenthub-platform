@@ -3,6 +3,7 @@ export type { Language } from "../safe-write-store.js";
 import { PostgresPersonProfileStore } from "../person-profile-store.js";
 import { PostgresPersonCivilIdStore } from "../postgres-person-civil-id-store.js";
 import { PostgresCivilIdOcrStore } from "../postgres-civil-id-ocr-store.js";
+export { PostgresCivilIdReviewStore } from "../postgres-civil-id-review-store.js";
 export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_PROFILE_FIELDS } from "../person-profile-store.js";
 export type { PersonProfileField, PersonProfileBrowserOptions, PersonProfileBrowserPrepared, PersonProfileShownFallback, PersonProfileSessionLiveness, PersonProfileImportedFallback } from "../person-profile-store.js";
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "../postgres-profile-records-store.js";
