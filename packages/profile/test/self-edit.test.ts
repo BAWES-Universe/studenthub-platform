@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
+import { OwnProfileRepository, PERSON_PROFILE_MINIMUM_AGE, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue, personBirthDateError } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
@@ -20,6 +20,26 @@ test("SHU373_AGE birth dates require the single minimum age and valid calendar d
   assert.equal(normalizePersonSelfEditValue("birthDate", "2020-01-01"), null);
   assert.equal(normalizePersonSelfEditValue("birthDate", "not-a-date"), null);
   assert.equal(normalizePersonSelfEditValue("birthDate", "2024-02-30"), null);
+  assert.equal(personBirthDateError("2010-10-31", "2026-10-31"), undefined);
+  assert.equal(personBirthDateError("2010-11-01", "2026-10-31"), "too_young");
+  assert.equal(personBirthDateError("2027-01-01", "2026-10-31"), "future");
+  assert.equal(PERSON_PROFILE_MINIMUM_AGE, 16);
+});
+
+test("SHU373_AGE a written birth date recomputes the shown age", async () => {
+  const repository = new OwnProfileRepository({
+    principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "linked", candidateRef: "candidate" }), readCandidate: async () => SYNTHETIC_PROFILE_FIXTURES.populated },
+    preferences: { readOwnPreferences: async () => ({ birthDate: { value: "2000-11-01", updatedAt: "2026-10-30T05:00:00.000Z" } }) } as never,
+    today: () => "2026-10-31",
+  });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
+  assert.equal(result.kind, "found");
+  if (result.kind === "found") {
+    assert.equal(result.profile.fields.birthDate.state === "available" && result.profile.fields.birthDate.value, "2000-11-01");
+    assert.equal(result.profile.fields.age.state === "available" && result.profile.fields.age.value, 25);
+    assert.equal(result.profile.fields.age.freshness.kind, "written_by_person");
+  }
 });
 
 test("SHU373_CATALOGUE choices accept ids rather than display names", () => {

@@ -129,7 +129,7 @@ const PROFILE_FIELD_SPECS = Object.freeze({
   language: fieldSpec("candidate_language_pref", "Language", "Production language preference, en or ar.", exactEnum<LanguagePreference>(new Map([["en", "en"], ["ar", "ar"]]))),
   area: fieldSpec("candidate_area_uuid→area.area_name_en", "Area", "Approved display value resolved from the production area foreign key; coordinates are excluded.", text(255)),
   drivingLicence: fieldSpec("candidate_driving_license", "Driving licence", "Production code 1/2 mapped to yes/no.", exactEnum<boolean>(new Map([[1, true], [2, false]]))),
-  jobSearchStatus: fieldSpec("candidate_job_search_status", "Job-search status", "Production code 0/1/2 mapped to not looking/active/open to offers.", exactEnum<JobSearchStatus>(new Map([[0, "not_looking"], [1, "active"], [2, "open_to_offers"]]))),
+  jobSearchStatus: fieldSpec("candidate_job_search_status", "Looking for work", "Production code 0/1/2 mapped to not looking/active/open to offers.", exactEnum<JobSearchStatus>(new Map([[0, "not_looking"], [1, "active"], [2, "open_to_offers"]]))),
   committed: fieldSpec("candidate_committed", "Committed", "Production 0/1 commitment marker mapped to a boolean.", exactEnum<boolean>(new Map([[0, false], [1, true]]))),
   isProfileCompleted: fieldSpec("is_incomplete_profile", "Profile complete", "Inverse of the imported production incomplete marker, whose final reviewed meaning includes conditional Kuwaiti-mother, education and skill requirements.", (value) => !exactEnum<boolean>(new Map([[0, false], [1, true]]))(value, "")),
   pendingFields: fieldSpec("candidate_pending_profile", "Pending profile requirements", "Closed safe names for all reviewed production completeness requirements; values and document locations are never included.", pendingFields),
@@ -235,6 +235,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         : spec.parse(raw, profile.asOfDate);
       if (parsed === undefined) throw new TypeError("malformed written profile value");
       fields[name] = written(spec, parsed as never, preference.updatedAt) as never;
+      if (name === "birthDate") fields.age = written(PROFILE_FIELD_SPECS.age, ageOn(raw as string, profile.asOfDate), preference.updatedAt);
     }
   }
   const mother = preferences.kuwaitiMother;

@@ -27,6 +27,22 @@ const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
 const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06fa-\u06fc]/u;
 
+function kuwaitDate(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+export function personBirthDateError(value: string, today = kuwaitDate()): "invalid" | "future" | "too_young" | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return "invalid";
+  const [year, month, day] = value.split("-").map(Number), date = new Date(Date.UTC(year!, month! - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month! - 1 || date.getUTCDate() !== day) return "invalid";
+  if (value > today) return "future";
+  const [todayYear, todayMonth, todayDay] = today.split("-").map(Number);
+  const cutoff = `${todayYear! - PERSON_PROFILE_MINIMUM_AGE}-${String(todayMonth).padStart(2, "0")}-${String(todayDay).padStart(2, "0")}`;
+  return value > cutoff ? "too_young" : undefined;
+}
+
 export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown): string | null {
   if (typeof value !== "string") return null;
   if (field === "gender") return ["male", "female", "other"].includes(value) ? value : null;
@@ -35,11 +51,7 @@ export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: 
   if (field === "jobSearchStatus") return ["not_looking", "active", "open_to_offers"].includes(value) ? value : null;
   if (field === "nationality" || field === "university") return value === "" || UUID.test(value) ? value : null;
   if (field === "birthDate") {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-    const [year, month, day] = value.split("-").map(Number), date = new Date(Date.UTC(year!, month! - 1, day));
-    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month! - 1 || date.getUTCDate() !== day) return null;
-    const minimum = new Date(); minimum.setUTCHours(0, 0, 0, 0); minimum.setUTCFullYear(minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE);
-    return date <= minimum ? value : null;
+    return personBirthDateError(value) === undefined ? value : null;
   }
   const normalized = value.normalize("NFC");
   const rule = SHU372_RULES[field as keyof typeof SHU372_RULES];

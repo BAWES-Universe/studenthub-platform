@@ -319,7 +319,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
   pendingFields: (value) => Array.isArray(value) && value.length > 0
@@ -350,8 +350,10 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
   if (login.profileEdit) for (const field of ["gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const) editable.add(field);
   const selectOptions = (items: readonly { id: string; name: string }[] | undefined, selected: string | undefined, empty: string) => `<option value="">${empty}</option>` + (items ?? []).map(item => `<option value="${escapeHtml(item.id)}"${item.id === selected ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
-  let rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
-    const row = fieldRow(profile, field);
+  const orderedFields = ["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")] as OwnProfileFieldName[];
+  let rows = orderedFields.map((field) => {
+    let row = fieldRow(profile, field);
+    if (field === "jobSearchStatus") row = row.replace("<div>", '<div class="notice">');
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
       const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";

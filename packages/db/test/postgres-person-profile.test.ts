@@ -137,7 +137,29 @@ test("SHU373_WRITE each choice writes twice and a Kuwaiti-mother clear stores NU
 });
 
 test("SHU373_CATALOGUE one query reads active country and university choices", async () => {
-  const store = new PostgresPersonProfileStore({ pool }), choices = await store.readProfileChoices();
+  let queries = 0;
+  const countingPool = { query: async (text: string, values?: readonly unknown[]) => { queries++; return pool.query(text, values as unknown[] | undefined); } };
+  const store = new PostgresPersonProfileStore({ pool: countingPool as never }), choices = await store.readProfileChoices();
+  assert.equal(queries, 1);
   assert.ok(choices.countries.every(item => item.type === "country"));
   assert.ok(choices.universities.every(item => item.type === "university"));
+});
+
+test("SHU373_CATALOGUE pending rejected deleted and unknown choices store nothing", async () => {
+  const id = `shu373-refuse-${randomUUID()}`, authz = new PostgresAuthzStore(pool), actor = "a".repeat(64);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const refs = [] as string[];
+  for (const status of ["pending", "rejected", "deleted"] as const) {
+    const ref = randomUUID(); refs.push(ref);
+    await pool.query("INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES($1,'country',$2,$3,$4,$5,$6,$6,clock_timestamp(),clock_timestamp())", [ref, `Country ${status}`, `${status}-${ref}`, status.toUpperCase(), status, actor]);
+  }
+  refs.push(randomUUID());
+  const store = new PostgresPersonProfileStore({ pool });
+  for (const value of refs) {
+    const change = { personRef: personRecordRef(id), field: "nationality", value };
+    const writer = createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+    const preview = await writer.preview({ principalRef: safeWritePrincipalRef(id), change }); assert.ok(preview.ok); if (!preview.ok) continue;
+    assert.deepEqual(await writer.confirm({ principalRef: safeWritePrincipalRef(id), change, token: preview.token }), { ok: false, reason: "invalid_value" });
+  }
+  assert.equal((await pool.query("SELECT nationality_id FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.nationality_id ?? null, null);
 });

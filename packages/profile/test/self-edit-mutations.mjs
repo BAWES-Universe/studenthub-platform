@@ -16,7 +16,7 @@ const mutations = [
   ["SHU372_RULES", "value.normalize(\"NFC\")", "value"],
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
-  ["SHU373_AGE", "minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE", "minimum.getUTCFullYear()"],
+  ["SHU373_AGE", "todayYear - PERSON_PROFILE_MINIMUM_AGE", "todayYear"],
   ["SHU373_WRITE", "if (field === \"gender\")", "if (false)"],
   ["SHU373_PAGE", "field === \"gender\" ? `<label><input type=\"radio\"", "false ? `<label><input type=\"radio\"", webUiModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
