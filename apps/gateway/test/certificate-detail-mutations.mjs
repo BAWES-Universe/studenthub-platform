@@ -12,11 +12,11 @@ const hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 
 // [mutant name, named test, its assertion message, needle in the compiled module, replacement]
 const cases = [
-  ["serve a certificate the person does not hold", "CERTDET_MINE refuses", "CERTDET_MINE another person's assignment is not served",
+  ["serve a certificate the person does not hold", "CERTDET_MINE refuses another person's assignment", "CERTDET_MINE another person's assignment is not served",
     "list.rows.find(r => r.assignmentId === detailId)", "list.rows.find(() => true)"],
   ["drop company escaping", "CERTDET_SHOW renders", "CERTDET_SHOW company text is escaped",
     "${esc(row.company)}", "${row.company}"],
-  ["return an empty success for an unknown assignment", "CERTDET_MINE refuses", "CERTDET_MINE an unknown assignment is the same 404",
+  ["return an empty success for an unknown assignment", "CERTDET_MINE refuses unknown and malformed assignments identically", "CERTDET_MINE an unknown assignment is the same 404",
     "if (!row)\n            return notFound(req, res);", 'if (!row) { res.writeHead(200, { "content-type": "text/html" }); res.end(""); return true; }'],
   ["read own certificates before checking the session", "CERTDET_DENY checks", "CERTDET_DENY own is not called without a session",
     "if (!person)\n        return reply(req, res, 401,", "if (ownDetail) await service.own(person);\n    if (!person)\n        return reply(req, res, 401,"],

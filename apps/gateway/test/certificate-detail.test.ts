@@ -56,17 +56,22 @@ test("CERTDET_SHOW renders and returns exactly the signed-in person's certificat
   assert.deepEqual(x.calls.own, ["alia", "alia", "alia"]);
 });
 
-test("CERTDET_MINE refuses another person's, unknown, and malformed assignments identically", async t => {
+test("CERTDET_MINE refuses another person's assignment", async t => {
   const x = await rig(t);
-  const paths = [OTHER, "44444444-4444-4444-8444-444444444444", "NOT-a-lower-uuid"];
+  const response = await x.call(`/profile/certificates/${OTHER}`, "s-alia");
+  assert.deepEqual([response.status, await response.text()], [404, JSON.stringify({ status: "not_found" })], "CERTDET_MINE another person's assignment is not served");
+  assert.deepEqual(x.calls.own, ["alia"]); assert.deepEqual(x.calls.pdf, []); assert.deepEqual(x.calls.staffList, []); assert.deepEqual(x.calls.isStaff, []);
+});
+
+test("CERTDET_MINE refuses unknown and malformed assignments identically", async t => {
+  const x = await rig(t);
+  const paths = ["44444444-4444-4444-8444-444444444444", "NOT-a-lower-uuid"];
   const replies = await Promise.all(paths.map(async id => { const r = await x.call(`/profile/certificates/${id}`, "s-alia"); return [r.status, await r.text()] as const; }));
-  assert.equal(replies[0]![0], 404, "CERTDET_MINE another person's assignment is not served");
-  assert.equal(replies[1]![0], 404, "CERTDET_MINE an unknown assignment is the same 404");
-  assert.deepEqual(replies[1], replies[0], "CERTDET_MINE an unknown assignment is the same 404");
-  assert.deepEqual(replies[2], replies[0], "CERTDET_MINE a malformed assignment is the same 404");
-  assert.deepEqual(x.calls.own, ["alia", "alia"]); assert.deepEqual(x.calls.pdf, []); assert.deepEqual(x.calls.staffList, []); assert.deepEqual(x.calls.isStaff, []);
+  assert.deepEqual(replies[0], [404, JSON.stringify({ status: "not_found" })], "CERTDET_MINE an unknown assignment is the same 404");
+  assert.deepEqual(replies[1], replies[0], "CERTDET_MINE a malformed assignment is the same 404");
+  assert.deepEqual(x.calls.own, ["alia"]); assert.deepEqual(x.calls.pdf, []); assert.deepEqual(x.calls.staffList, []); assert.deepEqual(x.calls.isStaff, []);
   const htmlReplies = await Promise.all(paths.map(async id => { const r = await x.call(`/profile/certificates/${id}`, "s-alia", "text/html"); return [r.status, await r.text()] as const; }));
-  assert.deepEqual(htmlReplies[1], htmlReplies[0]); assert.deepEqual(htmlReplies[2], htmlReplies[0]);
+  assert.deepEqual(htmlReplies[1], htmlReplies[0]);
 });
 
 test("CERTDET_DENY checks the session before reading and rejects non-GET methods", async t => {
