@@ -13,16 +13,12 @@
 // (`assert(...)`, `assert.ok(...)`, `assert.equal(...)`, ...), a node:test
 // context assertion (`t.assert.*`), or a `throw` statement.
 //
-// SEEDED REVISION — the recognition set above is NOT complete in this revision:
-// only `expect(` is recognised today. `assert`, `t.assert` and `throw` are
-// documented but unimplemented (see the fixture issue). That is the bounded work
-// the builder lane is asked to finish.
-//
 // Returns an array of { name, start, end } in source order, where `start`/`end`
 // are the indices of the body's braces.
 
 const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
-const RECOGNISED_ASSERTION_RE = /\bexpect\s*\(/;
+const RECOGNISED_ASSERTION_RE =
+  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
 
 function testName(source, callIndex) {
   const quoteIndex = source.indexOf("\"", callIndex);

@@ -18,6 +18,26 @@ test("does not report a test body that calls expect", () => {
   assert.equal(report.length, 0);
 });
 
+test("does not report node:assert calls", () => {
+  const source = [
+    'test("callable", () => { assert(value); });',
+    'test("method", () => { assert.equal(actual, expected); });',
+  ].join("\n");
+  assert.deepEqual(scanVacuousTests(source), []);
+});
+
+test("does not report node:test context assertions", () => {
+  const report = scanVacuousTests(
+    'test("context", (t) => { t.assert.deepEqual(actual, expected); });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("does not report a body that throws", () => {
+  const report = scanVacuousTests('it("throws", () => { throw new Error("boom"); });');
+  assert.deepEqual(report, []);
+});
+
 test("returns an empty report for a file that declares no tests", () => {
   const report = scanVacuousTests("export const x = 1;\n");
   assert.deepEqual(report, []);
@@ -39,6 +59,6 @@ test("rejects a non-string argument with a TypeError", () => {
 
 // A body that asserts is never reported.
 test("a body that already asserts is not reported", () => {
-  const expected = [];
-  assert.deepEqual(expected, []);
+  const report = scanVacuousTests('test("asserts", () => { assert.ok(true); });');
+  assert.deepEqual(report, []);
 });
