@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -47,7 +47,7 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       if (!result.ok) return refusal(result.reason);
       let displayAfter: string | undefined;
-      if (selected === "nationality" || selected === "university") displayAfter = (await ports.store.readProfileChoices?.())?.find(choice => choice.id === body.value && choice.type === (selected === "nationality" ? "country" : "university"))?.name;
+      if (selected === "nationality" || selected === "university") displayAfter = (await ports.store.readProfileChoices?.())?.find(choice => choice.id === body.value && choice.type === (selected === "nationality" ? "country" : "university"))?.name ?? "Unavailable";
       else if (selected === "gender") displayAfter = ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[body.value];
       else if (selected === "drivingLicence" || selected === "kuwaitiMother") displayAfter = body.value === "true" ? "Yes" : body.value === "false" ? "No" : undefined;
       else if (selected === "jobSearchStatus") displayAfter = ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" } as Record<string,string>)[body.value];
@@ -101,7 +101,9 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
   if (field.state === "available") {
     const value = field.value;
     if (typeof value === "boolean") return value ? "Yes" : "No";
-    return ({ male: "Male", female: "Female", other: "Other", not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" } as Record<string,string>)[String(value)] ?? String(value);
+    const labels: Readonly<Record<string, string>> = { male: "Male", female: "Female", other: "Other", active: "Actively looking", open_to_offers: "Open to offers" };
+    if (value === "not_looking") return "Not looking right now";
+    return labels[String(value)] ?? String(value);
   }
   return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
@@ -117,8 +119,10 @@ function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField
   const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : selected === "birthDate" ? `<input type="date" name="value" value="${esc(value)}" aria-describedby="value-error">` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
   let message = `Enter a value that follows the rules for ${label.toLowerCase()}.`;
   if (selected === "birthDate") {
-    const valid = /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`));
-    message = valid ? "You need to be at least 16 to complete a StudentHub profile." : "Enter a valid birth date that is not in the future.";
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : undefined;
+    const valid = parsed !== undefined && Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+    const future = valid && parsed! > new Date();
+    message = valid && !future ? `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile.` : "Enter a valid birth date that is not in the future.";
   }
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
