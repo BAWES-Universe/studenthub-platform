@@ -42,12 +42,7 @@ export class PostgresPersonProfileStore {
     }
     const type = field === "nationality" ? "country" : "university";
     const { rows } = await this.#pool.query(`SELECT EXISTS (SELECT 1 FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active') AS available`, [value, type]);
-    if (rows[0]?.available !== true) return false;
-    if (field === "nationality") {
-      const guard = await this.#pool.query(`SELECT NOT (COALESCE(c.code='KW',false) AND pp.kuwaiti_mother IS NOT NULL) AS available FROM catalogue_items c LEFT JOIN person_profiles pp ON pp.principal_id=$2 WHERE c.id=$1`, [value, principalId]);
-      return guard.rows[0]?.available === true;
-    }
-    return true;
+    return rows[0]?.available === true;
   }
 
   async readOriginChoices() {
@@ -137,10 +132,7 @@ export class PostgresPersonProfileStore {
           const type = field === "nationality" ? "country" : "university";
           const selected = (await client.query(`SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'`, [input.value, type])).rows[0];
           if (!selected) throw new Refusal("invalid_value");
-          if (field === "nationality" && selected.code === "KW") {
-            const mother = (await client.query(`SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1`, [id])).rows[0]?.kuwaiti_mother;
-            if (mother !== null && mother !== undefined) throw new Refusal("invalid_value");
-          }
+          if (field === "nationality" && selected.code === "KW") await client.query(`UPDATE person_profiles SET kuwaiti_mother=NULL, kuwaiti_mother_written_at=NULL WHERE principal_id=$1`, [id]);
         }
       }
       if (field === "kuwaitiMother") {

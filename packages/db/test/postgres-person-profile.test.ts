@@ -213,7 +213,7 @@ test("SHU415_CATALOGUE choices contain only active countries and universities", 
   }
 });
 
-test("SHU415_WRITE origin fields write twice, None is NULL, and Kuwaiti nationality refuses every mother value", async () => {
+test("SHU415_WRITE origin fields write twice, commit resolves active ids, None is NULL, and Kuwaiti nationality clears mother", async () => {
   const id = `shu415-${randomUUID()}`, authz = new PostgresAuthzStore(pool), store = new PostgresPersonProfileStore({ pool });
   await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
   const principalRef = safeWritePrincipalRef(id), writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
@@ -237,10 +237,24 @@ test("SHU415_WRITE origin fields write twice, None is NULL, and Kuwaiti national
     assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field, value } }), { ok: false, reason: "invalid_value" });
     assert.equal((await pool.query("SELECT university_id FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.university_id, null);
   }
+  const commitWriter = writer(), commitChange = { personRef: personRecordRef(id), field: "university" as const, value: university };
+  const inactivePreview = await commitWriter.preview({ principalRef, change: commitChange });
+  assert.ok(inactivePreview.ok);
+  if (inactivePreview.ok) {
+    await pool.query("UPDATE catalogue_items SET status='deleted',deleted_at=$2 WHERE id=$1", [university, now]);
+    assert.deepEqual(await commitWriter.confirm({ principalRef, change: commitChange, token: inactivePreview.token }), { ok: false, reason: "invalid_value" });
+    await pool.query("UPDATE catalogue_items SET status='active',deleted_at=NULL WHERE id=$1", [university]);
+  }
+  const missingWriter = writer(), missingPreview = await missingWriter.preview({ principalRef, change: commitChange });
+  assert.ok(missingPreview.ok);
+  if (missingPreview.ok) {
+    await pool.query("DELETE FROM catalogue_items WHERE id=$1", [university]);
+    assert.deepEqual(await missingWriter.confirm({ principalRef, change: commitChange, token: missingPreview.token }), { ok: false, reason: "invalid_value" });
+    await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at)
+      VALUES($1,'university','Kuwait University','kuwait university','active',$2,$2,$3,$3)`, [university, actor, now]);
+  }
   await write("kuwaitiMother", "false");
   const kuwait = "41111111-1111-4111-8111-111111111111";
-  assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "nationality", value: kuwait } }), { ok: false, reason: "invalid_value" });
-  await pool.query("UPDATE person_profiles SET kuwaiti_mother=NULL WHERE principal_id=$1", [id]);
   await write("nationality", kuwait);
   for (const value of ["true", "false", ""]) assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "kuwaitiMother", value } }), { ok: false, reason: "invalid_value" });
   await assert.rejects(pool.query("UPDATE person_profiles SET kuwaiti_mother=false WHERE principal_id=$1", [id]), (error: { code?: string }) => error.code === "23514");

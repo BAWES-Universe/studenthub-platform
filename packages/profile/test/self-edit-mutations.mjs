@@ -22,7 +22,7 @@ const mutations = [
   ["SHU374_HANDLE", '!/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)', "false"],
   ["SHU415_WRITE", '(field === "nationality" || (field === "university" && normalized !== ""))', 'field === "university" && normalized !== ""'],
   ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 32]", "['phone', 'Phone number', 'text', 32]", webUiModuleFile, pageSuite],
-  ["SHU413_PAGE", "summary(shownAfter(selected, after))", "summary(after)", pageModuleFile, pageSuite],
+  ["SHU413_PAGE", "summary(afterShown)", "summary(after)", pageModuleFile, pageSuite],
   ["SHU415_PAGE", 'field === "kuwaitiMother" ? value === "" ? "Not recorded" : value === "true" ? "Yes" : "No"', 'field === "kuwaitiMother" ? value', pageModuleFile, pageSuite],
   ["SHU415_PAGE", 'catalogue.find(item => item.id === after)?.name ?? "Unavailable"', 'catalogue.find(item => item.id === after)?.name ?? "Not recorded"', pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
@@ -56,4 +56,16 @@ if (process.env.DATABASE_URL) {
     assert.match(result.stdout + result.stderr, /not ok \d+ - SHU415_CATALOGUE /);
     assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
   } finally { await writeFile(catalogueModule, original); }
+
+  const commitFrom = "SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'";
+  const commitTo = "SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2";
+  const commitOriginal = await readFile(catalogueModule, "utf8");
+  assert.equal(commitOriginal.split(commitFrom).length - 1, 1);
+  try {
+    await writeFile(catalogueModule, commitOriginal.replace(commitFrom, commitTo));
+    const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^SHU415_WRITE ", catalogueSuite], { encoding: "utf8", env: process.env });
+    assert.notEqual(result.status, 0, "SHU415_WRITE commit catalogue mutant survived");
+    assert.match(result.stdout + result.stderr, /not ok \d+ - SHU415_WRITE /);
+    assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
+  } finally { await writeFile(catalogueModule, commitOriginal); }
 }
