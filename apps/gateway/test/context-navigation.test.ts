@@ -5,10 +5,10 @@ import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
 import { InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
-  type OrganizationDeletionRecords } from "@studenthub/organizations";
+  type OrganizationDeletionRecords, type OrganizationReader } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation } from "../src/context-navigation.js";
-import type { BrowserLoginApplication } from "../src/web-ui.js";
+import { renderWorkspace, type BrowserLoginApplication } from "../src/web-ui.js";
 
 const SESSION = "n".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
@@ -356,4 +356,125 @@ test("SHU-159/AC-09 CARD the selected workspace shows only the active role's com
   // No selection means no organization read at all.
   const none = await (await get("/workspace")).json();
   assert.equal(Object.hasOwn(none, "organization"), false);
+});
+
+async function shu332Rig(options: {
+  scope?: "self" | "subtree";
+  deletions?: OrganizationDeletionRecords;
+  childName?: string;
+} = {}) {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  await rig.sessions.put({ id: SESSION, personId: "person-1" });
+  const store = new InMemoryAuthzStore({
+    principals: [{ id: "person-1", pbuuids: [] }],
+    organizations: [
+      { id: "root", name: "StudentHub" },
+      { id: "org-a", name: "Organization A", parentOrgId: "root" },
+      { id: "org-a1", name: options.childName ?? "Alpha Sub-company", parentOrgId: "org-a" },
+      { id: "org-a2", name: "Beta Sub-company", parentOrgId: "org-a" },
+    ],
+  });
+  await store.grantMany("person-1", [
+    { orgId: "org-a", role: "org-owner", scope: options.scope ?? "subtree" },
+    { orgId: "org-a", role: "candidate" },
+  ]);
+  const repository = new OrganizationRepository({
+    store,
+    source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
+      ["org-a", SYNTHETIC_ORGANIZATION_FIXTURES.parentA],
+      ["org-a1", SYNTHETIC_ORGANIZATION_FIXTURES.childA1],
+    ])),
+    deletions: options.deletions,
+  });
+  return { rig, store, repository };
+}
+
+test("SHU332_NAV_SUBS top-level workspaces list only authorized live sub-companies", async () => {
+  const subtree = await shu332Rig();
+  let calls = 0;
+  const counting: OrganizationReader = {
+    read: (request) => subtree.repository.read(request),
+    listSubOrganizations(request) {
+      calls++;
+      return subtree.repository.listSubOrganizations(request);
+    },
+  };
+  const navigation = createContextNavigation(subtree.rig.sessions, subtree.store, counting);
+  const owner = await navigation.open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  assert.equal(owner.status, 200);
+  if (owner.status === 200) {
+    assert.equal(owner.body.subOrganizations?.kind, "found");
+    assert.deepEqual(owner.body.subOrganizations?.kind === "found"
+      ? owner.body.subOrganizations.subOrganizations.map((child) => child.orgId) : [], ["org-a1", "org-a2"]);
+  }
+  assert.equal(calls, 1, "one list call per top-level company card");
+
+  const child = await navigation.open(SESSION, new URLSearchParams({ org_id: "org-a1", role: "org-owner" }));
+  assert.equal(child.status, 200);
+  if (child.status === 200) assert.equal(Object.hasOwn(child.body, "subOrganizations"), false);
+  const candidate = await navigation.open(SESSION, new URLSearchParams({ org_id: "org-a", role: "candidate" }));
+  assert.equal(candidate.status, 200);
+  if (candidate.status === 200) assert.equal(Object.hasOwn(candidate.body, "subOrganizations"), false);
+  const none = await navigation.open(SESSION, new URLSearchParams());
+  assert.equal(none.status, 200);
+  if (none.status === 200) {
+    assert.equal(Object.hasOwn(none.body, "organization"), false);
+    assert.equal(Object.hasOwn(none.body, "subOrganizations"), false);
+  }
+  assert.equal(calls, 1, "non-top-level and absent cards never list sub-companies");
+
+  const self = await shu332Rig({ scope: "self" });
+  const selfResult = await createContextNavigation(self.rig.sessions, self.store, self.repository)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  assert.equal(selfResult.status, 200);
+  if (selfResult.status === 200) assert.deepEqual(selfResult.body.subOrganizations, { kind: "found", subOrganizations: [] });
+
+  const deleted = new CountingDeletions(new Set(["org-a2"]));
+  const live = await shu332Rig({ deletions: deleted });
+  const liveResult = await createContextNavigation(live.rig.sessions, live.store, live.repository, deleted)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  assert.equal(liveResult.status, 200);
+  if (liveResult.status === 200) {
+    assert.deepEqual(liveResult.body.subOrganizations?.kind === "found"
+      ? liveResult.body.subOrganizations.subOrganizations.map((entry) => entry.orgId) : [], ["org-a1"]);
+  }
+});
+
+test("SHU332_NAV_SUBS_UNAVAILABLE unavailable child data preserves the company card and renders a retry notice", async () => {
+  const f = await shu332Rig();
+  const reader: OrganizationReader = {
+    read: (request) => f.repository.read(request),
+    async listSubOrganizations() { return { kind: "unavailable" }; },
+  };
+  const result = await createContextNavigation(f.rig.sessions, f.store, reader)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  assert.equal(result.status, 200);
+  if (result.status !== 200) return;
+  assert.deepEqual(result.body.subOrganizations, { kind: "unavailable" });
+  assert.equal(result.body.organization?.kind, "found");
+  if (result.body.organization?.kind === "found") {
+    const legalName = result.body.organization.view.fields.legalName;
+    assert.equal(legalName.state, "available");
+    if (legalName.state === "available") assert.equal(legalName.value, "Synthetic Retail Group");
+  }
+  const html = renderWorkspace(result, f.rig.app);
+  assert.match(html, /Sub-companies couldn’t be loaded/);
+  assert.match(html, /Please try again in a moment/);
+  assert.match(html, /Synthetic Retail Group/);
+});
+
+test("SHU332_NAV_SUBS_HTML child names and links are escaped and an empty panel is explained", async () => {
+  const f = await shu332Rig({ childName: "<b>Sub & Co</b>" });
+  const navigation = createContextNavigation(f.rig.sessions, f.store, f.repository);
+  const result = await navigation.open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  const html = renderWorkspace(result, f.rig.app);
+  assert.match(html, /href="\/workspace\?org_id=org-a1&amp;role=org-owner"/);
+  assert.match(html, /&lt;b&gt;Sub &amp; Co&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>Sub & Co<\/b>/);
+
+  const empty = await shu332Rig({ scope: "self" });
+  const emptyResult = await createContextNavigation(empty.rig.sessions, empty.store, empty.repository)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  const emptyHtml = renderWorkspace(emptyResult, empty.rig.app);
+  assert.match(emptyHtml, /No sub-companies you can open/);
 });
