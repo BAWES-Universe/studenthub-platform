@@ -7,6 +7,8 @@ export interface LocationStore { listAreas():Promise<readonly AreaChoice[]>; rea
 export function validateCoordinates(latitude:unknown,longitude:unknown):Readonly<{latitude:number|null;longitude:number|null}>{
   if(latitude===null&&longitude===null)return Object.freeze({latitude:null,longitude:null});
   if(latitude===null||longitude===null)throw new TypeError("Enter both latitude and longitude.");
+  const decimal=/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+  if((typeof latitude!=="number"&&(typeof latitude!=="string"||!decimal.test(latitude)))||(typeof longitude!=="number"&&(typeof longitude!=="string"||!decimal.test(longitude))))throw new TypeError("Coordinates must be decimal numbers.");
   const lat=typeof latitude==="number"?latitude:Number(latitude),lon=typeof longitude==="number"?longitude:Number(longitude);
   if(!Number.isFinite(lat)||!Number.isFinite(lon))throw new TypeError("Coordinates must be numbers.");
   if(lat < -90 || lat > 90 || lon < -180 || lon > 180)throw new RangeError("Coordinates are outside the valid range.");
