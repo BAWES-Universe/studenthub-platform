@@ -110,6 +110,13 @@ test("reports a body whose only assertion is inside a line comment or string", (
   );
 });
 
+test("reports a body whose only assertion is inside a template literal", () => {
+  const report = scanVacuousTests(
+    'test("template", () => { const example = `assert.ok(value)`; });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["template"]);
+});
+
 test("ignores test-like calls inside comments and string literals", () => {
   const source = [
     '// test("comment", () => { const value = 1; });',
