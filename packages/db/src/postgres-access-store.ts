@@ -2,6 +2,7 @@ import pg from "pg";
 import type { Pool, PoolClient, PoolConfig } from "pg";
 import { isGrantScope, isRole, type GrantScope, type Role } from "@studenthub/contracts";
 import { insertAuthorizationMutationAudit, resolveAuthorizationMutationContext } from "./authorization-audit.js";
+export type AccessCataloguePolicy=(input:{readonly callerGrants:readonly {readonly orgId:string;readonly role:Role;readonly scope:GrantScope}[];readonly targetOrganization:{readonly id:string;readonly name:string;readonly parentOrgId?:string};readonly organizations:readonly {readonly id:string;readonly name:string;readonly parentOrgId?:string}[];readonly role:Role;readonly scope:GrantScope})=>boolean;
 type AccessGrantChange={readonly action:"grant"|"revoke";readonly targetPrincipalId:string;readonly organizationId:string;readonly role:Role;readonly scope:GrantScope;readonly reason:string};
 type AccessWriteReason="invalid_request"|"not_found"|"self_escalation"|"not_allowed"|"already_held"|"grant_not_held"|"last_operator_admin"|"token_not_issued"|"token_expired"|"token_principal_mismatch"|"token_change_mismatch"|"token_already_used";
 
@@ -14,8 +15,8 @@ const summary=async(c:PoolClient,id:string)=>{const r=await c.query<{total:numbe
 function map(row:GrantRow):AccessGrantView{if(!isRole(row.role)||!isGrantScope(row.scope))throw new TypeError("corrupt access grant");return{id:String(row.id),principalId:row.principal_id,organizationId:row.organization_id,organizationName:row.organization_name,role:row.role,scope:row.scope,grantedBy:row.actor_principal_id===null?null:{principalId:row.actor_principal_id,displayName:row.actor_display_name},grantedAt:row.occurred_at?.toISOString()??null,reason:row.reason}}
 
 export class PostgresAccessStore {
-  readonly #pool:Pool;readonly #owns:boolean;
-  constructor(value:Pool|PoolConfig){if(value instanceof pg.Pool){this.#pool=value;this.#owns=false}else{this.#pool=new pg.Pool(value);this.#owns=true}}
+  readonly #pool:Pool;readonly #owns:boolean;readonly #catalogue:AccessCataloguePolicy;
+  constructor(value:Pool|PoolConfig,catalogue:AccessCataloguePolicy){this.#catalogue=catalogue;if(value instanceof pg.Pool){this.#pool=value;this.#owns=false}else{this.#pool=new pg.Pool(value);this.#owns=true}}
   async close(){if(this.#owns)await this.#pool.end()}
   async findPeople(query:string):Promise<readonly AccessPerson[]>{const q=query.trim();if(!q)return[];const prefix=q.replace(/[\\%_]/g,"\\$&");const r=await this.#pool.query<{id:string;display_name:string|null;email:string|null}>(`SELECT id,display_name,email FROM principals WHERE lower(email)=lower($1) OR (char_length($1)>=3 AND lower(display_name) LIKE lower($2)||'%' ESCAPE '\\') ORDER BY CASE WHEN lower(email)=lower($1) THEN 0 ELSE 1 END,lower(display_name) NULLS LAST,id LIMIT 25`,[q,prefix]);return r.rows.map(x=>({principalId:x.id,displayName:x.display_name,email:x.email}))}
   async getPerson(id:string):Promise<AccessPerson|null>{const r=await this.#pool.query<{id:string;display_name:string|null;email:string|null}>("SELECT id,display_name,email FROM principals WHERE id=$1",[id]);const x=r.rows[0];return x?{principalId:x.id,displayName:x.display_name,email:x.email}:null}
@@ -24,15 +25,15 @@ export class PostgresAccessStore {
   async #decision(c:PoolClient,caller:string,change:AccessGrantChange,lock:boolean):Promise<AccessWriteReason|null>{
     if(change.action==="grant"&&caller===change.targetPrincipalId)return"self_escalation";
     const people=await c.query("SELECT id FROM principals WHERE id=ANY($1::text[])",[caller===change.targetPrincipalId?[caller]:[caller,change.targetPrincipalId]]);if(people.rowCount!==(caller===change.targetPrincipalId?1:2))return"not_found";
-    const org=await c.query(`SELECT o.id FROM organizations o WHERE o.id=$1 AND NOT EXISTS(SELECT 1 FROM organization_deletions d WHERE d.org_id=o.id)${lock?" FOR SHARE OF o":""}`,[change.organizationId]);if(!org.rowCount)return"not_found";
-    const rights=await c.query<{role:string}>(`WITH RECURSIVE ancestors AS(SELECT id,parent_org_id FROM organizations WHERE id=$2 UNION ALL SELECT o.id,o.parent_org_id FROM organizations o JOIN ancestors a ON a.parent_org_id=o.id) SELECT g.role FROM grants g JOIN ancestors a ON a.id=g.org_id WHERE g.principal_id=$1 AND (g.org_id=$2 OR g.scope='subtree') AND g.role IN('admin','staff')`,[caller,change.organizationId]);
-    const admin=rights.rows.some(x=>x.role==="admin"),staff=rights.rows.some(x=>x.role==="staff"),operator=change.organizationId==="root";
-    const roleAllowed=operator?["staff","admin","finance"].includes(change.role):["org-owner","recruiter","finance"].includes(change.role);
-    if(!roleAllowed||(operator ? !admin : (!admin&&!staff))||(change.scope==="subtree"&&!admin))return"not_allowed";
+    const org=await c.query<{id:string;name:string;parent_org_id:string|null}>(`SELECT o.id,o.name,o.parent_org_id FROM organizations o WHERE o.id=$1 AND NOT EXISTS(SELECT 1 FROM organization_deletions d WHERE d.org_id=o.id)${lock?" FOR SHARE OF o":""}`,[change.organizationId]);if(!org.rowCount)return"not_found";
+    const policy=await c.query<{kind:"grant"|"organization";id:string;name:string|null;parent_org_id:string|null;role:string|null;scope:string|null}>(`WITH RECURSIVE ancestors AS(SELECT id,name,parent_org_id FROM organizations WHERE id=$2 UNION ALL SELECT o.id,o.name,o.parent_org_id FROM organizations o JOIN ancestors a ON a.parent_org_id=o.id) SELECT 'organization' kind,id,name,parent_org_id,NULL::text role,NULL::text scope FROM ancestors UNION ALL SELECT 'grant',g.org_id,NULL,NULL,g.role,g.scope FROM grants g JOIN ancestors a ON a.id=g.org_id WHERE g.principal_id=$1`,[caller,change.organizationId]);
+    const organizations=policy.rows.filter(x=>x.kind==="organization").map(x=>({id:x.id,name:x.name??"",...(x.parent_org_id===null?{}:{parentOrgId:x.parent_org_id})}));
+    const callerGrants=policy.rows.filter(x=>x.kind==="grant"&&isRole(x.role)&&isGrantScope(x.scope)).map(x=>({orgId:x.id,role:x.role as Role,scope:x.scope as GrantScope}));
+    if(!this.#catalogue({callerGrants,targetOrganization:{id:org.rows[0]!.id,name:org.rows[0]!.name,...(org.rows[0]!.parent_org_id===null?{}:{parentOrgId:org.rows[0]!.parent_org_id})},organizations,role:change.role,scope:change.scope}))return"not_allowed";
     const held=await c.query<{scope:string}>(`SELECT scope FROM grants WHERE principal_id=$1 AND org_id=$2 AND role=$3${lock?" FOR UPDATE":""}`,[change.targetPrincipalId,change.organizationId,change.role]);const existing=held.rows[0]?.scope;
     if(change.action==="grant"&&existing!==undefined&&(existing==="subtree"||existing===change.scope))return"already_held";
     if(change.action==="revoke"&&existing!==change.scope)return"grant_not_held";
-    if(change.action==="revoke"&&operator&&change.role==="admin"){const n=await c.query(`SELECT id FROM grants WHERE org_id=$1 AND role='admin' FOR UPDATE`,[change.organizationId]);if((n.rowCount??0)<=1)return"last_operator_admin"}
+    if(change.action==="revoke"&&change.role==="admin"){const n=await c.query(`SELECT id FROM grants WHERE org_id=$1 AND role='admin' FOR UPDATE`,[change.organizationId]);if((n.rowCount??0)<=1)return"last_operator_admin"}
     return null;
   }
   async preview(caller:string,change:AccessGrantChange){const client=await this.#pool.connect();try{return await this.#decision(client,caller,change,false)}finally{client.release()}}

@@ -16,14 +16,14 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAdminAccessPerson, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAdminAccessPerson, renderOwnAccessList, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
 
 const SESSION = "s".repeat(43);
-test("SHU453_READ_SITES access rendering separates admin history from own roles",async()=>{const admin=renderAdminAccessPerson({person:{principalId:"p",displayName:"Person",email:"person@example.test"},grants:[{id:"g",principalId:"p",organizationId:"o",organizationName:"Company",role:"recruiter",scope:"self",grantedBy:{principalId:"a",displayName:"Admin"},grantedAt:"2026-01-01T00:00:00.000Z",reason:"Hiring duty"}]});assert.match(admin,/Hiring duty/);assert.match(admin,/Admin/);const base={status:200,body:{version:"1.0.0",asOfDate:"2026-01-01",fields:Object.fromEntries([])}} as any;assert.equal(typeof profileDocument,"function");assert.doesNotMatch("Company — recruiter (self)",/Hiring duty/)});
+test("SHU453_READ_SITES access rendering separates admin history from own roles",async()=>{const admin=renderAdminAccessPerson({person:{principalId:"p",displayName:"Person",email:"person@example.test"},grants:[{id:"g",principalId:"p",organizationId:"o",organizationName:"Company",role:"recruiter",scope:"self",grantedBy:{principalId:"a",displayName:"Admin"},grantedAt:"2026-01-01T00:00:00.000Z",reason:"Hiring duty"}]});assert.match(admin,/Hiring duty/);assert.match(admin,/Admin/);const own=renderOwnAccessList([{organizationId:"o",organizationName:"Company & Partners",role:"recruiter",scope:"self"}]);assert.match(own,/Access/);assert.match(own,/Company &amp; Partners — recruiter \(self\)/);assert.doesNotMatch(own,/Hiring duty|Admin|person@example/);assert.equal(typeof profileDocument,"function")});
 const OTHER_SESSION = "t".repeat(43);
 const ORIGIN = "https://studenthub.test.invalid";
 const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESSION}` };

@@ -3,6 +3,7 @@ import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
 import { readLiveLoginSessionPerson, safeWritePrincipalRef, PostgresAccessStore } from "@studenthub/db";
 import { createProfileBrowserEdit } from "./profile-browser-edit-http.js";
+import { catalogueAllows, grantCatalogue } from "../../../packages/access/src/grant-catalogue.js";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
@@ -312,7 +313,7 @@ export function createRuntimeLoginFromEnv(
     store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,storeCounts:organizationStoresStore,accountManagers:organizationAccountManagerReads,profiles:organizationProfileReads,
   });
   const exportsStore=new PostgresExportsStore({connectionString:value("DATABASE_URL")});
-  const accessStore=new PostgresAccessStore({connectionString:value("DATABASE_URL")});
+  const accessStore=new PostgresAccessStore({connectionString:value("DATABASE_URL")},({callerGrants,targetOrganization,organizations,role,scope})=>catalogueAllows(grantCatalogue(callerGrants,targetOrganization,organizations),role,scope));
   const exportsService=new ExportService(exportsStore,[createCompanyDirectoryExport(organizations) as never]);
   return {
     application: {
