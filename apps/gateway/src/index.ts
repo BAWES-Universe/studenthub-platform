@@ -38,6 +38,7 @@ import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
 import { createUniverseEmbedConfigFromEnv, type UniverseEmbedConfig } from "./universe/embed-policy.js";
 import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
+import { gatherProfileCompleteness } from "./profile-completeness.js";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -352,9 +353,10 @@ export function createGatewayServer(
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      const principalEmail = result.body?.email;
+      const requesterPrincipalId = result.body?.personId;
       if (result.status === 200 && login.web) {
         try {
-          const requesterPrincipalId = result.body?.personId;
           if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
             throw new Error("invalid authorized profile");
           }
@@ -374,8 +376,14 @@ export function createGatewayServer(
       }
       if (html) {
         try {
+          let completeness: import("./profile-completeness.js").ProfileCompletenessView | undefined;
+          if (result.status === 200 && typeof requesterPrincipalId === "string") {
+            const projection = result.body as import("@studenthub/profile").OwnProfileProjection;
+            completeness = await gatherProfileCompleteness(projection, requesterPrincipalId, principalEmail, login, profileRecords);
+          }
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const rendered = completeness ? { status: 200, body: completeness.profile } : result;
+          const page = await profileDocument(rendered, login, notice?.notice, documents !== undefined, undefined, completeness?.result, completeness?.choices);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

@@ -12,6 +12,7 @@ import { HttpLegacyLogin } from "../legacy-login.js";
 import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
+import { PROFILE_PRINCIPAL_EMAIL } from "../profile-completeness.js";
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
@@ -50,7 +51,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
   const area = createArea({ store: personLocations });
-  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
+  const principalEmails = new Map<string, string | undefined>();
+  const profiles = new OwnProfileRepository({ principals: { async getPrincipal(id: string) { const principal = await access.authzStore.getPrincipal(id); principalEmails.set(id, principal?.email); return principal; } }, source: profileSource,
     ...({ preferences: { async readOwnPreferences(id: string) {
       const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id).catch(() => null)]);
       const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };
@@ -72,12 +74,15 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     sessions, authz:access.authzStore, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "",
     resetUrl:legacyConfig.resetUrl, secret:safeWriteKey,
   }) : undefined;
-  const webProfiles: OwnProfileReader = legacyStore ? { async readOwn(request) {
+  const webProfiles: OwnProfileReader = { async readOwn(request) {
     const result = await profiles.readOwn(request);
     if (result.kind !== "found") return result;
-    const status = await legacyStore.status(request.targetPersonId);
-    return { kind: "found", profile: Object.freeze({ ...result.profile, legacyLinkState: status.linked ? "linked" : "unlinked" }) };
-  } } : profiles;
+    const status = legacyStore ? await legacyStore.status(request.targetPersonId) : undefined;
+    const projection = { ...result.profile, ...(status ? { legacyLinkState: status.linked ? "linked" : "unlinked" } : {}) };
+    Object.defineProperty(projection, PROFILE_PRINCIPAL_EMAIL, { value: principalEmails.get(request.targetPersonId), enumerable: false });
+    principalEmails.delete(request.targetPersonId);
+    return { kind: "found", profile: Object.freeze(projection) };
+  } };
   return {
     services: { application: {
       ...(safeWrites && safeWriteKey
