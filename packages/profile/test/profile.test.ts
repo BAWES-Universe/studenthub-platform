@@ -335,7 +335,7 @@ test("PROFILE-DEFAULT-HTML unconfigured adapter renders 200 with all 19 fields u
   assert.equal((html.match(/data-state="unavailable"/g) ?? []).length, 19);
   assert.equal((html.match(/<dt>/g) ?? []).length, 19);
   for (const contract of Object.values(OWN_PROFILE_FIELD_CONTRACT)) assert.ok(html.includes(`<dt>${contract.label}</dt>`));
-  assert.match(html, /Read-only/);
+  assert.doesNotMatch(html, /Read-only/);
   assert.match(html, /editing isn’t enabled/);
   assert.doesNotMatch(html, /Registry must not win|registry@example|Synthetic|noor@example|This profile isn’t available/);
   assert.equal(response.headers.get("cache-control"), "no-store");

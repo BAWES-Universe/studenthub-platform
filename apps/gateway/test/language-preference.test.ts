@@ -65,8 +65,34 @@ test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and
   for (const match of review.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) confirm.set(match[1]!, match[2]!.replaceAll("&amp;", "&"));
   const done = await fetch(`${originHolder.value}/profile/language/confirm`, { method: "POST", headers, body: confirm, redirect: "manual" });
   assert.equal(done.status, 303); assert.equal(done.headers.get("location"), "/profile"); assert.equal(value, "en");
+  const replay = await fetch(`${originHolder.value}/profile/language/confirm`, { method: "POST", headers, body: confirm });
+  assert.equal(replay.status, 409); assert.match(await replay.text(), /profile changed while you were reviewing/);
+  const unsigned = await fetch(`${originHolder.value}/profile/language/preview`, {
+    method: "POST", headers: { ...headers, cookie: "" }, body: "language=ar",
+  });
+  assert.equal(unsigned.status, 401); assert.match(await unsigned.text(), /Sign in/);
+  const rejected = await fetch(`${originHolder.value}/profile/language/preview`, {
+    method: "POST", headers: { ...headers, origin: "https://attacker.invalid", "sec-fetch-site": "cross-site" }, body: "language=ar",
+  });
+  assert.equal(rejected.status, 403); assert.match(await rejected.text(), /language wasn’t changed/);
   const shown = await (await fetch(`${originHolder.value}/profile`, { headers: { cookie: headers.cookie, accept: "text/html" } })).text();
   assert.match(shown, /<dt>Language<\/dt><dd>EN<\/dd><small class="field-meta">Updated by you · 2026-09-15/,
     "SHU371_SHOWN_OVER_SNAPSHOT renders written English and its write date over Arabic snapshot");
   assert.match(shown, /Checked once your documents are on file/);
+});
+
+test("SHU371_PAGE_FLOW unavailable page write renders an HTML 503", async (t) => {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  const app = { ...rig.app, web: { origin: "http://127.0.0.1", profiles: new OwnProfileRepository({
+    principals: new InMemoryAuthzStore(), source: new InMemoryApprovedProfileAdapter(),
+  }) } };
+  const server = createGatewayServer(undefined, undefined, undefined, app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const response = await fetch(`http://127.0.0.1:${address.port}/profile/language/preview`, {
+    method: "POST", headers: { accept: "text/html", origin: "http://127.0.0.1",
+      "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded" }, body: "language=en",
+  });
+  assert.equal(response.status, 503); assert.match(await response.text(), /profile service is unavailable/);
 });
