@@ -84,6 +84,8 @@ test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspac
   assert.doesNotMatch(text, /Organization A1|Synthetic Retail Kuwait City|SENSITIVE-/, "sub-companies open from their parent");
 });
 
+test("SHU196_EXPORT staff and admin see Export while an employer context does not",async(t)=>{const f=await fixture(t);await f.store.grantMany("person-1",[{orgId:"root",role:"admin",scope:"subtree"},{orgId:"org-b",role:"recruiter"}]);const staff=await(await f.get(STAFF_LIST,html)).text();const admin=await(await f.get("/workspace/companies?org_id=root&role=admin",html)).text();const employer=await(await f.get("/workspace/companies?org_id=org-b&role=recruiter",html)).text();assert.match(staff,/>Export<\/button>/);assert.match(admin,/>Export<\/button>/);assert.doesNotMatch(employer,/>Export<\/button>/)});
+
 test("SHU353_SHOWN directory renders the written currency in the company row", async (t) => {
   const absent = { hourlyRate: { kind: "absent" as const }, bonusCommission: { kind: "absent" as const } };
   const f = await fixture(t, { commercialTerms: {

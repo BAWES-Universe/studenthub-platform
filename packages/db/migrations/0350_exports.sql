@@ -1,3 +1,5 @@
+-- Export audit lives with the private file because authorization_audit requires an
+-- organization target and rejects export outcomes in its closed summary constraint.
 CREATE TABLE exports (
  id text PRIMARY KEY,
  kind text NOT NULL,

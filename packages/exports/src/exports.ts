@@ -3,6 +3,7 @@ import { writeCsv } from "./csv.js";
 
 export const EXPORT_EXPIRY_MS = 15 * 60 * 1000;
 export const EXPORT_ROW_CAP = 10_000;
+export const EXPORT_BYTE_CAP = 5 * 1024 * 1024;
 export type ExportOutcome = "created" | "refused_limit" | "refused_authorization";
 export interface StoredExport { readonly id:string;readonly kind:string;readonly requesterPrincipalId:string;readonly filters:Readonly<Record<string,unknown>>;readonly rowCount:number;readonly outcome:ExportOutcome;readonly createdAt:Date;readonly expiresAt:Date;readonly bytes:Buffer|null }
 export interface ExportStore {
@@ -28,8 +29,11 @@ export class ExportService {
     const closed=Object.freeze(Object.fromEntries(kind.filterKeys.filter(key=>filters[key]!==undefined).map(key=>[key,filters[key]]))) as F;
     if(!await kind.authorize(principalId,closed)){await this.#save(principalId,kindId,closed,0,"refused_authorization",null);return{ok:false,reason:"not_found"};}
     const rows:unknown[][]=[];let count=0;
-    for await(const row of kind.rows(principalId,closed)){count++;if(count>EXPORT_ROW_CAP){await this.#save(principalId,kindId,closed,count,"refused_limit",null);return{ok:false,reason:"row_limit"};}rows.push([...row]);}
-    const bytes=writeCsv(kind.columns,rows);const record=await this.#save(principalId,kindId,closed,count,"created",bytes);
+    for await(const row of kind.rows(principalId,closed)){count++;if(count<=EXPORT_ROW_CAP)rows.push([...row]);}
+    if(count>EXPORT_ROW_CAP){await this.#save(principalId,kindId,closed,count,"refused_limit",null);return{ok:false,reason:"row_limit"};}
+    const bytes=writeCsv(kind.columns,rows);
+    if(bytes.byteLength>EXPORT_BYTE_CAP){await this.#save(principalId,kindId,closed,count,"refused_limit",null);return{ok:false,reason:"row_limit"};}
+    const record=await this.#save(principalId,kindId,closed,count,"created",bytes);
     return{ok:true,id:record.id,downloadUrl:`/exports/${record.id}`,rowCount:count};
   }
   async download(principalId:string,id:string):Promise<Buffer|null>{
