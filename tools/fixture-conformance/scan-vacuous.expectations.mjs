@@ -45,6 +45,6 @@ export const EXPECTATIONS = Object.freeze([
   {
     name: "a body whose assertion is mentioned only inside a string literal",
     src: 'test("stub", () => { const s = "assert.equal(1, 2)"; });',
-    expected: [],
+    expected: ["stub"],
   },
 ]);
