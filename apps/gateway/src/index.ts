@@ -157,7 +157,7 @@ export function createGatewayServer(
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
 
-  const reviewLogin=login?.civilIdReview&&documents?{...login,civilIdReview:{...login.civilIdReview,staffDocuments:login.civilIdReview.staffDocuments??new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})}}:login;
+  const reviewLogin=documents&&login?.civilIdReview?{...login,civilIdReview:{...login.civilIdReview,staffDocuments:login.civilIdReview.staffDocuments??new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})}}:login;
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.
   // Otherwise retain Node's existing automatic Host-header requirement.
   return createServer({ requireHostHeader: universeEmbed === undefined }, (request, response) => {
