@@ -95,6 +95,7 @@ test("HTML negotiation is opt-in and preserves JSON defaults and preferences", (
 });
 
 test("SHU188_FEED notifications page shows the bell, current rendered text, subject link, and read form",()=>{const html=renderNotifications({status:200,body:{unreadCount:1,page:1,items:[{id:"10000000-0000-4000-8000-000000000001",text:"Renamed Co status changed to Active.",href:"/workspace?org_id=company-1&role=org-owner",createdAt:"2026-01-01T00:00:00.000Z",read:false}]}});assert.match(html,/Notifications \(1\)/);assert.match(html,/Renamed Co status changed to Active/);assert.match(html,/org_id=company-1&amp;role=org-owner/);assert.match(html,/10000000-0000-4000-8000-000000000001\/read/)});
+test("SHU188_FEED signed-in workspace header shows its unread bell count",()=>{const html=renderWorkspace({status:200,body:{contexts:[],active:null}},{} as BrowserLoginApplication,false,7);assert.match(html,/aria-label="Notifications, 7 unread"/);assert.match(html,/Notifications \(7\)/)});
 
 test("PAGE_DOCUMENT_HISTORY_OPT_IN keeps default documents script-free and pairs the explicit guard with CSP", () => {
   for (const language of [undefined, "en", "ar"] as const) {

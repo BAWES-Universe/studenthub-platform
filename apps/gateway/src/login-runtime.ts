@@ -54,7 +54,7 @@ import type { BrowserLoginApplication } from "./web-ui.js";
 import { ExportService } from "../../../packages/exports/src/exports.js";
 import { createCompanyDirectoryExport } from "../../../packages/exports/src/company-directory-export.js";
 import { createExportsHttp } from "./exports-http.js";
-import {NotificationFeed}from"../../../packages/notifications/src/notifications.js";import{createNotificationsHttp}from"./notifications-http.js";
+import {NotificationFeed,recordNotification}from"../../../packages/notifications/src/notifications.js";import{createNotificationsHttp}from"./notifications-http.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -255,7 +255,7 @@ export function createRuntimeLoginFromEnv(
   const organizationProfileReads = new PostgresOrganizationProfileReads({connectionString:value("DATABASE_URL")});
   const organizationStatusStore = new PostgresOrganizationStatusStore({connectionString:value("DATABASE_URL"),
     decision:organizationStatusDecision,stateDecision:organizationStatusStateDecision,event:organizationStatusEvent,
-    recordRef:organizationStatusRecordRef,principalRef:organizationStatusPrincipalRef});
+    recordRef:organizationStatusRecordRef,principalRef:organizationStatusPrincipalRef,notificationRecorder:recordNotification});
   const organizationCommercialTermsStore=new PostgresOrganizationCommercialTermsStore({connectionString:value("DATABASE_URL"),decision:organizationCommercialTermsDecision,stateDecision:organizationCommercialTermsStateDecision,recordRef:organizationCommercialTermsRecordRef,principalRef:organizationCommercialTermsPrincipalRef});
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
   const organizationAccountManagerStore=new PostgresOrganizationAccountManagerStore({connectionString:value("DATABASE_URL"),decision:organizationAccountManagerDecision,readDecision:organizationAccountManagerReadDecision,eligibleView:organizationEligibleAccountManagersView,stateDecision:organizationAccountManagerStateDecision,recordRef:organizationAccountManagerRecordRef,principalRef:organizationAccountManagerPrincipalRef});

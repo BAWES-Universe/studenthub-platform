@@ -91,7 +91,8 @@ export function writeHtml(response: ServerResponse, status: number, html: string
   response.end(html);
 }
 
-const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
+const baseBrand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
+const brand=baseBrand;
 
 export function pageDocument(title: string, content: string, language?: ProfileLanguage, historyGuard = false): string {
   return document(title, content, historyGuard, language);
@@ -272,7 +273,9 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
   return workspaceDocument("Companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(String(new URLSearchParams(context)))}">Workspaces</a>${companiesLink(active, login, true)}${myCompaniesLink(login)}</nav><p class="sidebar-note">Read-only for now.<br>Changes still happen in the current StudentHub.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">${escapeHtml(active.organizationName)} · ${roleNames[active.role].toUpperCase()}</div><h1>Companies<span class="accent">.</span></h1><p>Top-level companies your role covers. Open one to see its details and sub-companies.</p></div><span class="badge">Read-only</span></div>${form}${table}${pager ? `<nav class="pager" aria-label="Pages">${pager}</nav>` : ""}<section class="next-note"><div class="eyebrow">ABOUT THIS LIST</div><h2>Unavailable means we don’t have an approved value.</h2><p>Filters only match approved values. A company whose status or currency hasn’t been imported never matches a status or currency filter.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
-export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication, documentsAvailable = false): string {
+export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication, documentsAvailable = false, unreadCount = 0): string {
+  const brandMarkup=baseBrand;
+  const brand=`${brandMarkup}<a class="text-link" href="/notifications" aria-label="Notifications, ${unreadCount} unread">Notifications (${unreadCount})</a>`;
   if (result.status !== 200) {
     if (result.status !== 403 && result.status !== 400) return renderError(result.status, login);
     return workspaceDocument("Workspace unavailable", `<header class="topbar">${brand}<a href="/profile">My profile</a></header><main id="main" class="error-page"><h1>This workspace isn’t available.</h1><p>Your access may have changed. Choose one of your current workspaces to continue.</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);

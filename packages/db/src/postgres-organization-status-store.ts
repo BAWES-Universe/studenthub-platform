@@ -4,7 +4,7 @@ import type {CommitInput,CommitOutcome,Receipt,SafeWriteStore} from "@studenthub
 import {databaseUrl} from "./connection.js";
 import {organizationAuditRef} from "./authorization-audit.js";
 import {organizationLive} from "./organization-liveness.js";
-import {recordOrganizationStatusNotifications} from "./postgres-notifications-store.js";
+import {recordNotification} from "./postgres-notifications-store.js";
 
 export const ORGANIZATION_STATUS_OPERATION="organization.status.safe_write";
 type Grant={readonly org_id:string;readonly role:string;readonly scope:string};
@@ -15,7 +15,7 @@ export type OrganizationStatusStateDecision=(current:string|null,expected:string
 export type OrganizationStatusEvent=(before:string|null,value:string)=>{from:"active"|"under_review"|"inactive"|null;to:"active"|"under_review"|"inactive"|null}|null;
 const reference=/^[0-9a-f]{64}$/;
 const tokenRef=(id:string)=>createHash("sha256").update("studenthub:safe-write-token:v1\0").update(id).digest("hex");
-export interface PostgresOrganizationStatusStoreOptions {readonly connectionString?:string;readonly pool?:pg.Pool;readonly decision:OrganizationStatusDecision;readonly stateDecision:OrganizationStatusStateDecision;readonly event:OrganizationStatusEvent;readonly recordRef:(orgId:string)=>string;readonly principalRef:(id:string)=>string}
+export interface PostgresOrganizationStatusStoreOptions {readonly connectionString?:string;readonly pool?:pg.Pool;readonly decision:OrganizationStatusDecision;readonly stateDecision:OrganizationStatusStateDecision;readonly event:OrganizationStatusEvent;readonly recordRef:(orgId:string)=>string;readonly principalRef:(id:string)=>string;readonly notificationRecorder?:typeof recordNotification}
 class Refusal extends Error {constructor(readonly reason:Exclude<CommitOutcome,{ok:true}>["reason"]){super(reason)}}
 export class PostgresOrganizationStatusStore {
  readonly #pool:pg.Pool;readonly #owns:boolean;readonly #o:PostgresOrganizationStatusStoreOptions;
@@ -40,7 +40,7 @@ if(!await organizationLive(client,org,true))throw new Refusal("not_own_record");
 const grants=await this.#grants(client,id,true),ancestors=await this.#ancestors(client,org);
 if(!this.#o.decision(grants,org,ancestors))throw new Refusal("not_own_record");const used=await client.query("SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2",[ORGANIZATION_STATUS_OPERATION,tokenRef(input.tokenId)]);if(used.rows.length)throw new Refusal("token_already_used");const current=await this.#value(client,org);if(!this.#o.stateDecision(current,input.expectedBefore))throw new Refusal("state_changed");const value=input.value==="none"?null:input.value;
 await client.query(`INSERT INTO organization_status_overrides(org_id,status) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET status=EXCLUDED.status,updated_at=clock_timestamp()`,[org,value]);const event=this.#o.event(current,input.value);if(event)await client.query(`INSERT INTO organization_status_events(org_id,receipt_ref,from_status,to_status) VALUES($1,$2,$3,$4)`,[org,input.receipt.receiptRef,event.from,event.to]);
-if(event)await recordOrganizationStatusNotifications(client,org,event.to,input.receipt.receiptRef);
+if(event){const owners=await client.query<{principal_id:string}>("SELECT DISTINCT principal_id FROM grants WHERE org_id=$1 AND role='org-owner'",[org]);for(const owner of owners.rows)await(this.#o.notificationRecorder??recordNotification)(client,owner.principal_id,{kind:"organization.status_changed",subjectRef:`organization:${org}`,parameters:{status:event.to}},input.receipt.receiptRef)}
 await client.query(`INSERT INTO authorization_mutation_audit(request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary) VALUES($1,$2,$3,$2,$4::text[],$5::jsonb,$6::jsonb)`,[input.receipt.receiptRef,input.principalRef,ORGANIZATION_STATUS_OPERATION,[organizationAuditRef(org)],JSON.stringify({valuePresent:current!==null}),JSON.stringify({contractVersion:input.receipt.contractVersion,personRef:input.receipt.personRef,changeSetDigest:input.changeSetDigest,fields:["status"],committedAt:input.receipt.committedAt,tokenRef:tokenRef(input.tokenId)})]);
 await client.query("COMMIT");return {ok:true}}catch(e){try{await client.query("ROLLBACK")}catch{destroy=true}if(e instanceof Refusal)return {ok:false,reason:e.reason};if((e as {code?:string}).code==="23505")return {ok:false,reason:"token_already_used"};throw e}finally{client.release(destroy)}}
 }

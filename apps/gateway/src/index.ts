@@ -336,7 +336,8 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, login ? renderWorkspace(result, login, documents !== undefined) : renderError(503), {}, true);
+        const unreadCount=login?.notifications?await login.notifications.count(cookieValue(request.headers.cookie,"__Host-studenthub_session")):undefined;
+        writeHtml(response, result.status, login ? renderWorkspace(result, login, documents !== undefined, unreadCount??0) : renderError(503), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
