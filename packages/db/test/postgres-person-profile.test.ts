@@ -175,3 +175,46 @@ test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone h
   const preferences = await store.readOwnPreferences(ids[0]!) as Record<string, { value: unknown }>;
   assert.equal(preferences.handle!.value, `first_${suffix}`);
 });
+
+test("SHU415_CATALOGUE choices contain only active countries and universities", async () => {
+  const actor = "a".repeat(64), now = "2026-10-30T00:00:00.000Z";
+  const items = [
+    ["41111111-1111-4111-8111-111111111111", "country", "Kuwait", "kuwait", "KW", "active", null],
+    ["42222222-2222-4222-8222-222222222222", "university", "Kuwait University", "kuwait university", null, "active", null],
+    ["43333333-3333-4333-8333-333333333333", "country", "Deleted country", "deleted country", "DC", "deleted", now],
+    ["44444444-4444-4444-8444-444444444444", "university", "Deleted university", "deleted university", null, "deleted", now],
+  ] as const;
+  for (const item of items) await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$8,$9) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,status=EXCLUDED.status,deleted_at=EXCLUDED.deleted_at`, [...item.slice(0, 6), actor, now, item[6]]);
+  const choices = await new PostgresPersonProfileStore({ pool }).readOriginChoices();
+  assert.ok(choices.countries.some(item => item.id === items[0][0]));
+  assert.ok(choices.universities.some(item => item.id === items[1][0]));
+  assert.ok(!choices.countries.some(item => item.id === items[2][0]));
+  assert.ok(!choices.universities.some(item => item.id === items[3][0]));
+});
+
+test("SHU415_WRITE origin fields write twice, None is NULL, and Kuwaiti nationality refuses every mother value", async () => {
+  const id = `shu415-${randomUUID()}`, authz = new PostgresAuthzStore(pool), store = new PostgresPersonProfileStore({ pool });
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const principalRef = safeWritePrincipalRef(id), writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+  const write = async (field: "nationality" | "university" | "kuwaitiMother", value: string) => {
+    const change = { personRef: personRecordRef(id), field, value }, preview = await writer().preview({ principalRef, change });
+    assert.ok(preview.ok, `${field}:${value} previews`); if (!preview.ok) return preview;
+    const result = await writer().confirm({ principalRef, change, token: preview.token }); assert.ok(result.ok); return result;
+  };
+  const country = "45555555-5555-4555-8555-555555555555", university = "42222222-2222-4222-8222-222222222222", actor = "a".repeat(64), now = "2026-10-30T00:00:00.000Z";
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at)
+    VALUES($1,'country','Bahrain','bahrain','BH','active',$2,$2,$3,$3) ON CONFLICT(id) DO NOTHING`, [country, actor, now]);
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at)
+    VALUES($1,'university','Kuwait University','kuwait university','active',$2,$2,$3,$3) ON CONFLICT(id) DO NOTHING`, [university, actor, now]);
+  for (const value of [country, country]) await write("nationality", value);
+  for (const value of [university, university, ""]) await write("university", value);
+  for (const value of ["true", "false", ""]) await write("kuwaitiMother", value);
+  assert.equal((await pool.query("SELECT university_id FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.university_id, null);
+  await write("kuwaitiMother", "false");
+  const kuwait = "41111111-1111-4111-8111-111111111111";
+  assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "nationality", value: kuwait } }), { ok: false, reason: "invalid_value" });
+  await pool.query("UPDATE person_profiles SET kuwaiti_mother=NULL WHERE principal_id=$1", [id]);
+  await write("nationality", kuwait);
+  for (const value of ["true", "false", ""]) assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "kuwaitiMother", value } }), { ok: false, reason: "invalid_value" });
+});

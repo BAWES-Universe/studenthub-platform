@@ -9,7 +9,7 @@ import {
   type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 
-export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle"] as const;
+export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university", "kuwaitiMother"] as const;
 export type PersonSelfEditField = (typeof PERSON_SELF_EDIT_FIELDS)[number];
 
 export const PERSON_PROFILE_MINIMUM_AGE = 16;
@@ -25,6 +25,9 @@ export const SHU372_RULES = Object.freeze({
   jobSearchStatus: Object.freeze({ maxLength: 14, allowClear: false, accepts: ["not_looking", "active", "open_to_offers"], refuses: ["", "looking", "1"] }),
   phone: Object.freeze({ maxLength: 32, allowClear: true, accepts: ["+96550000000", "+442071838750", ""], refuses: ["+1234567", "+1234567890123456", "phone"] }),
   handle: Object.freeze({ maxLength: 30, allowClear: true, accepts: ["noor-al-sabah", "noor_2026", "noor.sabah", ""], refuses: ["no", "1noor", "noor al-sabah", "-noor"] }),
+  nationality: Object.freeze({ maxLength: 36, allowClear: false, accepts: ["11111111-1111-4111-8111-111111111111"], refuses: ["", "Kuwait", "not-an-id"] }),
+  university: Object.freeze({ maxLength: 36, allowClear: true, accepts: ["22222222-2222-4222-8222-222222222222", ""], refuses: ["University", "not-an-id"] }),
+  kuwaitiMother: Object.freeze({ maxLength: 5, allowClear: true, accepts: ["true", "false", ""], refuses: ["yes", "1"] }),
 } satisfies Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
 
 const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
@@ -78,6 +81,8 @@ export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: 
   if (field === "phone" && !/^\+[0-9]{8,15}$/.test(normalized)) return null;
   if (field === "handle") normalized = normalized.toLowerCase();
   if (field === "handle" && !/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)) return null;
+  if ((field === "nationality" || (field === "university" && normalized !== "")) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) return null;
+  if (field === "kuwaitiMother" && !["true", "false"].includes(normalized)) return null;
   if (normalized !== normalized.trim() || /\s{2}/u.test(normalized)) return null;
   if ((field === "displayName" || field === "arabicName") && !NAME.test(normalized)) return null;
   if (field === "arabicName" && !ARABIC_LETTER.test(normalized)) return null;
@@ -105,6 +110,10 @@ export function createPersonSelfEdit(options: {
       if (normalized && (normalized.change.field === "phone" || normalized.change.field === "handle") && normalized.change.value !== "") {
         const availability = options.store as SafeWriteStore & { contactValueAvailable?: (field: "phone" | "handle", value: string) => Promise<boolean> };
         if (availability.contactValueAvailable && !await availability.contactValueAvailable(normalized.change.field, normalized.change.value)) return { ok: false, reason: "invalid_value" };
+      }
+      if (normalized && (normalized.change.field === "nationality" || normalized.change.field === "university" || normalized.change.field === "kuwaitiMother")) {
+        const availability = options.store as SafeWriteStore & { originValueAvailable?: (field: "nationality" | "university" | "kuwaitiMother", value: string) => Promise<boolean> };
+        if (availability.originValueAvailable && !await availability.originValueAvailable(normalized.change.field, normalized.change.value)) return { ok: false, reason: "invalid_value" };
       }
       return normalized ? safeWrite.preview(normalized) : { ok: false, reason: "invalid_value" };
     },

@@ -41,6 +41,15 @@ test("SHU392_DIGEST normalization is deterministic before safe-write digesting",
     createHash("sha256").update("Noël Al-Sabah").digest("hex"));
 });
 
+test("SHU415_WRITE accepts ids and the two explicitly clearable origin fields", () => {
+  const country = "11111111-1111-4111-8111-111111111111";
+  assert.equal(normalizePersonSelfEditValue("nationality", country, TODAY), country);
+  assert.equal(normalizePersonSelfEditValue("nationality", "Kuwait", TODAY), null);
+  assert.equal(normalizePersonSelfEditValue("university", "", TODAY), "");
+  assert.equal(normalizePersonSelfEditValue("kuwaitiMother", "", TODAY), "");
+  assert.equal(normalizePersonSelfEditValue("kuwaitiMother", "false", TODAY), "false");
+});
+
 test("SHU392_CLEAR a cleared field is shown as written and not recorded", async () => {
   const updatedAt = "2026-10-30T05:00:00.000Z";
   const repository = new OwnProfileRepository({
