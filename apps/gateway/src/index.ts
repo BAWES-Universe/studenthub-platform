@@ -41,6 +41,7 @@ import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
 import { gatherProfileCompleteness } from "./profile-completeness.js";
 import type { ProfileCompletenessResult } from "@studenthub/profile";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -291,7 +292,7 @@ export function createGatewayServer(
       }
       if (html) {
         let civilIdReviewCount:number|undefined;
-        if(login?.civilIdReview&&result.status===200&&result.body.active&&(result.body.active.role==="staff"||result.body.active.role==="admin")&&result.body.active.orgId==="root"){
+        if(login?.civilIdReview&&result.status===200&&result.body.active&&(result.body.active.role==="staff"||result.body.active.role==="admin")&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(result.body.active.orgId)){
           const own=await login.profile({sessionId:cookieValue(request.headers.cookie,"__Host-studenthub_session")});
           if(own.status===200&&typeof own.body?.personId==="string")civilIdReviewCount=await login.civilIdReview.store.countPending({excludePrincipalId:own.body.personId});
         }
