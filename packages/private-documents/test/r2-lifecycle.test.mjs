@@ -153,8 +153,9 @@ test('SHU-145/R2-07 complete R2 configuration constructs ports without contactin
 test('Q14_1_ONE_PATH browser upload stays server-side in R2 mode',async t=>{
  const f=await fixture(t),bytes=png(),form=new FormData();
  form.set('submission',f.key());form.set('file',new Blob([bytes],{type:'image/png'}),'private-name.png');
- const response=await fetch(`${f.baseURL}/profile/documents/personal-photo/upload`,{method:'POST',redirect:'manual',headers:{cookie:`__Host-studenthub_session=${f.sessions.alice}`,origin},body:form});
+ const clientKey=f.key();const response=await fetch(`${f.baseURL}/profile/documents/personal-photo/upload`,{method:'POST',redirect:'manual',headers:{cookie:`__Host-studenthub_session=${f.sessions.alice}`,origin,'idempotency-key':clientKey},body:form});
  assert.equal(response.status,303);assert.equal(response.headers.get('location'),'/profile/documents');
  const text=await response.text();assert.doesNotMatch(text,/X-Amz|uploads\/|credential|private-name/);
+ for(const [name,value] of response.headers)assert.doesNotMatch(`${name}:${value}`,/X-Amz|uploads\/|credential|object.?key/i);
  assert.equal(f.snapshot().state.documents.length,1);assert.equal(f.snapshot().state.documents[0].size,bytes.length);
 });
