@@ -153,6 +153,8 @@ export function createGatewayServer(
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
+  const civilIdReview=(login as GatewayRouteLogin|undefined)?.civilIdReview;
+  if(civilIdReview&&documents&&!civilIdReview.documents)civilIdReview.documents=new StaffDocuments({...documents.options,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:civilIdReview.store});
 
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.
   // Otherwise retain Node's existing automatic Host-header requirement.
@@ -289,7 +291,10 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined) : renderError(503)), {}, true);
+        let civilIdsToCheck:number|undefined;
+        const review=(login as GatewayRouteLogin|undefined)?.civilIdReview,active=result.status===200?result.body.active:undefined;
+        if(review&&active&&(active.role==="staff"||active.role==="admin")&&DEFAULT_OPERATOR_ORG_IDS.includes(active.orgId)){const session=await review.sessions.get(cookieValue(request.headers.cookie,"__Host-studenthub_session")??"");if(session)civilIdsToCheck=await review.store.countPending({excludePrincipalId:session.personId});}
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined,civilIdsToCheck) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }

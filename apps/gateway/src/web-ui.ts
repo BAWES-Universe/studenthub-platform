@@ -35,6 +35,7 @@ import { currentProfileAvatar } from "./profile-avatar.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
+  civilIdsToCheck?: number;
   readonly notifications?: import("./notifications-http.js").NotificationsHttp;
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
@@ -47,6 +48,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly bankDetails?: BankDetailsService;
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
+  readonly civilIdReview?: { readonly store: { stateFor(principalId:string):Promise<{state:"waiting"|"checked"|"rejected";reason?:string}> } };
   readonly area?: AreaHttp;
   readonly web?: {
     readonly origin: string;
@@ -202,10 +204,11 @@ function companiesLink(active: WorkspaceContext | null, login: BrowserLoginAppli
 }
 
 function myCompaniesLink(active: WorkspaceContext | BrowserLoginApplication | null, login?: BrowserLoginApplication, current = false): string {
-  if (active && !("role" in active)) return "";
-  if (!active || !login?.organizationAccountManager || !DIRECTORY_ROLES.has(active.role)) return "";
+  const review = login?.civilIdsToCheck === undefined ? "" : `<a class="nav-item" href="/workspace/civil-ids">Civil IDs to check (${login.civilIdsToCheck})</a>`;
+  if (active && !("role" in active)) return review;
+  if (!active || !login?.organizationAccountManager || !DIRECTORY_ROLES.has(active.role)) return review;
   const href = `/workspace/my-companies?${new URLSearchParams({ org_id: active.orgId, role: active.role })}`;
-  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>My companies</a>`;
+  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>My companies</a>${review}`;
 }
 
 /** Read-only projection of the account-manager route: names and company links only. */
@@ -283,7 +286,7 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
   return workspaceDocument("Companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(String(new URLSearchParams(context)))}">Workspaces</a>${companiesLink(active, login, true)}${myCompaniesLink(login)}</nav><p class="sidebar-note">Read-only for now.<br>Changes still happen in the current StudentHub.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">${escapeHtml(active.organizationName)} · ${roleNames[active.role].toUpperCase()}</div><h1>Companies<span class="accent">.</span></h1><p>Top-level companies your role covers. Open one to see its details and sub-companies.</p></div><span class="badge">Read-only</span></div>${form}${table}${pager ? `<nav class="pager" aria-label="Pages">${pager}</nav>` : ""}<section class="next-note"><div class="eyebrow">ABOUT THIS LIST</div><h2>Unavailable means we don’t have an approved value.</h2><p>Filters only match approved values. A company whose status or currency hasn’t been imported never matches a status or currency filter.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
-export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication, documentsAvailable = false): string {
+export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication, documentsAvailable = false, civilIdsToCheck?: number): string {
   if (result.status !== 200) {
     if (result.status !== 403 && result.status !== 400) return renderError(result.status, login);
     return workspaceDocument("Workspace unavailable", `<header class="topbar">${brand}<a href="/profile">My profile</a></header><main id="main" class="error-page"><h1>This workspace isn’t available.</h1><p>Your access may have changed. Choose one of your current workspaces to continue.</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
@@ -298,6 +301,7 @@ export function renderWorkspace(result: NavigationResult, login: BrowserLoginApp
   const intro = active
     ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
     : "Choose the organization and role you want to use. You can switch without signing in again.";
+  login.civilIdsToCheck = civilIdsToCheck;
   return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a>${documentsAvailable ? '<a class="nav-item" href="/profile/documents">My documents</a>' : ""}<a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a>${companiesLink(active, login)}${myCompaniesLink(login)}</nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization,result.body.accountManager,result.body.accountManagerHistory,result.body.statusHistory,result.body.accountManagerOptions,active.orgId)}${renderOrganizationCounts(result.body.counts)}${renderSubOrganizations(result.body.subOrganizations, active)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
@@ -397,7 +401,9 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}${contributions.profileRows.filter(item => item.section === "details").map(item => item.render(language, copy)).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
-  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
+  const principalId=(result.body as {personId?:string}).personId,civilReview=login.civilIdReview&&principalId?await login.civilIdReview.store.stateFor(principalId):undefined;
+  const civilReviewHtml=!civilReview?"":civilReview.state==="checked"?"<p>Checked</p>":civilReview.state==="rejected"?`<p>Rejected: ${escapeHtml(civilReview.reason??"")} <a href="/profile/civil-id">Fix it</a> <a href="/profile/documents">Fix it</a></p>`:"<p>Waiting for StudentHub to check</p>";
+  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) + civilReviewHtml : "") + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
   const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${legacyAccountMark}${legacyAccountPrompt}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"],"",civilRow)}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
   return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }

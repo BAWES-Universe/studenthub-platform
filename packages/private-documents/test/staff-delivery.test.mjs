@@ -1,0 +1,10 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { StaffDocuments } from "../../../dist/packages/private-documents/src/staff-delivery.js";
+
+const viewer="11111111-1111-4111-8111-111111111111",subject="22222222-2222-4222-8222-222222222222";
+const state={format:1,documents:[{id:"33333333-3333-4333-8333-333333333333",version:"44444444-4444-4444-8444-444444444444",type:"civil-id-front",mime:"image/png",size:8,scope:{orgId:"operator",personId:subject},acl:"private",data:Buffer.from("evidence").toString("base64")}],retired:[]};
+function service({now=()=>1000,audit=async()=>{},principal=viewer}={}){return new StaffDocuments({store:{transaction:async fn=>fn(state)},authz:{getPrincipal:async()=>({id:principal}),listGrantsForPrincipal:async()=>[{role:"staff",scope:"subtree",orgId:"operator"}]},authenticate:async()=>({kind:"principal",principalId:principal}),signingKey:Buffer.alloc(32,7),origin:"https://student.test",orgId:"operator",staffOrgIds:["operator"],audit:{recordView:audit},now});}
+
+test("REV_IMAGES staff links bind viewer, expire, and audit before delivery",async()=>{const events=[],docs=service({audit:async event=>events.push(event)});const issued=await docs.issue("cookie",subject,"civil-id-front","civil_id_review");assert.equal(events[0].kind,"civil_id_image_issue");const delivered=await docs.deliver("cookie",issued.url);assert.equal(delivered.bytes.toString(),"evidence");assert.equal(events[1].kind,"civil_id_image_deliver");await assert.rejects(service({now:()=>61001}).deliver("cookie",issued.url));await assert.rejects(service({principal:subject}).issue("cookie",subject,"civil-id-front","civil_id_review"));});
+test("REV_STAFF audit failure issues no link or bytes",async()=>{const docs=service({audit:async()=>{throw new Error("audit unavailable")}});await assert.rejects(docs.issue("cookie",subject,"civil-id-front","civil_id_review"));const good=await service().issue("cookie",subject,"civil-id-front","civil_id_review");await assert.rejects(docs.deliver("cookie",good.url));});
