@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";import {spawnSync} from "node:child_process";import {readFile,unlink,writeFile} from "node:fs/promises";import {fileURLToPath} from "node:url";
-const source=new URL("../dist/people-directory.js",import.meta.url),original=await readFile(source,"utf8"),suite=fileURLToPath(new URL("../../../dist/packages/profile/test/people-directory.test.js",import.meta.url));
+const source=new URL("../../../dist/packages/profile/src/people-directory.js",import.meta.url),original=await readFile(source,"utf8"),suite=fileURLToPath(new URL("../../../dist/packages/profile/test/people-directory.test.js",import.meta.url));
 const mutations=[
  ["build name tokens from raw text","DIRDB_SEARCH",'[...raw.toLowerCase().matchAll(/[\\p{L}\\p{N}]+/gu)].map(match => match[0])','raw.toLowerCase().split(/\\s+/)',"name tokens must contain letters and digits only"],
  ["match short digit phone suffix","DIRDB_SEARCH","phoneDigits.length >= 4","phoneDigits.length >= 3","short digit terms must not be phone suffixes"],

@@ -30,7 +30,9 @@ test("DIRDB_DETAILS directory and document keys exactly partition CMP requiremen
   const profile=projectApprovedProfile(SYNTHETIC_PROFILE_FIXTURES.unavailable,"2026-11-13");
   const result=deriveProfileCompleteness({profile:{state:"available",value:profile},principalEmailPresent:{state:"available",value:false},activeBackground:{state:"available",value:{educationCount:0,skillCount:0}},documentTypesOnFile:{state:"available",value:[]},civilIdRecorded:{state:"available",value:{number:false,expiry:false}},writtenNationalityCode:{state:"available",value:null}});
   assert.equal(result.kind,"available");
-  const reported=new Set(result.kind==="available"?result.pendingFields:[]);reported.add("kuwaiti_mother");
+  const populated=projectApprovedProfile(SYNTHETIC_PROFILE_FIXTURES.populated,"2026-11-13");const nationality=populated.fields.nationality;const nonKuwaiti={...populated,fields:{...populated.fields,nationality:{...nationality,value:"Jordanian",freshness:{kind:"written_by_person" as const,observedAt:"2026-11-13T00:00:00.000Z"}},kuwaitiMother:{state:"unavailable" as const,reason:"not_recorded" as const,provenance:populated.fields.displayName.provenance,freshness:{kind:"written_by_person" as const,observedAt:"2026-11-13T00:00:00.000Z"}}}};const conditional=deriveProfileCompleteness({profile:{state:"available",value:nonKuwaiti},principalEmailPresent:{state:"available",value:true},activeBackground:{state:"available",value:{educationCount:1,skillCount:1}},documentTypesOnFile:{state:"available",value:["personal-photo","civil-id-front","civil-id-back"]},civilIdRecorded:{state:"available",value:{number:true,expiry:true}},writtenNationalityCode:{state:"available",value:"JO"}});
+  assert.equal(conditional.kind,"available");
+  const reported=new Set([...(result.kind==="available"?result.pendingFields:[]),...(conditional.kind==="available"?conditional.pendingFields:[])]);
   assert.deepEqual(reported,new Set([...PEOPLE_DETAILS_KEYS,...PEOPLE_DOCUMENT_KEYS]),"directory plus document keys must equal CMP's closed list");
   assert.equal(PEOPLE_DETAILS_KEYS.length,15,"all fifteen SQL-covered requirements must remain");
 });
