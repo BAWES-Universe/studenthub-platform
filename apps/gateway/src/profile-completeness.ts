@@ -17,6 +17,7 @@ const cookie = (request: IncomingMessage): string | undefined => request.headers
 export interface ProfileCompletenessDependencies {
   readonly principals: Pick<PrincipalStore, "getPrincipal">;
   readonly records?: ProfileRecordsRuntime;
+  readonly documentsAvailable?: boolean;
 }
 
 export function applyProfileCompleteness(profile: OwnProfileProjection, result: ReturnType<typeof deriveProfileCompleteness>): OwnProfileProjection {
@@ -63,11 +64,12 @@ export async function handleProfileCompleteness(request: IncomingMessage, respon
   const result = deriveProfileCompleteness({ profile: available(own.profile), principalEmailPresent: email, activeBackground: background,
     documentTypesOnFile: avatar ? available(avatar.documents.map(document => document.type).filter((type): type is "personal-photo"|"resume"|"civil-id-front"|"civil-id-back" => ["personal-photo","resume","civil-id-front","civil-id-back"].includes(type))) : failed(), civilIdRecorded: civil, writtenNationalityCode: code });
   const projection = applyProfileCompleteness(own.profile, result);
-  const page = await profileDocument({ status: 200, body: projection }, login, undefined, true, undefined,
+  const notice = await login.browserEdit?.notice(cookie(request), request.headers.cookie);
+  const page = await profileDocument({ status: 200, body: projection }, login, notice?.notice, dependencies.documentsAvailable === true, undefined,
     choices.state === "available" ? choices.value : { countries: [], universities: [] });
   let html: string;
   try { html = addNotificationBell(page.html, await login.notifications?.count(cookie(request)) ?? 0); }
   catch { html = addNotificationBell(page.html, 0); }
-  writeHtml(response, 200, html);
+  writeHtml(response, 200, html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
   return true;
 }
