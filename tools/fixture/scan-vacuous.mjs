@@ -56,6 +56,7 @@ function codeOnly(source) {
   let quote = null;
   let lineComment = false;
   let blockComment = false;
+  const templateExpressions = [];
 
   for (let i = 0; i < source.length; i += 1) {
     const ch = source[i];
@@ -86,6 +87,11 @@ function codeOnly(source) {
           result += " ";
           i += 1;
         }
+      } else if (quote === "`" && ch === "$" && next === "{") {
+        result += " ";
+        templateExpressions.push(1);
+        quote = null;
+        i += 1;
       } else if (ch === quote) {
         quote = null;
       }
@@ -110,6 +116,19 @@ function codeOnly(source) {
     } else if (ch === '"' || ch === "'" || ch === "`") {
       result += " ";
       quote = ch;
+    } else if (templateExpressions.length > 0 && ch === "{") {
+      templateExpressions[templateExpressions.length - 1] += 1;
+      result += ch;
+    } else if (templateExpressions.length > 0 && ch === "}") {
+      const last = templateExpressions.length - 1;
+      templateExpressions[last] -= 1;
+      if (templateExpressions[last] === 0) {
+        templateExpressions.pop();
+        quote = "`";
+        result += " ";
+      } else {
+        result += ch;
+      }
     } else {
       result += ch;
     }
