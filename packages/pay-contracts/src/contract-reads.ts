@@ -44,13 +44,12 @@ export function projectPayContract(contract: PayContract, view: PayContractView)
     id: contract.id, candidateId: contract.candidateId, companyId: contract.companyId, storeId: contract.storeId,
     startDate: contract.startDate, ...(contract.endDate === undefined ? {} : { endDate: contract.endDate }),
     currencyId: contract.currencyId, autoGenerate: contract.autoGenerate, status: contract.status,
-    terms: companyTerms(contract.terms), createdAt: contract.createdAt, updatedAt: contract.updatedAt,
+    terms: companyTerms(contract.terms),
   });
   return Object.freeze({
-    id: contract.id, candidateId: contract.candidateId, companyId: contract.companyId, storeId: contract.storeId,
+    id: contract.id, companyId: contract.companyId, storeId: contract.storeId,
     startDate: contract.startDate, ...(contract.endDate === undefined ? {} : { endDate: contract.endDate }),
-    currencyId: contract.currencyId, autoGenerate: contract.autoGenerate, status: contract.status,
-    terms: candidateTerms(contract.terms), createdAt: contract.createdAt, updatedAt: contract.updatedAt,
+    currencyId: contract.currencyId, status: contract.status, terms: candidateTerms(contract.terms),
   });
 }
 
