@@ -19,6 +19,50 @@ test("Q14_4_RULES requirements follow the closed legacy list and No is answered"
   assert.deepEqual(removed.fields.pendingFields.state === "available" && removed.fields.pendingFields.value,["personal_photo"]);
 });
 
+test("Q14_4_RULES every live requirement has a positive and negative case", () => {
+  const liveCases = [
+    ["personal_photo", "personal-photo"], ["civil_front", "civil-id-front"], ["civil_back", "civil-id-back"],
+  ] as const;
+  for (const [requirement, type] of liveCases) {
+    const result = deriveProfileCompleteness(base(), {...evidence, documents:evidence.documents.filter(row=>row.type!==type)});
+    assert.equal(result.fields.pendingFields.state === "available" && result.fields.pendingFields.value.includes(requirement), true, requirement);
+  }
+  for (const [requirement, patch] of [
+    ["email", {emailPresent:false}], ["education", {educationPresent:false}], ["skill", {skillPresent:false}],
+  ] as const) {
+    const result=deriveProfileCompleteness(base(),{...evidence,...patch});
+    assert.equal(result.fields.pendingFields.state === "available" && result.fields.pendingFields.value.includes(requirement),true,requirement);
+  }
+  const no = deriveProfileCompleteness(base(), {...evidence,nationalityCode:"JO"});
+  assert.equal(no.fields.pendingFields.state === "available" && no.fields.pendingFields.value.includes("kuwaiti_mother"),false,"stored No is answered");
+  const licence=base();
+  const driving={state:"available" as const,value:false,provenance:licence.fields.pendingFields.provenance,freshness:{kind:"written_by_person" as const,observedAt:"2026-09-13T12:00:00.000Z"}};
+  const noLicence=deriveProfileCompleteness({...licence,fields:{...licence.fields,drivingLicence:driving}},evidence);
+  assert.equal(noLicence.fields.pendingFields.state === "available" && noLicence.fields.pendingFields.value.includes("driving_licence"),false,"driving licence No is answered");
+  const kw = deriveProfileCompleteness(base(),evidence);
+  assert.equal(kw.fields.pendingFields.state === "available" && kw.fields.pendingFields.value.includes("kuwaiti_mother"),false,"KW does not require mother answer");
+});
+
+test("Q14_4_RULES blank nationality is missing while an unknown nationality fails closed", () => {
+  const blank=base();
+  const unavailable={...blank.fields.nationality,state:"unavailable" as const,reason:"not_recorded" as const};
+  const missing=deriveProfileCompleteness({...blank,fields:{...blank.fields,nationality:unavailable}}, {...evidence,nationalityCode:undefined});
+  assert.equal(missing.fields.pendingFields.state === "available" && missing.fields.pendingFields.value.includes("nationality"),true);
+  assert.equal(missing.fields.pendingFields.state === "available" && missing.fields.pendingFields.value.includes("kuwaiti_mother"),false);
+  const unknown=deriveProfileCompleteness(base(),{...evidence,nationalityCode:undefined});
+  assert.equal(unknown.fields.pendingFields.state,"unavailable");
+});
+
+test("Q14_4_RULES imported pending list is fallback only for unprojected values", () => {
+  const profile=base();
+  const imported={...profile.fields.pendingFields,value:["phone","civil_id","civil_expiry","kuwaiti_mother","personal_photo"] as const,
+    freshness:{kind:"imported_snapshot" as const,observedAt:"2026-01-01"}};
+  const fields={...profile.fields,pendingFields:imported,phone:undefined,civilId:undefined,kuwaitiMother:undefined};
+  const result=deriveProfileCompleteness({...profile,fields},{...evidence,nationalityCode:"JO"});
+  assert.deepEqual(result.fields.pendingFields.state === "available" && result.fields.pendingFields.value.filter(x=>["phone","civil_id","civil_expiry","kuwaiti_mother"].includes(x)),["phone","civil_id","civil_expiry","kuwaiti_mother"]);
+  assert.equal(result.fields.pendingFields.state === "available" && result.fields.pendingFields.value.includes("personal_photo"),false,"documents, not import, decide photos");
+});
+
 test("Q14_4_DERIVED unavailable evidence fails closed and derived values agree", () => {
   const failed=deriveProfileCompleteness(base(),{...evidence,sourcesAvailable:false});
   assert.equal(failed.fields.pendingFields.state,"unavailable"); assert.equal(failed.fields.isProfileCompleted.state,"unavailable");

@@ -31,7 +31,8 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   const provenance = Object.freeze({ system: "studenthub-production-approved-import" as const,
     revision: profile.fields.pendingFields.provenance.revision, sourceField: "live_profile_completeness" });
   const freshness = Object.freeze({ kind: "derived" as const, observedAt: new Date().toISOString() });
-  if (!evidence.sourcesAvailable || !evidence.nationalityCode) {
+  const nationalityPresent = present(profile.fields.nationality);
+  if (!evidence.sourcesAvailable || (nationalityPresent && !evidence.nationalityCode)) {
     const failed = Object.freeze({ state: "unavailable" as const, reason: "check_failed" as const, provenance, freshness });
     return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields, isProfileCompleted: failed, pendingFields: failed }) });
   }
@@ -39,7 +40,7 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   const civil = f.civilId?.state === "available" ? f.civilId.value : undefined;
   const missing = new Set<PendingProfileRequirement>();
   const require = (name: PendingProfileRequirement, met: boolean) => { if (!met) missing.add(name); };
-  require("nationality", present(f.nationality)); require("display_name", present(f.displayName));
+  require("nationality", nationalityPresent); require("display_name", present(f.displayName));
   require("arabic_name", present(f.arabicName)); require("gender", present(f.gender)); require("objective", present(f.objective));
   require("personal_photo", evidence.documents.some(d => d.type === "personal-photo")); require("email", evidence.emailPresent);
   require("phone", unprojected(profile, "phone", present(f.phone) ? true : undefined)); require("birth_date", present(f.birthDate));
@@ -48,7 +49,7 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   require("civil_front", evidence.documents.some(d => d.type === "civil-id-front"));
   require("civil_back", evidence.documents.some(d => d.type === "civil-id-back")); require("driving_licence", present(f.drivingLicence));
   require("location", present(f.area));
-  if (evidence.nationalityCode !== "KW") require("kuwaiti_mother", unprojected(profile, "kuwaiti_mother", present(f.kuwaitiMother) ? true : undefined));
+  if (evidence.nationalityCode !== undefined && evidence.nationalityCode !== "KW") require("kuwaiti_mother", unprojected(profile, "kuwaiti_mother", present(f.kuwaitiMother) ? true : undefined));
   require("education", evidence.educationPresent); require("skill", evidence.skillPresent);
   const value = Object.freeze(COMPLETENESS_ORDER.filter(name => missing.has(name)));
   const available = <T>(v: T) => Object.freeze({ state: "available" as const, value: v, provenance, freshness });
