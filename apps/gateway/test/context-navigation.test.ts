@@ -426,6 +426,17 @@ test("SHU355_SHOWN_GRANT company card hides a revoked manager and restores the r
   assert.match(await render(),/Account manager<\/dt><dd>Staff One/);
 });
 
+test("SHU360_SHOWN admin company card shows eligible names while principal ids stay only in values",async()=>{
+  const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:"person-1"});
+  const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});
+  await store.grantMany("person-1",[{orgId:"org-a",role:"admin"}]);
+  const managers={manager:async()=>({manager:null}),history:async()=>[],eligibleManagers:async()=>[{principalId:"private-staff-id",displayName:"Staff One"}]};
+  const organizations=Object.assign(new OrganizationRepository({store,source:new InMemoryApprovedOrganizationAdapter(new Map())}),{accountManagers:managers});
+  const result=await createContextNavigation(rig.sessions,store,organizations).open(SESSION,new URLSearchParams({org_id:"org-a",role:"admin"}));
+  const page=renderWorkspace(result,{...rig.app,navigation:createContextNavigation(rig.sessions,store)});
+  assert.match(page,/Assign account manager/);assert.match(page,/<option value="private-staff-id">Staff One<\/option>/);assert.doesNotMatch(page,/>private-staff-id</);assert.match(page,/action="\/workspace\/account-manager\/preview"/);
+});
+
 async function shu332Rig(options: {
   scope?: "self" | "subtree";
   deletions?: OrganizationDeletionRecords;
