@@ -17,8 +17,9 @@
 // are the indices of the body's braces.
 
 const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
-const RECOGNISED_ASSERTION_RE =
-  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
+const ASSERTION_CALL_RE =
+  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(/g;
+const THROW_RE = /\bthrow\b/g;
 
 function startsRegex(source, index) {
   const prefix = source.slice(0, index).trimEnd();
@@ -118,6 +119,24 @@ function codeOnly(source) {
   return result;
 }
 
+function isStandalone(source, index) {
+  return source.slice(0, index).trimEnd().at(-1) !== ".";
+}
+
+function containsRecognisedAssertion(source) {
+  ASSERTION_CALL_RE.lastIndex = 0;
+  let match;
+  while ((match = ASSERTION_CALL_RE.exec(source)) !== null) {
+    if (isStandalone(source, match.index)) return true;
+  }
+
+  THROW_RE.lastIndex = 0;
+  while ((match = THROW_RE.exec(source)) !== null) {
+    if (isStandalone(source, match.index)) return true;
+  }
+  return false;
+}
+
 function testName(source, callIndex, bodyStart) {
   for (let start = callIndex; start < bodyStart; start += 1) {
     const quote = source[start];
@@ -207,7 +226,7 @@ export function scanVacuousTests(fileText) {
     const callIndex = match.index;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
-    if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
+    if (containsRecognisedAssertion(codeOnly(body.text))) continue;
     report.push({
       name: testName(fileText, callIndex, body.start),
       start: body.start,
