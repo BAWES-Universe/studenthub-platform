@@ -20,6 +20,37 @@ const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
   /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
 
+function startsRegex(source, index) {
+  const prefix = source.slice(0, index).trimEnd();
+  if (prefix === "") return true;
+  const previous = prefix.at(-1);
+  if ("([{:;,=!?&|+-*%^~<>".includes(previous)) return true;
+  const word = /([A-Za-z_$][\w$]*)$/.exec(prefix)?.[1];
+  return /^(?:return|throw|case|delete|typeof|void|new|in|of|yield|await|else|do)$/.test(
+    word ?? "",
+  );
+}
+
+function regexEnd(source, start) {
+  let inClass = false;
+  for (let i = start + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "\\") {
+      i += 1;
+    } else if (ch === "[" && !inClass) {
+      inClass = true;
+    } else if (ch === "]" && inClass) {
+      inClass = false;
+    } else if (ch === "/" && !inClass) {
+      while (/[A-Za-z]/.test(source[i + 1] ?? "")) i += 1;
+      return i;
+    } else if (ch === "\n" || ch === "\r") {
+      return start;
+    }
+  }
+  return start;
+}
+
 function codeOnly(source) {
   let result = "";
   let quote = null;
@@ -68,6 +99,14 @@ function codeOnly(source) {
       result += "  ";
       blockComment = true;
       i += 1;
+    } else if (ch === "/" && startsRegex(source, i)) {
+      const end = regexEnd(source, i);
+      if (end !== i) {
+        result += " ".repeat(end - i + 1);
+        i = end;
+      } else {
+        result += ch;
+      }
     } else if (ch === '"' || ch === "'" || ch === "`") {
       result += " ";
       quote = ch;
@@ -133,6 +172,9 @@ function braceBody(source, callIndex) {
     } else if (ch === "/" && next === "*") {
       blockComment = true;
       i += 1;
+    } else if (ch === "/" && startsRegex(source, i)) {
+      const end = regexEnd(source, i);
+      if (end !== i) i = end;
     } else if (ch === '"' || ch === "'" || ch === "`") {
       quote = ch;
     } else if (ch === "{") {

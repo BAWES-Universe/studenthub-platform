@@ -123,3 +123,29 @@ test("ignores test-like calls inside comments and string literals", () => {
     ["real"],
   );
 });
+
+test("ignores test-like calls inside regular expression literals", () => {
+  const source = [
+    'const matcher = /test\\("fake", \\(\\) => \\{ work\\(\\); \\}\\)/;',
+    'test("real", () => { work(); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
+
+test("does not stop a body at a closing brace inside a regex literal", () => {
+  const report = scanVacuousTests(
+    'test("regex-brace", () => { const matcher = /[}]/; assert.ok(matcher); });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("does not recognise assertion text inside a regex literal", () => {
+  const report = scanVacuousTests(
+    'test("regex-assertion", () => { const matcher = /assert\\.ok\\(value\\)/; });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
+});
