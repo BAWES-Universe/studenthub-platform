@@ -31,6 +31,18 @@ const ORDER: readonly PendingProfileRequirement[] = Object.freeze([
   "driving_licence", "location", "kuwaiti_mother", "education", "skill",
 ]);
 
+function isDerivedRequirement(requirement: PendingProfileRequirement): boolean {
+  switch (requirement) {
+    case "nationality": case "display_name": case "arabic_name": case "gender": case "objective":
+    case "personal_photo": case "email": case "phone": case "birth_date": case "civil_id":
+    case "civil_expiry": case "civil_front": case "civil_back": case "driving_licence": case "location":
+    case "kuwaiti_mother": case "education": case "skill":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function present(value: unknown): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (typeof value === "boolean") return true;
@@ -110,5 +122,8 @@ export function deriveProfileCompleteness(input: ProfileCompletenessInput): Prof
   if (input.activeBackground.value.educationCount < 1) missing.add("education");
   if (input.activeBackground.value.skillCount < 1) missing.add("skill");
 
-  return Object.freeze({ kind: "available", pendingFields: Object.freeze(ORDER.filter((item) => missing.has(item))) });
+  return Object.freeze({
+    kind: "available",
+    pendingFields: Object.freeze(ORDER.filter((item) => !isDerivedRequirement(item) || missing.has(item))),
+  });
 }
