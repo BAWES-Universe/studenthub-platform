@@ -182,6 +182,8 @@ export interface PrivateDocumentOptions {
     authenticate: (credential: string) => Promise<RequestIdentity | null>;
     signingKey: Uint8Array;
     origin: string;
+    /** Reports whether an organization has been soft-deleted. */
+    organizationDeleted?: (orgId: string) => Promise<boolean>;
     now?: () => number;
     /** Absolute route used for signed delivery capabilities. */
     deliveryPath?: string;
@@ -241,6 +243,7 @@ export class PrivateDocuments {
             return fail('denied');
         if (scope.personId !== undefined && result.context.principalId !== scope.personId)
             fail('denied');
+        if (scope.personId === undefined && this.options.organizationDeleted && await this.options.organizationDeleted(scope.orgId)) fail('denied');
         return result.context.principalId;
     }
     private async find(identity: RequestIdentity, state: DocumentState, id: unknown): Promise<StoredDocument> {

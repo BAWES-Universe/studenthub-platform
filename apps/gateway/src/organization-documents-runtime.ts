@@ -1,12 +1,13 @@
-import { PostgresAuthzStore, PostgresLoginStore } from '@studenthub/db';
+import { PostgresAuthzStore, PostgresLoginStore, PostgresOrganizationDeletionStore } from '@studenthub/db';
 import type { AuthzStore } from '@studenthub/contracts';
 import type { SessionStore } from '@studenthub/login-contract';
+import { organizationDeletionDecision, organizationDeletionBlockers, organizationDeletionRecordRef, organizationDeletionPrincipalRef } from '@studenthub/organizations';
 import { FileDocumentStore, PrivateDocuments, type DocumentStore } from '../../../packages/private-documents/src/index.js';
 import { PostgresDocumentSnapshot, R2DocumentStore, R2Objects } from '../../../packages/private-documents/src/r2-storage.js';
 import type { OrganizationDocumentsRuntime } from './organization-documents-http.js';
 
 export function createOrganizationDocuments(ports: {
-  store: DocumentStore; authz: AuthzStore; sessions: SessionStore; origin: string; signingKey: Uint8Array; now?: () => number;
+  store: DocumentStore; authz: AuthzStore; sessions: SessionStore; origin: string; signingKey: Uint8Array; organizationDeleted?: (orgId: string) => Promise<boolean>; now?: () => number;
 }): OrganizationDocumentsRuntime {
   return { origin: ports.origin, service: new PrivateDocuments({ ...ports, deliveryPath: '/organization-documents/delivery', authenticate: async credential => {
     const session = await ports.sessions.get(credential);
@@ -37,7 +38,8 @@ export async function createRuntimeOrganizationDocumentsFromEnv(env: NodeJS.Proc
     }
     const authz = new PostgresAuthzStore({ connectionString: env.DATABASE_URL }); closers.push(() => authz.close());
     const login = new PostgresLoginStore({ connectionString: env.DATABASE_URL }); closers.push(() => login.close());
-    const runtime = createOrganizationDocuments({ store, authz, sessions: login.sessions, origin: env.DOCUMENT_ORIGIN!, signingKey });
+    const deletions = new PostgresOrganizationDeletionStore({ connectionString: env.DATABASE_URL, decision: organizationDeletionDecision, blockers: organizationDeletionBlockers, recordRef: organizationDeletionRecordRef, principalRef: organizationDeletionPrincipalRef }); closers.push(() => deletions.close());
+    const runtime = createOrganizationDocuments({ store, authz, sessions: login.sessions, origin: env.DOCUMENT_ORIGIN!, signingKey, organizationDeleted: orgId => deletions.isDeleted(orgId) });
     return { ...runtime, close: async () => { await Promise.all(closers.map(close => close())); } };
   } catch {
     await Promise.allSettled(closers.map(close => Promise.resolve().then(close)));
