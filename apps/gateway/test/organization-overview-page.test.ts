@@ -21,7 +21,7 @@ async function fixture(t: TestContext, options: { calls?: URLSearchParams[]; una
     organizations: [{ id: "root", name: "Root" }, { id: "org-a", name: "Registry A", parentOrgId: "root" },
       { id: "org-a1", name: "Registry Child", parentOrgId: "org-a" }, { id: "org-b", name: "Registry B", parentOrgId: "root" }],
   });
-  await store.grantMany("person-1", [{ orgId: "org-a", role: "org-owner" }, { orgId: "org-a", role: "recruiter" },
+  await store.grantMany("person-1", [{ orgId: "org-a", role: "org-owner", scope: "subtree" }, { orgId: "org-a", role: "recruiter" },
     { orgId: "root", role: "staff", scope: "subtree" }, { orgId: "root", role: "admin", scope: "subtree" }]);
   const { parentA, childA1, unrelatedB } = SYNTHETIC_ORGANIZATION_FIXTURES;
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
@@ -49,7 +49,9 @@ test("OVW_READ member sees exactly the audience projection", async (t) => {
   const owner = await f.get("/organization/org-a"); const body = await owner.text();
   assert.equal(owner.status, 200); assert.equal(owner.headers.get("cache-control"), "no-store");
   assert.match(body, /<h1>Synthetic Retail Group<\/h1>/);
-  for (const field of ORGANIZATION_FIELDS_BY_AUDIENCE.employer) assert.match(body, new RegExp(`>${ORGANIZATION_FIELD_CONTRACT[field].label}<`));
+  for (const field of ORGANIZATION_FIELDS_BY_AUDIENCE.employer) {
+    assert.ok(body.includes(`>${ORGANIZATION_FIELD_CONTRACT[field].label}<`), `OVW_READ shows ${field}`);
+  }
   assert.match(body, /data-state="unavailable">Unavailable</); assert.doesNotMatch(body, />Company email<|>Status set by staff<|>Bonus commission \(%\)</);
   const staff = await (await f.get("/organization/org-a?role=staff")).text();
   assert.match(staff, />Company email</, "OVW_READ staff sees company email");
