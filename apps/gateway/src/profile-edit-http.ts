@@ -45,7 +45,10 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       if (!exact(body, ["field", "value"])) return { status: 400, body: { error: "invalid_request" } };
       const selected = field(body.field); if (!selected || typeof body.value !== "string") return refusal("invalid_value");
       const today = kuwaitDate(clock.now());
-      if (selected === "birthDate" && validPersonBirthDate(body.value) && body.value <= today && !isPersonProfileMinimumAge(body.value, today)) return { status: 400, body: { error: "minimum_age" } };
+      if (selected === "birthDate" && validPersonBirthDate(body.value)) {
+        if (body.value > today) return { status: 400, body: { error: "future_date" } };
+        if (!isPersonProfileMinimumAge(body.value, today)) return { status: 400, body: { error: "minimum_age" } };
+      }
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : refusal(result.reason);
     },
@@ -95,7 +98,7 @@ export type ProfileEditPageWriter = (status: number, title: string, body: string
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
 export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
   return field.state === "available" ? field.value === true ? "Yes" : field.value === false ? "No"
-    : ({ male: "Male", female: "Female", other: "Other", not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(field.value)] ?? String(field.value)
+    : ({ male: "Male", female: "Female", other: "Other" })[String(field.value)] ?? String(field.value)
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -120,9 +123,12 @@ export function profileEditSummary(value: string): string {
   return result + (result.length < value.length ? "…" : "");
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
-function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string, minimumAge = false) {
+function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string, reason: "invalid_value" | "minimum_age" | "future_date") {
   const label = FIELD_LABELS[selected], control = editControl(selected, value, true);
-  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${minimumAge ? `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile` : `Enter a value that follows the rules for ${label.toLowerCase()}.`}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+  const message = reason === "minimum_age" ? `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`
+    : reason === "future_date" ? "Birth date cannot be in the future."
+      : `Enter a value that follows the rules for ${label.toLowerCase()}.`;
+  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
   const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
@@ -135,7 +141,7 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age")) invalidForm(write, selected, values.value, reason === "minimum_age"); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, values.value, reason); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);

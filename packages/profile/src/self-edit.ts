@@ -55,7 +55,7 @@ export function isPersonProfileMinimumAge(value: string, today: string): boolean
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && validBirthDate(value, today);
 }
 
-export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = "2026-10-30"): string | null {
+export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today: string): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.normalize("NFC");
   const rule = SHU372_RULES[field];

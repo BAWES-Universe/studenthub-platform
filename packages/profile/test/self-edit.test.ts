@@ -4,15 +4,16 @@ import { createHash } from "node:crypto";
 import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
+const TODAY = "2026-10-30";
 
 test("SHU372_RULES every shared rule example has the specified result", () => {
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
-    for (const value of rule.accepts) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value), value.normalize("NFC"), `${field} accepts ${value}`);
-    for (const value of rule.refuses) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value), null, `${field} refuses ${value}`);
+    for (const value of rule.accepts) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value, TODAY), value.normalize("NFC"), `${field} accepts ${value}`);
+    for (const value of rule.refuses) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value, TODAY), null, `${field} refuses ${value}`);
   }
-  assert.equal(normalizePersonSelfEditValue("displayName", "Noor Al-Sabah"), "Noor Al-Sabah");
-  assert.equal(normalizePersonSelfEditValue("arabicName", "نور الصباح"), "نور الصباح");
-  assert.equal(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah"), "Noël Al-Sabah");
+  assert.equal(normalizePersonSelfEditValue("displayName", "Noor Al-Sabah", TODAY), "Noor Al-Sabah");
+  assert.equal(normalizePersonSelfEditValue("arabicName", "نور الصباح", TODAY), "نور الصباح");
+  assert.equal(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah", TODAY), "Noël Al-Sabah");
 });
 
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {
@@ -36,7 +37,7 @@ test("SHU392_S1 each written value is read into its own profile field with its o
 });
 
 test("SHU392_DIGEST normalization is deterministic before safe-write digesting", () => {
-  assert.equal(createHash("sha256").update(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah")!).digest("hex"),
+  assert.equal(createHash("sha256").update(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah", TODAY)!).digest("hex"),
     createHash("sha256").update("Noël Al-Sabah").digest("hex"));
 });
 
@@ -111,6 +112,7 @@ test("SHU413_AGE uses the service clock and the single minimum-age setting", asy
   const preview = (value: string) => writer.preview({ principalRef, change: { personRef, field: "birthDate", value } });
   assert.equal((await preview("2010-10-30")).ok, true);
   assert.equal((await preview("2010-10-31")).ok, true);
+  assert.deepEqual(await preview("2010-11-01"), { ok: false, reason: "invalid_value" });
   assert.deepEqual(await preview("2010-02-30"), { ok: false, reason: "invalid_value" });
 });
 
@@ -126,10 +128,25 @@ test("SHU413_WRITE accepts only platform enums for the four choice fields", () =
 });
 
 test("SHU413_AGE an implausibly old stored birth date keeps the date and makes only age unavailable", async () => {
+  const principalRef = "a".repeat(64), personRef = "b".repeat(64);
+  let birthDate: string | null = null;
+  const writer = createPersonSelfEdit({
+    store: {
+      ownedRecord: async () => personRef,
+      readField: async () => birthDate,
+      commit: async input => { birthDate = input.value; return { ok: true }; },
+    },
+    secret: "s".repeat(32), clock: { now: () => new Date("2026-10-30T12:00:00.000Z") },
+  });
+  const request = { principalRef, change: { personRef, field: "birthDate", value: "1800-01-01" } } as const;
+  const preview = await writer.preview(request);
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.equal((await writer.confirm({ ...request, token: preview.token })).ok, true);
   const repository = new OwnProfileRepository({
     principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
     source: { resolveLink: async () => ({ kind: "linked", candidateRef: "candidate" }), readCandidate: async () => SYNTHETIC_PROFILE_FIXTURES.populated },
-    preferences: { readOwnPreferences: async () => ({ birthDate: { value: "1800-01-01", updatedAt: "2026-10-30T00:00:00.000Z" } }) } as never,
+    preferences: { readOwnPreferences: async () => ({ birthDate: { value: birthDate!, updatedAt: "2026-10-30T00:00:00.000Z" } }) } as never,
     today: () => "2026-10-30",
   });
   const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
