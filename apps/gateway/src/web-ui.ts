@@ -27,6 +27,7 @@ import type { AssignedCompaniesResult, OrganizationAccountManager } from "./orga
 import type { ExportsHttp } from "./exports-http.js";
 import { CONTRIBUTIONS, type Contributions } from "./contributions/index.js";
 import type {NotificationPage} from "../../../packages/notifications/src/notifications.js";
+import type { LegacyLinkService } from "./legacy-link-http.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -40,6 +41,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly profileEdit?: ProfileEdit;
   readonly browserEdit?: ProfileBrowserEdit;
   readonly bankDetails?: BankDetailsService;
+  readonly legacyLink?: LegacyLinkService;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
@@ -338,6 +340,9 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const nationalityAllowsMother = originChoices.countries.some(item => item.id === nationalityId && item.code !== "KW");
   if (nationalityAllowsMother && !nationalityIsKuwaiti) editable.add("kuwaitiMother");
   const hasWrites = Object.values(profile.fields).some(field => field.freshness.kind === "written_by_person");
+  const hasImported = Object.values(profile.fields).some(field => field.freshness.kind === "imported_snapshot" && field.state === "available");
+  const legacyAccountMark = hasImported && login.legacyLink ? `<p class="p-notice">${copy("profile.legacyImported")}</p>` : "";
+  const legacyAccountPrompt = !hasImported && login.legacyLink ? `<p class="p-notice">${copy("profile.legacyPrompt")} <a class="text-link" href="/profile/link-account">${copy("profile.legacyLink")}</a></p>` : "";
   const date = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value.slice(0,10)) && Number.isFinite(Date.parse(value.slice(0,10)))
     ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
   const formatted = (key: Key): string => {
@@ -384,7 +389,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}${contributions.profileRows.filter(item => item.section === "details").map(item => item.render(language, copy)).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
-  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"])}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
+  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${legacyAccountMark}${legacyAccountPrompt}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"])}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
   return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }
 

@@ -1,6 +1,6 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { OwnProfileRepository, createPersonImportedFallbackReader, type ApprovedProfileAdapter } from "@studenthub/profile";
@@ -8,6 +8,8 @@ import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
 import { createProfileEdit } from "../profile-edit-http.js";
+import { HttpLegacyLogin } from "../legacy-login.js";
+import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
 
@@ -20,16 +22,27 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   readonly sessions: typeof access.loginStore.sessions;
 }> {
   const { databaseUrl, safeWriteKey } = settings;
+  const legacyValues = [process.env.LEGACY_CANDIDATE_BASE_URL, process.env.LEGACY_CANDIDATE_ALLOWED_HOST, process.env.LEGACY_PASSWORD_RESET_URL];
+  let legacyConfig: {baseUrl:string;allowedHost:string;resetUrl:string}|undefined;
+  if (legacyValues.some(value => value !== undefined)) {
+    if (!legacyValues.every(value => value !== undefined && value.trim().length > 0)) throw new Error("incomplete legacy account link configuration");
+    const reset = new URL(legacyValues[2]!); if (reset.protocol !== "https:") throw new Error("LEGACY_PASSWORD_RESET_URL must use https");
+    legacyConfig = { baseUrl: legacyValues[0]!, allowedHost: legacyValues[1]!, resetUrl: reset.href };
+    // Validate even when SAFE_WRITE_SIGNING_KEY is absent, so an unsafe target never starts.
+    new HttpLegacyLogin({baseUrl:legacyConfig.baseUrl,allowedHost:legacyConfig.allowedHost});
+  }
+  const legacyStore = legacyConfig && safeWriteKey ? new PostgresLegacyLinkStore({connectionString:databaseUrl}, approvedProfiles) : undefined;
+  const profileSource = legacyStore ?? approvedProfiles;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
   const browserTokens = safeWriteKey ? createBrowserWriteTokens({ activeKeyVersion: browserKeyVersion,
     keys: { [browserKeyVersion]: safeWriteKey } }) : undefined;
   const browserSessionPool = browserTokens ? new pg.Pool({ connectionString: databaseUrl }) : undefined;
-  const importedFallback = createPersonImportedFallbackReader({ source: approvedProfiles });
+  const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
-  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: approvedProfiles,
+  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
     ...(safeWrites && personProfiles ? { preferences: { async readOwnPreferences(id: string) {
       const [language, person] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id)]);
       const merged = { ...(language ?? {}), ...(person ?? {}) };
@@ -46,6 +59,11 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       return personId ? { id, personId } : undefined;
     },
   } : access.loginStore.sessions;
+  const legacyLink = legacyConfig && safeWriteKey && legacyStore ? createLegacyLinkService({
+    legacy: new HttpLegacyLogin({baseUrl:legacyConfig.baseUrl,allowedHost:legacyConfig.allowedHost}), store:legacyStore,
+    sessions, authz:access.authzStore, origin: process.env.OIDC_CALLBACK_URL ? new URL(process.env.OIDC_CALLBACK_URL).origin : "",
+    resetUrl:legacyConfig.resetUrl, secret:safeWriteKey,
+  }) : undefined;
   return {
     services: { application: {
       ...(safeWrites && safeWriteKey
@@ -94,8 +112,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: access.loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),
+      ...(legacyLink ? { legacyLink } : {}),
       }, web: { profiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close()]); },
   };
 }

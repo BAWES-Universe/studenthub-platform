@@ -15,6 +15,7 @@ import type { OrganizationBrands } from "../organization-brands.js";
 import type { OrganizationStores } from "../organization-stores.js";
 import type { OrganizationDeletion } from "../organization-deletion.js";
 import type { OrganizationCreation } from "../organization-creation.js";
+import type { LegacyLinkService } from "../legacy-link-http.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationProfile?: OrganizationProfile;
@@ -27,6 +28,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly organizationStores?: OrganizationStores;
   readonly organizationDeletion?: OrganizationDeletion;
   readonly organizationCreation?: OrganizationCreation;
+  readonly legacyLink?: LegacyLinkService;
 };
 
 export interface GatewayRouteContext {
