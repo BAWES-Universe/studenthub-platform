@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  createSafeWrite, type FieldPolicy, type SafeWriteClock, type SafeWriteImplementation,
+  createSafeWrite, type ConfirmRequest, type FieldPolicy, type PreviewRequest, type SafeWriteClock, type SafeWriteImplementation,
   type SafeWriteSecret, type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 
@@ -12,6 +12,11 @@ export const ORGANIZATION_PROFILE_POLICY: FieldPolicy = Object.freeze({
   allowed: ORGANIZATION_PROFILE_FIELDS,
   maxValueLength: 2_000,
 });
+const ORGANIZATION_PROFILE_NAME_MAX_LENGTH = 255;
+
+function validOrganizationProfileName(field: string, value: string): boolean {
+  return (field !== "name_en" && field !== "name_ar") || value.length <= ORGANIZATION_PROFILE_NAME_MAX_LENGTH;
+}
 
 export interface OrganizationGrantRow { readonly org_id: string; readonly role: string }
 
@@ -46,5 +51,14 @@ export function buildOrganizationProfileWrite(input: OrganizationProfileBuildInp
     ...(input.clock ? { clock: input.clock } : {}),
     ...(input.tokenLifetimeMs === undefined ? {} : { tokenLifetimeMs: input.tokenLifetimeMs }),
   });
-  return { preview: implementation.preview, confirm: implementation.confirm };
+  return {
+    preview(request: PreviewRequest) {
+      return validOrganizationProfileName(request.change.field, request.change.value)
+        ? implementation.preview(request) : Promise.resolve({ ok: false, reason: "invalid_value" as const });
+    },
+    confirm(request: ConfirmRequest) {
+      return validOrganizationProfileName(request.change.field, request.change.value)
+        ? implementation.confirm(request) : Promise.resolve({ ok: false, reason: "invalid_value" as const });
+    },
+  };
 }
