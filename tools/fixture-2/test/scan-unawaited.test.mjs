@@ -11,3 +11,14 @@ test("SHU-254 fixture: ignores awaited calls and comments", () => {
   const src = 'const data = await fetchJson("/x");\n// sendMail(x)\nconst b = 2;';
   assert.deepEqual(findUnawaitedCalls(src), []);
 });
+
+test("SHU-254 fixture: reports a call on the final line", () => {
+  const src = "const a = 1;\nsendMail(to);";
+  assert.deepEqual(findUnawaitedCalls(src), [{ line: 2, helper: "sendMail" }]);
+});
+
+test("SHU-254 fixture: reports a call in single-line input", () => {
+  assert.deepEqual(findUnawaitedCalls("loadConfig();"), [
+    { line: 1, helper: "loadConfig" },
+  ]);
+});
