@@ -29,13 +29,30 @@ const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
 const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06fa-\u06fc]/u;
 
+export function validPersonBirthDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 function validBirthDate(value: string, today: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return false;
   const [year, month, day] = value.split("-").map(Number) as [number, number, number];
   const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return false;
+  if (!validPersonBirthDate(value)) return false;
   const minimum = new Date(`${today}T00:00:00.000Z`); minimum.setUTCFullYear(minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE);
   return date <= minimum;
+}
+
+export function kuwaitDate(now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(entry => entry.type === type)!.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function isPersonProfileMinimumAge(value: string, today: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && validBirthDate(value, today);
 }
 
 export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = "2026-10-30"): string | null {
@@ -66,7 +83,7 @@ export function createPersonSelfEdit(options: {
   const clock = options.clock ?? { now: () => new Date() };
   const normalize = <T extends PreviewRequest | ConfirmRequest>(request: T): T | null => {
     if (!PERSON_SELF_EDIT_FIELDS.includes(request.change.field as PersonSelfEditField)) return request;
-    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, clock.now().toISOString().slice(0, 10));
+    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, kuwaitDate(clock.now()));
     return value === null ? null : { ...request, change: { ...request.change, value } };
   };
   return Object.freeze({

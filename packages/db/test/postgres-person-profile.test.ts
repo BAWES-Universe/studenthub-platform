@@ -124,14 +124,16 @@ test("SHU413_WRITE Postgres writes every choice twice with stable text state", a
   await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
   const store = new PostgresPersonProfileStore({ pool });
   const writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32), clock: { now: () => new Date("2026-10-30T12:00:00.000Z") } });
-  for (const [field, value] of Object.entries({ gender: "female", birthDate: "2000-02-29", drivingLicence: "true", jobSearchStatus: "open_to_offers" })) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+  const changes = { gender: ["male", "female"], birthDate: ["2000-02-28", "2000-02-29"], drivingLicence: ["true", "false"], jobSearchStatus: ["active", "open_to_offers"] } as const;
+  for (const [field, values] of Object.entries(changes)) {
+    for (const [attempt, value] of values.entries()) {
       const change = { personRef: personRecordRef(id), field, value }, principalRef = safeWritePrincipalRef(id);
       const preview = await writer().preview({ principalRef, change }); assert.ok(preview.ok, `${field} preview ${attempt}`);
       if (preview.ok) assert.ok((await writer().confirm({ principalRef, change, token: preview.token })).ok, `${field} confirm ${attempt}`);
     }
   }
-  const preferences = await store.readOwnPreferences(id) as Record<string, { value: unknown }>;
+  const preferences = await store.readOwnPreferences(id) as Record<string, { value: unknown; updatedAt: string }>;
   assert.deepEqual(Object.fromEntries(Object.entries(preferences).filter(([key]) => ["gender", "birthDate", "drivingLicence", "jobSearchStatus"].includes(key)).map(([key, entry]) => [key, entry.value])),
-    { gender: "female", birthDate: "2000-02-29", drivingLicence: "true", jobSearchStatus: "open_to_offers" });
+    { gender: "female", birthDate: "2000-02-29", drivingLicence: "false", jobSearchStatus: "open_to_offers" });
+  for (const field of Object.keys(changes)) assert.match(preferences[field]!.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });

@@ -110,7 +110,7 @@ test("SHU413_AGE uses the service clock and the single minimum-age setting", asy
   });
   const preview = (value: string) => writer.preview({ principalRef, change: { personRef, field: "birthDate", value } });
   assert.equal((await preview("2010-10-30")).ok, true);
-  assert.deepEqual(await preview("2010-10-31"), { ok: false, reason: "invalid_value" });
+  assert.equal((await preview("2010-10-31")).ok, true);
   assert.deepEqual(await preview("2010-02-30"), { ok: false, reason: "invalid_value" });
 });
 
@@ -125,17 +125,17 @@ test("SHU413_WRITE accepts only platform enums for the four choice fields", () =
   }
 });
 
-test("SHU413_WRITE a bad stored birth date makes only birth date and its age unavailable", async () => {
+test("SHU413_AGE an implausibly old stored birth date keeps the date and makes only age unavailable", async () => {
   const repository = new OwnProfileRepository({
     principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
     source: { resolveLink: async () => ({ kind: "linked", candidateRef: "candidate" }), readCandidate: async () => SYNTHETIC_PROFILE_FIXTURES.populated },
-    preferences: { readOwnPreferences: async () => ({ birthDate: { value: "bad", updatedAt: "2026-10-30T00:00:00.000Z" } }) } as never,
+    preferences: { readOwnPreferences: async () => ({ birthDate: { value: "1800-01-01", updatedAt: "2026-10-30T00:00:00.000Z" } }) } as never,
     today: () => "2026-10-30",
   });
   const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
   assert.equal(result.kind, "found");
   if (result.kind !== "found") return;
-  assert.equal(result.profile.fields.birthDate.state, "unavailable");
+  assert.equal(result.profile.fields.birthDate.state, "available");
   assert.equal(result.profile.fields.age.state, "unavailable");
   assert.equal(result.profile.fields.gender.state, "available");
 });

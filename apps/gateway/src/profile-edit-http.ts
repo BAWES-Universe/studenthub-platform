@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -36,6 +36,7 @@ function refusal(reason: RejectionReason): ProfileEditResult {
     : reason.startsWith("token_") || reason === "state_changed" ? 409 : 400, body: { error: reason } };
 }
 export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; store: PersonProfileEditStore; secret: SafeWriteSecret; clock?: SafeWriteClock }): ProfileEdit {
+  const clock = ports.clock ?? { now: () => new Date() };
   const principal = async (session: string | undefined) => session ? (await ports.sessions.get(session))?.personId : undefined;
   const writer = (id: string) => createPersonSelfEdit({ store: ports.store.forPrincipal(id), secret: ports.secret, ...(ports.clock ? { clock: ports.clock } : {}) });
   return {
@@ -43,6 +44,8 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       const id = await principal(session); if (!id) return { status: 401, body: { error: "unauthorized" } };
       if (!exact(body, ["field", "value"])) return { status: 400, body: { error: "invalid_request" } };
       const selected = field(body.field); if (!selected || typeof body.value !== "string") return refusal("invalid_value");
+      const today = kuwaitDate(clock.now());
+      if (selected === "birthDate" && validPersonBirthDate(body.value) && body.value <= today && !isPersonProfileMinimumAge(body.value, today)) return { status: 400, body: { error: "minimum_age" } };
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : refusal(result.reason);
     },
@@ -96,16 +99,17 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Job-search status" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work" };
 const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
     : field === "jobSearchStatus" ? ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[value]!
       : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";
-  if (selected === "gender") return `<select name="value"${described}><option value="male"${value === "male" ? " selected" : ""}>Male</option><option value="female"${value === "female" ? " selected" : ""}>Female</option><option value="other"${value === "other" ? " selected" : ""}>Other</option></select>`;
-  if (selected === "drivingLicence") return `<select name="value"${described}><option value="true"${value === "true" ? " selected" : ""}>Yes</option><option value="false"${value === "false" ? " selected" : ""}>No</option></select>`;
-  if (selected === "jobSearchStatus") return `<select name="value"${described}><option value="not_looking"${value === "not_looking" ? " selected" : ""}>Not looking</option><option value="active"${value === "active" ? " selected" : ""}>Actively looking</option><option value="open_to_offers"${value === "open_to_offers" ? " selected" : ""}>Open to offers</option></select>`;
+  const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}"${value === code ? " checked" : ""}${described}>${label}</label>`).join("");
+  if (selected === "gender") return radios([["male","Male"],["female","Female"],["other","Other"]]);
+  if (selected === "drivingLicence") return radios([["true","Yes"],["false","No"]]);
+  if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
   if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
   if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
   return `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}"${described}>`;
@@ -116,9 +120,9 @@ export function profileEditSummary(value: string): string {
   return result + (result.length < value.length ? "…" : "");
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
-function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
+function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string, minimumAge = false) {
   const label = FIELD_LABELS[selected], control = editControl(selected, value, true);
-  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${minimumAge ? `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile` : `Enter a value that follows the rules for ${label.toLowerCase()}.`}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
   const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
@@ -131,7 +135,7 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age")) invalidForm(write, selected, values.value, reason === "minimum_age"); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
