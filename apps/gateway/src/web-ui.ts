@@ -342,8 +342,8 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
   const loaded = completeness ? completenessChoices : login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
   const originChoices = {
-    countries: Array.isArray(loaded?.countries) ? loaded.countries : profile.fields.nationality.state === "available" && profile.fields.nationality.editValue ? [{ id: profile.fields.nationality.editValue, code: "", name: profile.fields.nationality.value }] : [],
-    universities: Array.isArray(loaded?.universities) ? loaded.universities : profile.fields.university.state === "available" && profile.fields.university.editValue ? [{ id: profile.fields.university.editValue, name: profile.fields.university.value }] : [],
+    countries: Array.isArray(loaded?.countries) ? loaded.countries : [],
+    universities: Array.isArray(loaded?.universities) ? loaded.universities : [],
   };
   const nationalityId = profile.fields.nationality.state === "available" ? profile.fields.nationality.editValue : undefined;
   const nationalityIsKuwaiti = Array.isArray(loaded?.countries) && loaded.countries.some(item => item.id === nationalityId && item.code === "KW");

@@ -19,6 +19,7 @@ interface FixtureOptions {
   readonly civilConfigured?: boolean;
   readonly missingPhoto?: boolean;
   readonly allMissing?: boolean;
+  readonly nationalityMissing?: boolean;
 }
 
 async function fixture(t: TestContext, failure?: "background" | "choices" | "civil" | "documents", options: FixtureOptions = {}) {
@@ -32,6 +33,7 @@ async function fixture(t: TestContext, failure?: "background" | "choices" | "civ
     today: () => "2026-11-11",
   });
   const counts = { profile: 0, background: 0, choices: 0, civil: 0, documents: 0, writes: 0 };
+  const language = options.language ?? "en";
   const login: BrowserLoginApplication = {
     ...rig.app,
     browserEdit: { async notice() { return {}; } } as never,
@@ -40,7 +42,7 @@ async function fixture(t: TestContext, failure?: "background" | "choices" | "civ
       async preview() { counts.writes++; throw new Error("write"); }, async confirm() { counts.writes++; throw new Error("write"); }, async receipt() { counts.writes++; throw new Error("write"); },
     },
     ...(options.civilConfigured === false ? {} : { civilId: { async readOwn() { counts.civil++; if (failure === "civil") throw new Error("civil"); return options.allMissing ? null : { maskedNumber: "***", expiry: "2030-01-01" }; } } as never }),
-    web: { origin: "https://profile.test.invalid", returnTo: "https://profile.test.invalid/profile", profiles: { async readOwn(request) { counts.profile++; const found = await repository.readOwn(request); if (found.kind !== "found" || (!options.language && !options.clearDisplayName && !options.allMissing)) return found; const written = { kind: "written_by_person" as const, observedAt: found.profile.asOfDate }; const unavailable = (name: keyof typeof found.profile.fields) => ({ state: "unavailable" as const, reason: "not_recorded" as const, provenance: found.profile.fields[name]!.provenance, freshness: written }); const fields = { ...found.profile.fields, ...(options.language ? { language: { state: "available" as const, value: options.language, provenance: found.profile.fields.language.provenance, freshness: written } } : {}), ...(options.clearDisplayName ? { displayName: { state: "available" as const, value: " ", provenance: found.profile.fields.displayName.provenance, freshness: written } } : {}), ...(options.allMissing ? { displayName: unavailable("displayName"), arabicName: unavailable("arabicName"), gender: unavailable("gender"), objective: unavailable("objective"), phone: unavailable("phone"), birthDate: unavailable("birthDate"), nationality: { state: "available" as const, value: "United States", editValue: "US", provenance: found.profile.fields.nationality.provenance, freshness: written }, civilId: unavailable("civilId"), drivingLicence: unavailable("drivingLicence"), area: unavailable("area"), kuwaitiMother: unavailable("kuwaitiMother") } : {}) }; return { kind: "found" as const, profile: { ...found.profile, fields } as never }; } } },
+    web: { origin: "https://profile.test.invalid", returnTo: "https://profile.test.invalid/profile", profiles: { async readOwn(request) { counts.profile++; const found = await repository.readOwn(request); if (found.kind !== "found") return found; const written = { kind: "written_by_person" as const, observedAt: found.profile.asOfDate }; const unavailable = (name: keyof typeof found.profile.fields) => ({ state: "unavailable" as const, reason: "not_recorded" as const, provenance: found.profile.fields[name]!.provenance, freshness: written }); const fields = { ...found.profile.fields, language: { state: "available" as const, value: language, provenance: found.profile.fields.language.provenance, freshness: found.profile.fields.language.freshness }, ...(options.clearDisplayName ? { displayName: { state: "available" as const, value: " ", provenance: found.profile.fields.displayName.provenance, freshness: written } } : {}), ...(options.allMissing ? { displayName: unavailable("displayName"), arabicName: unavailable("arabicName"), gender: unavailable("gender"), objective: unavailable("objective"), phone: unavailable("phone"), birthDate: unavailable("birthDate"), nationality: options.nationalityMissing ? unavailable("nationality") : { state: "available" as const, value: "United States", editValue: "US", provenance: found.profile.fields.nationality.provenance, freshness: written }, civilId: unavailable("civilId"), drivingLicence: unavailable("drivingLicence"), area: unavailable("area"), kuwaitiMother: unavailable("kuwaitiMother") } : {}) }; return { kind: "found" as const, profile: { ...found.profile, fields } as never }; } } },
   };
   const documentTypes = options.complete && !options.allMissing ? options.missingPhoto ? ["civil-id-front", "civil-id-back"] : ["personal-photo", "civil-id-front", "civil-id-back"] : [];
   const documents = { async list() { counts.documents++; if (failure === "documents") throw new Error("documents"); return Array.from({ length: options.itemCount ?? documentTypes.length }, (_, index) => ({ id: `document-${index}`, type: documentTypes[index % Math.max(1, documentTypes.length)] ?? "resume" })); }, async issueDelivery() { throw new Error("delivery"); } };
@@ -84,7 +86,7 @@ test("Q14_4_CHECKLIST real GET renders linked missing items in fixed order", asy
 });
 
 test("Q14_4_ORDER real GET asserts every requirement word and target in English and Arabic", async t => {
-  const requirements = ["nationality", "display_name", "arabic_name", "gender", "objective", "personal_photo", "email", "phone", "birth_date", "civil_id", "civil_expiry", "civil_front", "civil_back", "driving_licence", "location", "kuwaiti_mother", "education", "skill"] as const;
+  const requirements = ["display_name", "arabic_name", "gender", "objective", "personal_photo", "email", "phone", "birth_date", "civil_id", "civil_expiry", "civil_front", "civil_back", "driving_licence", "location", "kuwaiti_mother", "education", "skill"] as const;
   const editable: Readonly<Record<string, string>> = { nationality: "nationality", display_name: "displayName", arabic_name: "arabicName", gender: "gender", objective: "objective", phone: "phone", birth_date: "birthDate", driving_licence: "drivingLicence", kuwaiti_mother: "kuwaitiMother" };
   const target = (requirement: string) => editable[requirement] ? `/profile/edit/${editable[requirement]}` : requirement === "location" ? "#field-area" : requirement === "civil_id" || requirement === "civil_expiry" ? "#field-civilId" : requirement === "personal_photo" || requirement === "civil_front" || requirement === "civil_back" ? "/profile/documents" : requirement === "education" || requirement === "skill" ? "/profile/background" : undefined;
   for (const language of ["en", "ar"] as const) {
@@ -98,6 +100,11 @@ test("Q14_4_ORDER real GET asserts every requirement word and target in English 
       const index = checklist.indexOf(fragment); assert.ok(index >= 0, `${language} ${words} must carry exactly ${href ?? "no link"}`); assert.ok(index > cursor, `${language} ${words} must follow fixed order`); cursor = index;
     }
     assert.equal(checklist.match(/<li>/g)?.length, requirements.length, `${language} checklist has the exact requirement set`);
+    const nationality = await fixture(t, undefined, { allMissing: true, nationalityMissing: true, email: "", language });
+    const nationalityHtml = await (await nationality.get("text/html")).text();
+    const nationalityChecklist = nationalityHtml.match(/<section class="p-card p-checklist">[^]*?<\/section>/)?.[0] ?? "";
+    assert.ok(nationalityChecklist.includes(`<li><a href="/profile/edit/nationality">${PROFILE_COPY[language]["pending.nationality"]}</a></li>`), `${language} nationality must carry its own edit target`);
+    assert.ok(!nationalityChecklist.includes(PROFILE_COPY[language]["pending.kuwaiti_mother"]), `${language} Kuwaiti-mother requirement is not guessed without nationality`);
   }
 });
 
@@ -139,8 +146,8 @@ test("Q14_4_EMAIL real login profile email completes the page and omission lists
   const withoutEmail = await fixture(t, undefined, { complete: true, email: "" });
   const missing = await withoutEmail.get("text/html"); const missingHtml = await missing.text();
   assert.equal(missing.status, 200);
-  assert.match(missingHtml, /<li>Email address <span>comes from your Universe account<\/span><\/li>/);
-  assert.doesNotMatch(missingHtml, /<a[^>]*>Email address/);
+  assert.match(missingHtml, /<li>Email <span>comes from your Universe account<\/span><\/li>/);
+  assert.doesNotMatch(missingHtml, /<a[^>]*>Email/);
 });
 
 test("Q14_4_SHOWN real GET is complete, reacts to one removed document and one cleared field, with fixed reads", async t => {
@@ -157,7 +164,7 @@ test("Q14_4_SHOWN real GET is complete, reacts to one removed document and one c
   assert.match(removedChecklist, /Personal photo/); assert.equal(removedChecklist.match(/<li>/g)?.length, 1, "removing one photo must show exactly that item");
   const cleared = await fixture(t, undefined, { complete: true, clearDisplayName: true });
   const response = await cleared.get("text/html"); const html = await response.text();
-  assert.match(html, /<li><a href="\/profile\/edit\/displayName">Full name<\/a><\/li>/);
+  assert.match(html, /<li><a href="\/profile\/edit\/displayName">Display name<\/a><\/li>/);
 });
 
 test("Q14_4_ROUTE Arabic real GET keeps each translated checklist word with its target", async t => {
