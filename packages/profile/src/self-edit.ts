@@ -6,7 +6,7 @@ export const PROFILE_EDIT_LIMITS: Readonly<Record<ProfileEditField, number>> = O
   display_name: 255, arabic_name: 255, objective: 100, introduction: 5_000, preferred_time: 100,
 });
 const OPTIONAL = new Set<ProfileEditField>(["arabic_name", "objective", "introduction", "preferred_time"]);
-const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufffe\uffff]/u;
+const FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufffe\uffff]/u;
 const WORD = /\p{L}[\p{L}\p{M}]*/gu;
 const ARABIC_LETTER = /\p{Script=Arabic}/u;
 

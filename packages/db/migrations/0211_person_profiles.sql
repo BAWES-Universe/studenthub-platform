@@ -3,7 +3,7 @@ CREATE FUNCTION person_profile_name_valid(value text, arabic boolean) RETURNS bo
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
  SELECT value IS NFC NORMALIZED AND char_length(value) BETWEEN 1 AND 255
    AND value = btrim(value, E' \t\n\r\f\v\u00a0')
-   AND value !~ '[[:space:]]{2}|[\u0001-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]'
+   AND value !~ '[[:space:]]{2}|[\t\n\r\f\v\u00A0\u1680\u2000-\u200F\u2028-\u202F\u205F\u2060-\u206F\u3000\u0001-\u001F\u007F-\u009F\u00AD\u061C\uFEFF]'
    AND (SELECT count(*) >= 2 FROM regexp_matches(value, '[[:alpha:]][[:alpha:]\u0300-\u036F]*', 'g'))
    AND (NOT arabic OR value ~ '[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]')
 $$;
@@ -11,7 +11,7 @@ CREATE FUNCTION person_profile_text_valid(value text, maximum integer) RETURNS b
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
  SELECT value IS NULL OR (value IS NFC NORMALIZED AND char_length(value) BETWEEN 1 AND maximum
    AND value = btrim(value, E' \t\n\r\f\v\u00a0')
-   AND value !~ '[\u0001-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]')
+   AND value !~ '[\t\n\r\f\v\u00A0\u1680\u2000-\u200F\u2028-\u202F\u205F\u2060-\u206F\u3000\u0001-\u001F\u007F-\u009F\u00AD\u061C\uFEFF]')
 $$;
 CREATE TABLE person_profiles (
  principal_id text PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,

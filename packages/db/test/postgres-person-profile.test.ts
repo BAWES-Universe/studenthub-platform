@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import pg from "pg";
+import { createPrincipal, InMemoryAuthzStore } from "@studenthub/contracts";
+import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES, buildProfileEditWrite } from "@studenthub/profile";
+import { PostgresAuthzStore, PostgresPersonProfileStore, runMigrations, personRecordRef, safeWritePrincipalRef } from "../src/index.js";
+import { profileDocument } from "../../../apps/gateway/src/web-ui.js";
+
+const url=process.env.DATABASE_URL??"";let pool:pg.Pool,authz:PostgresAuthzStore,store:PostgresPersonProfileStore;
+before(async()=>{if(!url)throw new Error("DATABASE_URL is required");pool=new pg.Pool({connectionString:url});await runMigrations(pool);authz=new PostgresAuthzStore(pool);store=new PostgresPersonProfileStore({pool})});
+after(async()=>{await authz.close();await store.close();await pool.end()});
+async function person(){const id=`shu390-${randomUUID()}`;await authz.registerPrincipal(createPrincipal({id,pbuuids:[]}));return id}
+async function write(id:string,field:"display_name"|"arabic_name"|"objective"|"introduction"|"preferred_time",value:string){const writer=buildProfileEditWrite({store:store.forPrincipal(id),secret:"shu390-postgres-secret-is-at-least-thirty-two-bytes",field});const change={personRef:personRecordRef(id),field,value};const preview=await writer.preview({principalRef:safeWritePrincipalRef(id),change});assert.equal(preview.ok,true);if(!preview.ok)return;assert.equal((await writer.confirm({principalRef:safeWritePrincipalRef(id),change,token:preview.token})).ok,true)}
+
+test("SHU372_RULES PostgreSQL CHECK matches names and normalized text",async()=>{const id=await person();for(const name of ["Noor Al-Sabah","O'Brien Smith","Abdul-Aziz Al Saud"])await assert.doesNotReject(()=>pool.query("INSERT INTO person_profiles(principal_id,display_name,display_name_updated_at) VALUES($1,$2,now()) ON CONFLICT(principal_id) DO UPDATE SET display_name=$2,display_name_updated_at=now()",[id,name]));for(const bad of ["Ahmed 3"," two\twords ","one\u2000two"])await assert.rejects(()=>pool.query("UPDATE person_profiles SET display_name=$2 WHERE principal_id=$1",[id,bad]),(e:any)=>e.code==="23514");await pool.query("DELETE FROM principals WHERE id=$1",[id]);assert.equal((await pool.query("SELECT 1 FROM person_profiles WHERE principal_id=$1",[id])).rowCount,0)});
+
+test("SHU372_WRITE all fields render as person-written and clearing wins over populated snapshot",async()=>{const id=await person();const values={display_name:"Noor Al-Sabah",arabic_name:"نور الصباح",objective:"Build useful things",introduction:"A careful introduction",preferred_time:"Weekday mornings"} as const;for(const [field,value] of Object.entries(values) as [keyof typeof values,string][])await write(id,field,value);
+ const repo=new OwnProfileRepository({principals:new InMemoryAuthzStore({principals:[createPrincipal({id,pbuuids:["pbuuid"]})]}),source:new InMemoryApprovedProfileAdapter({links:[{principalId:id,candidateRef:"candidate"}],rows:new Map([["candidate",SYNTHETIC_PROFILE_FIXTURES.populated]])}),preferences:store,today:()=>"2026-10-29"});
+ let result=await repo.readOwn({requesterPrincipalId:id,targetPersonId:id});assert.equal(result.kind,"found");if(result.kind!=="found")return;let html=(await profileDocument({status:200,body:result.profile},{profileEditor:{} as never} as never)).html;for(const value of Object.values(values))assert.match(html,new RegExp(value));assert.equal((html.match(/Updated by you/g)??[]).length>=5,true);
+ await write(id,"objective","");result=await repo.readOwn({requesterPrincipalId:id,targetPersonId:id});assert.equal(result.kind,"found");if(result.kind!=="found")return;html=(await profileDocument({status:200,body:result.profile},{profileEditor:{} as never} as never)).html;assert.match(html,/<dt>Objective<\/dt><dd><span class="missing"[^>]*>Not recorded<\/span><\/dd><small class="field-meta">Updated by you/);assert.doesNotMatch(html,/Build useful things/);
+});
+
+test("SHU372_OWNER store refuses foreign references, replay and stale before",async()=>{const [a,b]=[await person(),await person()];const port=store.forPrincipal(a);assert.equal(await port.ownedRecord(safeWritePrincipalRef(b)),null);assert.deepEqual(await port.commit({} as never),{ok:false,reason:"not_own_record"});await write(a,"objective","first");const stale=buildProfileEditWrite({store:port,secret:"shu390-stale-secret-is-at-least-thirty-two-bytes",field:"objective"});const change={personRef:personRecordRef(a),field:"objective",value:"second"};const p=await stale.preview({principalRef:safeWritePrincipalRef(a),change});assert.equal(p.ok,true);if(!p.ok)return;await write(a,"objective","elsewhere");assert.deepEqual(await stale.confirm({principalRef:safeWritePrincipalRef(a),change,token:p.token}),{ok:false,reason:"state_changed"})});

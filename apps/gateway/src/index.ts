@@ -180,7 +180,19 @@ export function createGatewayServer(
     void inSpan(webSpan ?? span, async () => {
     try {
     const editor=(login as BrowserLoginApplication & {profileEditor?:ProfileEditService}|undefined)?.profileEditor;
-    if(await handleProfileEditPage(request,response,editor,login?.web?.origin,(status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body))))return;
+    if(await handleProfileEditPage(request,response,editor,login?.web?.origin,
+      (status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body)),
+      async(sessionId,field)=>{
+        if(!sessionId||!login?.web)return undefined;
+        const authorized=await login.profile({sessionId});
+        const personId=authorized.status===200?authorized.body?.personId:undefined;
+        if(typeof personId!=="string")return undefined;
+        const result=await login.web.profiles.readOwn({requesterPrincipalId:personId,targetPersonId:personId});
+        if(result.kind!=="found")return undefined;
+        const key={display_name:"displayName",arabic_name:"arabicName",objective:"objective",introduction:"intro",preferred_time:"preferredTime"}[field] as "displayName"|"arabicName"|"objective"|"intro"|"preferredTime";
+        const shown=result.profile.fields[key];
+        return shown.state==="available"?String(shown.value):"Unavailable";
+      }))return;
     if(await handleProfileEdit(request,response,editor,login?.web?.origin))return;
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
