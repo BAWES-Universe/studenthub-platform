@@ -31,6 +31,15 @@ export async function handleCatalogue(
     if (!actor) return true;
     requireService(service);
 
+    if (request.method === "PUT" && parts.length === 4 && parts[1] === "bank" && parts[3] === "payment-details") {
+      send(response, 200, await service.setBankPaymentDetails(actor, parts[2]!, await jsonBody(request)));
+      return true;
+    }
+    if (request.method === "GET" && parts.length === 4 && parts[1] === "bank" && parts[3] === "payment-details") {
+      send(response, 200, await service.bankPaymentDetails(actor, parts[2]!));
+      return true;
+    }
+
     if (request.method === "POST" && parts.length === 2 && parts[1] !== "submissions") {
       send(response, 201, await service.create(actor, parts[1], await jsonBody(request)));
       return true;

@@ -1,4 +1,5 @@
 import type { Role } from "@studenthub/contracts";
+import type { BankPaymentDetails } from "./bank-payment-details.js";
 
 export const CATALOGUE_TYPES = [
   "country", "currency", "bank", "tag", "brand", "mall",
@@ -58,6 +59,8 @@ export interface CatalogueStore {
   createItem(input: CatalogueItem & { readonly actorRef: string }): Promise<CatalogueItem>;
   updateItem(type: CatalogueType, id: string, input: CatalogueItemInput & { readonly actorRef: string; readonly now: string }): Promise<CatalogueItem | undefined>;
   softDeleteItem(type: CatalogueType, id: string, actorRef: string, now: string): Promise<CatalogueItem | undefined>;
+  readBankPaymentDetails(bankId: string): Promise<BankPaymentDetails | undefined>;
+  writeBankPaymentDetails(bankId: string, details: Omit<BankPaymentDetails, "bankId" | "updatedAt"> & { readonly actorRef: string; readonly now: string }): Promise<BankPaymentDetails | undefined>;
   createSubmission(input: CatalogueSubmission & { readonly actorRef: string; readonly orgId: string }): Promise<CatalogueSubmission>;
   listSubmissions(status: CatalogueSubmission["status"], type: SubmittableCatalogueType | undefined, after: CatalogueSortKey | undefined, limit: number): Promise<readonly CatalogueSubmission[]>;
   moderateSubmission(id: string, decision: "approved" | "rejected", actorRef: string, now: string, itemId: string): Promise<CatalogueSubmission | undefined>;
