@@ -1,0 +1,17 @@
+import pg from 'pg';
+import { databaseUrl } from './connection.js';
+type JobName='heartbeat'|'missed_run_check';type JobOutcome='succeeded'|'failed'|'refused_overlap';
+interface JobRun{readonly runId:string;readonly jobName:JobName;readonly startedAt:Date;readonly finishedAt:Date;readonly durationMs:number;readonly outcome:JobOutcome}
+interface JobSummary{readonly jobName:JobName;readonly lastRun:JobRun|null;readonly lastSucceededAt:Date|null;readonly leaseExpiresAt:Date|null}
+interface JobStore{takeLease(jobName:JobName,runId:string,now:Date,expiresAt:Date):Promise<boolean>;renewLease(jobName:JobName,runId:string,now:Date,expiresAt:Date):Promise<boolean>;releaseLease(jobName:JobName,runId:string):Promise<void>;recordRun(run:JobRun):Promise<void>;summaries(jobNames:readonly JobName[]):Promise<readonly JobSummary[]>}
+
+export class PostgresJobRunsStore implements JobStore {
+  readonly #pool:pg.Pool;readonly #owns:boolean;
+  constructor(options:{connectionString?:string;pool?:pg.Pool}={}){this.#owns=!options.pool;this.#pool=options.pool??new pg.Pool({connectionString:options.connectionString??databaseUrl()})}
+  async close(){if(this.#owns)await this.#pool.end()}
+  async takeLease(jobName:JobName,runId:string,now:Date,expiresAt:Date):Promise<boolean>{const result=await this.#pool.query(`INSERT INTO job_leases(job_name,holder_run_id,expires_at) VALUES($1,$2,$3) ON CONFLICT(job_name) DO UPDATE SET holder_run_id=EXCLUDED.holder_run_id,expires_at=EXCLUDED.expires_at WHERE job_leases.expires_at <= $4 RETURNING 1`,[jobName,runId,expiresAt,now]);return result.rowCount===1}
+  async renewLease(jobName:JobName,runId:string,now:Date,expiresAt:Date):Promise<boolean>{const result=await this.#pool.query(`UPDATE job_leases SET expires_at=$4 WHERE job_name=$1 AND holder_run_id=$2 AND expires_at>$3`,[jobName,runId,now,expiresAt]);return result.rowCount===1}
+  async releaseLease(jobName:JobName,runId:string){await this.#pool.query(`DELETE FROM job_leases WHERE job_name=$1 AND holder_run_id=$2`,[jobName,runId])}
+  async recordRun(run:JobRun){await this.#pool.query(`INSERT INTO job_runs(run_id,job_name,started_at,finished_at,duration_ms,outcome) VALUES($1,$2,$3,$4,$5,$6)`,[run.runId,run.jobName,run.startedAt,run.finishedAt,run.durationMs,run.outcome])}
+  async summaries(jobNames:readonly JobName[]):Promise<readonly JobSummary[]>{if(!jobNames.length)return[];const {rows}=await this.#pool.query<{job_name:JobName;run_id:string|null;started_at:Date|null;finished_at:Date|null;duration_ms:number|null;outcome:JobRun['outcome']|null;last_succeeded_at:Date|null;expires_at:Date|null}>(`SELECT names.job_name,last_run.run_id,last_run.started_at,last_run.finished_at,last_run.duration_ms,last_run.outcome,success.last_succeeded_at,l.expires_at FROM unnest($1::text[]) names(job_name) LEFT JOIN LATERAL (SELECT run_id,started_at,finished_at,duration_ms,outcome FROM job_runs WHERE job_name=names.job_name ORDER BY started_at DESC LIMIT 1) last_run ON true LEFT JOIN LATERAL (SELECT max(finished_at) last_succeeded_at FROM job_runs WHERE job_name=names.job_name AND outcome='succeeded') success ON true LEFT JOIN job_leases l ON l.job_name=names.job_name`,[jobNames]);return rows.map(r=>({jobName:r.job_name,lastRun:r.run_id?{runId:r.run_id,jobName:r.job_name,startedAt:r.started_at!,finishedAt:r.finished_at!,durationMs:r.duration_ms!,outcome:r.outcome!}:null,lastSucceededAt:r.last_succeeded_at,leaseExpiresAt:r.expires_at}))}
+}

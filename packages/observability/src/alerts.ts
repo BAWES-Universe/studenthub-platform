@@ -1,14 +1,14 @@
 /** Local rule evaluation only. No notification or external integration is activated. */
-export interface Alert {
+export type Alert = {
   code: 'journey_failures' | 'journey_latency' | 'telemetry_dropped' | 'telemetry_unavailable';
   owner: 'platform-on-call';
   runbook: 'docs/observability.md';
-}
+}|{code:'job_failed'|'job_overlap'|'job_missed';jobName:'heartbeat'|'missed_run_check';owner:'platform-on-call';runbook:'docs/observability.md'};
 export function evaluateAlerts(snapshot: {
   metrics: Record<string, { count: number; buckets: number[] }>;
   counters: { dropped: number; unavailable: number };
 }): Alert[] {
-  const codes = new Set<Alert['code']>();
+  const codes = new Set<Exclude<Alert['code'],'job_failed'|'job_overlap'|'job_missed'>>();
   const journeys = new Map<string, { count: number; failed: number; slow: number }>();
   for (const [key, metric] of Object.entries(snapshot.metrics)) {
     const [component, journey, outcome] = key.split(':');

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
   PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore, PostgresPersonProfileStore } from "@studenthub/db";
+import{PostgresJobRunsStore}from"@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -43,6 +44,7 @@ import {createOrganizationCreation}from"./organization-creation.js";
 import {createPayContracts}from"./pay-contracts-http.js";
 import { createBankDetails } from "./bank-details.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
+import{createAdminJobs,type AdminJobsPage}from"./admin-jobs.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -174,6 +176,7 @@ export class RefreshingJwksResolver implements JwksResolver {
 
 export interface RuntimeLogin {
   readonly application: BrowserLoginApplication;
+  readonly adminJobs:AdminJobsPage;
   close(): Promise<void>;
 }
 
@@ -222,6 +225,7 @@ export function createRuntimeLoginFromEnv(
   const safeWriteKey = safeWriteSigningKey(env.SAFE_WRITE_SIGNING_KEY);
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
+  const jobRunsStore=new PostgresJobRunsStore({connectionString:value("DATABASE_URL")});
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles,
@@ -286,6 +290,7 @@ export function createRuntimeLoginFromEnv(
     store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,storeCounts:organizationStoresStore,accountManagers:organizationAccountManagerReads,profiles:organizationProfileReads,
   });
   return {
+    adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRunsStore),
     application: {
       ...application,
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
@@ -321,6 +326,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
+      await jobRunsStore.close();
       await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), personProfiles?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
         organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
     },

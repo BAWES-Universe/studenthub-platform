@@ -27,6 +27,7 @@ import {
   type AuthzMiddleware,
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
+import {renderAdminJobs,type AdminJobsPage} from "./admin-jobs.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
 import { handleProfileEdit, handleProfileEditPage, shownProfileValue } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
@@ -151,6 +152,7 @@ export function createGatewayServer(
   catalogue?: ReferenceCatalogue,
   profileRecords?: ProfileRecordsRuntime,
   organizationDocuments?: OrganizationDocumentsRuntime,
+  adminJobs?: AdminJobsPage,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -250,6 +252,12 @@ export function createGatewayServer(
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
       return;
+    }
+
+    if(request.method==="GET"&&request.url&&requestPath(request.url)==="/admin/jobs"){
+      let result:import("./admin-jobs.js").AdminJobsResult;
+      try{result=adminJobs?await adminJobs.open(cookieValue(request.headers.cookie,"__Host-studenthub_session")):{status:404,body:{error:"not_found"}}}catch{result={status:404,body:{error:"not_found"}}}
+      if(html&&result.status===200)writeHtml(response,200,renderAdminJobs(result));else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return;
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
@@ -586,6 +594,7 @@ if (entrypoint === import.meta.url) {
     runtimeCatalogue?.service,
     runtimeProfileRecords,
     runtimeOrganizationDocuments,
+    runtimeLogin?.adminJobs,
   );
   server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
   server.listen(port, host, () => {

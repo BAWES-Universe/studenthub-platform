@@ -48,3 +48,4 @@ export {PostgresPayContractSafeWriteStore,PAY_CONTRACT_CREATE_SAFE_WRITE_OPERATI
 export {PostgresOrganizationAccountManagerStore,ORGANIZATION_ACCOUNT_MANAGER_OPERATION,type PostgresOrganizationAccountManagerStoreOptions} from "./postgres-organization-account-manager-store.js";
 export {PostgresOrganizationAccountManagerReads} from "./postgres-organization-account-manager-reads.js";
 export { PostgresPersonProfileStore, PERSON_PROFILE_FIELDS, type PersonProfileField } from "./person-profile-store.js";
+export {PostgresJobRunsStore} from "./postgres-job-runs-store.js";

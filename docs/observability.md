@@ -132,6 +132,14 @@ outputs point to this runbook. Evaluation is local and sending is disabled.
 | journey_latency | At least 20 observations, with more than 5% exceeding 1 second | Inspect the affected journey/dependency, without logging request bodies or widening Sentry capture |
 | telemetry_dropped | Any queue drop during this process lifetime | Check local transport pressure and event volume; do not retry indefinitely or block requests |
 | telemetry_unavailable | Worker creation, error, exit, post or acknowledgment deadline failure | Confirm business health independently; inspect local host resources; restart only under the operator's environment procedure |
+| job_failed | A registered job run fails, including loss of its renewable lease | Owner: platform-on-call. Use this runbook and the closed job name; inspect dependencies without copying exception text or job arguments |
+| job_overlap | A run is refused because the same job holds a live lease | Owner: platform-on-call. Use this runbook; confirm the existing holder is healthy and do not force overlapping execution |
+| job_missed | A job has no success within its declared interval times the grace factor | Owner: platform-on-call. Use this runbook; inspect host scheduling and the last scrubbed run outcome |
+
+Durable `job_runs` records contain only run ID, closed job name, timestamps,
+duration and closed outcome. The read-only admin Jobs page shows those values and
+the derived missed state. Errors, stacks, arguments, row values and personal data
+are never stored or alerted. Scheduling the worker process remains an operator step.
 
 For `dependency_unavailable`, inspect configured dependency health using approved
 operator tooling. For `render_failure`, reproduce with synthetic profile data.
