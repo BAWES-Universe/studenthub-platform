@@ -19,13 +19,15 @@ test("SHU333_PG_CREATE staff creates company and sub-company with count audits",
 });
 
 test("SHU333_PG_REFUSED disallowed and dead parents write nothing", async () => {
+  const auditBefore = Number((await pool.query<{ count: string }>("SELECT count(*)::text count FROM authorization_mutation_audit WHERE operation=$1", [ORGANIZATION_CREATE_OPERATION])).rows[0]!.count);
   for (const [role, scope] of [["staff", "self"], ["org-owner", "subtree"], ["recruiter", "subtree"]] as const) assert.deepEqual(await store.create(await principal(role, scope), "root", `No ${randomUUID()}`), { kind: "not_found" });
   const actor = await principal(); assert.deepEqual(await store.create(actor, "unknown", "No"), { kind: "not_found" });
   const dead = `dead-${randomUUID()}`; await authz.upsertOrganization(createOrganization({ id: dead, name: dead, parentOrgId: "root" })); await pool.query("INSERT INTO organization_deletions(org_id,receipt_ref) VALUES($1,$2)", [dead, "a".repeat(64)]); assert.deepEqual(await store.create(actor, dead, "No"), { kind: "not_found" });
-  assert.equal((await pool.query("SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND actor_principal_ref IS NOT NULL AND target_org_refs='{}'", [ORGANIZATION_CREATE_OPERATION])).rowCount, 0);
+  assert.equal(Number((await pool.query<{ count: string }>("SELECT count(*)::text count FROM authorization_mutation_audit WHERE operation=$1", [ORGANIZATION_CREATE_OPERATION])).rows[0]!.count), auditBefore);
+  assert.equal((await pool.query("SELECT 1 FROM organizations WHERE name LIKE 'No %'")).rowCount, 0);
 });
 
-test("SHU333_PG_HIERARCHY a sub-company cannot have children", async () => { const actor = await principal(), a = await store.create(actor, "root", `A ${randomUUID()}`), b = await store.create(actor, (a as { orgId: string }).orgId, `B ${randomUUID()}`); assert.deepEqual(await store.create(actor, (b as { orgId: string }).orgId, "Too deep"), { kind: "hierarchy" }); });
+test("SHU333_PG_HIERARCHY a sub-company cannot have children and refusal writes nothing", async () => { const actor = await principal(), a = await store.create(actor, "root", `A ${randomUUID()}`), b = await store.create(actor, (a as { orgId: string }).orgId, `B ${randomUUID()}`); const parent = (b as { orgId: string }).orgId, auditBefore = Number((await pool.query<{ count: string }>("SELECT count(*)::text count FROM authorization_mutation_audit WHERE operation=$1", [ORGANIZATION_CREATE_OPERATION])).rows[0]!.count); assert.deepEqual(await store.create(actor, parent, "Too deep"), { kind: "hierarchy" }); assert.equal(Number((await pool.query<{ count: string }>("SELECT count(*)::text count FROM authorization_mutation_audit WHERE operation=$1", [ORGANIZATION_CREATE_OPERATION])).rows[0]!.count), auditBefore); assert.equal((await pool.query("SELECT 1 FROM organizations WHERE parent_org_id=$1 AND name='Too deep'", [parent])).rowCount, 0); });
 
 test("SHU333_PG_NAME_TAKEN names are unique case-insensitively only under one parent", async () => { const actor = await principal(), suffix = randomUUID(), a = await store.create(actor, "root", `Parent ${suffix}`), b = await store.create(actor, "root", `Other ${suffix}`); assert.equal((await store.create(actor, (a as { orgId: string }).orgId, "Acme")).kind, "created"); assert.deepEqual(await store.create(actor, (a as { orgId: string }).orgId, "ACME"), { kind: "name_taken" }); assert.equal((await store.create(actor, (b as { orgId: string }).orgId, "acme")).kind, "created"); });
 
