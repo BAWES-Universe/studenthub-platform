@@ -231,27 +231,24 @@ export function createRuntimeLoginFromEnv(
     clockSkewSeconds: 60,
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
   });
-  const notificationStore=new PostgresNotificationsStore({connectionString:value("DATABASE_URL")});
+  const notificationStore=PostgresNotificationsStore.connect({connectionString:value("DATABASE_URL")});
   const notifications=createNotificationsHttp(application,new NotificationsService(notificationStore,notificationStore,access.services.authzStore));
-  return {
-    application: {
+  const runtimeApplication={
       ...application,
       ...organizationArea.services.application,
       ...ops.services,
       ...profile.services.application,
       ...payContractArea.services,
-      notifications,
       web: {
         origin: new URL(callbackUrl).origin,
-        // Keep the existing exact return allowlist. No Host-derived redirect,
-        // new IdP configuration, or implicit expansion of approved targets.
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
           ? new URL("/profile", callbackUrl).href : undefined,
-        // Called only after application.profile establishes session ownership;
-        // the repository independently re-enforces the same owner boundary.
         profiles: profile.services.web.profiles,
       },
-    } as BrowserLoginApplication,
+    } as BrowserLoginApplication;
+  Object.defineProperty(runtimeApplication,"notifications",{value:notifications,enumerable:false});
+  return {
+    application: runtimeApplication,
     async close() {
       await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),notificationStore.close()]);
     },

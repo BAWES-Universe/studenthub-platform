@@ -7,7 +7,7 @@ export function createNotificationsHttp(login:Pick<LoginApplication,"profile">,s
  return{
   async open(session,page){const p=await principal(session);if(p.status===503)return{status:503,body:{error:"unavailable"}};const personId=(p.body as {personId?:string}).personId;if(!personId)return{status:401,body:{error:"not_found"}};const [body,unreadCount]=await Promise.all([service.list(personId,page),service.count(personId)]);return{status:200,body:{...body,unreadCount}}},
   async count(session){const p=await principal(session),personId=(p.body as {personId?:string}).personId;return p.status===200&&personId?service.count(personId):0},
-  async read(session,id){const p=await principal(session),personId=(p.body as {personId?:string}).personId;if(p.status!==200||!personId)return{status:401};return{status:await service.markRead(personId,id)?204:404}},
+  async read(session,id){const p=await principal(session),personId=(p.body as {personId?:string}).personId;if(p.status!==200||!personId)return{status:401};if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))return{status:404};return{status:await service.markRead(personId,id)?204:404}},
   async readAll(session){const p=await principal(session),personId=(p.body as {personId?:string}).personId;if(p.status!==200||!personId)return{status:401};await service.markAllRead(personId);return{status:204}}
  };
 }

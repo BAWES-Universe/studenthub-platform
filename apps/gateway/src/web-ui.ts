@@ -30,7 +30,6 @@ import type {NotificationPage} from "../../../packages/notifications/src/notific
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
-  readonly notificationCount?: number;
   readonly notifications?: import("./notifications-http.js").NotificationsHttp;
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
