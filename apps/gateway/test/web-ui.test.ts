@@ -88,8 +88,23 @@ test("SHU373_PAGE each profile control is in its own form and choices are read o
   assert.equal(writtenReads,1);assert.equal(catalogueReads,1);
   for(const [label,needle] of [["Gender",'type="radio" name="value" value="male"'],["Birth date",'type="date" name="value"'],["Nationality",`<option value="${country}" selected>Jordan`],["University",`<option value="${university}" selected>Approved University`],["Driving licence",'type="radio" name="value" value="true"'],["Kuwaiti mother",'name="field" value="kuwaitiMother"'],["Looking for work",'type="radio" name="value" value="active"']] as const){const form=html.match(new RegExp(`<form[^>]*aria-label="Change ${label}"[\\s\\S]*?</form>`))?.[0]??"";assert.match(form,new RegExp(needle));}
   assert.match(html,/>None<\/option><option value="">Not listed<\/option>/);assert.match(html,/Staff add new universities/);assert.match(html,/<dt>Kuwaiti mother<\/dt><dd>No<\/dd>/);
+  for (const shown of [
+    /<dt>Gender<\/dt><dd>Male<\/dd>/,
+    /<dt>Age<\/dt><dd>26 years<\/dd>/,
+    /<dt>Nationality<\/dt><dd>Jordan<\/dd>/,
+    /<dt>University<\/dt><dd>Approved University<\/dd>/,
+    /<dt>Driving licence<\/dt><dd>Yes<\/dd>/,
+  ]) assert.match(html, shown);
+  assert.match(html, /<dt>Looking for work<\/dt><dd>Actively looking<\/dd><small class="field-meta">Updated by you · 2026-10-30<\/small>/);
   assert.match(html,/<div class="notice" data-profile-work-status><strong>Looking for work: Actively looking<\/strong><\/div><dl class="profile-fields">/);
   assert.doesNotMatch(html,/<dl class="profile-fields">[\s\S]*?<p>Not listed\? Staff add new universities\.<\/p>/);
+});
+
+test("SHU373_PAGE cleared Kuwaiti-mother is hidden for KW and offered as Not recorded for non-KW", async () => {
+  const id="11111111-1111-4111-8111-111111111111", updatedAt="2026-10-30T12:00:00.000Z";
+  const render=async(code:string)=>{const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"})},today:()=>"2026-10-30",preferences:{readOwnPreferences:async()=>({nationality:{value:id,updatedAt},kuwaitiMother:{value:null,updatedAt}}),readProfileChoices:async()=>({countries:[{id,name:code==="KW"?"Kuwait":"Jordan",code}],universities:[]})} as never});const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")return "";return (await profileDocument({status:200,body:result.profile},{profileEdit:{}} as BrowserLoginApplication)).html;};
+  const kw=await render("KW");assert.doesNotMatch(kw,/<dt>Kuwaiti mother<\/dt>|aria-label="Change Kuwaiti mother"|name="field" value="kuwaitiMother"/);
+  const nonKw=await render("JO");assert.match(nonKw,/<dt>Kuwaiti mother<\/dt><dd><span class="missing"[^>]*>Not recorded<\/span>/);assert.match(nonKw,/aria-label="Change Kuwaiti mother"/);assert.match(nonKw,/name="value" value="true"/);assert.match(nonKw,/name="value" value="false"/);
 });
 
 test("SHU373_PAGE a written 1800 birth date keeps My profile reachable with only Age unavailable", async () => {

@@ -243,7 +243,8 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
   const mother = preferences.kuwaitiMother;
   const nationalityId = preferences.nationality?.value;
   const country = choices?.countries.find(item => item.id === nationalityId);
-  if (mother || (country && country.code !== "KW")) {
+  const motherRecorded = mother?.value === true || mother?.value === false;
+  if (motherRecorded || (country && country.code !== "KW")) {
     fields.kuwaitiMother = mother?.value === true || mother?.value === false
       ? written(PROFILE_FIELD_SPECS.nationality, mother.value, mother.updatedAt)
       : Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance("candidate_mom_kuwaiti"), freshness: Object.freeze({ kind: "written_by_person", observedAt: mother?.updatedAt ?? preferences.nationality?.updatedAt ?? "" }) });

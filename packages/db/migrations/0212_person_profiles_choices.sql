@@ -42,3 +42,14 @@ RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$
   WHEN audit_operation='profile.safe_write' THEN jsonb_typeof(summary)='object' AND ((summary ?& ARRAY['valuePresent'] AND summary-ARRAY['valuePresent']='{}'::jsonb AND jsonb_typeof(summary->'valuePresent')='boolean') OR (summary ?& ARRAY['contractVersion','personRef','changeSetDigest','fields','committedAt','tokenRef'] AND summary-ARRAY['contractVersion','personRef','changeSetDigest','fields','committedAt','tokenRef']='{}'::jsonb AND jsonb_typeof(summary->'contractVersion')='string' AND summary->>'contractVersion' ~ '^[0-9]+\.[0-9]+\.[0-9]+$' AND summary->>'personRef' ~ '^[0-9a-f]{64}$' AND summary->>'changeSetDigest' ~ '^[0-9a-f]{64}$' AND summary->>'tokenRef' ~ '^[0-9a-f]{64}$' AND jsonb_typeof(summary->'fields')='array' AND jsonb_array_length(summary->'fields')=1 AND summary->'fields'->>0 IN ('language','displayName','arabicName','objective','intro','preferredTime','gender','birthDate','nationality','university','drivingLicence','kuwaitiMother','jobSearchStatus') AND summary->>'committedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'))
   ELSE authorization_audit_summary_valid_0211(audit_operation,summary) END
 $$;
+
+-- CHECK expressions retain the OID of the function they were parsed with.
+-- Rebind both constraints to the expanded validator created above rather than
+-- leaving them attached to the renamed 0211 implementation.
+ALTER TABLE authorization_mutation_audit
+ DROP CONSTRAINT auth_audit_before_summary_shape,
+ DROP CONSTRAINT auth_audit_after_summary_shape,
+ ADD CONSTRAINT auth_audit_before_summary_shape
+   CHECK (authorization_audit_summary_valid(operation, before_summary)),
+ ADD CONSTRAINT auth_audit_after_summary_shape
+   CHECK (authorization_audit_summary_valid(operation, after_summary));
