@@ -67,9 +67,9 @@ export function validateDeploymentEnv(env = process.env) {
     throw new Error(`LOGIN_ALLOWED_RETURN_URLS must include ${profileUrl.href}`);
   }
 
-  for (const { name, kind } of CONFIG_SCHEMA) {
+  for (const { name, kind, required } of CONFIG_SCHEMA) {
     const value = env[name];
-    if (value === undefined || kind === "string" || kind === "literal" || name === "DATABASE_URL" || name === "OIDC_CALLBACK_URL") continue;
+    if ((!required && !value?.trim()) || value === undefined || kind === "string" || kind === "literal" || name === "DATABASE_URL" || name === "OIDC_CALLBACK_URL") continue;
     const parts = kind === "url-list" || kind === "host-list" ? value.split(",").map((part) => part.trim()) : [value];
     if (parts.some((part) => !part)) throw new Error(`${name} must be a valid ${kind}`);
     if (kind === "url" || kind === "url-list") {

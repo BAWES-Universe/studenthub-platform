@@ -31,9 +31,20 @@ test("schema is frozen and derives the exact required deployment names", () => {
 test("every required deployment variable is independently required", () => {
   for (const name of requiredNames) {
     const env = validEnv();
+    const databaseSecret = env.DATABASE_URL;
+    const clientSecret = env.OIDC_CLIENT_SECRET;
     delete env[name];
-    assert.throws(() => validateDeploymentEnv(env), (error) => error.message.includes(name));
+    assert.throws(
+      () => validateDeploymentEnv(env),
+      (error) => error.message.includes(name)
+        && !error.message.includes(databaseSecret)
+        && !error.message.includes(clientSecret),
+    );
   }
+});
+
+test("an empty optional platform database host list is accepted", () => {
+  assert.doesNotThrow(() => validateDeploymentEnv({ ...validEnv(), PLATFORM_DATABASE_HOSTS: "" }));
 });
 
 test("closed schema rejects undeclared OIDC variables", () => {
@@ -45,8 +56,4 @@ test("errors never disclose secret configuration values", () => {
   const databaseSecret = "database-secret-value";
   const databaseEnv = { ...validEnv(), DATABASE_URL: databaseSecret };
   assert.throws(() => validateDeploymentEnv(databaseEnv), (error) => !error.message.includes(databaseSecret));
-
-  const clientSecret = "client-secret-value";
-  const clientEnv = { ...validEnv(), OIDC_CLIENT_SECRET: clientSecret, HOST: "wrong" };
-  assert.throws(() => validateDeploymentEnv(clientEnv), (error) => !error.message.includes(clientSecret));
 });
