@@ -1,0 +1,1 @@
+import assert from"node:assert/strict";import{test}from"node:test";import{ORGANIZATION_NOTES_OPERATION}from"@studenthub/db";test("SHU-316 postgres operation is receipt-bearing safe write",()=>assert.equal(ORGANIZATION_NOTES_OPERATION,"organization.note.safe_write"));
