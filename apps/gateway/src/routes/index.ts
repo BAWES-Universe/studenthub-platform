@@ -5,6 +5,7 @@ import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, langua
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
 import { handleLegacyLink } from "../legacy-link-http.js";
+import { handleDocumentsUpload } from "../documents-upload-http.js";
 
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
@@ -19,6 +20,7 @@ const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCi
 
 export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
+  { name: "documents-upload", handle: (ctx) => handleDocumentsUpload(ctx.request, ctx.response, ctx.documents) },
   candidateDocumentsRoute,
   organizationDocumentsRoute,
   profileEditPageRoute,

@@ -3,7 +3,8 @@ import { CANDIDATE_DOCUMENT_ADMISSION, LifecycleError, type CandidateDocuments }
 import { CANDIDATE_DOCUMENT_TYPES } from '../../../packages/private-documents/src/lifecycle-state.js';
 import { DocumentError, type Metadata } from '../../../packages/private-documents/src/index.js';
 import { pageDocument, wantsHtml, writeHtml, type BrowserLoginApplication } from './web-ui.js';
-import type { ProfileLanguage } from './ui/profile-copy.js';
+import { profileCopy, type ProfileLanguage } from './ui/profile-copy.js';
+import { createIdempotencyKey } from '../../../packages/idempotency-contract/src/index.js';
 
 const COPY = {
   en: { title: 'My documents', back: 'My profile', onFile: 'On file', missing: 'Not uploaded', accepted: 'Accepted formats', maximum: 'Maximum size', bytes: 'bytes', signIn: 'Sign in to view your documents', continue: 'Continue with Universe', unavailable: 'Documents are temporarily unavailable. Please try again.', slots: ['Personal photo', 'CV', 'Civil ID front', 'Civil ID back'] },
@@ -21,11 +22,12 @@ function shell(language: ProfileLanguage, content: string): string {
 export function documentsPage(documents: readonly Metadata[], language: ProfileLanguage): string {
   const copy = COPY[language];
   const slots = CANDIDATE_DOCUMENT_TYPES.map((type, index) => {
+    const submission = createIdempotencyKey();
     const document = documents.find(row => row.type === type); // SHU366_PAGE slot presence
     const admission = CANDIDATE_DOCUMENT_ADMISSION[type];
     return `<div id="document-${type}" class="p-row"><dt>${copy.slots[index]}</dt><dd><strong>${document ? copy.onFile : copy.missing}</strong><p class="p-meta">${document
       ? `${escape(format(document.mime))} · ${escape(String(document.size))} ${copy.bytes}`
-      : `${copy.accepted}: ${admission.mimeTypes.map(mime => escape(format(mime))).join(', ')}. ${copy.maximum}: ${escape(String(admission.maxBytes / (1024 * 1024)))} MiB.`}</p></dd></div>`;
+      : `${copy.accepted}: ${admission.mimeTypes.map(mime => escape(format(mime))).join(', ')}. ${copy.maximum}: ${escape(String(admission.maxBytes / (1024 * 1024)))} MiB.`}</p><form method="post" enctype="multipart/form-data" action="/profile/documents/${type}/upload"><input type="file" name="file" accept="${admission.mimeTypes.join(',')}"><input type="hidden" name="submission" value="${submission}"><button class="p-button" type="submit">${profileCopy(language, document ? 'action.replace' : 'action.upload')}</button></form></dd></div>`;
   }).join('');
   return shell(language, `<dl class="p-stack">${slots}</dl>`);
 }

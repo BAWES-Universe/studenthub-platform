@@ -149,7 +149,7 @@ test("U1_A11Y: phone recovery never echoes a submitted phone value", () => {
 
 test("U1_COPY: all dictionary keys and placeholders match, every value is nonempty and interpolated safely", () => {
   const keys = Object.keys(PROFILE_COPY.en) as ProfileCopyKey[];
-  assert.equal(keys.length, 192);
+  assert.equal(keys.length, 195);
   assert.deepEqual(keys.sort(), Object.keys(PROFILE_COPY.ar).sort());
   const parameters = (value: string) => [...new Set(Array.from(value.matchAll(/\{([A-Za-z]+)\}/g), match => match[1]!))].sort();
   for (const key of keys) {
@@ -184,6 +184,13 @@ test("U1_COPY: rejects unknown locales, keys, missing or extra parameters and ac
   assert.throws(() => rawCopy("en", "action.editField", { get field() { getterRan = true; return "x"; } }), /parameters/);
   assert.equal(getterRan, false);
   assert.throws(() => rawCopy("en", "action.save", { field: "x" }), /parameters/);
+});
+
+test("UPL_NAV_COPY documents navigation and upload actions come from both dictionaries", () => {
+  assert.equal(profileCopyText('en','nav.documents'), 'My documents');
+  assert.equal(profileCopyText('ar','nav.documents'), 'مستنداتي');
+  assert.equal(profileCopyText('en','action.upload'), 'Upload');
+  assert.equal(profileCopyText('ar','action.replace'), 'استبدال');
 });
 
 test("U1_RTL: explicit locale direction and mixed-direction values without duplicate landmarks", () => {

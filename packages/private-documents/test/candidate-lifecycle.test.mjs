@@ -43,6 +43,13 @@ async function fixture(t){
  return {root:join(root,'private'),request,authorize,put,upload,finalize,state,disk,store,service,events,tokens,sessions,authz,ports,key,advance:ms=>now+=ms,fail:()=>failure=true,failRemove:()=>removeFailure=true,uncertain:()=>uncertain=true};
 }
 
+test('UPL_NO_ORG list refuses a missing configured organization before document storage',async t=>{
+ const f=await fixture(t);let reads=0;
+ const service=createCandidateDocuments({...f.ports,orgId:'organization-not-configured',store:{transaction:async()=>{reads++;throw new Error('must not read another namespace');}}});
+ await assert.rejects(service.list(f.tokens.alice),error=>error?.code==='denied'&&error?.status===403);
+ assert.equal(reads,0);
+});
+
 test('SHU-145/AC-01 mounted authenticated lifecycle covers all four document slots',async t=>{
  const f=await fixture(t);
  for(const type of ['personal-photo','resume','civil-id-front','civil-id-back']){

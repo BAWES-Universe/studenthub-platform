@@ -81,8 +81,17 @@ async function documentPage(page,language,metadata) {
       check(detail.includes(copy.accepted) && detail.includes(copy.maximum),'Missing slot explains accepted format and maximum');
       check(detail.includes(type==='resume'?'PDF':'PNG, JPEG') && detail.includes('10 MiB'),'Guidance matches current admission');
     }
+    const form=slot.locator('form');
+    assert.equal(await form.count(),1,'Each document slot has one upload form');
+    assert.equal(await form.getAttribute('method'),'post','Document form uses POST');
+    assert.equal(await form.getAttribute('enctype'),'multipart/form-data','Document form uses multipart encoding');
+    assert.equal(await form.getAttribute('action'),`/profile/documents/${type}/upload`,'Document form action is slot-scoped');
+    assert.equal(await form.locator('input[type="file"][name="file"]').count(),1,'One file input');
+    assert.equal(await form.locator('input[type="hidden"][name="submission"]').count(),1,'One hidden submission input');
+    assert.equal(await form.locator('button[type="submit"]').count(),1,'One submit button');
   }
-  assert.equal(await page.locator('main form, main input, main button, main time, main a[href*="candidate-documents"], main a[href*="private-documents"]').count(),0,'Read-only page has no mutation controls, delivery links or dates');
+  assert.equal(await page.locator('main form').count(),4,'Exactly four upload forms');
+  assert.equal(await page.locator('main time, main a[href*="candidate-documents"], main a[href*="private-documents"]').count(),0,'Page has no delivery links or dates');
   const shown=await page.locator('main').innerText();
   check(!/Date unavailable|https?:\/\/|uploads\//.test(shown),'No document dates or storage URLs displayed');
   if(metadata) {
