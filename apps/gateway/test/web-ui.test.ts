@@ -24,10 +24,15 @@ const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESS
 
 test("SHU373_PAGE My profile shows country and approved university choices plus both absent-university options",async()=>{
   let writtenReads=0,catalogueReads=0;
-  const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>createPrincipal({id:"person",email:"p@example.invalid",pbuuids:["candidate"]})},source:new InMemoryApprovedProfileAdapter({links:[{principalId:"person",candidateRef:"candidate"}],rows:new Map([["candidate",SYNTHETIC_PROFILE_FIXTURES.populated]])}),preferences:{readOwnPreferences:async()=>{writtenReads++;return null;},readProfileChoices:async()=>{catalogueReads++;return{countries:[{id:"11111111-1111-4111-8111-111111111111",name:"Bahrain",code:"BH"}],universities:[{id:"22222222-2222-4222-8222-222222222222",name:"Kuwait University"}]};}},today:()=>"2026-10-30"});
+  const at="2026-10-30T00:00:00.000Z";
+  const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>createPrincipal({id:"person",email:"p@example.invalid",pbuuids:["candidate"]})},source:new InMemoryApprovedProfileAdapter({links:[{principalId:"person",candidateRef:"candidate"}],rows:new Map([["candidate",SYNTHETIC_PROFILE_FIXTURES.populated]])}),preferences:{readOwnPreferences:async()=>{writtenReads++;return {gender:{value:"female",updatedAt:at},birthDate:{value:"2000-10-31",updatedAt:at},nationality:{value:"Bahraini",updatedAt:at},university:{value:"Kuwait University",updatedAt:at},drivingLicence:{value:false,updatedAt:at},kuwaitiMother:{value:true,updatedAt:at},jobSearchStatus:{value:"not_looking",updatedAt:at}};},readProfileChoices:async()=>{catalogueReads++;return{countries:[{id:"11111111-1111-4111-8111-111111111111",name:"Bahrain",code:"BH"}],universities:[{id:"22222222-2222-4222-8222-222222222222",name:"Kuwait University"}]};}},today:()=>"2026-10-30"});
   const found=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(found.kind,"found");if(found.kind!=="found")return;
   const page=await profileDocument({status:200,body:found.profile},{profileEdit:{} as never} as unknown as BrowserLoginApplication);
   assert.match(page.html,/>Bahrain<\/option>/);assert.match(page.html,/>Kuwait University<\/option>/);assert.match(page.html,/>None<\/option>/);assert.match(page.html,/>Not listed<\/option>/);assert.match(page.html,/Staff add new universities/);assert.deepEqual([writtenReads,catalogueReads],[1,1]);
+  assert.match(page.html,/type="radio" name="value" value="female" checked/);
+  assert.match(page.html,/type="radio" name="value" value="not_looking"/);
+  assert.match(page.html,/Not looking right now/);
+  for(const shown of ["Female","2000-10-31","25 years","Bahraini","Kuwait University","No","Yes","Not looking right now"]) assert.match(page.html,new RegExp(`<dd>${shown.replace(" ","\\s")}</dd>`));
 });
 
 async function fixture(t: TestContext, options: {

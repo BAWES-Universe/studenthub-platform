@@ -217,7 +217,8 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
           : name === "gender" ? new Map([["male","male"],["female","female"],["other","other"]]).get(String(preference.value))
           : name === "jobSearchStatus" ? new Map([["not_looking","not_looking"],["active","active"],["open_to_offers","open_to_offers"]]).get(String(preference.value))
           : preference.value;
-        fields[name] = written(PROFILE_FIELD_SPECS[name], (name === "drivingLicence" ? raw : PROFILE_FIELD_SPECS[name].parse(raw, profile.asOfDate)) as never, preference.updatedAt) as never;
+        fields[name] = written(PROFILE_FIELD_SPECS[name], (["drivingLicence","gender","jobSearchStatus"].includes(name) ? raw : PROFILE_FIELD_SPECS[name].parse(raw, profile.asOfDate)) as never, preference.updatedAt) as never;
+        if (name === "birthDate") fields.age = written(PROFILE_FIELD_SPECS.age, ageOn(String(preference.value), profile.asOfDate), preference.updatedAt) as never;
       }
     } catch {
       fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
@@ -230,8 +231,9 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
     fields[name] = unavailable(PROFILE_FIELD_SPECS[name], "", "not_recorded") as never;
   }
   const mother = preferences.kuwaitiMother;
-  const kuwaitiMother = mother ? Object.freeze({ state: "available" as const, value: mother.value === true,
-    provenance: provenance("candidate_mom_kuwaiti"), freshness: Object.freeze({ kind: "written_by_person" as const, observedAt: mother.updatedAt }) }) : undefined;
+  const kuwaitiMother = mother ? (mother.value === null ? Object.freeze({ state:"unavailable" as const, reason:"not_recorded" as const,
+    provenance: provenance("candidate_mom_kuwaiti"), freshness:Object.freeze({kind:"written_by_person" as const,observedAt:mother.updatedAt}) }) : Object.freeze({ state: "available" as const, value: mother.value === true || mother.value === "true",
+    provenance: provenance("candidate_mom_kuwaiti"), freshness: Object.freeze({ kind: "written_by_person" as const, observedAt: mother.updatedAt }) })) : undefined;
   return Object.freeze({ ...profile, fields: Object.freeze({ ...fields, ...(kuwaitiMother ? { kuwaitiMother } : {}) }) });
 }
 

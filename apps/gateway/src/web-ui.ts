@@ -302,7 +302,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
     throw new Error("invalid authorized profile");
   }
   const keys = Object.keys(projection.fields);
-  if (keys.length !== OWN_PROFILE_FIELD_NAMES.length
+  if ((keys.length !== OWN_PROFILE_FIELD_NAMES.length && !(keys.length === OWN_PROFILE_FIELD_NAMES.length + 1 && keys.includes("kuwaitiMother")))
     || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
     throw new Error("invalid authorized profile");
   }
@@ -319,7 +319,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
   pendingFields: (value) => Array.isArray(value) && value.length > 0
@@ -356,16 +356,17 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
       const option = (v: string, label: string, chosen=value) => `<option value="${escapeHtml(v)}"${chosen === v ? " selected" : ""}>${escapeHtml(label)}</option>`;
       const choices = profile.choices;
       let control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
-      if (field === "gender") control = `<select name="value">${option("male","Male")}${option("female","Female")}${option("other","Other")}</select>`;
+      const radio = (v:string,label:string,chosen=value) => `<label><input type="radio" name="value" value="${v}"${chosen===v?" checked":""}>${label}</label>`;
+      if (field === "gender") control = `${radio("male","Male")}${radio("female","Female")}${radio("other","Other")}`;
       if (field === "birthDate") control = `<input type="date" name="value" value="${escapeHtml(value)}">`;
-      if (field === "drivingLicence") control = `<select name="value">${option("true","Yes",value === "true" ? "true" : value === "false" ? "false" : "")}${option("false","No",value === "true" ? "true" : value === "false" ? "false" : "")}</select>`;
-      if (field === "jobSearchStatus") control = `<select name="value">${option("not_looking","Not looking")}${option("active","Actively looking")}${option("open_to_offers","Open to offers")}</select>`;
+      if (field === "drivingLicence") control = `${radio("true","Yes")}${radio("false","No")}`;
+      if (field === "jobSearchStatus") control = `${radio("not_looking","Not looking right now")}${radio("active","Actively looking")}${radio("open_to_offers","Open to offers")}`;
       if (field === "nationality") control = `<select name="value">${(choices?.countries ?? []).map(c => option(c.id,c.name,choices?.selectedNationalityId)).join("")}</select>`;
-      if (field === "university") control = `<select name="value">${option("","None")}${option("","Not listed")}${(choices?.universities ?? []).map(c => option(c.id,c.name)).join("")}</select><p>Not listed? Staff add new universities.</p>`;
+      if (field === "university") control = `<select name="value">${option("","None")}${option("not-listed","Not listed")}${(choices?.universities ?? []).map(c => option(c.id,c.name)).join("")}</select><p>Not listed? Staff add new universities.</p>`;
       return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
     return row;
-  }).join("") + (() => { const kw=profile.choices?.countries.some(c=>c.id===profile.choices?.selectedNationalityId&&c.code==="KW"); if(kw)return ""; const mother=profile.fields.kuwaitiMother; const current=mother?.state==="available"?String(mother.value):""; return `<div><dt>Kuwaiti mother</dt><dd>${current==="true"?"Yes":current==="false"?"No":"Not recorded"}</dd><small class="field-meta">${current?"Updated by you":"Not recorded"}</small>${login.profileEdit?`<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<select name="value"><option value="true"${current==="true"?" selected":""}>Yes</option><option value="false"${current==="false"?" selected":""}>No</option></select></label><button class="button primary" type="submit">Review change</button></form>`:""}</div>`; })();
+  }).join("") + (() => { const kw=profile.choices?.countries.some(c=>c.id===profile.choices?.selectedNationalityId&&c.code==="KW"); if(kw)return ""; const mother=profile.fields.kuwaitiMother; const current=mother?.state==="available"?String(mother.value):""; return `<div><dt>Kuwaiti mother</dt><dd>${current==="true"?"Yes":current==="false"?"No":"Not recorded"}</dd><small class="field-meta">${current?"Updated by you":"Not recorded"}</small>${login.profileEdit?`<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<label><input type="radio" name="value" value="true"${current==="true"?" checked":""}>Yes</label><label><input type="radio" name="value" value="false"${current==="false"?" checked":""}>No</label></label><button class="button primary" type="submit">Review change</button></form>`:""}</div>`; })();
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 

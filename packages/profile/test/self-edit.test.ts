@@ -35,6 +35,19 @@ test("SHU373_CATALOGUE profile choices are fetched once beside written values", 
   if(result.kind==="found") assert.equal(result.profile.choices?.universities[0]?.name,"Kuwait University");
 });
 
+test("SHU373_PAGE a written birth date replaces the snapshot and recomputes age", async () => {
+  const repository = new OwnProfileRepository({
+    principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},
+    source:{resolveLink:async()=>({kind:"linked",candidateRef:"candidate"}),readCandidate:async()=>SYNTHETIC_PROFILE_FIXTURES.populated},
+    preferences:{readOwnPreferences:async()=>({birthDate:{value:"2000-10-31",updatedAt:"2026-10-30T00:00:00.000Z"}})} as never,
+    today:()=>"2026-10-30",
+  });
+  const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});
+  assert.equal(result.kind,"found"); if(result.kind!=="found") return;
+  assert.equal(result.profile.fields.birthDate.state,"available");
+  assert.deepEqual(result.profile.fields.age.state==="available"&&result.profile.fields.age.value,25);
+});
+
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {
   const dates = ["2026-10-01T01:00:00.000Z", "2026-10-02T02:00:00.000Z", "2026-10-03T03:00:00.000Z", "2026-10-04T04:00:00.000Z", "2026-10-05T05:00:00.000Z"];
   const values = { displayName: "Noor Al-Sabah", arabicName: "نور الصباح", objective: "A new objective", intro: "A new introduction", preferredTime: "Early mornings" };

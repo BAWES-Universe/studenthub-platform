@@ -12,6 +12,11 @@ const COLUMNS: Record<PersonProfileField, string> = {
   gender: "gender", birthDate: "birth_date", nationality: "nationality_id", university: "university_id",
   drivingLicence: "driving_licence", kuwaitiMother: "kuwaiti_mother", jobSearchStatus: "job_search_status",
 };
+const WRITTEN_AT: Record<PersonProfileField, string> = {
+  displayName:"display_name_written_at", arabicName:"arabic_name_written_at", objective:"objective_written_at", intro:"introduction_written_at", preferredTime:"preferred_time_written_at",
+  gender:"gender_written_at", birthDate:"birth_date_written_at", nationality:"nationality_written_at", university:"university_written_at",
+  drivingLicence:"driving_licence_written_at", kuwaitiMother:"kuwaiti_mother_written_at", jobSearchStatus:"job_search_status_written_at",
+};
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
 
@@ -55,7 +60,7 @@ export class PostgresPersonProfileStore {
     if (!row) return null;
     const result: Record<string, unknown> = {};
     for (const [field, column] of Object.entries(COLUMNS)) {
-      const at = row[`${column}_written_at`];
+      const at = row[WRITTEN_AT[field as PersonProfileField]];
       if (at instanceof Date) result[field] = Object.freeze({ value: row[column], updatedAt: at.toISOString() });
     }
     return Object.freeze(result);
@@ -109,10 +114,6 @@ export class PostgresPersonProfileStore {
       if (current !== input.expectedBefore) throw new Refusal("state_changed");
       let stored: string | boolean | null = input.value === "" ? null : input.value;
       if (field === "drivingLicence" || field === "kuwaitiMother") stored = input.value === "true";
-      if (field === "birthDate") {
-        const cutoff = new Date(); cutoff.setUTCFullYear(cutoff.getUTCFullYear()-16);
-        if (input.value > cutoff.toISOString().slice(0,10)) throw new Refusal("invalid_value");
-      }
       if (field === "nationality" || field === "university") {
         if (input.value !== "") {
           const wanted = field === "nationality" ? "country" : "university";
@@ -123,8 +124,9 @@ export class PostgresPersonProfileStore {
           }
         }
       }
-      await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
-        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, stored]);
+      const stamp = WRITTEN_AT[field];
+      await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${stamp}) VALUES ($1,$2,clock_timestamp())
+        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${stamp}=EXCLUDED.${stamp}`, [id, stored]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
         VALUES ($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)`, [input.receipt.receiptRef, input.receipt.principalRef, SAFE_WRITE_OPERATION,
         JSON.stringify({ valuePresent: current !== null }), JSON.stringify({ contractVersion: input.receipt.contractVersion, personRef: input.receipt.personRef,

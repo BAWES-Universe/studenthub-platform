@@ -2,7 +2,7 @@
 ALTER TABLE person_profiles
  ADD COLUMN gender text CHECK (gender IN ('male','female','other')),
  ADD COLUMN gender_written_at timestamptz,
- ADD COLUMN birth_date date CHECK (birth_date <= current_date - INTERVAL '16 years'),
+ ADD COLUMN birth_date date CHECK (birth_date <= ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kuwait')::date - INTERVAL '16 years')::date),
  ADD COLUMN birth_date_written_at timestamptz,
  ADD COLUMN nationality_id uuid REFERENCES catalogue_items(id),
  ADD COLUMN nationality_written_at timestamptz,
@@ -14,6 +14,9 @@ ALTER TABLE person_profiles
  ADD COLUMN kuwaiti_mother_written_at timestamptz,
  ADD COLUMN job_search_status text CHECK (job_search_status IN ('not_looking','active','open_to_offers')),
  ADD COLUMN job_search_status_written_at timestamptz;
+
+CREATE INDEX person_profiles_nationality_id_idx ON person_profiles(nationality_id);
+CREATE INDEX person_profiles_university_id_idx ON person_profiles(university_id);
 
 ALTER FUNCTION authorization_audit_summary_valid(text,jsonb) RENAME TO authorization_audit_summary_valid_0211;
 CREATE FUNCTION authorization_audit_summary_valid(audit_operation text, summary jsonb)
@@ -48,5 +51,5 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER person_profile_choices_guard BEFORE INSERT OR UPDATE ON person_profiles
+CREATE TRIGGER person_profile_choices_guard BEFORE INSERT OR UPDATE OF nationality_id,university_id,kuwaiti_mother ON person_profiles
  FOR EACH ROW EXECUTE FUNCTION person_profile_choices_guard();

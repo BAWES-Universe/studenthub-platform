@@ -35,6 +35,7 @@ const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06
 export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = new Date().toISOString().slice(0,10)): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.normalize("NFC");
+  if (field === "university" && normalized === "not-listed") return "";
   const rule = SHU372_RULES[field];
   if ([...normalized].length > rule.maxLength || FORBIDDEN.test(normalized)) return null;
   if (normalized === "") return rule.allowClear ? "" : null;
