@@ -18,9 +18,9 @@ const mutations = [
   ["SHU372_RULES", "value.normalize(\"NFC\")", "value"],
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
-  ["SHU373_AGE", "cutoff.getUTCFullYear()-PERSON_PROFILE_MINIMUM_AGE", "cutoff.getUTCFullYear()-15"],
+  ["SHU373_AGE", "cutoff.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE", "cutoff.getUTCFullYear() - 15"],
   ["SHU373_CATALOGUE", "this.#preferences.readProfileChoices?.(request.requesterPrincipalId)", "Promise.resolve(undefined)", profileModuleFile, suite],
-  ["SHU373_PAGE", 'chosen===v?" checked":""', 'false?" checked":""', webModuleFile, webSuite],
+  ["SHU373_PAGE", 'chosen === v ? " checked" : ""', 'false ? " checked" : ""', webModuleFile, webSuite],
   ["SHU373_PAGE", '["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")]', 'OWN_PROFILE_FIELD_NAMES', webModuleFile, webSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
