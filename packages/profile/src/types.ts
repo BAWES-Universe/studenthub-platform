@@ -33,7 +33,7 @@ export interface FieldProvenance {
 }
 
 export interface FieldFreshness {
-  readonly kind: "imported_snapshot" | "person_written";
+  readonly kind: "imported_snapshot" | "written_by_person";
   readonly observedAt: string;
 }
 
@@ -123,5 +123,6 @@ export interface OwnProfileReader {
 }
 
 export interface OwnProfilePreferenceReader {
-  readOwnLanguage(principalId: string): Promise<{ readonly value: unknown; readonly updatedAt: string } | null>;
+  readOwnWrittenFields(principalId: string): Promise<Readonly<Partial<Record<OwnProfileFieldName,
+    { readonly value: unknown; readonly updatedAt: string }>>>>;
 }

@@ -231,6 +231,19 @@ test("SHU371_ANY_PERSON own profile write does not depend on grants", async (t) 
   assert.equal(await language(carol.id), null);
 });
 
+test("SHU371_ANY_PERSON deleted principal is refused with nothing stored", async (t) => {
+  const api = await gateway(t);
+  const alice = await person();
+  const preview = await api.preview(alice, "ar");
+  assert.equal(preview.status, 200);
+  await admin.query("DELETE FROM principals WHERE id = $1", [alice.id]);
+  const result = await api.confirm(alice, "ar", preview.body.token);
+  assert.deepEqual([result.status, result.body], [403, { error: "not_own_record" }]);
+  assert.equal(await language(alice.id), null);
+  const audit = await admin.query("SELECT 1 FROM authorization_mutation_audit WHERE target_principal_ref = $1", [safeWritePrincipalRef(alice.id)]);
+  assert.equal(audit.rows.length, 0);
+});
+
 function commitInput(id: string, expectedBefore: string | null, value: string) {
   const committedAt = new Date().toISOString();
   const tokenId = randomBytes(16).toString("hex");

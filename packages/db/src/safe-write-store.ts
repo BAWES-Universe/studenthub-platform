@@ -94,13 +94,13 @@ export class PostgresSafeWriteStore {
     if (this.#ownsPool) await this.#pool.end();
   }
 
-  async readOwnLanguage(principalId: string): Promise<{ value: unknown; updatedAt: string } | null> {
+  async readOwnWrittenFields(principalId: string): Promise<Readonly<Record<string, { value: unknown; updatedAt: string }>>> {
     const { rows } = await this.#pool.query<{ language: unknown; updated_at: Date | string }>(
       "SELECT language, updated_at FROM person_preferences WHERE principal_id = $1", [principalId],
     );
     const row = rows[0];
-    if (!row) return null;
-    return { value: row.language, updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at };
+    if (!row) return {};
+    return { language: { value: row.language, updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at } };
   }
 
   /**
@@ -165,8 +165,8 @@ export class PostgresSafeWriteStore {
   }
 
   /**
-   * Write authority is re-derived from server-side grants on every call: the
-   * principal must still exist. A profile belongs to the person regardless of grants.
+   * Self-write authority is re-derived on every call: the principal must still
+   * exist. A profile belongs to the person regardless of grants.
    */
   async #mayWrite(client: pg.Pool | pg.PoolClient, principalId: string): Promise<boolean> {
     const { rows } = await client.query(

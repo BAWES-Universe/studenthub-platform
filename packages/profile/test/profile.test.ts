@@ -108,10 +108,13 @@ test("SHU371_SHOWN_OVER_SNAPSHOT written language wins and malformed storage is 
   const principals = new InMemoryAuthzStore({ principals: PEOPLE });
   const source = new InMemoryApprovedProfileAdapter({ links: [{ principalId: "person-populated", candidateRef: "candidate-populated" }], rows: new Map([["candidate-populated", SYNTHETIC_PROFILE_FIXTURES.populated]]) });
   let value: unknown = "ar";
-  const profiles = new OwnProfileRepository({ principals, source, today: () => "2026-09-13", preferences: { async readOwnLanguage() { return { value, updatedAt: "2026-09-13T13:00:00.000Z" }; } } });
+  let snapshotReads = 0; let writtenReads = 0;
+  const countedSource = { async resolveLink(id: string) { snapshotReads++; return source.resolveLink(id); }, readCandidate: (ref: string) => source.readCandidate(ref) };
+  const profiles = new OwnProfileRepository({ principals, source: countedSource, today: () => "2026-09-13", preferences: { async readOwnWrittenFields() { writtenReads++; return { language: { value, updatedAt: "2026-09-13T13:00:00.000Z" } }; } } });
   const shown = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
   assert.equal(shown.kind === "found" && shown.profile.fields.language.state === "available" && shown.profile.fields.language.value, "ar");
-  assert.equal(shown.kind === "found" && shown.profile.fields.language.freshness.kind, "person_written");
+  assert.equal(shown.kind === "found" && shown.profile.fields.language.freshness.kind, "written_by_person");
+  assert.deepEqual([snapshotReads, writtenReads], [1, 1], "one snapshot lookup and one batched written-values read");
   value = "<raw-malformed>";
   const malformed = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
   assert.equal(malformed.kind === "found" && malformed.profile.fields.language.state, "unavailable");
@@ -120,7 +123,7 @@ test("SHU371_SHOWN_OVER_SNAPSHOT written language wins and malformed storage is 
 
 test("SHU371_PROJECTION another person's request reads no written preference", async () => {
   let reads = 0;
-  const profiles = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }), source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnLanguage() { reads++; return null; } } });
+  const profiles = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }), source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnWrittenFields() { reads++; return {}; } } });
   assert.deepEqual(await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-other" }), { kind: "not_found" });
   assert.equal(reads, 0);
 });
@@ -310,8 +313,8 @@ test("PROFILE-DEFAULT-HTML unconfigured adapter renders 200 with all 19 fields u
   assert.equal((html.match(/data-state="unavailable"/g) ?? []).length, 19);
   assert.equal((html.match(/<dt>/g) ?? []).length, 19);
   for (const contract of Object.values(OWN_PROFILE_FIELD_CONTRACT)) assert.ok(html.includes(`<dt>${contract.label}</dt>`));
-  assert.match(html, /Read-only/);
-  assert.match(html, /editing isn’t enabled/);
+  assert.match(html, /Checked once your documents are on file/);
+  assert.doesNotMatch(html, /Read-only|editing isn’t enabled/);
   assert.doesNotMatch(html, /Registry must not win|registry@example|Synthetic|noor@example|This profile isn’t available/);
   assert.equal(response.headers.get("cache-control"), "no-store");
 });

@@ -24,6 +24,8 @@ const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESS
 
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];
+  readonly writtenLanguage?: "en" | "ar";
+  readonly preferences?: BrowserLoginApplication["preferences"];
 } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
@@ -51,6 +53,7 @@ async function fixture(t: TestContext, options: {
       rows,
     }),
     today: () => "2026-09-13",
+    preferences: { async readOwnWrittenFields() { return options.writtenLanguage ? { language: { value: options.writtenLanguage, updatedAt: "2026-09-14T10:00:00.000Z" } } : {}; } },
   });
   const profiles = {
     async readOwn(request: Parameters<typeof repository.readOwn>[0]) {
@@ -58,7 +61,7 @@ async function fixture(t: TestContext, options: {
       return repository.readOwn(request);
     },
   };
-  const login: BrowserLoginApplication = { ...rig.app, web: {
+  const login: BrowserLoginApplication = { ...rig.app, ...(options.preferences ? { preferences: options.preferences } : {}), web: {
     origin: ORIGIN, returnTo: rig.config.allowedReturnUrls[1],
     profiles,
   } };
@@ -122,6 +125,36 @@ test("real login application serves the same typed projection to HTML and JSON w
     assert.equal(api.headers.get("vary"), "Accept");
   }
   assert.deepEqual(f.reads, ["person-1", "person-1", "person-1", "person-1"]);
+});
+
+test("SHU371_SHOWN_OVER_SNAPSHOT written language is rendered with provenance and change control on its row", async (t) => {
+  const inert = { async preview(){return {status:503 as const,body:{error:"unavailable"}}}, async confirm(){return {status:503 as const,body:{error:"unavailable"}}}, async receipt(){return {status:404 as const,body:{error:"receipt_not_found"}}} };
+  const f = await fixture(t, { writtenLanguage: "ar", preferences: inert });
+  const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
+  const body = await response.text();
+  assert.match(body, /<dt>Language<\/dt><dd>العربية<\/dd><small class="field-meta">Updated by you · 2026-09-14<\/small><form/);
+  assert.match(body, /<option value="en">English<\/option><option value="ar" selected>العربية<\/option>/);
+  assert.doesNotMatch(body, /Read-only|<dl class="profile-fields"><\/dl>/);
+});
+
+test("SHU371_PAGE_FLOW confirmed page change is shown on My profile", async (t) => {
+  const state: { writtenLanguage?: "en" | "ar"; preferences?: BrowserLoginApplication["preferences"] } = {};
+  const token = Object.fromEntries(["changeSetDigest", "expectedBeforeDigest", "expiresAt", "issuedAt", "mac", "principalRef", "tokenId"].map(key => [key, key])) as any;
+  state.preferences = {
+    async preview(_session, body) { return { status: 200, body: { changes: [{ before: "en", after: (body as any).language }], token } }; },
+    async confirm(_session, body) { state.writtenLanguage = (body as any).language; return { status: 200, body: {} }; },
+    async receipt() { return { status: 404, body: { error: "receipt_not_found" } }; },
+  };
+  const f = await fixture(t, state);
+  const headers = { ...BROWSER, origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" };
+  const preview = await fetch(f.url + "/profile/language/preview-page", { method: "POST", headers, body: "language=ar" });
+  const html = await preview.text();
+  const fields = [...html.matchAll(/name="([^"]+)" value="([^"]*)"/g)];
+  const confirmBody = new URLSearchParams(fields.map(match => [match[1]!, match[2]!]));
+  const confirm = await fetch(f.url + "/profile/language/confirm-page", { method: "POST", headers, body: confirmBody, redirect: "manual" });
+  assert.equal(confirm.status, 303);
+  const profile = await fetch(f.url + "/profile", { headers: BROWSER });
+  assert.match(await profile.text(), /<dt>Language<\/dt><dd>العربية<\/dd><small class="field-meta">Updated by you/);
 });
 
 test("private HTML is non-cacheable, has a restrictive CSP and loads no remote assets", async (t) => {

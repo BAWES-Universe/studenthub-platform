@@ -62,6 +62,18 @@ const mutations = [
     'if (link.kind === "unconfigured")', 'if (false)',
     "PROFILE-DEFAULT-JSON unconfigured profile must render instead of 404",
   ],
+  [
+    "ignore written profile values", "SHU371_SHOWN_OVER_SNAPSHOT",
+    "if (!written)\n                    return profile;", "if (true)\n                    return profile;",
+  ],
+  [
+    "mislabel person-written freshness", "SHU371_SHOWN_OVER_SNAPSHOT",
+    'kind: "written_by_person", observedAt: written.updatedAt', 'kind: "imported_snapshot", observedAt: written.updatedAt',
+  ],
+  [
+    "expose malformed written values", "SHU371_SHOWN_OVER_SNAPSHOT",
+    'language: Object.freeze({ state: "unavailable", reason: "not_recorded",', 'language: Object.freeze({ state: "available", value: written.value, reason: "not_recorded",',
+  ],
 ];
 
 for (const [name, pattern, from, to, assertion] of mutations) {

@@ -252,7 +252,7 @@ export class OwnProfileRepository {
     try {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
-      const written = await this.#preferences?.readOwnLanguage(request.requesterPrincipalId);
+      const written = (await this.#preferences?.readOwnWrittenFields(request.requesterPrincipalId))?.language;
       const overlay = (profile: OwnProfileProjection): OwnProfileProjection => {
         if (!written) return profile;
         try {
@@ -260,12 +260,12 @@ export class OwnProfileRepository {
           if (!isInstant(written.updatedAt)) throw new TypeError("malformed preference timestamp");
           return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields, language: Object.freeze({
             state: "available", value, provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-            freshness: Object.freeze({ kind: "person_written", observedAt: written.updatedAt }),
+            freshness: Object.freeze({ kind: "written_by_person", observedAt: written.updatedAt }),
           }) }) });
         } catch { return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields,
           language: Object.freeze({ state: "unavailable", reason: "not_recorded",
             provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-            freshness: Object.freeze({ kind: "person_written", observedAt: "" }),
+            freshness: Object.freeze({ kind: "written_by_person", observedAt: "" }),
           }),
         }) }); }
       };
