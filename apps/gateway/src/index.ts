@@ -342,6 +342,7 @@ export function createGatewayServer(
 
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/profile") {
       const url = new URL(request.url, "http://gateway.invalid");
+      let authorizedProfilePersonId: string | undefined;
       let result: import("@studenthub/login-contract").BrowserResponse;
       try {
         result = await login.profile({
@@ -358,6 +359,7 @@ export function createGatewayServer(
           if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
             throw new Error("invalid authorized profile");
           }
+          authorizedProfilePersonId = requesterPrincipalId;
           const profile = await login.web.profiles.readOwn({
             requesterPrincipalId,
             targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
@@ -375,8 +377,8 @@ export function createGatewayServer(
       if (html) {
         try {
           let civilIdSuggestion;
-          if (result.status===200 && login.civilIdSuggestion && typeof result.body?.personId === "string" && url.searchParams.get("person_id")===null) {
-            try { civilIdSuggestion=await login.civilIdSuggestion.current(result.body.personId); } catch { civilIdSuggestion=undefined; }
+          if (result.status===200 && login.civilIdSuggestion && authorizedProfilePersonId && url.searchParams.get("person_id")===null) {
+            try { civilIdSuggestion=await login.civilIdSuggestion.current(authorizedProfilePersonId); } catch { civilIdSuggestion=undefined; }
           }
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
           const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, civilIdSuggestion);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
