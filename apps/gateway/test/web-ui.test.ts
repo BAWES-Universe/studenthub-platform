@@ -10,7 +10,7 @@ import {
   SYNTHETIC_PROFILE_FIXTURES,
 } from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
-import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
+import { coalesceForEventLoopTurn, createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
 import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
@@ -21,6 +21,16 @@ const SESSION = "s".repeat(43);
 const OTHER_SESSION = "t".repeat(43);
 const ORIGIN = "https://studenthub.test.invalid";
 const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESSION}` };
+
+test("SHU373_PAGE composed profile preview shares one catalogue read", async () => {
+  let catalogueReads=0;
+  const read=coalesceForEventLoopTurn(async()=>{catalogueReads++;return { countries: [], universities: [] };});
+  assert.equal(await read(),await read());
+  assert.equal(catalogueReads,1);
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  await read();
+  assert.equal(catalogueReads,2);
+});
 
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];
@@ -396,13 +406,16 @@ test("SHU357_MY_COMPANIES_SIGN_IN distinguishes an expired session from an unava
 
 test("SHU373_PAGE each choice has its own control, catalogue labels, and conditional Kuwaiti-mother row", async () => {
   const jo="11111111-1111-4111-8111-111111111111",kw="22222222-2222-4222-8222-222222222222",uni="33333333-3333-4333-8333-333333333333",at="2026-11-01T01:00:00.000Z";
-  let writtenReads=0;
+  let writtenReads=0,catalogueReads=0;
   const render=async(nationality:string,mother:{value:string|null;updatedAt:string}|undefined)=>{
-    const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",email:"p@example.invalid",pbuuids:[]})},source:{resolveLink:async()=>({kind:"linked",candidateRef:"candidate"}),readCandidate:async()=>SYNTHETIC_PROFILE_FIXTURES.populated},today:()=>"2026-11-01",preferences:{readOwnPreferences:async()=>{writtenReads++;return {gender:{value:"male",updatedAt:at},birthDate:{value:"2000-01-02",updatedAt:at},nationality:{value:nationality,updatedAt:at},university:{value:uni,updatedAt:at},drivingLicence:{value:"true",updatedAt:at},jobSearchStatus:{value:"active",updatedAt:at},...(mother?{kuwaitiMother:mother}:{}),profileChoices:{countries:[{id:jo,name:"Jordan",code:"JO"},{id:kw,name:"Kuwait",code:"KW"}],universities:[{id:uni,name:"Kuwait University"}]}}}} as never});
+    const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",email:"p@example.invalid",pbuuids:[]})},source:{resolveLink:async()=>({kind:"linked",candidateRef:"candidate"}),readCandidate:async()=>SYNTHETIC_PROFILE_FIXTURES.populated},today:()=>"2026-11-01",preferences:{readOwnPreferences:async()=>{writtenReads++;const profileChoices=await(async()=>{catalogueReads++;return {countries:[{id:jo,name:"Jordan",code:"JO"},{id:kw,name:"Kuwait",code:"KW"}],universities:[{id:uni,name:"Kuwait University"}]}})();return {gender:{value:"male",updatedAt:at},birthDate:{value:"2000-01-02",updatedAt:at},nationality:{value:nationality,updatedAt:at},university:{value:uni,updatedAt:at},drivingLicence:{value:"true",updatedAt:at},jobSearchStatus:{value:"active",updatedAt:at},...(mother?{kuwaitiMother:mother}:{}),profileChoices}}} as never});
     const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")throw new Error();return (await profileDocument({status:200,body:result.profile},{profileEdit:{}} as BrowserLoginApplication)).html;
   };
-  const html=await render(jo,{value:null,updatedAt:at}); assert.equal(writtenReads,1);
+  const html=await render(jo,{value:null,updatedAt:at}); assert.equal(writtenReads,1);assert.equal(catalogueReads,1);
   for(const [label,needle] of [["Gender",'type="radio"'],["Birth date",'type="date"'],["Nationality",'<select name="value">'],["University",'<select name="value">'],["Driving licence",'type="radio"'],["Looking for work",'type="radio"'],["Kuwaiti mother",'type="radio"']] as const){const form=new RegExp(`aria-label="Change ${label}"[\\s\\S]*?<\\/form>`).exec(html)?.[0]??"";assert.match(form,new RegExp(needle));}
-  assert.match(html,/>Jordan</); assert.match(html,/<option value="33333333-3333-4333-8333-333333333333" selected>Kuwait University/); assert.match(html,/Not listed\? Staff add new universities/); assert.match(html,/<dt>Kuwaiti mother<\/dt>[\s\S]*?Not recorded/);
-  const kuwaiti=await render(kw,undefined); assert.equal(writtenReads,2); assert.doesNotMatch(kuwaiti,/<dt>Kuwaiti mother<\/dt>/);
+  const fields=/<dl class="profile-fields">([\s\S]*?)<\/dl>/.exec(html)?.[1]??"";
+  assert.match(fields,/^<div class="notice"><dt>Looking for work<\/dt><dd>Actively looking<\/dd>/);
+  for(const [label,value] of [["Gender","Male"],["Birth date","2000-01-02"],["Age","26 years"],["Nationality","Jordan"],["University","Kuwait University"],["Driving licence","Yes"],["Looking for work","Actively looking"]] as const) assert.match(fields,new RegExp(`<dt>${label}<\\/dt><dd>${value}<\\/dd>`));
+  assert.match(html,/<option value="33333333-3333-4333-8333-333333333333" selected>Kuwait University/); assert.match(html,/Not listed\? Staff add new universities/); assert.match(html,/<dt>Kuwaiti mother<\/dt>[\s\S]*?Not recorded/);
+  const kuwaiti=await render(kw,undefined); assert.equal(writtenReads,2);assert.equal(catalogueReads,2); assert.doesNotMatch(kuwaiti,/<dt>Kuwaiti mother<\/dt>/);
 });

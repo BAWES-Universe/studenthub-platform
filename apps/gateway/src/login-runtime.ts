@@ -33,6 +33,17 @@ import { createProfileEdit } from "./profile-edit-http.js";
 import { createOrganizationProfile } from "./organization-profile.js";
 import { createOrganizationStatus } from "./organization-status.js";
 import {createOrganizationCommercialTerms}from"./organization-commercial-terms.js";
+
+export function coalesceForEventLoopTurn<T>(read: () => Promise<T>): () => Promise<T> {
+  let inTurn: Promise<T> | undefined;
+  return () => {
+    if (!inTurn) {
+      inTurn = read();
+      setImmediate(() => { inTurn = undefined; });
+    }
+    return inTurn;
+  };
+}
 import {createOrganizationApprovedToHire}from"./organization-approved-to-hire.js";
 import {createOrganizationAccountManager}from"./organization-account-manager.js";
 import {createOrganizationNotes}from"./organization-notes.js";
@@ -224,9 +235,14 @@ export function createRuntimeLoginFromEnv(
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: value("DATABASE_URL") }) : undefined;
+  // A composed HTML request reads the projection and then formats its preview.
+  // Coalesce those two consumers onto the same catalogue snapshot for the turn.
+  const readProfileChoices = coalesceForEventLoopTurn(() => personProfiles
+    ? personProfiles.readProfileChoices()
+    : Promise.resolve({ countries: [], universities: [] }));
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles,
     ...(safeWrites && personProfiles ? { preferences: { async readOwnPreferences(id: string) {
-      const [language, person, profileChoices] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id), personProfiles.readProfileChoices()]);
+      const [language, person, profileChoices] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id), readProfileChoices()]);
       const merged = { ...(language ?? {}), ...(person ?? {}), profileChoices };
       return Object.keys(merged).length > 0 ? merged as never : null;
     } } } : {}) });
@@ -293,7 +309,11 @@ export function createRuntimeLoginFromEnv(
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
-      ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: loginStore.sessions, store: personProfiles, secret: safeWriteKey }) } : {}),
+      ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: loginStore.sessions, store: {
+        forPrincipal: (principalId: string) => personProfiles.forPrincipal(principalId),
+        readReceipt: (principalId: string, receiptRef: string) => personProfiles.readReceipt(principalId, receiptRef),
+        readProfileChoices,
+      }, secret: safeWriteKey }) } : {}),
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),
