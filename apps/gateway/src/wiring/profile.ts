@@ -20,6 +20,8 @@ type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
 type OwnPreferencesReader = { readOwnPreferences(id: string): Promise<object | null | undefined> };
 
+export function hasOperatorStaffGrant(grants:readonly {role:string;scope:string;orgId:string}[]):boolean{return grants.some(grant=>(grant.role==="staff"||grant.role==="admin")&&grant.scope==="subtree"&&DEFAULT_OPERATOR_ORG_IDS.includes(grant.orgId))}
+
 /**
  * The My profile read as production composes it: the approved profile source
  * plus the person's own preferences, civil ID and area, merged in one read.
@@ -94,7 +96,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const profileReadPool=new pg.Pool({connectionString:databaseUrl});
   const CivilIdReviewStore=(PostgresPersonProfileStore as typeof PostgresPersonProfileStore&{CivilIdReviewStore:new(options:{pool:pg.Pool})=>import("@studenthub/profile").CivilIdReviewStore}).CivilIdReviewStore;
   const civilIdReviewStore=civilId&&civilVault&&civilSuggestionStore?new CivilIdReviewStore({pool:profileReadPool}):undefined;
-  const civilIdReview=civilIdReviewStore&&civilVault&&civilKey?{store:civilIdReviewStore,vault:civilVault,ocr:civilSuggestionStore,secret:civilKey,async isStaff(principalId:string){const grants=await access.authzStore.listGrantsForPrincipal(principalId);return grants.some(grant=>(grant.role==="staff"||grant.role==="admin")&&grant.scope==="subtree"&&DEFAULT_OPERATOR_ORG_IDS.includes(grant.orgId))}}:undefined;
+  const civilIdReview=civilIdReviewStore&&civilVault&&civilKey?{store:civilIdReviewStore,vault:civilVault,ocr:civilSuggestionStore,secret:civilKey,async isStaff(principalId:string){const grants=await access.authzStore.listGrantsForPrincipal(principalId);return hasOperatorStaffGrant(grants)}}:undefined;
   const profileChoices=new PostgresPersonProfileStore({pool:profileReadPool});
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const personLocations = new PostgresPersonLocationStore({ pool:profileReadPool });

@@ -3,11 +3,11 @@ import { spawnSync } from "node:child_process";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const dist=new URL("../../../dist/apps/gateway/",import.meta.url),http=new URL("src/civil-id-review-http.js",dist),helper=new URL("test/helpers/real-profile-server.js",dist),suite=fileURLToPath(new URL("test/civil-id-review-http.test.js",dist)),hook=new URL("./helpers/swap-module.mjs",import.meta.url).href;
+const dist=new URL("../../../dist/apps/gateway/",import.meta.url),http=new URL("src/civil-id-review-http.js",dist),wiring=new URL("src/wiring/profile.js",dist),suite=fileURLToPath(new URL("test/civil-id-review-http.test.js",dist)),hook=new URL("./helpers/swap-module.mjs",import.meta.url).href;
 const cases=[
  ["show the full number in the queue","REV_SECRECY full number","REV_SECRECY queue HTML excludes full number",http,"maskCivilId(r.country, service.vault.open(r.principalId, r.country, r.numberCiphertext))","service.vault.open(r.principalId, r.country, r.numberCiphertext)"],
  ["drop the own-row refusal","REV_STAFF no session","REV_STAFF own open refused",http,"if (subject === principal)","if (false)"],
- ["drop scope subtree from isStaff","REV_STAFF no session","REV_STAFF non-subtree grant is false",helper,' && g.scope === "subtree"',""],
+ ["drop scope subtree from isStaff","REV_STAFF no session","REV_STAFF non-subtree grant is false",wiring,' && grant.scope === "subtree"',""],
  ["accept a reject without a reason","REV_DECIDE missing photo","REV_DECIDE invalid form stores nothing",http,"[...reason].length < 1","[...reason].length < 0"],
  ["skip the revision check","REV_DECIDE stale revision","REV_DECIDE stale revision refused",http,"decisionRevision = claim.revision","decisionRevision = latest.revision"],
  ["skip the confirmation expiry","REV_DECIDE stale revision","REV_DECIDE expired confirmation refused",http,"claim.expiresAt <= now","false"],

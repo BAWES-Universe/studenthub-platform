@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { CivilIdOcrStore, CivilIdReviewStore, CivilIdVault } from "@studenthub/profile";
 import { CIVIL_ID_REVIEW_PAGE_SIZE, maskCivilId } from "@studenthub/profile";
 import type { StaffDocuments } from "../../../packages/private-documents/src/staff-delivery.js";
-import { LifecycleError } from "../../../packages/private-documents/src/candidate-lifecycle.js";
+import { pageDocument, writeHtml } from "./web-ui.js";
 
 const LIMIT=4096, PERSON=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const esc=(v:string)=>v.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
@@ -25,7 +25,7 @@ export interface CivilIdReviewHttpService {
 type Confirm={v:1;reviewer:string;subject:string;decision:"confirmed"|"rejected";reason:string|null;revision:number;front:string|null;back:string|null;issuedAt:number;expiresAt:number};
 const sign=(claim:Confirm,key:Buffer)=>{const p=Buffer.from(JSON.stringify(claim)).toString("base64url");return `${p}.${createHmac("sha256",key).update("civil-id-review-confirm-v1\0"+p).digest("base64url")}`};
 const verify=(token:string,key:Buffer):Confirm|null=>{const [p,m,...rest]=token.split(".");if(!p||!m||rest.length)return null;const expected=createHmac("sha256",key).update("civil-id-review-confirm-v1\0"+p).digest("base64url"),a=Buffer.from(m),b=Buffer.from(expected);if(a.length!==b.length||!timingSafeEqual(a,b))return null;try{const x=JSON.parse(Buffer.from(p,"base64url").toString()) as Confirm;return x.v===1?x:null}catch{return null}};
-const finish=(res:ServerResponse,status:number,body:string,headers:Record<string,string>={})=>{res.writeHead(status,{"content-type":"text/html; charset=utf-8","cache-control":"no-store","referrer-policy":"no-referrer",...headers});res.end(body)};
+const finish=(res:ServerResponse,status:number,body:string,headers:Record<string,string>={})=>writeHtml(res,status,body.startsWith("<!doctype html>")?body:pageDocument("Civil ID",body),headers);
 async function form(req:IncomingMessage,fields:readonly string[]){if(!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(req.headers["content-type"]??"")||Number(req.headers["content-length"])>LIMIT){req.resume();return null}req.setEncoding("utf8");let raw="";for await(const c of req){raw+=c;if(Buffer.byteLength(raw)>LIMIT)return null}const p=new URLSearchParams(raw),keys=[...p.keys()];if(keys.length!==fields.length||new Set(keys).size!==keys.length||keys.some(k=>!fields.includes(k)))return null;return p}
 const evidence=async(s:CivilIdReviewHttpService,credential:string,subject:string)=>{const docs=await s.staffDocuments!.documents(credential,subject),front=docs.find(x=>x.type==="civil-id-front")?.version??null,back=docs.find(x=>x.type==="civil-id-back")?.version??null;return{front,back}};
 
@@ -43,7 +43,7 @@ export async function handleCivilIdReview(req:IncomingMessage,res:ServerResponse
     const body=rows.length?`<table><thead><tr><th>Name</th><th>Country</th><th>Number</th><th>Expiry</th><th>Waiting</th><th>Photo reading</th></tr></thead><tbody>${rows.map(r=>`<tr><th><a href="/workspace/civil-ids/${encodeURIComponent(r.principalId)}">${esc(r.name??"Unnamed")}</a></th><td>${esc(r.country??"Not recorded")}</td><td>${esc(r.number??"Not recorded")}</td><td>${esc(r.expiry??"Not recorded")}</td><td>${esc(r.waited)}</td><td>${esc(r.reading??"No result")}</td></tr>`).join("")}</tbody></table>`:"<p>No civil IDs are waiting on this page.</p>";finish(res,200,document("Civil IDs",`<main><h1>Civil IDs</h1>${body}</main>`));return true
   }
   if(path==="/workspace/civil-ids/delivery"&&req.method==="GET"){
-    try{const out=await service.staffDocuments.deliver(session,req.url!);res.writeHead(200,out.headers);res.end(out.bytes)}catch(e){finish(res,e instanceof LifecycleError?e.status:404,notFound)}return true
+    try{const out=await service.staffDocuments.deliver(session,req.url!);res.writeHead(200,out.headers);res.end(out.bytes)}catch{finish(res,404,notFound)}return true
   }
   const match=path.match(/^\/workspace\/civil-ids\/([^/]+)(?:\/decision(?:\/confirm)?)?$/);if(!match||!PERSON.test(decodeURIComponent(match[1]!))){finish(res,404,notFound);return true}const subject=decodeURIComponent(match[1]!);if(subject===principal){finish(res,403,plain("Civil ID","You cannot review your own Civil ID."));return true}
   const row=await service.store.readForDecision(subject);if(!row?.needsReview){finish(res,404,notFound);return true}

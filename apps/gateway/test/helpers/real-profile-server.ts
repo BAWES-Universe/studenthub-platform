@@ -33,7 +33,7 @@ import {
 } from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../../src/index.js";
 import type { BrowserLoginApplication } from "../../src/web-ui.js";
-import { composeOwnProfiles } from "../../src/wiring/profile.js";
+import { composeOwnProfiles, hasOperatorStaffGrant } from "../../src/wiring/profile.js";
 import type { CandidateDocuments } from "../../../../packages/private-documents/src/candidate-lifecycle.js";
 
 export const REAL_PROFILE_ORIGIN = "https://studenthub.test.invalid";
@@ -66,7 +66,7 @@ export type RealProfileServerOptions = {
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
   /** Wire the staff Civil ID review routes through the production gateway composition. */
-  readonly civilIdReview?: { readonly documents:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string };
+  readonly civilIdReview?: { readonly documents?:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string };
 };
 
 const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -109,7 +109,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,
-    ...(options.civilIdReview&&reviewStore?{civilIdReview:{store:reviewStore,vault,ocr:reviewOcr,secret:key,isStaff:async(id:string)=>{const grants=await authz.listGrantsForPrincipal(id);return grants.some(g=>(g.role==="staff"||g.role==="admin")&&g.scope==="subtree"&&g.orgId==="root")}}}:{}),
+    ...(options.civilIdReview&&reviewStore?{civilIdReview:{store:reviewStore,vault,ocr:reviewOcr,secret:key,isStaff:async(id:string)=>hasOperatorStaffGrant(await authz.listGrantsForPrincipal(id))}}:{}),
     // As wireProfile: the area service with the session store and origin.
     area: { area, sessions: rig.sessions, origin: REAL_PROFILE_ORIGIN },
     ...(options.extend?.(services) ?? {}),
