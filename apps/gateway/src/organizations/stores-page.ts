@@ -44,6 +44,7 @@ export async function handleOrganizationStoresPage(ctx: GatewayRouteContext): Pr
   if (ORGANIZATION_PAGE_RESERVED.includes(decoded)) return error(ctx, 404);
   const orgId = organizationPageOrgId(match[1]!);
   if (!orgId) return error(ctx, 404);
+  if (!ctx.login?.organizationStores && !ctx.login?.web) return false;
   const service = ctx.login?.organizationStores;
   if (!service) return unavailable(ctx);
   let result;
