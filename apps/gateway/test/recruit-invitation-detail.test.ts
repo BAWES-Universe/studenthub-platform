@@ -32,8 +32,8 @@ async function call(path: string, o: { method?: string; html?: boolean; cookie?:
 test("INVDET_SHOW a person's invitation detail renders escaped HTML and the InvitationView JSON", async () => {
   rows = [row]; calls.length = 0;
   const page = await call(`/recruit/invitations/${INV}`, { html: true });
-  for (const value of ["Co &lt;script&gt;", "Store &amp; Sons", "Role &gt; all", "Part time", "2026-12-01 to 2026-12-31", "Kuwait &amp; remote", "Pay: 5 &lt; 6 KWD (Hourly)", "New", `<time datetime="2026-11-17T10:00:00.000Z">`, `href="/recruit/invitations"`]) assert.ok(page.body.includes(value), `INVDET_SHOW includes ${value}`);
   assert.equal(page.body.includes("Co <script>"), false, "INVDET_SHOW company name is escaped");
+  for (const value of ["Co &lt;script&gt;", "Store &amp; Sons", "Role &gt; all", "Part time", "2026-12-01 to 2026-12-31", "Kuwait &amp; remote", "Pay: 5 &lt; 6 KWD (Hourly)", "New", `<time datetime="2026-11-17T10:00:00.000Z">`, `href="/recruit/invitations"`]) assert.ok(page.body.includes(value), `INVDET_SHOW includes ${value}`);
   const json = await call(`/recruit/invitations/${INV.toUpperCase()}`);
   assert.equal(json.status, 200); assert.deepEqual((json.json as { invitation: { invitationId: string; canAnswer: boolean } }).invitation, { invitationId: INV, status: "sent", company: "Co <script>", store: "Store & Sons", positionTitle: "Role > all", positionType: "part_time", period: { start: "2026-12-01", end: "2026-12-31" }, pay: "5 < 6 KWD", payModel: "hourly", location: "Kuwait & remote", invitedAt: "2026-11-17T10:00:00.000Z", canAnswer: true });
   assert.deepEqual(calls, ["mine:mine", "mine:mine"]);
