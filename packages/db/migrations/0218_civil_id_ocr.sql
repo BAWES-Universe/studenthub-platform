@@ -1,5 +1,5 @@
 CREATE TABLE civil_id_ocr_baseline (
- singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+ org_id text PRIMARY KEY,
  taken_at timestamptz NOT NULL,
  last_sweep_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
@@ -7,6 +7,7 @@ CREATE TABLE civil_id_ocr_baseline (
 CREATE TABLE civil_id_ocr_jobs (
  id uuid PRIMARY KEY,
  principal_id text NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+ org_id text NOT NULL,
  side text NOT NULL CHECK (side IN ('front','back')),
  document_id uuid NOT NULL,
  document_version uuid NOT NULL,
@@ -39,4 +40,5 @@ CREATE TABLE civil_id_ocr_jobs (
 CREATE INDEX civil_id_ocr_claim ON civil_id_ocr_jobs(status,not_before,created_at)
  WHERE status IN ('pending','running') AND superseded_at IS NULL;
 CREATE INDEX civil_id_ocr_person ON civil_id_ocr_jobs(principal_id,side,created_at DESC);
+CREATE INDEX civil_id_ocr_org ON civil_id_ocr_jobs(org_id,document_id,document_version);
 CREATE INDEX civil_id_ocr_expired_lease ON civil_id_ocr_jobs(lease_expires_at) WHERE status='running';
