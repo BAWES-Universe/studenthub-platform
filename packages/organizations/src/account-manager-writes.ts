@@ -13,6 +13,9 @@ export interface OrganizationAssignedCompanyRow{readonly org_id:string;readonly 
 export interface OrganizationAssignedCompany{readonly orgId:string;readonly name:string}
 export const ORGANIZATION_ASSIGNED_COMPANIES_LIMIT=50;
 export function organizationAssignedCompaniesView(rows:readonly OrganizationAssignedCompanyRow[]):OrganizationAssignedCompany[]{return rows.map((row)=>({orgId:row.org_id,name:row.name})).sort((a,b)=>a.name.localeCompare(b.name)||a.orgId.localeCompare(b.orgId)).slice(0,ORGANIZATION_ASSIGNED_COMPANIES_LIMIT);}
+export interface OrganizationAccountManagerEventRow{readonly from_present:boolean;readonly from_display_name:string|null;readonly to_present:boolean;readonly to_display_name:string|null;readonly occurred_at:Date|string}
+export interface OrganizationAccountManagerHistoryEvent{readonly from:string|null;readonly to:string|null;readonly occurredAt:string}
+export function organizationAccountManagerHistoryView(rows:readonly OrganizationAccountManagerEventRow[]):OrganizationAccountManagerHistoryEvent[]{return rows.map(row=>({from:row.from_present?row.from_display_name??"Unnamed staff member":null,to:row.to_present?row.to_display_name??"Unnamed staff member":null,occurredAt:new Date(row.occurred_at).toISOString()}));}
 function ref(domain:string,value:string){return createHash("sha256").update(`studenthub:${domain}:v1\0`).update(value).digest("hex");}
 export const organizationAccountManagerRecordRef=(orgId:string)=>ref("organization-account-manager-record",orgId);
 export const organizationAccountManagerPrincipalRef=(id:string)=>ref("organization-account-manager-principal",id);

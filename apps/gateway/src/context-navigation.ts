@@ -2,7 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { OrganizationCounts, OrganizationDeletionRecords, OrganizationReader, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
+import type { OrganizationAccountManagerEventRow, OrganizationCounts, OrganizationDeletionRecords, OrganizationReader, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -25,7 +25,8 @@ export type OrganizationCountsPanel =
   | { readonly kind: "found"; readonly counts: OrganizationCounts }
   | { readonly kind: "unavailable" };
 export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null;
-export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>}
+export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>;history?(principalId:string,orgId:string):Promise<readonly OrganizationAccountManagerEventRow[]|null>}
+export type OrganizationAccountManagerHistoryPanel=readonly OrganizationAccountManagerEventRow[];
 export type OrganizationReaderWithAccountManagers=OrganizationReader&{readonly accountManagers?:OrganizationAccountManagerReader};
 
 export type NavigationResult =
@@ -36,6 +37,7 @@ export type NavigationResult =
     readonly counts?: OrganizationCountsPanel;
     readonly subOrganizations?: SubOrganizationsPanel;
     readonly accountManager?: OrganizationAccountManagerPanel;
+    readonly accountManagerHistory?: OrganizationAccountManagerHistoryPanel;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
 
@@ -124,11 +126,11 @@ export function createContextNavigation(
             ? { kind: "found", subOrganizations: children.subOrganizations }
             : children.kind === "unavailable" ? { kind: "unavailable" } : undefined;
         }
-        let accountManager:OrganizationAccountManagerPanel|undefined;
+        let accountManager:OrganizationAccountManagerPanel|undefined,accountManagerHistory:OrganizationAccountManagerHistoryPanel|undefined;
         const accountManagers=organizationReader.accountManagers;
-        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const result=await accountManagers.manager(session.personId,active.orgId);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null}
-        const shownOrganization=accountManager!==undefined?{...organization,accountManager}:organization;
-        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}) } };
+        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const[result,history]=await Promise.all([accountManagers.manager(session.personId,active.orgId),accountManagers.history?.(session.personId,active.orgId)]);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null;if(history)accountManagerHistory=history}
+        const shownOrganization=accountManager!==undefined||accountManagerHistory!==undefined?{...organization,...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{})}:organization;
+        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}) } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }
