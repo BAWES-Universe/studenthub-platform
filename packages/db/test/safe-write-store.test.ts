@@ -15,6 +15,7 @@ import { createOrganization, createPrincipal } from "@studenthub/contracts";
 import {
   PostgresAuthzStore,
   PostgresLoginStore,
+  PostgresPersonProfileStore,
   PostgresSafeWriteStore,
   personRecordRef,
   runMigrations,
@@ -426,6 +427,11 @@ test("SHU-84/AC-12 AUTHOR a receipt row that is not well formed is never served"
     principalRef: safeWritePrincipalRef(id), changeSetDigest: "d".repeat(64), fields: ["language"],
     committedAt: "2026-10-04T00:00:00.000Z",
   }, "control: a well-formed row is served");
+  assert.equal(await serving({ ...good, after_summary: { ...good.after_summary, fields: ["objective"] } })
+    .readReceipt(id, "a".repeat(64)), null, "SHU372_WRITE another profile card's receipt is not a language receipt");
+  const profileServing = new PostgresPersonProfileStore({ pool: { query: async () => ({ rows: [good] }) } as unknown as pg.Pool });
+  assert.equal(await profileServing.readReceipt(id, "a".repeat(64)), null,
+    "SHU372_WRITE the language receipt is not a text-profile receipt");
   for (const bad of [
     { ...good, actor_principal_ref: null },
     { ...good, actor_principal_ref: "f".repeat(64) },

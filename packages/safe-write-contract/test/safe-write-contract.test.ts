@@ -19,6 +19,18 @@ import {
   type SafeWriteFactory,
   type SafeWriteScenario,
 } from "../src/index.js";
+
+test("SHU372_RULES clearing is opt-in and lengths count code points", async () => {
+  const store = createRecordingStore();
+  const principalRef = OWNER_PRINCIPAL_REF;
+  const personRef = OWNER_PERSON_REF;
+  const base = { store, secret: TEST_SECRET, clock: createClock() };
+  const ordinary = createSafeWrite({ ...base, policy: { allowed: ["objective"], maxValueLength: 100 } });
+  assert.deepEqual(await ordinary.preview({ principalRef, change: { personRef, field: "objective", value: "" } }), { ok: false, reason: "invalid_value" });
+  const clearing = createSafeWrite({ ...base, policy: { allowed: ["objective"], maxValueLength: 100, allowClear: true } });
+  assert.equal((await clearing.preview({ principalRef, change: { personRef, field: "objective", value: "😀".repeat(100) } })).ok, true);
+  assert.equal((await clearing.preview({ principalRef, change: { personRef, field: "objective", value: "" } })).ok, true);
+});
 import {
   inertFactory,
   makeFaultyFactory,

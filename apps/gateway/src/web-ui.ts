@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
 import type { ContextNavigation, NavigationResult, OrganizationAccountManagerHistoryPanel, OrganizationAccountManagerOptionsPanel, OrganizationAccountManagerPanel, OrganizationCountsPanel, OrganizationStatusHistoryPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
+import type { ProfileEdit } from "./profile-edit-http.js";
 import type { BankDetailsService } from "./bank-details.js";
 import {
   OWN_PROFILE_FIELD_CONTRACT,
@@ -29,6 +30,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly organizationAccountManager?: OrganizationAccountManager;
   /** SHU-84 safe write; absent unless a signing key is configured. */
   readonly preferences?: LanguagePreference;
+  readonly profileEdit?: ProfileEdit;
   readonly bankDetails?: BankDetailsService;
   readonly web?: {
     readonly origin: string;
@@ -308,7 +310,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
 }
 
 function fieldText(field: ProfileField<unknown>, format: (value: unknown) => string = String): string {
-  if (field.state === "unavailable") return '<span class="missing" data-state="unavailable">Unavailable</span>';
+  if (field.state === "unavailable") return `<span class="missing" data-state="unavailable">${field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable"}</span>`;
   return escapeHtml(format(field.value));
 }
 
@@ -345,9 +347,14 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
   const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
   const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
+  const editable: Partial<Record<OwnProfileFieldName,string>> = { displayName:"display_name", arabicName:"arabic_name", objective:"objective", intro:"introduction", preferredTime:"preferred_time" };
   const rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
     const row = fieldRow(profile, field);
-    return field === "language" && languageForm ? row.replace("</div>", `${languageForm}</div>`) : row;
+    if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
+    const writeField=editable[field]; if (!writeField || !login.profileEdit) return row;
+    const current=profile.fields[field].state==="available" ? String(profile.fields[field].value) : "";
+    const form=`<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${writeField}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}<textarea name="value">${escapeHtml(current)}</textarea></label><button class="button primary" type="submit">Review change</button></form>`;
+    return row.replace("</div>",`${form}</div>`);
   }).join("");
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }

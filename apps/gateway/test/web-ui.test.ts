@@ -8,11 +8,13 @@ import {
   OWN_PROFILE_FIELD_NAMES,
   PROFILE_PARITY_REVISION,
   SYNTHETIC_PROFILE_FIXTURES,
+  createSelfEdit, personProfileRef, safePrincipalRef,
 } from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml, profileDocument } from "../src/web-ui.js";
+import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import type { ServerResponse } from "node:http";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
@@ -21,6 +23,20 @@ const SESSION = "s".repeat(43);
 const OTHER_SESSION = "t".repeat(43);
 const ORIGIN = "https://studenthub.test.invalid";
 const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESSION}` };
+
+test("SHU372_PAGE every written text field is shown on My profile with its own date and clearing is Not recorded", async () => {
+  const id="person-written", values=new Map<string,string|null>(), dates=new Map<string,string>();
+  const port:SafeWriteStore={ownedRecord:r=>r===safePrincipalRef(id)?personProfileRef(id):null,readField:(_r,f)=>values.get(f)??null,commit:(i:CommitInput)=>{if((values.get(i.field)??null)!==i.expectedBefore)return {ok:false,reason:"state_changed"};values.set(i.field,i.value===""?null:i.value);dates.set(i.field,"2026-10-29T10:00:00.000Z");return {ok:true};}};
+  const sessions={async get(){return {personId:id};}}, receipts={forPrincipal:()=>port,async readReceipt(){return null;}};
+  const edit=createSelfEdit({sessions,store:receipts,secret:"shu372-web-test-secret-at-least-thirty-two"});
+  const inputs={display_name:"Ahmed Ali",arabic_name:"أحمد علي",objective:"My objective",introduction:"My introduction",preferred_time:"Early mornings"};
+  for(const [field,value] of Object.entries(inputs)){const p=await edit.preview("session",{field,value});assert.equal(p.status,200);assert.equal((await edit.confirm("session",{field,value,token:(p.body as {token:unknown}).token})).status,200);}
+  const preferences={async readOwnPreferences(){const entry=(field:string)=>dates.has(field)?{value:values.get(field)??null,updatedAt:dates.get(field)!}:undefined;return {displayName:entry("display_name"),arabicName:entry("arabic_name"),objective:entry("objective"),intro:entry("introduction"),preferredTime:entry("preferred_time")} as unknown as {language:unknown;updatedAt:string};}};
+  const repository=new OwnProfileRepository({principals:new InMemoryAuthzStore({principals:[createPrincipal({id,pbuuids:["p"]})]}),source:new InMemoryApprovedProfileAdapter({links:[{principalId:id,candidateRef:"c"}],rows:new Map([["c",SYNTHETIC_PROFILE_FIXTURES.populated]])}),preferences,today:()=>"2026-10-29"});
+  let read=await repository.readOwn({requesterPrincipalId:id,targetPersonId:id});assert.equal(read.kind,"found");let html=(await profileDocument({status:200,body:(read as {profile:Readonly<Record<string,unknown>>}).profile},{profile:async()=>({status:401,body:{error:"x"}})} as unknown as BrowserLoginApplication)).html;
+  for(const value of Object.values(inputs)){assert.match(html,new RegExp(value));}assert.equal((html.match(/Updated by you · 2026-10-29/g)??[]).length>=5,true);
+  const clear=await edit.preview("session",{field:"objective",value:""});assert.equal(clear.status,200);assert.equal((await edit.confirm("session",{field:"objective",value:"",token:(clear.body as {token:unknown}).token})).status,200);read=await repository.readOwn({requesterPrincipalId:id,targetPersonId:id});html=(await profileDocument({status:200,body:(read as {profile:Readonly<Record<string,unknown>>}).profile},{profile:async()=>({status:401,body:{error:"x"}})} as unknown as BrowserLoginApplication)).html;assert.match(html,/<dt>Objective<\/dt><dd><span[^>]*>Not recorded<\/span>/);assert.doesNotMatch(html,/My objective/);
+});
 
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];

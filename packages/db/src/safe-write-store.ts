@@ -148,6 +148,9 @@ export class PostgresSafeWriteStore {
       || typeof receipt.changeSetDigest !== "string" || !REFERENCE.test(receipt.changeSetDigest)
       || !Array.isArray(receipt.fields) || receipt.fields.length !== 1 || receipt.fields[0] !== LANGUAGE_FIELD
       || typeof receipt.committedAt !== "string" || !isInstant(receipt.committedAt)) {
+      // Another profile.safe_write field belongs to its own route. It is not a
+      // malformed language receipt and must remain indistinguishable from none.
+      if (Array.isArray(receipt.fields) && receipt.fields.length === 1 && receipt.fields[0] !== LANGUAGE_FIELD) return null;
       throw new Error("malformed safe-write receipt");
     }
     return Object.freeze({ ...receipt, fields: Object.freeze([LANGUAGE_FIELD]) }) as Receipt;

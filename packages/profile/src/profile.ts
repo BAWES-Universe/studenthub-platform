@@ -183,22 +183,37 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+type WrittenValue = Readonly<{ value: unknown | null; updatedAt: string }>;
+type ExtendedPreferences = Readonly<{ language?: unknown; updatedAt?: string; languageUpdatedAt?: string; displayName?: WrittenValue; arabicName?: WrittenValue; objective?: WrittenValue; intro?: WrittenValue; preferredTime?: WrittenValue }>;
+
+function applyPreferences(profile: OwnProfileProjection, rawPreferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+  const preferences = rawPreferences as ExtendedPreferences | null;
   if (!preferences) return profile;
   const fields = { ...profile.fields };
-  try {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
-      || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
+  const languageAt = preferences.updatedAt ?? preferences.languageUpdatedAt;
+  let hasWrittenValue = languageAt !== undefined;
+  if (languageAt !== undefined) try {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(languageAt)
+      || !Number.isFinite(Date.parse(languageAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
       PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference,
-      preferences.updatedAt);
+      languageAt);
   } catch {
     fields.language = Object.freeze({
       state: "unavailable", reason: "not_recorded",
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-      freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: languageAt }),
     });
   }
+  for (const [key, name] of [["displayName","displayName"],["arabicName","arabicName"],["objective","objective"],["intro","intro"],["preferredTime","preferredTime"]] as const) {
+    const entry = preferences[key]; if (!entry) continue;
+    hasWrittenValue = true;
+    const spec = PROFILE_FIELD_SPECS[name];
+    if (!Number.isFinite(Date.parse(entry.updatedAt))) throw new TypeError("malformed preference timestamp");
+    fields[name] = entry.value === null ? Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(spec.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: entry.updatedAt }) }) as never
+      : written(spec, spec.parse(entry.value, profile.asOfDate), entry.updatedAt) as never;
+  }
+  if (!hasWrittenValue) return profile;
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
   for (const name of ["isProfileCompleted", "pendingFields"] as const) {
