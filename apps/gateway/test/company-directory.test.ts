@@ -18,7 +18,7 @@ const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
+async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly managerPicker?:{directoryManagers(callerId:string,orgId:string):Promise<readonly{principalId:string;displayName:string|null}[]|null>}; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -39,7 +39,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers, commercialTerms:options.commercialTerms });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
-    ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
+    ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations,options.managerPicker) }),
     web: { origin: "https://studenthub.example.invalid", returnTo: rig.config.allowedReturnUrls[1],
       profiles: new OwnProfileRepository({ principals: store, source: new InMemoryApprovedProfileAdapter({ links: [], rows: new Map() }),
         today: () => "2026-10-04" }) },
@@ -188,7 +188,7 @@ test("SHU168_PAGE renders source store counts and unavailable state in HTML and 
 });
 
 test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the manager field", async (t) => {
-  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", {principalId:"person-1",displayName:"Staff One"}]]) } });
+  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", {principalId:"person-1",displayName:"Staff One"}]]) },managerPicker:{directoryManagers:async()=>[{principalId:"person-1",displayName:"Staff One"}]} });
   for (const manager of ["me", "person-1"]) {
     const body = await (await f.get(`${STAFF_LIST}&manager=${manager}`)).json();
     assert.equal(body.filters.accountManager, "person-1");
@@ -200,8 +200,12 @@ test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the m
   }
   assert.equal((await (await f.get(`${STAFF_LIST}&manager=`)).json()).directory.entries.length, 2);
   const page = await (await f.get(`${STAFF_LIST}&manager=me`, html)).text();
-  assert.match(page, /name="manager" maxlength="128" value="me"/);
+  assert.match(page, /<select name="manager">[\s\S]*?<option value="me" selected>Me<\/option>/);
 });
+
+test("SHU359_PICKER staff sees names and fallback never exposes the selected principal",async(t)=>{const f=await fixture(t,{managerPicker:{directoryManagers:async()=>[{principalId:"staff-secret",displayName:"Staff Name"},{principalId:"unnamed-secret",displayName:null}]}});let page=await(await f.get(STAFF_LIST,html)).text();assert.match(page,/>Staff Name<\/option>/);assert.match(page,/>Unnamed staff member<\/option>/);assert.doesNotMatch(page,/>staff-secret<|>unnamed-secret</);const failed=await fixture(t,{managerPicker:{directoryManagers:async()=>{throw new Error("down")}}});page=await(await failed.get(`${STAFF_LIST}&manager=selected-secret`,html)).text();assert.match(page,/<select name="manager">/);assert.match(page,/>Any<\/option>[\s\S]*>Me<\/option>/);assert.match(page,/>Selected account manager<\/option>/);assert.doesNotMatch(page,/>selected-secret</)})
+
+test("SHU359_SHOWN submitted picker choice filters to that manager's companies",async(t)=>{const f=await fixture(t,{accountManagers:{readMany:async()=>new Map([["org-a",{principalId:"staff-secret",displayName:"Staff Name"}]])},managerPicker:{directoryManagers:async()=>[{principalId:"staff-secret",displayName:"Staff Name"}]}});const page=await(await f.get(STAFF_LIST,html)).text(),match=page.match(/<option value="([^"]+)">Staff Name<\/option>/);assert.equal(match?.[1],"staff-secret");const body=await(await f.get(`${STAFF_LIST}&manager=${encodeURIComponent(match![1]!)}`)).json();assert.deepEqual(body.directory.entries.map((entry:{orgId:string})=>entry.orgId),["org-a"])})
 
 test("SHU355_SHOWN directory hides a manager without a covering grant and restores the retained assignment",async(t)=>{
   let granted=true;

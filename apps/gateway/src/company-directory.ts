@@ -4,6 +4,7 @@ import type {
   OrganizationDirectory, OrganizationDirectoryFilters, OrganizationDirectoryResult, OrganizationStatus,
 } from "@studenthub/organizations";
 import type { WorkspaceContext } from "./context-navigation.js";
+import type { OrganizationAccountManagerDirectoryStore } from "./organization-account-manager.js";
 
 type FoundDirectory = Extract<OrganizationDirectoryResult, { kind: "found" }>["directory"];
 
@@ -12,6 +13,7 @@ export type CompanyDirectoryResult =
     readonly active: WorkspaceContext;
     readonly filters: OrganizationDirectoryFilters;
     readonly accountManagerSelection?: string;
+    readonly accountManagerOptions?: readonly { readonly principalId: string; readonly displayName: string | null }[] | null;
     readonly directory: FoundDirectory;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
@@ -73,6 +75,7 @@ export function createCompanyDirectory(
   sessions: Pick<SessionStore, "get">,
   store: AuthzStore,
   directory: OrganizationDirectory,
+  accountManagers?: Pick<OrganizationAccountManagerDirectoryStore, "directoryManagers">,
 ): CompanyDirectoryPage {
   return {
     async open(sessionId, query) {
@@ -94,10 +97,16 @@ export function createCompanyDirectory(
         if (result.kind === "unavailable") return { status: 503, body: { error: "directory_unavailable" } };
         const org = await store.getOrganization(parsed.orgId);
         if (!org) return { status: 403, body: { error: "context_forbidden" } };
+        let accountManagerOptions: readonly { readonly principalId:string;readonly displayName:string|null }[] | null | undefined;
+        if ((parsed.role === "staff" || parsed.role === "admin") && accountManagers) {
+          try { accountManagerOptions = await accountManagers.directoryManagers(session.personId, parsed.orgId); }
+          catch { accountManagerOptions = null; }
+        }
         return { status: 200, body: {
           active: { orgId: org.id, role: parsed.role as WorkspaceContext["role"], organizationName: org.name },
           filters,
           ...(parsed.filters.accountManager ? { accountManagerSelection: parsed.filters.accountManager } : {}),
+          ...(accountManagerOptions === undefined ? {} : { accountManagerOptions }),
           directory: result.directory,
         } };
       } catch {
