@@ -77,3 +77,23 @@ test("does not stop a body at a closing brace inside a string literal", () => {
   );
   assert.deepEqual(report, []);
 });
+
+test("reports a body whose only assertion is inside a block comment", () => {
+  const report = scanVacuousTests(
+    'test("commented", () => { /* assert.ok(value); */ const value = 1; });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["commented"]);
+});
+
+test("reports a body whose only assertion is inside a line comment or string", () => {
+  const source = [
+    'test("line-comment", () => { // expect(value).toBe(1);',
+    "  const value = 1;",
+    "});",
+    'test("string", () => { const example = "throw new Error();"; });',
+  ].join("\n");
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["line-comment", "string"],
+  );
+});

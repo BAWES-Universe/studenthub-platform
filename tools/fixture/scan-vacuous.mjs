@@ -20,6 +20,65 @@ const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
   /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
 
+function codeOnly(source) {
+  let result = "";
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (lineComment) {
+      if (ch === "\n" || ch === "\r") {
+        lineComment = false;
+        result += ch;
+      } else {
+        result += " ";
+      }
+      continue;
+    }
+    if (blockComment) {
+      result += ch === "\n" || ch === "\r" ? ch : " ";
+      if (ch === "*" && next === "/") {
+        result += " ";
+        blockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      result += ch === "\n" || ch === "\r" ? ch : " ";
+      if (ch === "\\") {
+        if (i + 1 < source.length) {
+          result += " ";
+          i += 1;
+        }
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      result += "  ";
+      lineComment = true;
+      i += 1;
+    } else if (ch === "/" && next === "*") {
+      result += "  ";
+      blockComment = true;
+      i += 1;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      result += " ";
+      quote = ch;
+    } else {
+      result += ch;
+    }
+  }
+
+  return result;
+}
+
 function testName(source, callIndex) {
   const quoteIndex = source.indexOf("\"", callIndex);
   const altQuoteIndex = source.indexOf("'", callIndex);
@@ -93,7 +152,7 @@ export function scanVacuousTests(fileText) {
     const callIndex = match.index;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
-    if (RECOGNISED_ASSERTION_RE.test(body.text)) continue;
+    if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
     report.push({ name: testName(fileText, callIndex), start: body.start, end: body.end });
   }
   return report;

@@ -40,6 +40,6 @@ export const EXPECTATIONS = Object.freeze([
   {
     name: "a body whose assertion is mentioned only inside a block comment",
     src: 'test("commented", () => { /* assert.ok(x); */ const a = 1; });',
-    expected: [],
+    expected: ["commented"],
   },
 ]);
