@@ -228,6 +228,11 @@ export function createGatewayServer(
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
+      const selected = new URL(request.url, "http://gateway.invalid").searchParams;
+      const orgId = selected.get("org_id"), role = selected.get("role");
+      const active = orgId && (role === "staff" || role === "admin")
+        ? { orgId, role, organizationName: "" } as const
+        : null;
       const service = login?.organizationAccountManager;
       let result: import("./organization-account-manager.js").AssignedCompaniesResult;
       try {
@@ -237,7 +242,7 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "unavailable" } };
       }
-      if (html) writeHtml(response, result.status, login ? renderAssignedCompanies(result, login) : renderError(503), {}, true);
+      if (html) writeHtml(response, active ? result.status : 403, login && active ? renderAssignedCompanies(result, login, active) : renderError(login ? 403 : 503, login), {}, true);
       else writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       return;
     }

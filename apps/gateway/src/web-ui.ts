@@ -160,21 +160,25 @@ const DIRECTORY_ROLES: ReadonlySet<WorkspaceContext["role"]> = new Set(["staff",
 
 /** Shown for a staff or admin context; the directory still re-resolves the grant on every request. */
 function companiesLink(active: WorkspaceContext | null, login: BrowserLoginApplication, current = false): string {
-  if (!active || !login.companies || !DIRECTORY_ROLES.has(active.role)) return "";
+  const assigned = myCompaniesLink(active, login);
+  if (!active || !login.companies || !DIRECTORY_ROLES.has(active.role)) return assigned;
   const href = `/workspace/companies?${new URLSearchParams({ org_id: active.orgId, role: active.role })}`;
-  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>Companies</a>`;
+  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>Companies</a>${assigned}`;
 }
 
-function myCompaniesLink(login: BrowserLoginApplication, current = false): string {
-  if (!login.organizationAccountManager) return "";
-  return `<a class="nav-item${current ? " active" : ""}" href="/workspace/my-companies"${current ? ' aria-current="page"' : ""}>My companies</a>`;
+function myCompaniesLink(active: WorkspaceContext | BrowserLoginApplication | null, login?: BrowserLoginApplication, current = false): string {
+  if (active && !("role" in active)) return "";
+  if (!active || !login?.organizationAccountManager || !DIRECTORY_ROLES.has(active.role)) return "";
+  const href = `/workspace/my-companies?${new URLSearchParams({ org_id: active.orgId, role: active.role })}`;
+  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>My companies</a>`;
 }
 
 /** Read-only projection of the account-manager route: names and company links only. */
-export function renderAssignedCompanies(result: AssignedCompaniesResult, login: BrowserLoginApplication): string {
-  if (result.status !== 200) return renderError(result.status, login);
-  const links = result.body.companies.map(company => `<a class="context-option" href="/workspace/companies?${escapeHtml(String(new URLSearchParams({org_id:company.orgId,role:"staff"})))}"><span>${escapeHtml(company.name)}</span><span aria-hidden="true">→</span></a>`).join("");
-  return workspaceDocument("My companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace">Workspaces</a>${myCompaniesLink(login,true)}</nav><p class="sidebar-note">Read-only for now.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ACCOUNT MANAGEMENT</div><h1>My companies<span class="accent">.</span></h1><p>Companies where you are the assigned account manager.</p></div><span class="badge">Read-only</span></div><section aria-labelledby="companies-title"><h2 id="companies-title">Assigned companies</h2>${links ? `<nav class="context-list" aria-label="Assigned companies">${links}</nav>` : '<p class="empty-contexts">No companies assigned.</p>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+export function renderAssignedCompanies(result: AssignedCompaniesResult, login: BrowserLoginApplication, active: WorkspaceContext): string {
+  const context = String(new URLSearchParams({ org_id: active.orgId, role: active.role }));
+  if (result.status !== 200) return workspaceDocument("My companies unavailable", `<header class="topbar">${brand}<a href="/workspace?${escapeHtml(context)}">Workspaces</a></header><main id="main" class="error-page"><h1>My companies couldn’t be loaded.</h1><p>Please try again in a moment.</p><a class="button primary" href="/workspace/my-companies?${escapeHtml(context)}">Try again</a></main>`);
+  const links = result.body.companies.map(company => `<a class="context-option" href="/workspace?${escapeHtml(String(new URLSearchParams({org_id:company.orgId,role:active.role})))}"><span>${escapeHtml(company.name)}</span><span aria-hidden="true">→</span></a>`).join("");
+  return workspaceDocument("My companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(context)}">Workspaces</a>${myCompaniesLink(active,login,true)}</nav><p class="sidebar-note">Read-only for now.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ACCOUNT MANAGEMENT</div><h1>My companies<span class="accent">.</span></h1><p>Companies where you are the assigned account manager.</p></div><span class="badge">Read-only</span></div><section aria-labelledby="companies-title"><h2 id="companies-title">Assigned companies</h2>${links ? `<nav class="context-list" aria-label="Assigned companies">${links}</nav>` : '<p class="empty-contexts">No companies assigned.</p>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 const statusNames: Readonly<Record<string, string>> = { active: "Active", under_review: "Under review", inactive: "Inactive" };
