@@ -29,6 +29,8 @@ import { CONTRIBUTIONS, type Contributions } from "./contributions/index.js";
 import type {NotificationPage} from "../../../packages/notifications/src/notifications.js";
 import type { LegacyLinkService } from "./legacy-link-http.js";
 import { renderCivilIdRow } from "./civil-id-http.js";
+import { renderCivilIdSuggestion, type CivilIdSuggestionService } from "./civil-id-suggestion-http.js";
+import type { CivilIdSuggestion } from "@studenthub/profile";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "./area-http.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
@@ -49,6 +51,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly bankDetails?: BankDetailsService;
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
+  readonly civilIdSuggestion?: CivilIdSuggestionService;
   readonly area?: AreaHttp;
   readonly web?: {
     readonly origin: string;
@@ -333,7 +336,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
   return projection as OwnProfileProjection;
 }
 
-export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS, completeness?: ProfileCompletenessResult): Promise<{ status: number; html: string }> {
+export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS, completeness?: ProfileCompletenessResult, civilIdSuggestion?: CivilIdSuggestion): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
   const profile = projectionFrom(result);
   const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
@@ -403,7 +406,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}${contributions.profileRows.filter(item => item.section === "details").map(item => item.render(language, copy)).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
-  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
+  const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + renderCivilIdSuggestion(language, civilIdSuggestion) + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
   const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${legacyAccountMark}${legacyAccountPrompt}${summary}${checklist}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"],"",civilRow)}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
   return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }

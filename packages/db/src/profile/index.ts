@@ -13,3 +13,4 @@ export type { LegacyLinkMethod, LegacyLinkStatus, LegacySnapshotPort } from "../
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdStore", { value: PostgresPersonCivilIdStore });
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdOcrStore", { value: PostgresCivilIdOcrStore });
 export { PostgresPersonLocationStore } from "../postgres-person-location-store.js";
+export { PostgresCivilIdOcrStore } from "../postgres-civil-id-ocr-store.js";
