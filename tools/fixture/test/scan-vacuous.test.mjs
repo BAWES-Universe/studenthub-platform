@@ -156,3 +156,50 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("ignores a member call such as matcher.test(line)", () => {
+  assert.deepEqual(scanVacuousTests("if (matcher.test(line)) { work(); }"), []);
+});
+
+test("ignores a member call with whitespace before the method name", () => {
+  const source = ["if (matcher.", "    test(line)) { work(); }"].join("\n");
+  assert.deepEqual(scanVacuousTests(source), []);
+});
+
+test("ignores an optional-chained member call", () => {
+  assert.deepEqual(scanVacuousTests("if (matcher?.test(line)) { work(); }"), []);
+});
+
+test("ignores an identifier that merely ends in test or it", () => {
+  const source = [
+    '$test("prefixed", () => { work(); });',
+    'audit("suffixed", () => { work(); });',
+  ].join("\n");
+  assert.deepEqual(scanVacuousTests(source), []);
+});
+
+test("ignores a function declaration named test", () => {
+  assert.deepEqual(scanVacuousTests("function test(a) { return a; }\n"), []);
+});
+
+test("ignores a private method named test", () => {
+  assert.deepEqual(scanVacuousTests("class Suite { #test(a) { return a; } }\n"), []);
+});
+
+test("reports a vacuous body once when it guards on a matcher", () => {
+  const report = scanVacuousTests(
+    'test("uses matcher", () => { if (re.test(value)) { work(); } });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["uses matcher"]);
+});
+
+test("still reports a test declared after a member call", () => {
+  const source = [
+    "if (matcher.test(line)) { work(); }",
+    'test("real", () => { work(); });',
+  ].join("\n");
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});

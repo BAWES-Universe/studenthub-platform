@@ -9,6 +9,10 @@
 // brace-delimited block that follows the call's opening parenthesis. A body is
 // VACUOUS when no assertion call appears inside it.
 //
+// Only a plain call opens a test body. A member call (`matcher.test(line)`), a
+// declaration (`function test(a) { ... }`), and an identifier that merely ends
+// in `test`/`it` (`$test(...)`, `#test(...)`, `audit(...)`) are not test calls.
+//
 // An assertion call is documented as `expect(...)`, a node:assert call
 // (`assert(...)`, `assert.ok(...)`, `assert.equal(...)`, ...), a node:test
 // context assertion (`t.assert.*`), or a `throw` statement.
@@ -16,7 +20,7 @@
 // Returns an array of { name, start, end } in source order, where `start`/`end`
 // are the indices of the body's braces.
 
-const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
+const TEST_CALL_RE = /(?<![#$\w])(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
   /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
 
@@ -188,6 +192,21 @@ function braceBody(source, callIndex) {
   return null;
 }
 
+// A `test`/`it` identifier only opens a test body when it is called on its own.
+// The regex lookbehind rejects the identifiers it is glued to (`$test(`,
+// `#test(`, `audit(`); this rejects the two forms that put a token in front:
+// a member call (`matcher.test(line)`, `matcher?.test(line)`) and a function
+// declaration. `source` is the code-only text, so comments and literals are
+// already blanked to spaces and cannot hide the preceding token.
+function isTestCall(source, index) {
+  let i = index - 1;
+  while (i >= 0 && /\s/.test(source[i])) i -= 1;
+  if (i < 0) return true;
+  if (source[i] === ".") return false;
+  const word = /([A-Za-z_$][\w$]*)$/.exec(source.slice(0, i + 1))?.[1];
+  return word !== "function";
+}
+
 /**
  * Report the test bodies in `fileText` that contain no recognised assertion.
  * Pure: no I/O, no globals. Throws TypeError for a non-string input.
@@ -205,6 +224,7 @@ export function scanVacuousTests(fileText) {
   let match;
   while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
+    if (!isTestCall(searchableText, callIndex)) continue;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
