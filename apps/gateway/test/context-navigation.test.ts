@@ -392,6 +392,17 @@ test("SHU353_SHOWN company card renders the written currency in its closed proje
   assert.match(body, /Currency<\/dt><dd>USD<\/dd>/);
 });
 
+test("SHU355_SHOWN_GRANT company card shows a current manager name only to staff",async()=>{
+  const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:"person-1"});
+  const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});
+  await store.grantMany("person-1",[{orgId:"org-a",role:"staff"}]);
+  const organizations=new OrganizationRepository({store,source:new InMemoryApprovedOrganizationAdapter(new Map())});
+  const managers={manager:async()=>({manager:{principalId:"hidden-manager-id",displayName:"Staff One"}})};
+  const result=await createContextNavigation(rig.sessions,store,organizations,undefined,managers).open(SESSION,new URLSearchParams({org_id:"org-a",role:"staff"}));
+  const page=renderWorkspace(result,{...rig.app,navigation:createContextNavigation(rig.sessions,store)});
+  assert.match(page,/Account manager<\/dt><dd>Staff One/);assert.doesNotMatch(page,/hidden-manager-id/);
+});
+
 async function shu332Rig(options: {
   scope?: "self" | "subtree";
   deletions?: OrganizationDeletionRecords;

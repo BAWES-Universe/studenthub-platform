@@ -188,7 +188,7 @@ test("SHU168_PAGE renders source store counts and unavailable state in HTML and 
 });
 
 test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the manager field", async (t) => {
-  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", "person-1"]]) } });
+  const f = await fixture(t, { accountManagers: { readMany: async () => new Map([["org-a", {principalId:"person-1",displayName:"Staff One"}]]) } });
   for (const manager of ["me", "person-1"]) {
     const body = await (await f.get(`${STAFF_LIST}&manager=${manager}`)).json();
     assert.equal(body.filters.accountManager, "person-1");
@@ -200,7 +200,15 @@ test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the m
   }
   assert.equal((await (await f.get(`${STAFF_LIST}&manager=`)).json()).directory.entries.length, 2);
   const page = await (await f.get(`${STAFF_LIST}&manager=me`, html)).text();
-  assert.match(page, /name="manager" maxlength="128" value="person-1"/);
+  assert.match(page, /name="manager" maxlength="128" value=""/);
+});
+
+test("SHU355_SHOWN directory shows current manager names without principal ids",async(t)=>{
+  const f=await fixture(t,{accountManagers:{readMany:async()=>new Map([["org-a",{principalId:"secret-principal",displayName:"Staff One"}],["org-b",{principalId:"unnamed-secret",displayName:null}]])}});
+  const page=await(await f.get(STAFF_LIST,html)).text();
+  assert.match(page,/<th scope="col">Account manager<\/th>/);
+  assert.match(page,/Staff One/);assert.match(page,/Unnamed staff member/);
+  assert.doesNotMatch(page,/secret-principal|unnamed-secret/);
 });
 
 test("SHU339_PAGE_UNAVAILABLE requires the manager read port only for manager filters", async (t) => {
