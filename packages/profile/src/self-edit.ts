@@ -134,10 +134,13 @@ export const PERSON_PROFILE_MAX = Object.freeze({ display_name: 255, arabic_name
 // Controls, format characters, line/paragraph separators, private-use and noncharacters.
 const forbidden = (value: string) => [...value].some(char => {
   const point=char.codePointAt(0)!;
-  return point !== 0 && NAME_FORBIDDEN_CODE_POINT_RANGES.some(([low,high])=>point>=low&&point<=high);
+  return NAME_FORBIDDEN_CODE_POINT_RANGES.some(([low,high])=>point>=low&&point<=high);
 });
 const SPACE = /\s/gu;
-const LETTER_WORDS = /^\p{L}[\p{L}\p{M}]*(?: \p{L}[\p{L}\p{M}]*)+$/u;
+// Keep the combining-mark set identical to person_profile_text_valid. NFC
+// composes ordinary accents; these are the remaining marks used by supported
+// Latin and Arabic names.
+const LETTER_WORDS = /^\p{L}[\p{L}\u0300-\u036f\u064b-\u065f\u0670\u06d6-\u06ed]*(?: \p{L}[\p{L}\u0300-\u036f\u064b-\u065f\u0670\u06d6-\u06ed]*)+$/u;
 
 export function normalizePersonProfileValue(field: PersonProfileField, input: unknown): { ok: true; value: string } | { ok: false; reason: string } {
   if (typeof input !== "string") return { ok: false, reason: "Enter a value." };
