@@ -319,7 +319,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
   pendingFields: (value) => Array.isArray(value) && value.length > 0
@@ -339,6 +339,24 @@ function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): str
   return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
 }
 
+function choiceControl(profile: OwnProfileProjection, field: OwnProfileFieldName): string {
+  const current = profile.fields[field];
+  const value = current.state === "available" ? String(current.value) : "";
+  const radio = (options: readonly [string,string][]) => options.map(([id,label]) => `<label><input type="radio" name="value" value="${id}"${value === id || (typeof current === "object" && current.state === "available" && String(current.value) === id) ? " checked" : ""}>${label}</label>`).join("");
+  if (field === "gender") return radio([["male","Male"],["female","Female"],["other","Other"]]);
+  if (field === "drivingLicence") return radio([["true","Yes"],["false","No"]]);
+  if (field === "jobSearchStatus") return radio([["active","Actively looking"],["open_to_offers","Open to offers"],["not_looking","Not looking right now"]]);
+  if (field === "birthDate") return `<input type="date" name="value" value="${escapeHtml(value)}">`;
+  if (field === "nationality") return `<select name="value">${profile.profileChoices?.countries.map(item => `<option value="${item.id}"${profile.selectedNationalityId === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("") ?? ""}</select>`;
+  if (field === "university") return `<select name="value"><option value=""${!profile.selectedUniversityId ? " selected" : ""}>None</option>${profile.profileChoices?.universities.map(item => `<option value="${item.id}"${profile.selectedUniversityId === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("") ?? ""}<option value="not-listed">Not listed</option></select><small class="field-meta">Not listed? Staff add new universities.</small>`;
+  return "";
+}
+
+function editForm(profile: OwnProfileProjection, field: OwnProfileFieldName, control: string): string {
+  const label = field === "jobSearchStatus" ? "Looking for work" : OWN_PROFILE_FIELD_CONTRACT[field].label;
+  return `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(label)}"><input type="hidden" name="field" value="${field}"><fieldset><legend>Change ${escapeHtml(label)}</legend>${control}</fieldset><button class="button primary" type="submit">Review change</button></form>`;
+}
+
 export async function profileDocument(result: BrowserResponse, login: BrowserLoginApplication): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login) };
   const profile = projectionFrom(result);
@@ -347,17 +365,25 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
   const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
   const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
-  const rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
-    const row = fieldRow(profile, field);
+  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"]);
+  const ordered = ["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")] as OwnProfileFieldName[];
+  const rows = ordered.map((field) => {
+    const row = field === "jobSearchStatus" ? fieldRow(profile, field).replace("<div>", '<div class="notice">').replace("<dt>Job-search status</dt>", "<dt>Looking for work</dt>") : fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
       const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";
-      const control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
-      return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
+      const special = choiceControl(profile, field);
+      const control = special || (field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`);
+      return row.replace("</div>", `${editForm(profile, field, control)}</div>`);
     }
     return row;
-  }).join("");
+  }).join("") + ((profile.kuwaitiMotherOffered || profile.kuwaitiMother) ? (() => {
+    const mother = profile.kuwaitiMother;
+    const shown = mother ? fieldText(mother, value => value ? "Yes" : "No") : '<span class="missing" data-state="unavailable">Not recorded</span>';
+    const observed = mother?.freshness.observedAt.slice(0,10) ?? "";
+    const form = login.profileEdit && profile.kuwaitiMotherOffered ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><fieldset><legend>Change Kuwaiti mother</legend><label><input type="radio" name="value" value="true"${mother?.state === "available" && mother.value ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false"${mother?.state === "available" && !mother.value ? " checked" : ""}>No</label></fieldset><button class="button primary" type="submit">Review change</button></form>` : "";
+    return `<div><dt>Kuwaiti mother</dt><dd>${shown}</dd><small class="field-meta">${mother?.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : "Not recorded"}</small>${form}</div>`;
+  })() : "");
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 

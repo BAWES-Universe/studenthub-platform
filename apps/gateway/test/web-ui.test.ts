@@ -12,7 +12,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
@@ -393,3 +393,16 @@ test("SHU354_SHOWN shows each assigned name as a company link without principal 
 });
 
 test("SHU357_MY_COMPANIES_SIGN_IN distinguishes an expired session from an unavailable read",()=>{const login={organizationAccountManager:{} as OrganizationAccountManager,web:{origin:"https://studenthub.example.invalid",returnTo:"https://studenthub.example.invalid/workspace/my-companies"}} as BrowserLoginApplication,active={orgId:"employer",organizationName:"Employer",role:"staff" as const};const expired=renderAssignedCompanies({status:401,body:{error:"unauthorized"}},login,active);assert.match(expired,/Sign in/);assert.match(expired,/href="\/login\/universe\?return_to=https%3A%2F%2Fstudenthub\.example\.invalid%2Fworkspace%2Fmy-companies"/);assert.doesNotMatch(expired,/Try again/);const unavailable=renderAssignedCompanies({status:503,body:{error:"unavailable"}},login,active);assert.match(unavailable,/Try again/);assert.doesNotMatch(unavailable,/>Sign in</)});
+
+test("SHU373_PAGE each choice has its own control, catalogue labels, and conditional Kuwaiti-mother row", async () => {
+  const jo="11111111-1111-4111-8111-111111111111",kw="22222222-2222-4222-8222-222222222222",uni="33333333-3333-4333-8333-333333333333",at="2026-11-01T01:00:00.000Z";
+  let writtenReads=0;
+  const render=async(nationality:string,mother:{value:string|null;updatedAt:string}|undefined)=>{
+    const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",email:"p@example.invalid",pbuuids:[]})},source:{resolveLink:async()=>({kind:"linked",candidateRef:"candidate"}),readCandidate:async()=>SYNTHETIC_PROFILE_FIXTURES.populated},today:()=>"2026-11-01",preferences:{readOwnPreferences:async()=>{writtenReads++;return {gender:{value:"male",updatedAt:at},birthDate:{value:"2000-01-02",updatedAt:at},nationality:{value:nationality,updatedAt:at},university:{value:uni,updatedAt:at},drivingLicence:{value:"true",updatedAt:at},jobSearchStatus:{value:"active",updatedAt:at},...(mother?{kuwaitiMother:mother}:{}),profileChoices:{countries:[{id:jo,name:"Jordan",code:"JO"},{id:kw,name:"Kuwait",code:"KW"}],universities:[{id:uni,name:"Kuwait University"}]}}}} as never});
+    const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")throw new Error();return (await profileDocument({status:200,body:result.profile},{profileEdit:{}} as BrowserLoginApplication)).html;
+  };
+  const html=await render(jo,{value:null,updatedAt:at}); assert.equal(writtenReads,1);
+  for(const [label,needle] of [["Gender",'type="radio"'],["Birth date",'type="date"'],["Nationality",'<select name="value">'],["University",'<select name="value">'],["Driving licence",'type="radio"'],["Looking for work",'type="radio"'],["Kuwaiti mother",'type="radio"']] as const){const form=new RegExp(`aria-label="Change ${label}"[\\s\\S]*?<\\/form>`).exec(html)?.[0]??"";assert.match(form,new RegExp(needle));}
+  assert.match(html,/>Jordan</); assert.match(html,/<option value="33333333-3333-4333-8333-333333333333" selected>Kuwait University/); assert.match(html,/Not listed\? Staff add new universities/); assert.match(html,/<dt>Kuwaiti mother<\/dt>[\s\S]*?Not recorded/);
+  const kuwaiti=await render(kw,undefined); assert.equal(writtenReads,2); assert.doesNotMatch(kuwaiti,/<dt>Kuwaiti mother<\/dt>/);
+});
