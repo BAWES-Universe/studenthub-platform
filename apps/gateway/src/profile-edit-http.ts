@@ -119,7 +119,8 @@ const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayNam
 const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
     : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
-      : value;
+      : field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}`
+        : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";
   const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}${described}>${label}</label>`).join("");
@@ -156,12 +157,13 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, values.value, reason); else if (reason === "contact_value_unavailable") write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Your profile wasn’t changed.</h1><p>That ${selected === "phone" ? "phone number" : "profile link"} is not available.</p><a class="button primary" href="/profile">Back to My profile</a></main>`); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, selected === "phone" ? "" : values.value, reason); else if (reason === "contact_value_unavailable") write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Your profile wasn’t changed.</h1><p>That ${selected === "phone" ? "phone number" : "profile link"} is not available.</p><a class="button primary" href="/profile">Back to My profile</a></main>`); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
+      const after = (result.body as { changes: readonly { after: string | null }[] }).changes[0]?.after ?? "";
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, values.value!))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, after))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));

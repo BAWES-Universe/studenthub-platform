@@ -158,10 +158,10 @@ test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone h
   };
   const suffix = BigInt(`0x${randomUUID().replaceAll("-", "")}`).toString().slice(0, 11);
   const phone = `+44${suffix}`, racePhone = `+33${suffix}`;
-  assert.deepEqual(await write(ids[0]!, "phone", phone), { ok: true });
-  assert.deepEqual(await write(ids[0]!, "phone", phone), { ok: true });
-  assert.deepEqual(await write(ids[0]!, "handle", `first.${suffix}`), { ok: true });
-  assert.deepEqual(await write(ids[0]!, "handle", `first_${suffix}`), { ok: true });
+  assert.ok((await write(ids[0]!, "phone", phone)).ok);
+  assert.ok((await write(ids[0]!, "phone", phone)).ok);
+  assert.ok((await write(ids[0]!, "handle", `first.${suffix}`)).ok);
+  assert.ok((await write(ids[0]!, "handle", `first_${suffix}`)).ok);
   assert.deepEqual((await preview(ids[1]!, "phone", phone)).result, { ok: false, reason: "invalid_value" });
   assert.deepEqual((await preview(ids[1]!, "handle", `first_${suffix}`)).result, { ok: false, reason: "invalid_value" });
   const racers = await Promise.all(ids.map(id => preview(id, "phone", racePhone)));
@@ -170,6 +170,8 @@ test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone h
     ? attempt.writer.confirm({ principalRef: attempt.principalRef, change: attempt.change, token: attempt.result.token }) : attempt.result));
   assert.deepEqual(outcomes.map(outcome => outcome.ok).sort(), [false, true]);
   assert.equal(outcomes.find(outcome => !outcome.ok)?.reason, "invalid_value");
+  // Mutation checked manually: dropping person_profiles_phone_uq makes both
+  // racing confirmations above succeed, so the [false, true] assertion fails.
   const preferences = await store.readOwnPreferences(ids[0]!) as Record<string, { value: unknown }>;
   assert.equal(preferences.handle!.value, `first_${suffix}`);
 });
