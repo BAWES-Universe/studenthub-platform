@@ -18,13 +18,14 @@ test("DIR_ACCESS staff gate is live and hides the route", async t => {
   const noSession=await fetch(`${f.url}/workspace/people`,{headers:{accept:"text/html"}}); assert.equal(noSession.status,401);
   await f.authz.clearGrantsForPrincipal("person-1");
   const ordinaryHtml=await f.get("/workspace/people"),ordinaryJson=await f.json("/workspace/people");
-  assert.equal(ordinaryHtml.status,404,"DIR_ACCESS ordinary person is hidden");assert.equal(ordinaryJson.status,404);const hiddenBody=await ordinaryJson.text();assert.equal(hiddenBody,await(await f.json("/workspace/not-a-real-page")).text(),"DIR_ACCESS hidden JSON matches an absent page");
-  assert.doesNotMatch(await ordinaryHtml.text(),/href="\/workspace\/people"/);
+  assert.equal(ordinaryHtml.status,404,"DIR_ACCESS ordinary person is hidden");assert.equal(ordinaryJson.status,404);const hiddenBody=await ordinaryJson.text(),hiddenHtmlBody=await ordinaryHtml.text();assert.equal(hiddenBody,await(await f.json("/workspace/not-a-real-page")).text(),"DIR_ACCESS hidden JSON matches an absent page");assert.equal(hiddenHtmlBody,await(await f.get("/workspace/not-a-real-page")).text(),"DIR_ACCESS hidden HTML matches an absent page");
+  assert.doesNotMatch(hiddenHtmlBody,/href="\/workspace\/people"/);
   (f.login as unknown as {navigation:unknown}).navigation={open:async()=>({status:200,body:{contexts:[{orgId:"root",role:"staff",organizationName:"StudentHub"}],active:{orgId:"root",role:"staff",organizationName:"StudentHub"}}})};
   assert.doesNotMatch(await(await f.get("/workspace?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS sidebar hidden without live staff grant");
-  await f.authz.grantMany("person-1",[{orgId:"root",role:"staff",scope:"self"}]);assert.equal((await f.get("/workspace/people")).status,404,"DIR_ACCESS self scope is hidden");assert.doesNotMatch(await(await f.get("/workspace/companies?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS Companies sidebar hidden without live staff grant");
-  await f.authz.grantMany("person-1",[{orgId:"other",role:"staff",scope:"subtree"}]);assert.equal((await f.get("/workspace/people")).status,404);
-  await f.authz.grantMany("person-1",[{orgId:"root",role:"admin",scope:"subtree"}]);assert.equal((await f.get("/workspace/people")).status,200);
+  for(const grant of [{orgId:"root",role:"org-owner",scope:"subtree"},{orgId:"root",role:"recruiter",scope:"subtree"},{orgId:"root",role:"staff",scope:"self"},{orgId:"other",role:"staff",scope:"subtree"}] as const){await f.authz.clearGrantsForPrincipal("person-1");await f.authz.grantMany("person-1",[grant]);const personaHtml=await f.get("/workspace/people"),personaJson=await f.json("/workspace/people"),message=grant.scope==="self"?"DIR_ACCESS self scope is hidden":`DIR_ACCESS ${grant.role} HTML is hidden`;assert.equal(personaHtml.status,404,message);assert.equal(personaJson.status,404,`DIR_ACCESS ${grant.role} JSON is hidden`);assert.equal(await personaHtml.text(),hiddenHtmlBody,`DIR_ACCESS ${grant.role} HTML body matches`);assert.equal(await personaJson.text(),hiddenBody,`DIR_ACCESS ${grant.role} JSON body matches`);}
+  assert.doesNotMatch(await(await f.get("/workspace/companies?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS Companies sidebar hidden without live staff grant");
+  await f.authz.clearGrantsForPrincipal("person-1");await f.authz.grantMany("person-1",[{orgId:"root",role:"staff",scope:"subtree"}]);assert.equal((await f.get("/workspace/people")).status,200,"DIR_ACCESS staff subtree is served");
+  await f.authz.clearGrantsForPrincipal("person-1");await f.authz.grantMany("person-1",[{orgId:"root",role:"admin",scope:"subtree"}]);assert.equal((await f.get("/workspace/people")).status,200,"DIR_ACCESS admin subtree is served");
   assert.match(await(await f.get("/workspace?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS sidebar shown for live operator staff");
   assert.doesNotMatch(await(await f.get("/workspace/people")).text(),/href="\/workspace\/people\//);
 });
@@ -45,7 +46,7 @@ test("DIR_ROWS HTML and JSON expose the safe matching projection",async t=>{
   for(const fact of ["Written Name","اسم عربي","Actively looking","Kuwait","2 details missing","Waiting","Imported","C00123","•••• 0000"])assert.match(html,new RegExp(fact));
   assert.match(html,/Photo and ID images are checked on the person's page/);assert.match(html,/Until the final import/);assert.doesNotMatch(html,/href="\/workspace\/people\/person-2/);
   const parsed=JSON.parse(json);assert.equal(parsed.total,1);assert.equal(parsed.page,1);assert.equal(parsed.pageSize,25);assert.equal(parsed.rows[0].phone,"•••• 0000","DIR_ROWS full phone is never rendered");
-  for(const secret of ["registry@example.invalid","+96550000000","123456789012","civil_front","document"]) { assert.doesNotMatch(html,new RegExp(secret,"i"));assert.doesNotMatch(json,new RegExp(secret,"i")); }
+  for(const secret of ["registry@example.invalid","+96550000000","123456789012","civil_front","document"]) { assert.ok(!html.toLowerCase().includes(secret.toLowerCase()),`DIR_ROWS HTML excludes ${secret}`);assert.ok(!json.toLowerCase().includes(secret.toLowerCase()),`DIR_ROWS JSON excludes ${secret}`); }
 });
 
 test("DIR_ONE_QUERY page cost is one store read and HTML alone reads countries",async t=>{

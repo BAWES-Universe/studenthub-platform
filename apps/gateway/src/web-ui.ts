@@ -146,7 +146,7 @@ const roleNames: Record<WorkspaceContext["role"], string> = {
   "org-owner": "Organization owner", recruiter: "Recruiter", finance: "Finance",
 };
 
-const workspaceDocument = (title: string, content: string) => document(title, content, true);
+export const workspaceDocument = (title: string, content: string) => document(title, content, true);
 
 const organizationFormatters: Readonly<Partial<Record<OrganizationFieldName, (value: unknown) => string>>> = {
   status: (value) => ({ active: "Active", under_review: "Under review", inactive: "Inactive" })[String(value)] ?? String(value),
