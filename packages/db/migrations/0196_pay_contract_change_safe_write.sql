@@ -28,8 +28,8 @@ ALTER TABLE authorization_mutation_audit
     OR (before_summary ? 'valuePresent' AND after_summary ? 'tokenRef')
   );
 
--- Extends 0182's receipt shapes (which carry 0150's and 0148's) by admitting the bank-details
--- write to the safe-write branch with its one field; every other branch is unchanged.
+-- Extends 0195's receipt shapes with the two pay-contract change operations;
+-- every other branch is unchanged.
 CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(audit_operation TEXT, summary JSONB)
 RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$
  SELECT CASE
@@ -75,11 +75,6 @@ RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$
    AND summary->>'contractCount' ~ '^(0|[1-9][0-9]{0,17})$'
   ELSE FALSE END
 $$;
-
-CREATE UNIQUE INDEX authorization_mutation_audit_pay_contract_create_token
- ON authorization_mutation_audit ((after_summary ->> 'tokenRef')) WHERE operation='pay_contract.create.safe_write';
-CREATE UNIQUE INDEX authorization_mutation_audit_pay_contract_create_receipt
- ON authorization_mutation_audit (request_ref) WHERE operation='pay_contract.create.safe_write';
 
 CREATE UNIQUE INDEX authorization_mutation_audit_pay_contract_update_token
  ON authorization_mutation_audit ((after_summary ->> 'tokenRef')) WHERE operation='pay_contract.update.safe_write';
