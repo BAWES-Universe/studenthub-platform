@@ -109,7 +109,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,
-    ...(options.civilIdReview&&reviewStore?{civilIdReview:{store:reviewStore,vault,ocr:reviewOcr,secret:key,isStaff:async(id:string)=>hasOperatorStaffGrant(await authz.listGrantsForPrincipal(id))}}:{}),
+    ...(options.civilIdReview&&reviewStore?{civilIdReview:{store:reviewStore,vault,ocr:reviewOcr,secret:key,now,isStaff:async(id:string)=>hasOperatorStaffGrant(await authz.listGrantsForPrincipal(id))}}:{}),
     // As wireProfile: the area service with the session store and origin.
     area: { area, sessions: rig.sessions, origin: REAL_PROFILE_ORIGIN },
     ...(options.extend?.(services) ?? {}),
