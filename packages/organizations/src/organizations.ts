@@ -159,6 +159,8 @@ export interface OrganizationStatusRecords {
 }
 export type OrganizationCommercialTermRecord={readonly kind:"absent"}|{readonly kind:"cleared"}|{readonly kind:"value";readonly value:string};
 export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}>}
+export type OrganizationApprovedToHireRecord={readonly kind:"absent"}|{readonly kind:"value";readonly value:boolean};
+export interface OrganizationApprovedToHireRecords{read(orgId:string):Promise<OrganizationApprovedToHireRecord>;readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationApprovedToHireRecord>>}
 
 export function deriveOrganizationStatus(row: Row, record?:OrganizationStatusRecord): OrganizationField<OrganizationStatus> {
   if (record?.kind === "status") return available("status", record.status);
@@ -257,11 +259,14 @@ export function projectOrganizationFields(
   parent: Row | null | undefined,
   record?: OrganizationStatusRecord,
   terms?:{readonly own:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord};readonly parent:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}},
+  approvedRecord?:OrganizationApprovedToHireRecord,
 ): Readonly<Record<string, OrganizationField<unknown>>> {
   const names = ORGANIZATION_FIELDS_BY_AUDIENCE[audience];
   const fields: Record<string, OrganizationField<unknown>> = {};
   for (const name of names) {
-    if (name === "status" && (row !== undefined || record?.kind === "status")) {
+    if(name==="approvedToHire"&&approvedRecord?.kind==="value"){
+      fields[name]=available(name,approvedRecord.value);
+    } else if (name === "status" && (row !== undefined || record?.kind === "status")) {
       fields[name] = deriveOrganizationStatus(row ?? {}, record);
     } else if (name === "statusOverride" && record !== undefined && record.kind !== "absent") {
       fields[name] = record.kind === "status" ? available("statusOverride", record.status) : unavailable("statusOverride", "not_recorded");
@@ -318,7 +323,7 @@ function matchesDirectoryFilters(entry: OrganizationDirectoryEntry, filters: Org
   return filters.currencyCode === undefined || availableValue(entry.currencyCode) === filters.currencyCode;
 }
 
-function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record?:OrganizationStatusRecord): OrganizationDirectoryEntry {
+function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record?:OrganizationStatusRecord,approvedRecord?:OrganizationApprovedToHireRecord): OrganizationDirectoryEntry {
   const field = <T>(name: "legalName" | "commonNameEn" | "commonNameAr" | "currencyCode" | "approvedToHire") =>
     (row === undefined ? unavailable(name, "not_imported") : plainField(name, row)) as OrganizationField<T>;
   return Object.freeze({
@@ -329,7 +334,7 @@ function directoryEntry(org: Organization, row: Row | undefined, subOrganization
     commonNameEn: field<string>("commonNameEn"),
     commonNameAr: field<string>("commonNameAr"),
     currencyCode: field<string>("currencyCode"),
-    approvedToHire: field<boolean>("approvedToHire"),
+    approvedToHire: approvedRecord?.kind==="value"?available("approvedToHire",approvedRecord.value):field<boolean>("approvedToHire"),
     status: row === undefined && record?.kind !== "status" ? unavailable("status", "not_imported") : deriveOrganizationStatus(row ?? {},record),
   });
 }
@@ -369,6 +374,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #operators: ReadonlySet<string>;
   readonly #statusRecords?: OrganizationStatusRecords;
   readonly #commercialTerms?:OrganizationCommercialTermsRecords;
+  readonly #approvedToHire?:OrganizationApprovedToHireRecords;
 
   constructor(options: {
     readonly store: AuthzStore;
@@ -376,12 +382,14 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly operatorOrgIds?: readonly string[];
     readonly statusRecords?: OrganizationStatusRecords;
     readonly commercialTerms?:OrganizationCommercialTermsRecords;
+    readonly approvedToHire?:OrganizationApprovedToHireRecords;
   }) {
     this.#store = options.store;
     this.#source = options.source;
     this.#operators = new Set(options.operatorOrgIds ?? DEFAULT_OPERATOR_ORG_IDS);
     this.#statusRecords = options.statusRecords;
     this.#commercialTerms=options.commercialTerms;
+    this.#approvedToHire=options.approvedToHire;
   }
 
   /** The audience the caller may read at `orgId` right now, or undefined. */
@@ -410,6 +418,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const parentOrgId = companyParentOf(organizations, org.id, this.#operators);
       const snapshot = await this.#source.readSnapshot(org.id);
       const statusRecord = await this.#statusRecords?.read(org.id);
+      const approvedRecord=await this.#approvedToHire?.read(org.id);
       const absent={hourlyRate:{kind:"absent" as const},bonusCommission:{kind:"absent" as const}};
       const ownTerms=await this.#commercialTerms?.read(org.id)??absent;
       const row = snapshotRow(snapshot, org.id, parentOrgId);
@@ -428,7 +437,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         snapshot: row === undefined
           ? Object.freeze({ kind: "not_imported" as const })
           : Object.freeze({ kind: "imported" as const, observedAt: observedAt(row) }),
-        fields: projectOrganizationFields(audience, row, parent, statusRecord,{own:ownTerms,parent:parentTerms}),
+        fields: projectOrganizationFields(audience, row, parent, statusRecord,{own:ownTerms,parent:parentTerms},approvedRecord),
       }) as unknown as OrganizationView;
       return { kind: "found", organization: view };
     } catch {
@@ -505,6 +514,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const batchRecords = shown.length > 0 && this.#statusRecords?.readMany
         ? await this.#statusRecords.readMany(shown.map((org) => org.id))
         : undefined;
+      const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
       const entries: OrganizationDirectoryEntry[] = [];
       for (const org of shown) {
         // As in legacy (`filterParent`), the list holds top-level companies; sub-organizations open from their parent.
@@ -513,7 +523,8 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
           ? batchRecords.get(org.id) ?? { kind: "absent" as const }
           : await this.#statusRecords?.read(org.id);
         const children = organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length;
-        const entry = directoryEntry(org, row, children, statusRecord);
+        const approvedRecord=approvedBatch?.get(org.id)??{kind:"absent" as const};
+        const entry = directoryEntry(org, row, children, statusRecord,approvedRecord);
         if (matchesDirectoryFilters(entry, filters)) entries.push(entry);
       }
       entries.sort((a, b) => a.registryName.localeCompare(b.registryName) || a.orgId.localeCompare(b.orgId));
