@@ -370,7 +370,7 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
     return row;
   }).join("");
   const selectedCountry = profile.choices?.countries.find(item => item.id === profile.selectedChoiceIds?.nationality);
-  if (profile.kuwaitiMother !== undefined || (selectedCountry !== undefined && selectedCountry.code !== "KW")) {
+  if (selectedCountry?.code !== "KW" && (profile.kuwaitiMother !== undefined || selectedCountry !== undefined)) {
     const mother = profile.kuwaitiMother;
     const shown = mother ? fieldText(mother, value => value ? "Yes" : "No") : '<span class="missing" data-state="unavailable">Not recorded</span>';
     const value = mother?.state === "available" ? String(mother.value) : "";

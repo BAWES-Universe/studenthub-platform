@@ -47,12 +47,17 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       if (!result.ok) return refusal(result.reason);
       let displayValue: string | undefined = body.value;
+      let displayBefore: string | undefined;
       if ((selected === "nationality" || selected === "university") && body.value) {
         const choices = await ports.store.readProfileChoices?.();
         displayValue = (selected === "nationality" ? choices?.countries : choices?.universities)?.find(item => item.id === body.value)?.name ?? "Unavailable";
-      } else if (selected === "drivingLicence" || selected === "kuwaitiMother") displayValue = body.value === "true" ? "Yes" : body.value === "false" ? "No" : "Not recorded";
+      } else if (selected === "drivingLicence" || selected === "kuwaitiMother") {
+        displayValue = body.value === "true" ? "Yes" : body.value === "false" ? "No" : "Not recorded";
+        const before = result.changes[0]?.before;
+        displayBefore = before === "true" ? "Yes" : before === "false" ? "No" : "Not recorded";
+      }
       else if (selected === "jobSearchStatus") displayValue = ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" } as Record<string,string>)[body.value];
-      return { status: 200, body: { changes: result.changes, token: result.token, displayValue } };
+      return { status: 200, body: { changes: result.changes, token: result.token, displayValue, ...(displayBefore ? { displayBefore } : {}) } };
     },
     async confirm(session, body) {
       const id = await principal(session); if (!id) return { status: 401, body: { error: "unauthorized" } };
@@ -115,7 +120,7 @@ function error(write: ProfileEditPageWriter, status: number) { write(status, "Ed
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
   const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
   const birthError = selected === "birthDate" ? personBirthDateError(value) : undefined;
-  const message = birthError === "too_young" ? `You must be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile.`
+  const message = birthError === "too_young" ? `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile.`
     : birthError === "future" ? "Birth date cannot be in the future."
       : birthError === "invalid" ? "Enter a valid birth date." : `Enter a value that follows the rules for ${label.toLowerCase()}.`;
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
@@ -134,7 +139,7 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
-      const before = selected === "kuwaitiMother" ? undefined : await shownValue?.(sessionId, selected);
+      const before = selected === "kuwaitiMother" ? (result.body as { displayBefore?: string }).displayBefore : await shownValue?.(sessionId, selected);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
       const after = (result.body as { displayValue?: string }).displayValue ?? values.value!;
       write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(after)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;

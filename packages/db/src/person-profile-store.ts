@@ -12,6 +12,11 @@ const COLUMNS: Record<PersonProfileField, string> = {
   gender: "gender", birthDate: "birth_date", nationality: "nationality_id", university: "university_id",
   drivingLicence: "driving_licence", kuwaitiMother: "kuwaiti_mother", jobSearchStatus: "job_search_status",
 };
+const WRITTEN_AT_COLUMNS: Record<PersonProfileField, string> = {
+  displayName: "display_name_written_at", arabicName: "arabic_name_written_at", objective: "objective_written_at", intro: "introduction_written_at", preferredTime: "preferred_time_written_at",
+  gender: "gender_written_at", birthDate: "birth_date_written_at", nationality: "nationality_written_at", university: "university_written_at",
+  drivingLicence: "driving_licence_written_at", kuwaitiMother: "kuwaiti_mother_written_at", jobSearchStatus: "job_search_status_written_at",
+};
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
 
@@ -58,7 +63,7 @@ export class PostgresPersonProfileStore {
     if (!row) return null;
     const result: Record<string, unknown> = {};
     for (const [field, column] of Object.entries(COLUMNS)) {
-      const at = row[`${column}_written_at`];
+      const at = row[WRITTEN_AT_COLUMNS[field as PersonProfileField]];
       if (at instanceof Date) {
         const raw = row[column];
         const value = field === "drivingLicence" || field === "kuwaitiMother" ? raw === null ? null : raw === "true"
@@ -96,7 +101,7 @@ export class PostgresPersonProfileStore {
     return rows[0]?.value ?? null;
   }
   async #commit(id: string, input: CommitInput): Promise<CommitOutcome> {
-    const field = input.field as PersonProfileField, column = COLUMNS[field];
+    const field = input.field as PersonProfileField, column = COLUMNS[field], writtenAtColumn = WRITTEN_AT_COLUMNS[field];
     if (!column || input.receipt.personRef !== input.personRef || input.receipt.principalRef !== input.principalRef
       || input.receipt.changeSetDigest !== input.changeSetDigest || input.receipt.fields.length !== 1 || input.receipt.fields[0] !== field)
       throw new TypeError("inconsistent safe-write commit");
@@ -114,8 +119,8 @@ export class PostgresPersonProfileStore {
         if (!resolved) throw new Refusal("invalid_value");
         if (field === "nationality" && resolved.code === "KW") await client.query("UPDATE person_profiles SET kuwaiti_mother=NULL,kuwaiti_mother_written_at=clock_timestamp() WHERE principal_id=$1", [id]);
       }
-      await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
-        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, input.value === "" ? null : input.value]);
+      await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${writtenAtColumn}) VALUES ($1,$2,clock_timestamp())
+        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${writtenAtColumn}=EXCLUDED.${writtenAtColumn}`, [id, input.value === "" ? null : input.value]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
         VALUES ($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)`, [input.receipt.receiptRef, input.receipt.principalRef, SAFE_WRITE_OPERATION,
         JSON.stringify({ valuePresent: current !== null }), JSON.stringify({ contractVersion: input.receipt.contractVersion, personRef: input.receipt.personRef,

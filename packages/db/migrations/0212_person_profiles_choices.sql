@@ -21,13 +21,16 @@ CREATE INDEX person_profiles_university_id_idx ON person_profiles(university_id)
 CREATE FUNCTION person_profile_choices_valid() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE nationality_code text;
 BEGIN
- IF NEW.nationality_id IS NOT NULL THEN
+ IF NEW.nationality_id IS NOT NULL AND (TG_OP='INSERT' OR NEW.nationality_id IS DISTINCT FROM OLD.nationality_id) THEN
   SELECT code INTO nationality_code FROM catalogue_items WHERE id=NEW.nationality_id AND catalogue_type='country' AND status='active';
   IF NOT FOUND THEN RAISE EXCEPTION 'invalid nationality' USING ERRCODE='23514'; END IF;
  END IF;
- IF NEW.university_id IS NOT NULL AND NOT EXISTS
+ IF NEW.university_id IS NOT NULL AND (TG_OP='INSERT' OR NEW.university_id IS DISTINCT FROM OLD.university_id) AND NOT EXISTS
    (SELECT 1 FROM catalogue_items WHERE id=NEW.university_id AND catalogue_type='university' AND status='active')
  THEN RAISE EXCEPTION 'invalid university' USING ERRCODE='23514'; END IF;
+ IF NEW.kuwaiti_mother IS NOT NULL AND nationality_code IS NULL THEN
+  SELECT code INTO nationality_code FROM catalogue_items WHERE id=NEW.nationality_id AND catalogue_type='country';
+ END IF;
  IF NEW.kuwaiti_mother IS NOT NULL AND nationality_code='KW' THEN
   RAISE EXCEPTION 'Kuwaiti mother is inapplicable to Kuwaiti nationality' USING ERRCODE='23514';
  END IF;
