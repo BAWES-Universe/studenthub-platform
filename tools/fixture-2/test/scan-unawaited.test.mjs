@@ -31,3 +31,50 @@ test("SHU-254 fixture: final line still honours await and comments", () => {
 test("SHU-254 fixture: empty source yields no findings", () => {
   assert.deepEqual(findUnawaitedCalls(''), []);
 });
+
+test("SHU-254 fixture: reports code following a closed block comment", () => {
+  assert.deepEqual(findUnawaitedCalls('/* note */ fetchJson();'), [
+    { line: 1, helper: "fetchJson" },
+  ]);
+  assert.deepEqual(findUnawaitedCalls('const a = 1; /* note */ sendMail(a);'), [
+    { line: 1, helper: "sendMail" },
+  ]);
+});
+
+test("SHU-254 fixture: a trailing comment does not hide the call before it", () => {
+  assert.deepEqual(findUnawaitedCalls('loadConfig(); // see SHU-254'), [
+    { line: 1, helper: "loadConfig" },
+  ]);
+});
+
+test("SHU-254 fixture: an interrupted await still counts as awaited", () => {
+  assert.deepEqual(findUnawaitedCalls('await /* note */ fetchJson("/x");'), []);
+});
+
+test("SHU-254 fixture: ignores helpers inside a multi-line block comment", () => {
+  const src = '/*\n * fetchJson("/x");\n * sendMail(a);\n */\nconst b = 2;';
+  assert.deepEqual(findUnawaitedCalls(src), []);
+});
+
+test("SHU-254 fixture: a slash inside a string literal is not a comment", () => {
+  assert.deepEqual(findUnawaitedCalls('const url = "http://x"; sendMail(url);'), [
+    { line: 1, helper: "sendMail" },
+  ]);
+  assert.deepEqual(findUnawaitedCalls('fetchJson("http://x");'), [
+    { line: 1, helper: "fetchJson" },
+  ]);
+});
+
+test("SHU-254 fixture: an apostrophe in a block comment does not swallow the code", () => {
+  assert.deepEqual(findUnawaitedCalls("/* don't wait */ fetchJson();"), [
+    { line: 1, helper: "fetchJson" },
+  ]);
+});
+
+test("SHU-254 fixture: resumes scanning on the line that closes a block comment", () => {
+  const src = '/* fetchJson("/x");\n   still a comment */ sendMail(a);\nloadConfig();';
+  assert.deepEqual(findUnawaitedCalls(src), [
+    { line: 2, helper: "sendMail" },
+    { line: 3, helper: "loadConfig" },
+  ]);
+});
