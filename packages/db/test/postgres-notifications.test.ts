@@ -1,0 +1,2 @@
+import assert from"node:assert/strict";import test from"node:test";import{readFile}from"node:fs/promises";
+test("SHU188_EVENT notification schema stores events without text and indexes feed lookups",async()=>{const sql=await readFile(new URL("../migrations/0352_notifications.sql",import.meta.url),"utf8");assert.match(sql,/kind text NOT NULL CHECK/);assert.match(sql,/UNIQUE \(recipient_principal_id, dedupe_key\)/);assert.match(sql,/recipient_principal_id, read_at, created_at DESC/);assert.doesNotMatch(sql,/message|rendered_text|company_name/)});

@@ -6,7 +6,7 @@ import { createProfileBrowserEdit } from "./profile-browser-edit-http.js";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore, PostgresPersonProfileStore, PostgresJobRunsStore, PostgresExportsStore,PostgresEmailOutboxStore } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore, PostgresPersonProfileStore, PostgresJobRunsStore, PostgresExportsStore,PostgresEmailOutboxStore,PostgresNotificationsStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -54,6 +54,7 @@ import type { BrowserLoginApplication } from "./web-ui.js";
 import { ExportService } from "../../../packages/exports/src/exports.js";
 import { createCompanyDirectoryExport } from "../../../packages/exports/src/company-directory-export.js";
 import { createExportsHttp } from "./exports-http.js";
+import {NotificationFeed}from"../../../packages/notifications/src/notifications.js";import{createNotificationsHttp}from"./notifications-http.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -275,6 +276,7 @@ export function createRuntimeLoginFromEnv(
     creator:payContractCreator(payContractReferences),changer:payContractChanger(payContractReferences),stateDecision:payContractStateDecision,editableValue:payContractEditableValue,recordRef:payContractCompanyRecordRef,contractRecordRef:payContractRecordRef,principalRef:payContractPrincipalRef});
   const jobRuns = new PostgresJobRunsStore({connectionString:value("DATABASE_URL")});
   const emailOutbox=new PostgresEmailOutboxStore({connectionString:value("DATABASE_URL")});
+  const notificationsStore=new PostgresNotificationsStore({connectionString:value("DATABASE_URL")});const notifications=new NotificationFeed(notificationsStore,notificationsStore);
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -320,6 +322,7 @@ export function createRuntimeLoginFromEnv(
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
       exports:createExportsHttp(loginStore.sessions,exportsService),
+      notifications:createNotificationsHttp(loginStore.sessions,notifications),
       ...({adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert))} as {}),
       ...({adminOutbox:createAdminOutbox(loginStore.sessions,authzStore,emailOutbox)} as {}),
       ...(safeWrites && safeWriteKey
@@ -393,7 +396,7 @@ export function createRuntimeLoginFromEnv(
     },
     async close() {
       await Promise.all([browserSessionPool?.end(), loginStore.close(), authzStore.close(), safeWrites?.close(), personProfiles?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
-        organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close(),jobRuns.close(),exportsStore.close(),emailOutbox.close()]);
+        organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close(),jobRuns.close(),exportsStore.close(),emailOutbox.close(),notificationsStore.close()]);
     },
   };
 }

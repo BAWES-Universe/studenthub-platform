@@ -29,6 +29,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
 import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
+import {handleNotifications}from"./notifications-http.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
 import { handleProfileBrowserEdit } from "./profile-browser-edit-http.js";
@@ -47,7 +48,7 @@ import {handleOrganizationAccountManager,handleOrganizationAccountManagerPage,ty
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -231,6 +232,7 @@ export function createGatewayServer(
     if(await handleOrganizationAccountManager(request,response,(login as BrowserLoginApplication&{organizationAccountManager?:OrganizationAccountManager}|undefined)?.organizationAccountManager,login?.web?.origin))return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
+    if(await handleNotifications(request,response,login?.notifications,login?.web?.origin,cookieValue(request.headers.cookie,"__Host-studenthub_session"),result=>renderNotifications(result,login)))return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;

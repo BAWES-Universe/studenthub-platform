@@ -51,3 +51,4 @@ export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_
 export { PostgresJobRunsStore } from "./postgres-job-runs-store.js";
 export { PostgresExportsStore } from "./postgres-exports-store.js";
 export {PostgresEmailOutboxStore,type EmailOutboxAdminRow} from "./postgres-email-outbox-store.js";
+export {PostgresNotificationsStore} from "./postgres-notifications-store.js";

@@ -25,12 +25,14 @@ import type { ActiveOrganization } from "./context-navigation.js";
 import type { CompanyDirectoryPage, CompanyDirectoryResult } from "./company-directory.js";
 import type { AssignedCompaniesResult, OrganizationAccountManager } from "./organization-account-manager.js";
 import type { ExportsHttp } from "./exports-http.js";
+import type {NotificationsHttp,NotificationsResult} from "./notifications-http.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
   readonly exports?: ExportsHttp;
+  readonly notifications?: NotificationsHttp;
   readonly organizationAccountManager?: OrganizationAccountManager;
   /** SHU-84 safe write; absent unless a signing key is configured. */
   readonly preferences?: LanguagePreference;
@@ -43,6 +45,8 @@ export interface BrowserLoginApplication extends LoginApplication {
     readonly profiles: OwnProfileReader;
   };
 }
+
+export function renderNotifications(result:NotificationsResult,login?:BrowserLoginApplication):string{if(result.status!==200)return renderError(401,login);const bell=`<a class="text-link" href="/notifications" aria-label="Notifications, ${result.body.unreadCount} unread">Notifications (${result.body.unreadCount})</a>`;const items=result.body.items.map(item=>`<li><a href="${escapeHtml(item.href)}">${escapeHtml(item.text)}</a><time datetime="${escapeHtml(item.createdAt)}">${escapeHtml(item.createdAt.slice(0,10))}</time>${item.read?"":`<form method="post" action="/notifications/${encodeURIComponent(item.id)}/read"><button type="submit">Mark read</button></form>`}</li>`).join("");return workspaceDocument("Notifications",`<header class="topbar">${brand}<div>${bell} <form action="/logout" method="post"><button class="sign-out" type="submit">Sign out</button></form></div></header><main id="main" class="profile-main"><h1>Notifications<span class="accent">.</span></h1>${items?`<ol>${items}</ol>`:"<p>No notifications.</p>"}<form method="post" action="/notifications/read"><button class="button primary" type="submit">Mark all read</button></form></main>`)}
 
 /** HTML is opt-in. Missing, wildcard and JSON-preferred Accept keep the API. */
 export function wantsHtml(accept: string | undefined): boolean {
