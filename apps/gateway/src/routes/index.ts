@@ -18,7 +18,7 @@ const profileAvatarRoute: GatewayRoute = { name: "profile-avatar", handle: async
   await prepareProfileAvatar(ctx.request, ctx.response, ctx.documents); return false;
 } };
 const profileCompletenessRoute: GatewayRoute = { name: "profile-completeness", handle: (ctx) =>
-  handleProfileCompleteness(ctx.request, ctx.response, ctx.profileCompleteness ?? { records: ctx.profileRecords, documentsAvailable: ctx.documents !== undefined, civilIdConfigured: ctx.login?.civilId !== undefined }) };
+  handleProfileCompleteness(ctx.request, ctx.response, ctx.profileCompleteness ?? { records: ctx.profileRecords, documents: ctx.documents, civilIdConfigured: ctx.login?.civilId !== undefined }) };
 
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
