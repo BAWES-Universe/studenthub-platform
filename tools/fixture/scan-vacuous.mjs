@@ -182,29 +182,48 @@ function blockAt(source, openIndex) {
  * statement's block can never be mistaken for this call's body. Returns null
  * when the call has no block body — including a callback written with a concise
  * expression body, which has no braces to report.
+ *
+ * Only the callback the call receives directly can carry the body, so the
+ * `=>` and `function` tokens that mark it are recognised at the top level of
+ * the argument list alone: paren depth 1 with no object, array or parameter
+ * list open around them. A `=>` nested in a parameter default value, in an
+ * options object or in another call's arguments belongs to that inner
+ * function, not to the test.
  */
 function locateBody(source, parenIndex) {
   let depth = 0;
-  let functionDepth = -1;
+  let nesting = 0;
+  let sawFunction = false;
 
   for (const i of codeIndices(source, parenIndex)) {
     const ch = source[i];
+    const topLevel = depth === 1 && nesting === 0;
+
     if (ch === "(") {
       depth += 1;
     } else if (ch === ")") {
       depth -= 1;
       if (depth === 0) return null;
+    } else if (ch === "[") {
+      nesting += 1;
+    } else if (ch === "]") {
+      nesting -= 1;
+    } else if (ch === "{") {
+      // The body of a function expression is the first block that follows the
+      // keyword at the top level, which skips the parameter list and any
+      // destructuring or default value inside it.
+      if (topLevel && sawFunction) return blockAt(source, i);
+      nesting += 1;
+    } else if (ch === "}") {
+      nesting -= 1;
     } else if (ch === "=" && source[i + 1] === ">") {
+      if (!topLevel) continue;
       // The body is the block that directly follows the arrow; anything else
       // there is a concise expression body.
       const bodyStart = nextCodeIndex(source, i + 2);
       return source[bodyStart] === "{" ? blockAt(source, bodyStart) : null;
-    } else if (isFunctionKeyword(source, i)) {
-      // The body is the next block at the keyword's own depth, which skips the
-      // parameter list and any destructuring inside it.
-      functionDepth = depth;
-    } else if (ch === "{" && depth === functionDepth) {
-      return blockAt(source, i);
+    } else if (topLevel && isFunctionKeyword(source, i)) {
+      sawFunction = true;
     }
   }
   return null;

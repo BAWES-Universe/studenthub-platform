@@ -194,6 +194,35 @@ test("reports the callback body of a test that also passes an options object", (
   assert.equal(source.slice(report[0].start, report[0].end + 1), "{ const a = 1; }");
 });
 
+test("does not mistake a parameter default value's arrow for the callback", () => {
+  const source = 'test("default-arrow", (fn = () => 1) => { work(); });';
+  const report = scanVacuousTests(source);
+  assert.deepEqual(report.map((entry) => entry.name), ["default-arrow"]);
+  assert.equal(source.slice(report[0].start, report[0].end + 1), "{ work(); }");
+});
+
+test("reads the body past a parameter default value's arrow", () => {
+  const report = scanVacuousTests(
+    'test("default-arrow-asserts", (fn = () => 1) => { assert.ok(fn); });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("does not mistake an arrow inside an options object for the callback", () => {
+  const source = 'test("options-arrow", { setup: () => 1 }, () => { work(); });';
+  const report = scanVacuousTests(source);
+  assert.deepEqual(report.map((entry) => entry.name), ["options-arrow"]);
+  assert.equal(source.slice(report[0].start, report[0].end + 1), "{ work(); }");
+});
+
+test("does not mistake a function expression inside an options object for the callback", () => {
+  const source =
+    'test("options-fn", { setup: function () { return 1; } }, function () { work(); });';
+  const report = scanVacuousTests(source);
+  assert.deepEqual(report.map((entry) => entry.name), ["options-fn"]);
+  assert.equal(source.slice(report[0].start, report[0].end + 1), "{ work(); }");
+});
+
 test("does not mistake a destructured parameter for the test body", () => {
   const report = scanVacuousTests(
     'test("destructured", ({ signal }) => { assert.ok(signal); });',

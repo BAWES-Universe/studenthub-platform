@@ -43,13 +43,28 @@ export const EXPECTATIONS = Object.freeze([
     expected: ["commented"],
   },
   {
+    // Assertion text inside a string is not an assertion CALL, so the body is
+    // vacuous, exactly as for the template literal below.
     name: "a body whose assertion is mentioned only inside a string literal",
     src: 'test("stub", () => { const s = "assert.equal(1, 2)"; });',
-    expected: [],
+    expected: ["stub"],
   },
   {
     name: "a body whose assertion is mentioned only inside a template literal",
     src: "test(\"tpl\", () => { const s = `assert.equal(1, 2)`; });",
     expected: ["tpl"],
+  },
+  {
+    // The arrow of a parameter default value belongs to that inner function:
+    // the body is still the block of the callback the test call receives.
+    name: "a vacuous body behind a parameter whose default value is an arrow",
+    src: 'test("default-arrow", (fn = () => 1) => { work(); });',
+    expected: ["default-arrow"],
+  },
+  {
+    // An arrow inside an options object is not the callback either.
+    name: "a vacuous body behind an options object holding an arrow",
+    src: 'test("options-arrow", { setup: () => 1 }, () => { work(); });',
+    expected: ["options-arrow"],
   },
 ]);
