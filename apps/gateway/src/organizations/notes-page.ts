@@ -89,6 +89,7 @@ async function listPage(ctx: GatewayRouteContext, orgId: string, query: URLSearc
 
 async function detailPage(ctx: GatewayRouteContext, orgId: string, noteId: string, query: URLSearchParams): Promise<boolean> {
   if (query.size !== 0) return invalid(ctx);
+  if (!NOTE_ID.test(noteId)) return error(ctx, 404);
   const service = ctx.login?.organizationNotes;
   if (!service) return unavailable(ctx);
   const result = await service.list(sessionCookie(ctx.request.headers.cookie), orgId);
@@ -141,10 +142,9 @@ export async function handleOrganizationNotesPage(ctx: GatewayRouteContext): Pro
   if (action ? ctx.request.method !== "POST" : ctx.request.method !== "GET" && ctx.request.method !== "HEAD") return false;
   let decoded: string | undefined;
   try { decoded = decodeURIComponent(match[1]!); } catch { decoded = undefined; }
-  if (decoded && ORGANIZATION_PAGE_RESERVED.includes(decoded)) return false;
+  if (decoded && ORGANIZATION_PAGE_RESERVED.includes(decoded)) return detailId ? false : error(ctx, 404);
   const orgId = organizationPageOrgId(match[1]!);
   try {
-    if (detailId && !NOTE_ID.test(detailId)) return error(ctx, 404);
     if (detailId) return orgId ? await detailPage(ctx, orgId, detailId, requestUrl.searchParams) : error(ctx, 404);
     if (!action) return orgId ? await listPage(ctx, orgId, requestUrl.searchParams) : error(ctx, 404);
     const origin = ctx.login?.web?.origin;

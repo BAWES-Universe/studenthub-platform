@@ -9,7 +9,7 @@ import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createOrganizationNotes, type OrganizationNotes, type OrganizationNotesStore } from "../src/organization-notes.js";
 import { renderError, type BrowserLoginApplication } from "../src/web-ui.js";
 
-const SESSION = "s".repeat(43), OWNER = "o".repeat(43), OTHER = "x".repeat(43);
+const SESSION = "s".repeat(43), ADMIN = "a".repeat(43), OWNER = "o".repeat(43), RECRUITER = "r".repeat(43), OTHER = "x".repeat(43);
 const ORIGIN = "https://studenthub.example.invalid";
 const rows = new Map<string, OrganizationNoteRow[]>([
   ["org-a", [
@@ -19,11 +19,13 @@ const rows = new Map<string, OrganizationNoteRow[]>([
   ["org-b", [{ id: "9", author_principal_id: "other", body: "Private", created_at: "2026-11-21T09:00:00.000Z", note_type: "email" }]],
 ]);
 
-interface Options { noService?: boolean; throwing?: boolean; malformed?: boolean }
+interface Options { noService?: boolean; throwing?: boolean; malformed?: boolean; unavailable?: boolean }
 async function fixture(t: TestContext, options: Options = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "staff" });
+  await rig.sessions.put({ id: ADMIN, personId: "admin" });
   await rig.sessions.put({ id: OWNER, personId: "owner" });
+  await rig.sessions.put({ id: RECRUITER, personId: "recruiter" });
   await rig.sessions.put({ id: OTHER, personId: "other" });
   const calls = { list: [] as string[], preview: 0, confirm: 0, receipt: 0 };
   const store: OrganizationNotesStore = {
@@ -31,7 +33,7 @@ async function fixture(t: TestContext, options: Options = {}) {
     async readReceipt() { calls.receipt++; return null; },
     async list(personId, orgId) {
       calls.list.push(`${personId}:${orgId}`);
-      return personId === "staff" && orgId === "org-a" ? [...rows.get(orgId)!] : null;
+      return (personId === "staff" || personId === "admin") && orgId === "org-a" ? [...rows.get(orgId)!] : null;
     },
   };
   const real = createOrganizationNotes({ sessions: rig.sessions, store, secret: "note-detail-test-secret-at-least-32-bytes" });
@@ -39,6 +41,7 @@ async function fixture(t: TestContext, options: Options = {}) {
     async list(session, orgId) {
       if (options.throwing) throw new Error("private list stack");
       if (options.malformed) return { status: 200, body: { secret: rows.get("org-b") } };
+      if (options.unavailable) return { status: 503, body: { error: "safe_write_unavailable" } };
       return real.list(session, orgId);
     },
     async preview(session, body) { calls.preview++; return real.preview(session, body); },
@@ -76,7 +79,9 @@ test("NOTEDET_SHOW a staff member reads one escaped note and HEAD has no body", 
   assert.match(body, /href="\/organization\/org-a">Company<\/a>/, "NOTEDET_SHOW company breadcrumb");
   assert.match(body, /href="\/organization\/org-a\/notes">Notes<\/a>/, "NOTEDET_SHOW Notes link");
   const head = await f.request("/organization/org-a/notes/2", SESSION, "HEAD");
-  assert.equal(head.status, 200); assert.equal(await head.text(), "");
+  assert.equal(head.status, 200); assert.match(head.headers.get("content-type") ?? "", /^text\/html\b/); assert.equal(head.headers.get("cache-control"), "no-store"); assert.equal(await head.text(), "");
+  const admin = await f.request("/organization/org-a/notes/2", ADMIN);
+  assert.equal(admin.status, 200, "NOTEDET_SHOW admin reader sees the note");
 });
 
 test("NOTEDET_MINE selects the requested note from exactly one list call", async (t) => {
@@ -100,11 +105,13 @@ test("NOTEDET_DENY preserves authentication, query and method refusals", async (
   const f = await fixture(t);
   const none = await f.request("/organization/org-a/notes/2", null);
   assert.equal(none.status, 401); assert.equal(await none.text(), renderError(401, f.login), "NOTEDET_DENY no session is renderError(401)");
-  for (const session of [OWNER, OTHER]) {
+  for (const session of [OWNER, RECRUITER, OTHER]) {
     const denied = await f.request("/organization/org-a/notes/2", session); assert.equal(denied.status, 404); assert.equal(await denied.text(), renderError(404, f.login));
   }
   const query = await f.request("/organization/org-a/notes/2?x=1");
   assert.equal(query.status, 400, "NOTEDET_DENY a query string is 400");
+  const malformedQuery = await f.request("/organization/org-a/notes/abc?x=1");
+  assert.equal(malformedQuery.status, 400, "NOTEDET_DENY malformed id with a query is 400");
   const post = await f.request("/organization/org-a/notes/2", SESSION, "POST"); assert.equal(post.status, 404, "NOTEDET_DENY POST retains fallback response");
 });
 
@@ -114,11 +121,17 @@ test("NOTEDET_PASSTHROUGH existing and deeper paths retain their dispatch", asyn
   assert.equal((await f.request("/organization/org-a/notes?saved=note")).status, 200);
   assert.equal((await f.request("/organization/org-a/notes/preview")).status, 404, "NOTEDET_PASSTHROUGH GET preview stays unserved");
   assert.equal((await f.request("/organization/org-a/notes/confirm")).status, 404);
+  const receipts = await f.request("/organization/org-a/notes/receipts");
+  assert.equal(receipts.status, 404, "NOTEDET_PASSTHROUGH receipts keeps the gateway fallback");
+  assert.match(receipts.headers.get("content-type") ?? "", /^application\/json\b/);
+  const reserved = await f.request("/organization/onboarding/notes");
+  assert.equal(reserved.status, 404, "NOTEDET_PASSTHROUGH reserved list path keeps the HTML error");
+  assert.equal(await reserved.text(), renderError(404, f.login));
   assert.equal((await f.request("/organization/org-a/notes/2/x")).status, 404, "NOTEDET_PASSTHROUGH deeper paths stay unserved");
 });
 
 test("NOTEDET_UNAVAILABLE list failures stay private 503 pages", async (t) => {
-  for (const options of [{ noService: true }, { throwing: true }, { malformed: true }]) {
+  for (const options of [{ noService: true }, { throwing: true }, { malformed: true }, { unavailable: true }]) {
     const f = await fixture(t, options); const response = await f.request("/organization/org-a/notes/2"); const body = await response.text();
     assert.equal(response.status, 503, "NOTEDET_UNAVAILABLE detail is 503");
     assert.match(body, /Notes unavailable/); assert.doesNotMatch(body, /private list stack|Private|notes.*\[/i, "NOTEDET_UNAVAILABLE leaks no notes or stack");
