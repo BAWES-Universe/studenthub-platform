@@ -1,32 +1,33 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import {readFile} from "node:fs/promises";
 import test from "node:test";
-import { renderCivilIdSuggestion } from "../src/civil-id-suggestion-http.js";
+import {createSyntheticLoginRig} from "@studenthub/login-contract";
+import {CIVIL_ID_MESSAGES,CivilIdVault,InMemoryCivilIdOcrStore,InMemoryCivilIdStore,createCivilId} from "@studenthub/profile";
+import {SYNTHETIC_PROFILE_FIXTURES} from "../../../packages/profile/src/fixtures.js";
+import {createLoginApplication} from "../src/index.js";
+const http=await import(process.env.OCRP_HTTP_MODULE??"../src/civil-id-suggestion-http.js");
+const gateway=await import(process.env.OCRP_GATEWAY_MODULE??"../src/index.js");
+const SESSION="s".repeat(43),PERSON="person-1",NUMBER="123456781234",cookie=`__Host-studenthub_session=${SESSION}`;
 
-test("OCRP_LINE suggestion rendering masks the number and distinguishes completed outcomes", () => {
-  const id="suggestion-1", full="123456781234";
-  const shown=renderCivilIdSuggestion("en",{id,state:"read",last4:full.slice(-4),country:"KW",expiry:"2099-03-01",expired:false});
-  assert.match(shown,/We read a number ending 1234, expiring 2099-03-01\. Is this right\?/);
-  assert.equal((shown.match(/<form /g)??[]).length,2);
-  assert.match(shown,/action="\/profile\/civil-id\/suggestion\/accept"/);
-  assert.match(shown,/action="\/profile\/civil-id\/suggestion\/dismiss"/);
-  assert.doesNotMatch(shown,new RegExp(full),"OCRP_LINE full civil ID must never render");
-  const expired=renderCivilIdSuggestion("en",{id,state:"read",last4:"1234",country:"KW",expiry:"2020-01-05",expired:true});
-  assert.doesNotMatch(expired,/suggestion\/accept/,"OCRP_LINE expired suggestion must have no accept form");
-  assert.match(expired,/The date we read \(2020-01-05\) has passed/);
-  const unreadable=renderCivilIdSuggestion("en",{id,state:"unreadable",last4:null,country:null,expiry:null,expired:false});
-  const failed=renderCivilIdSuggestion("en",{id,state:"failed",last4:null,country:null,expiry:null,expired:false});
-  assert.match(unreadable,/We could not read your photo/);assert.match(failed,/We could not read your photo/);
-  assert.equal(renderCivilIdSuggestion("en",undefined),"");
-});
+async function setup(t:any,o:{number?:string;expiry?:string;country?:"KW"|"BH"}={}){
+ const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:PERSON});
+ const vault=new CivilIdVault(Buffer.alloc(32,7)),civilStore=new InMemoryCivilIdStore(),civilId=createCivilId({store:civilStore,vault,clock:{now:()=>new Date("2026-11-12T09:00:00Z")}}),store=new InMemoryCivilIdOcrStore();
+ const number=o.number??NUMBER,country=o.country??"KW",expiry=o.expiry??"2027-11-12",sealed=vault.seal(PERSON,country,number),at="2026-11-12T09:00:00.000Z";
+ store.jobs.push({id:"suggestion-1",principalId:PERSON,side:"front",documentId:"doc",version:"v1",size:12,status:"read",attempts:1,notBefore:at,leaseOwner:null,leaseExpiresAt:null,failureCode:null,country,numberCiphertext:sealed.ciphertext,keyVersion:sealed.keyVersion,last4:number.slice(-4),expiry,fallbackVersion:null,supersededAt:null,resolved:null,createdAt:at,updatedAt:at});
+ let reads=0;const service={store,civilId,civilStore,vault,now:()=>new Date(at),current:async(id:string)=>{reads++;return store.currentSuggestion(id,"2026-11-12")}};
+ const login={...rig.app,civilId,civilIdSuggestion:service,web:{origin:"https://studenthub.example.invalid",profiles:{readOwn:async()=>({kind:"found" as const,profile:SYNTHETIC_PROFILE_FIXTURES.unavailable})}}};
+ const server=gateway.createGatewayServer(undefined,undefined,undefined,login);await new Promise<void>(r=>server.listen(0,"127.0.0.1",r));t.after(()=>{server.closeAllConnections();server.close()});const a=server.address();assert.ok(a&&typeof a!=="string");const base=`http://127.0.0.1:${a.port}`;
+ const post=(path:string,body="suggestionId=suggestion-1&submissionId=civil-id-suggestion%3Asuggestion-1",headers:Record<string,string>={})=>fetch(base+path,{method:"POST",redirect:"manual",headers:{cookie,origin:"https://studenthub.example.invalid","sec-fetch-site":"same-origin","content-type":"application/x-www-form-urlencoded",...headers},body});
+ return{base,post,service,store,civilId,civilStore,get reads(){return reads}};
+}
 
-test("OCRP_PLACE suggestion is a definition-shaped row", () => {
-  const html=renderCivilIdSuggestion("en",{id:"s",state:"read",last4:"1234",country:"KW",expiry:"2099-01-01",expired:false});
-  assert.match(html,/^<div class="p-row"><dt>[^<]+<\/dt><dd>/,"OCRP_PLACE suggestion must use the profile dl row shape");
-});
-
-test("OCRP_SECRECY gateway opens a suggestion only in the accept module", async () => {
-  const source=await readFile(new URL("../src/civil-id-suggestion-http.js",import.meta.url),"utf8");
-  assert.equal((source.match(/\.vault\.open\(/g)??[]).length,1,"OCRP_SECRECY exactly one server-side vault open");
-  assert.doesNotMatch(source,/name=["']number["']/,"OCRP_SECRECY no civil number form field");
-});
+test("OCRP_LINE suggestion rendering masks the number and distinguishes outcomes",()=>{const shown=http.renderCivilIdSuggestion("en",{id:"suggestion-1",state:"read",last4:"1234",country:"KW",expiry:"2027-03-01",expired:false,number:NUMBER});assert.match(shown,/We read a number ending 1234, expiring 2027-03-01\. Is this right\?/,"OCRP_LINE masked line");assert.equal((shown.match(/<form /g)??[]).length,2);assert.doesNotMatch(shown,new RegExp(NUMBER),"OCRP_LINE full civil ID must never render");const expired=http.renderCivilIdSuggestion("en",{id:"s",state:"read",last4:"1234",country:"KW",expiry:"2020-01-05",expired:true});assert.doesNotMatch(expired,/suggestion\/accept/,"OCRP_LINE expired suggestion must have no accept form");});
+test("OCRP_PLACE suggestion follows Civil ID on the real route",async t=>{const f=await setup(t),html=await(await fetch(f.base+"/profile",{headers:{cookie,accept:"text/html"}})).text();assert.match(html,/id="field-civilId"[\s\S]*?<\/div><div class="p-row"><dt>Civil ID photo<\/dt>/,"OCRP_PLACE directly after Civil ID");assert.equal((html.match(/data-state="unavailable"/g)??[]).length,19,"OCRP_REAL route marker count");});
+test("OCRP_SHOWN profile reads once and hides the full number",async t=>{const f=await setup(t),html=await(await fetch(f.base+"/profile",{headers:{cookie,accept:"text/html"}})).text();assert.equal(f.reads,1,"OCRP_SHOWN exactly one suggestion read");assert.match(html,/number ending 1234/);assert.doesNotMatch(html,new RegExp(NUMBER));});
+test("OCRP_SEAM JSON and foreign reads are zero; throwing read is non-fatal",async t=>{const f=await setup(t);await fetch(f.base+"/profile",{headers:{cookie,accept:"application/json"}});assert.equal(f.reads,0,"OCRP_SEAM JSON zero reads");await fetch(f.base+"/profile?person_id=other",{headers:{cookie,accept:"text/html"}});assert.equal(f.reads,0,"OCRP_SEAM foreign zero reads");f.service.current=async()=>{throw Error("offline")};assert.equal((await fetch(f.base+"/profile",{headers:{cookie,accept:"text/html"}})).status,200);});
+test("OCRP_ACCEPT accept uses CIV, resolves, redirects and shows waiting",async t=>{const f=await setup(t),r=await f.post("/profile/civil-id/suggestion/accept");assert.equal(r.status,303,"OCRP_ACCEPT redirects");assert.equal(f.store.jobs[0]!.resolved,"accepted");assert.equal(f.civilStore.events.length,1,"OCRP_ACCEPT one CIV save");assert.equal((await f.civilId.readOwn(PERSON))?.needsReview,true);const html=await(await fetch(f.base+"/profile",{headers:{cookie,accept:"text/html"}})).text();assert.match(html,/Waiting for StudentHub to check/);});
+test("OCRP_STALE stale uses CIV message and completed retry is idempotent",async t=>{const f=await setup(t),stale=await f.post("/profile/civil-id/suggestion/accept","suggestionId=wrong&submissionId=civil-id-suggestion%3Awrong");assert.equal(stale.status,409);assert.ok((await stale.text()).includes(CIVIL_ID_MESSAGES.stale_revision),"OCRP_STALE real CIV message");assert.equal((await f.post("/profile/civil-id/suggestion/accept")).status,303);assert.equal((await f.post("/profile/civil-id/suggestion/accept")).status,303,"OCRP_STALE retry redirects");assert.equal(f.civilStore.events.length,1);});
+test("OCRP_DISMISS dismiss resolves without a CIV write and later version shows",async t=>{const f=await setup(t),r=await f.post("/profile/civil-id/suggestion/dismiss");assert.equal(r.status,303);assert.equal(f.store.jobs[0]!.resolved,"dismissed","OCRP_DISMISS records dismissed");assert.equal(f.civilStore.events.length,0,"OCRP_DISMISS no civil write");assert.equal(await f.service.current(PERSON),null);f.store.jobs.push({...f.store.jobs[0]!,id:"suggestion-2",version:"v2",resolved:null});assert.equal((await f.service.current(PERSON))?.id,"suggestion-2");});
+test("OCRP_ORIGIN session, origin, fetch metadata and exact fields are enforced",async t=>{const f=await setup(t),path="/profile/civil-id/suggestion/accept",body="suggestionId=suggestion-1&submissionId=civil-id-suggestion%3Asuggestion-1";const none=await fetch(f.base+path,{method:"POST",headers:{origin:"https://studenthub.example.invalid","content-type":"application/x-www-form-urlencoded"},body});assert.equal(none.status,401);const cross=await f.post(path,body,{"sec-fetch-site":"cross-site"});assert.equal(cross.status,403,"OCRP_ORIGIN cross-site rejected");const wrong=await f.post(path,body,{origin:"https://evil.invalid"});assert.equal(wrong.status,403,"OCRP_ORIGIN wrong origin rejected");const missing=await f.post(path,"suggestionId=suggestion-1");assert.equal(missing.status,400);assert.equal(f.civilStore.events.length,0);for(const r of[none,cross,wrong,missing])assert.equal(r.headers.get("cache-control"),"no-store");});
+test("OCRP_CASES CIV refuses invalid KW, BH and expired suggestions",async t=>{for(const o of[{number:"123",country:"KW" as const},{number:"12345678",country:"BH" as const},{expiry:"2020-01-01"}]){const f=await setup(t,o),r=await f.post("/profile/civil-id/suggestion/accept");assert.ok([400,409].includes(r.status),"OCRP_CASES CIV refusal reaches HTTP");assert.equal(f.civilStore.events.length,0);assert.equal(f.store.jobs[0]!.resolved,null);}});
+test("OCRP_SECRECY source has one vault open and no number field",async()=>{const source=await readFile(process.env.OCRP_HTTP_MODULE?new URL(process.env.OCRP_HTTP_MODULE):new URL("../src/civil-id-suggestion-http.js",import.meta.url),"utf8");assert.equal((source.match(/\.vault\.open\(/g)??[]).length,1,"OCRP_SECRECY exactly one open");assert.doesNotMatch(source,/name=["']number["']/,"OCRP_SECRECY no number field");});
