@@ -14,10 +14,13 @@ import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
 import type { ProfileCompletenessDependencies } from "../profile-completeness.js";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
 type OwnPreferencesReader = { readOwnPreferences(id: string): Promise<object | null | undefined> };
+
+export function hasOperatorStaffGrant(grants:readonly {role:string;scope:string;orgId:string}[]):boolean{return grants.some(grant=>(grant.role==="staff"||grant.role==="admin")&&grant.scope==="subtree"&&DEFAULT_OPERATOR_ORG_IDS.includes(grant.orgId))}
 
 /**
  * The My profile read as production composes it: the approved profile source
@@ -91,6 +94,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
   const profileReadPool=new pg.Pool({connectionString:databaseUrl});
+  const CivilIdReviewStore=(PostgresPersonProfileStore as typeof PostgresPersonProfileStore&{CivilIdReviewStore:new(options:{pool:pg.Pool})=>import("@studenthub/profile").CivilIdReviewStore}).CivilIdReviewStore;
+  const civilIdReviewStore=civilId&&civilVault&&civilSuggestionStore?new CivilIdReviewStore({pool:profileReadPool}):undefined;
+  const civilIdReview=civilIdReviewStore&&civilVault&&civilKey?{store:civilIdReviewStore,vault:civilVault,ocr:civilSuggestionStore,secret:civilKey,async isStaff(principalId:string){const grants=await access.authzStore.listGrantsForPrincipal(principalId);return hasOperatorStaffGrant(grants)}}:undefined;
   const profileChoices=new PostgresPersonProfileStore({pool:profileReadPool});
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const personLocations = new PostgresPersonLocationStore({ pool:profileReadPool });
@@ -171,6 +177,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
       ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
+      ...(civilIdReview ? { civilIdReview } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       people,
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
