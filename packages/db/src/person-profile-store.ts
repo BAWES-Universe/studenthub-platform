@@ -108,7 +108,7 @@ export class PostgresPersonProfileStore {
       }
       if (field === "nationality") {
         const kw = input.value !== "" && (await client.query("SELECT 1 FROM catalogue_items WHERE id=$1 AND catalogue_type='country' AND code='KW'",[input.value])).rowCount;
-        if (kw) await client.query("UPDATE person_profiles SET kuwaiti_mother=NULL,kuwaiti_mother_written_at=clock_timestamp() WHERE principal_id=$1",[id]);
+        if (kw) await client.query("UPDATE person_profiles SET kuwaiti_mother=NULL,kuwaiti_mother_written_at=NULL WHERE principal_id=$1",[id]);
       }
       const stored = input.value === "" ? null : (field === "drivingLicence" || field === "kuwaitiMother" ? input.value === "true" : input.value);
       await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())

@@ -39,3 +39,14 @@ FOR EACH ROW EXECUTE FUNCTION person_profile_choice_guard();
 
 CREATE INDEX person_profiles_nationality_idx ON person_profiles(nationality_id) WHERE nationality_id IS NOT NULL;
 CREATE INDEX person_profiles_university_idx ON person_profiles(university_id) WHERE university_id IS NOT NULL;
+
+DO $$
+DECLARE old_body text; new_body text;
+BEGIN
+  SELECT prosrc INTO old_body FROM pg_proc WHERE oid = 'authorization_audit_summary_valid(text,jsonb)'::regprocedure;
+  new_body := replace(old_body,
+    $needle$IN ('language','displayName','arabicName','objective','intro','preferredTime')$needle$,
+    $replacement$IN ('language','displayName','arabicName','objective','intro','preferredTime','gender','birthDate','nationality','university','drivingLicence','kuwaitiMother','jobSearchStatus')$replacement$);
+  IF new_body = old_body THEN RAISE EXCEPTION 'profile safe-write audit whitelist was not found'; END IF;
+  EXECUTE format('CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(TEXT,JSONB) RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS %L', new_body);
+END $$;

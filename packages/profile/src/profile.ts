@@ -227,6 +227,10 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
     }
   }
+  const writtenBirthDate = fields.birthDate;
+  if (writtenBirthDate.state === "available" && writtenBirthDate.freshness.kind === "written_by_person") {
+    fields.age = written(PROFILE_FIELD_SPECS.age, ageOn(writtenBirthDate.value, profile.asOfDate), writtenBirthDate.freshness.observedAt);
+  }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
   for (const name of ["isProfileCompleted", "pendingFields"] as const) {

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -43,7 +43,8 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
   return {
     async displayValue(session, selected, value) {
       if (!await principal(session)) return value;
-      if (selected === "drivingLicence" || selected === "kuwaitiMother") return value === "true" ? "Yes" : value === "false" ? "No" : "Not recorded";
+      if (selected === "drivingLicence" || selected === "kuwaitiMother") return value === "true" ? "Yes" : value === "false" ? "No" : value;
+      if (selected === "gender") return ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[value] ?? value;
       if (selected === "jobSearchStatus") return ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" } as Record<string,string>)[value] ?? value;
       if (selected === "nationality" || selected === "university") {
         const choices = await ports.store.readProfileChoices?.() ?? { countries: [], universities: [] };
@@ -116,7 +117,7 @@ export function profileEditSummary(value: string): string {
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
   const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
-  const birthMessage = selected === "birthDate" ? (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`)) ? "Enter a valid birth date." : value > new Date().toISOString().slice(0,10) ? "Birth date cannot be in the future." : "You must be at least 16 years old.") : undefined;
+  const birthMessage = selected === "birthDate" ? (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`)) ? "Enter a valid birth date." : value > new Date().toISOString().slice(0,10) ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`) : undefined;
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${birthMessage ?? `Enter a value that follows the rules for ${label.toLowerCase()}.`}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
@@ -133,7 +134,8 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
-      const before = await shownValue?.(sessionId, selected);
+      const beforeValue = await shownValue?.(sessionId, selected);
+      const before = beforeValue === undefined ? undefined : await service.displayValue(sessionId, selected, beforeValue);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
       const after = await service.displayValue(sessionId, selected, values.value!);
       write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(after)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;

@@ -42,6 +42,8 @@ test("SHU373_PAGE all seven written values carry their written date into My prof
   const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"}) as const,readCandidate:async()=>undefined},preferences:{readOwnPreferences:async()=>preferences}as never,today:()=>"2026-10-30"});
   const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")return;
   for(const[field,value]of Object.entries({gender:"female",birthDate:"2000-01-02",nationality:"Jordan",university:"Kuwait University",drivingLicence:true,kuwaitiMother:false,jobSearchStatus:"active"})){const shown: any=(result.profile.fields as any)[field];assert.equal(shown.value,value);assert.deepEqual(shown.freshness,{kind:"written_by_person",observedAt:updatedAt})}
+  assert.equal(result.profile.fields.age.state === "available" && result.profile.fields.age.value,26);
+  assert.deepEqual(result.profile.fields.age.freshness,{kind:"written_by_person",observedAt:updatedAt});
 });
 
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {
