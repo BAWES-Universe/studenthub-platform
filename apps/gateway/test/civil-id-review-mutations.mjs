@@ -10,7 +10,7 @@ const mutants=[
  ["accept a reject without a reason","(!reason || reason.length > 300","(reason?.length > 300"],
  ["skip the revision check","p.revision !== row.revision","false"],
  ["clear needs_review without a decision","const result = await rt.store.decide(","const result = await rt.store.clearWithoutDecision("],
- ["skip the confirmation expiry","if ((rt.now ?? Date.now)() >= p.expires)","if (true)"],
+ ["skip the confirmation expiry","if ((rt.now ?? Date.now)() >= p.expires)","if (false)"],
  ["drop the Origin check","req.headers.origin !== rt.origin","false"],
  ["read the state twice","const list = await rt.store.listPending({ page, excludePrincipalId: viewer });","await rt.store.listPending({ page, excludePrincipalId: viewer }); const list = await rt.store.listPending({ page, excludePrincipalId: viewer });"],
 ];
