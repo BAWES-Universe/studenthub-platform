@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import pg from "pg";
-import { runMigrations } from "../src/migrate.js";
+import { runMigrations } from "@studenthub/db";
 
 const DB_URL = process.env.DATABASE_URL ?? "";
 const moduleUrl = process.env.SHU437_TEST_MODULE ?? new URL("../src/restore-check.js", import.meta.url).href;
@@ -59,7 +59,7 @@ test("SHU104_COUNTS compares every table, migrations, and missing or unequal tab
   assert.ok(passing.tables.some((row) => row.table === "organizations" && row.matches));
   assert.equal(passing.migrations.matches, true);
   const sourcePool = new pg.Pool({ connectionString: urlFor(sourceName) });
-  const catalogue = await sourcePool.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name");
+  const catalogue = await sourcePool.query<{ table_name: string }>("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name COLLATE \"C\"");
   await sourcePool.end();
   assert.deepEqual(passing.tables.map((row) => row.table), catalogue.rows.map((row) => row.table_name));
 
@@ -115,6 +115,8 @@ test("SHU104_INTEGRITY reports foreign-key, sequence, and append-only trigger fa
 });
 
 test("SHU104_SAFE_TARGET enforces scratch target and records recovery timing", async () => {
+  const emittedModule = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/restore-check.js", import.meta.url), "utf8"));
+  assert.match(emittedModule, /default_transaction_read_only=on/, "the source connection must be pinned read-only");
   await assert.rejects(checkRestore(urlFor(sourceName), urlFor(sourceName)), /must differ/);
   await assert.rejects(checkRestore(urlFor(sourceName), urlFor(`${tag}_unsafe`)), /scratch suffix/);
   const restored = await copy("timing");
