@@ -10,9 +10,20 @@ import {createCandidateDocuments,createRuntimeCandidateDocumentsFromEnv} from '.
 import {FileDocumentStore} from '../../../dist/packages/private-documents/src/index.js';
 import {InMemoryAuthzStore} from '../../../dist/packages/contracts/src/index.js';
 import {createIdempotencyKey} from '../../../dist/packages/idempotency-contract/src/index.js';
+import {CandidateDocuments} from '../../../dist/packages/private-documents/src/candidate-lifecycle.js';
 
 const origin='https://documents.example.test';
 import {png,pdf} from './candidate-fixtures.mjs';
+
+test('UPL_NO_ORG list closes unavailable before authentication, namespace or store reads',async()=>{
+ let storeReads=0,authReads=0,organizationReads=0;
+ const service=new CandidateDocuments({orgId:undefined,origin,signingKey:randomBytes(32),
+  store:{transaction:async()=>{storeReads++;throw new Error('must not read');}},
+  authenticate:async()=>{authReads++;return{kind:'principal',principalId:'alice'};},
+  authz:{getOrganization:async()=>{organizationReads++;return{id:'other'};}}});
+ await assert.rejects(service.list('credential'),error=>error.status===503&&error.code==='unavailable');
+ assert.deepEqual({storeReads,authReads,organizationReads},{storeReads:0,authReads:0,organizationReads:0});
+});
 async function fixture(t){
  const root=await mkdtemp(join(tmpdir(),'shu145-'));t.after(()=>rm(root,{recursive:true,force:true}));
  const disk=await FileDocumentStore.create(join(root,'private'));

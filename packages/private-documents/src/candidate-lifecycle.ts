@@ -45,9 +45,11 @@ function version(v: unknown): string | null {
  * Tickets, metadata, receipts, retention work and audit commit in ONE transaction. */
 export class CandidateDocuments {
   readonly primitive: PrivateDocuments;
+  private readonly configured: boolean;
   constructor(readonly options: CandidateDocumentOptions) {
-    if (!/^[\w-]{1,128}$/.test(options.orgId)) throw new TypeError('invalid candidate-document configuration');
-    this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: options.orgId });
+    this.configured = typeof options.orgId === 'string' && options.orgId.length > 0;
+    if (this.configured && !/^[\w-]{1,128}$/.test(options.orgId)) throw new TypeError('invalid candidate-document configuration');
+    this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: this.configured ? options.orgId : '__candidate_documents_unconfigured__' });
   }
   private now(): number {
     const now = (this.options.now ?? Date.now)();
@@ -55,6 +57,7 @@ export class CandidateDocuments {
     return now;
   }
   async principal(credential: unknown): Promise<string> {
+    if (!this.configured) throw new LifecycleError(503, 'unavailable');
     if (typeof credential !== 'string' || !credential.length || credential.length > 8192) return deny();
     const identity = await this.options.authenticate(credential);
     if (!identity) return deny();

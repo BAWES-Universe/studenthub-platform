@@ -57,6 +57,7 @@ const english = {
   "help.university": "Not listed records no university; ask staff to add a university.",
 
   "nav.profile": "My profile",
+  "nav.documents": "My documents",
   "nav.background": "Education and experience",
   "nav.workspaces": "Workspaces",
   "nav.main": "Main navigation",
@@ -255,6 +256,7 @@ const arabic = {
   "help.university": "اختيار غير مدرج لا يسجّل جامعة؛ اطلب من الموظفين إضافة الجامعة.",
 
   "nav.profile": "ملفي الشخصي",
+  "nav.documents": "مستنداتي",
   "nav.background": "التعليم والخبرة",
   "nav.workspaces": "مساحات العمل",
   "nav.main": "التنقل الرئيسي",

@@ -21,11 +21,20 @@ import type { ServerResponse } from "node:http";
 import type { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
+import { profileCopyText } from "../src/ui/profile-copy.js";
 
 const SESSION = "s".repeat(43);
 const OTHER_SESSION = "t".repeat(43);
 const ORIGIN = "https://studenthub.test.invalid";
 const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESSION}` };
+
+test("UPL_NAV_COPY documents navigation is dictionary-owned in both languages", () => {
+  assert.equal(profileCopyText("en", "nav.documents"), "My documents");
+  assert.equal(profileCopyText("ar", "nav.documents"), "مستنداتي");
+  const source = readFileSync(new URL("../src/web-ui.js", import.meta.url), "utf8");
+  assert.match(source, /copy\("nav\.documents"\)/);
+  assert.doesNotMatch(source, /language === "ar" \? "مستنداتي" : "My documents"/);
+});
 
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];

@@ -1,6 +1,7 @@
 import type { GatewayRoute } from "./context.js";
 import { catalogueRoute } from "./catalogue.js";
 import { candidateDocumentsRoute, organizationDocumentsRoute } from "./documents.js";
+import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { profileEditPageRoute, profileEditRoute, profileBrowserEditRoute, languagePreferencePageRoute, languagePreferenceRoute, bankDetailsRoute, profileRecordsRoute } from "./profile.js";
 import { organizationProfileRoute, organizationStatusRoute, organizationCommercialTermsRoute, organizationApprovedToHireRoute, organizationNotesRoute, organizationBrandsRoute, organizationStoresRoute, organizationDeletionRoute, organizationCreationRoute, organizationAccountManagerPageRoute, organizationAccountManagerRoute } from "./organizations.js";
 import { payContractsRoute } from "./pay-contracts.js";
@@ -17,9 +18,13 @@ const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCi
     return result.status === 200 && typeof result.body?.personId === "string" ? result.body.personId : undefined; },
   (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 
+const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
+  handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
+
 export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
   candidateDocumentsRoute,
+  documentsUploadRoute,
   organizationDocumentsRoute,
   profileEditPageRoute,
   profileEditRoute,

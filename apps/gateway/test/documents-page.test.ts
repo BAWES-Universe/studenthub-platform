@@ -79,7 +79,10 @@ test('SHU366_PAGE finalized file appears once with closed slots and one list', a
   assert.ok(html.includes(`PDF · ${finalized.bytes.length} bytes`));
   assert.equal(f.counts().lists - before.lists, 1); assert.equal(f.counts().deliveries, 0);
   for (const row of (await f.disk.transaction(async state => state.documents))) { assert.ok(!html.includes(row.id)); assert.ok(!html.includes(row.version)); }
-  assert.doesNotMatch(html, /uploads\/|delivery|<script|<form|<input|Date unavailable|timestamp|type="file"/);
+  assert.doesNotMatch(html, /uploads\/|delivery|<script|Date unavailable|timestamp/);
+  assert.equal((html.match(/<form method="post" enctype="multipart\/form-data" action="\/profile\/documents\/(?:personal-photo|resume|civil-id-front|civil-id-back)\/upload">/g) ?? []).length, 4);
+  assert.equal((html.match(/<input type="file" name="file"/g) ?? []).length, 4);
+  assert.equal((html.match(/<input type="hidden" name="submission" value="v1\./g) ?? []).length, 4);
   assert.match(html, /lang="en" dir="ltr"/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(response.headers.get('content-security-policy')!, /default-src 'none'/);
