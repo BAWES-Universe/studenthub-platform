@@ -5,6 +5,8 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
 import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
+import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -32,6 +34,7 @@ import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,renderNotifications,
+  addCivilIdReviewLink,
 } from "./web-ui.js";
 import {addNotificationBell} from "./web-ui.js";
 import { ROUTES, runRoutes } from "./routes/index.js";
@@ -177,7 +180,8 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
-    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, catalogue,
+    const routeLogin = login?.civilIdReview && documents ? {...login,civilIdReview:{...login.civilIdReview,documents:new StaffDocuments({...documents.options,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:login.civilIdReview.store})}} : login;
+    const ctx = { request, response, login: routeLogin as GatewayRouteLogin | undefined, authz, documents, catalogue,
       profileRecords, organizationDocuments, writeHtml, pageDocument, renderError };
     if (await runRoutes(ROUTES, ctx)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
@@ -287,7 +291,10 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined) : renderError(503)), {}, true);
+        let workspace=login ? renderWorkspace(result, login, documents !== undefined) : renderError(503);
+        const active=result.status===200?result.body.active:undefined,session=cookieValue(request.headers.cookie,"__Host-studenthub_session");
+        if(active&&login?.civilIdReview&&DEFAULT_OPERATOR_ORG_IDS.includes(active.orgId)&&(active.role==="staff"||active.role==="admin")){const principal=await login.civilIdReview.principal(session??"");if(principal)workspace=addCivilIdReviewLink(workspace,await login.civilIdReview.store.countPending({excludePrincipalId:principal}));}
+        writeHtml(response, result.status, await signedInHtml(login,session,workspace), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -375,7 +382,8 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const civilReviewState = result.status===200 && login.civilIdReview && typeof (result.body as {personId?:unknown}).personId==="string" ? await login.civilIdReview.store.stateFor((result.body as {personId:string}).personId) : undefined;
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined,undefined,civilReviewState);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

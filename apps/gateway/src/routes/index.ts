@@ -8,6 +8,7 @@ import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { handleDocumentsActions } from "../documents-actions-http.js";
 import { prepareProfileAvatar } from "../profile-avatar.js";
+import { handleCivilIdReview } from "../civil-id-review-http.js";
 
 const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
   handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
@@ -20,6 +21,7 @@ const profileAvatarRoute: GatewayRoute = { name: "profile-avatar", handle: async
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
     (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
+const civilIdReviewRoute: GatewayRoute = { name: "civil-id-review", handle: (ctx) => handleCivilIdReview(ctx.request,ctx.response,ctx.login?.civilIdReview) };
 import { handleCivilId } from "../civil-id-http.js";
 import { handleArea } from "../area-http.js";
 
@@ -59,6 +61,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   legacyLinkRoute,
   civilIdRoute,
   areaRoute,
+  civilIdReviewRoute,
 ];
 
 export { runRoutes } from "./context.js";
