@@ -45,7 +45,7 @@ async function fixture(t: TestContext, option: "normal" | "throw" | "bad-body" |
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address(); assert.ok(address && typeof address !== "string");
-  const request = (path: string, session: string | undefined = SESSION, method = "GET", accept = "text/html") => fetch(`http://127.0.0.1:${address.port}${path}`, {
+  const request = (path: string, session: string | null = SESSION, method = "GET", accept = "text/html") => fetch(`http://127.0.0.1:${address.port}${path}`, {
     method, redirect: "manual", headers: { accept, ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}) },
   });
   return { request, calls, login };
@@ -87,7 +87,7 @@ test("NOTEDET_MINE selects only the requested note from one list call", async (t
 
 test("NOTEDET_DENY authorization query and methods retain their contracts", async (t) => {
   const f = await fixture(t);
-  const noSession = await f.request("/organization/org-a/notes/7", undefined);
+  const noSession = await f.request("/organization/org-a/notes/7", null);
   assert.equal(noSession.status, 401); assert.equal(await noSession.text(), renderError(401, f.login));
   const owner = await f.request("/organization/org-a/notes/7", OWNER);
   assert.equal(owner.status, 404); assert.equal(await owner.text(), renderError(404, f.login));
