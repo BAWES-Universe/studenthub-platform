@@ -61,6 +61,7 @@ test("CERTDET_MINE refuses another person's, unknown, and malformed assignments 
   const paths = [OTHER, "44444444-4444-4444-8444-444444444444", "NOT-a-lower-uuid"];
   const replies = await Promise.all(paths.map(async id => { const r = await x.call(`/profile/certificates/${id}`, "s-alia"); return [r.status, await r.text()] as const; }));
   assert.equal(replies[0]![0], 404, "CERTDET_MINE another person's assignment is not served");
+  assert.equal(replies[1]![0], 404, "CERTDET_MINE an unknown assignment is the same 404");
   assert.deepEqual(replies[1], replies[0], "CERTDET_MINE an unknown assignment is the same 404");
   assert.deepEqual(replies[2], replies[0], "CERTDET_MINE a malformed assignment is the same 404");
   assert.deepEqual(x.calls.own, ["alia", "alia"]); assert.deepEqual(x.calls.pdf, []); assert.deepEqual(x.calls.staffList, []); assert.deepEqual(x.calls.isStaff, []);
