@@ -3,7 +3,7 @@ import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
 import { PostgresBankDetailsStore, PostgresCivilIdOcrStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, kuwaitDate, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, kuwaitDate, type ApprovedProfileAdapter, type CivilIdOcrStore, type CivilIdStore, type OwnProfileReader } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -16,7 +16,12 @@ import type { ProfileCompletenessDependencies } from "../profile-completeness.js
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
-export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter): Wired<{
+export interface ProfileWiringOverrides {
+  readonly civilStore?: CivilIdStore & { close?(): Promise<void> };
+  readonly civilSuggestionStore?: CivilIdOcrStore & { close?(): Promise<void> };
+}
+
+export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter, overrides: ProfileWiringOverrides = {}): Wired<{
   readonly application: Record<string, unknown>;
   readonly web: { readonly profiles: OwnProfileReader; readonly profileCompleteness?: ProfileCompletenessDependencies };
   readonly browserSessionPool: pg.Pool | undefined;
@@ -38,10 +43,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const civilRaw = process.env.CIVIL_ID_ENCRYPTION_KEY;
   const civilKey = civilRaw === undefined ? undefined : Buffer.from(civilRaw, "base64");
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
-  const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
+  const civilStore = civilKey ? overrides.civilStore ?? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
   const civilVault = civilKey ? new CivilIdVault(civilKey) : undefined;
   const civilId = civilStore && civilVault ? createCivilId({ store: civilStore, vault: civilVault }) : undefined;
-  const civilSuggestionStore = civilKey ? new PostgresCivilIdOcrStore({ connectionString: databaseUrl }) : undefined;
+  const civilSuggestionStore = civilKey ? overrides.civilSuggestionStore ?? new PostgresCivilIdOcrStore({ connectionString: databaseUrl }) : undefined;
   const civilIdSuggestion = civilSuggestionStore && civilId && civilStore && civilVault ? { store: civilSuggestionStore, civilId, civilStore, vault: civilVault,
     now: () => new Date(), current: (principalId:string) => civilSuggestionStore.currentSuggestion(principalId, kuwaitDate(new Date())) } : undefined;
   // Freeze both protocol versions once, never derive them from a request.
@@ -137,6 +142,6 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), (civilStore as {close?:()=>Promise<void>}|undefined)?.close?.(), (civilSuggestionStore as {close?:()=>Promise<void>}|undefined)?.close?.()]); },
   };
 }
