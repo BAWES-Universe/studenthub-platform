@@ -26,16 +26,23 @@ export class PostgresPersonProfileStore {
   }
   async close() { if (this.#ownsPool) await this.#pool.end(); }
 
+  async contactValueAvailable(principalId: string, field: "phone" | "handle", value: string): Promise<boolean> {
+    const column = COLUMNS[field];
+    const { rows } = await this.#pool.query(`SELECT NOT EXISTS (SELECT 1 FROM person_profiles WHERE ${column}=$1 AND principal_id<>$2) AS available`, [value, principalId]);
+    return rows[0]?.available === true;
+  }
+
   forPrincipal(principalId: string): SafeWriteStore {
     if (!principalId) throw new TypeError("principal id required");
     const principalRef = safeWritePrincipalRef(principalId), personRef = personRecordRef(principalId);
     return {
+      contactValueAvailable: (field: "phone" | "handle", value: string) => this.contactValueAvailable(principalId, field, value),
       ownedRecord: async ref => ref === principalRef && await this.#exists(this.#pool, principalId) ? personRef : null,
       readField: async (record, field) => record === personRef && PERSON_PROFILE_FIELDS.includes(field as PersonProfileField)
         ? this.#readField(principalId, field as PersonProfileField) : null,
       commit: async input => input.principalRef === principalRef && input.personRef === personRef
         ? this.#commit(principalId, input) : { ok: false, reason: "not_own_record" },
-    };
+    } as SafeWriteStore;
   }
 
   async readOwnPreferences(principalId: string) {

@@ -234,7 +234,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
     if (!preference || preference.value === null) continue;
     try {
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preference.updatedAt) || !Number.isFinite(Date.parse(preference.updatedAt))) throw new TypeError("malformed preference timestamp");
-      const valid = name === "phone" ? /^\+965[0-9]{8}$/.test(String(preference.value)) : /^[a-z0-9](?:[a-z0-9_-]{1,28}[a-z0-9])?$/.test(String(preference.value));
+      const valid = name === "phone" ? /^\+[0-9]{8,15}$/.test(String(preference.value)) : /^[a-z][a-z0-9._-]{2,29}$/.test(String(preference.value));
       if (!valid) continue;
       const spec = fieldSpec(name, name === "phone" ? "Phone number" : "Profile link", "Platform-owned contact value.", text(name === "phone" ? 16 : 30));
       fields[name] = written(spec, String(preference.value), preference.updatedAt);

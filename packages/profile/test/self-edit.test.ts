@@ -157,13 +157,15 @@ test("SHU413_AGE an implausibly old stored birth date keeps the date and makes o
   assert.equal(result.profile.fields.gender.state, "available");
 });
 
-test("SHU374_PHONE accepts only canonical Kuwaiti phone values and clearing", () => {
-  for (const value of ["+96550000000", ""]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), value);
+test("SHU374_PHONE normalises Arabic digits and accepts canonical international phone values", () => {
+  for (const value of ["+96550000000", "+442071838750", ""]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), value);
   for (const value of ["50000000", "+965 5000 0000", "00965-50000000"]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), "+96550000000");
-  for (const value of ["+9655000000", "+965500000000", "phone"]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), null);
+  assert.equal(normalizePersonSelfEditValue("phone", "+٩٦٥ ٥٠٠٠ ٠٠٠٠", TODAY), "+96550000000");
+  for (const value of ["+1234567", "+1234567890123456", "phone"]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), null);
 });
 
-test("SHU374_HANDLE accepts a stable lowercase profile handle and clearing", () => {
-  for (const value of ["noor-al-sabah", "noor_2026", ""]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), value);
-  for (const value of ["Noor", "noor al-sabah", "-noor", "noor-"]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), null);
+test("SHU374_HANDLE stores lowercase handles with the complete public alphabet", () => {
+  for (const value of ["noor-al-sabah", "noor_2026", "noor.sabah", ""]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), value);
+  assert.equal(normalizePersonSelfEditValue("handle", "Noor.Sabah", TODAY), "noor.sabah");
+  for (const value of ["no", "1noor", "noor al-sabah", "-noor"]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), null);
 });

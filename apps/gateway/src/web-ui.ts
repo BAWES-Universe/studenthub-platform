@@ -367,7 +367,8 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     const contact = profile.fields[field];
     const value = contact?.state === "available" ? String(contact.value) : "";
     const form = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change ${label}"><input type="hidden" name="field" value="${field}"><label>Change ${label}<input type="${type}" name="value" value="${escapeHtml(value)}" maxlength="${max}"></label><button class="button primary" type="submit">Review change</button></form>` : "";
-    return contact?.state === "available" ? `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd><small class="field-meta">Updated by you · ${escapeHtml(contact.freshness.observedAt.slice(0,10))}</small>${form}</div>` : form;
+    const shown = field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}` : value;
+    return contact?.state === "available" ? `<div><dt>${label}</dt><dd>${escapeHtml(shown)}</dd><small class="field-meta">Updated by you · ${escapeHtml(contact.freshness.observedAt.slice(0,10))}</small>${form}</div>` : form ? `<div>${form}</div>` : "";
   }).join("");
   rows += contacts;
   const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";

@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, isPersonProfileMinimumAge, kuwaitDate, normalizePersonSelfEditValue, validPersonBirthDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
 export interface PersonProfileEditStore {
   forPrincipal(principalId: string): SafeWriteStore;
   readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null>;
+  contactValueAvailable?(principalId: string, field: "phone" | "handle", value: string): Promise<boolean>;
 }
 export type ProfileEditResult = { readonly status: 200; readonly body: unknown }
   | { readonly status: 400 | 401 | 403 | 404 | 409 | 503; readonly body: { readonly error: string } };
@@ -48,6 +49,10 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
       if (selected === "birthDate" && validPersonBirthDate(body.value)) {
         if (body.value > today) return { status: 400, body: { error: "future_date" } };
         if (!isPersonProfileMinimumAge(body.value, today)) return { status: 400, body: { error: "minimum_age" } };
+      }
+      if ((selected === "phone" || selected === "handle") && body.value !== "" && ports.store.contactValueAvailable) {
+        const normalized = normalizePersonSelfEditValue(selected, body.value, today);
+        if (normalized !== null && normalized !== "" && !await ports.store.contactValueAvailable(id, selected, normalized)) return { status: 400, body: { error: "contact_value_unavailable" } };
       }
       const result = await writer(id).preview({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: selected, value: body.value } });
       return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : refusal(result.reason);
@@ -151,7 +156,7 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, values.value, reason); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, values.value, reason); else if (reason === "contact_value_unavailable") write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Your profile wasn’t changed.</h1><p>That ${selected === "phone" ? "phone number" : "profile link"} is not available.</p><a class="button primary" href="/profile">Back to My profile</a></main>`); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);

@@ -146,17 +146,30 @@ test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone h
   const ids = [`shu374-${randomUUID()}`, `shu374-${randomUUID()}`], authz = new PostgresAuthzStore(pool);
   for (const id of ids) await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
   const store = new PostgresPersonProfileStore({ pool });
-  const write = async (id: string, field: "phone" | "handle", value: string) => {
+  const preview = async (id: string, field: "phone" | "handle", value: string) => {
     const writer = createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
     const principalRef = safeWritePrincipalRef(id), change = { personRef: personRecordRef(id), field, value };
-    const preview = await writer.preview({ principalRef, change }); assert.ok(preview.ok); if (!preview.ok) return preview;
-    return writer.confirm({ principalRef, change, token: preview.token });
+    const result = await writer.preview({ principalRef, change });
+    return { result, writer, principalRef, change };
   };
-  assert.deepEqual(await write(ids[0]!, "phone", "50000000"), { ok: true });
-  assert.deepEqual(await write(ids[0]!, "phone", "+965 5000 0000"), { ok: true });
-  assert.deepEqual(await write(ids[0]!, "handle", "first-person"), { ok: true });
-  assert.deepEqual(await write(ids[0]!, "handle", "first_person"), { ok: true });
-  assert.deepEqual(await write(ids[1]!, "phone", "00965-50000000"), { ok: false, reason: "invalid_value" });
+  const write = async (id: string, field: "phone" | "handle", value: string) => {
+    const attempt = await preview(id, field, value); assert.ok(attempt.result.ok); if (!attempt.result.ok) return attempt.result;
+    return attempt.writer.confirm({ principalRef: attempt.principalRef, change: attempt.change, token: attempt.result.token });
+  };
+  const suffix = BigInt(`0x${randomUUID().replaceAll("-", "")}`).toString().slice(0, 11);
+  const phone = `+44${suffix}`, racePhone = `+33${suffix}`;
+  assert.deepEqual(await write(ids[0]!, "phone", phone), { ok: true });
+  assert.deepEqual(await write(ids[0]!, "phone", phone), { ok: true });
+  assert.deepEqual(await write(ids[0]!, "handle", `first.${suffix}`), { ok: true });
+  assert.deepEqual(await write(ids[0]!, "handle", `first_${suffix}`), { ok: true });
+  assert.deepEqual((await preview(ids[1]!, "phone", phone)).result, { ok: false, reason: "invalid_value" });
+  assert.deepEqual((await preview(ids[1]!, "handle", `first_${suffix}`)).result, { ok: false, reason: "invalid_value" });
+  const racers = await Promise.all(ids.map(id => preview(id, "phone", racePhone)));
+  assert.ok(racers.every(attempt => attempt.result.ok));
+  const outcomes = await Promise.all(racers.map(attempt => attempt.result.ok
+    ? attempt.writer.confirm({ principalRef: attempt.principalRef, change: attempt.change, token: attempt.result.token }) : attempt.result));
+  assert.deepEqual(outcomes.map(outcome => outcome.ok).sort(), [false, true]);
+  assert.equal(outcomes.find(outcome => !outcome.ok)?.reason, "invalid_value");
   const preferences = await store.readOwnPreferences(ids[0]!) as Record<string, { value: unknown }>;
-  assert.deepEqual({ phone: preferences.phone!.value, handle: preferences.handle!.value }, { phone: "+96550000000", handle: "first_person" });
+  assert.equal(preferences.handle!.value, `first_${suffix}`);
 });
