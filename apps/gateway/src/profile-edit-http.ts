@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, personProfileKuwaitDay, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -16,6 +16,7 @@ export interface ProfileEdit {
   confirm(session: string | undefined, body: unknown): Promise<ProfileEditResult>;
   receipt(session: string | undefined, ref: string): Promise<ProfileEditResult>;
   displayValue?(field: PersonSelfEditField, value: string): Promise<string>;
+  today?(): string;
 }
 const TOKEN_KEYS = ["changeSetDigest", "expectedBeforeDigest", "expiresAt", "issuedAt", "mac", "principalRef", "tokenId"] as const;
 const BODY_LIMIT = 65536;
@@ -41,6 +42,7 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
   const principal = async (session: string | undefined) => session ? (await ports.sessions.get(session))?.personId : undefined;
   const writer = (id: string) => createPersonSelfEdit({ store: ports.store.forPrincipal(id), secret: ports.secret, ...(ports.clock ? { clock: ports.clock } : {}) });
   return {
+    today: () => personProfileKuwaitDay(ports.clock?.now() ?? new Date()),
     async displayValue(selected, value) {
       if (selected === "gender") return ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[value] ?? "Unavailable";
       if (selected === "drivingLicence" || selected === "kuwaitiMother") return value === "true" ? "Yes" : value === "false" ? "No" : "Not recorded";
@@ -119,7 +121,7 @@ export function profileEditSummary(value: string): string {
   return result + (result.length < value.length ? "…" : "");
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
-function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
+function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string, today: string) {
   const label = FIELD_LABELS[selected];
   const radio = (entries: readonly [string,string][]) => entries.map(([id,text]) => `<label><input type="radio" name="value" value="${id}"${value === id ? " checked" : ""} aria-describedby="value-error">${text}</label>`).join("");
   const control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>`
@@ -131,8 +133,8 @@ function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField
     : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
   let message = `Enter a value that follows the rules for ${label.toLowerCase()}.`;
   if (selected === "birthDate") {
-    const validShape = /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
-    message = !validShape ? "Enter a real birth date." : value > new Date().toISOString().slice(0,10) ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`;
+    const validShape = /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+    message = !validShape ? "Enter a real birth date." : value > today ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`;
   }
   if (selected === "university" && value === "not-listed") message = "Staff add new universities. Choose None for now.";
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><fieldset><legend>${label}</legend>${control}</fieldset><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
@@ -148,7 +150,7 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
       const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
       const sessionId = cookie(request.headers.cookie);
-      const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value, service.today?.() ?? personProfileKuwaitDay()); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);

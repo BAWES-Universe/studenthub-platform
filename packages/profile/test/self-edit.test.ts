@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
+import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue, personProfileKuwaitDay } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
@@ -103,6 +103,7 @@ test("SHU373_AGE birth dates use one minimum-age setting and real calendar dates
   assert.equal(normalizePersonSelfEditValue("birthDate", "2010-11-02", "2026-11-01"), null);
   assert.equal(normalizePersonSelfEditValue("birthDate", "2027-01-01", "2026-11-01"), null);
   assert.equal(normalizePersonSelfEditValue("birthDate", "2026-02-30", "2026-11-01"), null);
+  assert.equal(personProfileKuwaitDay(new Date("2026-10-31T21:00:00.000Z")), "2026-11-01");
 });
 
 test("SHU373_WRITE choice fields normalize to platform values", () => {

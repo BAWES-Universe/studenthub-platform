@@ -36,12 +36,20 @@ import {createOrganizationCommercialTerms}from"./organization-commercial-terms.j
 
 export function coalesceForEventLoopTurn<T>(read: () => Promise<T>): () => Promise<T> {
   let inTurn: Promise<T> | undefined;
+  let readers = 0;
   return () => {
     if (!inTurn) {
       inTurn = read();
-      setImmediate(() => { inTurn = undefined; });
+      readers = 0;
+      const snapshot = inTurn;
+      setTimeout(() => { if (inTurn === snapshot) inTurn = undefined; }, 100);
     }
-    return inTurn;
+    readers++;
+    const result = inTurn;
+    // A composed profile preview has two consumers separated by database I/O.
+    // Keep their snapshot together, then release it after the second consumer.
+    if (readers >= 2) setImmediate(() => { if (inTurn === result) inTurn = undefined; });
+    return result;
   };
 }
 import {createOrganizationApprovedToHire}from"./organization-approved-to-hire.js";

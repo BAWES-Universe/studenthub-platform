@@ -24,8 +24,10 @@ const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESS
 
 test("SHU373_PAGE composed profile preview shares one catalogue read", async () => {
   let catalogueReads=0;
-  const read=coalesceForEventLoopTurn(async()=>{catalogueReads++;return { countries: [], universities: [] };});
-  assert.equal(await read(),await read());
+  const read=coalesceForEventLoopTurn(async()=>{catalogueReads++;await new Promise<void>(resolve=>setImmediate(resolve));return { countries: [], universities: [] };});
+  const projection=await read();
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(projection,await read());
   assert.equal(catalogueReads,1);
   await new Promise<void>(resolve=>setImmediate(resolve));
   await read();
