@@ -100,6 +100,13 @@ test('Q14_1_REPLACE replacement keeps one current document and shows its new siz
 
 test('Q14_1_OWNER cookie and exact origin gate the body and isolate people',async t=>{
   const f=await fixture(t),token=await f.submission();
+  let storeCalls=0,reads=0,status=0,text='';
+  const request={url:'/profile/documents/personal-photo/upload',method:'POST',headers:{origin:ORIGIN,'content-type':'multipart/form-data; boundary=x'},resume(){},iterator(){reads++;throw new Error('body read');}};
+  const response={setHeader:()=>{},writeHead:(value:number)=>{status=value;},end:(value?:string)=>{text+=value??'';}} as never;
+  const untouched={options:{origin:ORIGIN},list:async()=>{storeCalls++;return[];}} as never;
+  assert.equal(await handleDocumentsUpload(request as never,response,untouched,{} as never),true);assert.equal(status,401);assert.match(text,/Sign in/);assert.equal(storeCalls,0);assert.equal(reads,0);
+  let wrongReads=0;const wrongRequest={...request,headers:{cookie:`__Host-studenthub_session=${SESSION}`,origin:'https://evil.invalid','content-type':'multipart/form-data; boundary=x'},iterator(){wrongReads++;throw new Error('body read');}};status=0;
+  assert.equal(await handleDocumentsUpload(wrongRequest as never,response,untouched,{profile:async()=>({status:200,body:{personId:'person-1'}})} as never),true);assert.equal(status,403);assert.equal(wrongReads,0);assert.equal(storeCalls,0);
   const wrong=await f.post('personal-photo',png(),'image/png',{submission:token,origin:'https://evil.invalid'});assert.equal(wrong.status,403);
   const cross=await f.post('personal-photo',png(),'image/png',{submission:token,site:'cross-site'});assert.equal(cross.status,403);
   const bearer=await fetch(`${f.base}/profile/documents/personal-photo/upload`,{method:'POST',headers:{authorization:'Bearer '+SESSION,origin:ORIGIN},body:new FormData()});assert.equal(bearer.status,401);
@@ -108,7 +115,8 @@ test('Q14_1_OWNER cookie and exact origin gate the body and isolate people',asyn
 });
 
 test('Q14_1_SHOWN one list plus authorize, bytes and finalize has fixed cardinality',async t=>{
-  const f=await fixture(t),calls:string[]=[];
-  for(const name of ['list','authorizeUpload','put','finalize'] as const){const original=f.service[name].bind(f.service) as (...args:never[])=>Promise<unknown>;(f.service[name] as unknown as (...args:never[])=>Promise<unknown>)=async(...args)=>{calls.push(name);return original(...args);};}
-  assert.equal((await f.post('civil-id-front',png(1),'image/png')).status,303);assert.deepEqual(calls,['list','authorizeUpload','put','finalize']);
+  const measure=async(prefill:boolean)=>{const f=await fixture(t);if(prefill){assert.equal((await f.post('personal-photo',png(),'image/png')).status,303);assert.equal((await f.post('resume',pdf(),'application/pdf')).status,303);assert.equal((await f.post('civil-id-back',png(2),'image/png')).status,303);}const token=await f.submission('civil-id-front'),calls:string[]=[];
+    for(const name of ['list','authorizeUpload','put','finalize'] as const){const original=f.service[name].bind(f.service) as (...args:never[])=>Promise<unknown>;(f.service[name] as unknown as (...args:never[])=>Promise<unknown>)=async(...args)=>{calls.push(name);return original(...args);};}
+    assert.equal((await f.post('civil-id-front',png(1),'image/png',{submission:token})).status,303);return calls;};
+  assert.deepEqual(await measure(false),['list','authorizeUpload','put','finalize']);assert.deepEqual(await measure(true),['list','authorizeUpload','put','finalize']);
 });
