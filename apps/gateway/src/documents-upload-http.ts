@@ -39,8 +39,9 @@ function multipart(body: Buffer, contentType: string): Form {
   const type = /^multipart\/form-data;\s*boundary=(?:"([A-Za-z0-9'()+_,.\/:=? -]{1,70})"|([A-Za-z0-9'()+_,.\/:=?-]{1,70}))$/.exec(contentType);
   const boundary=type?.[1] ?? type?.[2]; if (!boundary) throw new LifecycleError(400,'invalid');
   const marker=Buffer.from(`--${boundary}`), separator=Buffer.from('\r\n\r\n');
-  if (!body.subarray(0,marker.length).equals(marker) || !body.subarray(-marker.length-4).equals(Buffer.from(`--${boundary}--\r\n`))) throw new LifecycleError(400,'invalid');
-  const raw=body.toString('latin1').split(`--${boundary}`); if (raw.shift()!=='' || raw.pop()!=='--\r\n') throw new LifecycleError(400,'invalid');
+  const closingWithCrlf=Buffer.from(`--${boundary}--\r\n`), closing=Buffer.from(`--${boundary}--`);
+  if (!body.subarray(0,marker.length).equals(marker) || (!body.subarray(-closingWithCrlf.length).equals(closingWithCrlf) && !body.subarray(-closing.length).equals(closing))) throw new LifecycleError(400,'invalid');
+  const raw=body.toString('latin1').split(`--${boundary}`); if (raw.shift()!=='' || !['--','--\r\n'].includes(raw.pop()!)) throw new LifecycleError(400,'invalid');
   let file: Form['bytes']|undefined, mime='', submission: string|undefined, emptyName=false;
   for (const value of raw) {
     if (!value.startsWith('\r\n') || !value.endsWith('\r\n')) throw new LifecycleError(400,'invalid');
@@ -78,8 +79,8 @@ export async function handleDocumentsUpload(request: IncomingMessage, response: 
   try {
     const session=sessionCookie(request); if (!session) { request.resume(); send(401,'denied'); return true; }
     if (!service) { request.resume(); send(503,'unavailable'); return true; }
-    await service.principal(session);
     if (request.headers.origin!==service.options.origin || request.headers['sec-fetch-site']==='cross-site') { request.resume(); send(403,'denied'); return true; }
+    await service.principal(session);
     const form=multipart(await read(request),String(request.headers['content-type']??''));
     const current=(await service.list(session)).find(document=>document.type===slot);
     const digest=createHash('sha256').update(form.bytes).digest('hex'), contentMd5=createHash('md5').update(form.bytes).digest('base64');

@@ -6,9 +6,10 @@ const source=new URL('../../../dist/apps/gateway/src/documents-upload-http.js',i
 const suite=fileURLToPath(new URL('../../../dist/apps/gateway/test/documents-upload-http.test.js',import.meta.url));
 const original=await readFile(source,'utf8');
 const cases=[
- ['Q14_1_LIMIT','size>LIMIT', 'false'],
+ ['Q14_1_LIMIT','size > LIMIT', 'false'],
  ['Q14_1_OWNER',"request.headers.origin !== service.options.origin",'false'],
  ['Q14_1_ONE_PATH',"key(form.submission, 'finalize')","undefined"],
+ ['Q14_1_ONE_PATH','await service.finalize(session, key(form.submission, \'finalize\'), { uploadId: ticket.uploadId });',''],
  ['Q14_1_REFUSALS','await service.finalize(session, key(form.submission, \'finalize\'), { uploadId: ticket.uploadId });',''],
  ['Q14_1_REPLACE','expectedVersion: current?.version ?? null','expectedVersion: null'],
 ];
