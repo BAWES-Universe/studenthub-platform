@@ -45,6 +45,42 @@ test("does not report a body that rethrows an error", () => {
   assert.deepEqual(report, []);
 });
 
+test("does not report a throw statement guarded by a condition", () => {
+  const report = scanVacuousTests(
+    'test("guard", () => { if (!ready) throw new Error("not ready"); });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("does not report a throw statement with a parenthesised operand", () => {
+  const report = scanVacuousTests('test("parens", () => { throw (new Error("boom")); });');
+  assert.deepEqual(report, []);
+});
+
+test("reports a body whose only `throw` reads a property", () => {
+  const source = [
+    'test("property", () => { reporter.throw; });',
+    'test("optional-property", () => { reporter?.throw; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["property", "optional-property"],
+  );
+});
+
+test("reports a body whose only `throw` is a property key", () => {
+  const report = scanVacuousTests(
+    'test("key", () => { const handlers = { throw: onError }; });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["key"]);
+});
+
+test("reports a body whose only `throw` names a method", () => {
+  const report = scanVacuousTests('test("method", () => { const stub = { throw() {} }; });');
+  assert.deepEqual(report.map((entry) => entry.name), ["method"]);
+});
+
 test("returns an empty report for a file that declares no tests", () => {
   const report = scanVacuousTests("export const x = 1;\n");
   assert.deepEqual(report, []);

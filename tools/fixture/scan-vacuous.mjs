@@ -18,12 +18,21 @@
 // (`assert(...)`, `assert.ok(...)`, `assert.equal(...)`, ...), a node:test
 // context assertion (`t.assert.*`), or a `throw` statement.
 //
+// Only a `throw` statement asserts. `throw` is a reserved word, so its legal
+// non-statement uses all name a property -- a property read (`reporter.throw`),
+// a property key (`{ throw: handler }`), and a method definition
+// (`{ throw() {} }`) -- and none of those make a body non-vacuous.
+//
 // Returns an array of { name, start, end } in source order, where `start`/`end`
 // are the indices of the body's braces.
 
 const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
-const RECOGNISED_ASSERTION_RE =
-  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
+const RECOGNISED_ASSERTION_CALL_RE =
+  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(/;
+const THROW_TOKEN_RE = /\bthrow\b/g;
+// Characters that close or separate an expression, so none of them can begin
+// the operand a throw statement requires.
+const NON_OPERAND_START = ":;,)]}";
 
 const REGEX_PREFIX_PUNCTUATION = "([{:;,=!?&|+-*%^~<>";
 const REGEX_PREFIX_KEYWORD_RE =
@@ -247,6 +256,58 @@ function isPropertyCall(source, index) {
   return source.slice(0, index).trimEnd().endsWith(".");
 }
 
+// Index of the first non-whitespace character at or after `from`, or -1.
+function nextCodeIndex(code, from) {
+  for (let i = from; i < code.length; i += 1) {
+    if (!/\s/.test(code[i])) return i;
+  }
+  return -1;
+}
+
+// Index just past the `)` matched by the `(` at `openIndex`, or -1. Only valid
+// on code-only text, where a parenthesis inside a literal is already blanked.
+function afterMatchingCloseParen(code, openIndex) {
+  let depth = 0;
+  for (let i = openIndex; i < code.length; i += 1) {
+    if (code[i] === "(") {
+      depth += 1;
+    } else if (code[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+// Whether `code` (code-only text) contains a `throw` statement. A bare `throw`
+// token is not enough: the contract recognises only the statement, so the
+// property uses of the reserved word are rejected here.
+function hasThrowStatement(code) {
+  THROW_TOKEN_RE.lastIndex = 0;
+  let match;
+  while ((match = THROW_TOKEN_RE.exec(code)) !== null) {
+    // `reporter.throw` / `reporter?.throw` reads a property named `throw`.
+    if (code.slice(0, match.index).trimEnd().endsWith(".")) continue;
+
+    const operand = nextCodeIndex(code, match.index + match[0].length);
+    // A throw statement throws an operand; `{ throw: handler }` has a `:` here
+    // because the word is a property key instead.
+    if (operand === -1 || NON_OPERAND_START.includes(code[operand])) continue;
+
+    // `{ throw() {} }` defines a method named `throw`. A throw statement may
+    // also parenthesise its operand (`throw (err);`), but then the `)` cannot
+    // be followed by the `{` that opens a method body.
+    if (code[operand] === "(") {
+      const afterClose = afterMatchingCloseParen(code, operand);
+      const following = afterClose === -1 ? -1 : nextCodeIndex(code, afterClose);
+      if (following !== -1 && code[following] === "{") continue;
+    }
+
+    return true;
+  }
+  return false;
+}
+
 /**
  * Report the test bodies in `fileText` that contain no recognised assertion.
  * Pure: no I/O, no globals. Throws TypeError for a non-string input.
@@ -269,7 +330,9 @@ export function scanVacuousTests(fileText) {
     if (isPropertyCall(searchableText, callIndex)) continue;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
-    if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
+    const bodyCode = codeOnly(body.text);
+    if (RECOGNISED_ASSERTION_CALL_RE.test(bodyCode)) continue;
+    if (hasThrowStatement(bodyCode)) continue;
     report.push({
       name: testName(fileText, callIndex, body.start),
       start: body.start,

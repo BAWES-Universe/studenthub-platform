@@ -6,7 +6,9 @@
 // call, a node:test context assertion, or a `throw` statement.
 //
 // Assertion text that appears only inside a comment, a string literal, a template
-// literal, or a regex literal is not a call, so such a body IS vacuous.
+// literal, or a regex literal is not a call, so such a body IS vacuous. Likewise
+// `throw` counts only as a statement: a body whose only `throw` names a property
+// (`reporter.throw`, `{ throw: handler }`, `{ throw() {} }`) IS vacuous.
 //
 // This directory is the fixture's acceptance oracle. It lives OUTSIDE the
 // fixture's own directory on purpose: it is consumed by the reviewer at review
@@ -37,6 +39,28 @@ export const EXPECTATIONS = Object.freeze([
   {
     name: "a bare rethrow inside a catch",
     src: 'test("rethrow", () => { try { risky(); } catch (err) { throw err; } });',
+    expected: [],
+  },
+  {
+    // `throw` is reserved, so these three uses all name a property rather than
+    // heading a throw statement, and the body asserts nothing.
+    name: "a body whose only `throw` reads a property",
+    src: 'test("property", () => { reporter.throw; });',
+    expected: ["property"],
+  },
+  {
+    name: "a body whose only `throw` is a property key",
+    src: 'test("key", () => { const handlers = { throw: onError }; });',
+    expected: ["key"],
+  },
+  {
+    name: "a body whose only `throw` names a method",
+    src: 'test("method", () => { const stub = { throw() {} }; });',
+    expected: ["method"],
+  },
+  {
+    name: "a throw statement with a parenthesised operand",
+    src: 'test("parens", () => { throw (new Error("boom")); });',
     expected: [],
   },
   {
