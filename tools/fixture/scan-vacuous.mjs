@@ -25,15 +25,62 @@ const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
   /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
 
+const REGEX_PREFIX_PUNCTUATION = "([{:;,=!?&|+-*%^~<>";
+const REGEX_PREFIX_KEYWORD_RE =
+  /^(?:return|throw|case|delete|typeof|void|new|in|of|yield|await|else|do)$/;
+// `)` normally ends an expression, so a following `/` divides. The exception is
+// the `)` that closes one of these heads: what follows it is a statement, and a
+// statement may begin with a regex literal (`if (ready) /re/.test(value);`).
+const STATEMENT_HEAD_KEYWORD_RE = /^(?:if|while|for|with)$/;
+
+function precedingWord(text) {
+  return /([A-Za-z_$][\w$]*)$/.exec(text)?.[1] ?? "";
+}
+
+// Index of the `"`/`'`/`` ` `` that opens the literal closed at `closeIndex`,
+// or `closeIndex` itself when no opener is found.
+function quoteStart(text, closeIndex) {
+  const quote = text[closeIndex];
+  for (let i = closeIndex - 1; i >= 0; i -= 1) {
+    if (text[i] !== quote) continue;
+    let backslashes = 0;
+    while (text[i - 1 - backslashes] === "\\") backslashes += 1;
+    if (backslashes % 2 === 0) return i;
+  }
+  return closeIndex;
+}
+
+// Index of the `(` matched by the `)` at `closeIndex`, or -1. Quoted text is
+// stepped over so a parenthesis inside a string literal cannot close the group.
+function matchingOpenParen(text, closeIndex) {
+  let depth = 0;
+  for (let i = closeIndex; i >= 0; i -= 1) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i = quoteStart(text, i);
+    } else if (ch === ")") {
+      depth += 1;
+    } else if (ch === "(") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 function startsRegex(source, index) {
   const prefix = source.slice(0, index).trimEnd();
   if (prefix === "") return true;
   const previous = prefix.at(-1);
-  if ("([{:;,=!?&|+-*%^~<>".includes(previous)) return true;
-  const word = /([A-Za-z_$][\w$]*)$/.exec(prefix)?.[1];
-  return /^(?:return|throw|case|delete|typeof|void|new|in|of|yield|await|else|do)$/.test(
-    word ?? "",
-  );
+  if (REGEX_PREFIX_PUNCTUATION.includes(previous)) return true;
+  if (previous === ")") {
+    const open = matchingOpenParen(prefix, prefix.length - 1);
+    if (open === -1) return false;
+    return STATEMENT_HEAD_KEYWORD_RE.test(
+      precedingWord(prefix.slice(0, open).trimEnd()),
+    );
+  }
+  return REGEX_PREFIX_KEYWORD_RE.test(precedingWord(prefix));
 }
 
 function regexEnd(source, start) {

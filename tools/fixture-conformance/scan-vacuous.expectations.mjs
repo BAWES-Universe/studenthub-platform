@@ -54,4 +54,17 @@ export const EXPECTATIONS = Object.freeze([
     src: "test(\"tpl\", () => { const s = `assert.equal(1, 2)`; });",
     expected: ["tpl"],
   },
+  {
+    name: "a body whose assertion is mentioned only inside a regex literal",
+    src: 'test("re", () => { const matcher = /assert\\.ok\\(value\\)/; });',
+    expected: ["re"],
+  },
+  {
+    // A regex literal is valid wherever a statement is, including directly
+    // after the `)` of a condition, so the fake declaration it spells out is
+    // not a test declaration and contributes no body.
+    name: "a fake test declaration inside a regex literal in statement position",
+    src: 'if (ready) /test\\("fake", \\(\\) => \\{ work\\(\\); \\}\\)/.test(value);',
+    expected: [],
+  },
 ]);

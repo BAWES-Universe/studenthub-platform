@@ -162,6 +162,25 @@ test("does not recognise assertion text inside a regex literal", () => {
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
 
+test("ignores test-like calls inside a regex literal that follows a condition", () => {
+  const source = [
+    'if (ready) /test\\("fake", \\(\\) => \\{ work\\(\\); \\}\\)/.test(value);',
+    'test("real", () => { work(); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
+
+test("treats a slash after a call expression as division, not a regex literal", () => {
+  const report = scanVacuousTests(
+    'test("ratio", () => { const ratio = size(a) / 2; }); const pattern = "x/y";',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["ratio"]);
+});
+
 test("does not treat a RegExp.prototype.test call as a test declaration", () => {
   const source = [
     'test("matches", () => { assert.ok(/a/.test(value)); });',
