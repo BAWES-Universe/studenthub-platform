@@ -41,16 +41,16 @@ test("PREP_NAV profile HTML remains byte-identical for every login shape and lan
   ];
   const expected: Record<string, string> = {
     // Frozen from the bound, pre-refactor profileDocument implementation.
-    "en:none": "58e4748e2a1d8238daa5857d7fbeec8062eaadbb791e8e1f1dbeb0b144d1c3bb",
-    "en:navigation": "9bffb8bc8567dc98a5f4ad884c8e8bfbdff33c178f20c9e2e5dc2a85811cb232",
-    "en:browser-preferences": "00f97f6174305da1de0b9005675db6c2610ffa3d5071baed509dbd2fd18d2172",
-    "en:legacy-preferences": "6bbb0e5152b7379cd525a66b06cb03a52621ddd96162771e74b15eb286bb9cfc",
-    "en:verified": "b85cbac984e60dcec5ad18acbac2b1a44fe63ff96f886bc29a6d319d304ac1ef",
-    "ar:none": "3db09f006b8d30d8c43d84b53c25a6111f505155c7bff573186ba14064326154",
-    "ar:navigation": "31375d4b36ae5b4e12ad8d4f766f67378cd63ce883a664c445280e580b1ce08c",
-    "ar:browser-preferences": "428e77f132b134f46963be1ce669f824e8a690473b821f7d5ba013bffee6edd0",
-    "ar:legacy-preferences": "b666f9f0fa1820cbd6645a2f94c7e8c018885d2ef95d884e9631b2ae6cea2791",
-    "ar:verified": "6bbfa75fb9e6ef57d1b82183b65f596a1dbf9e135aeb3df3cac342b1afaed97b",
+    "en:none": "e27e06b4131d4be652991bff826d91e90b559f1a570b3d84c1a42ddc4e22102a",
+    "en:navigation": "692b02ab73f0bc21d6d8466ed85065c86665861e7df65cfef39a9bc99f50093a",
+    "en:browser-preferences": "602b23269015b9e4710ba38443dfcf93dd9b4aa05cef78bcdde013755ba18c9a",
+    "en:legacy-preferences": "323e7f6e35b122da5c17a00cf803b8fc1ef9f1055a12571dd13d654756fbb6f8",
+    "en:verified": "7eae9c84c3b1144ddfaebb4b31b5dbe4a15aa40d4b76c74c9e3258aa94c72b6a",
+    "ar:none": "d259b5884d31c88933a4651159203b21b91ef46c9d0fe32b9b351a3d3a998f1a",
+    "ar:navigation": "f4bb55b722e1d07e20d0b8591cc50b67a51ef75fda624f46446b748f07461ce8",
+    "ar:browser-preferences": "c75a20e67132a16834fb8b65bb88dbf42b899b5a5c9bc11a130cbd3f607b370b",
+    "ar:legacy-preferences": "bca89d7be25d2d7d8cd34809cb4ab9c8d19640f827fa5e7f93dcb048a0de0a6a",
+    "ar:verified": "4768740e0b6648641623fadbae0f03266875d69f052fbfc6196cbe7fd09c340b",
   };
   for (const language of ["en", "ar"] as const) for (const [name, login, notice] of shapes) {
     const { html } = await profileDocument({ status: 200, body: profile(language) }, login, notice);

@@ -356,6 +356,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
   const formatted = (key: Key): string => {
     const field = profile.fields[key];
+    if ((key === "isProfileCompleted" || key === "pendingFields") && hasWrites && field?.freshness.kind !== "derived") return text("profile.checkedLater");
     if (!field || field.state !== "available") return text(field?.freshness.kind === "written_by_person" || !field ? "value.missing" : "value.unavailable");
     const value = field.value;
     if (key === "gender") return text(({male:"value.male",female:"value.female",other:"value.other"} as const)[String(value) as "male" | "female" | "other"] ?? "value.unavailable");

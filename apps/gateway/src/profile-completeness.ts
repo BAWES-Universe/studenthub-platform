@@ -8,7 +8,6 @@ export interface ProfileCompletenessView {
   readonly profile: OwnProfileProjection;
   readonly choices: Awaited<ReturnType<NonNullable<NonNullable<BrowserLoginApplication["profileEdit"]>["choices"]>>> | null;
 }
-export const PROFILE_PRINCIPAL_EMAIL = Symbol("profilePrincipalEmail");
 
 const failed = { state: "failed" } as const;
 const attempt = <T>(operation: () => Promise<T>) => {
@@ -40,7 +39,7 @@ export async function gatherProfileCompleteness(
     : null;
   const result = deriveProfileCompleteness({
     profile: { state: "available", value: profile },
-    principalEmailPresent: { state: "available", value: typeof (principalEmail ?? (profile as OwnProfileProjection & { [PROFILE_PRINCIPAL_EMAIL]?: unknown })[PROFILE_PRINCIPAL_EMAIL]) === "string" && String(principalEmail ?? (profile as OwnProfileProjection & { [PROFILE_PRINCIPAL_EMAIL]?: unknown })[PROFILE_PRINCIPAL_EMAIL]).trim().length > 0 },
+    principalEmailPresent: { state: "available", value: typeof principalEmail === "string" && principalEmail.trim().length > 0 },
     activeBackground: background,
     documentTypesOnFile: avatar ? { state: "available", value: avatar.documents.map(document => document.type).filter((type): type is ProfileCompletenessDocumentType => type === "personal-photo" || type === "resume" || type === "civil-id-front" || type === "civil-id-back") } : { state: "failed" },
     civilIdRecorded: civil,
