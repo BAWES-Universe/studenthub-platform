@@ -31,7 +31,7 @@ function isStore(value: unknown): value is OrganizationStoreView {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
   const reference = (item: unknown) => item === null || (!!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string" && typeof (item as Record<string, unknown>).name === "string");
-  return typeof row.storeId === "string" && typeof row.name === "string" && (row.location === null || typeof row.location === "string") && reference(row.brand) && reference(row.mall);
+  return isOrganizationStoreId(row.storeId) && typeof row.name === "string" && (row.location === null || typeof row.location === "string") && reference(row.brand) && reference(row.mall);
 }
 
 export async function handleOrganizationStoresPage(ctx: GatewayRouteContext): Promise<boolean> {
