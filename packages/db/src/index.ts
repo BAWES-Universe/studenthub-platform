@@ -49,3 +49,4 @@ export {PostgresOrganizationAccountManagerStore,ORGANIZATION_ACCOUNT_MANAGER_OPE
 export {PostgresOrganizationAccountManagerReads} from "./postgres-organization-account-manager-reads.js";
 export { PostgresPersonProfileStore, PERSON_PROFILE_FIELDS, type PersonProfileField } from "./person-profile-store.js";
 export { PostgresJobRunsStore } from "./postgres-job-runs-store.js";
+export { PostgresExportsStore } from "./postgres-exports-store.js";

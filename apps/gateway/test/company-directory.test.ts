@@ -80,6 +80,7 @@ test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspac
   assert.match(text, /Under review/);
   assert.match(text, /aria-current="page">Companies<\/a>/);
   assert.match(text, /Companies 1–2 of 2/);
+  assert.match(text, /<form method="post" action="\/exports\/company-directory\?org_id=root&amp;role=staff"><button class="button" type="submit">Export<\/button>/);
   assert.doesNotMatch(text, /Organization A1|Synthetic Retail Kuwait City|SENSITIVE-/, "sub-companies open from their parent");
 });
 

@@ -1,0 +1,2 @@
+import assert from"node:assert/strict";import test from"node:test";import{readFile}from"node:fs/promises";import{join}from"node:path";
+test("SHU196_AUDIT migration stores closed filters, audit outcome and bytes together",async()=>{const sql=await readFile(join(process.cwd(),"packages/db/migrations/0350_exports.sql"),"utf8");assert.match(sql,/filters jsonb NOT NULL/);assert.match(sql,/outcome text NOT NULL/);assert.match(sql,/csv_bytes bytea/);assert.match(sql,/exports_expires_at_idx/);assert.match(sql,/exports_requester_created_idx/)});
