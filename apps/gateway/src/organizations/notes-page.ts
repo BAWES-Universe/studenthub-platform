@@ -135,6 +135,7 @@ export async function handleOrganizationNotesPage(ctx: GatewayRouteContext): Pro
   const match = PAGE.exec(requestUrl.pathname);
   if (!match) return false;
   const segment = match[2];
+  if (segment === "receipts") return false;
   const action = segment === "preview" || segment === "confirm" ? segment : undefined;
   const detailId = segment && !action ? segment : undefined;
   if (action ? ctx.request.method !== "POST" : ctx.request.method !== "GET" && ctx.request.method !== "HEAD") return false;
