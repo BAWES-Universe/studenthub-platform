@@ -79,16 +79,25 @@ function codeOnly(source) {
   return result;
 }
 
-function testName(source, callIndex) {
-  const quoteIndex = source.indexOf("\"", callIndex);
-  const altQuoteIndex = source.indexOf("'", callIndex);
-  const indexes = [quoteIndex, altQuoteIndex].filter((i) => i !== -1);
-  if (indexes.length === 0) return null;
-  const start = Math.min(...indexes);
-  const quote = source[start];
-  const end = source.indexOf(quote, start + 1);
-  if (end === -1) return null;
-  return source.slice(start + 1, end);
+function testName(source, callIndex, bodyStart) {
+  for (let start = callIndex; start < bodyStart; start += 1) {
+    const quote = source[start];
+    if (quote !== '"' && quote !== "'") continue;
+
+    let name = "";
+    for (let i = start + 1; i < bodyStart; i += 1) {
+      const ch = source[i];
+      if (ch === quote) return name;
+      if (ch === "\\" && i + 1 < bodyStart) {
+        name += source.slice(i, i + 2);
+        i += 1;
+      } else {
+        name += ch;
+      }
+    }
+    return null;
+  }
+  return null;
 }
 
 function braceBody(source, callIndex) {
@@ -157,7 +166,11 @@ export function scanVacuousTests(fileText) {
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
-    report.push({ name: testName(fileText, callIndex), start: body.start, end: body.end });
+    report.push({
+      name: testName(fileText, callIndex, body.start),
+      start: body.start,
+      end: body.end,
+    });
   }
   return report;
 }

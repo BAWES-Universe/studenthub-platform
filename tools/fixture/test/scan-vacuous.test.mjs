@@ -60,6 +60,18 @@ test("reports every vacuous body in source order", () => {
   assert.deepEqual(report.map((r) => r.name), ["first", "third"]);
 });
 
+test("extracts a quoted test name containing an escaped quote", () => {
+  const report = scanVacuousTests(String.raw`test("isn't \"empty\"", () => { work(); });`);
+  assert.equal(report.length, 1);
+  assert.equal(report[0].name, String.raw`isn't \"empty\"`);
+});
+
+test("does not borrow a name from source after an unquoted test name", () => {
+  const report = scanVacuousTests('test(dynamicName, () => { work(); }); const later = "wrong";');
+  assert.equal(report.length, 1);
+  assert.equal(report[0].name, null);
+});
+
 test("rejects a non-string argument with a TypeError", () => {
   assert.throws(() => scanVacuousTests(42), TypeError);
 });
