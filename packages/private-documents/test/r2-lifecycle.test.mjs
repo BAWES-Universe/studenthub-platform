@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,createHmac,randomBytes} from 'node:crypto';
+import {createServer} from 'node:http';
 import {Readable} from 'node:stream';
 import {S3Client} from '@aws-sdk/client-s3';
 import {R2Objects,R2DocumentStore,emptyPackedSnapshot} from '../../../dist/packages/private-documents/src/r2-storage.js';
