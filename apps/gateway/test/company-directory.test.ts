@@ -96,7 +96,7 @@ test("SHU353_SHOWN directory renders the written currency in the company row", a
   } });
 
   const text = await (await f.get(STAFF_LIST, html)).text();
-  assert.match(text, /<tr><th scope="row"><a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>.*?<\/th><td>Under review<\/td><td>Yes<\/td><td>USD<\/td>/);
+  assert.match(text, /<tr><th scope="row"><a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>.*?<\/th><td>Active<\/td><td>Yes<\/td><td>USD<\/td>/);
 });
 
 test("SHU-163/AC-07 PAGE filters reach the directory and survive paging links", async (t) => {

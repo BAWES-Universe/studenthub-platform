@@ -95,7 +95,8 @@ test("SHU353_DIRECTORY_CURRENCY written currencies are shown and filtered with o
   const {repository}=await setup({commercialTerms});
   assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{currencyCode:"USD"}})),["org-a"]);
   assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{currencyCode:"usd"}})),["org-a"]);
-  assert.deepEqual(calls,[["org-a","org-b"],["org-a","org-b"]]);
+  assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{currencyCode:"KWD"}})),[]);
+  assert.deepEqual(calls,[["org-a","org-b"],["org-a","org-b"],["org-a","org-b"]]);
   const list=entries(await repository.listOrganizations(STAFF));
   assert.deepEqual(list.map(entry=>[entry.orgId,value(entry,"currencyCode")]),[["org-a","USD"],["org-b","unavailable:not_recorded"]]);
 });

@@ -83,6 +83,7 @@ test("SHU353_CARD_CURRENCY written currency overlays the snapshot only after aut
   assert.deepEqual(await repository.read({principalId:"nobody",orgId:"org-a",role:"org-owner"}),{kind:"not_found"});
   assert.deepEqual(calls,[]);
   assert.equal(value(found(await repository.read({principalId:"owner-a-subtree",orgId:"org-a1",role:"org-owner"})),"currencyCode"),"unavailable:not_recorded");
+  assert.equal(value(found(await (await setup({commercialTerms,unconfigured:true})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"USD");
   const absentTerms={async read(){return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:{kind:"absent"as const}}}};
   assert.equal(value(found(await (await setup({commercialTerms:absentTerms})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"KWD");
   assert.equal(value(found(await (await setup({commercialTerms:absentTerms,unconfigured:true})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"unavailable:not_imported");
