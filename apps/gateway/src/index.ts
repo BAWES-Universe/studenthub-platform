@@ -5,6 +5,8 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
 import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
+import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -555,6 +557,8 @@ if (entrypoint === import.meta.url) {
   const runtimeLogin = createRuntimeLoginFromEnv();
   const universeEmbed = createUniverseEmbedConfigFromEnv(process.env, runtimeLogin?.application.web?.origin);
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
+  const review = (runtimeLogin?.application as GatewayRouteLogin|undefined)?.civilIdReview;
+  if (review && runtimeDocuments) review.documents = new StaffDocuments({...runtimeDocuments.service.options,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:review.store});
   const runtimeOrganizationDocuments = await createRuntimeOrganizationDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
   const runtimeProfileRecords = createRuntimeProfileRecordsFromEnv();
