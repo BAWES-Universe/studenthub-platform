@@ -183,6 +183,8 @@ export interface PrivateDocumentOptions {
     signingKey: Uint8Array;
     origin: string;
     now?: () => number;
+    /** Absolute route used for signed delivery capabilities. */
+    deliveryPath?: string;
     /** Whitelisted operational events only. No caller input, identifiers, errors or URLs. */
     audit?: (event: {
         operation: string;
@@ -193,6 +195,7 @@ export class PrivateDocuments {
     private readonly key: Buffer;
     private readonly origin: string;
     private readonly clock: () => number;
+    private readonly deliveryPath: string;
     constructor(private readonly options: PrivateDocumentOptions) {
         const url = new URL(options.origin);
         if (url.protocol !== 'https:' || url.port !== '' || url.origin !== options.origin || options.signingKey.byteLength < 32)
@@ -200,6 +203,9 @@ export class PrivateDocuments {
         this.origin = url.origin;
         this.key = Buffer.from(options.signingKey);
         this.clock = options.now ?? Date.now;
+        if (options.deliveryPath !== undefined && !/^\/[A-Za-z0-9/_-]+$/.test(options.deliveryPath))
+            throw new TypeError('invalid private-document configuration');
+        this.deliveryPath = options.deliveryPath ?? '/private-documents/delivery';
     }
     private now(): number { const n = this.clock(); if (!Number.isSafeInteger(n) || n < 0)
         fail('unavailable'); return n; }
@@ -298,7 +304,7 @@ export class PrivateDocuments {
             const now = this.now();
             const expiresAt = now + ttlSeconds * 1000;
             const payload = Buffer.from(JSON.stringify({ v: 1, id: d.id, version: d.version, subject: this.mac('subject:' + principal), iat: now, exp: expiresAt })).toString('base64url');
-            return { url: `${this.origin}/private-documents/delivery?t=${payload}.${this.mac('delivery:' + payload)}`, expiresAt };
+            return { url: `${this.origin}${this.deliveryPath}?t=${payload}.${this.mac('delivery:' + payload)}`, expiresAt };
         });
     }
     /** Opt-in HTTP adapter; this package does not mount or enable a live route.
@@ -312,7 +318,7 @@ export class PrivateDocuments {
             response.writeHead(status, { 'Content-Type': 'application/json' });
             response.end(JSON.stringify({ error: code }));
         };
-        if (!request.url?.startsWith('/private-documents/delivery?'))
+        if (!request.url?.startsWith(`${this.deliveryPath}?`))
             return error(404, 'not_found');
         if (request.method !== 'GET') {
             response.setHeader('Allow', 'GET');
@@ -345,7 +351,7 @@ export class PrivateDocuments {
                 return fail('denied');
             }
             const token = url.searchParams.get('t');
-            if (!token || url.origin !== this.origin || link !== `${this.origin}/private-documents/delivery?t=${token}`)
+            if (!token || url.origin !== this.origin || link !== `${this.origin}${this.deliveryPath}?t=${token}`)
                 return fail('denied');
             const parts = token.split('.');
             if (parts.length !== 2 || !parts.every(p => /^[A-Za-z0-9_-]+$/.test(p)))
