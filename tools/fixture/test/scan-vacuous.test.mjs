@@ -38,6 +38,13 @@ test("does not report a body that throws", () => {
   assert.deepEqual(report, []);
 });
 
+test("does not report a body that rethrows an error", () => {
+  const report = scanVacuousTests(
+    'test("rethrow", () => { try { risky(); } catch (err) { throw err; } });',
+  );
+  assert.deepEqual(report, []);
+});
+
 test("returns an empty report for a file that declares no tests", () => {
   const report = scanVacuousTests("export const x = 1;\n");
   assert.deepEqual(report, []);
