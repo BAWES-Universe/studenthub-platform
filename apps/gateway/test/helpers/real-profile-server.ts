@@ -81,6 +81,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     createPrincipal({ id: REAL_PROFILE_PERSON, pbuuids: ["pbuuid-1"], displayName: "Registry Name", email: "registry@example.invalid" }),
     createPrincipal({ id: REAL_PROFILE_OTHER_PERSON, pbuuids: ["pbuuid-2"] }),
   ] });
+  await authz.upsertOrganization({ id: "candidate-documents", name: "Candidate documents" });
   await authz.grantMany(REAL_PROFILE_PERSON, [{ orgId: `candidate:${REAL_PROFILE_PERSON}`, role: "candidate", scope: "self" }]);
   if(options.reviewStaff) await authz.grantMany(REAL_PROFILE_PERSON,[{orgId:"root",role:"staff",scope:"subtree"}]);
   const rows = new Map<string, unknown>([

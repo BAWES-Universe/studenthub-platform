@@ -84,7 +84,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const civilIdSuggestion = civilSuggestionStore && civilId && civilStore && civilVault ? composeCivilIdSuggestion({ store: civilSuggestionStore, civilId, civilStore, vault: civilVault }) : undefined;
   const CivilIdReviewStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdReviewStore: typeof import("../../../../packages/db/src/postgres-civil-id-review-store.js").PostgresCivilIdReviewStore }).CivilIdReviewStore;
   const civilIdReviewStore = civilKey ? new CivilIdReviewStore({ connectionString: databaseUrl }) : undefined;
-  const civilIdReview = civilIdReviewStore && civilVault ? { store: civilIdReviewStore, vault: civilVault, secret: civilKey!, async isStaff(principalId:string) { return isCivilIdReviewStaff(await access.authzStore.listGrantsForPrincipal(principalId)); } } : undefined;
+  const civilIdReview = civilIdReviewStore && civilVault ? { store: civilIdReviewStore, vault: civilVault, secret: civilKey!, async isStaff(principalId:string) { return isCivilIdReviewStaff(await access.authzStore.listGrantsForPrincipal(principalId)); }, ...(civilSuggestionStore ? { async reading(principalId:string) { const result=await civilSuggestionStore.currentSuggestion(principalId,kuwaitDate(new Date())); return result ? { number:result.last4, expiry:result.expiry, state:result.state } : null; } } : {}) } : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
