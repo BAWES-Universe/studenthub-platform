@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { assertBaseline, discover, loadBaseline } from "./discover.mjs";
+import { assertBaseline, discover, formatRun, loadBaseline } from "./discover.mjs";
 
 const root = process.cwd();
 
 async function run(command, args) {
-  console.log(`test-runner: ${command} ${args.join(" ")}`);
+  console.log(formatRun(command, args));
   const code = await new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: root, stdio: "inherit" });
     child.once("error", reject);

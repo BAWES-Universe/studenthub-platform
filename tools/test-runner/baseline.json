@@ -15,6 +15,8 @@
     "packages/private-documents/test/r2-postgres.test.mjs"
   ],
   "nodeTests": [
+    "dist/apps/gateway/test/company-directory.test.js",
+    "dist/apps/gateway/test/context-navigation.test.js",
     "dist/apps/gateway/test/authz-audit.test.js",
     "dist/apps/gateway/test/authz-middleware.test.js",
     "dist/apps/gateway/test/bank-details-http.test.js",
@@ -41,6 +43,7 @@
     "dist/apps/gateway/test/pay-contracts-http.test.js",
     "dist/apps/gateway/test/pay-contracts-read-http.test.js",
     "dist/apps/gateway/test/profile-records-http.test.js",
+    "dist/apps/gateway/test/web-ui.test.js",
     "dist/apps/worker/test/heartbeat.test.js",
     "dist/packages/contracts/test/authz.test.js",
     "dist/packages/contracts/test/contracts.test.js",
@@ -61,6 +64,7 @@
     "dist/packages/organizations/test/status-batch-reads.test.js",
     "dist/packages/organizations/test/status-events.test.js",
     "dist/packages/organizations/test/status-writes.test.js",
+    "dist/packages/observability/test/observability.test.js",
     "dist/packages/pay-contracts/test/bank-write.test.js",
     "dist/packages/pay-contracts/test/contract-changes.test.js",
     "dist/packages/pay-contracts/test/contract-reads.test.js",
