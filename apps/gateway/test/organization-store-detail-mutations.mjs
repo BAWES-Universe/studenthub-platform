@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const dist = new URL("../../../dist/apps/gateway/", import.meta.url), page = new URL("src/organizations/stores-page.js", dist), suite = fileURLToPath(new URL("test/organization-store-detail.test.js", dist)), hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 const cases = [
   ["serve the first listed store", "STOREDET_MINE", "STOREDET_MINE hidden store is 404", "const store = stores.find((candidate) => candidate.storeId === storeId);", "const store = stores[0];"],
-  ["drop detail name escaping", "STOREDET_SHOW", "STOREDET_SHOW store name is escaped", "<h1>${escapeHtml(store.name)}</h1>", "<h1>${store.name}</h1>"],
+  ["drop detail name escaping", "STOREDET_SHOW", "STOREDET_SHOW store name is escaped", "const storeName = escapeHtml(store.name);", "const storeName = store.name;"],
   ["map thrown detail list to 404", "STOREDET_UNAVAILABLE", "STOREDET_UNAVAILABLE failure is 503", "catch {\n        return unavailable(ctx);\n    }", "catch {\n        return error(ctx, 404);\n    }"],
   ["accept detail query", "STOREDET_DENY", "STOREDET_DENY query is 400", "if (requestUrl.searchParams.size !== 0)\n        return error(ctx, 400);", "if (false)\n        return error(ctx, 400);"],
 ];

@@ -63,7 +63,8 @@ export async function handleOrganizationStoresPage(ctx: GatewayRouteContext): Pr
   if (storeId !== undefined) {
     const store = stores.find((candidate) => candidate.storeId === storeId);
     if (!store) return error(ctx, 404);
-    const body = `<main id="main" class="profile-main"><nav aria-label="Breadcrumb"><a href="${base}">Company</a><a href="${base}/stores">Stores</a></nav><h1>${escapeHtml(store.name)}</h1><dl class="profile-fields"><div><dt>Location</dt><dd>${escapeHtml(store.location ?? "None")}</dd></div><div><dt>Brand</dt><dd>${escapeHtml(store.brand?.name ?? "None")}</dd></div><div><dt>Mall</dt><dd>${escapeHtml(store.mall?.name ?? "None")}</dd></div></dl></main>`;
+    const storeName = escapeHtml(store.name);
+    const body = `<main id="main" class="profile-main"><nav aria-label="Breadcrumb"><a href="${base}">Company</a><a href="${base}/stores">Stores</a></nav><h1>${storeName}</h1><dl class="profile-fields"><div><dt>Location</dt><dd>${escapeHtml(store.location ?? "None")}</dd></div><div><dt>Brand</dt><dd>${escapeHtml(store.brand?.name ?? "None")}</dd></div><div><dt>Mall</dt><dd>${escapeHtml(store.mall?.name ?? "None")}</dd></div></dl></main>`;
     ctx.writeHtml(ctx.response, 200, ctx.pageDocument(store.name, body));
     return true;
   }
