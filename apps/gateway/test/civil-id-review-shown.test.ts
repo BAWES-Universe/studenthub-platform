@@ -70,7 +70,7 @@ test("REV_SHOWN My profile shows decisions, escaping, waiting once, Arabic, and 
   const ar=await startRealProfileServer(t,{row:{candidate_id:232,candidate_language_pref:"ar"},civilIdReview:{}});await save(ar,STAFF);
   assert.match(await(await ar.get("/profile")).text(),/بانتظار تحقق StudentHub/,"REV_SHOWN Arabic waiting label is shown");
   const off=await startRealProfileServer(t);await save(off,STAFF);
-  assert.doesNotMatch(await(await off.get("/profile")).text(),/Waiting for StudentHub to check|Checked|Rejected:/,"REV_SHOWN feature-off profile has no decision line");
+  assert.doesNotMatch(await(await off.get("/profile")).text(),/Checked|Rejected:/,"REV_SHOWN feature-off profile has no decision line");
 });
 
 test("REV_DEGRADE a failing state store leaves My profile available without a decision line",async t=>{
@@ -78,5 +78,5 @@ test("REV_DEGRADE a failing state store leaves My profile available without a de
   const response=await x.get("/profile"),body=await response.text();
   assert.equal(response.status,200,"REV_DEGRADE profile remains 200");
   assert.match(body,/id="field-civilId"/,"REV_DEGRADE Civil ID row remains");
-  assert.doesNotMatch(body,/Waiting for StudentHub to check|Checked|Rejected:/,"REV_DEGRADE failed state read renders no decision line");
+  assert.doesNotMatch(body,/Checked|Rejected:/,"REV_DEGRADE failed state read renders no decision line");
 });

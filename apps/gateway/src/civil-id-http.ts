@@ -29,7 +29,7 @@ export async function handleCivilId(request:IncomingMessage,response:ServerRespo
 export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null,review?:CivilIdReviewState):string{
   const label=language==="ar"?"البطاقة المدنية":"Civil ID",change=language==="ar"?"تغيير":"Change",missing=language==="ar"?"غير مسجل":"Not recorded";
   const shown=value?(value.maskedNumber??missing)+(value.expiry?`, ${language==="ar"?"تنتهي":"expires"} ${value.expiry}`:""):missing;
-  const effectiveReview=arguments.length<3&&value?.needsReview?{state:"waiting" as const}:review;
+  const effectiveReview=review??(value?.needsReview?{state:"waiting" as const}:undefined);
   const state=effectiveReview?.state==="checked"?PROFILE_COPY[language]["civilId.checked"]:effectiveReview?.state==="rejected"?`${PROFILE_COPY[language]["civilId.rejected"]}: ${esc(effectiveReview.reason)}`:effectiveReview?.state==="waiting"?PROFILE_COPY[language]["civilId.waiting"]:"";
   const decision=state?`<p class="p-meta">${state}${effectiveReview?.state==="rejected"?` <a class="p-edit" href="/profile/civil-id">${PROFILE_COPY[language]["civilId.fixIt"]}</a> <a class="p-edit" href="/profile/documents">${PROFILE_COPY[language]["civilId.fixIt"]}</a>`:""}</p>`:"";
   return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${decision}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a></div></dd></div>`;
