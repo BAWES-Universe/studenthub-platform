@@ -103,10 +103,11 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }, name?: PersonSelfEditField): string {
-  if (field.state === "available" && (name === "gender" || ["male","female","other"].includes(String(field.value)))) return ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[String(field.value)] ?? "Unavailable";
-  if (field.state === "available" && (name === "drivingLicence" || typeof field.value === "boolean")) return field.value ? "Yes" : "No";
-  if (field.state === "available" && (name === "jobSearchStatus" || ["active","open_to_offers","not_looking"].includes(String(field.value)))) return ({ active: "Actively looking", open_to_offers: "Open to offers", not_looking: "Not looking right now" } as Record<string,string>)[String(field.value)] ?? "Unavailable";
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly provenance?: { readonly sourceField?: string }; readonly freshness: { readonly kind: string } }, name?: PersonSelfEditField): string {
+  name ??= ({ candidate_gender: "gender", candidate_driving_license: "drivingLicence", candidate_job_search_status: "jobSearchStatus" } as Readonly<Record<string, PersonSelfEditField>>)[field.provenance?.sourceField ?? ""];
+  if (field.state === "available" && name === "gender") return ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[String(field.value)] ?? "Unavailable";
+  if (field.state === "available" && (name === "drivingLicence" || name === "kuwaitiMother")) return field.value ? "Yes" : "No";
+  if (field.state === "available" && name === "jobSearchStatus") return ({ active: "Actively looking", open_to_offers: "Open to offers", not_looking: "Not looking right now" } as Record<string,string>)[String(field.value)] ?? "Unavailable";
   return field.state === "available" ? String(field.value)
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }

@@ -403,6 +403,7 @@ test("SHU373_PAGE each choice has its own control, catalogue labels, and conditi
   };
   const html=await render(jo,{value:null,updatedAt:at}); assert.equal(writtenReads,1);
   for(const [label,needle] of [["Gender",'type="radio"'],["Birth date",'type="date"'],["Nationality",'<select name="value">'],["University",'<select name="value">'],["Driving licence",'type="radio"'],["Looking for work",'type="radio"'],["Kuwaiti mother",'type="radio"']] as const){const form=new RegExp(`aria-label="Change ${label}"[\\s\\S]*?<\\/form>`).exec(html)?.[0]??"";assert.match(form,new RegExp(needle));}
-  assert.match(html,/>Jordan</); assert.match(html,/<option value="33333333-3333-4333-8333-333333333333" selected>Kuwait University/); assert.match(html,/Not listed\? Staff add new universities/); assert.match(html,/<dt>Kuwaiti mother<\/dt>[\s\S]*?Not recorded/);
+  for(const [label,value] of [["Gender","Male"],["Age","26 years"],["Nationality","Jordan"],["University","Kuwait University"],["Driving licence","Yes"],["Job-search status","Actively looking"]]) assert.match(html,new RegExp(`<dt>${label}<\\/dt><dd>${value}<\\/dd>`));
+  assert.match(html,/<option value="33333333-3333-4333-8333-333333333333" selected>Kuwait University/); assert.match(html,/Not listed\? Staff add new universities/); assert.match(html,/<dt>Kuwaiti mother<\/dt>[\s\S]*?Not recorded/);
   const kuwaiti=await render(kw,undefined); assert.equal(writtenReads,2); assert.doesNotMatch(kuwaiti,/<dt>Kuwaiti mother<\/dt>/);
 });

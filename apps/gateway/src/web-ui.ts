@@ -368,7 +368,7 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"]);
   const ordered = ["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")] as OwnProfileFieldName[];
   const rows = ordered.map((field) => {
-    const row = field === "jobSearchStatus" ? fieldRow(profile, field).replace("<div>", '<div class="notice">').replace("<dt>Job-search status</dt>", "<dt>Looking for work</dt>") : fieldRow(profile, field);
+    const row = field === "jobSearchStatus" ? fieldRow(profile, field).replace("<div>", '<div class="notice"><p>Looking for work</p>') : fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
       const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";

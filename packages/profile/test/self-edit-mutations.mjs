@@ -17,7 +17,9 @@ const mutations = [
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
   ["SHU373_AGE", "minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE", "minimum.getUTCFullYear() + PERSON_PROFILE_MINIMUM_AGE"],
+  ["SHU373_WRITE", '["male", "female", "other"].includes(value) ? value : null', "false ? value : null"],
   ["SHU373_CATALOGUE", ".find(choice => choice.id === preference.value)?.name", ".find(choice => choice.id !== preference.value)?.name", profileModuleFile, suite],
+  ["SHU373_PAGE", "`You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`", "`You need to be at least 99 to complete a StudentHub profile`", pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
 for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite] of mutations) {

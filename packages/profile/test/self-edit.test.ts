@@ -40,6 +40,21 @@ test("SHU392_DIGEST normalization is deterministic before safe-write digesting",
     createHash("sha256").update("Noël Al-Sabah").digest("hex"));
 });
 
+test("SHU373_PAGE catalogue choices alone preserve imported completion fields", async () => {
+  const repository = new OwnProfileRepository({
+    principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "linked", candidateRef: "candidate" }), readCandidate: async () => SYNTHETIC_PROFILE_FIXTURES.populated },
+    preferences: { readOwnPreferences: async () => ({ profileChoices: { countries: [], universities: [] } }) } as never,
+    today: () => "2026-10-30",
+  });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
+  assert.equal(result.kind, "found");
+  if (result.kind !== "found") return;
+  assert.equal(result.profile.fields.isProfileCompleted.state, "available");
+  assert.equal(result.profile.fields.pendingFields.state, "available");
+  assert.equal(result.profile.fields.isProfileCompleted.freshness.kind, "imported_snapshot");
+});
+
 test("SHU392_CLEAR a cleared field is shown as written and not recorded", async () => {
   const updatedAt = "2026-10-30T05:00:00.000Z";
   const repository = new OwnProfileRepository({
