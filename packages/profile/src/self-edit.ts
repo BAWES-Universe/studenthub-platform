@@ -12,7 +12,7 @@ const FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u
 /** The write rule intentionally matches the read parsers, with the legacy full-name rule added. */
 export function parseSelfEditValue(field: SelfEditField, value: unknown): string {
   const limit = SELF_EDIT_LIMITS[field];
-  if (typeof value !== "string" || value.length === 0 || value.length > limit || value !== value.trim() || FORBIDDEN.test(value)) throw new TypeError("invalid profile value");
+  if (typeof value !== "string" || value.length === 0 || Array.from(value).length > limit || value !== value.trim() || FORBIDDEN.test(value)) throw new TypeError("invalid profile value");
   if ((field === "display_name" || field === "arabic_name") && value.split(/\s+/u).length < 2) throw new TypeError("full name required");
   if (field === "arabic_name" && !/[\u0620-\u064A\u066E-\u06D3\u06FA-\u06FC\u0750-\u077F\u08A0-\u08C9\uFB50-\uFBC2\uFBD3-\uFD8F\uFD92-\uFDC7\uFDF0-\uFDFB\uFE70-\uFEFC]/u.test(value)) throw new TypeError("Arabic name required");
   return value;

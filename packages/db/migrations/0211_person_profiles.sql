@@ -17,10 +17,15 @@ $$;
 CREATE TABLE person_profiles (
   principal_id text PRIMARY KEY REFERENCES principals(id),
   candidate_name text CHECK (candidate_name IS NULL OR person_profile_name_valid(candidate_name,false)),
+  candidate_name_updated_at timestamptz,
   candidate_name_ar text CHECK (candidate_name_ar IS NULL OR person_profile_name_valid(candidate_name_ar,true)),
+  candidate_name_ar_updated_at timestamptz,
   candidate_objective text CHECK (candidate_objective IS NULL OR person_profile_text_valid(candidate_objective,100)),
+  candidate_objective_updated_at timestamptz,
   candidate_intro text CHECK (candidate_intro IS NULL OR person_profile_text_valid(candidate_intro,5000)),
+  candidate_intro_updated_at timestamptz,
   candidate_preferred_time text CHECK (candidate_preferred_time IS NULL OR person_profile_text_valid(candidate_preferred_time,100)),
+  candidate_preferred_time_updated_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 

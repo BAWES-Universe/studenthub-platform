@@ -40,7 +40,7 @@ function fieldSpec(sourceField: string, label: string, semantics: string, parse:
 
 function text(maxLength = 500): Parser {
   return (value) => {
-    if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    if (typeof value !== "string" || value.trim().length === 0 || Array.from(value).length > maxLength) {
       throw new TypeError("malformed approved profile value");
     }
     return value;
@@ -183,14 +183,16 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-type WrittenPreferences = Readonly<{ language?: unknown; updatedAt: string; displayName?: unknown; arabicName?: unknown;
-  objective?: unknown; intro?: unknown; preferredTime?: unknown }>;
+type WrittenValue = Readonly<{ value: unknown; updatedAt: string }>;
+type WrittenPreferences = Readonly<{ language?: unknown; updatedAt?: string; displayName?: WrittenValue; arabicName?: WrittenValue;
+  objective?: WrittenValue; intro?: WrittenValue; preferredTime?: WrittenValue }>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: WrittenPreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
+  const languageUpdatedAt = typeof preferences.updatedAt === "string" ? preferences.updatedAt : "";
   if (Object.hasOwn(preferences, "language")) try {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
+    if (typeof preferences.updatedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
       || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
       PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference,
@@ -199,15 +201,17 @@ function applyPreferences(profile: OwnProfileProjection, preferences: WrittenPre
     fields.language = Object.freeze({
       state: "unavailable", reason: "not_recorded",
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-      freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: languageUpdatedAt }),
     });
   }
   for (const [property, name] of [["displayName", "displayName"], ["arabicName", "arabicName"], ["objective", "objective"], ["intro", "intro"], ["preferredTime", "preferredTime"]] as const) {
     if (!Object.hasOwn(preferences, property)) continue;
+    const preference = preferences[property]!;
     try {
-      fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preferences[property], profile.asOfDate) as never, preferences.updatedAt) as never;
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preference.updatedAt) || !Number.isFinite(Date.parse(preference.updatedAt))) throw new TypeError("malformed preference timestamp");
+      fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
     } catch {
-      fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }) }) as never;
+      fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
     }
   }
   // Imported completeness cannot describe a profile once a platform-owned

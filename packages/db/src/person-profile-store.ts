@@ -9,6 +9,7 @@ const SELF_EDIT_FIELDS = ["display_name", "arabic_name", "objective", "intro", "
 type SelfEditField = typeof SELF_EDIT_FIELDS[number];
 const COLUMNS: Readonly<Record<SelfEditField, string>> = Object.freeze({ display_name: "candidate_name", arabic_name: "candidate_name_ar", objective: "candidate_objective", intro: "candidate_intro", preferred_time: "candidate_preferred_time" });
 const PROPERTIES: Readonly<Record<SelfEditField, string>> = Object.freeze({ display_name: "displayName", arabic_name: "arabicName", objective: "objective", intro: "intro", preferred_time: "preferredTime" });
+const UPDATED: Readonly<Record<SelfEditField, string>> = Object.freeze({ display_name: "candidate_name_updated_at", arabic_name: "candidate_name_ar_updated_at", objective: "candidate_objective_updated_at", intro: "candidate_intro_updated_at", preferred_time: "candidate_preferred_time_updated_at" });
 const REF = /^[0-9a-f]{64}$/;
 const digest = (domain: string, value: string) => createHash("sha256").update(`studenthub:${domain}:v1\0${value}`).digest("hex");
 class Refusal extends Error { constructor(readonly reason: Exclude<CommitOutcome, { ok: true }>["reason"]) { super(reason); } }
@@ -34,10 +35,11 @@ export class PostgresPersonProfileStore {
     return Object.freeze({ contractVersion:s.contractVersion, receiptRef:row.request_ref, personRef:s.personRef, principalRef:row.actor_principal_ref, changeSetDigest:s.changeSetDigest, fields:Object.freeze([field]), committedAt:s.committedAt });
   }
   async readOwnPreferences(principalId: string) {
-    const { rows } = await this.#pool.query<any>(`SELECT pp.language, p.candidate_name, p.candidate_name_ar, p.candidate_objective, p.candidate_intro, p.candidate_preferred_time, GREATEST(pp.updated_at,p.updated_at) updated_at FROM person_preferences pp FULL JOIN person_profiles p USING (principal_id) WHERE COALESCE(pp.principal_id,p.principal_id)=$1`, [principalId]);
-    const r=rows[0]; if (!r || !(r.updated_at instanceof Date)) return null;
-    const out:any={ updatedAt:r.updated_at.toISOString() }; if(r.language!==null&&r.language!==undefined)out.language=r.language;
-    for (const f of SELF_EDIT_FIELDS) if (r[COLUMNS[f]] !== null && r[COLUMNS[f]] !== undefined) out[PROPERTIES[f]]=r[COLUMNS[f]];
+    const { rows } = await this.#pool.query<any>(`SELECT pp.language,pp.updated_at FROM person_preferences pp WHERE pp.principal_id=$1`, [principalId]);
+    const profile = await this.#pool.query<any>(`SELECT candidate_name,candidate_name_updated_at,candidate_name_ar,candidate_name_ar_updated_at,candidate_objective,candidate_objective_updated_at,candidate_intro,candidate_intro_updated_at,candidate_preferred_time,candidate_preferred_time_updated_at FROM person_profiles WHERE principal_id=$1`, [principalId]);
+    const r=rows[0], p=profile.rows[0]; if (!r && !p) return null;
+    const out:any={}; if(r?.updated_at instanceof Date){out.updatedAt=r.updated_at.toISOString();out.language=r.language;}
+    for (const f of SELF_EDIT_FIELDS) if (p?.[UPDATED[f]] instanceof Date) out[PROPERTIES[f]]={value:p[COLUMNS[f]],updatedAt:p[UPDATED[f]].toISOString()};
     return Object.freeze(out);
   }
   #field(value: unknown): value is SelfEditField { return typeof value === "string" && (SELF_EDIT_FIELDS as readonly string[]).includes(value); }
@@ -51,8 +53,8 @@ export class PostgresPersonProfileStore {
       if(!await this.#exists(client,id))throw new Refusal("not_own_record");
       const stored=input.value===SELF_EDIT_CLEAR?null:input.value;
       const written=input.expectedBefore===null
-        ?await client.query(`INSERT INTO person_profiles(principal_id,${column}) VALUES($1,$2) ON CONFLICT(principal_id) DO UPDATE SET ${column}=EXCLUDED.${column},updated_at=clock_timestamp() WHERE person_profiles.${column} IS NULL RETURNING 1`,[id,stored])
-        :await client.query(`UPDATE person_profiles SET ${column}=$2,updated_at=clock_timestamp() WHERE principal_id=$1 AND ${column}=$3 RETURNING 1`,[id,stored,input.expectedBefore]);
+        ?await client.query(`INSERT INTO person_profiles(principal_id,${column},${UPDATED[field]}) VALUES($1,$2,clock_timestamp()) ON CONFLICT(principal_id) DO UPDATE SET ${column}=EXCLUDED.${column},${UPDATED[field]}=EXCLUDED.${UPDATED[field]},updated_at=clock_timestamp() WHERE person_profiles.${column} IS NULL RETURNING 1`,[id,stored])
+        :await client.query(`UPDATE person_profiles SET ${column}=$2,${UPDATED[field]}=clock_timestamp(),updated_at=clock_timestamp() WHERE principal_id=$1 AND ${column}=$3 RETURNING 1`,[id,stored,input.expectedBefore]);
       if(written.rows.length!==1)throw new Refusal("state_changed");
       await client.query(`INSERT INTO authorization_mutation_audit(request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary) VALUES($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)`,[input.receipt.receiptRef,input.receipt.principalRef,SAFE_WRITE_OPERATION,JSON.stringify({valuePresent:input.expectedBefore!==null}),JSON.stringify({contractVersion:input.receipt.contractVersion,personRef:input.receipt.personRef,changeSetDigest:input.receipt.changeSetDigest,fields:[field],committedAt:input.receipt.committedAt,tokenRef})]);
       await client.query("COMMIT");return{ok:true};

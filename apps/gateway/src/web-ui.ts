@@ -310,7 +310,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
 }
 
 function fieldText(field: ProfileField<unknown>, format: (value: unknown) => string = String): string {
-  if (field.state === "unavailable") return '<span class="missing" data-state="unavailable">Unavailable</span>';
+  if (field.state === "unavailable") return `<span class="missing" data-state="unavailable">${field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable"}</span>`;
   return escapeHtml(format(field.value));
 }
 
