@@ -9,6 +9,10 @@ export function organizationAccountManagerDecision(rows:readonly OrganizationAcc
 export function organizationAccountManagerReadDecision(rows:readonly OrganizationAccountManagerGrantRow[],orgId:string,ancestors:readonly string[],operators:readonly string[]=DEFAULT_OPERATOR_ORG_IDS):boolean{return !operators.includes(orgId)&&rows.some((row)=>(row.role === "staff" || row.role === "admin") && covers(row,orgId,ancestors));}
 export function organizationAccountManagerValue(field:string,value:string):boolean{return typeof value==="string"&&field==="account_manager"&&(value==="none"||/^[A-Za-z0-9._:-]{1,128}$/.test(value));}
 export function organizationAccountManagerStateDecision(current:string|null,expected:string|null):boolean{return current === expected;}
+export interface OrganizationAssignedCompanyRow{readonly org_id:string;readonly name:string}
+export interface OrganizationAssignedCompany{readonly orgId:string;readonly name:string}
+export const ORGANIZATION_ASSIGNED_COMPANIES_LIMIT=50;
+export function organizationAssignedCompaniesView(rows:readonly OrganizationAssignedCompanyRow[]):OrganizationAssignedCompany[]{return rows.map((row)=>({orgId:row.org_id,name:row.name})).sort((a,b)=>a.name.localeCompare(b.name)||a.orgId.localeCompare(b.orgId)).slice(0,ORGANIZATION_ASSIGNED_COMPANIES_LIMIT);}
 function ref(domain:string,value:string){return createHash("sha256").update(`studenthub:${domain}:v1\0`).update(value).digest("hex");}
 export const organizationAccountManagerRecordRef=(orgId:string)=>ref("organization-account-manager-record",orgId);
 export const organizationAccountManagerPrincipalRef=(id:string)=>ref("organization-account-manager-principal",id);
