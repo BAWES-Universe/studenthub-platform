@@ -6,9 +6,15 @@ import { organizationProfileRoute, organizationStatusRoute, organizationCommerci
 import { payContractsRoute } from "./pay-contracts.js";
 import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
+import { handleDocumentsActions } from "../documents-actions-http.js";
+import { prepareProfileAvatar } from "../profile-avatar.js";
 
 const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
   handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
+const documentsActionsRoute: GatewayRoute = { name: "documents-actions", handle: async (ctx) => {
+  prepareProfileAvatar(ctx.request, ctx.documents);
+  return handleDocumentsActions(ctx.request, ctx.response, ctx.documents, ctx.login);
+} };
 
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
@@ -27,6 +33,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
   candidateDocumentsRoute,
   documentsUploadRoute,
+  documentsActionsRoute,
   organizationDocumentsRoute,
   profileEditPageRoute,
   profileEditRoute,

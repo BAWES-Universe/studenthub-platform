@@ -81,6 +81,9 @@ test('SHU366_PAGE finalized file appears once with closed slots and one list', a
   for (const row of (await f.disk.transaction(async state => state.documents))) { assert.ok(!html.includes(row.id)); assert.ok(!html.includes(row.version)); }
   assert.doesNotMatch(html, /uploads\/|delivery|<script|Date unavailable|timestamp/);
   assert.equal((html.match(/<form method="post" enctype="multipart\/form-data"/g) ?? []).length, 4);
+  assert.equal((html.match(/>Remove<\/a>/g) ?? []).length, 1);
+  assert.equal((html.match(/\/view"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /document-resume[^]*?document-civil-id-front[^]*?resume\/(?:remove|view)/);
   assert.equal((html.match(/<input type="file" name="file"/g) ?? []).length, 4);
   assert.equal((html.match(/<input type="hidden" name="submission"/g) ?? []).length, 4);
   assert.match(html, /lang="en" dir="ltr"/);
