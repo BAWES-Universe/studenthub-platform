@@ -8,9 +8,10 @@ import { join } from "node:path";
 const root = mkdtempSync(join(process.cwd(), ".shu496-mutations-"));
 try {
   cpSync("dist", join(root, "dist"), { recursive: true });
+  cpSync("packages/db/dist", join(root, "packages/db/dist"), { recursive: true });
   const testFile = join(root, "dist/apps/gateway/test/login-reassign.test.js");
   const gatewayFile = join(root, "dist/apps/gateway/src/login-application.js");
-  const dbFile = join(root, "dist/packages/db/src/postgres-login-store.js");
+  const dbFile = join(root, "packages/db/dist/postgres-login-store.js");
   const run = () => spawnSync(process.execPath,
     ["--test", "--experimental-test-isolation=none", "--test-reporter=tap", testFile],
     { encoding: "utf8", timeout: 30_000 });

@@ -10,8 +10,8 @@ ALTER TABLE external_identities
     )
   ),
   ADD CONSTRAINT external_identities_lock_valid CHECK (
-    (locked_at IS NULL AND locked_reason IS NULL)
-    OR (locked_at IS NOT NULL AND locked_reason = 'stable_id_mismatch')
+    (locked_at IS NULL) = (locked_reason IS NULL)
+    AND (locked_reason IS NULL OR locked_reason = 'stable_id_mismatch')
   );
 
 CREATE INDEX external_identities_locked_at_idx

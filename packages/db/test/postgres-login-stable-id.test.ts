@@ -3,8 +3,7 @@ import { createHash } from "node:crypto";
 import { after, before, beforeEach, test } from "node:test";
 import pg from "pg";
 
-import { runMigrations } from "../src/migrate.js";
-import { PostgresLoginStore } from "../src/postgres-login-store.js";
+import { PostgresLoginStore, runMigrations } from "@studenthub/db";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool;
