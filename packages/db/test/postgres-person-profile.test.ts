@@ -122,7 +122,7 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
 test("SHU373_CATALOGUE resolves active ids, clears the flag for Kuwait, and the database refuses contradiction", async () => {
   const id = `shu373-${randomUUID()}`, authz = new PostgresAuthzStore(pool), store = new PostgresPersonProfileStore({ pool });
   await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
-  const country = randomUUID(), kuwait = randomUUID(), university = randomUUID(), actor = "a".repeat(64);
+  const country = randomUUID(), kuwait = randomUUID(), university = randomUUID(), deletedUniversity = randomUUID(), actor = "a".repeat(64);
   for (const [ref,type,name,code] of [[country,"country","Canadian","CA"],[kuwait,"country","Kuwaiti","KW"],[university,"university","Kuwait University",null]] as const)
     await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES($1,$2,$3,lower($3),$4,'active',$5,$5,now(),now())`,[ref,type,name,code,actor]);
   const writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
@@ -133,4 +133,8 @@ test("SHU373_CATALOGUE resolves active ids, clears the flag for Kuwait, and the 
   const shown=await store.readOwnPreferences(id) as Record<string,{value:unknown}>;assert.equal(shown.nationality?.value,"Kuwaiti");assert.equal(shown.university?.value,"Kuwait University");assert.equal(shown.kuwaitiMother?.value,null);
   await assert.rejects(pool.query("UPDATE person_profiles SET kuwaiti_mother=true WHERE principal_id=$1",[id]),/Kuwaiti mother cannot accompany Kuwaiti nationality/);
   assert.equal(await write("university",randomUUID()),false);
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at) VALUES($1,'university',$2,lower($2),'deleted',$3,$3,now(),now(),now())`,[deletedUniversity,"Retired University",actor]);
+  assert.equal(await write("university",deletedUniversity),false);
+  const unchanged=await pool.query("SELECT university_id::text FROM person_profiles WHERE principal_id=$1",[id]);
+  assert.equal(unchanged.rows[0]?.university_id,university,"refused catalogue ids store nothing");
 });
