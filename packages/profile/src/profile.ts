@@ -183,25 +183,41 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<Record<string, unknown>> | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
-  try {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
-      || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
+  let hasWrittenValue = false;
+  const language = preferences.language;
+  const languageUpdated = preferences.updatedAt ?? preferences.language_updated_at;
+  if (language !== null && language !== undefined && typeof languageUpdated === "string") try {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(languageUpdated)
+      || !Number.isFinite(Date.parse(languageUpdated))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
-      PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference,
-      preferences.updatedAt);
+      PROFILE_FIELD_SPECS.language.parse(language, profile.asOfDate) as LanguagePreference,
+      languageUpdated);
+    hasWrittenValue = true;
   } catch {
     fields.language = Object.freeze({
       state: "unavailable", reason: "not_recorded",
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-      freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: String(languageUpdated ?? "") }),
     });
+  }
+  const columns = { displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time" } as const;
+  const writtenFields = Array.isArray(preferences.written_fields) ? preferences.written_fields : [];
+  for (const [name, column] of Object.entries(columns) as [keyof typeof columns, string][]) {
+    if (!writtenFields.includes(name)) continue;
+    hasWrittenValue = true;
+    const timestamp = preferences[`${column}_updated_at`];
+    if (typeof timestamp !== "string") throw new TypeError("malformed profile write timestamp");
+    const raw = preferences[column];
+    fields[name] = raw === null ? Object.freeze({ state: "unavailable", reason: "not_recorded",
+      provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({kind:"written_by_person",observedAt:timestamp}) }) as never
+      : written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(raw, profile.asOfDate), timestamp) as never;
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
-  for (const name of ["isProfileCompleted", "pendingFields"] as const) {
+  for (const name of hasWrittenValue ? ["isProfileCompleted", "pendingFields"] as const : []) {
     fields[name] = unavailable(PROFILE_FIELD_SPECS[name], "", "not_recorded") as never;
   }
   return Object.freeze({ ...profile, fields: Object.freeze(fields) });
@@ -294,12 +310,12 @@ export class OwnProfileRepository {
         })])) as unknown as OwnProfileFields;
         return { kind: "found", profile: applyPreferences(Object.freeze({
           version: OWN_PROFILE_VERSION, asOfDate: today, fields: Object.freeze(fields),
-        }), preferences) };
+        }), preferences as unknown as Readonly<Record<string, unknown>>) };
       }
       if (link.kind !== "linked") return { kind: "not_found" };
       const row = await this.#source.readCandidate(link.candidateRef);
       if (row === undefined) return { kind: "unavailable" };
-      return { kind: "found", profile: applyPreferences(projectApprovedProfile(row, this.#today()), preferences) };
+      return { kind: "found", profile: applyPreferences(projectApprovedProfile(row, this.#today()), preferences as unknown as Readonly<Record<string, unknown>>) };
     } catch {
       return { kind: "unavailable" };
     }
