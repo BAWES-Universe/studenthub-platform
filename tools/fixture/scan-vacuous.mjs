@@ -6,15 +6,21 @@
 // CONTRACT
 // scanVacuousTests(fileText) reports test bodies that contain no assertion
 // call. A "test body" is the body of a `test(...)` or `it(...)` call: the first
-// brace-delimited block that follows the call's opening parenthesis. A body is
-// VACUOUS when no assertion call appears inside it.
+// brace-delimited block inside the call's argument list. A body is VACUOUS when
+// no assertion call appears inside it.
 //
 // An assertion call is documented as `expect(...)`, a node:assert call
 // (`assert(...)`, `assert.ok(...)`, `assert.equal(...)`, ...), a node:test
 // context assertion (`t.assert.*`), or a `throw` statement.
 //
 // Returns an array of { name, start, end } in source order, where `start`/`end`
-// are the indices of the body's braces.
+// are the indices of the body's braces. `name` is the first string literal in
+// the argument list, or null when the call names no literal.
+//
+// A call whose argument list holds no brace-delimited block has no body to
+// report, so it is skipped: a concise arrow (`test("x", () => assert.ok(v))`)
+// or a bare callback reference (`test("x", handler)`) is never reported, and
+// never borrows the braces of a later block.
 
 const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
@@ -118,10 +124,36 @@ function codeOnly(source) {
   return result;
 }
 
+// The name is the first string literal in the argument list. Comments and
+// regex literals are skipped so a quoted word inside them cannot be mistaken
+// for the name.
 function testName(source, callIndex, bodyStart) {
   for (let start = callIndex; start < bodyStart; start += 1) {
     const quote = source[start];
-    if (quote !== '"' && quote !== "'") continue;
+    const next = source[start + 1];
+
+    if (quote === "/" && next === "/") {
+      while (start < bodyStart && source[start] !== "\n" && source[start] !== "\r") {
+        start += 1;
+      }
+      continue;
+    }
+    if (quote === "/" && next === "*") {
+      start += 2;
+      while (start < bodyStart && !(source[start] === "*" && source[start + 1] === "/")) {
+        start += 1;
+      }
+      start += 1;
+      continue;
+    }
+    if (quote === "/" && startsRegex(source, start)) {
+      const end = regexEnd(source, start);
+      if (end !== start) {
+        start = end;
+        continue;
+      }
+    }
+    if (quote !== '"' && quote !== "'" && quote !== "`") continue;
 
     let name = "";
     for (let i = start + 1; i < bodyStart; i += 1) {
@@ -139,14 +171,18 @@ function testName(source, callIndex, bodyStart) {
   return null;
 }
 
-function braceBody(source, callIndex) {
+// Find the body inside the argument list that starts at `parenIndex`. Returns
+// null when the call closes without one, so a brace-less call (`() => expr`, or
+// a bare callback reference) never borrows a later, unrelated block.
+function braceBody(source, parenIndex) {
   let open = -1;
   let depth = 0;
+  let parens = 0;
   let quote = null;
   let lineComment = false;
   let blockComment = false;
 
-  for (let i = callIndex; i < source.length; i += 1) {
+  for (let i = parenIndex; i < source.length; i += 1) {
     const ch = source[i];
     const next = source[i + 1];
 
@@ -177,6 +213,14 @@ function braceBody(source, callIndex) {
       if (end !== i) i = end;
     } else if (ch === '"' || ch === "'" || ch === "`") {
       quote = ch;
+    } else if (ch === "(") {
+      // Parens only bound the search for the body; inside it they are code.
+      if (open === -1) parens += 1;
+    } else if (ch === ")") {
+      if (open === -1) {
+        parens -= 1;
+        if (parens === 0) return null;
+      }
     } else if (ch === "{") {
       if (open === -1) open = i;
       depth += 1;

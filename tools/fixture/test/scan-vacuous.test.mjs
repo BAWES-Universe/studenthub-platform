@@ -156,3 +156,57 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not borrow a later block as the body of a concise arrow test", () => {
+  const source = [
+    'test("concise", () => assert.ok(value));',
+    'test("vacuous", () => { const value = 1; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["vacuous"],
+  );
+});
+
+test("skips a test call whose argument list holds no brace-delimited body", () => {
+  const source = ['test("reference", handler);', "const helper = { value: 1 };"].join("\n");
+  assert.deepEqual(scanVacuousTests(source), []);
+});
+
+test("reports the indices of the body's own braces", () => {
+  const source = 'test("empty", () => { const a = 1; });';
+  const [entry] = scanVacuousTests(source);
+  assert.equal(source[entry.start], "{");
+  assert.equal(source[entry.end], "}");
+  assert.equal(source.slice(entry.start, entry.end + 1), "{ const a = 1; }");
+});
+
+test("does not take a test name from a block comment in the argument list", () => {
+  const report = scanVacuousTests('test(/* "commented" */ dynamicName, () => { work(); });');
+  assert.equal(report.length, 1);
+  assert.equal(report[0].name, null);
+});
+
+test("takes the quoted test name rather than a preceding block comment", () => {
+  const report = scanVacuousTests('test(/* skip "decoy" */ "real", () => { work(); });');
+  assert.deepEqual(report.map((entry) => entry.name), ["real"]);
+});
+
+test("does not take a test name from a line comment in the argument list", () => {
+  const source = ['test( // "decoy"', '  "real",', "  () => { work(); },", ");"].join("\n");
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
+
+test("does not take a test name from a regex literal in the argument list", () => {
+  const report = scanVacuousTests('test(label.replace(/"decoy"/, "real"), () => { work(); });');
+  assert.deepEqual(report.map((entry) => entry.name), ["real"]);
+});
+
+test("extracts a template literal test name", () => {
+  const report = scanVacuousTests("test(`templated`, () => { work(); });");
+  assert.deepEqual(report.map((entry) => entry.name), ["templated"]);
+});
