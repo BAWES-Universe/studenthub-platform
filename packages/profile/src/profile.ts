@@ -183,10 +183,11 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+type WrittenPreferences = Readonly<{ language: unknown; updatedAt: string } & Record<string, unknown>>;
+function applyPreferences(profile: OwnProfileProjection, preferences: WrittenPreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
-  try {
+  if (typeof preferences.updatedAt === "string" && preferences.updatedAt.length > 0) try {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
       || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
@@ -198,6 +199,21 @@ function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
+  }
+  const edits = [
+    ["displayName", "displayName", "displayNameWritten", "displayNameUpdatedAt"],
+    ["arabicName", "arabicName", "arabicNameWritten", "arabicNameUpdatedAt"],
+    ["objective", "objective", "objectiveWritten", "objectiveUpdatedAt"],
+    ["intro", "intro", "introWritten", "introUpdatedAt"],
+    ["preferredTime", "preferredTime", "preferredTimeWritten", "preferredTimeUpdatedAt"],
+  ] as const;
+  for (const [name, key, marker, dateKey] of edits) {
+    if (preferences[marker] !== true) continue;
+    const observedAt = preferences[dateKey];
+    const value = preferences[key];
+    if (typeof observedAt !== "string" || !Number.isFinite(Date.parse(observedAt))) continue;
+    if (value === null) fields[name] = Object.freeze({ state:"unavailable",reason:"not_recorded",provenance:provenance(PROFILE_FIELD_SPECS[name].sourceField),freshness:Object.freeze({kind:"written_by_person",observedAt}) }) as never;
+    else try { fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(value,profile.asOfDate), observedAt) as never; } catch { fields[name] = Object.freeze({state:"unavailable",reason:"not_recorded",provenance:provenance(PROFILE_FIELD_SPECS[name].sourceField),freshness:Object.freeze({kind:"written_by_person",observedAt})}) as never; }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
-import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
+import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresPersonProfileStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
   PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
@@ -29,6 +29,7 @@ import {payContractWriteDecision,payContractReadAccess,payContractCreator,payCon
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
+import { createProfileEdit } from "./profile-edit-http.js";
 import { createOrganizationProfile } from "./organization-profile.js";
 import { createOrganizationStatus } from "./organization-status.js";
 import {createOrganizationCommercialTerms}from"./organization-commercial-terms.js";
@@ -222,8 +223,9 @@ export function createRuntimeLoginFromEnv(
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
+  const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles,
-    ...(safeWrites ? { preferences: safeWrites } : {}) });
+    ...(personProfiles ? { preferences: personProfiles } : safeWrites ? { preferences: safeWrites } : {}) });
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
@@ -287,6 +289,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
+      ...(personProfiles && safeWriteKey ? { profileEditor:createProfileEdit({sessions:loginStore.sessions,store:personProfiles,secret:safeWriteKey}) } : {}),
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),

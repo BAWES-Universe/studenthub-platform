@@ -28,6 +28,15 @@ import {
 
 const REAL_FACTORY: SafeWriteFactory = (input) => createSafeWrite(input);
 
+test("SHU372_RULES clearing is opt-in and lengths count code points", async () => {
+  const change = { personRef: OWNER_PERSON_REF, field: "display_name", value: "" };
+  const opted = createSafeWrite({ store:createRecordingStore(), secret:TEST_SECRET, policy:{allowed:["display_name"],maxValueLength:100,allowClear:true} });
+  assert.equal((await opted.preview({change,principalRef:OWNER_PRINCIPAL_REF})).ok,true);
+  const ordinary = createSafeWrite({ store:createRecordingStore(), secret:TEST_SECRET, policy:{allowed:["display_name"],maxValueLength:100} });
+  assert.deepEqual(await ordinary.preview({change,principalRef:OWNER_PRINCIPAL_REF}),{ok:false,reason:"invalid_value"});
+  assert.equal((await ordinary.preview({change:{...change,value:"😀".repeat(100)},principalRef:OWNER_PRINCIPAL_REF})).ok,true);
+});
+
 function scenario(index: number): SafeWriteScenario {
   const name = SAFE_WRITE_SCENARIOS[index];
   assert.ok(name !== undefined, `scenario ${index} exists`);

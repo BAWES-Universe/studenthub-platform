@@ -77,7 +77,7 @@ function validateChange(change: ChangeRequest, policy: FieldPolicy): RejectionRe
   if (!REFERENCE_PATTERN.test(change.personRef)) return "malformed_reference";
   if (!policy.allowed.includes(change.field)) return "unknown_field";
   if (typeof change.value !== "string") return "invalid_value";
-  if (change.value.length === 0 || change.value.length > policy.maxValueLength) return "invalid_value";
+  if ((change.value.length === 0 && !policy.allowClear) || [...change.value].length > policy.maxValueLength) return "invalid_value";
   // Edge whitespace is rejected rather than trimmed: silently cleaning a value
   // stores something other than what the preview showed the person.
   if (change.value !== change.value.trim()) return "invalid_value";

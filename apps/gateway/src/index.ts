@@ -28,6 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
+import { handleProfileEdit, handleProfileEditPage, type ProfileEditService } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
@@ -49,6 +50,7 @@ export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
 export { createLoginApplication } from "./login-application.js";
 export { createRuntimeLoginFromEnv } from "./login-runtime.js";
+export * from "./profile-edit-http.js";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
@@ -177,6 +179,9 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
+    const editor=(login as BrowserLoginApplication & {profileEditor?:ProfileEditService}|undefined)?.profileEditor;
+    if(await handleProfileEditPage(request,response,editor,login?.web?.origin,(status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body))))return;
+    if(await handleProfileEdit(request,response,editor,login?.web?.origin))return;
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
     if (await handleOrganizationDocuments(request, response, organizationDocuments)) return;
