@@ -16,7 +16,7 @@ const cases = [
     ".find((candidate) => candidate.id.toLowerCase() === wanted);", ".find(() => true);"],
   ["render a cancel form", "INTDET_READONLY has", "INTDET_READONLY detail has no form, cancel or evaluate control",
     "</ol><p><a class=\"text-link\" href=\"/recruit/my-interviews\">", "</ol><form method=\"post\" action=\"/cancel\"></form><p><a class=\"text-link\" href=\"/recruit/my-interviews\">"],
-  ["drop company-name escaping", "INTDET_SHOW renders", "INTDET_SHOW escapes Sultan <Co>",
+  ["drop company-name escaping", "INTDET_SHOW renders", "INTDET_SHOW renders Sultan &lt;Co&gt;",
     "${html(v.company)} · ${html(v.store)}", "${v.company} · ${html(v.store)}"],
   ["answer 200 empty for an unknown id", "INTDET_MINE reveals", "INTDET_MINE JSON denials are byte-identical",
     "return row ? { status: 200, body: { interview: personInterviewView(row) } } : NOT_FOUND;", "return row ? { status: 200, body: { interview: personInterviewView(row) } } : { status: 200, body: {} };"],
