@@ -41,6 +41,33 @@ async function bounded(request: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks, size);
 }
 type Form = { bytes: Buffer; mime: string; submission: string; noFile: boolean };
+type ActiveSubmission = { fingerprint: string; operation: Promise<void> };
+const activeSubmissions = new WeakMap<CandidateDocuments, Map<string, ActiveSubmission>>();
+
+function runSubmission(service: CandidateDocuments, session: string, type: CandidateDocumentType, form: Form): Promise<void> {
+  let active = activeSubmissions.get(service);
+  if (!active) { active = new Map(); activeSubmissions.set(service, active); }
+  const key = createHash('sha256').update(`${session}\0${type}\0${form.submission}`).digest('hex');
+  const fingerprint = createHash('sha256').update(form.mime).update('\0').update(form.bytes).digest('hex');
+  const existing = active.get(key);
+  if (existing?.fingerprint === fingerprint) return existing.operation;
+  const operation = (async () => {
+    const current = (await service.list(session)).find(document => document.type === type);
+    const digest = createHash('sha256').update(form.bytes).digest('hex');
+    const md5 = createHash('md5').update(form.bytes).digest('base64');
+    const authorized = await service.authorizeUpload(session, submissionKey(form.submission, 'authorize'), {
+      type, mime: form.mime, size: form.bytes.length, expectedVersion: current?.version ?? null, ...(service.options.directUploads ? { sha256: digest, contentMd5: md5 } : {}),
+    });
+    const ticket = authorized.body as { uploadId: string; objectKey: string; credential: string };
+    await service.put(session, submissionKey(form.submission, 'bytes'), ticket.uploadId, ticket.objectKey, ticket.credential, form.bytes);
+    await service.finalize(session, submissionKey(form.submission, 'finalize'), { uploadId: ticket.uploadId });
+  })();
+  const entry = { fingerprint, operation };
+  active.set(key, entry);
+  void operation.finally(() => setImmediate(() => { if (active?.get(key) === entry) active.delete(key); })).catch(() => undefined);
+  return operation;
+}
+
 function multipart(body: Buffer, contentType: string | undefined): Form {
   const match = /^multipart\/form-data;\s*boundary=([!#$%&'*+.^_`|~0-9A-Za-z-]{1,70})$/.exec(contentType ?? '');
   if (!match) throw new LifecycleError(400, 'invalid');
@@ -92,15 +119,7 @@ export async function handleDocumentsUpload(request: IncomingMessage, response: 
     if (request.headers.origin !== service.options.origin || request.headers['sec-fetch-site'] === 'cross-site') { fail(403, 'This upload must come from My documents.'); return true; }
     const form = multipart(await bounded(request), request.headers['content-type']);
     if (form.noFile) throw new LifecycleError(400, 'no_file');
-    const current = (await service.list(session)).find(document => document.type === type);
-    const digest = createHash('sha256').update(form.bytes).digest('hex');
-    const md5 = createHash('md5').update(form.bytes).digest('base64');
-    const authorized = await service.authorizeUpload(session, submissionKey(form.submission, 'authorize'), {
-      type, mime: form.mime, size: form.bytes.length, expectedVersion: current?.version ?? null, ...(service.options.directUploads ? { sha256: digest, contentMd5: md5 } : {}),
-    });
-    const ticket = authorized.body as { uploadId: string; objectKey: string; credential: string };
-    await service.put(session, submissionKey(form.submission, 'bytes'), ticket.uploadId, ticket.objectKey, ticket.credential, form.bytes);
-    await service.finalize(session, submissionKey(form.submission, 'finalize'), { uploadId: ticket.uploadId });
+    await runSubmission(service, session, type, form);
     response.writeHead(303, { location: '/profile/documents', 'cache-control': 'no-store' }); response.end();
   } catch (error) {
     const lifecycle = error instanceof LifecycleError ? error : new LifecycleError(503, 'unavailable');
