@@ -18,7 +18,7 @@ export interface JobRunsStore {
 }
 export type JobAlert = Alert & { readonly jobName:JobName };
 export interface RunnerOptions { readonly telemetry?:Telemetry;readonly alert?:(alert:JobAlert)=>void|Promise<void>;readonly now?:()=>Date;readonly leaseMs?:number;readonly setTimer?:(callback:()=>void,delay:number)=>unknown;readonly clearTimer?:(timer:unknown)=>void }
-const alert = (code:"job_failed"|"job_overlap"|"job_missed",jobName:JobName):JobAlert => ({code,jobName,owner:"platform-on-call",runbook:"docs/observability.md"});
+const alert = (code:"job_failed"|"job_overlap"|"job_missed",jobName:JobName):JobAlert => ({code,jobName,owner:"platform-on-call",runbook:`docs/runbooks/alerts.md#${code}`});
 export function writeJobAlert(value:JobAlert,write:(text:string)=>void=text=>process.stderr.write(text)):void{write(`${JSON.stringify(value)}\n`)}
 export const JOB_MISSED_GRACE_FACTOR=1.5;
 export function isJobMissed(job:Pick<Job,"intervalMs">,lastSuccess:Date|undefined,now:Date):boolean{return !lastSuccess||now.getTime()-lastSuccess.getTime()>job.intervalMs*JOB_MISSED_GRACE_FACTOR}

@@ -201,7 +201,7 @@ test('alerts: failure, latency and transport rules bind thresholds and ownership
   } };
   const alerts = evaluateAlerts(input);
   assert.deepEqual(alerts.map(a => a.code).sort(), ['journey_failures', 'journey_latency', 'telemetry_dropped', 'telemetry_unavailable']);
-  assert.ok(alerts.every(a => a.owner === 'platform-on-call' && a.runbook === 'docs/observability.md'));
+  assert.ok(alerts.every(a => a.owner === 'platform-on-call' && a.runbook === `docs/runbooks/alerts.md#${a.code}`));
   assert.deepEqual(evaluateAlerts({ ...base, metrics: { 'gateway:profile_read:failure': { count: 4, buckets: [0, 4, 4, 4, 4, 4, 4, 4] } } }), []);
 });
 
