@@ -28,10 +28,17 @@ export interface DocumentState {
     retired: StoredDocument[];
     lifecycle?: LifecycleState;
 }
+/** Internal read-only adapter hook. It is non-enumerable and never persisted. */
+export const documentReadHydrator = Symbol('documentReadHydrator');
+type ReadableDocumentState = DocumentState & { [documentReadHydrator]?: (id: string) => Promise<void> };
 /** Must isolate concurrent transactions, commit atomically, and roll back on callback failure.
  * This is a trusted server-only port, never a client adapter or metadata endpoint. */
 export interface DocumentStore {
     transaction<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
+    readPath?: {
+        read<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
+        audit(entry: { operation: 'list' | 'issueDelivery' | 'deliver'; principalRef: string; at: number }): Promise<void>;
+    };
 }
 type Code = 'denied' | 'invalid' | 'unavailable';
 export class DocumentError extends Error {
@@ -227,7 +234,7 @@ export class PrivateDocuments {
             const principalId = this.options.ownDocumentOrgId === undefined ? undefined : await resolvePrincipalId(identity, this.options.authz);
             if (principalId === null) return fail('denied');
             const result = await this.options.store.transaction(async (state) => {
-                validateState(state);
+                if (!(documentReadHydrator in state)) validateState(state);
                 if (this.options.ownDocumentOrgId !== undefined) {
                     const currentIdentity = await this.options.authenticate(credential as string);
                     if (!currentIdentity || await resolvePrincipalId(currentIdentity, this.options.authz) !== principalId)
@@ -392,6 +399,7 @@ export class PrivateDocuments {
             const now = this.now();
             if (!record(claim) || claim.v !== 1 || !Number.isSafeInteger(claim.exp) || !Number.isSafeInteger(claim.iat) || Number(claim.exp) <= now || Number(claim.iat) > now || Number(claim.exp) - Number(claim.iat) > 300000 || Number(claim.exp) <= Number(claim.iat))
                 return fail('denied');
+            await (s as ReadableDocumentState)[documentReadHydrator]?.(String(claim.id));
             const d = await this.find(i, s, claim.id);
             const principal = await this.authorize(i, d.scope);
             if (claim.version !== d.version || claim.subject !== this.mac('subject:' + principal))

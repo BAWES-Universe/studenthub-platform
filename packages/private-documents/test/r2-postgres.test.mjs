@@ -54,3 +54,37 @@ test('SHU-145/PG-03 real SQL and synthetic private objects recover an uncertain 
  assert.ok(packed.state.documents[0].data.startsWith('r2:'));
  assert.deepEqual((await service.deliver(credential,(await service.issueDelivery(credential,result.body.metadata.id)).url)).bytes,png());
 });
+
+test('RA_NO_LOCK reader and audit pool bypass a locked or exhausted writer pool',unavailable,async()=>{
+ const locker=await pool.connect();
+ try{
+  await locker.query('BEGIN');await locker.query('SELECT snapshot FROM candidate_document_snapshot WHERE singleton=true FOR UPDATE');
+  for(let i=0;i<3;i++)await assert.doesNotReject(Promise.race([snapshots.read(),new Promise((_,reject)=>setTimeout(()=>reject(new assert.AssertionError({message:'read queued behind row lock'})),500))]));
+  await assert.doesNotReject(Promise.race([snapshots.auditRead({operation:'list',principalRef:'1'.repeat(64),at:Date.now()}),new Promise((_,reject)=>setTimeout(()=>reject(new assert.AssertionError({message:'audit queued behind row lock'})),500))]));
+ }finally{await locker.query('ROLLBACK');locker.release();}
+ let release;const parked=new Promise(r=>release=r);
+ const first=snapshots.transaction(async()=>parked),second=snapshots.transaction(async()=>{});
+ await new Promise(r=>setTimeout(r,100));
+ try{
+  for(let i=0;i<3;i++)await assert.doesNotReject(Promise.race([snapshots.read(),new Promise((_,reject)=>setTimeout(()=>reject(new assert.AssertionError({message:'read used writer pool'})),500))]));
+  await assert.doesNotReject(Promise.race([snapshots.auditRead({operation:'deliver',principalRef:'2'.repeat(64),at:Date.now()}),new Promise((_,reject)=>setTimeout(()=>reject(new assert.AssertionError({message:'audit used writer pool'})),500))]));
+ }finally{release();await Promise.all([first,second]);}
+});
+
+test('RA_NO_WRITE plain reads do not rewrite the shared snapshot',unavailable,async()=>{
+ const before=await pool.query('SELECT xmin::text,snapshot FROM candidate_document_snapshot WHERE singleton=true');
+ await assert.doesNotReject(()=>snapshots.read());await assert.doesNotReject(()=>snapshots.read());await assert.doesNotReject(()=>snapshots.read());
+ const afterRead=await pool.query('SELECT xmin::text,snapshot FROM candidate_document_snapshot WHERE singleton=true');
+ assert.deepEqual(afterRead.rows,before.rows,'read path must not update snapshot');
+});
+
+test('RA_AUDIT_ROW audit rows are minimal, constrained and append-only',unavailable,async()=>{
+ const ref=randomBytes(32).toString('hex'),at=Date.now();
+ await assert.doesNotReject(()=>snapshots.auditRead({operation:'issueDelivery',principalRef:ref,at}));
+ const row=(await pool.query('SELECT * FROM candidate_document_read_audit WHERE principal_ref=$1',[ref])).rows[0];
+ assert.deepEqual(Object.keys(row).sort(),['id','occurred_at','operation','principal_ref']);assert.equal(row.operation,'issueDelivery');assert.equal(row.principal_ref,ref);assert.ok(Math.abs(row.occurred_at.getTime()-at)<2);
+ await assert.rejects(pool.query('UPDATE candidate_document_read_audit SET operation=$1 WHERE id=$2',['list',row.id]));
+ await assert.rejects(pool.query('DELETE FROM candidate_document_read_audit WHERE id=$1',[row.id]));
+ await assert.rejects(pool.query('TRUNCATE candidate_document_read_audit'));
+ await assert.rejects(pool.query('INSERT INTO candidate_document_read_audit(id,operation,principal_ref,occurred_at) VALUES($1,$2,$3,now())',[randomUUID(),'bad',ref]));
+});
