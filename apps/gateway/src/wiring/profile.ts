@@ -12,6 +12,7 @@ import { HttpLegacyLogin } from "../legacy-login.js";
 import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
+import { readPreparedProfilePrincipal } from "../profile-completeness.js";
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
@@ -50,7 +51,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
   const area = createArea({ store: personLocations });
-  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
+  const profiles = new OwnProfileRepository({ principals: { getPrincipal: id => readPreparedProfilePrincipal(access.authzStore, id) }, source: profileSource,
     ...({ preferences: { async readOwnPreferences(id: string) {
       const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id).catch(() => null)]);
       const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };

@@ -32,6 +32,8 @@ import { renderCivilIdRow } from "./civil-id-http.js";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "./area-http.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
+import { currentProfileCompleteness } from "./profile-completeness.js";
+import { deriveProfileCompleteness, unavailableProfileCompleteness } from "@studenthub/profile";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -332,14 +334,18 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
 
 export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
-  const profile = projectionFrom(result);
+  let profile = projectionFrom(result);
+  const completeness = currentProfileCompleteness();
+  if (completeness !== undefined) profile = completeness.evidence
+    ? (() => { try { return deriveProfileCompleteness(profile, completeness.evidence); } catch { return unavailableProfileCompleteness(profile); } })()
+    : unavailableProfileCompleteness(profile);
   const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
   const text = (key: ProfileCopyKey, params: Readonly<Record<string, string | number>> = {}): string => PROFILE_COPY[language][key].replace(/\{([A-Za-z]+)\}/g, (_, name: string) => String(params[name] ?? ""));
   const copy = (key: ProfileCopyKey, params?: Readonly<Record<string, string | number>>) => escapeHtml(text(key, params));
   type Key = OwnProfileFieldName | "phone" | "handle" | "kuwaitiMother";
   const label = (key: Key) => text(`field.${key}`);
   const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
-  const loaded = login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
+  const loaded = completeness?.choices ?? (login.profileEdit?.choices ? await login.profileEdit.choices() : undefined);
   const originChoices = { countries: Array.isArray(loaded?.countries) ? loaded.countries : [], universities: Array.isArray(loaded?.universities) ? loaded.universities : [] };
   const nationalityId = profile.fields.nationality.state === "available" ? profile.fields.nationality.editValue : undefined;
   const nationalityIsKuwaiti = originChoices.countries.some(item => item.id === nationalityId && item.code === "KW");
@@ -354,7 +360,6 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
   const formatted = (key: Key): string => {
     const field = profile.fields[key];
-    if ((key === "isProfileCompleted" || key === "pendingFields") && hasWrites) return text("profile.checkedLater");
     if (!field || field.state !== "available") return text(field?.freshness.kind === "written_by_person" || !field ? "value.missing" : "value.unavailable");
     const value = field.value;
     if (key === "gender") return text(({male:"value.male",female:"value.female",other:"value.other"} as const)[String(value) as "male" | "female" | "other"] ?? "value.unavailable");
@@ -390,11 +395,25 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const initial = Array.from(name.trim())[0]?.toUpperCase() ?? "S";
   const languageForm = login.preferences ? `<form class="p-language" method="post" action="/profile/language/preview"><label for="profile-language">${copy("profile.changeLanguage")}</label><select id="profile-language" name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select><button class="p-button" type="submit">${copy("action.review")}</button></form>` : "";
   const provenanceKeys: (Key|"civilId")[] = [...OWN_PROFILE_FIELD_NAMES,...(["phone","handle","kuwaitiMother","civilId"] as const).filter(key => profile.fields[key])];
-  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(key === "civilId" ? (language === "ar" ? "البطاقة المدنية" : "Civil ID") : label(key))}</dt><dd>${copy(field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "not_imported" ? "meta.notImported" : field.freshness.observedAt ? "meta.imported" : "meta.importedUndated",{date:date(field.freshness.observedAt ?? "")})}</dd></div>`; }).join("")}</dl></details>`;
+  const provenance = `<details class="p-provenance"><summary>${copy("profile.sources")}</summary><dl>${provenanceKeys.map(key => { const field = profile.fields[key]!; return `<div><dt>${escapeHtml(key === "civilId" ? (language === "ar" ? "البطاقة المدنية" : "Civil ID") : label(key))}</dt><dd>${copy(field.freshness.kind === "derived" ? "meta.derived" : field.freshness.kind === "written_by_person" ? "meta.updated" : field.freshness.kind === "not_imported" ? "meta.notImported" : field.freshness.observedAt ? "meta.imported" : "meta.importedUndated",{date:date(field.freshness.observedAt ?? "")})}</dd></div>`; }).join("")}</dl></details>`;
   const avatar = currentProfileAvatar()?.avatarUrl;
   const summary = `<section id="profile-summary" class="p-card p-identity" aria-labelledby="profile-name">${avatar ? `<img class="p-monogram" src="${escapeHtml(avatar)}" alt="">` : `<div class="p-monogram" aria-hidden="true">${escapeHtml(initial)}</div>`}<div class="p-identity-text"><p class="p-kicker">${copy("profile.account")}</p><h2 id="profile-name"><bdi dir="auto">${escapeHtml(name)}</bdi></h2>${profile.fields.arabicName.state === "available" ? `<p lang="ar"><bdi dir="auto">${escapeHtml(profile.fields.arabicName.value)}</bdi></p>` : ""}${profile.fields.objective.state === "available" ? `<p class="p-lead"><bdi dir="auto">${escapeHtml(profile.fields.objective.value)}</bdi></p>` : ""}</div><dl class="p-status">${row("jobSearchStatus")}</dl></section>`;
+  const checklistTarget = (requirement: string): string | undefined => {
+    const editableTargets: Readonly<Record<string,string>> = { display_name:"displayName", arabic_name:"arabicName", objective:"objective", gender:"gender", birth_date:"birthDate", phone:"phone", driving_licence:"drivingLicence", nationality:"nationality", kuwaiti_mother:"kuwaitiMother" };
+    const field = editableTargets[requirement]; if (field) return login.browserEdit ? `/profile/edit/${field}` : `#field-${field}`;
+    if (requirement === "location") return "#field-area";
+    if (requirement === "civil_id" || requirement === "civil_expiry") return "#field-civilId";
+    if (["personal_photo","civil_front","civil_back"].includes(requirement)) return "/profile/documents";
+    if (requirement === "education" || requirement === "skill") return "/profile/background";
+    return undefined;
+  };
+  const checklist = profile.fields.pendingFields.state !== "available" || profile.fields.isProfileCompleted.state !== "available"
+    ? `<section class="p-card p-checklist" aria-labelledby="profile-checklist"><h2 id="profile-checklist">${copy("profile.checkFailed")}</h2></section>`
+    : profile.fields.pendingFields.value.length === 0
+      ? `<section class="p-card p-checklist" aria-labelledby="profile-checklist"><h2 id="profile-checklist">${copy("profile.complete")}</h2></section>`
+      : `<section class="p-card p-checklist" aria-labelledby="profile-checklist"><h2 id="profile-checklist">${copy("profile.toFinish")}</h2><ul>${profile.fields.pendingFields.value.map(requirement => { const words=copy(`pending.${requirement}` as ProfileCopyKey), href=checklistTarget(requirement); return `<li>${href ? `<a href="${href}">${words}</a>` : words}${requirement === "email" ? ` <span>${copy("profile.emailUniverse")}</span>` : ""}</li>`; }).join("")}</ul></section>`;
   const navigation = `<nav class="p-nav" aria-label="${copy("nav.main")}">${contributions.navigation.filter(item => item.visible(login)).map(item => `<a href="${item.href}"${item.current ? ' aria-current="page"' : ""}>${copy(item.labelKey)}</a>${item.key === "profile" && documentsAvailable ? `<a href="/profile/documents">${copy("nav.documents")}</a>` : ""}`).join("")}</nav>`;
-  const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
+  const sections = `${checklist}<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}${contributions.profileRows.filter(item => item.section === "details").map(item => item.render(language, copy)).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
   const civilRow = (login.civilId ? renderCivilIdRow(language, profile.fields.civilId?.state === "available" ? profile.fields.civilId.value : null) : "") + (login.area && profile.fields.coordinates?.state === "available" ? `<div class="p-row"><dt>${copy("area.coordinates")}</dt><dd><bdi dir="ltr">${profile.fields.coordinates.value.latitude.toFixed(6)}, ${profile.fields.coordinates.value.longitude.toFixed(6)}</bdi> <a class="p-edit" href="/profile/area/location">${copy("area.useLocation")}</a> <a class="p-edit" href="/profile/area">${copy("area.removeLocation")}</a></dd></div>` : "");
