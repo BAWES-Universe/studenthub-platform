@@ -76,6 +76,8 @@ test("REV_STAFF delivery refuses a live token after the person leaves the queue"
   assert.equal(delivered.status,404,"REV_STAFF non-waiting delivery is 404");assert.equal(await delivered.text(),expected,"REV_STAFF non-waiting delivery body is byte-identical");
   x.documentState.documents[0]!.scope.personId="unknown";const unknownLink=await x.login.civilIdReview!.staffDocuments!.issue(REAL_PROFILE_SESSION,"unknown","civil-id-front","civil_id_review"),unknown=await x.get(unknownLink.url);
   assert.equal(unknown.status,404,"REV_STAFF unknown delivery is 404");assert.equal(await unknown.text(),expected,"REV_STAFF unknown delivery body is byte-identical");
+  x.documentState.documents[0]!.scope.personId="bad/id";const malformedLink=await x.login.civilIdReview!.staffDocuments!.issue(REAL_PROFILE_SESSION,"bad/id","civil-id-front","civil_id_review"),malformed=await x.get(malformedLink.url);
+  assert.equal(malformed.status,404,"REV_STAFF malformed delivery is 404");assert.equal(await malformed.text(),expected,"REV_STAFF malformed delivery body is byte-identical");
 });
 
 test("REV_STAFF authorized person refusals cover both POST routes and non-waiting rows",async t=>{
@@ -96,5 +98,8 @@ test("REV_IMAGES queue and decision calls stay fixed for 0, 1 and 60 waiting peo
 });
 
 test("REV_SECRECY token headers redirects views decisions and logs exclude full number",async t=>{
-  const lines:string[]=[],old=console.error;console.error=(...v:unknown[])=>{lines.push(v.join(" "))};try{const x=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,preview=await x.post(path+"/decision",{decision:"rejected",reason:"secret scan",revision:"1"}),html=await preview.text(),token=/name="confirmation" value="([^"]+)"/.exec(html)![1]!,claim=Buffer.from(token.split(".")[0]!,"base64url").toString(),confirmed=await x.post(path+"/decision/confirm",{confirmation:token});const material=[...preview.headers,...confirmed.headers,claim,confirmed.headers.get("location"),JSON.stringify(x.reviewStore!.views),JSON.stringify(x.reviewStore!.decisions),...lines].join("\n");assert.doesNotMatch(material,new RegExp(full),"REV_SECRECY all non-page surfaces exclude full number")}finally{console.error=old}
+  const lines:string[]=[],old=console.error;let material="";
+  console.error=(...v:unknown[])=>{lines.push(v.join(" "))};
+  try{const x=await rig(t),path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`,preview=await x.post(path+"/decision",{decision:"rejected",reason:"secret scan",revision:"1"}),html=await preview.text(),token=/name="confirmation" value="([^"]+)"/.exec(html)![1]!,claim=Buffer.from(token.split(".")[0]!,"base64url").toString(),confirmed=await x.post(path+"/decision/confirm",{confirmation:token});material=[...preview.headers,...confirmed.headers,claim,confirmed.headers.get("location"),JSON.stringify(x.reviewStore!.views),JSON.stringify(x.reviewStore!.decisions),...lines].join("\n")}finally{console.error=old}
+  assert.doesNotMatch(material,new RegExp(full),"REV_SECRECY all non-page surfaces exclude full number")
 });
