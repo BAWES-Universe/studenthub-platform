@@ -86,6 +86,8 @@ async function fixture(t: TestContext, options: {
   return { rig, login, rows, profiles, reads, url };
 }
 
+test("SHU453_READ_SITES own access is included in the profile document without admin history",async(t)=>{const f=await fixture(t);Object.assign(f.login,{access:{search:async()=>({status:404 as const,body:{error:"not_found"}}),person:async()=>({status:404 as const,body:{error:"not_found"}}),preview:async()=>({status:404 as const,body:{error:"not_found"}}),confirm:async()=>({status:404 as const,body:{error:"not_found"}}),own:async()=>[{organizationId:"company:synthetic",organizationName:"Synthetic & Company",role:"recruiter"as const,scope:"subtree"as const}]}});const body=await(await fetch(`${f.url}/profile`,{headers:BROWSER})).text();assert.match(body,/Synthetic &amp; Company — recruiter \(subtree\)/);assert.doesNotMatch(body,/Hiring duty|Granted by|Reason/)});
+
 test("HTML negotiation is opt-in and preserves JSON defaults and preferences", () => {
   for (const accept of [undefined, "*/*", "application/json", "text/html;q=0", "text/html;q=0.5, application/json", "application/json, text/html", "text/html;q=bogus", "text/html;q=2"]) {
     assert.equal(wantsHtml(accept), false, accept);

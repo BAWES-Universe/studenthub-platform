@@ -2,6 +2,9 @@ import pg from "pg";
 import type { Pool, PoolClient, PoolConfig } from "pg";
 import { isGrantScope, isRole, type GrantScope, type Role } from "@studenthub/contracts";
 import { insertAuthorizationMutationAudit, resolveAuthorizationMutationContext } from "./authorization-audit.js";
+// Kept at the persistence boundary because @studenthub/db cannot depend on the
+// higher-level organizations package. This mirrors its closed default set.
+const DEFAULT_OPERATOR_ORG_IDS:readonly string[]=Object.freeze(["root"]);
 export type AccessCataloguePolicy=(input:{readonly callerGrants:readonly {readonly orgId:string;readonly role:Role;readonly scope:GrantScope}[];readonly targetOrganization:{readonly id:string;readonly name:string;readonly parentOrgId?:string};readonly organizations:readonly {readonly id:string;readonly name:string;readonly parentOrgId?:string}[];readonly role:Role;readonly scope:GrantScope})=>boolean;
 type AccessGrantChange={readonly action:"grant"|"revoke";readonly targetPrincipalId:string;readonly organizationId:string;readonly role:Role;readonly scope:GrantScope;readonly reason:string};
 type AccessWriteReason="invalid_request"|"not_found"|"self_escalation"|"not_allowed"|"already_held"|"grant_not_held"|"last_operator_admin"|"token_not_issued"|"token_expired"|"token_principal_mismatch"|"token_change_mismatch"|"token_already_used";
@@ -25,7 +28,8 @@ export class PostgresAccessStore {
   async #decision(c:PoolClient,caller:string,change:AccessGrantChange,lock:boolean):Promise<AccessWriteReason|null>{
     if(change.action==="grant"&&caller===change.targetPrincipalId)return"self_escalation";
     const people=await c.query("SELECT id FROM principals WHERE id=ANY($1::text[])",[caller===change.targetPrincipalId?[caller]:[caller,change.targetPrincipalId]]);if(people.rowCount!==(caller===change.targetPrincipalId?1:2))return"not_found";
-    const org=await c.query<{id:string;name:string;parent_org_id:string|null}>(`SELECT o.id,o.name,o.parent_org_id FROM organizations o WHERE o.id=$1 AND NOT EXISTS(SELECT 1 FROM organization_deletions d WHERE d.org_id=o.id)${lock?" FOR SHARE OF o":""}`,[change.organizationId]);if(!org.rowCount)return"not_found";
+    const org=await c.query<{id:string;name:string;parent_org_id:string|null}>(`SELECT o.id,o.name,o.parent_org_id FROM organizations o WHERE o.id=$1${lock?" FOR SHARE OF o":""}`,[change.organizationId]);if(!org.rowCount)return"not_found";
+    const deleted=await c.query("SELECT 1 FROM organization_deletions WHERE org_id=$1",[change.organizationId]);if(deleted.rowCount)return"not_found";
     const policy=await c.query<{kind:"grant"|"organization";id:string;name:string|null;parent_org_id:string|null;role:string|null;scope:string|null}>(`WITH RECURSIVE ancestors AS(SELECT id,name,parent_org_id FROM organizations WHERE id=$2 UNION ALL SELECT o.id,o.name,o.parent_org_id FROM organizations o JOIN ancestors a ON a.parent_org_id=o.id) SELECT 'organization' kind,id,name,parent_org_id,NULL::text role,NULL::text scope FROM ancestors UNION ALL SELECT 'grant',g.org_id,NULL,NULL,g.role,g.scope FROM grants g JOIN ancestors a ON a.id=g.org_id WHERE g.principal_id=$1`,[caller,change.organizationId]);
     const organizations=policy.rows.filter(x=>x.kind==="organization").map(x=>({id:x.id,name:x.name??"",...(x.parent_org_id===null?{}:{parentOrgId:x.parent_org_id})}));
     const callerGrants=policy.rows.filter(x=>x.kind==="grant"&&isRole(x.role)&&isGrantScope(x.scope)).map(x=>({orgId:x.id,role:x.role as Role,scope:x.scope as GrantScope}));
@@ -33,7 +37,7 @@ export class PostgresAccessStore {
     const held=await c.query<{scope:string}>(`SELECT scope FROM grants WHERE principal_id=$1 AND org_id=$2 AND role=$3${lock?" FOR UPDATE":""}`,[change.targetPrincipalId,change.organizationId,change.role]);const existing=held.rows[0]?.scope;
     if(change.action==="grant"&&existing!==undefined&&(existing==="subtree"||existing===change.scope))return"already_held";
     if(change.action==="revoke"&&existing!==change.scope)return"grant_not_held";
-    if(change.action==="revoke"&&change.role==="admin"){const n=await c.query(`SELECT id FROM grants WHERE org_id=$1 AND role='admin' FOR UPDATE`,[change.organizationId]);if((n.rowCount??0)<=1)return"last_operator_admin"}
+    if(change.action==="revoke"&&change.role==="admin"&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(change.organizationId)){const n=await c.query(`SELECT id FROM grants WHERE org_id=$1 AND role='admin' FOR UPDATE`,[change.organizationId]);if((n.rowCount??0)<=1)return"last_operator_admin"}
     return null;
   }
   async preview(caller:string,change:AccessGrantChange){const client=await this.#pool.connect();try{return await this.#decision(client,caller,change,false)}finally{client.release()}}
