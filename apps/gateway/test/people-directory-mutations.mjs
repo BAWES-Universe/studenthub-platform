@@ -6,7 +6,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 const dist=new URL("../../../dist/apps/gateway/",import.meta.url),people=new URL("src/people-directory.js",dist),web=new URL("src/web-ui.js",dist),suite=fileURLToPath(new URL("test/people-directory.test.js",dist)),hook=new URL("./helpers/swap-module.mjs",import.meta.url).href;
 const cases=[
-  ["drop the staff check","DIR_ACCESS every refused persona","DIR_ACCESS candidate/self/candidate:person-2 text/html status",people,"if (!await isPeopleStaff(options.authz, session.personId))","if (false)"],
+  ["drop the staff check","DIR_ACCESS every refused persona","DIR_ACCESS candidate/self/candidate:person-2 text/html status",people,"if (!active)","if (false)"],
   ["accept a self-scope grant","DIR_ACCESS every refused persona","DIR_ACCESS staff/self/root text/html status",people,'g.scope === "subtree"','(g.scope === "subtree" || g.scope === "self")'],
   ["accept a repeated key","DIR_QUERY closed vocabulary","DIR_QUERY rejects page=1&page=2",people,"params.getAll(key).length !== 1","false"],
   ["render the full phone","DIR_ROWS HTML and JSON","DIR_ROWS HTML omits +96550000000",web,"e(maskPhone(r.phoneLast4))",'e("+9655000" + r.phoneLast4)'],

@@ -17,18 +17,16 @@ export function parsePeopleDirectoryQuery(params:URLSearchParams):PeopleDirector
   const page=params.get("page");if(page!==null){if(!/^[1-9]\d{0,5}$/.test(page))return null;result.page=Number(page)}
   return Object.freeze(result);
 }
-export async function isPeopleStaff(authz:Pick<AuthzStore,"listGrantsForPrincipal">,principalId:string):Promise<boolean>{
-  const grants=await authz.listGrantsForPrincipal(principalId);
-  return grants.some(g=>(g.role==="staff"||g.role==="admin")&&g.scope==="subtree"&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(g.orgId));
-}
-export type PeopleDirectoryBody={readonly rows:readonly PeopleDirectoryRow[];readonly total:number;readonly page:number;readonly pageSize:number;readonly query:PeopleDirectoryQuery;readonly countries:readonly {id:string;name:string}[]};
+const peopleStaffGrant=(grants:Awaited<ReturnType<AuthzStore["listGrantsForPrincipal"]>>)=>grants.find(g=>(g.role==="staff"||g.role==="admin")&&g.scope==="subtree"&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(g.orgId));
+export async function isPeopleStaff(authz:Pick<AuthzStore,"listGrantsForPrincipal">,principalId:string):Promise<boolean>{return Boolean(peopleStaffGrant(await authz.listGrantsForPrincipal(principalId)))}
+export type PeopleDirectoryBody={readonly rows:readonly PeopleDirectoryRow[];readonly total:number;readonly page:number;readonly pageSize:number;readonly query:PeopleDirectoryQuery;readonly countries:readonly {id:string;name:string}[];readonly active:{readonly orgId:string;readonly role:"staff"|"admin"}};
 export type PeopleDirectoryResult={status:200;body:PeopleDirectoryBody}|{status:400|401|404|503;body:{error:string}};
 export interface PeopleDirectoryPage{open(session:string|undefined,params:URLSearchParams,html:boolean):Promise<PeopleDirectoryResult>}
 export function createPeopleDirectory(options:{sessions:Pick<SessionStore,"get">;authz:Pick<AuthzStore,"listGrantsForPrincipal">;store:PeopleDirectoryStore;choices:()=>Promise<{countries:readonly {id:string;name:string}[]}>;now?:()=>Date}):PeopleDirectoryPage{
   return{async open(sessionId,params,html){
     const session=sessionId?await options.sessions.get(sessionId):undefined;if(!session)return{status:401,body:{error:"unauthorized"}};
-    if(!await isPeopleStaff(options.authz,session.personId))return{status:404,body:{error:"not_found"}};
+    const active=peopleStaffGrant(await options.authz.listGrantsForPrincipal(session.personId));if(!active)return{status:404,body:{error:"not_found"}};
     const query=parsePeopleDirectoryQuery(params);if(!query)return{status:400,body:{error:"invalid_people_query"}};
-    try{const [{rows,total},choices]=await Promise.all([options.store.page(query,kuwaitDate((options.now??(()=>new Date()))())),html?options.choices():Promise.resolve({countries:[]})]);return{status:200,body:{rows,total,page:query.page,pageSize:PEOPLE_PAGE_SIZE,query,countries:choices.countries.map(x=>({id:x.id,name:x.name}))}}}catch{return{status:503,body:{error:"directory_unavailable"}}}
+    try{const [{rows,total},choices]=await Promise.all([options.store.page(query,kuwaitDate((options.now??(()=>new Date()))())),html?options.choices():Promise.resolve({countries:[]})]);return{status:200,body:{rows,total,page:query.page,pageSize:PEOPLE_PAGE_SIZE,query,countries:choices.countries.map(x=>({id:x.id,name:x.name})),active:{orgId:active.orgId,role:active.role as "staff"|"admin"}}}}catch{return{status:503,body:{error:"directory_unavailable"}}}
   }};
 }

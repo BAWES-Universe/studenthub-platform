@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import type { PeopleDirectoryQuery, PeopleDirectoryRow, PeopleDirectoryStore } from "@studenthub/profile";
 import { createPeopleDirectory } from "../src/people-directory.js";
 import { REAL_PROFILE_OTHER_SESSION, REAL_PROFILE_SESSION, startRealProfileServer } from "./helpers/real-profile-server.js";
+test("DIR_FIXES People HTML permits its workspace history guard",async t=>{const x=await setup(t);await x.server.authz.grantMany("person-1",[{orgId:"root",role:"staff",scope:"subtree"}]);const response=await x.server.get("/workspace/people");assert.equal(response.status,200);assert.match(response.headers.get("content-security-policy")??"",/(?:^|;) script-src 'self'(?:;|$)/,"DIR_FIXES People CSP permits workspace history guard");assert.match(await response.text(),/<script src="\/assets\/workspace-history\.js" defer><\/script>/,"DIR_FIXES People emits workspace history guard");});
 const nationalityId="11111111-1111-4111-8111-111111111111";
 const complete:PeopleDirectoryRow={principalId:"person-9",name:"Written Name",universeName:"Universe Name",arabicName:"اسم",workStatus:"active",nationality:{id:nationalityId,name:"Kuwaiti"},detailsMissing:0,civilState:"checked",imported:true,employeeId:"C00123",phoneLast4:"0000"};
 const sparse:PeopleDirectoryRow={principalId:"person-10",name:null,universeName:"Universe Person",arabicName:null,workStatus:"open_to_offers",nationality:null,detailsMissing:3,civilState:"none",imported:false,employeeId:null,phoneLast4:null};
