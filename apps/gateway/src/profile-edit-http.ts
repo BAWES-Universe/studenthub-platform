@@ -8,13 +8,17 @@ export interface PersonProfileEditStore {
   forPrincipal(principalId: string): SafeWriteStore;
   readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null>;
   contactValueAvailable?(principalId: string, field: "phone" | "handle", value: string): Promise<boolean>;
+  profileChoices?(): Promise<ProfileChoices>;
 }
+export interface ProfileChoice { readonly id: string; readonly name: string }
+export interface ProfileChoices { readonly countries: readonly ProfileChoice[]; readonly universities: readonly ProfileChoice[] }
 export type ProfileEditResult = { readonly status: 200; readonly body: unknown }
   | { readonly status: 400 | 401 | 403 | 404 | 409 | 503; readonly body: { readonly error: string } };
 export interface ProfileEdit {
   preview(session: string | undefined, body: unknown): Promise<ProfileEditResult>;
   confirm(session: string | undefined, body: unknown): Promise<ProfileEditResult>;
   receipt(session: string | undefined, ref: string): Promise<ProfileEditResult>;
+  choices(): Promise<ProfileChoices>;
 }
 const TOKEN_KEYS = ["changeSetDigest", "expectedBeforeDigest", "expiresAt", "issuedAt", "mac", "principalRef", "tokenId"] as const;
 const BODY_LIMIT = 65536;
@@ -41,6 +45,7 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
   const principal = async (session: string | undefined) => session ? (await ports.sessions.get(session))?.personId : undefined;
   const writer = (id: string) => createPersonSelfEdit({ store: ports.store.forPrincipal(id), secret: ports.secret, ...(ports.clock ? { clock: ports.clock } : {}) });
   return {
+    choices: () => ports.store.profileChoices?.() ?? Promise.resolve({ countries: [], universities: [] }),
     async preview(session, body) {
       const id = await principal(session); if (!id) return { status: 401, body: { error: "unauthorized" } };
       if (!exact(body, ["field", "value"])) return { status: 400, body: { error: "invalid_request" } };
@@ -119,11 +124,12 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
   return String(field.value);
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work", phone: "Phone number", handle: "Profile link" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work", phone: "Phone number", handle: "Profile link", nationality: "Nationality", university: "University", kuwaitiMother: "Kuwaiti mother" };
 const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
     : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
       : field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}`
+        : field === "kuwaitiMother" ? value === "true" ? "Yes" : "No"
         : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";
@@ -131,6 +137,7 @@ function editControl(selected: PersonSelfEditField, value: string, invalid = fal
   if (selected === "gender") return radios([["male","Male"],["female","Female"],["other","Other"]]);
   if (selected === "drivingLicence") return radios([["true","Yes"],["false","No"]]);
   if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
+  if (selected === "kuwaitiMother") return radios([["true","Yes"],["false","No"]]);
   if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
   if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
   if (selected === "phone") return `<input type="tel" name="value" value="${esc(value)}" maxlength="32"${described}>`;
@@ -166,8 +173,10 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const after = (result.body as { changes: readonly { after: string | null }[] }).changes[0]?.after ?? "";
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
+      const choices = selected === "nationality" || selected === "university" ? await service.choices() : undefined;
+      const namedAfter = selected === "nationality" ? choices?.countries.find(choice => choice.id === after)?.name : selected === "university" ? choices?.universities.find(choice => choice.id === after)?.name : undefined;
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, after))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(namedAfter ?? shownAfter(selected, after))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));

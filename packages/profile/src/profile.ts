@@ -184,7 +184,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -202,7 +202,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
   }
-  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus"] as const) {
+  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "nationality", "university"] as const) {
     const preference = preferences[name];
     if (!preference) continue;
     try {
@@ -228,6 +228,14 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
       if (name === "birthDate") fields.age = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS.age.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) });
     }
+  }
+  const mother = preferences.kuwaitiMother;
+  if (mother) try {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(mother.updatedAt) || !Number.isFinite(Date.parse(mother.updatedAt))) throw new TypeError("malformed preference timestamp");
+    fields.kuwaitiMother = written(fieldSpec("kuwaiti_mother", "Kuwaiti mother", "Whether the person's mother is Kuwaiti.", exactEnum(new Map([["true", true], ["false", false]]))), exactEnum(new Map([["true", true], ["false", false]]))(mother.value, profile.asOfDate) as boolean, mother.updatedAt);
+  } catch {
+    fields.kuwaitiMother = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance("kuwaiti_mother"),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: mother.updatedAt }) });
   }
   for (const name of ["phone", "handle"] as const) {
     const preference = preferences[name];

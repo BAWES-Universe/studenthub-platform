@@ -171,3 +171,12 @@ test("SHU374_HANDLE stores lowercase handles with the complete public alphabet",
   assert.equal(normalizePersonSelfEditValue("handle", "Noor.Sabah", TODAY), "noor.sabah");
   for (const value of ["no", "1noor", "noor al-sabah", "-noor"]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), null);
 });
+
+test("SHU415_WRITE validates catalogue ids and the Kuwaiti-mother choice", () => {
+  assert.equal(normalizePersonSelfEditValue("nationality", "11111111-1111-4111-8111-111111111111", TODAY), "11111111-1111-4111-8111-111111111111");
+  assert.equal(normalizePersonSelfEditValue("university", "22222222-2222-4222-8222-222222222222", TODAY), "22222222-2222-4222-8222-222222222222");
+  for (const field of ["nationality", "university"] as const) for (const value of ["", "Kuwait", "1"]) assert.equal(normalizePersonSelfEditValue(field, value, TODAY), null);
+  assert.equal(normalizePersonSelfEditValue("kuwaitiMother", "true", TODAY), "true");
+  assert.equal(normalizePersonSelfEditValue("kuwaitiMother", "false", TODAY), "false");
+  assert.equal(normalizePersonSelfEditValue("kuwaitiMother", "yes", TODAY), null);
+});

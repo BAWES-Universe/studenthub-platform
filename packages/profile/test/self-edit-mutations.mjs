@@ -20,7 +20,10 @@ const mutations = [
   ["SHU413_WRITE", 'if (field === "gender" && !["male", "female", "other"].includes(normalized))', 'if (field === "gender" && false)'],
   ["SHU374_PHONE", '!/^\\+[0-9]{8,15}$/.test(normalized)', "false"],
   ["SHU374_HANDLE", '!/^[a-z][a-z0-9._-]{2,29}$/.test(normalized)', "false"],
+  ["SHU415_WRITE", '!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)', "false"],
+  ["SHU415_WRITE", 'field === "kuwaitiMother" && !["true", "false"].includes(normalized)', 'field === "kuwaitiMother" && false'],
   ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 32]", "['phone', 'Phone number', 'text', 32]", webUiModuleFile, pageSuite],
+  ["SHU415_PAGE", '<select name="value" required>', '<input name="value">', webUiModuleFile, pageSuite],
   ["SHU413_PAGE", "summary(shownAfter(selected, after))", "summary(after)", pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];

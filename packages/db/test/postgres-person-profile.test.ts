@@ -142,6 +142,37 @@ test("SHU413_WRITE Postgres writes every choice twice with stable text state", a
   for (const field of Object.keys(changes)) assert.match(preferences[field]!.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test("SHU415_CATALOGUE choices omit deleted countries and universities", async () => {
+  const store = new PostgresPersonProfileStore({ pool }), ref = "a".repeat(64);
+  const insert = async (type: "country" | "university", status: "active" | "deleted", name: string, code?: string) => {
+    const id = randomUUID();
+    await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at)
+      VALUES($1,$2,$3,$3,$4,$5,$6,$6,now(),now(),$7)`, [id,type,name,code ?? null,status,ref,status === "deleted" ? new Date() : null]);
+    return id;
+  };
+  const activeCountry = await insert("country", "active", `Active-${randomUUID()}`), deletedCountry = await insert("country", "deleted", `Deleted-${randomUUID()}`);
+  const activeUniversity = await insert("university", "active", `Active-${randomUUID()}`), deletedUniversity = await insert("university", "deleted", `Deleted-${randomUUID()}`);
+  const choices = await store.profileChoices();
+  assert.equal(choices.countries.some(choice => choice.id === activeCountry), true);
+  assert.equal(choices.universities.some(choice => choice.id === activeUniversity), true);
+  assert.equal(choices.countries.some(choice => choice.id === deletedCountry), false);
+  assert.equal(choices.universities.some(choice => choice.id === deletedUniversity), false);
+});
+
+test("SHU415_WRITE Postgres writes origin fields twice, resolves labels, and refuses the Kuwaiti combination", async () => {
+  const id = `shu415-${randomUUID()}`, authz = new PostgresAuthzStore(pool), ref = "b".repeat(64);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const catalogue = async (type: "country" | "university", name: string, code?: string) => { const itemId=randomUUID(); await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES($1,$2,$3,$3,$4,'active',$5,$5,now(),now())`,[itemId,type,name,code??null,ref]); return itemId; };
+  const country = await catalogue("country", "Canadian"), kuwait = await catalogue("country", "Kuwaiti", "KW"), university = await catalogue("university", "Test University");
+  const store = new PostgresPersonProfileStore({ pool }), writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+  const write = async (field: "nationality" | "university" | "kuwaitiMother", value: string) => { const principalRef=safeWritePrincipalRef(id),change={personRef:personRecordRef(id),field,value};const preview=await writer().preview({principalRef,change});assert.ok(preview.ok);return preview.ok?writer().confirm({principalRef,change,token:preview.token}):preview; };
+  for (const [field, values] of [["nationality",[country,country]],["university",[university,university]],["kuwaitiMother",["true","false"]]] as const) for (const value of values) assert.equal((await write(field,String(value))).ok,true);
+  assert.equal((await write("kuwaitiMother","true")).ok,true);
+  assert.deepEqual(await write("nationality",kuwait),{ok:false,reason:"invalid_value"});
+  const preferences = await store.readOwnPreferences(id) as Record<string,{value:unknown}>;
+  assert.equal(preferences.nationality!.value,"Canadian"); assert.equal(preferences.university!.value,"Test University"); assert.equal(preferences.kuwaitiMother!.value,"true");
+});
+
 test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone holder the same refusal", async () => {
   const ids = [`shu374-${randomUUID()}`, `shu374-${randomUUID()}`], authz = new PostgresAuthzStore(pool);
   for (const id of ids) await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));

@@ -5,12 +5,13 @@ import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./safe-write-store.js";
 
-export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle"] as const;
+export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university", "kuwaitiMother"] as const;
 export type PersonProfileField = (typeof PERSON_PROFILE_FIELDS)[number];
 const COLUMNS: Record<PersonProfileField, string> = {
   displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time",
   gender: "gender", birthDate: "birth_date", drivingLicence: "driving_licence", jobSearchStatus: "job_search_status",
   phone: "phone", handle: "profile_handle",
+  nationality: "nationality_id", university: "university_id", kuwaitiMother: "kuwaiti_mother",
 };
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
@@ -30,6 +31,16 @@ export class PostgresPersonProfileStore {
     const column = COLUMNS[field];
     const { rows } = await this.#pool.query(`SELECT NOT EXISTS (SELECT 1 FROM person_profiles WHERE ${column}=$1 AND principal_id<>$2) AS available`, [value, principalId]);
     return rows[0]?.available === true;
+  }
+
+  async profileChoices() {
+    const { rows } = await this.#pool.query(`SELECT id::text, catalogue_type AS type, name
+      FROM catalogue_items WHERE status='active' AND catalogue_type IN ('country','university')
+      ORDER BY catalogue_type,name,id`);
+    return Object.freeze({
+      countries: Object.freeze(rows.filter(row => row.type === "country").map(row => Object.freeze({ id: row.id as string, name: row.name as string }))),
+      universities: Object.freeze(rows.filter(row => row.type === "university").map(row => Object.freeze({ id: row.id as string, name: row.name as string }))),
+    });
   }
 
   forPrincipal(principalId: string): SafeWriteStore {
@@ -54,14 +65,20 @@ export class PostgresPersonProfileStore {
               pp.gender::text, pp.gender_written_at, pp.birth_date::text, pp.birth_date_written_at,
               pp.driving_licence::text, pp.driving_licence_written_at,
               pp.job_search_status::text, pp.job_search_status_written_at,
-              pp.phone::text, pp.phone_written_at, pp.profile_handle::text, pp.profile_handle_written_at
-         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id WHERE p.id=$1`, [principalId]);
+              pp.phone::text, pp.phone_written_at, pp.profile_handle::text, pp.profile_handle_written_at,
+              pp.nationality_id::text, pp.nationality_id_written_at, nationality.name AS nationality_name,
+              pp.university_id::text, pp.university_id_written_at, university.name AS university_name,
+              pp.kuwaiti_mother::text, pp.kuwaiti_mother_written_at
+         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id
+         LEFT JOIN catalogue_items nationality ON nationality.id=pp.nationality_id AND nationality.catalogue_type='country'
+         LEFT JOIN catalogue_items university ON university.id=pp.university_id AND university.catalogue_type='university'
+         WHERE p.id=$1`, [principalId]);
     const row = rows[0];
     if (!row) return null;
     const result: Record<string, unknown> = {};
     for (const [field, column] of Object.entries(COLUMNS)) {
       const at = row[`${column}_written_at`];
-      if (at instanceof Date) result[field] = Object.freeze({ value: row[column], updatedAt: at.toISOString() });
+      if (at instanceof Date) result[field] = Object.freeze({ value: field === "nationality" ? row.nationality_name : field === "university" ? row.university_name : row[column], updatedAt: at.toISOString() });
     }
     return Object.freeze(result);
   }
@@ -98,6 +115,13 @@ export class PostgresPersonProfileStore {
       if (!await this.#exists(client, id)) throw new Refusal("not_own_record");
       const current = (await client.query(`SELECT ${column}::text AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
       if (current !== input.expectedBefore) throw new Refusal("state_changed");
+      if (field === "nationality" || field === "university") {
+        const expectedType = field === "nationality" ? "country" : "university";
+        const choice = (await client.query(`SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'`, [input.value, expectedType])).rows[0];
+        if (!choice) throw new Refusal("invalid_value");
+        if (field === "nationality" && choice.code === "KW" && (await client.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.kuwaiti_mother === true) throw new Refusal("invalid_value");
+      }
+      if (field === "kuwaitiMother" && input.value === "true" && (await client.query(`SELECT 1 FROM person_profiles pp JOIN catalogue_items ci ON ci.id=pp.nationality_id WHERE pp.principal_id=$1 AND ci.catalogue_type='country' AND ci.code='KW'`, [id])).rowCount) throw new Refusal("invalid_value");
       await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
         ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, input.value === "" ? null : input.value]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
