@@ -90,13 +90,14 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const browserSessionPool = browserTokens ? new pg.Pool({ connectionString: databaseUrl }) : undefined;
   const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
+  const profileReadPool = new pg.Pool({ connectionString: databaseUrl });
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
-  const peopleChoicesStore = personProfiles ?? new PostgresPersonProfileStore({ connectionString: databaseUrl });
+  const peopleChoicesStore = personProfiles ?? new PostgresPersonProfileStore({ pool: profileReadPool });
   const PeopleDirectoryStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { PeopleDirectoryStore: typeof import("../../../../packages/db/src/postgres-people-directory-store.js").PostgresPeopleDirectoryStore }).PeopleDirectoryStore;
-  const peopleDirectoryStore = new PeopleDirectoryStore({ connectionString: databaseUrl });
+  const peopleDirectoryStore = new PeopleDirectoryStore({ pool: profileReadPool });
   const people = createPeopleDirectory({ sessions: access.loginStore.sessions, authz: access.authzStore, store: peopleDirectoryStore,
     choices: async () => ({ countries: (await peopleChoicesStore.readOriginChoices()).countries }) });
-  const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
+  const personLocations = new PostgresPersonLocationStore({ pool: profileReadPool });
   const area = createArea({ store: personLocations });
   const profiles = composeOwnProfiles({ principals: access.authzStore, source: profileSource, safeWrites, personProfiles, civilId, area });
   // SHU-182: a candidate's own bank details, behind the same signing key.
@@ -172,10 +173,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
       ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
-      area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
-      people,
+      area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "", people },
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personProfiles ? undefined : peopleChoicesStore.close(), personLocations.close(), peopleDirectoryStore.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), profileReadPool.end(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
   };
 }

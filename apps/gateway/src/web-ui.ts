@@ -55,7 +55,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
   readonly civilIdSuggestion?: CivilIdSuggestionService;
-  readonly area?: AreaHttp;
+  readonly area?: AreaHttp & { readonly people?: PeopleDirectoryPage };
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
@@ -211,7 +211,7 @@ function companiesLink(active: WorkspaceContext | null, login: BrowserLoginAppli
 }
 
 function peopleLink(active: WorkspaceContext | null, login: BrowserLoginApplication, current = false, authorized = false): string {
-  if (!authorized || !active || !login.people || !DIRECTORY_ROLES.has(active.role) || !(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(active.orgId)) return "";
+  if (!authorized || !active || !(login.people ?? login.area?.people) || !DIRECTORY_ROLES.has(active.role) || !(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(active.orgId)) return "";
   return `<a class="nav-item${current ? " active" : ""}" href="/workspace/people"${current ? ' aria-current="page"' : ""}>People</a>`;
 }
 
