@@ -8,6 +8,7 @@ import { handleLegacyLink } from "../legacy-link-http.js";
 import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { handleDocumentsActions } from "../documents-actions-http.js";
 import { prepareProfileAvatar } from "../profile-avatar.js";
+import { handleProfileCompleteness } from "../profile-completeness.js";
 
 const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
   handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
@@ -16,6 +17,8 @@ const documentsActionsRoute: GatewayRoute = { name: "documents-actions", handle:
 const profileAvatarRoute: GatewayRoute = { name: "profile-avatar", handle: async (ctx) => {
   await prepareProfileAvatar(ctx.request, ctx.response, ctx.documents); return false;
 } };
+const profileCompletenessRoute: GatewayRoute = { name: "profile-completeness", handle: (ctx) =>
+  handleProfileCompleteness(ctx.request, ctx.response, ctx.login, ctx.profileCompleteness ?? { principals: ctx.authz.store, records: ctx.profileRecords }, ctx.writeHtml) };
 
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
@@ -43,6 +46,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   languagePreferenceRoute,
   bankDetailsRoute,
   profileAvatarRoute,
+  profileCompletenessRoute,
   organizationProfileRoute,
   organizationStatusRoute,
   organizationCommercialTermsRoute,

@@ -19,6 +19,7 @@ import type { LegacyLinkService } from "../legacy-link-http.js";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "../area-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
+import type { ProfileCompletenessDependencies } from "../profile-completeness.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilId?: CivilIdService;
@@ -48,6 +49,7 @@ export interface GatewayRouteContext {
   readonly writeHtml: typeof import("../web-ui.js").writeHtml;
   readonly pageDocument: typeof import("../web-ui.js").pageDocument;
   readonly renderError: typeof import("../web-ui.js").renderError;
+  readonly profileCompleteness?: ProfileCompletenessDependencies;
 }
 
 export type GatewayRoute = {
