@@ -7,6 +7,7 @@ const moduleFile = new URL("../../../dist/packages/profile/src/self-edit.js", im
 const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/self-edit.test.js", import.meta.url));
 const pageModuleFile = new URL("../../../dist/apps/gateway/src/profile-edit-http.js", import.meta.url);
 const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/profile-edit-http.test.js", import.meta.url));
+const webModuleFile = new URL("../../../dist/apps/gateway/src/web-ui.js", import.meta.url);
 const mutations = [
   ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
   ["SHU372_RULES", "/\\s{2}/u.test(normalized)", "false"],
@@ -14,6 +15,7 @@ const mutations = [
   ["SHU372_RULES", "!ARABIC_LETTER.test(normalized)", "false"],
   ["SHU372_RULES", "value.normalize(\"NFC\")", "value"],
   ["SHU373_AGE", "minimum.getUTCFullYear()-PERSON_PROFILE_MINIMUM_AGE", "minimum.getUTCFullYear()-17"],
+  ["SHU373_PAGE", "control = radios([[\"male\", \"Male\"], [\"female\", \"Female\"], [\"other\", \"Other\"]]);", "control = \"mutant\";", webModuleFile, pageSuite],
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],

@@ -32,7 +32,13 @@ const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
 const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06fa-\u06fc]/u;
 
-export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = new Date().toISOString().slice(0,10)): string | null {
+function kuwaitDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)!.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = kuwaitDate(new Date())): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.normalize("NFC");
   const rule = SHU372_RULES[field];
@@ -66,7 +72,7 @@ export function createPersonSelfEdit(options: {
   });
   const normalize = <T extends PreviewRequest | ConfirmRequest>(request: T): T | null => {
     if (!PERSON_SELF_EDIT_FIELDS.includes(request.change.field as PersonSelfEditField)) return request;
-    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, (options.clock?.now() ?? new Date()).toISOString().slice(0,10));
+    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, kuwaitDate(options.clock?.now() ?? new Date()));
     return value === null ? null : { ...request, change: { ...request.change, value } };
   };
   return Object.freeze({

@@ -24,6 +24,15 @@ test("SHU373_AGE one minimum-age setting accepts sixteen with no maximum", () =>
   assert.equal(normalizePersonSelfEditValue("birthDate", "not-a-date", "2026-10-30"), null);
 });
 
+test("SHU373_AGE uses the Kuwait calendar day at the minimum-age boundary", async () => {
+  let value: string | null = null;
+  const store = { ownedRecord: () => "b".repeat(64), readField: () => value, commit: (input: any) => { value = input.value; return { ok: true } as const; } };
+  const writer = createPersonSelfEdit({ store, secret: "s".repeat(32), clock: { now: () => new Date("2026-10-29T21:30:00.000Z") } });
+  const request = { principalRef: "a".repeat(64), change: { personRef: "b".repeat(64), field: "birthDate" as const, value: "2010-10-30" } };
+  const preview = await writer.preview(request);
+  assert.ok(preview.ok);
+});
+
 test("SHU373_CATALOGUE reads written values and catalogue choices once each", async () => {
   let writtenReads=0, catalogueReads=0;
   const repository = new OwnProfileRepository({

@@ -48,5 +48,5 @@ BEGIN
     $needle$IN ('language','displayName','arabicName','objective','intro','preferredTime')$needle$,
     $replacement$IN ('language','displayName','arabicName','objective','intro','preferredTime','gender','birthDate','nationality','university','drivingLicence','kuwaitiMother','jobSearchStatus')$replacement$);
   IF new_body = old_body THEN RAISE EXCEPTION 'profile safe-write audit whitelist was not found'; END IF;
-  EXECUTE format('CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(TEXT,JSONB) RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS %L', new_body);
+  EXECUTE format('CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(audit_operation TEXT, summary JSONB) RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS %L', new_body);
 END $$;
