@@ -63,6 +63,7 @@ async function fixture(t){
   directUploads:{authorize:async ticket=>{await snapshots.reserve(ticket.objectKey);return r2.authorize(ticket);},read:ticket=>r2.read(ticket)}};
  const service=createCandidateDocuments(ports),server=createGatewayServer(undefined,undefined,undefined,undefined,null,undefined,service);
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r);}));
+ const gatewayUrl=`http://127.0.0.1:${server.address().port}`;
  const key=()=>createIdempotencyKey(new Date(now));
  async function req(path,body,{actor='alice',idempotency=key(),method='POST'}={}){const r=await fetch(`http://127.0.0.1:${server.address().port}${path}`,{method,headers:{authorization:'Bearer '+sessions[actor],origin,'content-type':'application/json','idempotency-key':idempotency},body:method==='GET'?undefined:JSON.stringify(body)});const bytes=Buffer.from(await r.arrayBuffer());let json;try{json=JSON.parse(bytes);}catch{}return {status:r.status,body:json,bytes};}
  const authorize=(type,bytes,expectedVersion=null)=>req('/candidate-documents/uploads',{type,mime:type==='resume'?'application/pdf':'image/png',size:bytes.length,expectedVersion,sha256:hash(bytes),contentMd5:md5(bytes)});
@@ -71,7 +72,7 @@ async function fixture(t){
   const key=decodeURIComponent(new URL(url).pathname).slice(bucket.length+2);
   if(objects.has(key))return 412;objects.set(key,Buffer.from(bytes));return 200;
  }
- return {req,authorize,upload,key,service,store,r2,objects,requests,reserved,sessions,ports,snapshot:()=>structuredClone(packed),fail:()=>fail=true,uncertain:()=>uncertain=true,advance:ms=>now+=ms};
+ return {req,authorize,upload,key,service,store,r2,objects,requests,reserved,sessions,ports,gatewayUrl,snapshot:()=>structuredClone(packed),fail:()=>fail=true,uncertain:()=>uncertain=true,advance:ms=>now+=ms};
 }
 
 test('SHU-145/R2-01 direct signatures bind one key, exact headers, one write and expiry',async t=>{
@@ -147,4 +148,15 @@ test('SHU-145/R2-07 complete R2 configuration constructs ports without contactin
   DOCUMENT_R2_ACCESS_KEY_ID:accessKeyId,DOCUMENT_R2_SECRET_ACCESS_KEY:secretAccessKey};
  const runtime=await createRuntimeCandidateDocumentsFromEnv(env);assert.ok(runtime.service.options.directUploads);assert.ok(runtime.service.options.store instanceof R2DocumentStore);await runtime.close();
  await assert.rejects(createRuntimeCandidateDocumentsFromEnv({...env,DOCUMENT_ROOT:'/no-fallback'}),{message:'invalid candidate-document configuration'});
+});
+
+test('Q14_1_ONE_PATH R2 browser form computes digests and keeps direct capability server-side',async t=>{
+ const f=await fixture(t),form=new FormData();
+ form.append('file',new Blob([png()],{type:'image/png'}),'browser-name-must-not-escape.png');
+ form.append('submission','v1.1800000000000.12345678-1234-4234-8234-123456789abc');
+ const response=await fetch(f.gatewayUrl+'/profile/documents/personal-photo/upload',{method:'POST',headers:{cookie:`__Host-studenthub_session=${f.sessions.alice}`,origin,'sec-fetch-site':'same-origin'},body:form,redirect:'manual'});
+ assert.equal(response.status,303);assert.equal(response.headers.get('location'),'/profile/documents');
+ const text=await response.text();assert.doesNotMatch(text,/browser-name|X-Amz|uploads\/|credential/);
+ const snapshot=f.snapshot();assert.equal(snapshot.state.documents.length,1);assert.equal(snapshot.state.documents[0].type,'personal-photo');
+ assert.equal(f.objects.size,1,'R2 immutable object is written once by the server path');
 });

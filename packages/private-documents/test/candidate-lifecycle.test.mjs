@@ -437,3 +437,11 @@ test('SHU366_PERSON_LIVE every operation and receipt replay rechecks live sessio
   }
  }
 });
+
+test('UPL_NO_ORG list refuses a missing configured document organization without reading document state',async t=>{
+ const f=await fixture(t);let reads=0;const store=f.service.options.store;
+ f.service.options.store={transaction:async fn=>{reads++;return store.transaction(fn);}};
+ f.service.options.orgId='';
+ await assert.rejects(f.service.list(f.tokens.alice),error=>error?.code==='denied'&&error?.status===403);
+ assert.equal(reads,0);
+});

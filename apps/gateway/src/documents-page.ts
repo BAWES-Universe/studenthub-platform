@@ -4,6 +4,7 @@ import { CANDIDATE_DOCUMENT_TYPES } from '../../../packages/private-documents/sr
 import { DocumentError, type Metadata } from '../../../packages/private-documents/src/index.js';
 import { pageDocument, wantsHtml, writeHtml, type BrowserLoginApplication } from './web-ui.js';
 import type { ProfileLanguage } from './ui/profile-copy.js';
+import { createIdempotencyKey } from '../../../packages/idempotency-contract/src/idempotency.js';
 
 const COPY = {
   en: { title: 'My documents', back: 'My profile', onFile: 'On file', missing: 'Not uploaded', accepted: 'Accepted formats', maximum: 'Maximum size', bytes: 'bytes', signIn: 'Sign in to view your documents', continue: 'Continue with Universe', unavailable: 'Documents are temporarily unavailable. Please try again.', slots: ['Personal photo', 'CV', 'Civil ID front', 'Civil ID back'] },
@@ -18,14 +19,15 @@ function shell(language: ProfileLanguage, content: string): string {
   return pageDocument(copy.title, `<main id="main" class="profile-ui"><div class="p-shell"><section class="p-main p-card p-stack"><a href="/profile">${copy.back}</a><h1 id="documents-heading">${copy.title}</h1>${content}</section></div></main>`, language);
 }
 /** Presentation is a closed four-slot projection. Never serialize a metadata row. */
-export function documentsPage(documents: readonly Metadata[], language: ProfileLanguage): string {
+export function documentsPage(documents: readonly Metadata[], language: ProfileLanguage, now: () => number = Date.now): string {
   const copy = COPY[language];
   const slots = CANDIDATE_DOCUMENT_TYPES.map((type, index) => {
     const document = documents.find(row => row.type === type); // SHU366_PAGE slot presence
     const admission = CANDIDATE_DOCUMENT_ADMISSION[type];
+    const submission = createIdempotencyKey(new Date(now()));
     return `<div id="document-${type}" class="p-row"><dt>${copy.slots[index]}</dt><dd><strong>${document ? copy.onFile : copy.missing}</strong><p class="p-meta">${document
       ? `${escape(format(document.mime))} · ${escape(String(document.size))} ${copy.bytes}`
-      : `${copy.accepted}: ${admission.mimeTypes.map(mime => escape(format(mime))).join(', ')}. ${copy.maximum}: ${escape(String(admission.maxBytes / (1024 * 1024)))} MiB.`}</p></dd></div>`;
+      : `${copy.accepted}: ${admission.mimeTypes.map(mime => escape(format(mime))).join(', ')}. ${copy.maximum}: ${escape(String(admission.maxBytes / (1024 * 1024)))} MiB.`}</p><form method="post" enctype="multipart/form-data" action="/profile/documents/${type}/upload"><input type="file" name="file" accept="${admission.mimeTypes.join(',')}" required><input type="hidden" name="submission" value="${submission}"><button class="p-button p-primary" type="submit">${document ? 'Replace' : 'Upload'}</button></form></dd></div>`;
   }).join('');
   return shell(language, `<dl class="p-stack">${slots}</dl>`);
 }
@@ -62,7 +64,7 @@ export async function handleDocumentsPage(request: IncomingMessage, response: Se
     language = own.profile.fields.language.state === 'available' && own.profile.fields.language.value === 'ar' ? 'ar' : 'en';
     if (!service) { fail(503); return true; }
     const documents = await service.list(sessionId);
-    writeHtml(response, 200, documentsPage(documents, language));
+    writeHtml(response, 200, documentsPage(documents, language, service.options.now ?? Date.now));
   } catch (error) {
     // A session may have been revoked between profile authentication and the list.
     if ((error instanceof LifecycleError || error instanceof DocumentError) && error.code === 'denied' && sessionId && login) {
