@@ -8,3 +8,4 @@ export * from "./civil-id-ocr.js";
 export * from "./civil-id-review.js";
 export * from "./area.js";
 export * from "./completeness.js";
+export * from "./people-directory.js";
