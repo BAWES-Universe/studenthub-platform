@@ -47,6 +47,20 @@ function upload(value: unknown): { scope: { orgId: string }; type: DocumentType;
 function metadata(value: Metadata): Metadata {
   return { id: value.id, type: value.type, mime: value.mime, size: value.size, version: value.version };
 }
+function organizationDocument(value: Metadata): Metadata {
+  if (value.type !== 'company-logo' && value.type !== 'commercial-licence') throw new DocumentError('denied');
+  return value;
+}
+function deliveryDocumentId(raw: string): unknown {
+  try {
+    const token = new URL('https://route.invalid' + raw).searchParams.get('t');
+    const payload = token?.split('.')[0];
+    const claim: unknown = payload === undefined ? undefined : JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return record(claim) ? claim.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function handleOrganizationDocuments(request: IncomingMessage, response: ServerResponse, runtime?: OrganizationDocumentsRuntime): Promise<boolean> {
   const raw = request.url ?? '';
@@ -63,6 +77,7 @@ export async function handleOrganizationDocuments(request: IncomingMessage, resp
     if (!runtime) { send(503, { error: 'unavailable' }); return true; }
     const session = credential(request);
     if (request.method === 'GET' && raw.startsWith('/organization-documents/delivery?')) {
+      organizationDocument(await runtime.service.metadata(session, deliveryDocumentId(raw)));
       const result = await runtime.service.deliver(session, runtime.origin + raw);
       response.writeHead(200, result.headers); response.end(result.bytes); return true;
     }
@@ -82,10 +97,11 @@ export async function handleOrganizationDocuments(request: IncomingMessage, resp
     }
     if (!record(input) || !exact(input, ['documentId']) || typeof input.documentId !== 'string') throw new DocumentError('invalid');
     if (raw === '/organization-documents/delivery') {
+      organizationDocument(await runtime.service.metadata(session, input.documentId));
       const delivery = await runtime.service.issueDelivery(session, input.documentId);
       send(200, { url: delivery.url, expiresAt: delivery.expiresAt }); return true;
     }
-    const previous = metadata(await runtime.service.metadata(session, input.documentId));
+    const previous = metadata(organizationDocument(await runtime.service.metadata(session, input.documentId)));
     await runtime.service.remove(session, input.documentId);
     send(200, previous);
   } catch (error) {

@@ -7,14 +7,14 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { InMemoryAuthzStore } from '@studenthub/contracts';
 import type { LoginSession, SessionStore } from '@studenthub/login-contract';
-import { FileDocumentStore } from '../../../packages/private-documents/src/index.js';
+import { FileDocumentStore, PrivateDocuments } from '../../../packages/private-documents/src/index.js';
 import { createOrganizationDocuments } from '../src/organization-documents-runtime.js';
 
 const { handleOrganizationDocuments } = await import(process.env.SHU301_TEST_MODULE ?? '../src/organization-documents-http.js');
-const OWNER = 'o'.repeat(43), OTHER = 'x'.repeat(43), ANON = 'a'.repeat(43);
+const OWNER = 'o'.repeat(43), OTHER = 'x'.repeat(43), CANDIDATE = 'c'.repeat(43), ANON = 'a'.repeat(43);
 const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 class Sessions implements SessionStore {
-  rows = new Map<string, LoginSession>([[OWNER, { id: OWNER, personId: 'owner' }], [OTHER, { id: OTHER, personId: 'other-owner' }]]);
+  rows = new Map<string, LoginSession>([[OWNER, { id: OWNER, personId: 'owner' }], [OTHER, { id: OTHER, personId: 'other-owner' }], [CANDIDATE, { id: CANDIDATE, personId: 'candidate' }]]);
   async put(row: LoginSession) { this.rows.set(row.id, row); }
   async get(id: string) { return this.rows.get(id); }
   async delete(id: string) { this.rows.delete(id); }
@@ -22,16 +22,21 @@ class Sessions implements SessionStore {
 async function rig(context: TestContext) {
   const dir = await mkdtemp(join(tmpdir(), 'shu301-')); context.after(() => rm(dir, { recursive: true, force: true }));
   const store = await FileDocumentStore.create(join(dir, 'documents'));
-  const authz = new InMemoryAuthzStore({ organizations: [{ id: 'org-a', name: 'A' }, { id: 'org-b', name: 'B' }], principals: ['owner', 'other-owner'].map(id => ({ id, pbuuids: [] })) });
+  const authz = new InMemoryAuthzStore({ organizations: [{ id: 'org-a', name: 'A' }, { id: 'org-b', name: 'B' }], principals: ['owner', 'other-owner', 'candidate'].map(id => ({ id, pbuuids: [] })) });
   await authz.grantMany('owner', [{ orgId: 'org-a', role: 'org-owner', scope: 'self' }]);
   await authz.grantMany('other-owner', [{ orgId: 'org-b', role: 'org-owner', scope: 'self' }]);
+  await authz.grantMany('candidate', [{ orgId: 'org-a', role: 'candidate', scope: 'self' }]);
   let now = 1_800_000_000_000;
   const configuredOrigin = 'https://documents.example.test';
-  const runtime = createOrganizationDocuments({ store, authz, sessions: new Sessions(), origin: configuredOrigin, signingKey: randomBytes(32), now: () => now });
+  const sessions = new Sessions(); const signingKey = randomBytes(32);
+  const runtime = createOrganizationDocuments({ store, authz, sessions, origin: configuredOrigin, signingKey, now: () => now });
+  const candidate = new PrivateDocuments({ store, authz, signingKey, origin: configuredOrigin, now: () => now, authenticate: async credential => {
+    const session = await sessions.get(credential); return session ? { kind: 'principal', principalId: session.personId } : null;
+  } });
   const server = createServer((request, response) => void handleOrganizationDocuments(request, response, runtime));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); context.after(() => server.close());
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  return { endpoint: `http://127.0.0.1:${address.port}`, origin: configuredOrigin, runtime, advance: (ms: number) => { now += ms; } };
+  return { endpoint: `http://127.0.0.1:${address.port}`, origin: configuredOrigin, runtime, candidate, advance: (ms: number) => { now += ms; } };
 }
 const headers = (origin: string, session = OWNER) => ({ cookie: `__Host-studenthub_session=${session}`, origin, 'content-type': 'application/json' });
 const body = (type: 'company-logo' | 'commercial-licence' = 'company-logo', bytes = png) => ({ orgId: 'org-a', type, mime: type === 'company-logo' ? 'image/png' : 'application/pdf', data: bytes.toString('base64') });
@@ -79,4 +84,18 @@ test('SHU-301 non-owner ', async context => {
   }
   const crossOrg = await fetch(`${endpoint}/organization-documents/upload`, { method: 'POST', headers: headers(origin, OTHER), body: JSON.stringify(body()) });
   assert.equal(crossOrg.status, 404); assert.deepEqual(await crossOrg.json(), { error: 'not_found' });
+});
+
+test('SHU-301 organization route rejects candidate documents ', async context => {
+  const { endpoint, origin, candidate } = await rig(context);
+  const document = await candidate.upload(CANDIDATE, { scope: { orgId: 'org-a', personId: 'candidate' }, type: 'personal-photo', mime: 'image/png', bytes: png });
+  const candidateDelivery = await candidate.issueDelivery(CANDIDATE, document.id);
+  const replay = new URL(candidateDelivery.url); replay.pathname = '/organization-documents/delivery';
+  let response = await fetch(endpoint + replay.pathname + replay.search, { headers: { cookie: `__Host-studenthub_session=${CANDIDATE}` } });
+  assert.equal(response.status, 404); assert.deepEqual(await response.json(), { error: 'not_found' });
+  for (const route of ['delivery', 'remove']) {
+    response = await fetch(`${endpoint}/organization-documents/${route}`, { method: 'POST', headers: headers(origin, CANDIDATE), body: JSON.stringify({ documentId: document.id }) });
+    assert.equal(response.status, 404); assert.deepEqual(await response.json(), { error: 'not_found' });
+  }
+  assert.deepEqual(await candidate.metadata(CANDIDATE, document.id), document);
 });
