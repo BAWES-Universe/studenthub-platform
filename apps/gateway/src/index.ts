@@ -254,7 +254,7 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "directory_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderCompanyDirectory(result, login) : renderError(503)), {}, true);
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderCompanyDirectory(result, login, await login.people?.visible(cookieValue(request.headers.cookie,"__Host-studenthub_session")) ?? false) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }

@@ -210,7 +210,7 @@ function companiesLink(active: WorkspaceContext | null, login: BrowserLoginAppli
   return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>Companies</a>${assigned}`;
 }
 
-function peopleLink(active: WorkspaceContext | null, login: BrowserLoginApplication, current = false, authorized = true): string {
+function peopleLink(active: WorkspaceContext | null, login: BrowserLoginApplication, current = false, authorized = false): string {
   if (!authorized || !active || !login.people || !DIRECTORY_ROLES.has(active.role) || !(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(active.orgId)) return "";
   return `<a class="nav-item${current ? " active" : ""}" href="/workspace/people"${current ? ' aria-current="page"' : ""}>People</a>`;
 }
@@ -251,7 +251,7 @@ function renderSubOrganizations(panel: SubOrganizationsPanel | undefined, active
 }
 
 /** Staff and admin company list. Every value comes from the directory's closed entry. */
-export function renderCompanyDirectory(result: CompanyDirectoryResult, login: BrowserLoginApplication): string {
+export function renderCompanyDirectory(result: CompanyDirectoryResult, login: BrowserLoginApplication, peopleAuthorized = false): string {
   if (result.status !== 200) {
     if (result.status === 401 || result.status === 503) return renderError(result.status, login);
     const message = result.status === 400
@@ -294,7 +294,7 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
   const table = directory.entries.length
     ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th><th scope="col">Stores</th><th scope="col">Account manager</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-contexts" role="status">${directory.total === 0 ? "No companies match these filters." : "There are no more companies on this page."}</p>`;
-  return workspaceDocument("Companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(String(new URLSearchParams(context)))}">Workspaces</a>${companiesLink(active, login, true)}${peopleLink(active,login)}${myCompaniesLink(login)}</nav><p class="sidebar-note">Read-only for now.<br>Changes still happen in the current StudentHub.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">${escapeHtml(active.organizationName)} · ${roleNames[active.role].toUpperCase()}</div><h1>Companies<span class="accent">.</span></h1><p>Top-level companies your role covers. Open one to see its details and sub-companies.</p></div><span class="badge">Read-only</span></div>${form}${table}${pager ? `<nav class="pager" aria-label="Pages">${pager}</nav>` : ""}<section class="next-note"><div class="eyebrow">ABOUT THIS LIST</div><h2>Unavailable means we don’t have an approved value.</h2><p>Filters only match approved values. A company whose status or currency hasn’t been imported never matches a status or currency filter.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+  return workspaceDocument("Companies", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace?${escapeHtml(String(new URLSearchParams(context)))}">Workspaces</a>${companiesLink(active, login, true)}${peopleLink(active,login,false,peopleAuthorized)}${myCompaniesLink(login)}</nav><p class="sidebar-note">Read-only for now.<br>Changes still happen in the current StudentHub.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">${escapeHtml(active.organizationName)} · ${roleNames[active.role].toUpperCase()}</div><h1>Companies<span class="accent">.</span></h1><p>Top-level companies your role covers. Open one to see its details and sub-companies.</p></div><span class="badge">Read-only</span></div>${form}${table}${pager ? `<nav class="pager" aria-label="Pages">${pager}</nav>` : ""}<section class="next-note"><div class="eyebrow">ABOUT THIS LIST</div><h2>Unavailable means we don’t have an approved value.</h2><p>Filters only match approved values. A company whose status or currency hasn’t been imported never matches a status or currency filter.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication, documentsAvailable = false, peopleAuthorized = false): string {

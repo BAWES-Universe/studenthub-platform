@@ -18,11 +18,11 @@ test("DIR_ACCESS staff gate is live and hides the route", async t => {
   const noSession=await fetch(`${f.url}/workspace/people`,{headers:{accept:"text/html"}}); assert.equal(noSession.status,401);
   await f.authz.clearGrantsForPrincipal("person-1");
   const ordinaryHtml=await f.get("/workspace/people"),ordinaryJson=await f.json("/workspace/people");
-  assert.equal(ordinaryHtml.status,404,"DIR_ACCESS ordinary person is hidden");assert.equal(ordinaryJson.status,404);assert.deepEqual(await ordinaryJson.json(),{error:"not_found"});
+  assert.equal(ordinaryHtml.status,404,"DIR_ACCESS ordinary person is hidden");assert.equal(ordinaryJson.status,404);const hiddenBody=await ordinaryJson.text();assert.equal(hiddenBody,await(await f.json("/workspace/not-a-real-page")).text(),"DIR_ACCESS hidden JSON matches an absent page");
   assert.doesNotMatch(await ordinaryHtml.text(),/href="\/workspace\/people"/);
   (f.login as unknown as {navigation:unknown}).navigation={open:async()=>({status:200,body:{contexts:[{orgId:"root",role:"staff",organizationName:"StudentHub"}],active:{orgId:"root",role:"staff",organizationName:"StudentHub"}}})};
   assert.doesNotMatch(await(await f.get("/workspace?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS sidebar hidden without live staff grant");
-  await f.authz.grantMany("person-1",[{orgId:"root",role:"staff",scope:"self"}]);assert.equal((await f.get("/workspace/people")).status,404,"DIR_ACCESS self scope is hidden");
+  await f.authz.grantMany("person-1",[{orgId:"root",role:"staff",scope:"self"}]);assert.equal((await f.get("/workspace/people")).status,404,"DIR_ACCESS self scope is hidden");assert.doesNotMatch(await(await f.get("/workspace/companies?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS Companies sidebar hidden without live staff grant");
   await f.authz.grantMany("person-1",[{orgId:"other",role:"staff",scope:"subtree"}]);assert.equal((await f.get("/workspace/people")).status,404);
   await f.authz.grantMany("person-1",[{orgId:"root",role:"admin",scope:"subtree"}]);assert.equal((await f.get("/workspace/people")).status,200);
   assert.match(await(await f.get("/workspace?org_id=root&role=staff")).text(),/>People<\/a>/,"DIR_ACCESS sidebar shown for live operator staff");
@@ -31,7 +31,8 @@ test("DIR_ACCESS staff gate is live and hides the route", async t => {
 
 test("DIR_QUERY closed vocabulary rejects before the store and passes Kuwait today", async t => {
   const f=await fixture(t); const before=f.calls;
-  for(const query of ["?wat=1","?q=a&q=b",`?q=${"x".repeat(101)}`,"?status=bad","?nationality=no","?civil=bad","?details=bad","?page=0","?page=1000000"]){assert.equal((await f.json(`/workspace/people${query}`)).status,400,query);}
+  assert.equal((await f.json("/workspace/people?q=a&q=b")).status,400,"DIR_QUERY repeated key rejected before store");
+  for(const query of ["?wat=1",`?q=${"x".repeat(101)}`,"?status=bad","?nationality=no","?nationality=11111111-1111-6111-8111-111111111111","?civil=bad","?details=bad","?page=0","?page=1000000"]){assert.equal((await f.json(`/workspace/people${query}`)).status,400,query);}
   assert.equal(f.calls,before,"DIR_QUERY repeated key rejected before store");
   const q="?q=Noor&status=active&nationality=11111111-1111-4111-8111-111111111111&civil=waiting&details=missing&page=2";
   assert.equal((await f.json(`/workspace/people${q}`)).status,200);

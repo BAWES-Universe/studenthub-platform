@@ -1,12 +1,12 @@
 import type { AuthzStore } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
 import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
-import { PEOPLE_PAGE_SIZE, maskPhone, type PeopleCivilState, type PeopleDirectoryQuery, type PeopleDirectoryRow, type PeopleDirectoryStore, type PeopleWorkStatus } from "@studenthub/profile";
+import { PEOPLE_PAGE_SIZE, kuwaitDate, maskPhone, type PeopleCivilState, type PeopleDirectoryQuery, type PeopleDirectoryRow, type PeopleDirectoryStore, type PeopleWorkStatus } from "@studenthub/profile";
 
 const PARAMETERS = new Set(["q", "status", "nationality", "civil", "details", "page"]);
 const STATUSES = new Set<PeopleWorkStatus>(["not_looking", "active", "open_to_offers", "unset"]);
 const CIVIL = new Set<PeopleCivilState>(["none", "waiting", "rejected", "expired", "checked", "recorded"]);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function parsePeopleDirectoryQuery(parameters: URLSearchParams): PeopleDirectoryQuery | null {
   for (const key of new Set(parameters.keys())) if (!PARAMETERS.has(key) || parameters.getAll(key).length !== 1) return null;
@@ -33,7 +33,7 @@ export async function isPeopleStaff(authz: Pick<AuthzStore, "listGrantsForPrinci
 }
 
 export type PeopleDirectoryResult = { readonly status: 200; readonly body: { readonly query: PeopleDirectoryQuery; readonly rows: readonly PeopleDirectoryRow[]; readonly total: number; readonly page: number; readonly pageSize: number; readonly countries?: readonly { readonly id: string; readonly name: string }[] } }
-  | { readonly status: 400 | 401 | 404 | 503; readonly body: { readonly error: string } };
+  | { readonly status: 400 | 401 | 404 | 503; readonly body: { readonly ok?: false; readonly error: string } };
 
 export interface PeopleDirectoryPage {
   open(sessionId: string | undefined, parameters: URLSearchParams, html: boolean): Promise<PeopleDirectoryResult>;
@@ -45,10 +45,10 @@ export function createPeopleDirectory(options: { sessions: Pick<SessionStore, "g
     try {
       const session = sessionId ? await options.sessions.get(sessionId) : undefined;
       if (!session) return { status: 401, body: { error: "unauthorized" } };
-      if (!await isPeopleStaff(options.authz, session.personId)) return { status: 404, body: { error: "not_found" } };
+      if (!await isPeopleStaff(options.authz, session.personId)) return { status: 404, body: { ok: false, error: "not_found" } };
       const query = parsePeopleDirectoryQuery(parameters);
       if (!query) return { status: 400, body: { error: "invalid_people_query" } };
-      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(options.now?.() ?? new Date());
+      const today = kuwaitDate(options.now?.() ?? new Date());
       const [{ rows, total }, choices] = await Promise.all([options.store.page(query, today), html ? options.choices() : Promise.resolve(undefined)]);
       return { status: 200, body: { query, rows, total, page: query.page, pageSize: PEOPLE_PAGE_SIZE, ...(choices ? { countries: choices.countries } : {}) } };
     } catch { return { status: 503, body: { error: "directory_unavailable" } }; }

@@ -55,7 +55,7 @@ export const peopleDirectoryRoute: GatewayRoute = { name: "people-directory", ha
   const cookie = ctx.request.headers.cookie?.split(";").map(value => value.trim()).find(value => value.startsWith("__Host-studenthub_session="))?.slice(26);
   const result = await ctx.login?.people?.open(cookie, new URL(ctx.request.url, "http://gateway.invalid").searchParams, html)
     ?? { status: 404 as const, body: { error: "not_found" } };
-  if (html) ctx.writeHtml(ctx.response, result.status, renderPeopleDirectory(result), {}, true);
+  if (html) ctx.writeHtml(ctx.response, result.status, result.status === 200 ? renderPeopleDirectory(result) : ctx.renderError(result.status, ctx.login));
   else { ctx.response.writeHead(result.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", vary: "Accept", "x-content-type-options": "nosniff" }); ctx.response.end(JSON.stringify(peopleDirectoryJson(result))); }
   return true;
 } };
