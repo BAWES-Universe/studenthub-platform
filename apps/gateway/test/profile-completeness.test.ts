@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { prepareProfileCompleteness, currentProfileCompleteness } from "../src/profile-completeness.js";
 import { prepareProfileAvatar } from "../src/profile-avatar.js";
+import { projectApprovedProfile, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
+import { profileDocument } from "../src/web-ui.js";
 
 test("Q14_4_DERIVED an unconfigured HTML source prepares a failed, never-complete check",async()=>{
   const request={method:"GET",url:"/profile",headers:{accept:"text/html",cookie:`__Host-studenthub_session=${"s".repeat(43)}`}} as never;
@@ -29,6 +31,34 @@ test("Q14_4_SHOWN HTML evidence has fixed reads for 0, 1 and 40 rows and reuses 
     const records={sessions:{get:async()=>{sessions++;return{personId:"p"};}},service:{background:async()=>{background++;return{education:Array.from({length:count},()=>({})),skill:Array.from({length:count},()=>({}))};}}} as never;
     const authz={store:{getPrincipal:async()=>{principal++;return{id:"p",email:"p@example.invalid"};}}} as never;
     await prepareProfileCompleteness(request,response,login,authz,records);
-    assert.ok(currentProfileCompleteness()?.evidence);assert.deepEqual({sessions,background,choices,principal,documents,civil},{sessions:1,background:1,choices:1,principal:1,documents:1,civil:0});
+    assert.ok(currentProfileCompleteness()?.evidence);
+    const base=projectApprovedProfile(SYNTHETIC_PROFILE_FIXTURES.populated,"2026-11-10");
+    const fields={...base.fields,nationality:{...base.fields.nationality,editValue:"kw"},language:{...base.fields.language,value:"en" as const}};
+    const rendered=await profileDocument({status:200,body:{...base,fields}},login);
+    const expected=count===0?["Personal photo","Civil ID front","Civil ID back","Education","Skill"]:["Civil ID front","Civil ID back"];
+    for(const item of expected)assert.ok(rendered.html.includes(item),`${count} rows derives ${item}`);
+    assert.doesNotMatch(rendered.html,/<h2 id="profile-checklist">Profile complete<\/h2>/);
+    assert.match(rendered.html,/Profile completeness[\s\S]*?No/);
+    assert.match(rendered.html,/Still to do[\s\S]*?Worked out from your profile/);
+    assert.doesNotMatch(rendered.html,/Checked once your documents are on file/);
+    assert.deepEqual({sessions,background,choices,principal,documents,civil},{sessions:1,background:1,choices:1,principal:1,documents:1,civil:0});
+  }
+});
+
+test("Q14_4_DERIVED every evidence failure reaches the rendered check-failed state without a write port",async()=>{
+  for(const failing of ["principal","background","choices","documents","civil"] as const){
+    const request={method:"GET",url:"/profile",headers:{accept:"text/html",cookie:`__Host-studenthub_session=${"s".repeat(43)}`}} as never;
+    const response=new EventEmitter() as never;
+    const neverWrite=()=>{throw new Error("completeness attempted a write");};
+    if(failing!=="documents")await prepareProfileAvatar(request,response,{list:async()=>[],issueDelivery:async()=>({url:"/signed",expiresAt:1}),insert:neverWrite,update:neverWrite} as never);
+    const login=(failing==="civil"?{profileEdit:{choices:async()=>({countries:[],universities:[]})}}:{civilId:{readOwn:async()=>null},profileEdit:{choices:async()=>{if(failing==="choices")throw new Error("choices");return{countries:[],universities:[]};}}}) as never;
+    const records={sessions:{get:async()=>({personId:"p"})},service:{background:async()=>{if(failing==="background")throw new Error("background");return{education:[],skill:[]};},insert:neverWrite,update:neverWrite}} as never;
+    const authz={store:{getPrincipal:async()=>{if(failing==="principal")throw new Error("principal");return{id:"p",email:"p@example.invalid"};},insert:neverWrite,update:neverWrite}} as never;
+    await prepareProfileCompleteness(request,response,login,authz,records);
+    const base=projectApprovedProfile(SYNTHETIC_PROFILE_FIXTURES.populated,"2026-11-10");
+    const renderLogin={profileEdit:{choices:async()=>({countries:[],universities:[]})}} as never;
+    const rendered=await profileDocument({status:200,body:{...base,fields:{...base.fields,language:{...base.fields.language,value:"en" as const}}}},renderLogin);
+    assert.match(rendered.html,/Couldn&#39;t check right now/,failing);
+    assert.doesNotMatch(rendered.html,/<h2 id="profile-checklist">Profile complete<\/h2>/,failing);
   }
 });

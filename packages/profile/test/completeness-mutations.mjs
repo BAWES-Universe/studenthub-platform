@@ -5,7 +5,7 @@ import {fileURLToPath} from "node:url";
 const source=new URL("../dist/completeness.js",import.meta.url),original=await readFile(source,"utf8");
 const suite=fileURLToPath(new URL("../../../dist/packages/profile/test/completeness.test.js",import.meta.url));
 const mutations=[
-  ["treat No as missing","Q14_4_RULES false answers",'typeof field.value !== "string"','field.value === true'],
+  ["treat No as missing","Q14_4_RULES false answers",'typeof field.value !== "string"','typeof field.value === "string"'],
   ["require mother for KW","Q14_4_RULES KW never",'nationalityCode !== "KW"','nationalityCode !== "ZZ"'],
   ["let import satisfy document","Q14_4_RULES documents never",'documents.has("personal-photo")','importedFallback("personal_photo", documents.has("personal-photo"))'],
   ["complete on failed source","Q14_4_DERIVED failures",'state: "unavailable"','state: "available", value: true'],
