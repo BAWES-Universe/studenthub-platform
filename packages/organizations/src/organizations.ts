@@ -347,6 +347,7 @@ export class HierarchyViolation extends Error {}
  * itself a readable organization and does not count as a hierarchy level.
  */
 export const DEFAULT_OPERATOR_ORG_IDS = Object.freeze(["root"]);
+export interface OrganizationDeletionRecords{isDeleted(orgId:string):Promise<boolean>;deletedAmong(orgIds:readonly string[]):Promise<ReadonlySet<string>>}
 
 /**
  * Company-level parent of `orgId`: null for a top-level organization.
@@ -375,6 +376,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #statusRecords?: OrganizationStatusRecords;
   readonly #commercialTerms?:OrganizationCommercialTermsRecords;
   readonly #approvedToHire?:OrganizationApprovedToHireRecords;
+  readonly #deletions?:OrganizationDeletionRecords;
 
   constructor(options: {
     readonly store: AuthzStore;
@@ -383,6 +385,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly statusRecords?: OrganizationStatusRecords;
     readonly commercialTerms?:OrganizationCommercialTermsRecords;
     readonly approvedToHire?:OrganizationApprovedToHireRecords;
+    readonly deletions?:OrganizationDeletionRecords;
   }) {
     this.#store = options.store;
     this.#source = options.source;
@@ -390,6 +393,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     this.#statusRecords = options.statusRecords;
     this.#commercialTerms=options.commercialTerms;
     this.#approvedToHire=options.approvedToHire;
+    this.#deletions=options.deletions;
   }
 
   /** The audience the caller may read at `orgId` right now, or undefined. */
@@ -404,6 +408,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     );
     if (resolution.kind !== "authorized" || resolution.context.orgId !== orgId
       || resolution.context.role !== request.role) return undefined;
+    if(await this.#deletions?.isDeleted(orgId))return undefined;
     return audience;
   }
 
@@ -504,6 +509,8 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         .filter((context) => context.role === request.role && within.has(context.orgId)
           && !this.#operators.has(context.orgId))
         .map((context) => context.orgId));
+      const deletedIds=covered.size>0&&this.#deletions?await this.#deletions.deletedAmong([...covered]):new Set<string>();
+      for(const id of deletedIds)covered.delete(id);
       const shown: Organization[] = [];
       for (const org of organizations) {
         if (!covered.has(org.id)) continue;

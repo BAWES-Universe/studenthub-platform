@@ -1,0 +1,1 @@
+import assert from"node:assert/strict";import{test}from"node:test";import{ORGANIZATION_DELETION_OPERATION}from"../src/postgres-organization-deletion-store.js";test("organization deletion postgres operation is stable",()=>assert.equal(ORGANIZATION_DELETION_OPERATION,"organization.deletion.safe_write"));
