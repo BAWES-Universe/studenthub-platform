@@ -392,15 +392,20 @@ test("SHU353_SHOWN company card renders the written currency in its closed proje
   assert.match(body, /Currency<\/dt><dd>USD<\/dd>/);
 });
 
-test("SHU355_SHOWN_GRANT company card shows a current manager name only to staff",async()=>{
+test("SHU355_SHOWN_GRANT company card hides a revoked manager and restores the retained assignment",async()=>{
   const rig=createSyntheticLoginRig(createLoginApplication);await rig.sessions.put({id:SESSION,personId:"person-1"});
-  const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});
+  const store=new InMemoryAuthzStore({principals:[{id:"person-1",pbuuids:[]},{id:"person-2",pbuuids:[]}],organizations:[{id:"org-a",name:"Organization A"}]});
   await store.grantMany("person-1",[{orgId:"org-a",role:"staff"}]);
-  const organizations=new OrganizationRepository({store,source:new InMemoryApprovedOrganizationAdapter(new Map())});
-  const managers={manager:async()=>({manager:{principalId:"hidden-manager-id",displayName:"Staff One"}})};
-  const result=await createContextNavigation(rig.sessions,store,organizations,undefined,managers).open(SESSION,new URLSearchParams({org_id:"org-a",role:"staff"}));
-  const page=renderWorkspace(result,{...rig.app,navigation:createContextNavigation(rig.sessions,store)});
-  assert.match(page,/Account manager<\/dt><dd>Staff One/);assert.doesNotMatch(page,/hidden-manager-id/);
+  await store.grantMany("person-2",[{orgId:"org-a",role:"staff"}]);
+  const managers={manager:async()=>({manager:(await store.listGrantsForPrincipal("person-2")).some(grant=>grant.orgId==="org-a"&&grant.role==="staff")?{principalId:"hidden-manager-id",displayName:"Staff One"}:null})};
+  const organizations=Object.assign(new OrganizationRepository({store,source:new InMemoryApprovedOrganizationAdapter(new Map())}),{accountManagers:managers});
+  const open=()=>createContextNavigation(rig.sessions,store,organizations).open(SESSION,new URLSearchParams({org_id:"org-a",role:"staff"}));
+  const render=async()=>renderWorkspace(await open(),{...rig.app,navigation:createContextNavigation(rig.sessions,store)});
+  const shown=await render();assert.match(shown,/Account manager<\/dt><dd>Staff One/);assert.doesNotMatch(shown,/hidden-manager-id/);
+  await store.revokeMany("person-2",[{orgId:"org-a",role:"staff"}]);
+  assert.match(await render(),/Account manager<\/dt><dd>None/);
+  await store.grantMany("person-2",[{orgId:"org-a",role:"staff"}]);
+  assert.match(await render(),/Account manager<\/dt><dd>Staff One/);
 });
 
 async function shu332Rig(options: {

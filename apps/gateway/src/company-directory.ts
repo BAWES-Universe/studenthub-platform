@@ -11,6 +11,7 @@ export type CompanyDirectoryResult =
   | { readonly status: 200; readonly body: {
     readonly active: WorkspaceContext;
     readonly filters: OrganizationDirectoryFilters;
+    readonly accountManagerSelection?: string;
     readonly directory: FoundDirectory;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
@@ -96,6 +97,7 @@ export function createCompanyDirectory(
         return { status: 200, body: {
           active: { orgId: org.id, role: parsed.role as WorkspaceContext["role"], organizationName: org.name },
           filters,
+          ...(parsed.filters.accountManager ? { accountManagerSelection: parsed.filters.accountManager } : {}),
           directory: result.directory,
         } };
       } catch {

@@ -83,7 +83,7 @@ function value(entry: OrganizationDirectoryEntry, name: keyof OrganizationDirect
 
 const STAFF = { principalId: "staff", orgId: "root", role: "staff" } as const;
 const ENTRY_KEYS = [
-  "accountManager", "approvedToHire", "commonNameAr", "commonNameEn", "currencyCode", "legalName", "orgId", "registryName", "status",
+  "approvedToHire", "commonNameAr", "commonNameEn", "currencyCode", "legalName", "orgId", "registryName", "status",
   "storeCount", "subOrganizationCount",
 ];
 const SENTINELS = /SENSITIVE-|company_auth_key|password|reset_token|commercial_licence|company_logo|staff_id|followup|hourly|commission|email|example\.invalid/i;
@@ -246,7 +246,7 @@ test("SHU168_STORE_COUNT_SCOPE batches only covered live top-level companies and
   assert.deepEqual(await failing.repository.listOrganizations(STAFF), { kind: "unavailable" });
 });
 
-test("SHU339_FILTER filters by manager before the existing directory filters", async () => {
+test("SHU355_RULE filters by the current manager before the existing directory filters", async () => {
   const calls: string[][] = [];
   const accountManagers: OrganizationAccountManagerRecords = { readMany: async (orgIds) => {
     calls.push([...orgIds]); return new Map([["org-a", {principalId:"staff-self-a",displayName:"Staff A"}], ["org-b", {principalId:"admin",displayName:"Admin"}]]);
@@ -260,6 +260,15 @@ test("SHU339_FILTER filters by manager before the existing directory filters", a
   assert.deepEqual(ids(await list("staff-self-a", { status: "inactive" })), []);
   assert.deepEqual(ids(await list("staff-self-a", { currencyCode: "USD" })), []);
   const before = calls.length; assert.deepEqual(ids(await repository.listOrganizations(STAFF)), ["org-a", "org-b", "org-c"]); assert.equal(calls.length, before+1);
+});
+
+test("SHU355_SHOWN projects the current manager for rendering and distinguishes an unavailable port",async()=>{
+  const current={principalId:"staff-self-a",displayName:"Staff A"};
+  const configured=await setup({accountManagers:{readMany:async()=>new Map([["org-a",current]])}});
+  const found=await configured.repository.listOrganizations(STAFF);assert.equal(found.kind,"found");
+  if(found.kind==="found"){const entries=found.directory.entries as readonly (typeof found.directory.entries[number]&{accountManager?:unknown})[];assert.deepEqual(entries.find(entry=>entry.orgId==="org-a")?.accountManager,current);assert.equal(entries.find(entry=>entry.orgId==="org-b")?.accountManager,null)}
+  const unavailable=await setup();const result=await unavailable.repository.listOrganizations(STAFF);assert.equal(result.kind,"found");
+  if(result.kind==="found")assert.equal("accountManager" in result.directory.entries[0]!,false);
 });
 
 test("SHU339_FILTER_SCOPE reads exactly live covered top-level companies once", async () => {

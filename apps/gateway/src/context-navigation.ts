@@ -26,6 +26,7 @@ export type OrganizationCountsPanel =
   | { readonly kind: "unavailable" };
 export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null;
 export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>}
+export type OrganizationReaderWithAccountManagers=OrganizationReader&{readonly accountManagers?:OrganizationAccountManagerReader};
 
 export type NavigationResult =
   | { readonly status: 200; readonly body: {
@@ -46,9 +47,8 @@ export interface ContextNavigation {
 export function createContextNavigation(
   sessions: Pick<SessionStore, "get">,
   store: AuthzStore,
-  organizationReader?: OrganizationReader,
+  organizationReader?: OrganizationReaderWithAccountManagers,
   deletions?: OrganizationDeletionRecords,
-  accountManagers?:OrganizationAccountManagerReader,
 ): ContextNavigation {
   return {
     async open(sessionId, selection) {
@@ -125,6 +125,7 @@ export function createContextNavigation(
             : children.kind === "unavailable" ? { kind: "unavailable" } : undefined;
         }
         let accountManager:OrganizationAccountManagerPanel|undefined;
+        const accountManagers=organizationReader.accountManagers;
         if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const result=await accountManagers.manager(session.personId,active.orgId);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null}
         const shownOrganization=accountManager!==undefined?{...organization,accountManager}:organization;
         return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}) } };

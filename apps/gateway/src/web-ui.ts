@@ -138,7 +138,7 @@ function renderOrganization(organization: ActiveOrganization | undefined, accoun
   const fields = view.fields as unknown as Readonly<Record<OrganizationFieldName, OrganizationField<unknown>>>;
   const legalName = fields.legalName;
   const heading = legalName.state === "available" ? String(legalName.value) : view.registryName;
-  const managerRow=accountManager===undefined?"":`<div><dt>Account manager</dt><dd>${accountManager===null?"Not assigned":escapeHtml(accountManager.displayName??"Unnamed staff member")}</dd></div>`;
+  const managerRow=accountManager===undefined?"":`<div><dt>Account manager</dt><dd>${accountManager===null?"None":escapeHtml(accountManager.displayName??"Unnamed staff member")}</dd></div>`;
   const rows = ORGANIZATION_FIELDS_BY_AUDIENCE[view.audience].map((name) =>
     `<div><dt>${escapeHtml(ORGANIZATION_FIELD_CONTRACT[name].label)}</dt><dd>${organizationFieldText(name, fields[name])}</dd></div>`).join("")+managerRow;
   const source = view.snapshot.kind === "imported"
@@ -211,14 +211,14 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
       : "Your access may have changed. Choose one of your current workspaces to continue.";
     return workspaceDocument("Companies unavailable", `<header class="topbar">${brand}<a href="/workspace">Workspaces</a></header><main id="main" class="error-page"><h1>This company list isn’t available.</h1><p>${message}</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
   }
-  const { active, filters, directory } = result.body;
+  const { active, filters, directory, accountManagerSelection } = result.body;
   const context = { org_id: active.orgId, role: active.role };
   const query: Record<string, string> = { ...context,
     ...(filters.query ? { q: filters.query } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.approvedToHire === undefined ? {} : { approved: filters.approvedToHire ? "yes" : "no" }),
     ...(filters.currencyCode ? { currency: filters.currencyCode } : {}),
-    ...(filters.accountManager ? { manager: filters.accountManager } : {}) };
+    ...(accountManagerSelection ? { manager: accountManagerSelection } : {}) };
   const cell = (field: { readonly state: string; readonly value?: unknown }, format: (value: unknown) => string = String) =>
     field.state === "available" ? escapeHtml(format(field.value)) : '<span class="missing" data-state="unavailable">Unavailable</span>';
   const rows = directory.entries.map((entry) => {
@@ -227,7 +227,7 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
       ? `<span class="field-meta">${escapeHtml(entry.commonNameEn.value)}</span>` : "";
     const href = `/workspace?${new URLSearchParams({ org_id: entry.orgId, role: active.role })}`;
     const manager=(entry as typeof entry&{accountManager?:{displayName:string|null}|null}).accountManager;
-    const managerName=manager===undefined?"Unavailable":manager===null?"Not assigned":manager.displayName??"Unnamed staff member";
+    const managerName=manager===undefined?"Unavailable":manager===null?"None":manager.displayName??"Unnamed staff member";
     return `<tr><th scope="row"><a href="${escapeHtml(href)}">${escapeHtml(name)}</a>${common}</th><td>${cell(entry.status, (value) => statusNames[String(value)] ?? String(value))}</td><td>${cell(entry.approvedToHire, (value) => value ? "Yes" : "No")}</td><td>${cell(entry.currencyCode)}</td><td>${entry.subOrganizationCount}</td><td>${entry.storeCount === null ? '<span class="missing" data-state="unavailable">Unavailable</span>' : entry.storeCount}</td><td>${escapeHtml(managerName)}</td></tr>`;
   }).join("");
   const first = directory.total === 0 ? 0 : (directory.page - 1) * directory.pageSize + 1;
@@ -241,7 +241,7 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
   const option = (value: string, label: string, selected: string | undefined) =>
     `<option value="${value}"${selected === value ? " selected" : ""}>${label}</option>`;
   const approved = filters.approvedToHire === undefined ? undefined : filters.approvedToHire ? "yes" : "no";
-  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><label>Account manager<input name="manager" maxlength="128" value="${filters.accountManager==="me"?"me":""}" placeholder="Any, or me"></label><button class="sign-out" type="submit">Search</button></form>`;
+  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><label>Account manager<input name="manager" maxlength="128" value="${escapeHtml(accountManagerSelection ?? "")}" placeholder="Any, or me"></label><button class="sign-out" type="submit">Search</button></form>`;
   const table = directory.entries.length
     ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th><th scope="col">Stores</th><th scope="col">Account manager</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-contexts" role="status">${directory.total === 0 ? "No companies match these filters." : "There are no more companies on this page."}</p>`;
