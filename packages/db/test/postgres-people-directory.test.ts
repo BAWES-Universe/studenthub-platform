@@ -7,7 +7,7 @@ import {classifyPeopleDirectorySearch,PostgresPeopleDirectoryStore} from "../src
 import {classifySearchTerm} from "../../profile/src/people-directory.js";
 
 test("DIRDB_SEARCH database and profile search classifiers stay identical",()=>{
-  for(const value of ["c00123","+965 5000 0000","50000000","٥٠٠٠٠٠٠٠","00965-5000-0000","0000","123","https://studenthub.test/people/Noor_26",`Noor & | ! : * ( ) ' " < > نور`]){
+  for(const value of ["c00123","+965 5000 0000","50000000","٥٠٠٠٠٠٠٠","00965-5000-0000","0000","123","+9(6)(5)(5)(0)(0)(0)(0)(0)(0)(0)(0)","https://studenthub.test/people/Noor_26",`Noor & | ! : * ( ) ' " < > نور`]){
     assert.deepEqual(classifyPeopleDirectorySearch(value),classifySearchTerm(value),`database classifier must mirror profile classifier for ${value}`);
   }
 });
@@ -26,7 +26,7 @@ test("DIRDB_ONE one page is exactly one pool statement for zero, one, and sixty 
 const URL=process.env.DATABASE_URL??"";let pool:pg.Pool,store:PostgresPeopleDirectoryStore;const ids:string[]=[];
 before(async()=>{if(!URL)return;pool=new pg.Pool({connectionString:URL});await runMigrations(pool);store=new PostgresPeopleDirectoryStore({pool});});
 beforeEach(async()=>{if(URL)await pool.query("TRUNCATE principals CASCADE");ids.length=0;});
-after(async()=>{if(pool){if(ids.length)await pool.query("DELETE FROM principals WHERE id=ANY($1::text[])",[ids]);await pool.end();}});
+after(async()=>{if(pool){await pool.query("TRUNCATE principals CASCADE");await pool.end();}});
 
 async function person(values:{name:string;arabic?:string;universe?:string;phone?:string;handle?:string;candidate?:string}){
   const id=`shu618-${randomUUID()}`;ids.push(id);
@@ -42,11 +42,12 @@ async function catalogue(type:"country"|"area",name:string,code?:string){
   return id;
 }
 
+let generatedPhone=0;
 async function completePerson(label:string,options:{status?:"not_looking"|"active"|"open_to_offers"|null;nationality?:string;kuwaitiMother?:boolean|null;phone?:string}={}){
   const id=`shu618-${randomUUID()}`,country=options.nationality??await catalogue("country",`Country ${label}`,"US"),area=await catalogue("area",`Area ${label}`),now="2026-11-13T08:00:00Z";ids.push(id);
   await pool.query("INSERT INTO principals(id,display_name,email) VALUES($1::text,$2::text,$3::text)",[id,`Universe ${label}`,`${label}@test.invalid`]);
   await pool.query(`INSERT INTO person_profiles(principal_id,display_name,display_name_written_at,arabic_name,arabic_name_written_at,objective,objective_written_at,gender,gender_written_at,birth_date,birth_date_written_at,driving_licence,driving_licence_written_at,job_search_status,job_search_status_written_at,phone,phone_written_at,profile_handle,profile_handle_written_at,nationality_id,nationality_id_written_at,kuwaiti_mother,kuwaiti_mother_written_at)
-    VALUES($1::text,$2::text,$3::timestamptz,'اسم كامل',$3::timestamptz,'Objective',$3::timestamptz,'female',$3::timestamptz,'2000-01-01',$3::timestamptz,false,$3::timestamptz,$4::text,CASE WHEN $4::text IS NULL THEN NULL ELSE $3::timestamptz END,$5::text,$3::timestamptz,$6::text,$3::timestamptz,$7::uuid,$3::timestamptz,$8::boolean,CASE WHEN $8::boolean IS NULL THEN NULL ELSE $3::timestamptz END)`,[id,`${label} Person`,now,options.status===undefined?"active":options.status,options.phone??`+9655${randomBytes(3).toString("hex").replace(/[a-f]/g,"1").slice(0,7)}`,`h${randomBytes(5).toString("hex")}`,country,"kuwaitiMother" in options?options.kuwaitiMother:false]);
+    VALUES($1::text,$2::text,$3::timestamptz,'اسم كامل',$3::timestamptz,'Objective',$3::timestamptz,'female',$3::timestamptz,'2000-01-01',$3::timestamptz,false,$3::timestamptz,$4::text,CASE WHEN $4::text IS NULL THEN NULL ELSE $3::timestamptz END,$5::text,$3::timestamptz,$6::text,$3::timestamptz,$7::uuid,$3::timestamptz,$8::boolean,CASE WHEN $8::boolean IS NULL THEN NULL ELSE $3::timestamptz END)`,[id,`${label} Person`,now,options.status===undefined?"active":options.status,options.phone??`+9656${String(++generatedPhone).padStart(7,"0")}`,`h${randomBytes(5).toString("hex")}`,country,"kuwaitiMother" in options?options.kuwaitiMother:false]);
   await pool.query("INSERT INTO person_locations(principal_id,area_id,revision,written_at,updated_at) VALUES($1::text,$2::uuid,1,$3::timestamptz,$3::timestamptz)",[id,area,now]);
   await pool.query("INSERT INTO person_civil_ids(principal_id,country,number_ciphertext,number_hash,key_version,expiry_date,revision) VALUES($1::text,'KW',decode('01','hex'),decode($2::text,'hex'),1,'2030-01-01',1)",[id,randomBytes(32).toString("hex")]);
   for(const kind of ["education","skill"])await pool.query("INSERT INTO candidate_profile_records(id,owner_principal_id,kind,status,fields,created_at,updated_at) VALUES($1::uuid,$2::text,$3::text,'active','{}'::jsonb,$4::timestamptz,$4::timestamptz)",[randomUUID(),id,kind,now]);
@@ -71,6 +72,7 @@ test("DIRDB_SHOWN imported-only people remain visible with their Universe identi
   const row=result.rows.find(value=>value.principalId===id);
   assert.ok(row,"an imported snapshot must appear before a self-edit creates person_profiles");
   assert.equal(row.name,null);assert.equal(row.universeName,"Imported Universe");assert.equal(row.imported,true);
+  assert.equal(row.employeeId,"C987654321","employee identifiers pad short ids but never truncate long ids");
 });
 
 test("DIRDB_FILTERS database filters all civil states, fields, paging, and stable shown-name order",{skip:!URL},async()=>{
@@ -86,6 +88,10 @@ test("DIRDB_FILTERS database filters all civil states, fields, paging, and stabl
     if(state==="checked")await pool.query("UPDATE person_civil_ids SET expiry_date='2026-11-13' WHERE principal_id=$1::text",[id]);
     if(state==="rejected"||state==="checked")await pool.query("INSERT INTO civil_id_review_decisions(id,subject_principal_id,reviewer_principal_id,decision,reason,civil_revision,confirm_ref,decided_at) VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,1,$6::text,clock_timestamp())",[randomUUID(),id,reviewer,state==="rejected"?"rejected":"confirmed",state==="rejected"?"incorrect":null,randomBytes(32).toString("hex")]);
   }
+  for(const [status,count] of [["unset",1],["not_looking",1],["open_to_offers",1],["active",3]] as const)assert.equal((await store.page({status,page:1},"2026-11-13")).total,count,`${status} status narrows without q`);
+  assert.equal((await store.page({nationality:country,page:1},"2026-11-13")).total,6,"nationality narrows without q");
+  for(const state of ["none","waiting","rejected","expired","checked","recorded"] as const)assert.deepEqual((await store.page({civil:state,page:1},"2026-11-13")).rows.map(row=>row.principalId),[stateIds.get(state)],`${state} civil filter narrows without q`);
+  assert.equal((await store.page({details:"complete",page:1},"2026-11-13")).total,5,"details narrows without q");
   for(const state of ["none","waiting","rejected","expired","checked","recorded"]){
     const result=await store.page({q:"civilcase",civil:state as "none",page:1},"2026-11-13");
     assert.deepEqual(result.rows.map(row=>row.principalId),[stateIds.get(state)],`${state} civil filter and precedence`);

@@ -31,7 +31,30 @@ test("DIRDB_DETAILS SQL coverage is exactly CMP minus document requirements",()=
   assert.equal(result.kind,"available");
   const importedMother=projectApprovedProfile({...SYNTHETIC_PROFILE_FIXTURES.populated,is_incomplete_profile:1,candidate_pending_profile:"candidate_mom_kuwaiti"},"2026-11-13");
   const mother=deriveProfileCompleteness({profile:{state:"available",value:importedMother},principalEmailPresent:{state:"available",value:true},activeBackground:{state:"available",value:{educationCount:1,skillCount:1}},documentTypesOnFile:{state:"available",value:["personal-photo","civil-id-front","civil-id-back"]},civilIdRecorded:{state:"available",value:{number:true,expiry:true}},writtenNationalityCode:{state:"available",value:"KW"}});
+  // An entirely missing projection cannot express the conditional Kuwaiti-mother answer, so add the
+  // dedicated imported pending fixture before comparing CMP's closed set with directory coverage.
   assert.deepEqual(new Set([...(result.kind==="available"?result.pendingFields:[]),...(mother.kind==="available"?mother.pendingFields:[])]),new Set([...PEOPLE_DETAILS_KEYS,...PEOPLE_DOCUMENT_KEYS]),"directory and document keys must equal CMP's closed list");
+});
+
+test("DIRDB_DETAILS every SQL-covered key has matching CMP met and unmet fixtures",()=>{
+  const legacyNames:Record<string,string>={phone:"phone",civil_id:"civil id",civil_expiry:"civil expiry date",kuwaiti_mother:"candidate_mom_kuwaiti"};
+  const rawColumns:Record<string,string>={nationality:"nationality_name",display_name:"candidate_name",arabic_name:"candidate_name_ar",gender:"candidate_gender",objective:"candidate_objective",birth_date:"candidate_birth_date",driving_licence:"candidate_driving_license",location:"area_name"};
+  const evaluate=(key:string,missing:boolean)=>{
+    const raw:Record<string,unknown>={...SYNTHETIC_PROFILE_FIXTURES.populated};
+    if(missing&&rawColumns[key])raw[rawColumns[key]]=null;
+    if(missing&&legacyNames[key]){raw.is_incomplete_profile=1;raw.candidate_pending_profile=legacyNames[key];}
+    const profile=projectApprovedProfile(raw,"2026-11-13");
+    const input:Parameters<typeof deriveProfileCompleteness>[0]={
+      profile:{state:"available",value:profile},principalEmailPresent:{state:"available",value:!(missing&&key==="email")},
+      activeBackground:{state:"available",value:{educationCount:missing&&key==="education"?0:1,skillCount:missing&&key==="skill"?0:1}},
+      documentTypesOnFile:{state:"available",value:["personal-photo","civil-id-front","civil-id-back"]},
+      civilIdRecorded:{state:"available",value:{number:!(missing&&key==="civil_id"),expiry:!(missing&&key==="civil_expiry")}},
+      writtenNationalityCode:{state:"available",value:"KW"},
+    };
+    const completeness=deriveProfileCompleteness(input);assert.equal(completeness.kind,"available",`${key} fixture is evaluable`);
+    return completeness.kind==="available"&&completeness.pendingFields.includes(key as never);
+  };
+  for(const key of PEOPLE_DETAILS_KEYS){assert.equal(evaluate(key,false),false,`${key} CMP met fixture agrees with SQL`);assert.equal(evaluate(key,true),true,`${key} CMP unmet fixture agrees with SQL`);}
 });
 
 test("DIRDB_SHOWN phone masking never reveals more than the final four digits",()=>{

@@ -11,7 +11,7 @@ export const classifyPeopleDirectorySearch = (q: string): ClassifiedSearch => {
   const text=q.trim().normalize("NFC"), employee=/^c0*([1-9][0-9]*)$/i.exec(text), converted=text.replace(/[\u0660-\u0669\u06f0-\u06f9]/g,digit);
   const allowed=/^[+0-9\u0660-\u0669\u06f0-\u06f9 ()-]+$/.test(text), compact=converted.replace(/[ ()-]/g,""), international=compact.startsWith("+")||compact.startsWith("00"), digits=compact.startsWith("+")?compact.slice(1):compact.startsWith("00")?compact.slice(2):compact;
   const phone=digits.length===8&&!international?`+965${digits}`:international||digits.startsWith("965")?`+${digits}`:compact;
-  const valid=allowed&&/^\+[0-9]{8,15}$/.test(phone), suffix=[...text].map(digit).join("").replace(/\D/g,"");
+  const valid=allowed&&[...text].length<=32&&/^\+[0-9]{8,15}$/.test(phone), suffix=[...text].map(digit).join("").replace(/\D/g,"");
   const link=/^(?:https?:\/\/[^/]+)?\/(?:people|profile)\/([a-z][a-z0-9._-]{2,29})\/?$/i.exec(text), bare=/^[a-z][a-z0-9._-]{2,29}$/i.test(text)?text.toLowerCase():null;
   return {employeeId:employee?.[1]??null,phone:valid?phone:null,phoneSuffix:allowed&&!valid&&suffix.length>=4?suffix:null,handle:link?.[1]?.toLowerCase()??bare,nameTokens:text.toLocaleLowerCase("und").match(/[\p{L}\p{N}]+/gu)??[]};
 };
@@ -21,7 +21,7 @@ WITH source AS (
  SELECT p.id AS principal_id, pp.display_name AS name, p.display_name AS universe_name,
   pp.arabic_name, pp.job_search_status AS work_status, ci.id::text AS nationality_id, ci.name AS nationality_name,
   (lal.principal_id IS NOT NULL) AS imported,
-  CASE WHEN lal.legacy_candidate_id IS NULL THEN NULL ELSE 'C'||lpad(lal.legacy_candidate_id,5,'0') END AS employee_id,
+  CASE WHEN lal.legacy_candidate_id IS NULL THEN NULL ELSE 'C'||lpad(lal.legacy_candidate_id,greatest(5,length(lal.legacy_candidate_id)),'0') END AS employee_id,
   right(pp.phone,4) AS phone_last4,
   (CASE WHEN ci.id IS NULL OR ci.catalogue_type<>'country' THEN 1 ELSE 0 END
    + CASE WHEN nullif(btrim(pp.display_name),'') IS NULL THEN 1 ELSE 0 END
