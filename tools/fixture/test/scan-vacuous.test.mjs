@@ -156,3 +156,22 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not treat methods on unrelated objects as assertion calls", () => {
+  const source = [
+    'test("expect-method", () => { reporter.expect(value); });',
+    'test("assert-method", () => { logger.assert(value); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["expect-method", "assert-method"],
+  );
+});
+
+test("does not treat a throw property as a throw statement", () => {
+  const report = scanVacuousTests(
+    'test("throw-method", () => { errors.throw(value); });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["throw-method"]);
+});
