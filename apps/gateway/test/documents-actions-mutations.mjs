@@ -8,6 +8,9 @@ const cases=[
  ['Q14_2_REMOVE',actions,suites.actions,"!document || !equal(supplied, stamp(service, personId, type, document.version))","!document"],
  ['Q14_2_VIEW',actions,suites.actions,"action === 'view' ? request.method !== 'POST'","action === 'view' ? false"],
  ['Q14_2_OWNER',actions,suites.actions,"request.headers.origin !== service.options.origin","false"],
+ ['DA_KEY_400',actions,suites.actions,"if (error instanceof RangeError || error instanceof TypeError)","if (false)"],
+ ['DA_REVOKED_401',actions,suites.actions,"if ((await login.profile({ sessionId: session })).status === 401)","if (false)"],
+ ['DA_STILL_503',actions,suites.actions,"if ((await login.profile({ sessionId: session })).status === 401)","if ((await login.profile({ sessionId: session })).status !== 401 || true)"],
  ['Q14_2_AVATAR',avatar,suites.avatar,"await service.issueDelivery(session, photo.id).then(v => v.url).catch(() => undefined)","await service.issueDelivery(session, photo.id).then(v => v.url)"],
  ['Q14_2_AVATAR',avatar,suites.avatar,"v.url","photo.id"],
 ];
