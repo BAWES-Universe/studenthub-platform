@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
-import type { CivilIdReviewStore, InMemoryCivilIdReviewStore } from "@studenthub/profile";
+import { SYNTHETIC_PROFILE_FIXTURES, type CivilIdReviewStore, type InMemoryCivilIdReviewStore } from "@studenthub/profile";
 import { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
 import {
   REAL_PROFILE_CIVIL_KEY, REAL_PROFILE_ORIGIN,
@@ -41,7 +41,7 @@ test("REV_SIDEBAR full staff gate controls the real workspace link and one count
   await save(allowed);
   assert.match(await(await allowed.get("/workspace?org_id=root&role=staff")).text(),/Civil IDs to check \(1\)/,"REV_SIDEBAR eligible staff sees queue count");
   assert.equal(calls,1,"REV_SIDEBAR countPending runs once");
-  for(const [org,role,scope] of [["candidate-documents","staff","subtree"],["root","staff","self"],["root","org-owner","subtree"],["root","employer","subtree"],["root","candidate","self"]] as const){
+  for(const [org,role,scope] of [["candidate-documents","staff","subtree"],["root","staff","self"],["root","org-owner","subtree"],["root","recruiter","subtree"],["root","candidate","self"]] as const){
     let deniedCalls=0;
     const configured=await startRealProfileServer(t,{civilIdReview:{staffGrant:{orgId:org==="candidate-documents"?"root":org,role:role as "staff",scope},wrapStore:s=>delegate(s,{countPending:async i=>{deniedCalls++;return s.countPending(i)}})},extend:()=>({navigation:navigation(org,role) as never})});
     const plain=await startRealProfileServer(t,{extend:()=>({navigation:navigation(org,role) as never})});
@@ -67,7 +67,7 @@ test("REV_SHOWN My profile shows decisions, escaping, waiting once, Arabic, and 
   const confirmed=await startRealProfileServer(t,{civilIdReview:{documents:await documents()}});await save(confirmed);
   await decide(confirmed,"confirmed");
   assert.match(await(await confirmed.get("/profile",REAL_PROFILE_OTHER_SESSION)).text(),/Checked/,"REV_SHOWN confirmed decision is shown");
-  const ar=await startRealProfileServer(t,{row:{candidate_id:232,candidate_language_pref:"ar"},civilIdReview:{}});await save(ar,STAFF);
+  const ar=await startRealProfileServer(t,{row:{...SYNTHETIC_PROFILE_FIXTURES.populated,candidate_language_pref:"ar"},civilIdReview:{}});await save(ar,STAFF);
   assert.match(await(await ar.get("/profile")).text(),/بانتظار تحقق StudentHub/,"REV_SHOWN Arabic waiting label is shown");
   const off=await startRealProfileServer(t);await save(off,STAFF);
   assert.doesNotMatch(await(await off.get("/profile")).text(),/Checked|Rejected:/,"REV_SHOWN feature-off profile has no decision line");
