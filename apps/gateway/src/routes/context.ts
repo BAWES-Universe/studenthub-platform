@@ -19,10 +19,12 @@ import type { LegacyLinkService } from "../legacy-link-http.js";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "../area-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
+import type { CivilIdReviewService } from "../civil-id-review-http.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilId?: CivilIdService;
   readonly area?: AreaHttp;
+  readonly civilIdReview?: Omit<CivilIdReviewService,"documents">;
   readonly organizationProfile?: OrganizationProfile;
   readonly organizationStatus?: OrganizationStatus;
   readonly organizationCommercialTerms?: OrganizationCommercialTerms;
