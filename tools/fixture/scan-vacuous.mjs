@@ -142,6 +142,10 @@ function testName(source, callIndex, bodyStart) {
 function braceBody(source, callIndex) {
   let open = -1;
   let depth = 0;
+  // callIndex points at the opening parenthesis matched by TEST_CALL_RE.  Keep
+  // the search inside that call; otherwise a brace in a later statement can
+  // accidentally become the body of a brace-less test callback.
+  let parenthesisDepth = 0;
   let quote = null;
   let lineComment = false;
   let blockComment = false;
@@ -177,6 +181,11 @@ function braceBody(source, callIndex) {
       if (end !== i) i = end;
     } else if (ch === '"' || ch === "'" || ch === "`") {
       quote = ch;
+    } else if (ch === "(" && open === -1) {
+      parenthesisDepth += 1;
+    } else if (ch === ")" && open === -1) {
+      parenthesisDepth -= 1;
+      if (parenthesisDepth === 0) return null;
     } else if (ch === "{") {
       if (open === -1) open = i;
       depth += 1;

@@ -156,3 +156,12 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not borrow a brace from after a test call", () => {
+  const source = [
+    'test("expression callback", () => doWork());',
+    "const options = { enabled: true };",
+  ].join("\n");
+
+  assert.deepEqual(scanVacuousTests(source), []);
+});
