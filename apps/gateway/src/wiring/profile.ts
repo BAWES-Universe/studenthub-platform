@@ -1,9 +1,10 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresCivilIdReviewStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, maskCivilId, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -38,7 +39,12 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const civilKey = civilRaw === undefined ? undefined : Buffer.from(civilRaw, "base64");
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
   const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
+  const civilIdReviewStore = civilKey ? new PostgresCivilIdReviewStore({ connectionString: databaseUrl }) : undefined;
   const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
+  const civilVault = civilKey ? new CivilIdVault(civilKey) : undefined;
+  const civilIdReview = civilIdReviewStore&&civilVault&&safeWriteKey&&settings.callbackUrl ? {origin:new URL(settings.callbackUrl).origin,secret:safeWriteKey,
+    async viewer(session:string){const active=await access.loginStore.sessions.get(session);if(!active)return undefined;const grants=await access.authzStore.listGrantsForPrincipal(active.personId);return grants.some(g=>(g.role==="staff"||g.role==="admin")&&g.scope==="subtree"&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(g.orgId))?active.personId:undefined;},
+    store:civilIdReviewStore,openNumber:(row:{principalId:string;country:"KW"|"BH";numberCiphertext:Buffer})=>civilVault.open(row.principalId,row.country,row.numberCiphertext),maskNumber:(value:string,country:"KW"|"BH")=>maskCivilId(country,value)}:undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -72,12 +78,12 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     sessions, authz:access.authzStore, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "",
     resetUrl:legacyConfig.resetUrl, secret:safeWriteKey,
   }) : undefined;
-  const webProfiles: OwnProfileReader = legacyStore ? { async readOwn(request) {
+  const webProfiles: OwnProfileReader = { async readOwn(request) {
     const result = await profiles.readOwn(request);
     if (result.kind !== "found") return result;
-    const status = await legacyStore.status(request.targetPersonId);
-    return { kind: "found", profile: Object.freeze({ ...result.profile, legacyLinkState: status.linked ? "linked" : "unlinked" }) };
-  } } : profiles;
+    const [status,civilIdReviewState] = await Promise.all([legacyStore?.status(request.targetPersonId),civilIdReviewStore?.stateFor(request.targetPersonId)]);
+    return { kind: "found", profile: Object.freeze({ ...result.profile, ...(status?{legacyLinkState:status.linked ? "linked" : "unlinked"}:{}), civilIdReviewState }) };
+  } };
   return {
     services: { application: {
       ...(safeWrites && safeWriteKey
@@ -128,9 +134,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      ...(civilIdReview ? { civilIdReview } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilIdReviewStore?.close()]); },
   };
 }

@@ -9,6 +9,8 @@ import { handleDocumentsUpload } from "../documents-upload-http.js";
 import { handleDocumentsActions } from "../documents-actions-http.js";
 import { prepareProfileAvatar } from "../profile-avatar.js";
 import { handleCivilIdReview } from "../civil-id-review-http.js";
+import { StaffDocuments } from "../../../../packages/private-documents/src/staff-delivery.js";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 
 const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
   handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
@@ -17,7 +19,7 @@ const documentsActionsRoute: GatewayRoute = { name: "documents-actions", handle:
 const profileAvatarRoute: GatewayRoute = { name: "profile-avatar", handle: async (ctx) => {
   await prepareProfileAvatar(ctx.request, ctx.response, ctx.documents); return false;
 } };
-const civilIdReviewRoute: GatewayRoute = { name: "civil-id-review", handle: ctx => handleCivilIdReview(ctx.request,ctx.response,ctx.civilIdReview) };
+const civilIdReviewRoute: GatewayRoute = { name: "civil-id-review", handle: ctx => {const core=ctx.login?.civilIdReview,documents=ctx.documents;return handleCivilIdReview(ctx.request,ctx.response,core&&documents?{...core,documents:new StaffDocuments({...documents.options,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,staffAudit:core.store})}:ctx.civilIdReview);} };
 
 const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
   handleLegacyLink(ctx.request, ctx.response, ctx.login?.legacyLink,
