@@ -156,3 +156,23 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not recognise similarly named member calls as assertions", () => {
+  const source = [
+    'test("member-expect", () => { helper.expect(value); });',
+    'test("member-assert", () => { helper.assert(value); });',
+    'test("nested-context", () => { helper.t.assert.ok(value); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["member-expect", "member-assert", "nested-context"],
+  );
+});
+
+test("does not recognise an object property named throw as a throw statement", () => {
+  const report = scanVacuousTests(
+    'test("throw-property", () => { const result = { throw: value }; });',
+  );
+  assert.deepEqual(report.map((entry) => entry.name), ["throw-property"]);
+});

@@ -18,7 +18,7 @@
 
 const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
-  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
+  /(?<![\w$.])(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|(?<![\w$.])throw\b(?!\s*:)/;
 
 function startsRegex(source, index) {
   const prefix = source.slice(0, index).trimEnd();
