@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { disabledTelemetry, observedJob, type Telemetry } from "./index.js";
 import type { Alert } from "./alerts.js";
 
-export const JOB_NAMES = ["heartbeat", "missed_run_check"] as const;
+export const JOB_NAMES = ["heartbeat", "missed_run_check", "email_outbox_delivery"] as const;
 export type JobName = typeof JOB_NAMES[number];
 export const JOB_OUTCOMES = ["succeeded", "failed", "refused_overlap"] as const;
 export type JobOutcome = typeof JOB_OUTCOMES[number];
@@ -34,7 +34,7 @@ export async function runJob(job:Job,store:JobRunsStore,options:RunnerOptions={}
   const clearTimer=options.clearTimer??(timer=>clearInterval(timer as ReturnType<typeof setInterval>));
   const timer=setTimer(()=>void renew(),Math.max(1,Math.floor(leaseMs/3)));
   let outcome:JobOutcome="succeeded",result:unknown,error:unknown;
-  try{result=await observedJob(()=>job.work(controller.signal),options.telemetry??disabledTelemetry,job.name)}catch(caught){outcome="failed";error=caught}
+  try{result=await observedJob(()=>job.work(controller.signal),options.telemetry??disabledTelemetry,job.name==="email_outbox_delivery"?"job":job.name)}catch(caught){outcome="failed";error=caught}
   finally{clearTimer(timer);await renew();if(lost&&outcome==="succeeded"){outcome="failed";error=new Error("job lease lost")}const finishedAt=now();try{await store.record({runId,jobName:job.name,startedAt,finishedAt,durationMs:Math.max(0,finishedAt.getTime()-startedAt.getTime()),outcome})}finally{try{await store.release(job.name,runId)}finally{if(outcome==="failed")await options.alert?.(alert("job_failed",job.name))}}}
   if(error!==undefined)throw error;return result;
 }
@@ -44,8 +44,8 @@ export async function missedJobAlerts(jobs:readonly Job[],store:Pick<JobRunsStor
   for(const job of jobs){if(signal?.aborted)break;if(isJobMissed(job,successes.get(job.name),now)){const value=alert("job_missed",job.name);alerts.push(value);await emit(value)}}
   return alerts;
 }
-export function createJobRegistry(store:JobRunsStore,emit:(alert:JobAlert)=>void|Promise<void>):readonly Job[]{
-  const jobs:Job[]=[{name:"heartbeat",intervalMs:60_000,work:async()=>({status:"ok"})},{name:"missed_run_check",intervalMs:60_000,work:async signal=>{await missedJobAlerts(jobs,store,emit,new Date(),signal)}}];return Object.freeze(jobs);
+export function createJobRegistry(store:JobRunsStore,emit:(alert:JobAlert)=>void|Promise<void>,deliverEmail:()=>Promise<unknown>=async()=>undefined):readonly Job[]{
+  const jobs:Job[]=[{name:"heartbeat",intervalMs:60_000,work:async()=>({status:"ok"})},{name:"missed_run_check",intervalMs:60_000,work:async signal=>{await missedJobAlerts(jobs,store,emit,new Date(),signal)}},{name:"email_outbox_delivery",intervalMs:60_000,work:async()=>deliverEmail()}];return Object.freeze(jobs);
 }
 export class MemoryJobRunsStore implements JobRunsStore {
   readonly runs:JobRun[]=[];readonly leases=new Map<JobName,{holder:string;expiresAt:Date}>();failRenewal=false;
