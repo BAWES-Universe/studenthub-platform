@@ -52,7 +52,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const area = createArea({ store: personLocations });
   const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
     ...({ preferences: { async readOwnPreferences(id: string) {
-      const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id)]);
+      const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id).catch(() => null)]);
       const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };
       return Object.keys(merged).length > 0 ? merged as never : null;
     } } }) });
