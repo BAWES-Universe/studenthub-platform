@@ -20,13 +20,13 @@ export interface CivilIdSuggestionService {
 export function createCivilIdSuggestion(options:{store:CivilIdOcrStore;civilId:CivilIdService;civilIdStore:CivilIdStore;vault:CivilIdVault;clock?:{now():Date}}):CivilIdSuggestionService {
   const now=()=>options.clock?.now()??new Date();
   const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kuwait",year:"numeric",month:"2-digit",day:"2-digit"}).format(now());
-  return Object.freeze({
+  return {
     civilId:options.civilId,
     current:(principalId:string)=>options.store.currentSuggestion(principalId,today()),
     async open(suggestionId:string,principalId:string){const sealed=await options.store.openForAccept(suggestionId,principalId);return sealed?{country:sealed.country,number:options.vault.open(principalId,sealed.country,sealed.ciphertext)}:null;},
     resolve:(suggestionId:string,principalId:string,how:"accepted"|"dismissed")=>options.store.resolve(suggestionId,principalId,how,now().toISOString()),
     submissionRecorded:(principalId:string,suggestionId:string)=>options.civilIdStore.submissionRecorded(principalId,submissionId(suggestionId)),
-  });
+  };
 }
 
 export function renderCivilIdSuggestion(language:"en"|"ar", suggestion:CivilIdSuggestion|undefined|null):string {
@@ -52,7 +52,9 @@ export async function handleCivilIdSuggestion(request:IncomingMessage,response:S
   const current=await service.current(principal);if(!current||current.id!==id){if(path.endsWith("/accept")&&await service.submissionRecorded(principal,id)){finish(303,{location:"/profile#field-civilId"});return true;}write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision));return true;}
   if(path.endsWith("/dismiss")){await service.resolve(id,principal,"dismissed");finish(303,{location:"/profile/civil-id"});return true;}
   if(current.state!=="read"){write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision));return true;}
-  const opened=await service.open(id,principal);if(!opened&&current.last4){write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision));return true;}
+  let opened:Awaited<ReturnType<CivilIdSuggestionService["open"]>>;
+  try { opened=await service.open(id,principal); } catch { write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision));return true; }
+  if(!opened&&current.last4){write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision));return true;}
   const own=await service.civilId.readOwn(principal);const saved=await service.civilId.save({principalId:principal,submissionId:submissionId(id),revision:own?.revision??0,country:opened?.country??current.country??undefined,number:opened?.number,expiry:current.expiry??undefined});
   if(saved.ok||saved.reason==="submission_reused"||saved.reason==="nothing_to_save"){await service.resolve(id,principal,"accepted");finish(303,{location:"/profile#field-civilId"});return true;}
   write(saved.reason==="duplicate"||saved.reason==="stale_revision"?409:400,"Civil ID",errorPage(CIVIL_ID_MESSAGES[saved.reason]));return true;
