@@ -163,14 +163,28 @@ test("SHU415_WRITE Postgres writes origin fields twice, resolves labels, and ref
   const id = `shu415-${randomUUID()}`, authz = new PostgresAuthzStore(pool), ref = "b".repeat(64);
   await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
   const catalogue = async (type: "country" | "university", name: string, code?: string) => { const itemId=randomUUID(); await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES($1,$2,$3,$3,$4,'active',$5,$5,now(),now())`,[itemId,type,name,code??null,ref]); return itemId; };
-  const country = await catalogue("country", "Canadian"), kuwait = await catalogue("country", "Kuwaiti", "KW"), university = await catalogue("university", "Test University");
+  const suffix=randomUUID(), country = await catalogue("country", `Canadian-${suffix}`), kuwait = await catalogue("country", `Kuwaiti-${suffix}`, "KW"), university = await catalogue("university", `Test University-${suffix}`), deleted=await catalogue("country",`Deleted-${suffix}`);
+  await pool.query("UPDATE catalogue_items SET status='deleted',deleted_at=now() WHERE id=$1",[deleted]);
   const store = new PostgresPersonProfileStore({ pool }), writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
   const write = async (field: "nationality" | "university" | "kuwaitiMother", value: string) => { const principalRef=safeWritePrincipalRef(id),change={personRef:personRecordRef(id),field,value};const preview=await writer().preview({principalRef,change});assert.ok(preview.ok);return preview.ok?writer().confirm({principalRef,change,token:preview.token}):preview; };
   for (const [field, values] of [["nationality",[country,country]],["university",[university,university]],["kuwaitiMother",["true","false"]]] as const) for (const value of values) assert.equal((await write(field,String(value))).ok,true);
   assert.equal((await write("kuwaitiMother","true")).ok,true);
-  assert.deepEqual(await write("nationality",kuwait),{ok:false,reason:"invalid_value"});
-  const preferences = await store.readOwnPreferences(id) as Record<string,{value:unknown}>;
-  assert.equal(preferences.nationality!.value,"Canadian"); assert.equal(preferences.university!.value,"Test University"); assert.equal(preferences.kuwaitiMother!.value,"true");
+  assert.equal((await write("nationality",kuwait)).ok,true);
+  assert.equal((await pool.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1",[id])).rows[0].kuwaiti_mother,null);
+  assert.deepEqual(await write("kuwaitiMother","true"),{ok:false,reason:"invalid_value"});
+  assert.equal((await write("nationality",country)).ok,true);
+  for(const invalid of [randomUUID(),deleted,university]) assert.deepEqual(await write("nationality",invalid),{ok:false,reason:"invalid_value"});
+  assert.deepEqual(await write("university",country),{ok:false,reason:"invalid_value"});
+  const stored=(await pool.query("SELECT nationality_id::text,university_id::text,kuwaiti_mother::text FROM person_profiles WHERE principal_id=$1",[id])).rows[0];
+  assert.deepEqual(stored,{nationality_id:country,university_id:university,kuwaiti_mother:null});
+  await assert.rejects(pool.query("UPDATE person_profiles SET nationality_id=$1,kuwaiti_mother=true WHERE principal_id=$2",[kuwait,id]),(error:unknown)=>(error as{code?:string}).code==="23514");
+  const preferences = await store.readOwnPreferences(id) as Record<string,{value:unknown;referenceId?:string}>;
+  assert.equal(preferences.nationality!.value,`Canadian-${suffix}`); assert.equal(preferences.nationality!.referenceId,country);
+  assert.equal(preferences.university!.value,`Test University-${suffix}`); assert.equal(preferences.university!.referenceId,university);
+  assert.equal(preferences.kuwaitiMother!.value,null);
+  // Hand-checked mutation: removing status='active' admits deleted; removing the
+  // catalogue type admits cross-typed ids; removing the 0214 trigger lets the
+  // direct UPDATE above succeed. Each corresponding assertion fails.
 });
 
 test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone holder the same refusal", async () => {

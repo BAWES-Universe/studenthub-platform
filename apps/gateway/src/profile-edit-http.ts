@@ -10,7 +10,7 @@ export interface PersonProfileEditStore {
   contactValueAvailable?(principalId: string, field: "phone" | "handle", value: string): Promise<boolean>;
   profileChoices?(): Promise<ProfileChoices>;
 }
-export interface ProfileChoice { readonly id: string; readonly name: string }
+export interface ProfileChoice { readonly id: string; readonly name: string; readonly code?: string | null }
 export interface ProfileChoices { readonly countries: readonly ProfileChoice[]; readonly universities: readonly ProfileChoice[] }
 export type ProfileEditResult = { readonly status: 200; readonly body: unknown }
   | { readonly status: 400 | 401 | 403 | 404 | 409 | 503; readonly body: { readonly error: string } };
@@ -170,13 +170,15 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const sessionId = cookie(request.headers.cookie);
       const result = await service.preview(sessionId, values); if (result.status !== 200) { const reason = (result.body as { error?: string }).error; if (result.status === 400 && (reason === "invalid_value" || reason === "minimum_age" || reason === "future_date")) invalidForm(write, selected, selected === "phone" ? "" : values.value, reason); else if (reason === "contact_value_unavailable") write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Your profile wasn’t changed.</h1><p>That ${selected === "phone" ? "phone number" : "profile link"} is not available.</p><a class="button primary" href="/profile">Back to My profile</a></main>`); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
-      const after = (result.body as { changes: readonly { after: string | null }[] }).changes[0]?.after ?? "";
+      const submittedAfter = (result.body as { changes: readonly { after: string | null }[] }).changes[0]?.after ?? "";
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
       const choices = selected === "nationality" || selected === "university" ? await service.choices() : undefined;
-      const namedAfter = selected === "nationality" ? choices?.countries.find(choice => choice.id === after)?.name : selected === "university" ? choices?.universities.find(choice => choice.id === after)?.name : undefined;
+      const namedAfter = selected === "nationality" ? choices?.countries.find(choice => choice.id === submittedAfter)?.name : selected === "university" ? choices?.universities.find(choice => choice.id === submittedAfter)?.name : undefined;
+      if ((selected === "nationality" || (selected === "university" && submittedAfter !== "")) && namedAfter === undefined) { error(write, 400); return true; }
+      const after = namedAfter ?? submittedAfter;
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(namedAfter ?? shownAfter(selected, after))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(shownAfter(selected, after))}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));

@@ -352,14 +352,17 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   let rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
     const row = fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
-    if (login.profileEdit && editable.has(field) && field !== "jobSearchStatus") {
+    const catalogueAvailable = field !== "nationality" && field !== "university"
+      || (field === "nationality" ? profileChoices?.countries.length : profileChoices?.universities.length);
+    if (login.profileEdit && editable.has(field) && field !== "jobSearchStatus" && catalogueAvailable) {
       const raw = profile.fields[field].state === "available" ? profile.fields[field].value : "";
       const value = String(raw);
       const radios = (choices: readonly (readonly [string,string])[]) => choices.map(([code,label]) => `<label><input type="radio" name="value" value="${code}" required${value === code ? " checked" : ""}>${label}</label>`).join("");
       const control = field === "gender" ? radios([["male","Male"],["female","Female"],["other","Other"]])
         : field === "drivingLicence" ? radios([["true","Yes"],["false","No"]])
           : field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">`
-            : field === "nationality" || field === "university" ? `<select name="value" required><option value="">Select ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label.toLowerCase())}</option>${(field === "nationality" ? profileChoices?.countries : profileChoices?.universities)?.map(choice => `<option value="${escapeHtml(choice.id)}"${choice.name === value ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
+            : field === "nationality" ? `<select name="value" required><option value="">Select nationality</option>${profileChoices?.countries.map(choice => `<option value="${escapeHtml(choice.id)}"${profile.fields.nationality.state === "available" && profile.fields.nationality.referenceId === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
+              : field === "university" ? `<select name="value"><option value=""${raw === "" ? " selected" : ""}>None</option><option value="" disabled>Not listed</option>${profileChoices?.universities.map(choice => `<option value="${escapeHtml(choice.id)}"${profile.fields.university.state === "available" && profile.fields.university.referenceId === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
               : field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
       return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
@@ -374,8 +377,10 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   }).join("");
   rows += contacts;
   const mother = profile.fields.kuwaitiMother;
-  const motherForm = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<label><input type="radio" name="value" value="true" required${mother?.state === "available" && mother.value ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false" required${mother?.state === "available" && !mother.value ? " checked" : ""}>No</label></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  if (mother?.state === "available" || motherForm) rows += `<div><p><strong>Kuwaiti mother:</strong> ${mother?.state === "available" ? mother.value ? "Yes" : "No" : "Not recorded"}</p>${motherForm}</div>`;
+  const nationalityIsKuwaiti = profile.fields.nationality.state === "available" && profile.fields.nationality.referenceCode === "KW";
+  const motherForm = login.profileEdit && !nationalityIsKuwaiti ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<label><input type="radio" name="value" value="true" required${mother?.state === "available" && mother.value ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false" required${mother?.state === "available" && !mother.value ? " checked" : ""}>No</label></label><button class="button primary" type="submit">Review change</button></form>` : "";
+  if (!nationalityIsKuwaiti && mother?.state === "available") rows += `<div><dt>Kuwaiti mother</dt><dd>${mother.value ? "Yes" : "No"}</dd><small class="field-meta">Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}</small>${motherForm}</div>`;
+  else if (motherForm) rows += `<div>${motherForm}</div>`;
   const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";
   const workStatusChoices = ([['not_looking','Not looking right now'],['active','Actively looking for work'],['open_to_offers','Open to offers']] as const)
     .map(([code, label]) => `<label><input type="radio" name="value" value="${code}" required${workStatusValue === code ? " checked" : ""}>${label}</label>`).join("");

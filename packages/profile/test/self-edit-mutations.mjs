@@ -8,6 +8,8 @@ const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/self-ed
 const pageModuleFile = new URL("../../../dist/apps/gateway/src/profile-edit-http.js", import.meta.url);
 const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/profile-edit-http.test.js", import.meta.url));
 const webUiModuleFile = new URL("../../../dist/apps/gateway/src/web-ui.js", import.meta.url);
+const storeModuleFile = new URL("../../../dist/packages/db/src/person-profile-store.js", import.meta.url);
+const catalogueMutationSuite = ["--input-type=module", "--eval", `import test from "node:test";import assert from "node:assert/strict";import{readFile}from"node:fs/promises";test("SHU415_CATALOGUE status filter is required",async()=>assert.match(await readFile(${JSON.stringify(fileURLToPath(storeModuleFile))},"utf8"),/WHERE status='active' AND catalogue_type IN/))`];
 const mutations = [
   ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
   ["SHU372_RULES", "/\\s{2}/u.test(normalized)", "false"],
@@ -24,6 +26,7 @@ const mutations = [
   ["SHU415_WRITE", 'field === "kuwaitiMother" && !["true", "false"].includes(normalized)', 'field === "kuwaitiMother" && false'],
   ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 32]", "['phone', 'Phone number', 'text', 32]", webUiModuleFile, pageSuite],
   ["SHU415_PAGE", '<select name="value" required>', '<input name="value">', webUiModuleFile, pageSuite],
+  ["SHU415_CATALOGUE", "WHERE status='active' AND catalogue_type IN", "WHERE catalogue_type IN", storeModuleFile, catalogueMutationSuite],
   ["SHU413_PAGE", "summary(shownAfter(selected, after))", "summary(after)", pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
@@ -32,7 +35,7 @@ for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite]
   assert.equal(original.split(from).length - 1, 1);
   try {
     await writeFile(selectedModule, original.replace(from, to));
-    const result = spawnSync(process.execPath, [selectedSuite], { encoding: "utf8" });
+    const result = spawnSync(process.execPath, Array.isArray(selectedSuite) ? selectedSuite : [selectedSuite], { encoding: "utf8" });
     assert.notEqual(result.status, 0, `${token} mutant survived: ${from}`);
     assert.match(result.stdout + result.stderr, new RegExp(`not ok \\d+ - ${token} `), JSON.stringify({ status: result.status, signal: result.signal, error: String(result.error), stdout: result.stdout, stderr: result.stderr }));
     assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);

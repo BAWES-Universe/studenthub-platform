@@ -42,6 +42,10 @@ export interface AvailableProfileField<T> {
   readonly value: T;
   readonly provenance: FieldProvenance;
   readonly freshness: FieldFreshness;
+  /** Catalogue identity used by native controls; never rendered as profile text. */
+  readonly referenceId?: string;
+  /** Stable catalogue code used only for applicability rules. */
+  readonly referenceCode?: string | null;
 }
 
 export interface UnavailableProfileField {

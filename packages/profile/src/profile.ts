@@ -183,7 +183,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
+type WrittenPreference = Readonly<{ value: unknown; updatedAt: string; referenceId?: unknown; referenceCode?: unknown }>;
 type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
@@ -216,7 +216,12 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
           : name === "gender" ? exactEnum<Gender>(new Map([["male", "male"], ["female", "female"], ["other", "other"]]))(preference.value, profile.asOfDate)
             : name === "jobSearchStatus" ? exactEnum<JobSearchStatus>(new Map([["not_looking", "not_looking"], ["active", "active"], ["open_to_offers", "open_to_offers"]]))(preference.value, profile.asOfDate)
               : name === "birthDate" ? dateOnly(preference.value) : preference.value;
-        fields[name] = written(PROFILE_FIELD_SPECS[name], stored as never, preference.updatedAt) as never;
+        const projected = written(PROFILE_FIELD_SPECS[name], stored as never, preference.updatedAt);
+        fields[name] = (name === "nationality" || name === "university")
+          ? Object.freeze({ ...projected,
+            ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(preference.referenceId)) ? { referenceId: String(preference.referenceId) } : {}),
+            referenceCode: typeof preference.referenceCode === "string" ? preference.referenceCode : null }) as never
+          : projected as never;
         if (name === "birthDate") try {
           fields.age = written(PROFILE_FIELD_SPECS.age, ageOn(dateOnly(preference.value), profile.asOfDate), preference.updatedAt);
         } catch {

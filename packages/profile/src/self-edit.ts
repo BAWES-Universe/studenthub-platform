@@ -26,8 +26,8 @@ export const SHU372_RULES = Object.freeze({
   phone: Object.freeze({ maxLength: 32, allowClear: true, accepts: ["+96550000000", "+442071838750", ""], refuses: ["+1234567", "+1234567890123456", "phone"] }),
   handle: Object.freeze({ maxLength: 30, allowClear: true, accepts: ["noor-al-sabah", "noor_2026", "noor.sabah", ""], refuses: ["no", "1noor", "noor al-sabah", "-noor"] }),
   nationality: Object.freeze({ maxLength: 36, allowClear: false, accepts: ["11111111-1111-4111-8111-111111111111"], refuses: ["", "Kuwait", "1"] }),
-  university: Object.freeze({ maxLength: 36, allowClear: false, accepts: ["22222222-2222-4222-8222-222222222222"], refuses: ["", "Kuwait University", "2"] }),
-  kuwaitiMother: Object.freeze({ maxLength: 5, allowClear: false, accepts: ["true", "false"], refuses: ["", "yes", "1"] }),
+  university: Object.freeze({ maxLength: 36, allowClear: true, accepts: ["22222222-2222-4222-8222-222222222222", ""], refuses: ["Kuwait University", "2"] }),
+  kuwaitiMother: Object.freeze({ maxLength: 5, allowClear: true, accepts: ["true", "false", ""], refuses: ["yes", "1"] }),
 } satisfies Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
 
 const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
