@@ -24,6 +24,7 @@ test("SHU370_CONVENTION new conventional tests are discovered", async () => {
   const root = await fixture([
     "dist/apps/example/test/compiled.test.js",
     "dist/packages/example/test/new-card.test.js",
+    "dist/packages/db/test/postgres-new-card.test.js",
     "apps/example/test/app.test.mjs",
     "packages/example/test/package.test.mjs",
     "packages/example/test/mutations-extra.mjs",
@@ -39,6 +40,7 @@ test("SHU370_CONVENTION new conventional tests are discovered", async () => {
   ]);
   assert.deepEqual(found.mutationTests, ["packages/example/test/mutations-extra.mjs"]);
   assert.deepEqual(found.dbNodeTests, ["packages/db/test/db-source.test.mjs"]);
+  assert.deepEqual(found.dbTests, ["dist/packages/db/test/postgres-new-card.test.js"]);
   assert.deepEqual(found.documentTests, ["packages/private-documents/test/new-card.test.mjs"]);
 });
 

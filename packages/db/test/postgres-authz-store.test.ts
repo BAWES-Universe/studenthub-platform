@@ -44,9 +44,9 @@ import {
 const DB_URL = process.env.DATABASE_URL ?? "";
 
 async function expectedMigrationVersions(): Promise<string[]> {
-  // Resolve beside this module just as migrate.ts does, so cwd cannot change
-  // the inventory asserted against the real schema_migrations ledger.
-  return (await readdir(new URL("../migrations/", import.meta.url)))
+  // This test executes from dist/packages/db/test, so resolve back to the
+  // repository's source migration directory rather than a nonexistent dist copy.
+  return (await readdir(new URL("../../../../packages/db/migrations/", import.meta.url)))
     .filter((file) => file.endsWith(".sql"))
     .sort()
     .map((file) => file.slice(0, -4));

@@ -94,9 +94,10 @@ export function formatRun(command, args) {
 }
 
 export async function discoverMigrations(root = process.cwd()) {
-  return sorted((await filesBelow(root, "packages/db/migrations"))
+  return (await filesBelow(root, "packages/db/migrations"))
     .filter((file) => file.endsWith(".sql"))
-    .map((file) => path.basename(file, ".sql")));
+    .map((file) => path.basename(file, ".sql"))
+    .sort();
 }
 
 export async function loadBaseline(root = process.cwd()) {

@@ -44,7 +44,7 @@ async function fixture(files) {
     assert.deepEqual(found.nodeTests, []);
     assert.deepEqual(found.dbTests, ["dist/packages/db/test/postgres-example.test.js"]);
   }, /multiple lanes/,
-    "SHU370_FAILS_CLOSED kills a mutant that puts a db file in the normal test lane");
+    "SHU370_CONVENTION kills a mutant that puts a db file in the normal test lane");
 }
 
 {
@@ -58,4 +58,4 @@ async function fixture(files) {
     "SHU370_FAILS_CLOSED kills a mutant that turns empty discovery into a pass");
 }
 
-console.log("SHU370_FAILS_CLOSED three discovery mutants killed by assertions");
+console.log("SHU370_CONVENTION db-lane mutant and SHU370_FAILS_CLOSED fail-closed mutants killed by assertions");
