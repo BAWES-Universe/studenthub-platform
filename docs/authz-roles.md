@@ -99,6 +99,19 @@ shape.)*
    > providers to `hashed_user_id` (or another opaque, immutable subject) before
    > grants bind to money or personal records is a platform decision, not a
    > code change in this PR.
+
+   **Universe reassignment guard.** When a Universe ID token includes a valid
+   `hashed_user_id` (preferred) or `uid`, StudentHub binds that opaque stable
+   id to the `(issuer, subject)` identity. A later different id permanently
+   locks the identity, revokes its login sessions, and rejects sign-in until
+   staff clear the lock. Locked identities are available to the staff link
+   report; the stable id itself is never displayed there.
+
+   **Residual risk.** When the Universe token carries no stable-id claim, an
+   address reassigned before its first guarded sign-in, or while claims are
+   absent, can still inherit the earlier principal. Universe should use
+   Authentik's immutable UUID as the OIDC subject; that provider-side change is
+   the complete fix.
 3. **Issuer-key registry contract** — every issuer has keys with
    `active | retired` status. Unknown `kid` and retired keys are hard denies;
    rotation never falls back to accepting anything. An assertion carries an

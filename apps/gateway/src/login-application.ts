@@ -21,6 +21,25 @@ interface IdTokenClaims {
   readonly phone?: string;
   readonly name?: string;
   readonly birthdate?: string;
+  readonly hashed_user_id?: unknown;
+  readonly uid?: unknown;
+}
+
+const STABLE_USER_ID = /^[A-Za-z0-9_-]{8,128}$/;
+
+function stableUserIdFrom(claims: IdTokenClaims): string | undefined {
+  const hashed = claims.hashed_user_id;
+  const uid = claims.uid;
+  if (hashed !== undefined && (typeof hashed !== "string" || !STABLE_USER_ID.test(hashed))) {
+    throw new Error("invalid stable user id");
+  }
+  if (uid !== undefined && (typeof uid !== "string" || !STABLE_USER_ID.test(uid))) {
+    throw new Error("invalid stable user id");
+  }
+  if (hashed !== undefined && uid !== undefined && hashed !== uid) {
+    throw new Error("conflicting stable user ids");
+  }
+  return hashed ?? uid;
 }
 
 function opaqueToken(dependencies: LoginDependencies): string {
@@ -148,14 +167,24 @@ export const createLoginApplication: LoginApplicationFactory = (
       });
       const claims = await validateIdToken(tokens.idToken, loginState.nonce, dependencies, config);
       if (!config.subjectPolicy(claims.sub)) return rejected();
+      const stableUserId = stableUserIdFrom(claims);
       const profile: ClaimedProfile = {
         email: claims.email,
         phone: claims.phone,
         name: claims.name,
         dateOfBirth: claims.birthdate,
+        ...(stableUserId === undefined ? {} : { stableUserId }),
       };
       const identity = await dependencies.identities.findBySubject(config.issuer, claims.sub)
         ?? await dependencies.identities.createForSubject(config.issuer, claims.sub, profile);
+      if (stableUserId !== undefined && dependencies.identities.bindStableId) {
+        const binding = await dependencies.identities.bindStableId(
+          config.issuer,
+          claims.sub,
+          stableUserId,
+        );
+        if (binding === "mismatch" || binding === "locked") return rejected();
+      }
       const sessionId = opaqueToken(dependencies);
       await dependencies.sessions.put({ id: sessionId, personId: identity.personId });
       return {

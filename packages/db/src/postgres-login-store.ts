@@ -31,6 +31,18 @@ interface IdentityRow {
   person_id: string;
 }
 
+export interface LockedIdentity {
+  readonly issuer: string;
+  readonly subjectHash: string;
+  readonly personId: string;
+  readonly lockedAt: Date;
+}
+
+interface StableBindingRow {
+  person_id: string;
+  outcome: "bound" | "matched" | "mismatch" | "locked";
+}
+
 /** PostgreSQL-backed login stores sharing one bounded connection pool. */
 export class PostgresLoginStore {
   readonly #pool: PgPool;
@@ -66,7 +78,38 @@ export class PostgresLoginStore {
       // Deliberately unavailable: mutable donor/profile fields are never an
       // authentication binding mechanism.
       findLegacyMatch: async () => undefined,
+      bindStableId: (issuer, subject, stableUserId) =>
+        this.#bindStableId(issuer, subject, stableUserId),
     };
+  }
+
+  async listLockedIdentities(): Promise<readonly LockedIdentity[]> {
+    const { rows } = await this.#pool.query<{
+      issuer: string; subject: string; person_id: string; locked_at: Date;
+    }>(
+      `SELECT issuer, subject, person_id, locked_at
+         FROM external_identities
+        WHERE locked_at IS NOT NULL
+        ORDER BY locked_at, issuer, subject`,
+    );
+    return rows.map((row) => ({
+      issuer: row.issuer,
+      subjectHash: createHash("sha256").update(row.subject).digest("hex"),
+      personId: row.person_id,
+      lockedAt: row.locked_at,
+    }));
+  }
+
+  async unlockIdentity(identity: {
+    readonly issuer: string; readonly subject: string;
+  }): Promise<boolean> {
+    const { rowCount } = await this.#pool.query(
+      `UPDATE external_identities
+          SET locked_at = NULL, locked_reason = NULL
+        WHERE issuer = $1::text AND subject = $2::text AND locked_at IS NOT NULL`,
+      [identity.issuer, identity.subject],
+    );
+    return rowCount === 1;
   }
 
   async close(): Promise<void> {
@@ -136,6 +179,64 @@ export class PostgresLoginStore {
     );
     const row = rows[0];
     return row && { issuer: row.issuer, subject: row.subject, personId: row.person_id };
+  }
+
+  async #bindStableId(
+    issuer: string,
+    subject: string,
+    stableUserId: string,
+  ): Promise<"bound" | "matched" | "mismatch" | "locked"> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query<StableBindingRow>(
+        `WITH current AS MATERIALIZED (
+           SELECT issuer, subject, person_id, stable_user_id, locked_at
+             FROM external_identities
+            WHERE issuer = $1::text AND subject = $2::text
+            FOR UPDATE
+         )
+         UPDATE external_identities AS identity
+            SET stable_user_id = COALESCE(current.stable_user_id, $3::text),
+                locked_at = CASE
+                  WHEN current.locked_at IS NOT NULL THEN current.locked_at
+                  WHEN current.stable_user_id IS NOT NULL
+                   AND current.stable_user_id <> $3::text THEN clock_timestamp()
+                  ELSE NULL
+                END,
+                locked_reason = CASE
+                  WHEN current.locked_at IS NOT NULL THEN 'stable_id_mismatch'::text
+                  WHEN current.stable_user_id IS NOT NULL
+                   AND current.stable_user_id <> $3::text THEN 'stable_id_mismatch'::text
+                  ELSE NULL
+                END
+           FROM current
+          WHERE identity.issuer = current.issuer AND identity.subject = current.subject
+         RETURNING identity.person_id,
+           CASE
+             WHEN current.locked_at IS NOT NULL THEN 'locked'
+             WHEN current.stable_user_id IS NULL THEN 'bound'
+             WHEN current.stable_user_id = $3::text THEN 'matched'
+             ELSE 'mismatch'
+           END AS outcome`,
+        [issuer, subject, stableUserId],
+      );
+      const binding = rows[0];
+      if (!binding) throw new Error("external identity does not exist");
+      if (binding.outcome === "mismatch") {
+        await client.query(
+          "DELETE FROM login_sessions WHERE person_id = $1::text",
+          [binding.person_id],
+        );
+      }
+      await client.query("COMMIT");
+      return binding.outcome;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* preserve original */ }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async #createIdentity(
