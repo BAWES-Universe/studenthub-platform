@@ -72,6 +72,19 @@ test("does not borrow a name from source after an unquoted test name", () => {
   assert.equal(report[0].name, null);
 });
 
+test("does not borrow a string nested in the test-name expression", () => {
+  const report = scanVacuousTests('test(makeName("wrong"), () => { work(); });');
+  assert.equal(report.length, 1);
+  assert.equal(report[0].name, null);
+});
+
+test("extracts a literal name after leading comments", () => {
+  const report = scanVacuousTests(
+    'test(/* fixture name */ "commented", () => { work(); });',
+  );
+  assert.equal(report[0].name, "commented");
+});
+
 test("rejects a non-string argument with a TypeError", () => {
   assert.throws(() => scanVacuousTests(42), TypeError);
 });
@@ -123,6 +136,19 @@ test("ignores test-like calls inside comments and string literals", () => {
     'const example = \'it("string", () => { const value = 2; });\';',
     '/* it("block", () => { const value = 3; }); */',
     'test("real", () => { const value = 4; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
+
+test("ignores methods named test or it", () => {
+  const source = [
+    'matcher.test("not-a-test", () => { work(); });',
+    'runner.it("not-a-test-either", () => { work(); });',
+    'test("real", () => { work(); });',
   ].join("\n");
 
   assert.deepEqual(

@@ -118,13 +118,29 @@ function codeOnly(source) {
   return result;
 }
 
-function testName(source, callIndex, bodyStart) {
-  for (let start = callIndex; start < bodyStart; start += 1) {
-    const quote = source[start];
-    if (quote !== '"' && quote !== "'") continue;
+function testName(source, argumentStart, bodyStart) {
+  // A name is only available when the first argument is a string literal.
+  // Looking for any quote before the callback would incorrectly borrow a
+  // string from expressions such as `test(makeName("wrong"), () => {})`.
+  let start = argumentStart;
+  while (start < bodyStart) {
+    if (/\s/.test(source[start])) {
+      start += 1;
+    } else if (source.startsWith("//", start)) {
+      const newline = source.indexOf("\n", start + 2);
+      start = newline === -1 ? bodyStart : newline + 1;
+    } else if (source.startsWith("/*", start)) {
+      const close = source.indexOf("*/", start + 2);
+      start = close === -1 ? bodyStart : close + 2;
+    } else {
+      break;
+    }
+  }
 
-    let name = "";
-    for (let i = start + 1; i < bodyStart; i += 1) {
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'") return null;
+  let name = "";
+  for (let i = start + 1; i < bodyStart; i += 1) {
       const ch = source[i];
       if (ch === quote) return name;
       if (ch === "\\" && i + 1 < bodyStart) {
@@ -133,8 +149,6 @@ function testName(source, callIndex, bodyStart) {
       } else {
         name += ch;
       }
-    }
-    return null;
   }
   return null;
 }
@@ -205,11 +219,15 @@ export function scanVacuousTests(fileText) {
   let match;
   while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
+    // `test` and `it` are the test APIs themselves, not arbitrary methods
+    // such as `pattern.test(...)` or `runner.it(...)`.
+    const prefix = searchableText.slice(0, callIndex).trimEnd();
+    if (prefix.endsWith(".") || prefix.endsWith("?.")) continue;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
     report.push({
-      name: testName(fileText, callIndex, body.start),
+      name: testName(fileText, callIndex + match[0].length, body.start),
       start: body.start,
       end: body.end,
     });
