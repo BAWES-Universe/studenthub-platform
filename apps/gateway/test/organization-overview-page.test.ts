@@ -4,7 +4,7 @@ import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import {
   InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
-  ORGANIZATION_FIELD_CONTRACT, ORGANIZATION_FIELDS_BY_AUDIENCE,
+  ORGANIZATION_FIELD_CONTRACT, ORGANIZATION_FIELDS_BY_AUDIENCE, type OrganizationDeletionRecords,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation, type ContextNavigation } from "../src/context-navigation.js";
@@ -13,7 +13,7 @@ import type { BrowserLoginApplication } from "../src/web-ui.js";
 const SESSION = "o".repeat(43);
 const cookie = { cookie: `__Host-studenthub_session=${SESSION}`, accept: "text/html" };
 
-async function fixture(t: TestContext, options: { calls?: URLSearchParams[]; unavailable?: boolean; throwing?: boolean; evilNames?: boolean } = {}) {
+async function fixture(t: TestContext, options: { calls?: URLSearchParams[]; unavailable?: boolean; throwing?: boolean; serviceUnavailable?: boolean; evilNames?: boolean; deleted?: readonly string[] } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -27,10 +27,13 @@ async function fixture(t: TestContext, options: { calls?: URLSearchParams[]; una
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", options.evilNames ? { ...parentA, company_name: "<script>x</script>", company_common_name_en: "<script>x</script>" } : parentA], ["org-a1", childA1], ["org-b", unrelatedB],
   ])) });
-  const actual = createContextNavigation(rig.sessions, store, organizations);
+  const deleted = new Set(options.deleted ?? []);
+  const deletions: OrganizationDeletionRecords = { isDeleted: async (orgId) => deleted.has(orgId), deletedAmong: async (orgIds) => new Set(orgIds.filter((orgId) => deleted.has(orgId))) };
+  const actual = createContextNavigation(rig.sessions, store, organizations, deletions);
   const navigation: ContextNavigation = { async open(session, selection) {
     options.calls?.push(new URLSearchParams(selection));
     if (options.throwing) throw new Error("private navigation detail");
+    if (options.serviceUnavailable) return { status: 503, body: { error: "private service detail" } };
     const result = await actual.open(session, selection);
     if (options.unavailable && selection.size > 0 && result.status === 200) return { ...result, body: { ...result.body, organization: { kind: "unavailable" } } };
     return result;
@@ -46,9 +49,9 @@ async function fixture(t: TestContext, options: { calls?: URLSearchParams[]; una
 
 test("OVW_READ member sees exactly the audience projection", async (t) => {
   const f = await fixture(t);
-  const owner = await f.get("/organization/org-a"); const body = await owner.text();
+  const owner = await f.get("/organization/org-a1"); const body = await owner.text();
   assert.equal(owner.status, 200); assert.equal(owner.headers.get("cache-control"), "no-store");
-  assert.match(body, /<h1>Synthetic Retail Group<\/h1>/);
+  assert.match(body, /<h1>Synthetic Retail Kuwait City<\/h1>/);
   for (const field of ORGANIZATION_FIELDS_BY_AUDIENCE.employer) {
     assert.ok(body.includes(`>${ORGANIZATION_FIELD_CONTRACT[field].label}<`), `OVW_READ shows ${field}`);
   }
@@ -73,6 +76,8 @@ test("OVW_DENY every authenticated refusal has the same 404 body", async (t) => 
     if (path.includes("org-b")) assert.equal(calls.length, 2, "OVW_DENY /organization/org-b?role=org-owner is hidden");
   }
   assert.ok(bodies.every((body) => body === bodies[0]), "OVW_DENY refusal bodies are byte-identical");
+  const deleted = await fixture(t, { deleted: ["org-a"] }); const deletedResponse = await deleted.get("/organization/org-a");
+  assert.equal(deletedResponse.status, 404); assert.equal(await deletedResponse.text(), bodies[0], "OVW_DENY deleted organization is byte-identical");
   assert.equal((await f.get("/organization/org-a", false)).status, 401);
 });
 
@@ -82,11 +87,15 @@ test("OVW_LINKS actions and sub-organizations follow the active role", async (t)
   assert.match(owner, /href="\/organization\/org-a\/stores">Stores</); assert.match(owner, /href="\/organization\/org-a1">/);
   const staff = await (await f.get("/organization/org-a?role=staff")).text();
   assert.doesNotMatch(staff, />Edit company details</, "OVW_LINKS staff has no Edit"); assert.match(staff, />Stores</);
+  for (const role of ["recruiter", "admin"]) {
+    const body = await (await f.get(`/organization/org-a?role=${role}`)).text();
+    assert.doesNotMatch(body, />Edit company details</); assert.match(body, />Stores</);
+  }
 });
 
 test("OVW_ESCAPE company names are escaped", async (t) => {
   const f = await fixture(t, { evilNames: true }); const body = await (await f.get("/organization/org-a")).text();
-  assert.match(body, /&lt;script&gt;x&lt;\/script&gt;/, "OVW_ESCAPE heading is escaped"); assert.doesNotMatch(body, /<script>x<\/script>/);
+  assert.match(body, /<h1>&lt;script&gt;x&lt;\/script&gt;<\/h1>/, "OVW_ESCAPE heading is escaped"); assert.doesNotMatch(body, /<script>x<\/script>/);
 });
 
 test("OVW_DEGRADE unavailable data is a notice and failures are plain 503 pages", async (t) => {
@@ -94,12 +103,19 @@ test("OVW_DEGRADE unavailable data is a notice and failures are plain 503 pages"
   assert.match(notice, /Company details couldn’t be loaded\./, "OVW_DEGRADE unavailable is a notice"); assert.doesNotMatch(notice, /profile-fields/);
   const response = await (await fixture(t, { throwing: true })).get("/organization/org-a"); const body = await response.text();
   assert.equal(response.status, 503); assert.doesNotMatch(body, /private navigation detail|Error:/);
+  const unavailable = await (await fixture(t, { serviceUnavailable: true })).get("/organization/org-a");
+  assert.equal(unavailable.status, 503); assert.doesNotMatch(await unavailable.text(), /private service detail/);
 });
 
 test("OVW_PASSTHROUGH reserved and nested organization routes pass through", async (t) => {
   const calls: URLSearchParams[] = []; const f = await fixture(t, { calls });
   for (const path of ["/organization/create", "/organization/assigned-companies", "/organization/onboarding", "/organization/org-a/edit", "/organization/org-a/stores"]) {
-    await f.get(path); assert.equal(calls.length, 0, `OVW_PASSTHROUGH ${path}`);
+    const response = await f.get(path); const body = await response.text();
+    assert.equal(calls.length, 0, `OVW_PASSTHROUGH ${path}`);
+    if (path === "/organization/onboarding") {
+      assert.equal(response.status, 404, "OVW_PASSTHROUGH /organization/onboarding status");
+      assert.equal(body, '{"ok":false,"error":"not_found"}', "OVW_PASSTHROUGH /organization/onboarding bytes");
+    }
   }
   await f.get("/organization/org-a/work"); assert.equal(calls.length, 0, "OVW_PASSTHROUGH work reaches its own lane");
 });

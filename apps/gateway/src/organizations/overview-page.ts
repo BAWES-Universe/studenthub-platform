@@ -16,10 +16,13 @@ const ORG_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 const PAGE = /^\/organization\/([^/]+)$/;
 const ROLE_ORDER: readonly Role[] = ["org-owner", "recruiter", "staff", "admin"];
 
+function decodedSegment(segment: string): string | undefined {
+  try { return decodeURIComponent(segment); } catch { return undefined; }
+}
+
 export function organizationPageOrgId(segment: string): string | undefined {
-  let decoded: string;
-  try { decoded = decodeURIComponent(segment); } catch { return undefined; }
-  return ORG_ID.test(decoded) && !ORGANIZATION_PAGE_RESERVED.includes(decoded) ? decoded : undefined;
+  const decoded = decodedSegment(segment);
+  return decoded && ORG_ID.test(decoded) && !ORGANIZATION_PAGE_RESERVED.includes(decoded) ? decoded : undefined;
 }
 
 function escapeHtml(value: unknown): string {
@@ -61,6 +64,8 @@ export async function handleOrganizationOverviewPage(ctx: GatewayRouteContext): 
   const requestUrl = new URL(ctx.request.url ?? "/", "http://gateway.invalid");
   const match = PAGE.exec(requestUrl.pathname);
   if (!match || (ctx.request.method !== "GET" && ctx.request.method !== "HEAD")) return false;
+  const decoded = decodedSegment(match[1]!);
+  if (decoded && ORGANIZATION_PAGE_RESERVED.includes(decoded)) return false;
   const orgId = organizationPageOrgId(match[1]!);
   if (!orgId) return error(ctx, 404);
   const roles = requestUrl.searchParams.getAll("role");
@@ -77,10 +82,8 @@ export async function handleOrganizationOverviewPage(ctx: GatewayRouteContext): 
   const requestedRole = roles[0];
   const role = requestedRole ?? ROLE_ORDER.find((candidate) => contexts.body.contexts.some((item) => item.orgId === orgId && item.role === candidate));
   const heldAtOrganization = role && contexts.body.contexts.some((item) => item.orgId === orgId && item.role === role);
-  const heldThroughSubtree = role && (role === "staff" || role === "admin")
-    && contexts.body.contexts.some((item) => item.role === role);
   if (!role || !ROLE_ORDER.includes(role as Role)
-    || (!heldAtOrganization && !heldThroughSubtree)) return error(ctx, 404);
+    || !heldAtOrganization) return error(ctx, 404);
   let result;
   try { result = await navigation.open(session, new URLSearchParams({ org_id: orgId, role })); } catch { return unavailable(ctx); }
   if (result.status === 503) return unavailable(ctx);

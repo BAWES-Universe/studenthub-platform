@@ -12,11 +12,11 @@ const hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 // [mutant, named test, assertion message, needle in the compiled module, replacement]
 const cases = [
   ["open as owner without a held-context check", "OVW_DENY every authenticated refusal", "OVW_DENY /organization/org-b?role=org-owner is hidden",
-    "(!heldAtOrganization && !heldThroughSubtree)", "false"],
+    "!heldAtOrganization", "false"],
   ["show Edit to every role", "OVW_LINKS actions", "OVW_LINKS staff has no Edit",
     'role === "org-owner" ? `<a href="${base}/edit">Edit company details</a>` : ""', '`<a href="${base}/edit">Edit company details</a>`'],
-  ["allow create as an organization id", "OVW_PASSTHROUGH reserved", "OVW_PASSTHROUGH /organization/create",
-    '"onboarding", "create", "assigned-companies"', '"onboarding", "assigned-companies"'],
+  ["allow onboarding as an organization id", "OVW_PASSTHROUGH reserved", "OVW_PASSTHROUGH /organization/onboarding bytes",
+    '"onboarding", "create", "assigned-companies"', '"create", "assigned-companies"'],
   ["render an unescaped heading", "OVW_ESCAPE company names", "OVW_ESCAPE heading is escaped",
     '<h1>${escapeHtml(heading)}</h1>', '<h1>${heading}</h1>'],
   ["turn unavailable projection into 503", "OVW_DEGRADE unavailable", "OVW_DEGRADE unavailable is a notice",
