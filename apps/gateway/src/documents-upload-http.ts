@@ -3,6 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createIdempotencyKey } from '../../../packages/idempotency-contract/src/idempotency.js';
 import { CANDIDATE_DOCUMENT_ADMISSION, LifecycleError, type CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import { CANDIDATE_DOCUMENT_TYPES, type CandidateDocumentType } from '../../../packages/private-documents/src/lifecycle-state.js';
+import { validateCandidateContent } from '../../../packages/private-documents/src/candidate-content.js';
 import { pageDocument, writeHtml, type BrowserLoginApplication } from './web-ui.js';
 
 const MULTIPART_OVERHEAD = 64 * 1024;
@@ -76,9 +77,15 @@ export async function handleDocumentsUpload(request: IncomingMessage, response: 
   try {
     const current = (await service.list(session)).find(document => document.type === type);
     const parsed = parseMultipart(await readBounded(request, CANDIDATE_DOCUMENT_ADMISSION[type].maxBytes + MULTIPART_OVERHEAD), String(request.headers['content-type'] ?? ''));
+    // Run the lifecycle's sole content admission before creating its durable
+    // ticket, so a refused browser upload leaves no staged state behind.
+    try { validateCandidateContent(type, parsed.mime, parsed.bytes); } catch { throw new FormError(400, 'invalid'); }
     const keys = serverKeys(service, type, parsed.submission);
     const sha256 = createHash('sha256').update(parsed.bytes).digest('hex'); const contentMd5 = createHash('md5').update(parsed.bytes).digest('base64');
-    const authorization = await service.authorizeUpload(session, keys[0], { type, mime: parsed.mime, size: parsed.bytes.length, expectedVersion: current?.version ?? null, ...(service.options.directUploads ? { sha256, contentMd5 } : {}) });
+    // The version is server-owned: a replacement may only displace the row that
+    // was visible when this form post began.
+    const expectedVersion = current?.version ?? null;
+    const authorization = await service.authorizeUpload(session, keys[0], { type, mime: parsed.mime, size: parsed.bytes.length, expectedVersion, ...(service.options.directUploads ? { sha256, contentMd5 } : {}) });
     const ticket = authorization.body as { uploadId: string; objectKey: string; credential: string };
     await service.put(session, keys[1], ticket.uploadId, ticket.objectKey, ticket.credential, parsed.bytes);
     await service.finalize(session, keys[2], { uploadId: ticket.uploadId });

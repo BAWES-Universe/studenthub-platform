@@ -75,7 +75,16 @@ test('Q14_1_REFUSALS missing, duplicate and unknown parts are closed HTML errors
 });
 
 test('Q14_1_REFUSALS a refused finalize never becomes a redirect', async () => {
-  const f = fake(); (f.service as { finalize: () => Promise<never> }).finalize = async () => { throw Object.assign(new Error('conflict'), { status: 409, code: 'conflict' }); };
+  const f = fake(); (f.service as { finalize: () => Promise<never> }).finalize = async () => { const { LifecycleError } = await import('../../../packages/private-documents/src/candidate-lifecycle.js'); throw new LifecycleError(409, 'conflict'); };
   const x = exchange(valid()); await handleDocumentsUpload(x.request, x.response, f.service);
-  assert.notEqual(x.result().status, 303); assert.doesNotMatch(x.result().body, /conflict|upload-secret|object-secret/);
+  assert.equal(x.result().status, 409); assert.match(x.result().body, /Your documents changed, try again/); assert.doesNotMatch(x.result().body, /conflict|upload-secret|object-secret/);
+});
+
+test('Q14_1_REPLACE route binds authorization to the server-read current version', async () => {
+  const f = fake();
+  (f.service as { list: (...args: unknown[]) => Promise<unknown[]> }).list = async (...args) => { f.calls.push({ name:'list', args }); return [{ type:'personal-photo', version:'00000000-0000-4000-8000-000000000099' }]; };
+  const x = exchange(valid()); await handleDocumentsUpload(x.request, x.response, f.service);
+  assert.equal(x.result().status, 303);
+  const authorize = f.calls.find(call => call.name === 'authorize')!;
+  assert.equal((authorize.args[2] as { expectedVersion: string }).expectedVersion, '00000000-0000-4000-8000-000000000099');
 });

@@ -26,13 +26,17 @@ async function rig(t: TestContext, language = 'en') {
   const loginRig = createSyntheticLoginRig(createLoginApplication);
   await loginRig.sessions.put({ id: SESSION, personId: 'person-1' });
   await loginRig.sessions.put({ id: OTHER, personId: 'person-2' });
-  let transactions = 0, lists = 0, deliveries = 0, broken = false, profileBroken = false;
+  let transactions = 0, lists = 0, deliveries = 0, authorizes = 0, puts = 0, finalizes = 0, broken = false, profileBroken = false, failCommit = false;
   const now = 1_800_000_000_000;
-  const service = new CandidateDocuments({ store: { transaction: fn => { transactions++; if (broken) throw new Error('RAW_ERROR private/key https://delivery.invalid?token=secret'); return disk.transaction(fn); } }, authz, origin, orgId: 'org-a', signingKey: randomBytes(32), now: () => now, authenticate: async credential => {
+  const service = new CandidateDocuments({ store: { transaction: fn => { transactions++; if (broken) throw new Error('RAW_ERROR private/key https://delivery.invalid?token=secret'); return disk.transaction(async state => { const versions = state.documents.map(row => row.version).join(','); const result = await fn(state); if (failCommit && state.documents.map(row => row.version).join(',') !== versions) { failCommit = false; throw new Error('injected commit failure'); } return result; }); } }, authz, origin, orgId: 'org-a', signingKey: randomBytes(32), now: () => now, authenticate: async credential => {
     const session = await loginRig.sessions.get(credential); return session ? { kind: 'principal', principalId: session.personId } : null;
   } });
   const originalList = service.list.bind(service);
   service.list = async (credential, includeFinalizedAt) => { lists++; return originalList(credential, includeFinalizedAt); };
+  const originalAuthorize = service.authorizeUpload.bind(service), originalPut = service.put.bind(service), originalFinalize = service.finalize.bind(service);
+  service.authorizeUpload = async (...args) => { authorizes++; return originalAuthorize(...args); };
+  service.put = async (...args) => { puts++; return originalPut(...args); };
+  service.finalize = async (...args) => { finalizes++; return originalFinalize(...args); };
   service.issueDelivery = async () => { deliveries++; throw new Error('Unexpected delivery'); };
   const repository = new OwnProfileRepository({ principals: authz, source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnPreferences() { return { language: language === 'ar' ? 'ar' : 'en', updatedAt: '2026-11-05T00:00:00Z' }; } } });
   const profileReads: unknown[] = [], sessionReads: unknown[] = [];
@@ -50,7 +54,7 @@ async function rig(t: TestContext, language = 'en') {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const url = `http://127.0.0.1:${address.port}`;
   const get = (path = '/profile/documents', session: string | undefined = SESSION, accept = 'text/html') => fetch(url + path, { headers: { accept, ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}) } });
-  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), unconfigure: () => { configured = false; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
+  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries, authorizes, puts, finalizes }), unconfigure: () => { configured = false; }, failCommit: () => { failCommit = true; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
 }
 function pdf(): Buffer {
   let text = '%PDF-1.4\n'; const offsets: number[] = [];
@@ -68,6 +72,18 @@ async function finalize(f: Awaited<ReturnType<typeof rig>>, session = SESSION) {
   const result = await f.service.finalize(session, f.key(), { uploadId: ticket.uploadId });
   assert.equal(result.status, 200);
   return { bytes, result, ticket };
+}
+async function submissionFor(f: Awaited<ReturnType<typeof rig>>, type: string, session = SESSION): Promise<string> {
+  const html = await (await f.get('/profile/documents', session)).text();
+  const section = html.split(`id="document-${type}"`)[1]!.split('</form>')[0]!;
+  return /name="submission" value="([^"]+)"/.exec(section)![1]!;
+}
+async function postFile(f: Awaited<ReturnType<typeof rig>>, type: string, bytes: Buffer, mime: string, options: { session?: string; submission?: string; filename?: string } = {}) {
+  const session = options.session ?? SESSION;
+  const form = new FormData();
+  form.set('submission', options.submission ?? await submissionFor(f, type, session));
+  form.set('file', new Blob([new Uint8Array(bytes)], { type: mime }), options.filename ?? 'browser-name-must-not-escape.bin');
+  return fetch(`${f.url}/profile/documents/${type}/upload`, { method:'POST', redirect:'manual', headers:{ cookie:`__Host-studenthub_session=${session}`, origin, 'sec-fetch-site':'same-origin' }, body:form });
 }
 test('SHU366_PAGE finalized file appears once with closed slots and one list', async t => {
   const f = await rig(t), finalized = await finalize(f);
@@ -112,7 +128,7 @@ test('SHU366_PAGE session refusal precedes even unconfigured service access', as
     const response = await f.get('/profile/documents?language=ar', mode === 'missing' ? '' : SESSION);
     assert.equal(response.status, 401, mode); const html = await response.text();
     assert.match(html, /Sign in to view your documents/); assert.match(html, /Continue with Universe/);
-    assert.deepEqual(f.counts(), { lists: 0, transactions: 0, deliveries: 0 }); assert.deepEqual(f.profileReads, []);
+    assert.deepEqual(f.counts(), { lists: 0, transactions: 0, deliveries: 0, authorizes: 0, puts: 0, finalizes: 0 }); assert.deepEqual(f.profileReads, []);
   }
   const configured = await rig(t); await configured.loginRig.sessions.delete(SESSION);
   assert.equal((await configured.get()).status, 401); assert.equal(configured.counts().transactions, 0);
@@ -168,7 +184,7 @@ test('SHU366_PAGE methods and Accept are opt-in without store access', async t =
   const f = await rig(t);
   for (const accept of ['*/*', 'application/json', 'text/html;q=0', 'application/json,text/html']) assert.equal((await f.get('/profile/documents', SESSION, accept)).status, 404);
   for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) assert.equal((await fetch(f.url + '/profile/documents', { method, headers: { accept: 'text/html', cookie: `__Host-studenthub_session=${SESSION}` } })).status, 404);
-  assert.deepEqual(f.counts(), { lists: 0, transactions: 0, deliveries: 0 });
+  assert.deepEqual(f.counts(), { lists: 0, transactions: 0, deliveries: 0, authorizes: 0, puts: 0, finalizes: 0 });
   assert.equal((await f.get('/profile/documents-extra')).status, 404);
 });
 
@@ -195,7 +211,7 @@ test('SHU366_PAGE rejects ambiguous session cookies without store access', async
     const response = await fetch(f.url + '/profile/documents', { headers: { accept: 'text/html', cookie } });
     assert.equal(response.status, 401);
   }
-  assert.deepEqual(f.counts(), { transactions: 0, lists: 0, deliveries: 0 });
+  assert.deepEqual(f.counts(), { transactions: 0, lists: 0, deliveries: 0, authorizes: 0, puts: 0, finalizes: 0 });
 });
 
 test('SHU366_PAGE concurrent revocation at primitive authentication is sign-in401', async t => {
@@ -228,4 +244,71 @@ test('Q14_1_UPLOAD plain form uploads and renders the finalized file', async t =
   const shown = await (await f.get()).text();
   assert.match(shown, /id="document-personal-photo"[^]*?<strong>On file<\/strong>/);
   assert.doesNotMatch(shown, /never-shown\.png/); assert.match(shown, /PNG/); assert.match(shown, /15 Jan 2027/);
+});
+
+test('Q14_1_REFUSALS route admission matrix leaves documents, tickets and cleanup unchanged', async t => {
+  const f = await rig(t), goodPng = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63606060000000040001f61738550000000049454e44ae426082','hex');
+  const jpeg = Buffer.from('ffd8ffc0000b080001000101011100ffda0008010100003f0000ffd9','hex');
+  const cases: [string, Buffer, string][] = [
+    ['personal-photo', Buffer.from('GIF89a'), 'image/gif'], ['personal-photo', pdf(), 'application/pdf'], ['resume', goodPng, 'image/png'],
+    ['personal-photo', jpeg, 'image/png'], ['resume', Buffer.from('%PDF-not-a-document'), 'application/pdf'],
+    ['personal-photo', goodPng.subarray(0, 24), 'image/png'], ['civil-id-front', jpeg.subarray(0, -2), 'image/jpeg'],
+    ['resume', pdf().subarray(0, -8), 'application/pdf'], ['civil-id-back', Buffer.alloc(0), 'image/png'],
+  ];
+  for (const [type, bytes, mime] of cases) {
+    const before = await f.disk.transaction(async state => JSON.stringify({ documents:state.documents, uploads:state.lifecycle?.uploads ?? [], cleanup:state.lifecycle?.cleanup ?? [] }));
+    const response = await postFile(f, type, bytes, mime);
+    assert.equal(response.status, 400, `${type} ${mime} ${bytes.length}`); const html = await response.text();
+    assert.match(html, /Choose a valid file/); assert.match(html, /Back to My documents/);
+    const after = await f.disk.transaction(async state => JSON.stringify({ documents:state.documents, uploads:state.lifecycle?.uploads ?? [], cleanup:state.lifecycle?.cleanup ?? [] }));
+    assert.equal(after, before, `${type} refusal changed durable state`);
+  }
+  const rawSubmission = await submissionFor(f, 'personal-photo'), boundary = 'shu503-stateful-refusal';
+  const part = (name: string, value: Buffer | string, filename?: string) => Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"${filename === undefined ? '' : `; filename="${filename}"`}\r\n${filename === undefined ? '' : 'Content-Type: image/png\r\n'}\r\n`), Buffer.isBuffer(value) ? value : Buffer.from(value), Buffer.from('\r\n')]);
+  const malformed = [
+    [part('submission', rawSubmission), part('file', Buffer.alloc(0), '')],
+    [part('submission', rawSubmission), part('unknown', 'x'), part('file', goodPng, 'x.png')],
+    [part('submission', rawSubmission), part('file', goodPng, 'a.png'), part('file', goodPng, 'b.png')],
+  ];
+  for (const parts of malformed) {
+    const before = await f.disk.transaction(async state => JSON.stringify({ documents:state.documents, uploads:state.lifecycle?.uploads ?? [], cleanup:state.lifecycle?.cleanup ?? [] }));
+    const body = Buffer.concat([...parts, Buffer.from(`--${boundary}--`)]);
+    const response = await fetch(`${f.url}/profile/documents/personal-photo/upload`, { method:'POST', redirect:'manual', headers:{ cookie:`__Host-studenthub_session=${SESSION}`, origin, 'sec-fetch-site':'same-origin', 'content-type':`multipart/form-data; boundary=${boundary}` }, body });
+    assert.equal(response.status, 400); assert.match(await response.text(), /Back to My documents/);
+    const after = await f.disk.transaction(async state => JSON.stringify({ documents:state.documents, uploads:state.lifecycle?.uploads ?? [], cleanup:state.lifecycle?.cleanup ?? [] }));
+    assert.equal(after, before, 'malformed multipart changed durable state');
+  }
+});
+
+test('Q14_1_REPLACE failed page commit keeps old size and successful retry holds exactly one old version', async t => {
+  const f = await rig(t), old = pdf(), newer = Buffer.concat([pdf().subarray(0, -6), Buffer.from('%pad\n%%EOF\n')]);
+  assert.equal((await postFile(f, 'resume', old, 'application/pdf')).status, 303);
+  f.failCommit(); const failed = await postFile(f, 'resume', newer, 'application/pdf');
+  assert.equal(failed.status, 503); let shown = await (await f.get()).text();
+  assert.match(shown, new RegExp(`PDF · ${old.length} bytes`));
+  let state = await f.disk.transaction(async value => value); assert.equal(state.documents[0]!.size, old.length); assert.equal(state.lifecycle!.cleanup.length, 0);
+  assert.equal((await postFile(f, 'resume', newer, 'application/pdf')).status, 303);
+  shown = await (await f.get()).text(); assert.match(shown, new RegExp(`PDF · ${newer.length} bytes`));
+  state = await f.disk.transaction(async value => value); assert.equal(state.lifecycle!.cleanup.length, 1); assert.equal(state.lifecycle!.cleanup[0]!.status, 'held');
+});
+
+test('Q14_1_ONE_PATH retrying one signed form stores one version and client fields cannot select an owner', async t => {
+  const f = await rig(t), bytes = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63606060000000040001f61738550000000049454e44ae426082','hex');
+  const submission = await submissionFor(f, 'personal-photo');
+  assert.equal((await postFile(f, 'personal-photo', bytes, 'image/png', { submission })).status, 303);
+  assert.equal((await postFile(f, 'personal-photo', bytes, 'image/png', { submission })).status, 303);
+  let state = await f.disk.transaction(async value => value); assert.equal(state.documents.length, 1); assert.equal(state.lifecycle!.cleanup.length, 0);
+  const otherSubmission = await submissionFor(f, 'civil-id-front', OTHER);
+  assert.equal((await postFile(f, 'civil-id-front', bytes, 'image/png', { session:OTHER, submission:otherSubmission })).status, 303);
+  const first = await f.service.list(SESSION), second = await f.service.list(OTHER);
+  assert.deepEqual(first.map(row => row.type), ['personal-photo']); assert.deepEqual(second.map(row => row.type), ['civil-id-front']);
+  state = await f.disk.transaction(async value => value); assert.equal(state.documents.length, 2);
+});
+
+test('Q14_1_SHOWN genuine upload has one list authorize bytes finalize regardless of other slots', async t => {
+  const f = await rig(t), bytes = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63606060000000040001f61738550000000049454e44ae426082','hex');
+  await finalize(f); const submission = await submissionFor(f, 'civil-id-back'); const before = f.counts();
+  assert.equal((await postFile(f, 'civil-id-back', bytes, 'image/png', { submission })).status, 303);
+  const after = f.counts(); assert.deepEqual({ list:after.lists-before.lists, authorize:after.authorizes-before.authorizes, put:after.puts-before.puts, finalize:after.finalizes-before.finalizes }, { list:1, authorize:1, put:1, finalize:1 });
+  const shown = await (await f.get()).text(); assert.match(shown, /id="document-civil-id-back"[^]*?<strong>On file<\/strong>/);
 });
