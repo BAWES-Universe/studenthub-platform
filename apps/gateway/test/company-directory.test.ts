@@ -8,17 +8,19 @@ import {
   type OrganizationStoreCounts,
   type OrganizationAccountManagerRecords,
   type OrganizationCommercialTermsRecords,
+  organizationEligibleAccountManagersView,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createCompanyDirectory } from "../src/company-directory.js";
 import { createContextNavigation } from "../src/context-navigation.js";
 import type { BrowserLoginApplication } from "../src/web-ui.js";
+import type { OrganizationAccountManagerStore } from "../src/organization-account-manager.js";
 
 const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
+async function fixture(t: TestContext, options: { readonly eligibleManagers?: Pick<OrganizationAccountManagerStore,"eligibleManagers">; readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -39,7 +41,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers, commercialTerms:options.commercialTerms });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
-    ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
+    ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations, options.eligibleManagers) }),
     web: { origin: "https://studenthub.example.invalid", returnTo: rig.config.allowedReturnUrls[1],
       profiles: new OwnProfileRepository({ principals: store, source: new InMemoryApprovedProfileAdapter({ links: [], rows: new Map() }),
         today: () => "2026-10-04" }) },
@@ -56,6 +58,8 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
 }
 
 const html = { accept: "text/html" };
+
+test("SHU359_ELIGIBLE listing uses the shared write eligibility rule and name ordering",()=>{assert.deepEqual(organizationEligibleAccountManagersView([{principal_id:"unnamed",display_name:null,grants:[{org_id:"root",role:"staff",scope:"self"}]},{principal_id:"alice",display_name:"Alice",grants:[{org_id:"root",role:"admin",scope:"self"}]},{principal_id:"hidden",display_name:"Hidden",grants:[{org_id:"root",role:"recruiter",scope:"self"}]}],"root",[]),[]);assert.deepEqual(organizationEligibleAccountManagersView([{principal_id:"unnamed",display_name:null,grants:[{org_id:"org-a",role:"staff",scope:"self"}]},{principal_id:"alice",display_name:"Alice",grants:[{org_id:"org-a",role:"admin",scope:"self"}]}],"org-a",[]),[{principalId:"alice",displayName:"Alice"},{principalId:"unnamed",displayName:null}])});
 
 test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspace", async (t) => {
   const f = await fixture(t);
@@ -213,6 +217,9 @@ test("SHU355_SHOWN directory hides a manager without a covering grant and restor
   granted=false;assert.match(await(await f.get(STAFF_LIST,html)).text(),/<td>None<\/td>/);
   granted=true;assert.match(await(await f.get(STAFF_LIST,html)).text(),/Staff One/);
 });
+
+test("SHU359_PICKER staff sees an eligible-manager picker and me keeps its query meaning",async(t)=>{const f=await fixture(t,{eligibleManagers:{eligibleManagers:async()=>[{principalId:"staff-b",displayName:null},{principalId:"staff-a",displayName:"Alice Staff"}]}});const page=await(await f.get(`${STAFF_LIST}&manager=me`,html)).text();assert.match(page,/<select name="manager">/);assert.match(page,/<option value="me" selected>Me<\/option>/);assert.match(page,/<option value="staff-a">Alice Staff<\/option>/);assert.match(page,/<option value="staff-b">Unnamed staff member<\/option>/);assert.doesNotMatch(page,/>staff-a<|>staff-b</)});
+test("SHU359_SHOWN picker appears only after directory authorization",async(t)=>{let calls=0;const f=await fixture(t,{eligibleManagers:{eligibleManagers:async()=>{calls++;return[{principalId:"staff-a",displayName:"Visible Staff"}]}}});assert.match(await(await f.get(STAFF_LIST,html)).text(),/Visible Staff/);assert.equal(calls,1);const denied=await f.get("/workspace/companies?org_id=org-b&role=recruiter",html);assert.equal(denied.status,403);assert.equal(calls,1)});
 
 test("SHU357_DIRECTORY_DEGRADES renders unavailable manager cells when the batch read fails",async(t)=>{
   const f=await fixture(t,{accountManagers:{readMany:async()=>{throw new Error("down")}}});

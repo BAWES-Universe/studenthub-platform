@@ -218,7 +218,7 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
       : "Your access may have changed. Choose one of your current workspaces to continue.";
     return workspaceDocument("Companies unavailable", `<header class="topbar">${brand}<a href="/workspace">Workspaces</a></header><main id="main" class="error-page"><h1>This company list isn’t available.</h1><p>${message}</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
   }
-  const { active, filters, directory, accountManagerSelection } = result.body;
+  const { active, filters, directory, accountManagerSelection, eligibleAccountManagers } = result.body;
   const context = { org_id: active.orgId, role: active.role };
   const query: Record<string, string> = { ...context,
     ...(filters.query ? { q: filters.query } : {}),
@@ -246,9 +246,12 @@ export function renderCompanyDirectory(result: CompanyDirectoryResult, login: Br
     last < directory.total ? pageLink(directory.page + 1, "Next →", "next") : "",
   ].join("");
   const option = (value: string, label: string, selected: string | undefined) =>
-    `<option value="${value}"${selected === value ? " selected" : ""}>${label}</option>`;
+    `<option value="${escapeHtml(value)}"${selected === value ? " selected" : ""}>${escapeHtml(label)}</option>`;
   const approved = filters.approvedToHire === undefined ? undefined : filters.approvedToHire ? "yes" : "no";
-  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><label>Account manager<input name="manager" maxlength="128" value="${escapeHtml(accountManagerSelection ?? "")}" placeholder="Any, or me"></label><button class="sign-out" type="submit">Search</button></form>`;
+  const managerField = eligibleAccountManagers === undefined
+    ? `<input name="manager" maxlength="128" value="${escapeHtml(accountManagerSelection ?? "")}" placeholder="Any, or me">`
+    : `<select name="manager">${option("", "Any", accountManagerSelection ?? "")}${option("me", "Me", accountManagerSelection)}${eligibleAccountManagers.map(person => option(person.principalId, person.displayName ?? "Unnamed staff member", accountManagerSelection)).join("")}</select>`;
+  const form = `<form class="directory-filters" method="get" action="/workspace/companies" role="search"><input type="hidden" name="org_id" value="${escapeHtml(active.orgId)}"><input type="hidden" name="role" value="${escapeHtml(active.role)}"><label>Search<input type="search" name="q" maxlength="100" value="${escapeHtml(filters.query ?? "")}" placeholder="Name in English or Arabic"></label><label>Status<select name="status">${option("", "Any status", filters.status ?? "")}${option("active", "Active", filters.status)}${option("under_review", "Under review", filters.status)}${option("inactive", "Inactive", filters.status)}</select></label><label>Approved to hire<select name="approved">${option("", "Any", approved ?? "")}${option("yes", "Yes", approved)}${option("no", "No", approved)}</select></label><label>Currency<input name="currency" maxlength="3" pattern="[A-Z]{3}" value="${escapeHtml(filters.currencyCode ?? "")}" placeholder="Any" size="5"></label><label>Account manager${managerField}</label><button class="sign-out" type="submit">Search</button></form>`;
   const table = directory.entries.length
     ? `<div class="directory-table"><table><caption>Companies ${first}–${last} of ${directory.total}</caption><thead><tr><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Approved to hire</th><th scope="col">Currency</th><th scope="col">Sub-companies</th><th scope="col">Stores</th><th scope="col">Account manager</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-contexts" role="status">${directory.total === 0 ? "No companies match these filters." : "There are no more companies on this page."}</p>`;
