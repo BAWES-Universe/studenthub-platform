@@ -276,7 +276,7 @@ export async function handleLanguagePreferencePage(
   if (path !== FORM_PREVIEW && path !== FORM_CONFIRM) return false;
   // These URLs are shared with the JSON API. Only native browser form posts
   // belong to this adapter; JSON continues to the existing route unchanged.
-  if (request.headers["content-type"]?.startsWith("application/json")) return false;
+  if (!request.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) return false;
   if (request.method !== "POST") { pageError(write, 404); return true; }
   if (!service || !origin) { pageError(write, 503); return true; }
   if (request.headers.origin !== origin || request.headers["sec-fetch-site"] === "cross-site") { request.resume(); pageError(write, 403); return true; }

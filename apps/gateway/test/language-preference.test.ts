@@ -25,17 +25,18 @@ test("SHU-84/AC-01 CONFORMANCE the served policy permits exactly one field", () 
 
 test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and render the write", async (t) => {
   const personId = "person-populated", session = "p".repeat(43), originHolder = { value: "" };
-  let value: string | null = "en", receipt: Receipt | null = null;
+  let value: string | null = null, receipt: Receipt | null = null;
+  let updatedAt = "2026-09-14T08:30:00.000Z";
   const port: SafeWriteStore = {
     ownedRecord: (ref) => ref === safeWritePrincipalRef(personId) ? personRecordRef(personId) : null,
     readField: () => value,
     commit: (input: CommitInput) => {
       if (input.expectedBefore !== value) return { ok: false, reason: "state_changed" };
-      value = input.value; receipt = input.receipt; return { ok: true };
+      value = input.value; updatedAt = "2026-09-15T09:45:00.000Z"; receipt = input.receipt; return { ok: true };
     },
   };
   const store = { forPrincipal: () => port, readReceipt: async () => receipt,
-    readOwnPreferences: async () => value === null ? null : { language: value } };
+    readOwnPreferences: async () => value === null ? null : { language: value, updatedAt } };
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: session, personId });
   const profiles = new OwnProfileRepository({
@@ -53,18 +54,19 @@ test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and
   const headers = { cookie: `__Host-studenthub_session=${session}`, accept: "text/html", origin: originHolder.value,
     "sec-fetch-site": "same-origin", "content-type": "application/x-www-form-urlencoded" };
   const overSnapshot = await (await fetch(`${originHolder.value}/profile`, { headers: { cookie: headers.cookie, accept: "text/html" } })).text();
-  assert.match(overSnapshot, /<dt>Language<\/dt><dd>EN<\/dd><small class="field-meta">Written by you/,
-    "SHU371_SHOWN_OVER_SNAPSHOT renders written English over the Arabic fixture snapshot");
-  const preview = await fetch(`${originHolder.value}/profile/language/preview`, { method: "POST", headers, body: "language=ar" });
+  assert.match(overSnapshot, /<dt>Language<\/dt><dd>AR<\/dd><small class="field-meta">StudentHub snapshot/);
+  const preview = await fetch(`${originHolder.value}/profile/language/preview`, { method: "POST", headers, body: "language=en" });
   const review = await preview.text();
   assert.equal(preview.status, 200); assert.equal(preview.headers.get("cache-control"), "no-store");
-  assert.match(review, /SHU371_PAGE_FLOW|Language: <strong>English<\/strong> → <strong>العربية/);
+  assert.match(review, /Language: <strong>العربية<\/strong> → <strong>English<\/strong>/,
+    "SHU371_PAGE_FLOW preview before comes from My profile, not the empty write store");
   assert.doesNotMatch(review, /token[^<]*(?:href|location)=/i);
   const confirm = new URLSearchParams();
   for (const match of review.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) confirm.set(match[1]!, match[2]!.replaceAll("&amp;", "&"));
   const done = await fetch(`${originHolder.value}/profile/language/confirm`, { method: "POST", headers, body: confirm, redirect: "manual" });
-  assert.equal(done.status, 303); assert.equal(done.headers.get("location"), "/profile"); assert.equal(value, "ar");
+  assert.equal(done.status, 303); assert.equal(done.headers.get("location"), "/profile"); assert.equal(value, "en");
   const shown = await (await fetch(`${originHolder.value}/profile`, { headers: { cookie: headers.cookie, accept: "text/html" } })).text();
-  assert.match(shown, /<dt>Language<\/dt><dd>AR<\/dd><small class="field-meta">Written by you/);
+  assert.match(shown, /<dt>Language<\/dt><dd>EN<\/dd><small class="field-meta">Updated by you · 2026-09-15/,
+    "SHU371_SHOWN_OVER_SNAPSHOT renders written English and its write date over Arabic snapshot");
   assert.match(shown, /Checked once your documents are on file/);
 });

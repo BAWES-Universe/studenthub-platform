@@ -124,5 +124,5 @@ export interface OwnProfileReader {
 
 /** Platform-owned profile values, read in one fixed-cost lookup for one person. */
 export interface OwnProfilePreferencesReader {
-  readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown }> | null>;
+  readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null>;
 }

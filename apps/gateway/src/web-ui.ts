@@ -332,7 +332,7 @@ function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): str
     return `<div><dt>${escapeHtml(contract.label)}</dt><dd>Checked once your documents are on file</dd><small class="field-meta">Not recorded</small></div>`;
   }
   const observed = field.freshness.observedAt.slice(0, 10);
-  const source = field.freshness.kind === "written_by_person" ? "Written by you" : `StudentHub snapshot · ${escapeHtml(observed)}`;
+  const source = field.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`;
   return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
 }
 

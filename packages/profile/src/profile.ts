@@ -175,25 +175,28 @@ function available<T>(spec: FieldSpec, observedAt: string, value: T): AvailableP
   });
 }
 
-function written<T>(spec: FieldSpec, value: T): AvailableProfileField<T> {
+function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailableProfileField<T> {
   return Object.freeze({
     state: "available", value,
     provenance: provenance(spec.sourceField),
-    freshness: Object.freeze({ kind: "written_by_person", observedAt: "" }),
+    freshness: Object.freeze({ kind: "written_by_person", observedAt }),
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown }> | null): OwnProfileProjection {
+function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
   try {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
+      || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
-      PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference);
+      PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference,
+      preferences.updatedAt);
   } catch {
     fields.language = Object.freeze({
       state: "unavailable", reason: "not_recorded",
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-      freshness: Object.freeze({ kind: "written_by_person", observedAt: "" }),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
   }
   // Imported completeness cannot describe a profile once a platform-owned

@@ -170,12 +170,14 @@ export class PostgresSafeWriteStore {
     return rows[0]?.language ?? null;
   }
 
-  async readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown }> | null> {
+  async readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null> {
     if (typeof principalId !== "string" || principalId.length === 0) throw new TypeError("principal id required");
-    const { rows } = await this.#pool.query<{ language: unknown }>(
-      "SELECT language FROM person_preferences WHERE principal_id = $1", [principalId],
+    const { rows } = await this.#pool.query<{ language: unknown; updated_at: Date }>(
+      "SELECT language, updated_at FROM person_preferences WHERE principal_id = $1", [principalId],
     );
-    return rows[0] ? Object.freeze({ language: rows[0].language }) : null;
+    const row = rows[0];
+    if (!row || !(row.updated_at instanceof Date) || !Number.isFinite(row.updated_at.valueOf())) return null;
+    return Object.freeze({ language: row.language, updatedAt: row.updated_at.toISOString() });
   }
 
   async #commit(principalId: string, input: CommitInput): Promise<CommitOutcome> {
