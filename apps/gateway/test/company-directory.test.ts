@@ -214,6 +214,14 @@ test("SHU355_SHOWN directory hides a manager without a covering grant and restor
   granted=true;assert.match(await(await f.get(STAFF_LIST,html)).text(),/Staff One/);
 });
 
+test("SHU357_DIRECTORY_DEGRADES renders unavailable manager cells when the batch read fails",async(t)=>{
+  const f=await fixture(t,{accountManagers:{readMany:async()=>{throw new Error("down")}}});
+  const response=await f.get(STAFF_LIST,html);assert.equal(response.status,200);
+  const page=await response.text();assert.match(page,/<th scope="col">Account manager<\/th>/);
+  assert.equal((page.match(/<td>Unavailable<\/td>/g)??[]).length,2);
+  assert.equal((await f.get(`${STAFF_LIST}&manager=person-1`)).status,503);
+});
+
 test("SHU339_PAGE_UNAVAILABLE requires the manager read port only for manager filters", async (t) => {
   const f = await fixture(t);
   assert.equal((await f.get(`${STAFF_LIST}&manager=me`)).status, 503);

@@ -310,4 +310,7 @@ test("SHU339_FILTER_UNAVAILABLE refuses missing and failing ports after authoriz
 
 test("SHU357_DIRECTORY_DEGRADES only an unfiltered manager column degrades",async()=>{const failing={readMany:async()=>{throw new Error("down")}};const{repository}=await setup({accountManagers:failing});const open=await repository.listOrganizations(STAFF);assert.equal(open.kind,"found");if(open.kind==="found")assert.ok(open.directory.entries.every(entry=>!("accountManager" in entry)));assert.deepEqual(await repository.listOrganizations({...STAFF,filters:{accountManager:"staff"}}),{kind:"unavailable"})});
 
-test("SHU357_TERMS_BATCH_REQUIRED a configured directory adapter must provide its batch read",async()=>{let singles=0;const commercialTerms={read:async()=>{singles++;return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const}}}};const{repository}=await setup({commercialTerms:commercialTerms as unknown as OrganizationCommercialTermsRecords});assert.deepEqual(await repository.listOrganizations(STAFF),{kind:"unavailable"});assert.equal(singles,0)});
+test("SHU357_TERMS_BATCH_REQUIRED a configured directory adapter must provide its batch read",()=>{const commercialTerms={read:async()=>({hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const}})};if(false){
+  // @ts-expect-error SHU-357: directory-capable commercial terms adapters require the fixed-cost batch read.
+  void setup({commercialTerms});
+}assert.ok(true)});

@@ -410,7 +410,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #source: ApprovedOrganizationAdapter;
   readonly #operators: ReadonlySet<string>;
   readonly #statusRecords?: OrganizationStatusRecords;
-  readonly #commercialTerms?:Pick<OrganizationCommercialTermsRecords,"read">&Partial<Pick<OrganizationCommercialTermsRecords,"readMany">>;
+  readonly #commercialTerms?:OrganizationCommercialTermsRecords;
   readonly #approvedToHire?:OrganizationApprovedToHireRecords;
   readonly #storeCounts?: OrganizationStoreCounts;
   readonly #accountManagers?: OrganizationAccountManagerRecords;
@@ -422,7 +422,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly source: ApprovedOrganizationAdapter;
     readonly operatorOrgIds?: readonly string[];
     readonly statusRecords?: OrganizationStatusRecords;
-    readonly commercialTerms?:Pick<OrganizationCommercialTermsRecords,"read">&Partial<Pick<OrganizationCommercialTermsRecords,"readMany">>;
+    readonly commercialTerms?:OrganizationCommercialTermsRecords;
     readonly approvedToHire?:OrganizationApprovedToHireRecords;
     readonly storeCounts?: OrganizationStoreCounts;
     readonly accountManagers?: OrganizationAccountManagerRecords;
@@ -596,7 +596,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         ? await this.#statusRecords.readMany(shown.map((org) => org.id))
         : undefined;
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
-      const termsBatch=shown.length>0&&this.#commercialTerms?await this.#commercialTerms.readMany!(shown.map(org=>org.id)):undefined;
+      const termsBatch=shown.length>0&&this.#commercialTerms?await this.#commercialTerms.readMany(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
       let managers:ReadonlyMap<string,OrganizationAccountManagerRecord>|undefined;
       if(shown.length>0&&this.#accountManagers)try{managers=await this.#accountManagers.readMany(shown.map((org)=>org.id));}
