@@ -30,3 +30,10 @@ CREATE TABLE email_preferences (
   enabled BOOLEAN NOT NULL,
   PRIMARY KEY(principal_id,class)
 );
+
+ALTER TABLE job_runs DROP CONSTRAINT job_runs_job_name_check;
+ALTER TABLE job_runs ADD CONSTRAINT job_runs_job_name_check
+  CHECK (job_name IN ('heartbeat','missed_run_check','email_delivery'));
+ALTER TABLE job_leases DROP CONSTRAINT job_leases_job_name_check;
+ALTER TABLE job_leases ADD CONSTRAINT job_leases_job_name_check
+  CHECK (job_name IN ('heartbeat','missed_run_check','email_delivery'));
