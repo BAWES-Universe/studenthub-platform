@@ -12,7 +12,7 @@ const mutations=[
  ["OCRP_STALE",httpSource,"submissionId, revision:",'submissionId:"random", revision:'],
  ["OCRP_DISMISS",httpSource,'suggestion.resolve(id, principalId, "dismissed")','civilId.save({principalId,submissionId,revision:0,country:"KW",number:"290010101234"})'],
  ["OCRP_ORIGIN",httpSource,"request.headers.origin !== origin","false"],
- ["OCRP_SECRECY",httpSource,'value="${escapeHtml(suggestion.id)}"','value="${escapeHtml(suggestion.id)}290010101234"'],
+ ["OCRP_SECRECY",httpSource,'name="suggestionId" value="${escapeHtml(suggestion.id)}"','name="suggestionId" value="${escapeHtml(suggestion.id)}290010101234"'],
  ["OCRP_SHOWN",webSource,"renderCivilIdSuggestion(language, civilIdSuggestion)","renderCivilIdSuggestion(language, civilIdSuggestion).repeat(2)"],
 ];
 function run(token,module,web=false){return spawnSync(process.execPath,["--test","--test-reporter=tap",`--test-name-pattern=^${token} `,suite],{encoding:"utf8",timeout:30000,env:{...process.env,[web?"OCRP_WEB_MODULE":"OCRP_MODULE"]:module}});}

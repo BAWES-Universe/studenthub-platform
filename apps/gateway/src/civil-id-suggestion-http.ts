@@ -52,7 +52,7 @@ export async function handleCivilIdSuggestion(request: IncomingMessage, response
   const id=params.get("suggestionId")??"", submissionId=params.get("submissionId")??""; if (!id || submissionId!==id) { write(400,"Civil ID",errorPage("Invalid request.")); return true; }
   const current=await suggestion.current(principalId); if (!current || current.id!==id) { write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision)); return true; }
   if (how==="dismissed") { if (!await suggestion.resolve(id,principalId,"dismissed")) { write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision)); return true; } finish(303,{location:"/profile/civil-id"}); return true; }
-  if (current.state!=="read" || current.expired) { write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision)); return true; }
+  if (current.state!=="read") { write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision)); return true; }
   const opened=current.last4 ? await suggestion.openForAccept(id,principalId) : null; if (current.last4 && !opened) { write(409,"Civil ID",errorPage(CIVIL_ID_MESSAGES.stale_revision)); return true; }
   const own=await civilId.readOwn(principalId); const number=opened ? suggestion.vault.open(principalId,opened.country,opened.ciphertext) : undefined;
   const saved=await civilId.save({principalId,submissionId,revision:own?.revision??0,country:opened?.country??current.country??undefined,number,expiry:current.expiry??undefined});
