@@ -156,3 +156,29 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("ignores property methods named test", () => {
+  const source = [
+    'matcher.test("not a test");',
+    'matcher . test("still not a test", () => { work(); });',
+    'test("real", () => { work(); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
+
+test("does not borrow a body from after a brace-less test call", () => {
+  const source = [
+    'test("expression body", () => work());',
+    'if (ready) { work(); }',
+    'test("real", () => { work(); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});

@@ -142,6 +142,7 @@ function testName(source, callIndex, bodyStart) {
 function braceBody(source, callIndex) {
   let open = -1;
   let depth = 0;
+  let callDepth = 0;
   let quote = null;
   let lineComment = false;
   let blockComment = false;
@@ -177,6 +178,13 @@ function braceBody(source, callIndex) {
       if (end !== i) i = end;
     } else if (ch === '"' || ch === "'" || ch === "`") {
       quote = ch;
+    } else if (open === -1 && ch === "(") {
+      callDepth += 1;
+    } else if (open === -1 && ch === ")") {
+      callDepth -= 1;
+      // A brace found after the test call is not its body. In particular, do
+      // not let a brace-less test borrow the body of a later test.
+      if (callDepth === 0) return null;
     } else if (ch === "{") {
       if (open === -1) open = i;
       depth += 1;
@@ -205,6 +213,9 @@ export function scanVacuousTests(fileText) {
   let match;
   while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
+    // `test` is also a common method name (for example, RegExp.prototype.test).
+    // The contract only covers calls to the test functions themselves.
+    if (searchableText.slice(0, callIndex).trimEnd().endsWith(".")) continue;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
