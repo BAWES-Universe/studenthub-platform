@@ -19,6 +19,21 @@ export const REQUIRED_DEPLOYMENT_ENV = Object.freeze(
   CONFIG_SCHEMA.filter(({ required }) => required).map(({ name }) => name),
 );
 
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isHostname(value) {
+  return value.length <= 253 && value.split(".").every(
+    (label) => label.length >= 1 && label.length <= 63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label),
+  );
+}
+
 export function validateDeploymentEnv(env = process.env) {
   const declaredNames = new Set(CONFIG_SCHEMA.map(({ name }) => name));
   const unknown = Object.keys(env).find(
@@ -33,6 +48,13 @@ export function validateDeploymentEnv(env = process.env) {
   if (env.HOST !== "0.0.0.0") {
     throw new Error("HOST must be 0.0.0.0 in the gateway container");
   }
+  for (const { name, kind } of CONFIG_SCHEMA) {
+    if ((kind !== "url" && kind !== "url-list") || name === "DATABASE_URL") continue;
+    const parts = kind === "url-list" ? env[name].split(",").map((part) => part.trim()) : [env[name]];
+    if (parts.some((part) => !part || !isHttpUrl(part))) {
+      throw new Error(`${name} must be a valid ${kind}`);
+    }
+  }
   let databaseUrl;
   try {
     databaseUrl = new URL(env.DATABASE_URL);
@@ -45,9 +67,13 @@ export function validateDeploymentEnv(env = process.env) {
   if (!databaseUrl.hostname || !databaseUrl.pathname.slice(1)) {
     throw new Error("DATABASE_URL must name a database host and database");
   }
+  const configuredPlatformDatabaseHosts = (env.PLATFORM_DATABASE_HOSTS ?? "").split(",").map((host) => host.trim());
+  if (env.PLATFORM_DATABASE_HOSTS?.trim() && configuredPlatformDatabaseHosts.some((host) => !host || !isHostname(host))) {
+    throw new Error("PLATFORM_DATABASE_HOSTS must be a valid host-list");
+  }
   const platformDatabaseHosts = new Set([
     "platform-postgres",
-    ...(env.PLATFORM_DATABASE_HOSTS ?? "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
+    ...configuredPlatformDatabaseHosts.map((host) => host.toLowerCase()).filter(Boolean),
   ]);
   if (!platformDatabaseHosts.has(databaseUrl.hostname.toLowerCase())) {
     throw new Error("DATABASE_URL hostname must identify the dedicated platform database");
@@ -72,12 +98,8 @@ export function validateDeploymentEnv(env = process.env) {
     if ((!required && !value?.trim()) || value === undefined || kind === "string" || kind === "literal" || name === "DATABASE_URL" || name === "OIDC_CALLBACK_URL") continue;
     const parts = kind === "url-list" || kind === "host-list" ? value.split(",").map((part) => part.trim()) : [value];
     if (parts.some((part) => !part)) throw new Error(`${name} must be a valid ${kind}`);
-    if (kind === "url" || kind === "url-list") {
-      try {
-        for (const part of parts) new URL(part);
-      } catch {
-        throw new Error(`${name} must be a valid ${kind}`);
-      }
+    if ((kind === "url" || kind === "url-list") && parts.some((part) => !isHttpUrl(part))) {
+      throw new Error(`${name} must be a valid ${kind}`);
     }
   }
 }
