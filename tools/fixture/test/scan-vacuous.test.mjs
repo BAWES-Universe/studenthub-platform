@@ -156,3 +156,65 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+// A body belongs to the call that receives it: the search for a body never
+// leaves the test call's own argument list.
+
+test("reports brace indices that bracket the body text", () => {
+  const source = 'test("indices", () => { const a = 1; });';
+  const [entry] = scanVacuousTests(source);
+  assert.equal(source.slice(entry.start, entry.end + 1), "{ const a = 1; }");
+});
+
+test("does not take a later block as the body of a concise callback", () => {
+  const source = [
+    'test("concise", () => assert.ok(value));',
+    'test("vacuous", () => { const a = 1; });',
+  ].join("\n");
+  const report = scanVacuousTests(source);
+  assert.deepEqual(report.map((entry) => entry.name), ["vacuous"]);
+  assert.equal(source.slice(report[0].start, report[0].end + 1), "{ const a = 1; }");
+});
+
+test("does not report a callback with a concise expression body", () => {
+  assert.deepEqual(scanVacuousTests('test("concise-only", () => work());'), []);
+});
+
+test("does not mistake an options object for the test body", () => {
+  const report = scanVacuousTests(
+    'test("options", { timeout: 50 }, () => { assert.ok(value); });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("reports the callback body of a test that also passes an options object", () => {
+  const source = 'test("options-vacuous", { timeout: 50 }, () => { const a = 1; });';
+  const report = scanVacuousTests(source);
+  assert.deepEqual(report.map((entry) => entry.name), ["options-vacuous"]);
+  assert.equal(source.slice(report[0].start, report[0].end + 1), "{ const a = 1; }");
+});
+
+test("does not mistake a destructured parameter for the test body", () => {
+  const report = scanVacuousTests(
+    'test("destructured", ({ signal }) => { assert.ok(signal); });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("reports a vacuous function expression body", () => {
+  const source = [
+    'test("fn-asserts", function () { assert.ok(value); });',
+    'test("fn-vacuous", function () { const a = 1; });',
+  ].join("\n");
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["fn-vacuous"],
+  );
+});
+
+test("does not mistake a destructured parameter of a function expression for the body", () => {
+  const report = scanVacuousTests(
+    'test("fn-destructured", function ({ signal }) { assert.ok(signal); });',
+  );
+  assert.deepEqual(report, []);
+});

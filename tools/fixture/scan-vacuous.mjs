@@ -5,9 +5,13 @@
 //
 // CONTRACT
 // scanVacuousTests(fileText) reports test bodies that contain no assertion
-// call. A "test body" is the body of a `test(...)` or `it(...)` call: the first
-// brace-delimited block that follows the call's opening parenthesis. A body is
-// VACUOUS when no assertion call appears inside it.
+// call. A "test body" is the block of the callback that a `test(...)` or
+// `it(...)` call receives: the brace-delimited block of the arrow function or
+// function expression found inside that call's own argument list. Text outside
+// the argument list can never become a body, and neither an options object nor
+// a destructured parameter is a body. A callback with a concise expression body
+// has no block to report, so it is never reported. A body is VACUOUS when no
+// assertion call appears inside it.
 //
 // An assertion call is documented as `expect(...)`, a node:assert call
 // (`assert(...)`, `assert.ok(...)`, `assert.equal(...)`, ...), a node:test
@@ -51,71 +55,86 @@ function regexEnd(source, start) {
   return start;
 }
 
-function codeOnly(source) {
-  let result = "";
+/**
+ * Yield the index of every character of `source` at or after `from` that is
+ * code: characters inside comments, string and template literals, and regex
+ * literals are skipped. This is the single place that knows how to step over
+ * non-code text, so every scan below stays consistent with every other one.
+ */
+function* codeIndices(source, from) {
   let quote = null;
   let lineComment = false;
   let blockComment = false;
 
-  for (let i = 0; i < source.length; i += 1) {
+  for (let i = from; i < source.length; i += 1) {
     const ch = source[i];
     const next = source[i + 1];
 
     if (lineComment) {
-      if (ch === "\n" || ch === "\r") {
-        lineComment = false;
-        result += ch;
-      } else {
-        result += " ";
-      }
+      if (ch === "\n" || ch === "\r") lineComment = false;
       continue;
     }
     if (blockComment) {
-      result += ch === "\n" || ch === "\r" ? ch : " ";
       if (ch === "*" && next === "/") {
-        result += " ";
         blockComment = false;
         i += 1;
       }
       continue;
     }
     if (quote) {
-      result += ch === "\n" || ch === "\r" ? ch : " ";
-      if (ch === "\\") {
-        if (i + 1 < source.length) {
-          result += " ";
-          i += 1;
-        }
-      } else if (ch === quote) {
-        quote = null;
-      }
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = null;
       continue;
     }
     if (ch === "/" && next === "/") {
-      result += "  ";
       lineComment = true;
       i += 1;
-    } else if (ch === "/" && next === "*") {
-      result += "  ";
+      continue;
+    }
+    if (ch === "/" && next === "*") {
       blockComment = true;
       i += 1;
-    } else if (ch === "/" && startsRegex(source, i)) {
+      continue;
+    }
+    if (ch === "/" && startsRegex(source, i)) {
       const end = regexEnd(source, i);
       if (end !== i) {
-        result += " ".repeat(end - i + 1);
         i = end;
-      } else {
-        result += ch;
+        continue;
       }
-    } else if (ch === '"' || ch === "'" || ch === "`") {
-      result += " ";
-      quote = ch;
-    } else {
-      result += ch;
     }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+    yield i;
   }
+}
 
-  return result;
+// Blank every non-code character, keeping line breaks and every source index
+// exactly where it was. split("") keeps the mapping code-unit aligned.
+function codeOnly(source) {
+  const blanked = source
+    .split("")
+    .map((ch) => (ch === "\n" || ch === "\r" ? ch : " "));
+  for (const i of codeIndices(source, 0)) blanked[i] = source[i];
+  return blanked.join("");
+}
+
+// Index of the next code character at or after `index`, skipping whitespace and
+// comments only. Used to look at the token that follows `=>`.
+function nextCodeIndex(source, index) {
+  for (const i of codeIndices(source, index)) {
+    if (!/\s/.test(source[i])) return i;
+  }
+  return source.length;
+}
+
+function isFunctionKeyword(source, index) {
+  if (!source.startsWith("function", index)) return false;
+  const before = source[index - 1];
+  const after = source[index + "function".length];
+  return !/[\w$]/.test(before ?? "") && !/[\w$]/.test(after ?? "");
 }
 
 function testName(source, callIndex, bodyStart) {
@@ -139,50 +158,53 @@ function testName(source, callIndex, bodyStart) {
   return null;
 }
 
-function braceBody(source, callIndex) {
-  let open = -1;
+// Match the block that opens at `openIndex`.
+function blockAt(source, openIndex) {
   let depth = 0;
-  let quote = null;
-  let lineComment = false;
-  let blockComment = false;
 
-  for (let i = callIndex; i < source.length; i += 1) {
+  for (const i of codeIndices(source, openIndex)) {
     const ch = source[i];
-    const next = source[i + 1];
-
-    if (lineComment) {
-      if (ch === "\n" || ch === "\r") lineComment = false;
-      continue;
-    }
-    if (blockComment) {
-      if (ch === "*" && next === "/") {
-        blockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (quote) {
-      if (ch === "\\") i += 1;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "/" && next === "/") {
-      lineComment = true;
-      i += 1;
-    } else if (ch === "/" && next === "*") {
-      blockComment = true;
-      i += 1;
-    } else if (ch === "/" && startsRegex(source, i)) {
-      const end = regexEnd(source, i);
-      if (end !== i) i = end;
-    } else if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-    } else if (ch === "{") {
-      if (open === -1) open = i;
+    if (ch === "{") {
       depth += 1;
-    } else if (ch === "}" && open !== -1) {
+    } else if (ch === "}") {
       depth -= 1;
-      if (depth === 0) return { start: open, end: i, text: source.slice(open, i + 1) };
+      if (depth === 0) {
+        return { start: openIndex, end: i, text: source.slice(openIndex, i + 1) };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Locate the callback body of the test call whose opening parenthesis is at
+ * `parenIndex`. The search never leaves that argument list, so a later
+ * statement's block can never be mistaken for this call's body. Returns null
+ * when the call has no block body — including a callback written with a concise
+ * expression body, which has no braces to report.
+ */
+function locateBody(source, parenIndex) {
+  let depth = 0;
+  let functionDepth = -1;
+
+  for (const i of codeIndices(source, parenIndex)) {
+    const ch = source[i];
+    if (ch === "(") {
+      depth += 1;
+    } else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) return null;
+    } else if (ch === "=" && source[i + 1] === ">") {
+      // The body is the block that directly follows the arrow; anything else
+      // there is a concise expression body.
+      const bodyStart = nextCodeIndex(source, i + 2);
+      return source[bodyStart] === "{" ? blockAt(source, bodyStart) : null;
+    } else if (isFunctionKeyword(source, i)) {
+      // The body is the next block at the keyword's own depth, which skips the
+      // parameter list and any destructuring inside it.
+      functionDepth = depth;
+    } else if (ch === "{" && depth === functionDepth) {
+      return blockAt(source, i);
     }
   }
   return null;
@@ -198,14 +220,14 @@ export function scanVacuousTests(fileText) {
   }
   const report = [];
   // Keep source positions intact while excluding test-like text in comments and
-  // literals from candidate discovery. braceBody still receives the original
+  // literals from candidate discovery. locateBody still receives the original
   // source so the reported brace indices remain exact.
   const searchableText = codeOnly(fileText);
   TEST_CALL_RE.lastIndex = 0;
   let match;
   while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
-    const body = braceBody(fileText, callIndex + match[0].length - 1);
+    const body = locateBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
     report.push({
