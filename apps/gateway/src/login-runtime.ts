@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore, PostgresOrganizationProfileReads,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationAccountManagerStore,PostgresOrganizationAccountManagerReads,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore,PostgresOrganizationDeletionStore,PostgresOrganizationStoresStore,PostgresOrganizationCreationStore, PostgresPersonProfileStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -29,6 +29,7 @@ import {payContractWriteDecision,payContractReadAccess,payContractCreator,payCon
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
+import { createProfileEdit } from "./profile-edit-http.js";
 import { createOrganizationProfile } from "./organization-profile.js";
 import { createOrganizationStatus } from "./organization-status.js";
 import {createOrganizationCommercialTerms}from"./organization-commercial-terms.js";
@@ -222,8 +223,12 @@ export function createRuntimeLoginFromEnv(
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
+  const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles,
-    ...(safeWrites ? { preferences: safeWrites } : {}) });
+    ...(safeWrites && personProfiles ? { preferences: { async readOwnPreferences(id: string) {
+      const [language, person] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id)]);
+      return language || person ? { ...(language ?? {}), ...(person ?? {}) } as never : null;
+    } } } : {}) });
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
@@ -287,6 +292,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
+      ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: loginStore.sessions, store: personProfiles, secret: safeWriteKey }) } : {}),
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),
@@ -314,7 +320,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), personProfiles?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
         organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
     },
   };
