@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";import test from "node:test";import * as builtIn from "../src/people-directory.js";
+import {deriveProfileCompleteness} from "../src/completeness.js";import {projectApprovedProfile,SYNTHETIC_PROFILE_FIXTURES} from "../src/index.js";
 const implementation=process.env.SHU633_TEST_MODULE?await import(process.env.SHU633_TEST_MODULE) as typeof builtIn:builtIn;
 const {classifySearchTerm,civilStateOf,maskPhone,PEOPLE_DETAILS_KEYS,PEOPLE_DOCUMENT_KEYS}=implementation;
 test("DIRDB_SEARCH classifier safely separates every SQL search class",()=>{
@@ -22,7 +23,16 @@ test("DIRDB_FILTERS civil state precedence and current expiry are exact",()=>{
 });
 test("DIRDB_DETAILS directory and document keys form CMP closed list",()=>{
  // CMP conditionally asks for kuwaiti_mother, so its closed list requires the union of Kuwaiti and non-Kuwaiti inputs.
- assert.deepEqual(new Set([...PEOPLE_DETAILS_KEYS,...PEOPLE_DOCUMENT_KEYS]),new Set(["nationality","display_name","arabic_name","gender","objective","personal_photo","email","phone","birth_date","civil_id","civil_expiry","civil_front","civil_back","driving_licence","location","kuwaiti_mother","education","skill"]),"details keys must retain the CMP closed list");
+ const empty=projectApprovedProfile(SYNTHETIC_PROFILE_FIXTURES.unavailable,"2026-01-01"),seed=empty.fields.displayName;
+ const profile={...empty,fields:{...empty.fields,nationality:{state:"available" as const,value:"Written country",editValue:"country",provenance:seed.provenance,freshness:{kind:"written_by_person" as const,observedAt:"2026-01-01T00:00:00.000Z"}}}};
+ const common={profile:{state:"available" as const,value:profile},principalEmailPresent:{state:"available" as const,value:false},activeBackground:{state:"available" as const,value:{educationCount:0,skillCount:0}},documentTypesOnFile:{state:"available" as const,value:[]},civilIdRecorded:{state:"available" as const,value:{number:false,expiry:false}}};
+ const kw=deriveProfileCompleteness({...common,profile:{state:"available",value:empty},writtenNationalityCode:{state:"available",value:"KW"}}),nonKw=deriveProfileCompleteness({...common,writtenNationalityCode:{state:"available",value:"JO"}});
+ assert.equal(kw.kind,"available");assert.equal(nonKw.kind,"available");
+ const reported=new Set([...(kw.kind==="available"?kw.pendingFields:[]),...(nonKw.kind==="available"?nonKw.pendingFields:[])]);
+ assert.deepEqual(new Set([...PEOPLE_DETAILS_KEYS,...PEOPLE_DOCUMENT_KEYS]),reported,"details keys must retain the CMP closed list");
+ for(const key of PEOPLE_DETAILS_KEYS)assert.ok(reported.has(key),`${key} CMP unmet fixture agrees with SQL key`);
+ const met=deriveProfileCompleteness({profile:{state:"available",value:projectApprovedProfile(SYNTHETIC_PROFILE_FIXTURES.populated,"2026-01-01")},principalEmailPresent:{state:"available",value:true},activeBackground:{state:"available",value:{educationCount:1,skillCount:1}},documentTypesOnFile:{state:"available",value:["personal-photo","civil-id-front","civil-id-back"]},civilIdRecorded:{state:"available",value:{number:true,expiry:true}},writtenNationalityCode:{state:"available",value:"KW"}});
+ assert.deepEqual(met,{kind:"available",pendingFields:[]},"CMP met fixture agrees with every SQL key");
  assert.equal(PEOPLE_DETAILS_KEYS.length,15,"all fifteen SQL details remain covered");
 });
 test("DIRDB_SHOWN phone masking never reveals more than last four",()=>assert.equal(maskPhone("0000"),"•••• 0000","phone must stay masked"));
