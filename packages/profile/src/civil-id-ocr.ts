@@ -23,7 +23,7 @@ export interface CivilIdOcrStore {
 }
 
 const digits=(s:string)=>normalizeCivilIdNumber(s).replace(/[^0-9]/g,c=>c);
-function dateIn(line:string):string|null { const normalized=line.normalize("NFKC").replace(/[\u0660-\u0669]/g,c=>String(c.charCodeAt(0)-0x0660));const matches=normalized.matchAll(/(^|[^0-9])(\d{2})\/(\d{2})\/(\d{4})(?=$|[^0-9])/g);let found:null|string=null;for(const m of matches){const d=+m[2]!,mo=+m[3]!,y=+m[4]!;const x=new Date(Date.UTC(y,mo-1,d));if(x.getUTCFullYear()===y&&x.getUTCMonth()===mo-1&&x.getUTCDate()===d)found=`${m[4]}-${m[3]}-${m[2]}`;}return found;}
+function dateIn(line:string):string|null { const normalized=line.normalize("NFKC").replace(/[\u0660-\u0669\u06f0-\u06f9]/g,c=>String(c.charCodeAt(0)-(c<="\u0669"?0x0660:0x06f0)));const matches=normalized.matchAll(/(^|[^0-9])(\d{2})\/(\d{2})\/(\d{4})(?=$|[^0-9])/g);let found:null|string=null;for(const m of matches){const d=+m[2]!,mo=+m[3]!,y=+m[4]!;const x=new Date(Date.UTC(y,mo-1,d));if(x.getUTCFullYear()===y&&x.getUTCMonth()===mo-1&&x.getUTCDate()===d)found=`${m[4]}-${m[3]}-${m[2]}`;}return found;}
 export function parseCivilIdLines(lines:readonly string[]):{number:string|null;country:CivilIdCountry|null;expiry:string|null} {
  let number:string|null=null,country:CivilIdCountry|null=null,expiry:string|null=null;
  for(const raw of lines){const line=digits(raw);const date=dateIn(raw);if(date)expiry=date;if(number===null&&/^[0-9]+$/.test(line)&&line.length>5){for(const c of ["KW","BH"] as const){const valid=validateCivilId({country:c,number:line});if(valid.ok){number=valid.value.number;country=c;break;}}}}
