@@ -3,7 +3,10 @@
 ALTER TABLE person_profiles
  ADD COLUMN gender text CHECK (gender IN ('male','female','other')),
  ADD COLUMN gender_written_at timestamptz CHECK (gender IS NULL OR gender_written_at IS NOT NULL),
- ADD COLUMN birth_date date CHECK (birth_date IS NULL OR birth_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kuwait')::date - INTERVAL '16 years'),
+ -- The self-edit policy owns the configurable minimum-age rule and evaluates
+ -- it on the UTC calendar day. Keep the database column date-only so there is
+ -- one threshold setting rather than a second literal that can drift.
+ ADD COLUMN birth_date date,
  ADD COLUMN birth_date_written_at timestamptz CHECK (birth_date IS NULL OR birth_date_written_at IS NOT NULL),
  ADD COLUMN nationality_id uuid REFERENCES catalogue_items(id),
  ADD COLUMN nationality_id_written_at timestamptz CHECK (nationality_id IS NULL OR nationality_id_written_at IS NOT NULL),
