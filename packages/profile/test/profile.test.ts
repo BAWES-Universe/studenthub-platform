@@ -114,11 +114,21 @@ test("SHU371_SHOWN_OVER_SNAPSHOT written language wins and malformed storage is 
   const shown = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
   assert.equal(shown.kind === "found" && shown.profile.fields.language.state === "available" && shown.profile.fields.language.value, "ar");
   assert.equal(shown.kind === "found" && shown.profile.fields.language.freshness.kind, "written_by_person");
+  assert.equal(shown.kind === "found" && shown.profile.fields.isProfileCompleted.state, "unavailable");
+  assert.equal(shown.kind === "found" && shown.profile.fields.isProfileCompleted.state === "unavailable" && shown.profile.fields.isProfileCompleted.reason, "not_recorded");
+  assert.equal(shown.kind === "found" && shown.profile.fields.pendingFields.state, "unavailable");
+  assert.equal(shown.kind === "found" && shown.profile.fields.pendingFields.state === "unavailable" && shown.profile.fields.pendingFields.reason, "not_recorded");
   assert.deepEqual([snapshotReads, writtenReads], [1, 1], "one snapshot lookup and one batched written-values read");
   value = "<raw-malformed>";
   const malformed = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
   assert.equal(malformed.kind === "found" && malformed.profile.fields.language.state, "unavailable");
   assert.doesNotMatch(JSON.stringify(malformed), /raw-malformed/);
+
+  const unconfigured = new OwnProfileRepository({ principals, source: new UnconfiguredApprovedProfileAdapter(), today: () => "2026-09-13",
+    preferences: { async readOwnWrittenFields() { return { language: { value: "ar", updatedAt: "2026-09-13T13:00:00.000Z" } }; } },
+  });
+  const justSignedIn = await unconfigured.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(justSignedIn.kind === "found" && justSignedIn.profile.fields.language.state === "available" && justSignedIn.profile.fields.language.value, "ar");
 });
 
 test("SHU371_PROJECTION another person's request reads no written preference", async () => {
@@ -126,6 +136,24 @@ test("SHU371_PROJECTION another person's request reads no written preference", a
   const profiles = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }), source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnWrittenFields() { reads++; return {}; } } });
   assert.deepEqual(await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-other" }), { kind: "not_found" });
   assert.equal(reads, 0);
+});
+
+test("SHU371_PROJECTION a written field makes imported completeness unavailable", async () => {
+  const profiles = new OwnProfileRepository({
+    principals: new InMemoryAuthzStore({ principals: PEOPLE }),
+    source: new InMemoryApprovedProfileAdapter({
+      links: [{ principalId: "person-populated", candidateRef: "candidate-populated" }],
+      rows: new Map([["candidate-populated", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+    }),
+    preferences: { async readOwnWrittenFields() { return { language: { value: "ar", updatedAt: "2026-09-13T13:00:00.000Z" } }; } },
+  });
+  const result = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(result.kind, "found");
+  if (result.kind !== "found") return;
+  for (const name of ["isProfileCompleted", "pendingFields"] as const) {
+    assert.equal(result.profile.fields[name].state, "unavailable", `${name} is not recomputed from a partial write`);
+    assert.equal(result.profile.fields[name].state === "unavailable" && result.profile.fields[name].reason, "not_recorded");
+  }
 });
 
 test("missing, duplicate and many-to-one immutable linkage fail closed", async () => {

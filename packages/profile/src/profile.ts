@@ -252,21 +252,34 @@ export class OwnProfileRepository {
     try {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
-      const written = (await this.#preferences?.readOwnWrittenFields(request.requesterPrincipalId))?.language;
+      const writtenFields = await this.#preferences?.readOwnWrittenFields(request.requesterPrincipalId) ?? {};
+      const written = writtenFields.language;
+      const hasWritten = Object.keys(writtenFields).length > 0;
       const overlay = (profile: OwnProfileProjection): OwnProfileProjection => {
-        if (!written) return profile;
+        if (!hasWritten) return profile;
+        const completeness = Object.freeze({ state: "unavailable" as const, reason: "not_recorded" as const,
+          provenance: provenance(PROFILE_FIELD_SPECS.isProfileCompleted.sourceField),
+          freshness: Object.freeze({ kind: "written_by_person" as const, observedAt: "" }),
+        });
+        const pending = Object.freeze({ ...completeness,
+          provenance: provenance(PROFILE_FIELD_SPECS.pendingFields.sourceField),
+        });
+        if (!written) return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields,
+          isProfileCompleted: completeness, pendingFields: pending,
+        }) });
         try {
           const value = PROFILE_FIELD_SPECS.language.parse(written.value, profile.asOfDate) as LanguagePreference;
           if (!isInstant(written.updatedAt)) throw new TypeError("malformed preference timestamp");
           return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields, language: Object.freeze({
             state: "available", value, provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
             freshness: Object.freeze({ kind: "written_by_person", observedAt: written.updatedAt }),
-          }) }) });
+          }), isProfileCompleted: completeness, pendingFields: pending }) });
         } catch { return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields,
           language: Object.freeze({ state: "unavailable", reason: "not_recorded",
             provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
             freshness: Object.freeze({ kind: "written_by_person", observedAt: "" }),
           }),
+          isProfileCompleted: completeness, pendingFields: pending,
         }) }); }
       };
       const link = await this.#source.resolveLink(request.requesterPrincipalId);

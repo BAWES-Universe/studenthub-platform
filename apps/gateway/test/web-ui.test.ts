@@ -134,7 +134,19 @@ test("SHU371_SHOWN_OVER_SNAPSHOT written language is rendered with provenance an
   const body = await response.text();
   assert.match(body, /<dt>Language<\/dt><dd>العربية<\/dd><small class="field-meta">Updated by you · 2026-09-14<\/small><form/);
   assert.match(body, /<option value="en">English<\/option><option value="ar" selected>العربية<\/option>/);
+  assert.match(body, /<dt>Profile completeness<\/dt><dd>Checked once your documents are on file<\/dd>/);
+  assert.doesNotMatch(body, /<dt>Profile complete<\/dt>|<dt>Pending profile requirements<\/dt>/);
   assert.doesNotMatch(body, /Read-only|<dl class="profile-fields"><\/dl>/);
+
+  const api = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, accept: "application/json" } });
+  const projection = await api.json();
+  assert.deepEqual(projection.fields.isProfileCompleted, {
+    state: "unavailable", reason: "not_recorded",
+    provenance: { system: "studenthub-production-approved-import", revision: PROFILE_PARITY_REVISION, sourceField: "is_incomplete_profile" },
+    freshness: { kind: "written_by_person", observedAt: "" },
+  });
+  assert.equal(projection.fields.pendingFields.state, "unavailable");
+  assert.equal(projection.fields.pendingFields.reason, "not_recorded");
 });
 
 test("SHU371_PAGE_FLOW confirmed page change is shown on My profile", async (t) => {
