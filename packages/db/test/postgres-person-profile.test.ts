@@ -119,7 +119,7 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
   assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
 });
 
-test("SHU373_CATALOGUE resolves active ids at commit and the database refuses Kuwaiti-mother contradiction", async () => {
+test("SHU373_CATALOGUE resolves active ids, clears the flag for Kuwait, and the database refuses contradiction", async () => {
   const id = `shu373-${randomUUID()}`, authz = new PostgresAuthzStore(pool), store = new PostgresPersonProfileStore({ pool });
   await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
   const country = randomUUID(), kuwait = randomUUID(), university = randomUUID(), actor = "a".repeat(64);
@@ -129,8 +129,8 @@ test("SHU373_CATALOGUE resolves active ids at commit and the database refuses Ku
   const write = async (field: "nationality"|"university", value: string) => { const request={principalRef:safeWritePrincipalRef(id),change:{personRef:personRecordRef(id),field,value}};const preview=await writer().preview(request);assert.ok(preview.ok);if(!preview.ok)return false;return (await writer().confirm({...request,token:preview.token})).ok; };
   assert.equal(await write("nationality",country),true); assert.equal(await write("university",university),true);
   await pool.query("UPDATE person_profiles SET kuwaiti_mother=true,kuwaiti_mother_written_at=now() WHERE principal_id=$1",[id]);
-  assert.equal(await write("nationality",kuwait),false);
-  const shown=await store.readOwnPreferences(id) as Record<string,{value:unknown}>;assert.equal(shown.nationality?.value,"Canadian");assert.equal(shown.university?.value,"Kuwait University");
-  await assert.rejects(pool.query("UPDATE person_profiles SET nationality_id=$2 WHERE principal_id=$1",[id,kuwait]),/Kuwaiti mother cannot accompany Kuwaiti nationality/);
+  assert.equal(await write("nationality",kuwait),true);
+  const shown=await store.readOwnPreferences(id) as Record<string,{value:unknown}>;assert.equal(shown.nationality?.value,"Kuwaiti");assert.equal(shown.university?.value,"Kuwait University");assert.equal(shown.kuwaitiMother?.value,null);
+  await assert.rejects(pool.query("UPDATE person_profiles SET kuwaiti_mother=true WHERE principal_id=$1",[id]),/Kuwaiti mother cannot accompany Kuwaiti nationality/);
   assert.equal(await write("university",randomUUID()),false);
 });

@@ -71,7 +71,7 @@ function ageOn(birthDate: string, today: string): number {
   const [year, month, day] = today.split("-").map(Number) as [number, number, number];
   let age = year - birthYear;
   if (month < birthMonth || (month === birthMonth && day < birthDay)) age -= 1;
-  if (age < 0 || age > 150) throw new TypeError("malformed approved profile value");
+  if (age < 0) throw new TypeError("malformed approved profile value");
   return age;
 }
 

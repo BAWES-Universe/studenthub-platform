@@ -303,7 +303,9 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
     throw new Error("invalid authorized profile");
   }
   const keys = Object.keys(projection.fields);
-  if (keys.length !== OWN_PROFILE_FIELD_NAMES.length
+  const allowed = new Set<string>([...OWN_PROFILE_FIELD_NAMES, "kuwaitiMother"]);
+  if ((keys.length !== OWN_PROFILE_FIELD_NAMES.length && keys.length !== OWN_PROFILE_FIELD_NAMES.length + 1)
+    || keys.some((name) => !allowed.has(name))
     || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
     throw new Error("invalid authorized profile");
   }
@@ -320,7 +322,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
   pendingFields: (value) => Array.isArray(value) && value.length > 0
@@ -349,8 +351,11 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
   const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
   const catalogue = login.profileChoices ? await login.profileChoices() : [];
-  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"]);
-  const detailRows = OWN_PROFILE_FIELD_NAMES.map((field) => {
+  const kwName = catalogue.find(item => item.type === "country" && item.code === "KW")?.name ?? "Kuwaiti";
+  const nationality = profile.fields.nationality;
+  const mayEditKuwaitiMother = nationality.state !== "available" || nationality.value !== kwName;
+  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", ...(mayEditKuwaitiMother ? ["kuwaitiMother" as const] : []), "jobSearchStatus"]);
+  const detailRows = OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus").map((field) => {
     const row = fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
@@ -358,19 +363,21 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
       // Their controls start empty because commits accept ids only.
       const value = field === "nationality" || field === "university" ? ""
         : profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";
-      const choices: Partial<Record<OwnProfileFieldName, readonly [string,string][]>> = { gender:[["male","Male"],["female","Female"],["other","Other"]], drivingLicence:[["true","Yes"],["false","No"]], jobSearchStatus:[["not_looking","Not looking"],["active","Actively looking"],["open_to_offers","Open to offers"]] };
+      const choices: Partial<Record<OwnProfileFieldName, readonly [string,string][]>> = { gender:[["male","Male"],["female","Female"],["other","Other"]], drivingLicence:[["true","Yes"],["false","No"]], kuwaitiMother:[["true","Yes"],["false","No"]], jobSearchStatus:[["not_looking","Not looking right now"],["active","Actively looking"],["open_to_offers","Open to offers"]] };
       const radio = choices[field]?.map(([key,label])=>`<label><input type="radio" name="value" value="${key}"${value===key?' checked':''}>${label}</label>`).join("");
       const catalogueType = field === "nationality" ? "country" : field === "university" ? "university" : undefined;
-      const catalogueControl = catalogueType ? `<select name="value">${field === "university" ? '<option value="">None</option>' : ''}${catalogue.filter(item=>item.type===catalogueType).map(item=>`<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}<option value="" disabled>Not listed</option></select>` : undefined;
+      const catalogueControl = catalogueType ? `<select name="value">${field === "university" ? '<option value="">None</option>' : ''}${catalogue.filter(item=>item.type===catalogueType).map(item=>`<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select>${field === "university" ? "<small>University not listed? StudentHub staff add universities.</small>" : ""}` : undefined;
       const control = radio ?? catalogueControl ?? (field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">` : field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`);
       return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
     return row;
   }).join("");
-  const lookingForWork = profile.fields.jobSearchStatus.state === "available" && profile.fields.jobSearchStatus.value === "active"
-    ? '<div class="notice"><dt>Work availability</dt><dd>Looking for work</dd></div>' : "";
-  const mother = profile.kuwaitiMother as { state: string; value?: boolean; freshness: { observedAt: string } } | undefined;
-  const motherRow = mother ? `<div><dt>Kuwaiti mother</dt><dd>${mother.state === "available" ? mother.value ? "Yes" : "No" : "Not recorded"}</dd><small class="field-meta">Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}</small><form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label><input type="radio" name="value" value="true">Yes</label><label><input type="radio" name="value" value="false">No</label><button class="button primary" type="submit">Review change</button></form></div>` : "";
+  const work = profile.fields.jobSearchStatus;
+  const workValue = work.state === "available" ? fieldFormatters.jobSearchStatus!(work.value) : "Not recorded";
+  const workControl = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change Job-search status"><input type="hidden" name="field" value="jobSearchStatus"><label><input type="radio" name="value" value="active">Actively looking</label><label><input type="radio" name="value" value="open_to_offers">Open to offers</label><label><input type="radio" name="value" value="not_looking">Not looking right now</label><button class="button primary" type="submit">Change</button></form>` : "";
+  const lookingForWork = `<div class="notice"><dt>Looking for work</dt><dd>${escapeHtml(workValue)}</dd>${workControl}</div>`;
+  const mother = profile.fields.kuwaitiMother;
+  const motherRow = mother && mayEditKuwaitiMother ? `<div><dt>Kuwaiti mother</dt><dd>${fieldText(mother, value => value ? "Yes" : "No")}</dd><small class="field-meta">${mother.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}` : "StudentHub snapshot"}</small>${login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label><input type="radio" name="value" value="true">Yes</label><label><input type="radio" name="value" value="false">No</label><button class="button primary" type="submit">Review change</button></form>` : ""}</div>` : "";
   const rows = lookingForWork + motherRow + detailRows;
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }

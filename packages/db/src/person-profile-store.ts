@@ -109,8 +109,8 @@ export class PostgresPersonProfileStore {
         const reference = await client.query(`SELECT code FROM catalogue_items WHERE id=$1::uuid AND catalogue_type=$2 AND status='active'`, [input.value, type]);
         if (!reference.rowCount) throw new Refusal("invalid_value");
         if (field === "nationality" && reference.rows[0]?.code === "KW") {
-          const mother = (await client.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.kuwaiti_mother;
-          if (mother === true) throw new Refusal("invalid_value");
+          await client.query(`UPDATE person_profiles SET kuwaiti_mother=NULL, kuwaiti_mother_written_at=clock_timestamp()
+            WHERE principal_id=$1 AND kuwaiti_mother IS NOT NULL`, [id]);
         }
       }
       if (field === "kuwaitiMother" && input.value === "true") {

@@ -27,6 +27,18 @@ test("SHU373_CATALOGUE catalogue choices are ids, never names", () => {
   assert.equal(normalizePersonSelfEditValue("nationality", "Kuwaiti"), null);
 });
 
+test("SHU373_AGE a birth date older than 150 remains readable after it is written", async () => {
+  const repository = new OwnProfileRepository({
+    principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "unconfigured" }), readCandidate: async () => undefined },
+    preferences: { readOwnPreferences: async () => ({ birthDate: { value: "1800-01-01", updatedAt: "2026-10-30T12:00:00.000Z" } }) } as never,
+    today: () => "2026-10-30",
+  });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
+  assert.equal(result.kind, "found");
+  if (result.kind === "found") assert.equal(result.profile.fields.age.state === "available" && result.profile.fields.age.value, 226);
+});
+
 test("SHU372_RULES every shared rule example has the specified result", () => {
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
     for (const value of rule.accepts) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value), value.normalize("NFC"), `${field} accepts ${value}`);
