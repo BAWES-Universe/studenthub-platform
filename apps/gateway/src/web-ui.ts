@@ -331,7 +331,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
   return projection as OwnProfileProjection;
 }
 
-export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS, completeness?: ProfileCompletenessResult): Promise<{ status: number; html: string }> {
+export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS, completeness?: ProfileCompletenessResult, completenessChoices?: Awaited<ReturnType<NonNullable<NonNullable<BrowserLoginApplication["profileEdit"]>["choices"]>>>): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
   const profile = projectionFrom(result);
   const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
@@ -340,7 +340,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   type Key = OwnProfileFieldName | "phone" | "handle" | "kuwaitiMother";
   const label = (key: Key) => text(`field.${key}`);
   const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
-  const loaded = login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
+  const loaded = completeness ? completenessChoices : login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
   const originChoices = { countries: Array.isArray(loaded?.countries) ? loaded.countries : [], universities: Array.isArray(loaded?.universities) ? loaded.universities : [] };
   const nationalityId = profile.fields.nationality.state === "available" ? profile.fields.nationality.editValue : undefined;
   const nationalityIsKuwaiti = originChoices.countries.some(item => item.id === nationalityId && item.code === "KW");

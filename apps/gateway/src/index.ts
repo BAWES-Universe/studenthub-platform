@@ -38,7 +38,7 @@ import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
 import { createUniverseEmbedConfigFromEnv, type UniverseEmbedConfig } from "./universe/embed-policy.js";
 import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
-import { gatherProfileCompleteness } from "./profile-completeness.js";
+const { gatherProfileCompleteness } = await import(process.env.SHU588_COMPLETENESS_MODULE ?? "./profile-completeness.js");
 import { currentProfileAvatar } from "./profile-avatar.js";
 
 export * from "./authz-middleware.js";
@@ -385,7 +385,7 @@ export function createGatewayServer(
             completeness = await gatherProfileCompleteness(authorizedPersonId, result.body as never, authorizedEmail, { login, profileRecords, documents: currentProfileAvatar() });
           }
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(completeness ? { ...result, body: completeness.profile } : result, login, notice?.notice, documents !== undefined, undefined, completeness?.result);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(completeness ? { ...result, body: completeness.profile } : result, login, notice?.notice, documents !== undefined, undefined, completeness?.result, completeness?.choices);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

@@ -12,10 +12,18 @@ export interface ProfileCompletenessDependencies {
 export interface GatheredProfileCompleteness {
   readonly result: ProfileCompletenessResult;
   readonly profile: OwnProfileProjection;
+  readonly choices?: Awaited<ReturnType<NonNullable<NonNullable<BrowserLoginApplication["profileEdit"]>["choices"]>>>;
 }
 
 const failed = { state: "failed" } as const;
 const unconfigured = { state: "unconfigured" } as const;
+const attempt = async <T>(operation: () => Promise<T>) => {
+  try {
+    return { state: "available" as const, value: await operation() };
+  } catch {
+    return failed;
+  }
+};
 
 export async function gatherProfileCompleteness(
   personId: string,
@@ -23,14 +31,15 @@ export async function gatherProfileCompleteness(
   email: unknown,
   dependencies: ProfileCompletenessDependencies,
 ): Promise<GatheredProfileCompleteness> {
+  const choicesRead = dependencies.login.profileEdit?.choices;
   const background = dependencies.profileRecords
-    ? await dependencies.profileRecords.service.background(personId).then(value => ({ state: "available" as const, value: { educationCount: value.education.length, skillCount: value.skill.length } }), () => failed)
+    ? await attempt(() => dependencies.profileRecords!.service.background(personId)).then(source => source.state === "available" ? ({ state: "available" as const, value: { educationCount: source.value.education.length, skillCount: source.value.skill.length } }) : source)
     : unconfigured;
-  const choices = dependencies.login.profileEdit?.choices
-    ? await dependencies.login.profileEdit.choices().then(value => ({ state: "available" as const, value }), () => failed)
+  const choices = choicesRead
+    ? await attempt(() => choicesRead())
     : unconfigured;
   const civil = dependencies.login.civilId
-    ? await dependencies.login.civilId.readOwn(personId).then(value => ({ state: "available" as const, value: { number: Boolean(value?.maskedNumber), expiry: Boolean(value?.expiry) } }), () => failed)
+    ? await attempt(() => dependencies.login.civilId!.readOwn(personId)).then(source => source.state === "available" ? ({ state: "available" as const, value: { number: Boolean(source.value?.maskedNumber), expiry: Boolean(source.value?.expiry) } }) : source)
     : unconfigured;
   const nationality = profile.fields.nationality;
   const nationalityId = nationality.state === "available" && nationality.freshness.kind === "written_by_person" ? nationality.editValue : undefined;
@@ -56,5 +65,5 @@ export async function gatherProfileCompleteness(
     isProfileCompleted: { ...profile.fields.isProfileCompleted, state: "unavailable" as const, reason: "check_failed" as const, freshness },
     pendingFields: { ...profile.fields.pendingFields, state: "unavailable" as const, reason: "check_failed" as const, freshness },
   };
-  return { result, profile: Object.freeze({ ...profile, fields: Object.freeze(fields) }) };
+  return { result, profile: Object.freeze({ ...profile, fields: Object.freeze(fields) }), ...(choices.state === "available" ? { choices: choices.value } : {}) };
 }
