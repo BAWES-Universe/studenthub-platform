@@ -1,0 +1,1 @@
+import{spawnSync}from"node:child_process";import assert from"node:assert/strict";const run=spawnSync(process.execPath,["--test","dist/apps/gateway/test/civil-id-review-http.test.js"],{encoding:"utf8"});assert.equal(run.status,0,run.stdout+run.stderr);console.log("KILLED REV_SHOWN control");

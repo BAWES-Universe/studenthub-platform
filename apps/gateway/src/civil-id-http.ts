@@ -25,8 +25,9 @@ export async function handleCivilId(request:IncomingMessage,response:ServerRespo
   if(result.ok||result.reason==="submission_reused"){finish(303,{location:"/profile#field-civilId"});return true;}if(result.reason==="stale_revision"){write(409,"Civil ID",page(await service.readOwn(principal),CIVIL_ID_MESSAGES.stale_revision));return true;}write(result.reason==="duplicate"?409:400,"Civil ID",page({country:params.get("country"),expiry:params.get("expiry")||null,revision},CIVIL_ID_MESSAGES[result.reason]));return true;
 }
 
-export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null):string{
+export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null,decision?:{state:"waiting"|"checked"|"rejected";reason:string|null}|null):string{
   const label=language==="ar"?"البطاقة المدنية":"Civil ID",change=language==="ar"?"تغيير":"Change",missing=language==="ar"?"غير مسجل":"Not recorded",waiting=language==="ar"?"بانتظار تحقق StudentHub":"Waiting for StudentHub to check";
   const shown=value?(value.maskedNumber??missing)+(value.expiry?`, ${language==="ar"?"تنتهي":"expires"} ${value.expiry}`:""):missing;
-  return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${value?.needsReview?`<p class="p-meta">${waiting}</p>`:""}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a></div></dd></div>`;
+  const state=decision?.state==="checked"?"Checked":decision?.state==="rejected"?`Rejected: ${esc(decision.reason??"")}`:value?.needsReview?waiting:"";
+  return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${state?`<p class="p-meta">${state}</p>`:""}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a>${decision?.state==="rejected"?` <a class="p-edit" href="/profile/documents">Fix it</a>`:""}</div></dd></div>`;
 }

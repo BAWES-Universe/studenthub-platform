@@ -1,0 +1,1 @@
+import{spawnSync}from"node:child_process";import assert from"node:assert/strict";const run=spawnSync(process.execPath,["--test","packages/private-documents/test/staff-delivery.test.mjs"],{encoding:"utf8"});assert.equal(run.status,0,run.stdout+run.stderr);console.log("KILLED REV_IMAGES control");

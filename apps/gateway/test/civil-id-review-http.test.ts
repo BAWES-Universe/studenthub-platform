@@ -1,0 +1,4 @@
+import test from "node:test";import assert from "node:assert/strict";import{renderCivilIdRow}from"../src/civil-id-http.js";
+test("REV_SHOWN Civil ID decisions render in the Civil ID row",()=>{const checked=renderCivilIdRow("en",{country:"KW",maskedNumber:"•••• 1234",expiry:null,needsReview:false},{state:"checked",reason:null});assert.match(checked,/id="field-civilId"[\s\S]*Checked/);const rejected=renderCivilIdRow("en",null,{state:"rejected",reason:"Photo unclear"});assert.match(rejected,/Rejected: Photo unclear/);assert.match(rejected,/profile\/documents/)});
+test("REV_DECIDE rejected reason is HTML escaped",()=>{assert.match(renderCivilIdRow("en",null,{state:"rejected",reason:"<fix>"}),/Rejected: &lt;fix&gt;/)});
+test("REV_SECRECY waiting appears once",()=>{const row=renderCivilIdRow("en",{country:"KW",maskedNumber:"•••• 1234",expiry:null,needsReview:true},{state:"waiting",reason:null});assert.equal(row.match(/Waiting for StudentHub to check/g)?.length,1)});

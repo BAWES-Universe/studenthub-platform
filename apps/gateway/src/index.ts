@@ -5,6 +5,7 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
 import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -151,6 +152,8 @@ export function createGatewayServer(
   organizationDocuments?: OrganizationDocumentsRuntime,
   universeEmbed?: UniverseEmbedConfig,
 ): Server {
+  const civilReview = (login as GatewayRouteLogin | undefined)?.civilIdReview;
+  if (civilReview && documents && !civilReview.documents) Object.defineProperty(civilReview,"documents",{value:new StaffDocuments(documents,civilReview.store),enumerable:true});
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
@@ -347,6 +350,7 @@ export function createGatewayServer(
       const url = new URL(request.url, "http://gateway.invalid");
       let result: import("@studenthub/login-contract").BrowserResponse;
       let completeness: ProfileCompletenessResult | undefined;
+      let civilIdDecision: {state:"waiting"|"checked"|"rejected";reason:string|null}|null|undefined;
       try {
         result = await login.profile({
           sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
@@ -362,6 +366,7 @@ export function createGatewayServer(
           if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
             throw new Error("invalid authorized profile");
           }
+          civilIdDecision = await (login as GatewayRouteLogin).civilIdReview?.store.stateFor(requesterPrincipalId);
           const profile = await login.web.profiles.readOwn({
             requesterPrincipalId,
             targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
@@ -387,7 +392,7 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness,civilIdDecision);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

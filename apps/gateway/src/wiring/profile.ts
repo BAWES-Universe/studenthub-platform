@@ -13,6 +13,7 @@ import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
 import type { ProfileCompletenessDependencies } from "../profile-completeness.js";
+import { PostgresCivilIdReviewStore } from "../../../../packages/db/src/postgres-civil-id-review-store.js";
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
@@ -66,6 +67,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
   const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
   const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
+  const civilIdVault = civilKey ? new CivilIdVault(civilKey) : undefined;
+  const civilIdReviewStore = civilIdVault && safeWriteKey ? new PostgresCivilIdReviewStore({ connectionString: databaseUrl }) : undefined;
+  const CivilIdOcrStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdOcrStore: typeof import("../../../../packages/db/src/postgres-civil-id-ocr-store.js").PostgresCivilIdOcrStore }).CivilIdOcrStore;
+  const civilIdReviewOcr = civilIdReviewStore ? new CivilIdOcrStore({ connectionString: databaseUrl }) : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -150,9 +155,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      ...(civilIdReviewStore && civilIdVault && safeWriteKey ? { civilIdReview: { sessions: access.loginStore.sessions, authz: access.authzStore, store: civilIdReviewStore, vault: civilIdVault, secret: safeWriteKey, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "", ocr: civilIdReviewOcr } } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilIdReviewStore?.close(), civilIdReviewOcr?.close()]); },
   };
 }
