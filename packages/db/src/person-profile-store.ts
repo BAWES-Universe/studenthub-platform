@@ -120,13 +120,13 @@ export class PostgresPersonProfileStore {
       if (!await this.#exists(client, id)) throw new Refusal("not_own_record");
       const current = (await client.query(`SELECT ${column}::text AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
       if (current !== input.expectedBefore) throw new Refusal("state_changed");
-      if (field === "nationality" || field === "university") {
+      if (field === "nationality" || (field === "university" && input.value !== "")) {
         const expectedType = field === "nationality" ? "country" : "university";
         const choice = (await client.query(`SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'`, [input.value, expectedType])).rows[0];
         if (!choice) throw new Refusal("invalid_value");
         clearMother = field === "nationality" && choice.code === "KW";
       }
-      if (field === "kuwaitiMother" && input.value === "true" && (await client.query(`SELECT 1 FROM person_profiles pp JOIN catalogue_items ci ON ci.id=pp.nationality_id WHERE pp.principal_id=$1 AND ci.catalogue_type='country' AND ci.code='KW'`, [id])).rowCount) throw new Refusal("invalid_value");
+      if (field === "kuwaitiMother" && (await client.query(`SELECT 1 FROM person_profiles pp JOIN catalogue_items ci ON ci.id=pp.nationality_id WHERE pp.principal_id=$1 AND ci.catalogue_type='country' AND ci.code='KW'`, [id])).rowCount) throw new Refusal("invalid_value");
       if (clearMother) await client.query(`INSERT INTO person_profiles (principal_id, nationality_id, nationality_id_written_at, kuwaiti_mother, kuwaiti_mother_written_at)
         VALUES ($1,$2,clock_timestamp(),NULL,clock_timestamp()) ON CONFLICT (principal_id) DO UPDATE
         SET nationality_id=EXCLUDED.nationality_id, nationality_id_written_at=EXCLUDED.nationality_id_written_at,

@@ -9,7 +9,7 @@ const pageModuleFile = new URL("../../../dist/apps/gateway/src/profile-edit-http
 const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/profile-edit-http.test.js", import.meta.url));
 const webUiModuleFile = new URL("../../../dist/apps/gateway/src/web-ui.js", import.meta.url);
 const storeModuleFile = new URL("../../../dist/packages/db/src/person-profile-store.js", import.meta.url);
-const catalogueMutationSuite = ["--input-type=module", "--eval", `import test from "node:test";import assert from "node:assert/strict";import{readFile}from"node:fs/promises";test("SHU415_CATALOGUE status filter is required",async()=>assert.match(await readFile(${JSON.stringify(fileURLToPath(storeModuleFile))},"utf8"),/WHERE status='active' AND catalogue_type IN/))`];
+const catalogueMutationSuite = ["--input-type=module", "--eval", `import test from "node:test";import assert from "node:assert/strict";import{PostgresPersonProfileStore}from${JSON.stringify(storeModuleFile.href)};test("SHU415_CATALOGUE status filter is required",async()=>{const rows=[{id:"active",type:"country",name:"Active",code:null},{id:"deleted",type:"country",name:"Deleted",code:null}];const pool={query:async sql=>({rows:sql.includes("status='active'")?rows.slice(0,1):rows})};const choices=await new PostgresPersonProfileStore({pool}).profileChoices();assert.deepEqual(choices.countries.map(choice=>choice.id),["active"]);})`];
 const mutations = [
   ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
   ["SHU372_RULES", "/\\s{2}/u.test(normalized)", "false"],

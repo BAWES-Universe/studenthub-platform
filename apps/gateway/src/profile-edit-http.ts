@@ -129,7 +129,7 @@ const shownAfter = (field: PersonSelfEditField, value: string) => field === "dri
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
     : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
       : field === "phone" && /^\+965[0-9]{8}$/.test(value) ? `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}`
-        : field === "kuwaitiMother" ? value === "true" ? "Yes" : "No"
+        : field === "kuwaitiMother" ? value === "" ? "Not recorded" : value === "true" ? "Yes" : "No"
         : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";

@@ -327,6 +327,12 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   civilExpired: (value) => value ? "Expired" : "Not expired",
 };
 
+function shownFieldRow(label: string, field: ProfileField<unknown>, formatter?: (value: unknown) => string): string {
+  const observed = field.freshness.observedAt.slice(0, 10);
+  const source = field.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`;
+  return `<div><dt>${escapeHtml(label)}</dt><dd>${fieldText(field, formatter)}</dd><small class="field-meta">${source}</small></div>`;
+}
+
 function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): string {
   const field = profile.fields[name] as ProfileField<unknown>;
   const contract = OWN_PROFILE_FIELD_CONTRACT[name];
@@ -334,9 +340,7 @@ function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): str
     && Object.values(profile.fields).some(({ freshness }) => freshness.kind === "written_by_person")) {
     return `<div><dt>${escapeHtml(contract.label)}</dt><dd>Checked once your documents are on file</dd><small class="field-meta">Not recorded</small></div>`;
   }
-  const observed = field.freshness.observedAt.slice(0, 10);
-  const source = field.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`;
-  return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
+  return shownFieldRow(contract.label, field, fieldFormatters[name]);
 }
 
 export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>): Promise<{ status: number; html: string }> {
@@ -361,8 +365,8 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
       const control = field === "gender" ? radios([["male","Male"],["female","Female"],["other","Other"]])
         : field === "drivingLicence" ? radios([["true","Yes"],["false","No"]])
           : field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">`
-            : field === "nationality" ? `<select name="value" required><option value="">Select nationality</option>${profileChoices?.countries.map(choice => `<option value="${escapeHtml(choice.id)}"${profile.fields.nationality.state === "available" && profile.fields.nationality.referenceId === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
-              : field === "university" ? `<select name="value"><option value=""${raw === "" ? " selected" : ""}>None</option><option value="" disabled>Not listed</option>${profileChoices?.universities.map(choice => `<option value="${escapeHtml(choice.id)}"${profile.fields.university.state === "available" && profile.fields.university.referenceId === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
+            : field === "nationality" ? `<select name="value" required><option value="">Not recorded</option>${profileChoices?.countries.map(choice => `<option value="${escapeHtml(choice.id)}"${profile.fields.nationality.state === "available" && profile.fields.nationality.referenceId === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
+              : field === "university" ? `<select name="value"><option value=""${raw === "" ? " selected" : ""}>Not recorded</option><option value="" disabled>Not listed — ask staff to add it</option>${profileChoices?.universities.map(choice => `<option value="${escapeHtml(choice.id)}"${profile.fields.university.state === "available" && profile.fields.university.referenceId === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("") ?? ""}</select>`
               : field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
       return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
@@ -379,7 +383,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const mother = profile.fields.kuwaitiMother;
   const nationalityIsKuwaiti = profile.fields.nationality.state === "available" && profile.fields.nationality.referenceCode === "KW";
   const motherForm = login.profileEdit && !nationalityIsKuwaiti ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<label><input type="radio" name="value" value="true" required${mother?.state === "available" && mother.value ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false" required${mother?.state === "available" && !mother.value ? " checked" : ""}>No</label></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  if (!nationalityIsKuwaiti && mother?.state === "available") rows += `<div><dt>Kuwaiti mother</dt><dd>${mother.value ? "Yes" : "No"}</dd><small class="field-meta">Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0,10))}</small>${motherForm}</div>`;
+  if (!nationalityIsKuwaiti && mother?.state === "available") rows += shownFieldRow("Kuwaiti mother", mother, value => value ? "Yes" : "No").replace("</div>", `${motherForm}</div>`);
   else if (motherForm) rows += `<div>${motherForm}</div>`;
   const workStatusValue = profile.fields.jobSearchStatus.state === "available" ? String(profile.fields.jobSearchStatus.value) : "";
   const workStatusChoices = ([['not_looking','Not looking right now'],['active','Actively looking for work'],['open_to_offers','Open to offers']] as const)

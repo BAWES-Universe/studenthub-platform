@@ -13,7 +13,7 @@ CREATE INDEX person_profiles_university_id_idx ON person_profiles (university_id
 
 CREATE FUNCTION person_profile_origin_valid() RETURNS trigger LANGUAGE plpgsql AS $function$
 BEGIN
- IF NEW.kuwaiti_mother IS TRUE AND EXISTS (
+ IF NEW.kuwaiti_mother IS NOT NULL AND EXISTS (
    SELECT 1 FROM catalogue_items WHERE id=NEW.nationality_id AND catalogue_type='country' AND code='KW'
  ) THEN RAISE EXCEPTION 'Kuwaiti mother is not applicable to Kuwaiti nationality' USING ERRCODE='23514'; END IF;
  RETURN NEW;
