@@ -5,10 +5,12 @@ import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./safe-write-store.js";
 
-export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
+export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"] as const;
 export type PersonProfileField = (typeof PERSON_PROFILE_FIELDS)[number];
 const COLUMNS: Record<PersonProfileField, string> = {
   displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time",
+  gender: "gender", birthDate: "birth_date", nationality: "nationality_id", university: "university_id",
+  drivingLicence: "driving_licence", kuwaitiMother: "kuwaiti_mother", jobSearchStatus: "job_search_status",
 };
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
@@ -41,8 +43,14 @@ export class PostgresPersonProfileStore {
     const { rows } = await this.#pool.query(
       `SELECT pp.display_name, pp.display_name_written_at, pp.arabic_name, pp.arabic_name_written_at,
               pp.objective, pp.objective_written_at, pp.introduction, pp.introduction_written_at,
-              pp.preferred_time, pp.preferred_time_written_at
-         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id WHERE p.id=$1`, [principalId]);
+              pp.preferred_time, pp.preferred_time_written_at, pp.gender, pp.gender_written_at,
+              pp.birth_date::text birth_date, pp.birth_date_written_at,
+              c.name nationality_id, pp.nationality_written_at, u.name university_id, pp.university_written_at,
+              pp.driving_licence, pp.driving_licence_written_at, pp.kuwaiti_mother, pp.kuwaiti_mother_written_at,
+              pp.job_search_status, pp.job_search_status_written_at
+         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id
+         LEFT JOIN catalogue_items c ON c.id=pp.nationality_id
+         LEFT JOIN catalogue_items u ON u.id=pp.university_id WHERE p.id=$1`, [principalId]);
     const row = rows[0];
     if (!row) return null;
     const result: Record<string, unknown> = {};
@@ -51,6 +59,18 @@ export class PostgresPersonProfileStore {
       if (at instanceof Date) result[field] = Object.freeze({ value: row[column], updatedAt: at.toISOString() });
     }
     return Object.freeze(result);
+  }
+
+  async readProfileChoices(principalId: string) {
+    if (!principalId) throw new TypeError("principal id required");
+    const { rows } = await this.#pool.query(`SELECT ci.id,ci.catalogue_type,ci.name,ci.code,pp.nationality_id selected
+      FROM catalogue_items ci LEFT JOIN person_profiles pp ON pp.principal_id=$1
+      WHERE ci.status='active' AND ci.catalogue_type IN ('country','university')
+      ORDER BY ci.normalized_name COLLATE "C",ci.id`, [principalId]);
+    const item = (row: Record<string, unknown>) => Object.freeze({ id: String(row.id), name: String(row.name), ...(row.code === null ? {} : { code: String(row.code) }) });
+    return Object.freeze({ countries: Object.freeze(rows.filter(r => r.catalogue_type === "country").map(item)),
+      universities: Object.freeze(rows.filter(r => r.catalogue_type === "university").map(item)),
+      ...(rows[0]?.selected ? { selectedNationalityId: String(rows[0].selected) } : {}) });
   }
 
   async readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null> {
@@ -69,7 +89,8 @@ export class PostgresPersonProfileStore {
 
   async #exists(client: pg.Pool | pg.PoolClient, id: string) { return (await client.query("SELECT 1 FROM principals WHERE id=$1", [id])).rows.length === 1; }
   async #readField(id: string, field: PersonProfileField) {
-    const { rows } = await this.#pool.query(`SELECT ${COLUMNS[field]} AS value FROM person_profiles WHERE principal_id=$1`, [id]);
+    const cast = field === "birthDate" || field === "drivingLicence" || field === "kuwaitiMother" ? "::text" : "";
+    const { rows } = await this.#pool.query(`SELECT ${COLUMNS[field]}${cast} AS value FROM person_profiles WHERE principal_id=$1`, [id]);
     return rows[0]?.value ?? null;
   }
   async #commit(id: string, input: CommitInput): Promise<CommitOutcome> {
@@ -83,10 +104,27 @@ export class PostgresPersonProfileStore {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [id]);
       if ((await client.query(`SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2`, [SAFE_WRITE_OPERATION, spent])).rows.length) throw new Refusal("token_already_used");
       if (!await this.#exists(client, id)) throw new Refusal("not_own_record");
-      const current = (await client.query(`SELECT ${column} AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
+      const cast = field === "birthDate" || field === "drivingLicence" || field === "kuwaitiMother" ? "::text" : "";
+      const current = (await client.query(`SELECT ${column}${cast} AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
       if (current !== input.expectedBefore) throw new Refusal("state_changed");
+      let stored: string | boolean | null = input.value === "" ? null : input.value;
+      if (field === "drivingLicence" || field === "kuwaitiMother") stored = input.value === "true";
+      if (field === "birthDate") {
+        const cutoff = new Date(); cutoff.setUTCFullYear(cutoff.getUTCFullYear()-16);
+        if (input.value > cutoff.toISOString().slice(0,10)) throw new Refusal("invalid_value");
+      }
+      if (field === "nationality" || field === "university") {
+        if (input.value !== "") {
+          const wanted = field === "nationality" ? "country" : "university";
+          const resolved = (await client.query(`SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'`, [input.value,wanted])).rows[0];
+          if (!resolved) throw new Refusal("invalid_value");
+          if (field === "nationality" && resolved.code === "KW") {
+            await client.query(`UPDATE person_profiles SET kuwaiti_mother=NULL,kuwaiti_mother_written_at=clock_timestamp() WHERE principal_id=$1`,[id]);
+          }
+        }
+      }
       await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
-        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, input.value === "" ? null : input.value]);
+        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, stored]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
         VALUES ($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)`, [input.receipt.receiptRef, input.receipt.principalRef, SAFE_WRITE_OPERATION,
         JSON.stringify({ valuePresent: current !== null }), JSON.stringify({ contractVersion: input.receipt.contractVersion, personRef: input.receipt.personRef,

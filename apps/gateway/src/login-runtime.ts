@@ -229,7 +229,7 @@ export function createRuntimeLoginFromEnv(
       const [language, person] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id)]);
       const merged = { ...(language ?? {}), ...(person ?? {}) };
       return Object.keys(merged).length > 0 ? merged as never : null;
-    } } } : {}) });
+    }, readProfileChoices: (id: string) => personProfiles.readProfileChoices(id) } } : {}) });
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;

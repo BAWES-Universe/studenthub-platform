@@ -12,7 +12,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, profileDocument, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
@@ -21,6 +21,14 @@ const SESSION = "s".repeat(43);
 const OTHER_SESSION = "t".repeat(43);
 const ORIGIN = "https://studenthub.test.invalid";
 const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESSION}` };
+
+test("SHU373_PAGE My profile shows country and approved university choices plus both absent-university options",async()=>{
+  let writtenReads=0,catalogueReads=0;
+  const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>createPrincipal({id:"person",email:"p@example.invalid",pbuuids:["candidate"]})},source:new InMemoryApprovedProfileAdapter({links:[{principalId:"person",candidateRef:"candidate"}],rows:new Map([["candidate",SYNTHETIC_PROFILE_FIXTURES.populated]])}),preferences:{readOwnPreferences:async()=>{writtenReads++;return null;},readProfileChoices:async()=>{catalogueReads++;return{countries:[{id:"11111111-1111-4111-8111-111111111111",name:"Bahrain",code:"BH"}],universities:[{id:"22222222-2222-4222-8222-222222222222",name:"Kuwait University"}]};}},today:()=>"2026-10-30"});
+  const found=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(found.kind,"found");if(found.kind!=="found")return;
+  const page=await profileDocument({status:200,body:found.profile},{profileEdit:{} as never} as unknown as BrowserLoginApplication);
+  assert.match(page.html,/>Bahrain<\/option>/);assert.match(page.html,/>Kuwait University<\/option>/);assert.match(page.html,/>None<\/option>/);assert.match(page.html,/>Not listed<\/option>/);assert.match(page.html,/Staff add new universities/);assert.deepEqual([writtenReads,catalogueReads],[1,1]);
+});
 
 async function fixture(t: TestContext, options: {
   readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];

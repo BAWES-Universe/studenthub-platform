@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
-import { PostgresAuthzStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "@studenthub/db";
+import { PostgresAuthzStore, PostgresCatalogueStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "@studenthub/db";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SHU372_RULES, SYNTHETIC_PROFILE_FIXTURES, createPersonSelfEdit } from "@studenthub/profile";
 import { profileDocument, type BrowserLoginApplication } from "../../../apps/gateway/src/web-ui.js";
 
@@ -78,6 +78,25 @@ test("SHU372_WRITE Postgres commits, clears, replays safely, and cascades princi
   assert.equal(typeof preferences?.objective?.updatedAt, "string");
   await pool.query("DELETE FROM principals WHERE id=$1", [id]);
   assert.equal((await pool.query("SELECT 1 FROM person_profiles WHERE principal_id=$1", [id])).rowCount, 0);
+});
+
+test("SHU373_WRITE every structured field can be written twice without a Date or boolean state loop", async () => {
+  const id=`shu373-${randomUUID()}`, authz=new PostgresAuthzStore(pool), catalogues=new PostgresCatalogueStore(pool);
+  await authz.registerPrincipal(createPrincipal({id,email:`${id}@example.invalid`,pbuuids:[]}));
+  const now="2026-10-30T00:00:00.000Z", actorRef=principalAuditRef(id);
+  const country1=randomUUID(),country2=randomUUID(),university=randomUUID();
+  await catalogues.createItem({id:country1,type:"country",name:"Jordan",code:"JO",status:"active",createdAt:now,updatedAt:now,actorRef});
+  await catalogues.createItem({id:country2,type:"country",name:"Bahrain",code:"BH",status:"active",createdAt:now,updatedAt:now,actorRef});
+  await catalogues.createItem({id:university,type:"university",name:"Test University",status:"active",createdAt:now,updatedAt:now,actorRef});
+  const store=new PostgresPersonProfileStore({pool}), principalRef=safeWritePrincipalRef(id), personRef=personRecordRef(id);
+  const write=async(field:any,value:string)=>{const writer=createPersonSelfEdit({store:store.forPrincipal(id),secret:"s".repeat(32),clock:{now:()=>new Date(now)}});const change={personRef,field,value};const preview=await writer.preview({principalRef,change});assert.ok(preview.ok,`${field} preview`);if(preview.ok)assert.ok((await writer.confirm({principalRef,change,token:preview.token})).ok,`${field} confirm`);};
+  for(const [field,first,second] of [["gender","female","other"],["birthDate","2000-01-01","2000-02-02"],["nationality",country1,country2],["university",university,""],["drivingLicence","true","false"],["kuwaitiMother","true","false"],["jobSearchStatus","active","not_looking"]] as const){await write(field,first);await write(field,second);}
+});
+
+test("SHU373_CATALOGUE reads active country and university choices only",async()=>{
+  const id=`shu373-${randomUUID()}`,authz=new PostgresAuthzStore(pool);await authz.registerPrincipal(createPrincipal({id,email:`${id}@example.invalid`,pbuuids:[]}));
+  const choices=await new PostgresPersonProfileStore({pool}).readProfileChoices(id);
+  assert.ok(choices.countries.every(c=>c.name.length>0));assert.ok(choices.universities.every(c=>c.name.length>0));
 });
 
 test("SHU395_PG_S1 Postgres writes and clears override a populated snapshot on My profile", async () => {

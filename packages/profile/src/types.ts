@@ -4,6 +4,12 @@ export const PROFILE_PARITY_REVISION = "c2ce255695eabc7e3a0f23b162f5996274234c63
 export type Gender = "male" | "female" | "other";
 export type LanguagePreference = "en" | "ar";
 export type JobSearchStatus = "not_looking" | "active" | "open_to_offers";
+export interface ProfileChoice { readonly id: string; readonly name: string; readonly code?: string }
+export interface ProfileChoices {
+  readonly countries: readonly ProfileChoice[];
+  readonly universities: readonly ProfileChoice[];
+  readonly selectedNationalityId?: string;
+}
 
 export type PendingProfileRequirement =
   | "identity_reference"
@@ -67,6 +73,7 @@ export interface OwnProfileFields {
   readonly language: ProfileField<LanguagePreference>;
   readonly area: ProfileField<string>;
   readonly drivingLicence: ProfileField<boolean>;
+  readonly kuwaitiMother?: ProfileField<boolean>;
   readonly jobSearchStatus: ProfileField<JobSearchStatus>;
   readonly committed: ProfileField<boolean>;
   readonly isProfileCompleted: ProfileField<boolean>;
@@ -75,7 +82,7 @@ export interface OwnProfileFields {
   readonly civilExpired: ProfileField<boolean>;
 }
 
-export type OwnProfileFieldName = keyof OwnProfileFields;
+export type OwnProfileFieldName = Exclude<keyof OwnProfileFields, "kuwaitiMother">;
 
 export interface OwnProfileProjection {
   readonly [key: string]: unknown;
@@ -83,6 +90,7 @@ export interface OwnProfileProjection {
   /** Date used for age and civil-expiry derivations. */
   readonly asOfDate: string;
   readonly fields: Readonly<OwnProfileFields>;
+  readonly choices?: ProfileChoices;
 }
 
 export interface OwnProfileFieldContract {
@@ -125,4 +133,5 @@ export interface OwnProfileReader {
 /** Platform-owned profile values, read in one fixed-cost lookup for one person. */
 export interface OwnProfilePreferencesReader {
   readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null>;
+  readProfileChoices?(principalId: string): Promise<ProfileChoices>;
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
+import { OwnProfileRepository, PERSON_PROFILE_MINIMUM_AGE, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
@@ -13,6 +13,26 @@ test("SHU372_RULES every shared rule example has the specified result", () => {
   assert.equal(normalizePersonSelfEditValue("displayName", "Noor Al-Sabah"), "Noor Al-Sabah");
   assert.equal(normalizePersonSelfEditValue("arabicName", "نور الصباح"), "نور الصباح");
   assert.equal(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah"), "Noël Al-Sabah");
+});
+
+test("SHU373_AGE one minimum-age setting accepts the sixteenth birthday with no maximum", () => {
+  assert.equal(PERSON_PROFILE_MINIMUM_AGE, 16);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-10-30", "2026-10-30"), "2010-10-30");
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-10-31", "2026-10-30"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "1900-01-01", "2026-10-30"), "1900-01-01");
+});
+
+test("SHU373_CATALOGUE profile choices are fetched once beside written values", async () => {
+  let writes=0,catalogue=0;
+  const repository = new OwnProfileRepository({
+    principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},
+    source:{resolveLink:async()=>({kind:"unconfigured"}),readCandidate:async()=>undefined},
+    preferences:{readOwnPreferences:async()=>{writes++;return null;},readProfileChoices:async()=>{catalogue++;return {countries:[{id:"kw",name:"Kuwait",code:"KW"}],universities:[{id:"u",name:"Kuwait University"}]};}},
+    today:()=>"2026-10-30",
+  });
+  const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});
+  assert.equal(result.kind,"found"); assert.deepEqual([writes,catalogue],[1,1]);
+  if(result.kind==="found") assert.equal(result.profile.choices?.universities[0]?.name,"Kuwait University");
 });
 
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {

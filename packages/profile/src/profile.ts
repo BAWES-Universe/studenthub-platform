@@ -184,7 +184,8 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime", WrittenPreference>>>;
+type WritableProfileField = "displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "nationality" | "university" | "drivingLicence" | "kuwaitiMother" | "jobSearchStatus";
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<WritableProfileField, WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -202,7 +203,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
   }
-  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const) {
+  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const) {
     const preference = preferences[name];
     if (!preference) continue;
     try {
@@ -212,7 +213,11 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
       } else {
-        fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
+        const raw = (name === "drivingLicence" && typeof preference.value === "boolean") ? preference.value
+          : name === "gender" ? new Map([["male","male"],["female","female"],["other","other"]]).get(String(preference.value))
+          : name === "jobSearchStatus" ? new Map([["not_looking","not_looking"],["active","active"],["open_to_offers","open_to_offers"]]).get(String(preference.value))
+          : preference.value;
+        fields[name] = written(PROFILE_FIELD_SPECS[name], (name === "drivingLicence" ? raw : PROFILE_FIELD_SPECS[name].parse(raw, profile.asOfDate)) as never, preference.updatedAt) as never;
       }
     } catch {
       fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
@@ -224,7 +229,10 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
   for (const name of ["isProfileCompleted", "pendingFields"] as const) {
     fields[name] = unavailable(PROFILE_FIELD_SPECS[name], "", "not_recorded") as never;
   }
-  return Object.freeze({ ...profile, fields: Object.freeze(fields) });
+  const mother = preferences.kuwaitiMother;
+  const kuwaitiMother = mother ? Object.freeze({ state: "available" as const, value: mother.value === true,
+    provenance: provenance("candidate_mom_kuwaiti"), freshness: Object.freeze({ kind: "written_by_person" as const, observedAt: mother.updatedAt }) }) : undefined;
+  return Object.freeze({ ...profile, fields: Object.freeze({ ...fields, ...(kuwaitiMother ? { kuwaitiMother } : {}) }) });
 }
 
 function importedAt(row: Readonly<Record<string, unknown>>): string {
@@ -299,8 +307,11 @@ export class OwnProfileRepository {
     try {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
-      const preferences = this.#preferences
-        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) as ProfilePreferences | null : null;
+      const [preferences, choices] = this.#preferences ? await Promise.all([
+        this.#preferences.readOwnPreferences(request.requesterPrincipalId) as Promise<ProfilePreferences | null>,
+        this.#preferences.readProfileChoices?.(request.requesterPrincipalId) ?? Promise.resolve(undefined),
+      ]) : [null, undefined];
+      const withChoices = (profile: OwnProfileProjection) => choices ? Object.freeze({ ...profile, choices }) : profile;
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
       if (link.kind === "unconfigured") {
         const today = this.#today();
@@ -312,14 +323,14 @@ export class OwnProfileRepository {
           provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "not_imported", observedAt: "" }),
         })])) as unknown as OwnProfileFields;
-        return { kind: "found", profile: applyPreferences(Object.freeze({
+        return { kind: "found", profile: withChoices(applyPreferences(Object.freeze({
           version: OWN_PROFILE_VERSION, asOfDate: today, fields: Object.freeze(fields),
-        }), preferences) };
+        }), preferences)) };
       }
       if (link.kind !== "linked") return { kind: "not_found" };
       const row = await this.#source.readCandidate(link.candidateRef);
       if (row === undefined) return { kind: "unavailable" };
-      return { kind: "found", profile: applyPreferences(projectApprovedProfile(row, this.#today()), preferences) };
+      return { kind: "found", profile: withChoices(applyPreferences(projectApprovedProfile(row, this.#today()), preferences)) };
     } catch {
       return { kind: "unavailable" };
     }

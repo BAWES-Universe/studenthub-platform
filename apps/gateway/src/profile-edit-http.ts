@@ -95,7 +95,7 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", nationality: "Nationality", university: "University", drivingLicence: "Driving licence", kuwaitiMother: "Kuwaiti mother", jobSearchStatus: "Looking for work" };
 export function profileEditSummary(value: string): string {
   let result = "", count = 0;
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) { const length = [...segment].length; if (count + length > 120) break; result += segment; count += length; }
