@@ -90,7 +90,7 @@ export class PostgresCatalogueStore implements CatalogueStore {
     const { rows } = await this.#pool.query<BankPaymentDetailsRow>(
       `INSERT INTO catalogue_bank_payment_details
        (bank_id,swift_code,iban_bank_code,abk_code,transfer_type,created_by_ref,updated_by_ref,created_at,updated_at)
-       SELECT id,$2,$3,$4,$5,$6,$6,$7,$7 FROM catalogue_items
+       SELECT id,$2::text,$3::text,$4::text,$5::text,$6::char(64),$6::char(64),$7::timestamptz,$7::timestamptz FROM catalogue_items
        WHERE id=$1 AND catalogue_type='bank' AND status='active'
        ON CONFLICT (bank_id) DO UPDATE SET swift_code=EXCLUDED.swift_code,
          iban_bank_code=EXCLUDED.iban_bank_code,abk_code=EXCLUDED.abk_code,
