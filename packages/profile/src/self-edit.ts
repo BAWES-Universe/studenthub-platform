@@ -13,6 +13,12 @@ export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective"
 export type PersonSelfEditField = (typeof PERSON_SELF_EDIT_FIELDS)[number];
 export const PERSON_PROFILE_MINIMUM_AGE = 16;
 
+function kuwaitDate(now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(value => value.type === type)!.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 export const SHU372_RULES = Object.freeze({
   displayName: Object.freeze({ maxLength: 255, allowClear: false, accepts: ["Noor Al-Sabah", "Abdul-Aziz Al Saud", "O'Brien Smith", "St.John Smith", "نور الصباح"], refuses: ["Noor", "Ahmed 3", " Noor Al-Sabah", "Noor  Al-Sabah", "Noor\u00a0Al-Sabah", "O''Brien Smith", ".Noor Smith", "Noor. Smith"] }),
   arabicName: Object.freeze({ maxLength: 255, allowClear: true, accepts: ["نور الصباح", ""], refuses: ["نور", "Noor Al-Sabah", "نور  الصباح", "نور\u00a0الصباح"] }),
@@ -68,7 +74,7 @@ export function createPersonSelfEdit(options: {
   const normalize = <T extends PreviewRequest | ConfirmRequest>(request: T): T | null => {
     if (!PERSON_SELF_EDIT_FIELDS.includes(request.change.field as PersonSelfEditField)) return request;
     const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value,
-      (options.clock?.now() ?? new Date()).toISOString().slice(0,10));
+      kuwaitDate(options.clock?.now() ?? new Date()));
     return value === null ? null : { ...request, change: { ...request.change, value } };
   };
   return Object.freeze({

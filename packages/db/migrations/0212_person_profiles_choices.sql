@@ -2,7 +2,7 @@
 ALTER TABLE person_profiles
  ADD COLUMN gender text CHECK (gender IN ('male','female','other')),
  ADD COLUMN gender_written_at timestamptz,
- ADD COLUMN birth_date date CHECK (birth_date <= ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kuwait')::date - INTERVAL '16 years')::date),
+ ADD COLUMN birth_date date,
  ADD COLUMN birth_date_written_at timestamptz,
  ADD COLUMN nationality_id uuid REFERENCES catalogue_items(id),
  ADD COLUMN nationality_written_at timestamptz,

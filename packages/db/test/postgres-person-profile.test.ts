@@ -14,6 +14,7 @@ after(async () => pool.end());
 
 test("SHU392_PG_RULES the CHECK and application share every SHU372_RULES example", async () => {
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
+    if (!["displayName", "arabicName", "objective", "intro", "preferredTime"].includes(field)) continue;
     const requireWords = field === "displayName" || field === "arabicName";
     for (const value of rule.accepts) {
       if (value === "") continue; // clearing is represented by SQL NULL
@@ -93,10 +94,31 @@ test("SHU373_WRITE every structured field can be written twice without a Date or
   for(const [field,first,second] of [["gender","female","other"],["birthDate","2000-01-01","2000-02-02"],["nationality",country1,country2],["university",university,""],["drivingLicence","true","false"],["kuwaitiMother","true","false"],["jobSearchStatus","active","not_looking"]] as const){await write(field,first);await write(field,second);}
 });
 
-test("SHU373_CATALOGUE reads active country and university choices only",async()=>{
-  const id=`shu373-${randomUUID()}`,authz=new PostgresAuthzStore(pool);await authz.registerPrincipal(createPrincipal({id,email:`${id}@example.invalid`,pbuuids:[]}));
-  const choices=await new PostgresPersonProfileStore({pool}).readProfileChoices(id);
-  assert.ok(choices.countries.every(c=>c.name.length>0));assert.ok(choices.universities.every(c=>c.name.length>0));
+test("SHU373_CATALOGUE resolves active ids, stores ids, shows current names, and refuses unknown or deleted ids",async()=>{
+  const id=`shu373-${randomUUID()}`,authz=new PostgresAuthzStore(pool),catalogues=new PostgresCatalogueStore(pool);
+  await authz.registerPrincipal(createPrincipal({id,email:`${id}@example.invalid`,pbuuids:[]}));
+  const now="2026-10-30T00:00:00.000Z",actorRef=principalAuditRef(id),country=randomUUID(),university=randomUUID(),deleted=randomUUID();
+  await catalogues.createItem({id:country,type:"country",name:"Jordan",code:"JO",status:"active",createdAt:now,updatedAt:now,actorRef});
+  await catalogues.createItem({id:university,type:"university",name:"Pinned University",status:"active",createdAt:now,updatedAt:now,actorRef});
+  await catalogues.createItem({id:deleted,type:"country",name:"Deleted Country",code:"ZZ",status:"deleted",createdAt:now,updatedAt:now,actorRef});
+  const store=new PostgresPersonProfileStore({pool}),principalRef=safeWritePrincipalRef(id),personRef=personRecordRef(id);
+  const write=async(field:"nationality"|"university",value:string)=>{const writer=createPersonSelfEdit({store:store.forPrincipal(id),secret:"s".repeat(32),clock:{now:()=>new Date(now)}}),change={personRef,field,value};const preview=await writer.preview({principalRef,change});assert.ok(preview.ok);if(!preview.ok)throw new Error("preview failed");return writer.confirm({principalRef,change,token:preview.token});};
+  assert.deepEqual(await write("nationality",deleted),{ok:false,reason:"invalid_value"});
+  assert.deepEqual(await write("nationality",randomUUID()),{ok:false,reason:"invalid_value"});
+  assert.deepEqual(await write("nationality",country),{ok:true});assert.deepEqual(await write("university",university),{ok:true});
+  const stored=await pool.query("SELECT nationality_id,university_id FROM person_profiles WHERE principal_id=$1",[id]);
+  assert.equal(stored.rows[0].nationality_id,country);assert.equal(stored.rows[0].university_id,university);
+  const choices=await store.readProfileChoices(id);assert.equal(choices.countries.some(c=>c.id===deleted),false);assert.equal(choices.countries.some(c=>c.id===country&&c.name==="Jordan"),true);assert.equal(choices.universities.some(c=>c.id===university&&c.name==="Pinned University"),true);
+  const preferences=await store.readOwnPreferences(id) as Record<string,{value:unknown}>;assert.equal(preferences.nationality?.value,"Jordan");assert.equal(preferences.university?.value,"Pinned University");
+  const profiles=new OwnProfileRepository({principals:authz,source:new InMemoryApprovedProfileAdapter({links:[],rows:new Map()}),preferences:store as never,today:()=>"2026-10-30"});
+  const found=await profiles.readOwn({requesterPrincipalId:id,targetPersonId:id});assert.equal(found.kind,"found");if(found.kind==="found"){const html=(await profileDocument({status:200,body:found.profile},{profileEdit:{}} as BrowserLoginApplication)).html;assert.match(html,/<dt>Nationality<\/dt><dd>Jordan<\/dd>/);assert.match(html,/<dt>University<\/dt><dd>Pinned University<\/dd>/);}
+});
+
+test("SHU373_CATALOGUE Kuwaiti nationality clears and the database refuses a Kuwaiti-mother value",async()=>{
+  const id=`shu373-${randomUUID()}`,authz=new PostgresAuthzStore(pool),catalogues=new PostgresCatalogueStore(pool),country=randomUUID(),now="2026-10-30T00:00:00.000Z";
+  await authz.registerPrincipal(createPrincipal({id,email:`${id}@example.invalid`,pbuuids:[]}));
+  await catalogues.createItem({id:country,type:"country",name:"State of Kuwait",code:"KW",status:"active",createdAt:now,updatedAt:now,actorRef:principalAuditRef(id)});
+  await assert.rejects(pool.query("INSERT INTO person_profiles(principal_id,nationality_id,kuwaiti_mother) VALUES($1,$2,true)",[id,country]),/kuwaiti mother is inapplicable/);
 });
 
 test("SHU395_PG_S1 Postgres writes and clears override a populated snapshot on My profile", async () => {

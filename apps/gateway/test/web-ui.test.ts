@@ -32,6 +32,8 @@ test("SHU373_PAGE My profile shows country and approved university choices plus 
   assert.match(page.html,/type="radio" name="value" value="female" checked/);
   assert.match(page.html,/type="radio" name="value" value="not_looking"/);
   assert.match(page.html,/Not looking right now/);
+  assert.match(page.html,/<dl class="profile-fields"><div class="work-status"><dt>Looking for work<\/dt>/);
+  assert.match(page.html,/<div class="work-status">[\s\S]*aria-label="Change Looking for work"/);
   for(const shown of ["Female","2000-10-31","25 years","Bahraini","Kuwait University","No","Yes","Not looking right now"]) assert.match(page.html,new RegExp(`<dd>${shown.replace(" ","\\s")}</dd>`));
 });
 

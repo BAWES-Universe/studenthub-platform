@@ -21,6 +21,7 @@ const mutations = [
   ["SHU373_AGE", "cutoff.getUTCFullYear()-PERSON_PROFILE_MINIMUM_AGE", "cutoff.getUTCFullYear()-15"],
   ["SHU373_CATALOGUE", "this.#preferences.readProfileChoices?.(request.requesterPrincipalId)", "Promise.resolve(undefined)", profileModuleFile, suite],
   ["SHU373_PAGE", 'chosen===v?" checked":""', 'false?" checked":""', webModuleFile, webSuite],
+  ["SHU373_PAGE", '["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")]', 'OWN_PROFILE_FIELD_NAMES', webModuleFile, webSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
 for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite] of mutations) {

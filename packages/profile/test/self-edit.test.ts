@@ -22,6 +22,17 @@ test("SHU373_AGE one minimum-age setting accepts the sixteenth birthday with no 
   assert.equal(normalizePersonSelfEditValue("birthDate", "1900-01-01", "2026-10-30"), "1900-01-01");
 });
 
+test("SHU373_AGE safe writes use Kuwait's calendar date at the UTC day boundary", async () => {
+  let requested: string | null = null;
+  const personRef = "b".repeat(64), principalRef = "a".repeat(64);
+  const store: SafeWriteStore = { ownedRecord: async () => personRef, readField: async () => null,
+    commit: async input => { requested = input.value; return { ok: true }; } };
+  const writer = createPersonSelfEdit({ store, secret: "s".repeat(32), clock: { now: () => new Date("2026-10-29T21:30:00.000Z") } });
+  const request = { principalRef, change: { personRef, field: "birthDate", value: "2010-10-30" } };
+  const preview = await writer.preview(request); assert.ok(preview.ok); if (!preview.ok) return;
+  assert.ok((await writer.confirm({ ...request, token: preview.token })).ok); assert.equal(requested, "2010-10-30");
+});
+
 test("SHU373_CATALOGUE profile choices are fetched once beside written values", async () => {
   let writes=0,catalogue=0;
   const repository = new OwnProfileRepository({
