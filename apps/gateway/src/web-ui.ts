@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
-import type { ContextNavigation, NavigationResult, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
+import type { ContextNavigation, NavigationResult, OrganizationCountsPanel, SubOrganizationsPanel, WorkspaceContext } from "./context-navigation.js";
 import type { LanguagePreference } from "./language-preference.js";
 import type { BankDetailsService } from "./bank-details.js";
 import {
@@ -144,6 +144,15 @@ function renderOrganization(organization: ActiveOrganization | undefined): strin
   return `<section class="profile-card org-card" aria-labelledby="org-title"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(Array.from(heading.trim())[0]?.toUpperCase() ?? "S")}</div><div><h2 id="org-title">${escapeHtml(heading)}</h2><p>${source}</p></div><span class="identity-label">${kind}</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>You see the company details your role allows. Licences, logos, sign-in data and internal notes are never shown here.</p></div></section>`;
 }
 
+function renderOrganizationCounts(panel: OrganizationCountsPanel | undefined): string {
+  if (!panel) return "";
+  if (panel.kind === "unavailable") {
+    return `<section class="notice org-notice" role="status"><strong>Company counts couldn’t be loaded.</strong><p>Please try again in a moment.</p></section>`;
+  }
+  const stores = panel.counts.stores === null ? '<span class="missing" data-state="unavailable">Unavailable</span>' : String(panel.counts.stores);
+  return `<section aria-labelledby="counts-title"><h2 id="counts-title">At a glance</h2><dl class="profile-fields"><div><dt>Stores</dt><dd>${stores}</dd></div><div><dt>Sub-companies</dt><dd>${panel.counts.subOrganizations}</dd></div></dl></section>`;
+}
+
 /** Native links preserve selections across refresh/back without storing authority. */
 const DIRECTORY_ROLES: ReadonlySet<WorkspaceContext["role"]> = new Set(["staff", "admin"]);
 
@@ -231,7 +240,7 @@ export function renderWorkspace(result: NavigationResult, login: BrowserLoginApp
   const intro = active
     ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
     : "Choose the organization and role you want to use. You can switch without signing in again.";
-  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a>${companiesLink(active, login)}</nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization)}${renderSubOrganizations(result.body.subOrganizations, active)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a>${companiesLink(active, login)}</nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>${renderOrganization(result.body.organization)}${renderOrganizationCounts(result.body.counts)}${renderSubOrganizations(result.body.subOrganizations, active)}` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderLanding(login?: BrowserLoginApplication): string {

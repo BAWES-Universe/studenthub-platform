@@ -11,6 +11,22 @@ const original = await readFile(source, "utf8");
 const suite = fileURLToPath(new URL("../../../dist/packages/organizations/test/organizations.test.js", import.meta.url));
 const mutations = [
   [
+    "let any audience read counts", "SHU334_COUNTS_SCOPE",
+    "if (audience !== \"admin\")", "if (audience === undefined)",
+  ],
+  [
+    "count every child", "SHU334_COUNTS_CHILDREN",
+    "if (await this.#authorize(request, child.id) !== undefined)", "if (true)",
+  ],
+  [
+    "store count without a port", "SHU334_COUNTS_STORES",
+    "stores: totals ? totals.get(request.orgId) ?? 0 : null,", "stores: totals ? totals.get(request.orgId) ?? 0 : 0,",
+  ],
+  [
+    "count the wrong set", "SHU334_COUNTS_STORES",
+    "countMany([request.orgId])", "countMany([])",
+  ],
+  [
     "read status from the stored legacy column", "SHU-159/AC-01 STATUS",
     "const override = statusOverride(row);",
     "if (row.company_status === 10)\n        return available(\"status\", \"active\");\n    const override = statusOverride(row);",

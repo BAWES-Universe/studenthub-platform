@@ -21,6 +21,18 @@ try {
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr);
   const mutants = [
     {
+      name: "admin cards must request counts",
+      pattern: "SHU334_NAV_COUNTS",
+      from: "const tally = await organizationReader.readCounts({ principalId: session.personId, orgId: active.orgId, role: active.role });",
+      to: 'const tally = { kind: "not_found" };',
+    },
+    {
+      name: "unavailable counts must not look empty",
+      pattern: "SHU334_NAV_COUNTS_UNAVAILABLE",
+      from: ': tally.kind === "unavailable" ? { kind: "unavailable" } : undefined;',
+      to: ': tally.kind === "unavailable" ? { kind: "found", counts: { stores: 0, subOrganizations: 0 } } : undefined;',
+    },
+    {
       name: "session ownership cannot be fabricated",
       pattern: "anonymous, expired, logged-out and unknown-principal",
       from: "const session = sessionId ? await sessions.get(sessionId) : undefined;",
@@ -118,6 +130,20 @@ try {
     assert.match(result.stdout, /not ok .*SHU332_NAV_SUBS_HTML /);
     assert.match(result.stdout, /ERR_ASSERTION/);
     console.log(`KILLED (applied + SHU332_NAV_SUBS_HTML assertion verified): ${name}`);
+    writeFileSync(historyFile, historyOriginal);
+  }
+  for (const [name, from, to] of [
+    ["unavailable stores must be marked", "panel.counts.stores === null ?", "false ?"],
+  ]) {
+    assert.equal(historyOriginal.split(from).length - 1, 1, `${name}: unique anchor`);
+    writeFileSync(historyFile, historyOriginal.replace(from, to));
+    const result = run();
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /not ok .*SHU334_NAV_COUNTS_HTML /);
+    assert.match(result.stdout, /ERR_ASSERTION/);
+    console.log(`KILLED (applied + SHU334_NAV_COUNTS_HTML assertion verified): ${name}`);
     writeFileSync(historyFile, historyOriginal);
   }
   const restored = run();

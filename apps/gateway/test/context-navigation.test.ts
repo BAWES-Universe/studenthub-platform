@@ -377,6 +377,7 @@ async function shu332Rig(options: {
   await store.grantMany("person-1", [
     { orgId: "org-a", role: "org-owner", scope: options.scope ?? "subtree" },
     { orgId: "org-a", role: "candidate" },
+    { orgId: "root", role: "admin", scope: "subtree" },
   ]);
   const repository = new OrganizationRepository({
     store,
@@ -385,6 +386,7 @@ async function shu332Rig(options: {
       ["org-a1", SYNTHETIC_ORGANIZATION_FIXTURES.childA1],
     ])),
     deletions: options.deletions,
+    storeCounts: { async countMany(ids) { return new Map(ids.map((id) => [id, 4])); } },
   });
   return { rig, store, repository };
 }
@@ -477,4 +479,64 @@ test("SHU332_NAV_SUBS_HTML child names and links are escaped and an empty panel 
     .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
   const emptyHtml = renderWorkspace(emptyResult, empty.rig.app);
   assert.match(emptyHtml, /No sub-companies you can open/);
+});
+
+test("SHU334_NAV_COUNTS only an admin card requests counts", async () => {
+  const f = await shu332Rig();
+  let calls = 0;
+  const reader: OrganizationReader = {
+    read: (request) => f.repository.read(request),
+    listSubOrganizations: (request) => f.repository.listSubOrganizations(request),
+    readCounts(request) { calls++; return f.repository.readCounts(request); },
+  };
+  const navigation = createContextNavigation(f.rig.sessions, f.store, reader);
+  const admin = await navigation.open(SESSION, new URLSearchParams({ org_id: "org-a", role: "admin" }));
+  assert.equal(admin.status, 200);
+  if (admin.status === 200) assert.deepEqual(admin.body.counts, { kind: "found", counts: { stores: 4, subOrganizations: 2 } });
+  assert.equal(calls, 1);
+  const owner = await navigation.open(SESSION, new URLSearchParams({ org_id: "org-a", role: "org-owner" }));
+  assert.equal(owner.status, 200);
+  if (owner.status === 200) assert.equal(Object.hasOwn(owner.body, "counts"), false);
+  const none = await navigation.open(SESSION, new URLSearchParams());
+  assert.equal(none.status, 200);
+  if (none.status === 200) assert.equal(Object.hasOwn(none.body, "counts"), false);
+  assert.equal(calls, 1);
+  const without = { read: reader.read, listSubOrganizations: reader.listSubOrganizations };
+  const noMethod = await createContextNavigation(f.rig.sessions, f.store, without)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "admin" }));
+  if (noMethod.status === 200) assert.equal(Object.hasOwn(noMethod.body, "counts"), false);
+});
+
+test("SHU334_NAV_COUNTS_UNAVAILABLE unavailable counts preserve the company card", async () => {
+  const f = await shu332Rig();
+  const reader: OrganizationReader = {
+    read: (request) => f.repository.read(request),
+    listSubOrganizations: (request) => f.repository.listSubOrganizations(request),
+    async readCounts() { return { kind: "unavailable" }; },
+  };
+  const result = await createContextNavigation(f.rig.sessions, f.store, reader)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "admin" }));
+  assert.equal(result.status, 200);
+  if (result.status !== 200) return;
+  assert.deepEqual(result.body.counts, { kind: "unavailable" });
+  assert.equal(result.body.organization?.kind, "found");
+  const html = renderWorkspace(result, f.rig.app);
+  assert.match(html, /Company counts couldn’t be loaded/);
+  assert.match(html, /Synthetic Retail Group/);
+});
+
+test("SHU334_NAV_COUNTS_HTML renders both counts and the unavailable store marker", async () => {
+  const f = await shu332Rig();
+  const result = await createContextNavigation(f.rig.sessions, f.store, f.repository)
+    .open(SESSION, new URLSearchParams({ org_id: "org-a", role: "admin" }));
+  const html = renderWorkspace(result, f.rig.app);
+  assert.match(html, /At a glance/);
+  assert.match(html, /<dt>Stores<\/dt><dd>4<\/dd>/);
+  assert.match(html, /<dt>Sub-companies<\/dt><dd>2<\/dd>/);
+  assert.doesNotMatch(html, /<dd>null<\/dd>/);
+  if (result.status !== 200) return;
+  const unavailable = { ...result, body: { ...result.body, counts: { kind: "found" as const, counts: { stores: null, subOrganizations: 2 } } } };
+  const unavailableHtml = renderWorkspace(unavailable, f.rig.app);
+  assert.match(unavailableHtml, /<dt>Stores<\/dt><dd><span class="missing" data-state="unavailable">Unavailable<\/span><\/dd>/);
+  assert.doesNotMatch(unavailableHtml, />null</);
 });
