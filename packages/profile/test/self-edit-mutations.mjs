@@ -1,0 +1,10 @@
+import assert from"node:assert/strict";import{spawnSync}from"node:child_process";import{readFile,unlink,writeFile}from"node:fs/promises";import{fileURLToPath}from"node:url";
+const profile=new URL("../dist/self-edit.js",import.meta.url),gateway=new URL("../../../dist/apps/gateway/src/profile-edit-http.js",import.meta.url);const profileSuite=fileURLToPath(new URL("../../../dist/packages/profile/test/self-edit.test.js",import.meta.url)),gatewaySuite=fileURLToPath(new URL("../../../dist/apps/gateway/test/profile-edit-http.test.js",import.meta.url));
+const mutations=[
+ [profile,profileSuite,"SHU372_RULES","SHU372_TEST_MODULE",'!value.includes(" ")','false'],
+ [profile,profileSuite,"SHU372_WRITE","SHU372_TEST_MODULE","Array.from(value).length > PERSON_PROFILE_LIMITS[field]","false"],
+ [gateway,gatewaySuite,"SHU372_OWNER","SHU372_GATEWAY_MODULE",'if (!id)\n                return { status: 401, body: { error: "unauthorized" } }; if (!exact(b, ["field", "value"]))','if (false)\n                return { status: 401, body: { error: "unauthorized" } }; if (!exact(b, ["field", "value"]))'],
+ [gateway,gatewaySuite,"SHU372_PAGE","SHU372_GATEWAY_MODULE",'return r.ok ? { status: 200, body: { receipt: r.receipt } } : status(r.reason);','return r.ok ? { status: 400, body: { error: "mutated" } } : status(r.reason);'],
+];
+for(const[file,suite,token,envKey,from,to]of mutations){const original=await readFile(file,"utf8");assert.equal(original.split(from).length-1,1,`mutation binds once: ${token}`);const target=new URL(`./self-edit-mutation-${process.pid}.js`,file);try{await writeFile(target,original.replace(from,to));const r=spawnSync(process.execPath,["--test",`--test-name-pattern=^${token} `,suite],{encoding:"utf8",env:{...process.env,[envKey]:target.href}});assert.equal(r.error,undefined,`${token} runner error ${String(r.error)}`);assert.notEqual(r.status,0,`${token} mutant survived`);assert.match(r.stdout+r.stderr,/ERR_ASSERTION/,`${token} did not die by assertion\n${r.stdout}${r.stderr}`)}finally{await unlink(target).catch(()=>{})}}
+process.stdout.write("4/4 SHU-372 mutations killed\n");

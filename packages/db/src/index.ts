@@ -25,6 +25,7 @@ export {
   type Language,
 } from "./safe-write-store.js";
 export { PostgresLoginStore } from "./postgres-login-store.js";
+export { PostgresPersonProfileStore, PERSON_PROFILE_OPERATION, type PersonProfileRead } from "./person-profile-store.js";
 export { PostgresCatalogueStore } from "./postgres-catalogue-store.js";
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "./postgres-profile-records-store.js";
 export { PostgresFinanceReferenceResolver, PostgresPayContractStore } from "./postgres-pay-contract-store.js";

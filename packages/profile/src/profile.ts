@@ -40,7 +40,7 @@ function fieldSpec(sourceField: string, label: string, semantics: string, parse:
 
 function text(maxLength = 500): Parser {
   return (value) => {
-    if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    if (typeof value !== "string" || value.trim().length === 0 || Array.from(value).length > maxLength) {
       throw new TypeError("malformed approved profile value");
     }
     return value;
@@ -183,21 +183,32 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language?: unknown; updatedAt?: string; updatedAtByField?: Readonly<Record<string,string>>; [key:string]: unknown }> | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
-  try {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
+  if (Object.hasOwn(preferences, "language")) try {
+    if (typeof preferences.updatedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
       || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
       PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference,
-      preferences.updatedAt);
+      preferences.updatedAt!);
   } catch {
     fields.language = Object.freeze({
       state: "unavailable", reason: "not_recorded",
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
-      freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt! }),
     });
+  }
+  const mapping = { name:"displayName", name_ar:"arabicName", objective:"objective", intro:"intro", preferred_time:"preferredTime" } as const;
+  for (const [stored, name] of Object.entries(mapping) as [keyof typeof mapping, typeof mapping[keyof typeof mapping]][]) {
+    if (!Object.hasOwn(preferences, stored)) continue;
+    const observedAt = preferences.updatedAtByField?.[stored] ?? "";
+    const value = preferences[stored];
+    try {
+      if (typeof observedAt !== "string" || !Number.isFinite(Date.parse(observedAt))) throw new TypeError();
+      fields[name] = value === null ? Object.freeze({ state:"unavailable", reason:"not_recorded", provenance:provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness:Object.freeze({kind:"written_by_person",observedAt}) })
+        : written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(value, profile.asOfDate) as string, observedAt) as never;
+    } catch { fields[name] = Object.freeze({ state:"unavailable", reason:"not_recorded", provenance:provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness:Object.freeze({kind:"written_by_person",observedAt}) }) as never; }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
@@ -280,7 +291,7 @@ export class OwnProfileRepository {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
       const preferences = this.#preferences
-        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) : null;
+        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) as Readonly<{ language?:unknown;updatedAt?:string;updatedAtByField?:Readonly<Record<string,string>>;[key:string]:unknown}> | null : null;
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
       if (link.kind === "unconfigured") {
         const today = this.#today();

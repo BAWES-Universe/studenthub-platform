@@ -28,6 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
+import { handleProfileEdit, handleProfileEditPage } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
@@ -49,6 +50,7 @@ export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
 export { createLoginApplication } from "./login-application.js";
 export { createRuntimeLoginFromEnv } from "./login-runtime.js";
+export * from "./profile-edit-http.js";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
@@ -191,7 +193,11 @@ export function createGatewayServer(
         const field = result.kind === "found" ? result.profile.fields.language : undefined;
         return field?.state === "available" ? field.value : undefined;
       })) return;
+    if (await handleProfileEditPage(request,response,login?.profileEdit,login?.web?.origin,
+      (status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body)),
+      async(sessionId,field)=>{if(!sessionId||!login?.web)return undefined;const authorized=await login.profile({sessionId});const id=authorized.status===200?authorized.body?.personId:undefined;if(typeof id!=="string")return undefined;const result=await login.web.profiles.readOwn({requesterPrincipalId:id,targetPersonId:id});if(result.kind!=="found")return undefined;const map={name:"displayName",name_ar:"arabicName",objective:"objective",intro:"intro",preferred_time:"preferredTime"} as const;const value=result.profile.fields[map[field]];return value.state==="available"?String(value.value):"Not recorded"}))return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
+    if (await handleProfileEdit(request,response,login?.profileEdit,login?.web?.origin)) return;
     if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,
       (login as BrowserLoginApplication & { organizationProfile?: OrganizationProfile } | undefined)?.organizationProfile,
