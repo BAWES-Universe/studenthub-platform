@@ -40,7 +40,7 @@ function fieldSpec(sourceField: string, label: string, semantics: string, parse:
 
 function text(maxLength = 500): Parser {
   return (value) => {
-    if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    if (typeof value !== "string" || value.trim().length === 0 || [...value].length > maxLength) {
       throw new TypeError("malformed approved profile value");
     }
     return value;

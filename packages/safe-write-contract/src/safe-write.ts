@@ -212,11 +212,13 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
         changeSetDigest: digest,
         receipt,
       });
-    } catch {
+    } catch (error) {
       // The store aborts as one unit, so nothing was written. The token is
       // deliberately NOT spent: refusing to retry a write that never happened
       // would strand the person with no way to complete their own change.
-      return refused("receipt_failed");
+      return refused((error as { code?: unknown })?.code === "invalid_value"
+        ? "invalid_value"
+        : "receipt_failed");
     }
 
     // A precondition the store re-checked inside the transaction did not hold.

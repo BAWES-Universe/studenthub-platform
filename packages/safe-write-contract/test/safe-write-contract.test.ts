@@ -37,6 +37,18 @@ test("SHU372_RULES clearing is opt-in and lengths count code points", async () =
   assert.equal((await ordinary.preview({change:{...change,value:"😀".repeat(100)},principalRef:OWNER_PRINCIPAL_REF})).ok,true);
 });
 
+test("SHU372_WRITE a store invalid-value refusal is preserved", async () => {
+  const recording = createRecordingStore();
+  const store = { ...recording, commit: async () => { throw Object.assign(new Error("check violation"), { code: "invalid_value" }); } };
+  const implementation = createSafeWrite({ store, secret:TEST_SECRET, policy:TEST_POLICY });
+  const change = { personRef:OWNER_PERSON_REF, field:"display_name", value:"Valid Name" };
+  const preview = await implementation.preview({ change, principalRef:OWNER_PRINCIPAL_REF });
+  assert.equal(preview.ok, true);
+  if (!preview.ok) return;
+  assert.deepEqual(await implementation.confirm({ change, principalRef:OWNER_PRINCIPAL_REF, token:preview.token }),
+    { ok:false, reason:"invalid_value" });
+});
+
 function scenario(index: number): SafeWriteScenario {
   const name = SAFE_WRITE_SCENARIOS[index];
   assert.ok(name !== undefined, `scenario ${index} exists`);
