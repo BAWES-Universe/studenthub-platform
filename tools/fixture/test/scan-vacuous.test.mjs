@@ -78,6 +78,18 @@ test("does not borrow a nested string from a dynamic test name", () => {
   assert.equal(report[0].name, null);
 });
 
+test("extracts a quoted test name after comments", () => {
+  const source = [
+    'test(/* detail */ "block", () => { work(); });',
+    "test(// detail",
+    '  "line", () => { work(); });',
+  ].join("\n");
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["block", "line"],
+  );
+});
+
 test("ignores member calls named test or it", () => {
   const source = [
     'runner.test("not-a-test", () => { work(); });',

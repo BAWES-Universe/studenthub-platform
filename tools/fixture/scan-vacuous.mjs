@@ -128,7 +128,19 @@ function testName(source, callIndex, bodyStart) {
   // Only a quoted first argument supplies a name. Looking for any quote before
   // the body can incorrectly borrow one from `test(makeName("x"), ...)`.
   let start = openingParenthesis + 1;
-  while (/\s/.test(source[start] ?? "")) start += 1;
+  while (start < bodyStart) {
+    if (/\s/.test(source[start])) {
+      start += 1;
+    } else if (source.startsWith("//", start)) {
+      const lineEnd = source.indexOf("\n", start + 2);
+      start = lineEnd === -1 ? bodyStart : lineEnd + 1;
+    } else if (source.startsWith("/*", start)) {
+      const commentEnd = source.indexOf("*/", start + 2);
+      start = commentEnd === -1 ? bodyStart : commentEnd + 2;
+    } else {
+      break;
+    }
+  }
   const quote = source[start];
   if (quote !== '"' && quote !== "'") return null;
 
