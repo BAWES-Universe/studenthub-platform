@@ -6,12 +6,15 @@ const ASYNC_HELPERS = ["fetchJson", "sendMail", "loadConfig"];
 // comment is still scanned. Each removed span leaves one space behind, keeping
 // `await /* note */ fetchJson()` recognisable as awaited. Quoted text is copied
 // through verbatim so a literal such as "http://x" is not read as a comment.
+// Block comments and template literals carry across lines; an unterminated ' or
+// " string ends with its line, so a stray apostrophe cannot swallow the rest of
+// the file.
 function stripComments(lines) {
   const stripped = [];
   let inBlock = false;
+  let quote = null;
   for (const line of lines) {
     let code = "";
-    let quote = null;
     let i = 0;
     while (i < line.length) {
       const ch = line[i];
@@ -51,6 +54,7 @@ function stripComments(lines) {
       i += 1;
     }
     stripped.push(code);
+    if (quote !== "`") quote = null;
   }
   return stripped;
 }

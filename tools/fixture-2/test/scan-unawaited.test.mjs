@@ -65,6 +65,22 @@ test("SHU-254 fixture: a slash inside a string literal is not a comment", () => 
   ]);
 });
 
+test("SHU-254 fixture: a slash inside a multi-line template literal is not a comment", () => {
+  const src = "const message = `first\nhttp://example`; sendMail();";
+  assert.deepEqual(findUnawaitedCalls(src), [{ line: 2, helper: "sendMail" }]);
+});
+
+test("SHU-254 fixture: scans the line that closes a multi-line template literal", () => {
+  const src = "const t = `a\nb`; loadConfig(); // done";
+  assert.deepEqual(findUnawaitedCalls(src), [{ line: 2, helper: "loadConfig" }]);
+  assert.deepEqual(findUnawaitedCalls("const t = `a\nb`; await loadConfig();"), []);
+});
+
+test("SHU-254 fixture: an unterminated quote does not swallow later lines", () => {
+  const src = "const s = 'oops;\nsendMail(a);";
+  assert.deepEqual(findUnawaitedCalls(src), [{ line: 2, helper: "sendMail" }]);
+});
+
 test("SHU-254 fixture: an apostrophe in a block comment does not swallow the code", () => {
   assert.deepEqual(findUnawaitedCalls("/* don't wait */ fetchJson();"), [
     { line: 1, helper: "fetchJson" },
