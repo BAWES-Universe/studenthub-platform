@@ -1,0 +1,2 @@
+import assert from "node:assert/strict";import {test} from "node:test";import {readFile} from "node:fs/promises";
+test("SHU-160 migration keeps private document locators out of profile/audit schema",async()=>{const sql=await readFile("packages/db/migrations/0150_organization_profile.sql","utf8");assert.match(sql,/organization_profile_fields/);assert.doesNotMatch(sql,/object_key|public_url|document_url/i);for(const field of ["name_ar","name_en","description_ar","description_en","website"])assert.match(sql,new RegExp(field))});

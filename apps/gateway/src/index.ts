@@ -26,6 +26,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference } from "./language-preference.js";
+import { handleOrganizationProfile, type OrganizationProfileService } from "./organization-profile.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
   WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
@@ -35,6 +36,7 @@ export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
 export { createLoginApplication } from "./login-application.js";
 export { createRuntimeLoginFromEnv } from "./login-runtime.js";
+export * from "./organization-profile.js";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
@@ -165,6 +167,7 @@ export function createGatewayServer(
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
+    if (await handleOrganizationProfile(request, response, (login as (BrowserLoginApplication & {organizationProfile?:OrganizationProfileService})|undefined)?.organizationProfile, login?.web?.origin)) return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {

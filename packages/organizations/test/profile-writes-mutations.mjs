@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";import {spawnSync} from "node:child_process";import {readFile,writeFile,unlink} from "node:fs/promises";import {fileURLToPath} from "node:url";
+const source=new URL("../dist/profile-writes.js",import.meta.url),original=await readFile(source,"utf8"),documentSource=new URL("../../../dist/packages/private-documents/src/organization-documents.js",import.meta.url),documentOriginal=await readFile(documentSource,"utf8"),suite=fileURLToPath(new URL("../../../dist/packages/organizations/test/profile-writes.test.js",import.meta.url));
+const mutations=[
+ ["bypass preview for website","SHU-160/AC-01 SAFE-WRITE","const bypassPreview = false;","const bypassPreview = true;"],
+ ["mark licence public-read","SHU-160/AC-02 private-delivery negative-control","export const ORGANIZATION_DOCUMENT_ACL = \"private\";","export const ORGANIZATION_DOCUMENT_ACL = \"public-read\";","document"],
+ ["accept recruiter","SHU-160/AC-03 recruiter-write-refused","return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : refusal(result.reason);","return result.ok ? { status: 200, body: { changes: result.changes, token: result.token } } : {status:200,body:{changes:[],token:{}}};"],
+ ["leak URL in receipt","SHU-160/AC-04 receipt-whitelist","body: { receipt: result.receipt }","body: { receipt: {...result.receipt,url: 'https://objects.invalid/key'} }"],
+ ["edit cross org","SHU-160/AC-05 cross-org","personRef: organizationProfileRef(orgId)","personRef: organizationProfileRef('acme')","all"],
+];
+const run=(_pattern,module)=>spawnSync(process.execPath,["--test","--test-reporter=tap",suite],{encoding:"utf8",env:{...process.env,...(module?{SHU160_TEST_MODULE:module}:{})}});
+assert.equal(run("",undefined).status,0);
+for(const [name,pattern,from,to,kind] of mutations){const base=kind==="document"?documentOriginal:original,count=base.split(from).length-1;assert.equal(count,kind==="all"?2:1,name);const target=new URL(`../dist/mutation-${process.pid}.js`,import.meta.url);try{await writeFile(target,kind==="all"?base.split(from).join(to):base.replace(from,to));const env=`${target.href}?${Date.now()}`,r=spawnSync(process.execPath,["--test","--test-reporter=tap",suite],{encoding:"utf8",env:{...process.env,...(kind==="document"?{SHU160_DOC_MODULE:env}:{SHU160_TEST_MODULE:env})}});assert.equal(r.error,undefined,`${name}: runner error`);assert.notEqual(r.status,0,`${name} survived\n${r.stdout}${r.stderr}`);process.stdout.write(`KILLED ${name} -> ${pattern}\n`)}finally{await unlink(target).catch(()=>{})}}
+assert.equal(run("",undefined).status,0);
