@@ -97,3 +97,34 @@ test("SHU372_OWNER another record and ownership lost after preview are refused",
   x.loseOwner();
   assert.deepEqual(await x.writer.confirm({ ...request, token: preview.token }), { ok: false, reason: "not_own_record" });
 });
+
+test("SHU373_AGE birth dates use one minimum-age setting and real calendar dates", () => {
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-11-01", "2026-11-01"), "2010-11-01");
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-11-02", "2026-11-01"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2027-01-01", "2026-11-01"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2026-02-30", "2026-11-01"), null);
+});
+
+test("SHU373_WRITE choice fields normalize to platform values", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  for (const [field,value] of [["gender","female"],["nationality",id],["university",id],["drivingLicence","false"],["kuwaitiMother","true"],["jobSearchStatus","open_to_offers"]] as const)
+    assert.equal(normalizePersonSelfEditValue(field, value, "2026-11-01"), value);
+  assert.equal(normalizePersonSelfEditValue("university", "", "2026-11-01"), "");
+  assert.equal(normalizePersonSelfEditValue("gender", "1", "2026-11-01"), null);
+});
+
+test("SHU373_CATALOGUE written ids resolve by id and a malformed id affects only its field", async () => {
+  const country = "11111111-1111-4111-8111-111111111111", university = "22222222-2222-4222-8222-222222222222", at = "2026-11-01T01:02:03.000Z";
+  const repository = new OwnProfileRepository({
+    principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "person@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "linked", candidateRef: "candidate" }), readCandidate: async () => SYNTHETIC_PROFILE_FIXTURES.populated },
+    preferences: { readOwnPreferences: async () => ({ nationality: { value: country, updatedAt: at }, university: { value: university, updatedAt: at }, profileChoices: { countries: [{ id: country, name: "Jordan", code: "JO" }], universities: [] } }) } as never,
+    today: () => "2026-11-01",
+  });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" }); assert.equal(result.kind, "found");
+  if (result.kind !== "found") return;
+  assert.equal(result.profile.fields.nationality.state === "available" && result.profile.fields.nationality.value, "Jordan");
+  assert.equal(result.profile.fields.university.state, "unavailable");
+  assert.equal(result.profile.fields.gender.state, "available");
+  assert.equal(result.profile.kuwaitiMotherOffered, true);
+});

@@ -226,8 +226,8 @@ export function createRuntimeLoginFromEnv(
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles,
     ...(safeWrites && personProfiles ? { preferences: { async readOwnPreferences(id: string) {
-      const [language, person] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id)]);
-      const merged = { ...(language ?? {}), ...(person ?? {}) };
+      const [language, person, profileChoices] = await Promise.all([safeWrites.readOwnPreferences(id), personProfiles.readOwnPreferences(id), personProfiles.readProfileChoices()]);
+      const merged = { ...(language ?? {}), ...(person ?? {}), profileChoices };
       return Object.keys(merged).length > 0 ? merged as never : null;
     } } } : {}) });
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),

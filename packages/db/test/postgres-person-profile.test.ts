@@ -118,3 +118,46 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
   await pool.query("INSERT INTO person_profiles(principal_id,objective,objective_written_at) VALUES($1,'Concurrent',clock_timestamp())", [id]);
   assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
 });
+
+test("SHU373_WRITE each choice writes twice, booleans stay textual for safe-write, and clearing stores NULL", async () => {
+  const id = `shu373-${randomUUID()}`, country = randomUUID(), kuwait = randomUUID(), university = randomUUID(), actor = principalAuditRef(id), authz = new PostgresAuthzStore(pool);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const now = "2026-11-01T00:00:00.000Z";
+  const suffix = randomUUID();
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES
+    ($1,'country',$6,$7,'JO','active',$4,$4,$5,$5),($2,'country',$8,$9,'KW','active',$4,$4,$5,$5),($3,'university',$10,$11,NULL,'active',$4,$4,$5,$5)`, [country, kuwait, university, actor, now,`Jordan ${suffix}`,`jordan ${suffix}`,`Kuwait ${suffix}`,`kuwait ${suffix}`,`Kuwait University ${suffix}`,`kuwait university ${suffix}`]);
+  const store = new PostgresPersonProfileStore({ pool }), writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+  const write = async (field: "gender"|"birthDate"|"nationality"|"university"|"drivingLicence"|"kuwaitiMother"|"jobSearchStatus", value: string) => {
+    const request = { principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field, value } };
+    const preview = await writer().preview(request); assert.ok(preview.ok, `${field} preview`); if (!preview.ok) return;
+    assert.ok((await writer().confirm({ ...request, token: preview.token })).ok, `${field} commit`);
+  };
+  for (const [field, first, second] of [["gender","male","female"],["birthDate","2000-01-01","2000-01-02"],["nationality",country,country],["university",university,university],["drivingLicence","true","false"],["kuwaitiMother","true","false"],["jobSearchStatus","active","open_to_offers"]] as const) { await write(field,first); await write(field,second); }
+  await write("kuwaitiMother", "");
+  assert.equal((await pool.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0]!.kuwaiti_mother, null);
+  await write("kuwaitiMother", "true"); await write("nationality", kuwait);
+  const row = (await pool.query("SELECT birth_date::text birth_date,driving_licence,kuwaiti_mother,job_search_status,job_search_status_written_at FROM person_profiles WHERE principal_id=$1", [id])).rows[0]!;
+  assert.equal(row.birth_date, "2000-01-02"); assert.equal(row.driving_licence, false); assert.equal(row.kuwaiti_mother, null);
+  assert.equal(row.job_search_status, "open_to_offers"); assert.ok(row.job_search_status_written_at instanceof Date);
+  const rejected = { principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: "kuwaitiMother" as const, value: "true" } };
+  const rejectedPreview = await writer().preview(rejected); assert.ok(rejectedPreview.ok);
+  if (rejectedPreview.ok) assert.deepEqual(await writer().confirm({ ...rejected, token: rejectedPreview.token }), { ok: false, reason: "invalid_value" });
+  assert.equal((await pool.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0]!.kuwaiti_mother, null);
+  await assert.rejects(pool.query("UPDATE person_profiles SET kuwaiti_mother=true,kuwaiti_mother_written_at=clock_timestamp() WHERE principal_id=$1", [id]), (error: unknown) => (error as { code?: string }).code === "23514");
+  assert.equal((await pool.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0]!.kuwaiti_mother, null);
+});
+
+test("SHU373_CATALOGUE active choices are returned and deleted or unknown ids are refused", async () => {
+  const id = `shu373-cat-${randomUUID()}`, activeCountry = randomUUID(), deletedCountry = randomUUID(), activeUniversity = randomUUID(), deletedUniversity = randomUUID();
+  const actor = principalAuditRef(id), authz = new PostgresAuthzStore(pool); await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const now = "2026-11-01T00:00:00.000Z";
+  const suffix = randomUUID();
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at) VALUES
+    ($1,'country',$7,$8,'active',$5,$5,$6,$6,NULL),($2,'country',$9,$10,'deleted',$5,$5,$6,$6,$6),
+    ($3,'university',$11,$12,'active',$5,$5,$6,$6,NULL),($4,'university',$13,$14,'deleted',$5,$5,$6,$6,$6)`, [activeCountry,deletedCountry,activeUniversity,deletedUniversity,actor,now,`Active country ${suffix}`,`active country ${suffix}`,`Deleted country ${suffix}`,`deleted country ${suffix}`,`Active university ${suffix}`,`active university ${suffix}`,`Deleted university ${suffix}`,`deleted university ${suffix}`]);
+  const store = new PostgresPersonProfileStore({ pool }), choices = await store.readProfileChoices();
+  assert.ok(choices.countries.some(choice => choice.id === activeCountry)); assert.ok(choices.universities.some(choice => choice.id === activeUniversity));
+  assert.ok(!choices.countries.some(choice => choice.id === deletedCountry)); assert.ok(!choices.universities.some(choice => choice.id === deletedUniversity));
+  const refuse = async (field: "nationality"|"university", value: string) => { const request={principalRef:safeWritePrincipalRef(id),change:{personRef:personRecordRef(id),field,value}}; const writer=createPersonSelfEdit({store:store.forPrincipal(id),secret:"s".repeat(32)}); const preview=await writer.preview(request); assert.ok(preview.ok); if(preview.ok) assert.deepEqual(await writer.confirm({...request,token:preview.token}),{ok:false,reason:"invalid_value"}); };
+  await refuse("nationality",deletedCountry); await refuse("nationality",randomUUID()); await refuse("university",deletedUniversity); await refuse("university",randomUUID());
+});

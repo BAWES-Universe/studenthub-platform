@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
 export interface PersonProfileEditStore {
   forPrincipal(principalId: string): SafeWriteStore;
   readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null>;
+  readProfileChoices?(): Promise<{ readonly countries: readonly { readonly id: string; readonly name: string }[]; readonly universities: readonly { readonly id: string; readonly name: string }[] }>;
 }
 export type ProfileEditResult = { readonly status: 200; readonly body: unknown }
   | { readonly status: 400 | 401 | 403 | 404 | 409 | 503; readonly body: { readonly error: string } };
@@ -14,6 +15,7 @@ export interface ProfileEdit {
   preview(session: string | undefined, body: unknown): Promise<ProfileEditResult>;
   confirm(session: string | undefined, body: unknown): Promise<ProfileEditResult>;
   receipt(session: string | undefined, ref: string): Promise<ProfileEditResult>;
+  displayValue?(field: PersonSelfEditField, value: string): Promise<string>;
 }
 const TOKEN_KEYS = ["changeSetDigest", "expectedBeforeDigest", "expiresAt", "issuedAt", "mac", "principalRef", "tokenId"] as const;
 const BODY_LIMIT = 65536;
@@ -39,6 +41,17 @@ export function createProfileEdit(ports: { sessions: Pick<SessionStore, "get">; 
   const principal = async (session: string | undefined) => session ? (await ports.sessions.get(session))?.personId : undefined;
   const writer = (id: string) => createPersonSelfEdit({ store: ports.store.forPrincipal(id), secret: ports.secret, ...(ports.clock ? { clock: ports.clock } : {}) });
   return {
+    async displayValue(selected, value) {
+      if (selected === "gender") return ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[value] ?? "Unavailable";
+      if (selected === "drivingLicence" || selected === "kuwaitiMother") return value === "true" ? "Yes" : value === "false" ? "No" : "Not recorded";
+      if (selected === "jobSearchStatus") return ({ active: "Actively looking", open_to_offers: "Open to offers", not_looking: "Not looking right now" } as Record<string,string>)[value] ?? "Unavailable";
+      if (selected === "nationality" || selected === "university") {
+        if (!value && selected === "university") return "Not recorded";
+        const choices = await ports.store.readProfileChoices?.();
+        return (selected === "nationality" ? choices?.countries : choices?.universities)?.find(choice => choice.id === value)?.name ?? "Unavailable";
+      }
+      return value;
+    },
     async preview(session, body) {
       const id = await principal(session); if (!id) return { status: 401, body: { error: "unauthorized" } };
       if (!exact(body, ["field", "value"])) return { status: 400, body: { error: "invalid_request" } };
@@ -90,12 +103,16 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField?: string } }, name?: PersonSelfEditField): string {
+  const source = field.provenance?.sourceField;
+  if (field.state === "available" && (name === "gender" || source === "candidate_gender")) return ({ male: "Male", female: "Female", other: "Other" } as Record<string,string>)[String(field.value)] ?? "Unavailable";
+  if (field.state === "available" && (name === "drivingLicence" || name === "kuwaitiMother" || source === "candidate_driving_license" || source === "candidate_mom_kuwaiti")) return field.value ? "Yes" : "No";
+  if (field.state === "available" && (name === "jobSearchStatus" || source === "candidate_job_search_status")) return ({ active: "Actively looking", open_to_offers: "Open to offers", not_looking: "Not looking right now" } as Record<string,string>)[String(field.value)] ?? "Unavailable";
   return field.state === "available" ? String(field.value)
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", nationality: "Nationality", university: "University", drivingLicence: "Driving licence", kuwaitiMother: "Kuwaiti mother", jobSearchStatus: "Looking for work" };
 export function profileEditSummary(value: string): string {
   let result = "", count = 0;
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) { const length = [...segment].length; if (count + length > 120) break; result += segment; count += length; }
@@ -103,8 +120,22 @@ export function profileEditSummary(value: string): string {
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
-  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
-  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+  const label = FIELD_LABELS[selected];
+  const radio = (entries: readonly [string,string][]) => entries.map(([id,text]) => `<label><input type="radio" name="value" value="${id}"${value === id ? " checked" : ""} aria-describedby="value-error">${text}</label>`).join("");
+  const control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>`
+    : selected === "birthDate" ? `<input type="date" name="value" value="${esc(value)}" aria-describedby="value-error">`
+    : selected === "gender" ? radio([["male","Male"],["female","Female"],["other","Other"]])
+    : selected === "drivingLicence" || selected === "kuwaitiMother" ? radio([["true","Yes"],["false","No"]])
+    : selected === "jobSearchStatus" ? radio([["active","Actively looking"],["open_to_offers","Open to offers"],["not_looking","Not looking right now"]])
+    : selected === "university" && value === "not-listed" ? `<select name="value" aria-describedby="value-error"><option value="">None</option><option value="not-listed" selected>Not listed</option></select>`
+    : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
+  let message = `Enter a value that follows the rules for ${label.toLowerCase()}.`;
+  if (selected === "birthDate") {
+    const validShape = /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+    message = !validShape ? "Enter a real birth date." : value > new Date().toISOString().slice(0,10) ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`;
+  }
+  if (selected === "university" && value === "not-listed") message = "Staff add new universities. Choose None for now.";
+  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><fieldset><legend>${label}</legend>${control}</fieldset><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
   const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
@@ -122,7 +153,8 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
       const before = await shownValue?.(sessionId, selected);
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(values.value!)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      const after = await service.displayValue?.(selected, values.value!) ?? values.value!;
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(after)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));
