@@ -5,3 +5,4 @@ export type { PersonProfileField, PersonProfileBrowserOptions, PersonProfileBrow
 export { PostgresProfileRecordStore, PostgresReferenceResolver } from "../postgres-profile-records-store.js";
 export { PostgresBankDetailsStore, BANK_DETAILS_OPERATION } from "../postgres-bank-details-store.js";
 export type { PostgresBankDetailsStoreOptions } from "../postgres-bank-details-store.js";
+export { PostgresPersonCivilIdStore } from "../postgres-person-civil-id-store.js";

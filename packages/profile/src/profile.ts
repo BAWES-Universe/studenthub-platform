@@ -184,7 +184,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string; editValue?: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; civilId?: Readonly<{ country:"KW"|"BH"|null; maskedNumber:string|null; expiry:string|null; needsReview:boolean; updatedAt:string }> } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -249,6 +249,12 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       const spec = fieldSpec(name, name === "phone" ? "Phone number" : "Profile link", "Platform-owned contact value.", text(name === "phone" ? 16 : 30));
       fields[name] = written(spec, String(preference.value), preference.updatedAt);
     } catch { /* A bad contact value is omitted without affecting the profile. */ }
+  }
+  const civil = preferences.civilId;
+  if (civil) {
+    const spec = fieldSpec("person_civil_ids", "Civil ID", "Platform-owned civil ID summary for this person only.", text());
+    fields.civilId = written(spec, Object.freeze({ country:civil.country, maskedNumber:civil.maskedNumber, expiry:civil.expiry, needsReview:civil.needsReview }), civil.updatedAt);
+    if (civil.expiry !== null) fields.civilExpired = written(PROFILE_FIELD_SPECS.civilExpired, civil.expiry < profile.asOfDate, civil.updatedAt);
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.

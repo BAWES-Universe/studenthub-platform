@@ -15,8 +15,10 @@ import type { OrganizationBrands } from "../organization-brands.js";
 import type { OrganizationStores } from "../organization-stores.js";
 import type { OrganizationDeletion } from "../organization-deletion.js";
 import type { OrganizationCreation } from "../organization-creation.js";
+import type { CivilIdService } from "@studenthub/profile";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
+  readonly civilId?: CivilIdService;
   readonly organizationProfile?: OrganizationProfile;
   readonly organizationStatus?: OrganizationStatus;
   readonly organizationCommercialTerms?: OrganizationCommercialTerms;
