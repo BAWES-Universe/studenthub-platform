@@ -54,11 +54,13 @@ export function validateDeploymentEnv(env = process.env, schema = CONFIG_SCHEMA)
   if (env.HOST !== "0.0.0.0") {
     throw new Error("HOST must be 0.0.0.0 in the gateway container");
   }
+  let allowedReturnUrls;
   for (const { name, kind, required } of schema) {
     if ((kind !== "url" && kind !== "url-list") || name === "DATABASE_URL") continue;
     const value = env[name];
     if (!required && !value?.trim()) continue;
     const parts = kind === "url-list" ? listParts(value, name, kind) : [value];
+    if (name === "LOGIN_ALLOWED_RETURN_URLS") allowedReturnUrls = parts;
     if (parts.filter(Boolean).some((part) => !isHttpUrl(part))) {
       throw new Error(`${name} must be a valid ${kind}`);
     }
@@ -96,7 +98,6 @@ export function validateDeploymentEnv(env = process.env, schema = CONFIG_SCHEMA)
     throw new Error("OIDC_CALLBACK_URL must be a valid URL");
   }
   const requiredProfileUrl = profileUrl.href;
-  const allowedReturnUrls = env.LOGIN_ALLOWED_RETURN_URLS.split(",").map((url) => url.trim());
   if (!allowedReturnUrls.includes(requiredProfileUrl)) {
     profileUrl.username = "";
     profileUrl.password = "";

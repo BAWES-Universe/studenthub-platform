@@ -63,6 +63,40 @@ test("duplicate ids are rejected", () => {
   assert.ok(validateRegister(copy).errors.includes("INT-01 id is duplicated"));
 });
 
+test("missing ids are reported without treating them as duplicates", () => {
+  const copy = structuredClone(register);
+  delete copy.integrations[0].id;
+  delete copy.integrations[1].id;
+  const result = validateRegister(copy);
+  assert.ok(result.errors.includes("entry-1 id is missing or empty"));
+  assert.ok(result.errors.includes("entry-2 id is missing or empty"));
+  assert.equal(result.errors.includes("entry-2 id is duplicated"), false);
+});
+
+test("repeated non-empty ids are reported as duplicates", () => {
+  const copy = structuredClone(register);
+  copy.integrations[1].id = "INT-01";
+  assert.ok(validateRegister(copy).errors.includes("INT-01 id is duplicated"));
+});
+
+test("array fields reject blank string items while preserving empty-array rules", () => {
+  const ownerCardsCopy = structuredClone(register);
+  ownerCardsCopy.integrations[0].owner_cards = [" "];
+  assert.ok(validateRegister(ownerCardsCopy).errors.includes("INT-01 owner_cards has a blank item"));
+
+  const credentialNamesCopy = structuredClone(register);
+  credentialNamesCopy.integrations[0].credential_names = [""];
+  assert.ok(validateRegister(credentialNamesCopy).errors.includes("INT-01 credential_names has a blank item"));
+
+  const emptyOwnerCardsCopy = structuredClone(register);
+  emptyOwnerCardsCopy.integrations[0].owner_cards = [];
+  assert.ok(validateRegister(emptyOwnerCardsCopy).errors.includes("INT-01 owner_cards is missing or empty"));
+
+  const emptyCredentialNamesCopy = structuredClone(register);
+  emptyCredentialNamesCopy.integrations[0].credential_names = [];
+  assert.equal(validateRegister(emptyCredentialNamesCopy).ok, true);
+});
+
 test("unknown rotation states and dispositions are rejected", () => {
   const rotationCopy = structuredClone(register);
   rotationCopy.integrations[0].rotation_state = "unknown-state";
@@ -89,7 +123,10 @@ test("entries reject undeclared fields and wrongly typed fields", () => {
   }
 });
 
-test("integration documentation lists every id", async () => {
+test("integration documentation ID column equals register ids in order", async () => {
   const docs = await readFile(docsUrl, "utf8");
-  for (const [id] of expected) assert.match(docs, new RegExp(`\\| ${id} \\|`));
+  const documentedIds = docs.split("\n")
+    .filter((line) => line.startsWith("| INT-"))
+    .map((line) => line.split("|")[1].trim());
+  assert.deepEqual(documentedIds, register.integrations.map(({ id }) => id));
 });
