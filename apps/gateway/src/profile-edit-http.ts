@@ -96,16 +96,23 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
-  return field.state === "available" ? field.value === true ? "Yes" : field.value === false ? "No"
-    : ({ male: "Male", female: "Female", other: "Other" })[String(field.value)] ?? String(field.value)
-    : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField: string } }): string {
+  if (field.state === "unavailable") return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
+  if (field.value === true) return "Yes";
+  if (field.value === false) return "No";
+  if (field.provenance?.sourceField === "candidate_gender") {
+    return ({ male: "Male", female: "Female", other: "Other" })[String(field.value)] ?? String(field.value);
+  }
+  if (field.provenance?.sourceField === "candidate_job_search_status") {
+    return ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[String(field.value)] ?? String(field.value);
+  }
+  return String(field.value);
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work" };
 const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
-    : field === "jobSearchStatus" ? ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[value]!
+    : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
       : value;
 function editControl(selected: PersonSelfEditField, value: string, invalid = false): string {
   const described = invalid ? ' aria-describedby="value-error"' : "";
