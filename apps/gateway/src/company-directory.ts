@@ -98,8 +98,9 @@ export function createCompanyDirectory(
         const org = await store.getOrganization(parsed.orgId);
         if (!org) return { status: 403, body: { error: "context_forbidden" } };
         let accountManagerOptions: readonly { readonly principalId:string;readonly displayName:string|null }[] | null | undefined;
-        if ((parsed.role === "staff" || parsed.role === "admin") && accountManagers) {
-          try { accountManagerOptions = await accountManagers.directoryManagers(session.personId, parsed.orgId); }
+        if (parsed.role === "staff" || parsed.role === "admin") {
+          accountManagerOptions = null;
+          if (accountManagers) try { accountManagerOptions = await accountManagers.directoryManagers(session.personId, parsed.orgId); }
           catch { accountManagerOptions = null; }
         }
         return { status: 200, body: {
