@@ -40,7 +40,7 @@ function fieldSpec(sourceField: string, label: string, semantics: string, parse:
 
 function text(maxLength = 500): Parser {
   return (value) => {
-    if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    if (typeof value !== "string" || value.trim().length === 0 || [...value].length > maxLength) {
       throw new TypeError("malformed approved profile value");
     }
     return value;
@@ -208,7 +208,12 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
     try {
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preference.updatedAt)
         || !Number.isFinite(Date.parse(preference.updatedAt))) throw new TypeError("malformed preference timestamp");
-      fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
+      if (preference.value === null) {
+        fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
+          freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
+      } else {
+        fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
+      }
     } catch {
       fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;

@@ -7,9 +7,12 @@ const moduleFile = new URL("../../../dist/packages/profile/src/self-edit.js", im
 const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/self-edit.test.js", import.meta.url));
 const mutations = [
   ["SHU392_RULES", "normalized !== normalized.trim()", "false"],
-  ["SHU392_RULES", "normalized.includes(\"  \")", "false"],
-  ["SHU392_RULES", "normalized.split(\" \").length < 2", "false"],
+  ["SHU392_RULES", "/\\s{2}/u.test(normalized)", "false"],
+  ["SHU392_RULES", "!NAME.test(normalized)", "false"],
+  ["SHU392_RULES", "!ARABIC_LETTER.test(normalized)", "false"],
   ["SHU392_RULES", "value.normalize(\"NFC\")", "value"],
+  ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
+  ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
 ];
 const run = () => spawnSync(process.execPath, [suite], { encoding: "utf8" });
 for (const [token, from, to] of mutations) {

@@ -5,6 +5,7 @@ import pg from "pg";
 import { createPrincipal } from "@studenthub/contracts";
 import { PostgresAuthzStore, PostgresPersonProfileStore, PostgresSafeWriteStore, personRecordRef, principalAuditRef, requestAuditRef, runMigrations, safeWritePrincipalRef } from "../src/index.js";
 import { SHU372_RULES } from "../../profile/src/self-edit.js";
+import { createPersonSelfEdit } from "../../profile/src/self-edit.js";
 
 const url = process.env.DATABASE_URL ?? "";
 let pool: pg.Pool;
@@ -53,4 +54,40 @@ test("SHU392_PG_CROSS_RECEIPTS each card treats the other card's receipt as abse
   const profiles = new PostgresPersonProfileStore({ pool }), languages = new PostgresSafeWriteStore({ pool });
   assert.equal(await profiles.readReceipt(id, languageReceipt), null);
   assert.equal(await languages.readReceipt(id, profileReceipt), null);
+});
+
+test("SHU372_WRITE Postgres commits, clears, replays safely, and cascades principal deletion", async () => {
+  const id = `shu392-${randomUUID()}`, other = `shu392-${randomUUID()}`;
+  const authz = new PostgresAuthzStore(pool);
+  for (const principalId of [id, other]) await authz.registerPrincipal(createPrincipal({ id: principalId, email: `${principalId}@example.invalid`, pbuuids: [] }));
+  const store = new PostgresPersonProfileStore({ pool });
+  const writer = () => createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+  const request = (value: string) => ({ principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field: "objective", value } });
+  const first = request("Build teams"), preview = await writer().preview(first); assert.ok(preview.ok);
+  if (!preview.ok) return;
+  assert.ok((await writer().confirm({ ...first, token: preview.token })).ok);
+  const noop = await writer().preview(first); assert.ok(noop.ok);
+  if (!noop.ok) return;
+  assert.ok((await writer().confirm({ ...first, token: noop.token })).ok);
+  assert.deepEqual(await writer().confirm({ ...first, token: noop.token }), { ok: false, reason: "token_already_used" });
+  const clear = request(""), clearing = await writer().preview(clear); assert.ok(clearing.ok);
+  if (!clearing.ok) return;
+  assert.ok((await writer().confirm({ ...clear, token: clearing.token })).ok);
+  const preferences = await store.readOwnPreferences(id) as Record<string, { value: unknown; updatedAt: string }> | null;
+  assert.equal(preferences?.objective?.value, null);
+  assert.equal(typeof preferences?.objective?.updatedAt, "string");
+  await pool.query("DELETE FROM principals WHERE id=$1", [id]);
+  assert.equal((await pool.query("SELECT 1 FROM person_profiles WHERE principal_id=$1", [id])).rowCount, 0);
+});
+
+test("SHU372_OWNER Postgres refuses another person and a stale before value", async () => {
+  const id = `shu392-${randomUUID()}`, authz = new PostgresAuthzStore(pool);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const store = new PostgresPersonProfileStore({ pool }), writer = createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+  const principalRef = safeWritePrincipalRef(id), change = { personRef: personRecordRef(id), field: "objective", value: "Build teams" };
+  assert.deepEqual(await writer.preview({ principalRef, change: { ...change, personRef: "c".repeat(64) } }), { ok: false, reason: "not_own_record" });
+  const preview = await writer.preview({ principalRef, change }); assert.ok(preview.ok);
+  if (!preview.ok) return;
+  await pool.query("INSERT INTO person_profiles(principal_id,objective,objective_written_at) VALUES($1,'Concurrent',clock_timestamp())", [id]);
+  assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
 });

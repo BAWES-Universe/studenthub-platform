@@ -1,20 +1,21 @@
 -- SHU-392: platform-owned self-edited profile text. PostgreSQL char_length and
 -- JavaScript spread both count Unicode code points. Explicit forbidden ranges
 -- avoid locale-sensitive character classes; names otherwise accept every script.
-CREATE FUNCTION person_profile_text_valid(value text, maximum integer, require_two_words boolean)
+CREATE FUNCTION person_profile_text_valid(value text, maximum integer, require_two_words boolean, require_arabic boolean DEFAULT false)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
  SELECT value IS NFC NORMALIZED
    AND char_length(value) BETWEEN 1 AND maximum
-   AND value !~ '[\u0000-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]'
-   AND value !~ '^ | $|  '
-   AND (NOT require_two_words OR value ~ '^[^ ]+ [^ ]+( [^ ]+)*$')
+   AND value !~ '[\u0001-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]'
+   AND value COLLATE "pg_c_utf8" !~ '^[[:space:]\u00A0]|[[:space:]\u00A0]$|[[:space:]\u00A0]{2}'
+   AND (NOT require_two_words OR value COLLATE "pg_c_utf8" ~ '^[[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F-]+( [[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F-]+)+$')
+   AND (NOT require_arabic OR value ~ '[\u0621-\u063A\u0641-\u064A\u066E-\u066F\u0671-\u06D3\u06FA-\u06FC]')
 $$;
 
 CREATE TABLE person_profiles (
- principal_id text PRIMARY KEY REFERENCES principals(id),
+ principal_id text PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
  display_name text CHECK (display_name IS NULL OR person_profile_text_valid(display_name,255,true)),
  display_name_written_at timestamptz CHECK (display_name IS NULL OR display_name_written_at IS NOT NULL),
- arabic_name text CHECK (arabic_name IS NULL OR person_profile_text_valid(arabic_name,255,true)),
+ arabic_name text CHECK (arabic_name IS NULL OR person_profile_text_valid(arabic_name,255,true,true)),
  arabic_name_written_at timestamptz CHECK (arabic_name IS NULL OR arabic_name_written_at IS NOT NULL),
  objective text CHECK (objective IS NULL OR person_profile_text_valid(objective,100,false)),
  objective_written_at timestamptz CHECK (objective IS NULL OR objective_written_at IS NOT NULL),

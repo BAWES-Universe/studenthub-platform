@@ -150,7 +150,7 @@ export interface PreviewRequest {
  * the record can move, the grant can be revoked, and a second confirm of the
  * same token can arrive while the first is still in flight.
  */
-export type CommitRefusal = "state_changed" | "token_already_used" | "not_own_record";
+export type CommitRefusal = "state_changed" | "token_already_used" | "not_own_record" | "invalid_value";
 
 export type CommitOutcome =
   | { readonly ok: true }

@@ -13,7 +13,7 @@ const COLUMNS: Record<PersonProfileField, string> = {
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
 
-class Refusal extends Error { constructor(readonly reason: "state_changed" | "token_already_used" | "not_own_record") { super(reason); } }
+class Refusal extends Error { constructor(readonly reason: Exclude<CommitOutcome, { ok: true }>["reason"]) { super(reason); } }
 
 export class PostgresPersonProfileStore {
   readonly #pool: pg.Pool;
@@ -92,7 +92,16 @@ export class PostgresPersonProfileStore {
         JSON.stringify({ valuePresent: current !== null }), JSON.stringify({ contractVersion: input.receipt.contractVersion, personRef: input.receipt.personRef,
           changeSetDigest: input.receipt.changeSetDigest, fields: [field], committedAt: input.receipt.committedAt, tokenRef: spent })]);
       await client.query("COMMIT"); return { ok: true };
-    } catch (error) { try { await client.query("ROLLBACK"); } catch {} if (error instanceof Refusal) return { ok: false, reason: error.reason }; throw error; }
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      if (error instanceof Refusal) return { ok: false, reason: error.reason };
+      const databaseError = error as { code?: unknown; constraint?: unknown };
+      if (databaseError.code === "23505" && databaseError.constraint === "authorization_mutation_audit_safe_write_token") {
+        return { ok: false, reason: "token_already_used" };
+      }
+      if (databaseError.code === "23514") return { ok: false, reason: "invalid_value" };
+      throw error;
+    }
     finally { client.release(); }
   }
 }
