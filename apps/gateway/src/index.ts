@@ -37,6 +37,7 @@ import {handlePayContracts,type PayContractsCreate} from "./pay-contracts-http.j
 import {handleOrganizationBrands,type OrganizationBrands} from "./organization-brands.js";
 import {handleOrganizationStores,type OrganizationStores} from "./organization-stores.js";
 import {handleOrganizationDeletion,type OrganizationDeletion} from "./organization-deletion.js";
+import {handleOrganizationCreation,type OrganizationCreation} from "./organization-creation.js";
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
@@ -193,6 +194,7 @@ export function createGatewayServer(
     if(await handleOrganizationBrands(request,response,(login as BrowserLoginApplication&{organizationBrands?:OrganizationBrands}|undefined)?.organizationBrands,login?.web?.origin))return;
     if(await handleOrganizationStores(request,response,(login as BrowserLoginApplication&{organizationStores?:OrganizationStores}|undefined)?.organizationStores,login?.web?.origin))return;
     if(await handleOrganizationDeletion(request,response,(login as BrowserLoginApplication&{organizationDeletion?:OrganizationDeletion}|undefined)?.organizationDeletion,login?.web?.origin))return;
+    if(await handleOrganizationCreation(request,response,(login as BrowserLoginApplication&{organizationCreation?:OrganizationCreation}|undefined)?.organizationCreation,login?.web?.origin))return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
