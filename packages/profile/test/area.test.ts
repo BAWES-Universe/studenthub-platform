@@ -1,0 +1,8 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { InMemoryLocationStore, LocationConflictError, createArea, groupAreasByGovernorate, nearestArea, validateCoordinates } from "../src/area.js";
+
+const areas=[{id:"b",nameEn:"B",governorateEn:"Capital",latitude:29.30,longitude:47.90},{id:"a",nameEn:"A",nameAr:"أ",governorateEn:"Capital",governorateAr:"العاصمة",latitude:29.30,longitude:47.90},{id:"z",nameEn:"Loose"}];
+test("Q14_5_AREA groups names and detail-less areas",()=>{const en=groupAreasByGovernorate(areas,"en");assert.equal(en[0]?.governorate,"Capital");assert.equal(en.at(-1)?.governorate,"Other areas");assert.equal(groupAreasByGovernorate(areas,"ar").flatMap(group=>group.areas).find(area=>area.id==="a")?.displayName,"أ")});
+test("Q14_5_COORDINATES validates six decimals, nearest limit and id tie",()=>{assert.deepEqual(validateCoordinates(29.1234567,47.1234567),{latitude:29.123457,longitude:47.123457});assert.equal(nearestArea(areas,29.30,47.90)?.id,"a");assert.equal(nearestArea(areas,0,0),null);assert.throws(()=>validateCoordinates(91,0),/range/);assert.throws(()=>validateCoordinates(1,null),/both/)});
+test("Q14_5_AREA save checks choice, revision, clearing and idempotency",async()=>{const store=new InMemoryLocationStore(areas),service=createArea({store});const input={principalId:"p",areaId:"a",latitude:null,longitude:null,expectedRevision:0,submissionId:"s"};const first=await service.save(input);assert.equal(first.areaId,"a");assert.equal((await service.save(input)).revision,1);await assert.rejects(service.save({...input,submissionId:"t"}),LocationConflictError);const cleared=await service.save({...input,areaId:null,expectedRevision:1,submissionId:"u"});assert.equal(cleared.areaId,null)});

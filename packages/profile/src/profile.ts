@@ -185,11 +185,13 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string; editValue?: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; civilId?: Readonly<{ country:"KW"|"BH"|null; maskedNumber:string|null; expiry:string|null; needsReview:boolean; updatedAt:string }> } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; area?: WrittenPreference & {nameEn?:string;nameAr?:string}; coordinates?:Readonly<{latitude:number;longitude:number;updatedAt:string}>; civilId?: Readonly<{ country:"KW"|"BH"|null; maskedNumber:string|null; expiry:string|null; needsReview:boolean; updatedAt:string }> } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle" | "nationality" | "university" | "kuwaitiMother", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
+  const area=preferences.area;if(area){const language=preferences.language==="ar"?"ar":fields.language.state==="available"?fields.language.value:"en";if(area.value===null)fields.area=Object.freeze({state:"unavailable",reason:"not_recorded",provenance:provenance(PROFILE_FIELD_SPECS.area.sourceField),freshness:Object.freeze({kind:"written_by_person",observedAt:area.updatedAt})});else fields.area=Object.freeze({...written(PROFILE_FIELD_SPECS.area,language==="ar"&&area.nameAr?area.nameAr:(area.nameEn??String(area.value)),area.updatedAt),editValue:area.editValue??String(area.value)});}
+  if(preferences.coordinates)fields.coordinates=written(fieldSpec("person_locations","Coordinates","Optional coordinates visible only to this person.",value=>value),Object.freeze({latitude:preferences.coordinates.latitude,longitude:preferences.coordinates.longitude}),preferences.coordinates.updatedAt);
   if (preferences.language !== undefined && preferences.updatedAt !== undefined) try {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
       || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");

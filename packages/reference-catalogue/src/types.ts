@@ -4,7 +4,7 @@ import type { CurrencyDetails } from "./currency-details.js";
 
 export const CATALOGUE_TYPES = [
   "country", "currency", "bank", "tag", "brand", "mall",
-  "university", "major", "degree", "degree-group",
+  "university", "major", "degree", "degree-group", "area",
 ] as const;
 export type CatalogueType = typeof CATALOGUE_TYPES[number];
 

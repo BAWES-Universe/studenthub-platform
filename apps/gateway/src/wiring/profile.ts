@@ -1,9 +1,9 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { CivilIdVault, OwnProfileRepository, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -39,6 +39,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
   const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
   const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
+  const locationStore = safeWriteKey ? new PostgresPersonLocationStore({ connectionString: databaseUrl }) : undefined;
+  const area = locationStore ? createArea({ store: locationStore }) : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -49,9 +51,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
-    ...(safeWrites && personProfiles || civilId ? { preferences: { async readOwnPreferences(id: string) {
-      const [language, person, civil] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id)]);
-      const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}) };
+    ...(safeWrites && personProfiles || civilId || area ? { preferences: { async readOwnPreferences(id: string) {
+      const [language, person, civil, location, areas] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area?.readOwn(id), area?.choices()]);
+      const chosen = location?.areaId ? areas?.find(item => item.id === location.areaId) : undefined;
+      const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area:{value:location.areaId,nameEn:chosen?.nameEn,nameAr:chosen?.nameAr,editValue:location.areaId??undefined,updatedAt:location.writtenAt},...(location.latitude===null?{}:{coordinates:{latitude:location.latitude,longitude:location.longitude!,updatedAt:location.writtenAt}}) } : {}) };
       return Object.keys(merged).length > 0 ? merged as never : null;
     } } } : {}) });
   // SHU-182: a candidate's own bank details, behind the same signing key.
@@ -126,8 +129,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      ...(area ? { area } : {}),
       }, web: { profiles: webProfiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), locationStore?.close()]); },
   };
 }

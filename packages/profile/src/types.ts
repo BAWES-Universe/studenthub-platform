@@ -82,6 +82,7 @@ export interface OwnProfileContactFields {
   readonly handle?: ProfileField<string>;
   readonly kuwaitiMother?: ProfileField<boolean>;
   readonly civilId?: ProfileField<Readonly<{ country: "KW" | "BH" | null; maskedNumber: string | null; expiry: string | null; needsReview: boolean }>>;
+  readonly coordinates?: ProfileField<Readonly<{ latitude: number; longitude: number }>>;
 }
 
 export type OwnProfileFieldName = keyof OwnProfileFields;
@@ -133,5 +134,5 @@ export interface OwnProfileReader {
 
 /** Platform-owned profile values, read in one fixed-cost lookup for one person. */
 export interface OwnProfilePreferencesReader {
-  readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null>;
+  readOwnPreferences(principalId: string): Promise<Readonly<{ language?: unknown; updatedAt?: string; area?: { value:string|null; nameEn?:string; nameAr?:string; updatedAt:string; editValue?:string }; coordinates?: { latitude:number; longitude:number; updatedAt:string } }> | null>;
 }
