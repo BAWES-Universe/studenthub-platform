@@ -51,6 +51,40 @@ function regexEnd(source, start) {
   return start;
 }
 
+function blankLiteralText(text) {
+  return text.replace(/[^\n\r]/g, " ");
+}
+
+// Template text is inert, but substitutions are ordinary JavaScript and can
+// contain assertions. Preserve code in ${...} while masking the surrounding
+// literal without changing source offsets.
+function templateCode(source, start) {
+  let result = " ";
+  for (let i = start + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "\\") {
+      const escaped = source.slice(i, i + 2);
+      result += blankLiteralText(escaped);
+      i += escaped.length - 1;
+    } else if (ch === "`") {
+      return { text: result + " ", end: i };
+    } else if (ch === "$" && source[i + 1] === "{") {
+      const expression = braceBody(source, i + 1);
+      if (!expression) {
+        result += blankLiteralText(source.slice(i));
+        return { text: result, end: source.length - 1 };
+      }
+      result += "  ";
+      result += codeOnly(source.slice(i + 2, expression.end));
+      result += " ";
+      i = expression.end;
+    } else {
+      result += ch === "\n" || ch === "\r" ? ch : " ";
+    }
+  }
+  return { text: result, end: source.length - 1 };
+}
+
 function codeOnly(source) {
   let result = "";
   let quote = null;
@@ -107,7 +141,11 @@ function codeOnly(source) {
       } else {
         result += ch;
       }
-    } else if (ch === '"' || ch === "'" || ch === "`") {
+    } else if (ch === "`") {
+      const template = templateCode(source, i);
+      result += template.text;
+      i = template.end;
+    } else if (ch === '"' || ch === "'") {
       result += " ";
       quote = ch;
     } else {

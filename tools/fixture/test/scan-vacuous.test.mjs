@@ -117,6 +117,13 @@ test("reports a body whose only assertion is inside a template literal", () => {
   assert.deepEqual(report.map((entry) => entry.name), ["template"]);
 });
 
+test("recognises an assertion in a template literal substitution", () => {
+  const report = scanVacuousTests(
+    'test("template-expression", () => { `${expect(value).toBe(true)}`; });',
+  );
+  assert.deepEqual(report, []);
+});
+
 test("ignores test-like calls inside comments and string literals", () => {
   const source = [
     '// test("comment", () => { const value = 1; });',
