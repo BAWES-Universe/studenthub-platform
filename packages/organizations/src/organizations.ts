@@ -175,7 +175,7 @@ export interface OrganizationStatusRecords {
 }
 export type OrganizationCommercialTermRecord={readonly kind:"absent"}|{readonly kind:"cleared"}|{readonly kind:"value";readonly value:string};
 export type OrganizationCommercialTermsRecord={readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord;readonly currencyCode?:OrganizationCommercialTermRecord};
-export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<OrganizationCommercialTermsRecord>;readMany?(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationCommercialTermsRecord>>}
+export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<OrganizationCommercialTermsRecord>;readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationCommercialTermsRecord>>}
 export type OrganizationApprovedToHireRecord={readonly kind:"absent"}|{readonly kind:"value";readonly value:boolean};
 export interface OrganizationApprovedToHireRecords{read(orgId:string):Promise<OrganizationApprovedToHireRecord>;readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationApprovedToHireRecord>>}
 export interface OrganizationStoreCounts { countMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, number>> }
@@ -410,7 +410,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
   readonly #source: ApprovedOrganizationAdapter;
   readonly #operators: ReadonlySet<string>;
   readonly #statusRecords?: OrganizationStatusRecords;
-  readonly #commercialTerms?:OrganizationCommercialTermsRecords;
+  readonly #commercialTerms?:Pick<OrganizationCommercialTermsRecords,"read">&Partial<Pick<OrganizationCommercialTermsRecords,"readMany">>;
   readonly #approvedToHire?:OrganizationApprovedToHireRecords;
   readonly #storeCounts?: OrganizationStoreCounts;
   readonly #accountManagers?: OrganizationAccountManagerRecords;
@@ -422,7 +422,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
     readonly source: ApprovedOrganizationAdapter;
     readonly operatorOrgIds?: readonly string[];
     readonly statusRecords?: OrganizationStatusRecords;
-    readonly commercialTerms?:OrganizationCommercialTermsRecords;
+    readonly commercialTerms?:Pick<OrganizationCommercialTermsRecords,"read">&Partial<Pick<OrganizationCommercialTermsRecords,"readMany">>;
     readonly approvedToHire?:OrganizationApprovedToHireRecords;
     readonly storeCounts?: OrganizationStoreCounts;
     readonly accountManagers?: OrganizationAccountManagerRecords;
@@ -596,9 +596,11 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         ? await this.#statusRecords.readMany(shown.map((org) => org.id))
         : undefined;
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
-      const termsBatch=shown.length>0&&this.#commercialTerms?.readMany?await this.#commercialTerms.readMany(shown.map(org=>org.id)):undefined;
+      const termsBatch=shown.length>0&&this.#commercialTerms?await this.#commercialTerms.readMany!(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
-      const managers = shown.length > 0 ? await this.#accountManagers?.readMany(shown.map((org) => org.id)) : undefined;
+      let managers:ReadonlyMap<string,OrganizationAccountManagerRecord>|undefined;
+      if(shown.length>0&&this.#accountManagers)try{managers=await this.#accountManagers.readMany(shown.map((org)=>org.id));}
+      catch{if(filters.accountManager!==undefined)return{kind:"unavailable"};}
       const entries: OrganizationDirectoryEntry[] = [];
       for (const org of shown) {
         if (filters.accountManager !== undefined && managers?.get(org.id)?.principalId !== filters.accountManager) continue;

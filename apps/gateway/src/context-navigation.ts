@@ -24,9 +24,9 @@ export type SubOrganizationsPanel =
 export type OrganizationCountsPanel =
   | { readonly kind: "found"; readonly counts: OrganizationCounts }
   | { readonly kind: "unavailable" };
-export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null;
+export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null|{readonly kind:"unavailable"};
 export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>;history?(principalId:string,orgId:string):Promise<readonly OrganizationAccountManagerEventRow[]|null>}
-export type OrganizationAccountManagerHistoryPanel=readonly OrganizationAccountManagerEventRow[];
+export type OrganizationAccountManagerHistoryPanel=readonly OrganizationAccountManagerEventRow[]|{readonly kind:"unavailable";readonly length?:never};
 export type OrganizationReaderWithAccountManagers=OrganizationReader&{readonly accountManagers?:OrganizationAccountManagerReader};
 
 export type NavigationResult =
@@ -128,7 +128,12 @@ export function createContextNavigation(
         }
         let accountManager:OrganizationAccountManagerPanel|undefined,accountManagerHistory:OrganizationAccountManagerHistoryPanel|undefined;
         const accountManagers=organizationReader.accountManagers;
-        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const[result,history]=await Promise.all([accountManagers.manager(session.personId,active.orgId),accountManagers.history?.(session.personId,active.orgId)]);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null;if(history)accountManagerHistory=history.slice(0,5)}
+        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){
+          try { const result=await accountManagers.manager(session.personId,active.orgId); if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null; }
+          catch { accountManager={kind:"unavailable"}; }
+          if(accountManagers.history)try { const history=await accountManagers.history(session.personId,active.orgId); if(history)accountManagerHistory=history.slice(0,5); }
+          catch { accountManagerHistory={kind:"unavailable"}; }
+        }
         const shownOrganization=accountManager!==undefined||accountManagerHistory!==undefined?{...organization,...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{})}:organization;
         return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}) } };
       } catch {

@@ -391,3 +391,5 @@ test("SHU354_SHOWN shows each assigned name as a company link without principal 
   const body=renderAssignedCompanies({status:200,body:{companies}},login,{orgId:"employer",organizationName:"Employer",role:"admin"});
   assert.ok(body.indexOf("Alpha &amp; One")<body.indexOf("Beta"));assert.match(body,/href="\/workspace\?org_id=company-one&amp;role=admin"/);assert.doesNotMatch(body,/principal|person-1|workspace\/companies/);
 });
+
+test("SHU357_MY_COMPANIES_SIGN_IN distinguishes an expired session from an unavailable read",()=>{const login={organizationAccountManager:{} as OrganizationAccountManager} as BrowserLoginApplication,active={orgId:"employer",organizationName:"Employer",role:"staff" as const};const expired=renderAssignedCompanies({status:401,body:{error:"unauthorized"}},login,active);assert.match(expired,/Sign in/);assert.doesNotMatch(expired,/Try again/);const unavailable=renderAssignedCompanies({status:503,body:{error:"unavailable"}},login,active);assert.match(unavailable,/Try again/);assert.doesNotMatch(unavailable,/>Sign in</)});

@@ -74,7 +74,7 @@ const SENTINELS = /SENSITIVE-|company_auth_key|password|reset_token|commercial_l
 
 test("SHU353_CARD_CURRENCY written currency overlays the snapshot only after authorization and never inherits", async () => {
   const calls:string[]=[];
-  const commercialTerms={async read(id:string){calls.push(id);return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:id==="org-a1"?{kind:"cleared"as const}:{kind:"value"as const,value:"USD"}}}};
+  const commercialTerms={async read(id:string){calls.push(id);return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:id==="org-a1"?{kind:"cleared"as const}:{kind:"value"as const,value:"USD"}}},async readMany(){return new Map()}};
   const {repository}=await setup({commercialTerms});
   for (const [principalId,role] of [["owner-a","org-owner"],["staff","staff"],["admin","admin"]] as const) {
     assert.equal(value(found(await repository.read({principalId,orgId:"org-a",role})),"currencyCode"),"USD");
@@ -84,7 +84,7 @@ test("SHU353_CARD_CURRENCY written currency overlays the snapshot only after aut
   assert.deepEqual(calls,[]);
   assert.equal(value(found(await repository.read({principalId:"owner-a-subtree",orgId:"org-a1",role:"org-owner"})),"currencyCode"),"unavailable:not_recorded");
   assert.equal(value(found(await (await setup({commercialTerms,unconfigured:true})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"USD");
-  const absentTerms={async read(){return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:{kind:"absent"as const}}}};
+  const absentTerms={async read(){return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:{kind:"absent"as const}}},async readMany(){return new Map()}};
   assert.equal(value(found(await (await setup({commercialTerms:absentTerms})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"KWD");
   assert.equal(value(found(await (await setup({commercialTerms:absentTerms,unconfigured:true})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"unavailable:not_imported");
 });
