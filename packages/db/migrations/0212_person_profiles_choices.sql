@@ -11,11 +11,11 @@ ALTER TABLE person_profiles
  ADD COLUMN nationality_id uuid REFERENCES catalogue_items(id),
  ADD COLUMN nationality_id_written_at timestamptz CHECK (nationality_id IS NULL OR nationality_id_written_at IS NOT NULL),
  ADD COLUMN university_id uuid REFERENCES catalogue_items(id),
- ADD COLUMN university_id_written_at timestamptz,
+ ADD COLUMN university_id_written_at timestamptz CHECK (university_id IS NULL OR university_id_written_at IS NOT NULL),
  ADD COLUMN driving_licence boolean,
  ADD COLUMN driving_licence_written_at timestamptz CHECK (driving_licence IS NULL OR driving_licence_written_at IS NOT NULL),
  ADD COLUMN kuwaiti_mother boolean,
- ADD COLUMN kuwaiti_mother_written_at timestamptz,
+ ADD COLUMN kuwaiti_mother_written_at timestamptz CHECK (kuwaiti_mother IS NULL OR kuwaiti_mother_written_at IS NOT NULL),
  ADD COLUMN job_search_status text CHECK (job_search_status IN ('not_looking','active','open_to_offers')),
  ADD COLUMN job_search_status_written_at timestamptz CHECK (job_search_status IS NULL OR job_search_status_written_at IS NOT NULL);
 

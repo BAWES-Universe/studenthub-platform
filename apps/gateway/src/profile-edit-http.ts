@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, personProfileCalendarDate, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -132,7 +132,7 @@ function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField
   let message = `Enter a value that follows the rules for ${label.toLowerCase()}.`;
   if (selected === "birthDate") {
     const validShape = /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
-    message = !validShape ? "Enter a real birth date." : value > new Date().toISOString().slice(0,10) ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`;
+    message = !validShape ? "Enter a real birth date." : value > personProfileCalendarDate() ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`;
   }
   if (selected === "university" && value === "not-listed") message = "Staff add new universities. Choose None for now.";
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><fieldset><legend>${label}</legend>${control}</fieldset><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
@@ -151,7 +151,15 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
       const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
       const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
-      const before = await shownValue?.(sessionId, selected);
+      const change = (result.body as { changes?: readonly { before: string | null }[] }).changes?.[0];
+      const shownBefore = await shownValue?.(sessionId, selected);
+      // Kuwaiti mother is intentionally projected at the root (the closed
+      // fields DTO must keep its fixed shape), so the generic shown-value seam
+      // cannot see it. Its safe-write before value is still the same textual
+      // value read for the digest and is mapped through the normal formatter.
+      const before = selected === "kuwaitiMother" && change?.before !== null && change?.before !== undefined
+        ? await service.displayValue?.(selected, change.before) ?? change.before
+        : shownBefore;
       const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
       const after = await service.displayValue?.(selected, values.value!) ?? values.value!;
       write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(after)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;

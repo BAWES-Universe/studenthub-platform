@@ -347,7 +347,7 @@ function choiceControl(profile: OwnProfileProjection, field: OwnProfileFieldName
   if (field === "drivingLicence") return radio([["true","Yes"],["false","No"]]);
   if (field === "jobSearchStatus") return radio([["active","Actively looking"],["open_to_offers","Open to offers"],["not_looking","Not looking right now"]]);
   if (field === "birthDate") return `<input type="date" name="value" value="${escapeHtml(value)}">`;
-  if (field === "nationality") return `<select name="value">${profile.profileChoices?.countries.map(item => `<option value="${item.id}"${profile.selectedNationalityId === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("") ?? ""}</select>`;
+  if (field === "nationality") return `<select name="value"><option value=""${!profile.selectedNationalityId ? " selected" : ""} disabled>Select nationality</option>${profile.profileChoices?.countries.map(item => `<option value="${item.id}"${profile.selectedNationalityId === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("") ?? ""}</select>`;
   if (field === "university") return `<select name="value"><option value=""${!profile.selectedUniversityId ? " selected" : ""}>None</option>${profile.profileChoices?.universities.map(item => `<option value="${item.id}"${profile.selectedUniversityId === item.id ? " selected" : ""}>${escapeHtml(item.name)}</option>`).join("") ?? ""}<option value="not-listed">Not listed</option></select><small class="field-meta">Not listed? Staff add new universities.</small>`;
   return "";
 }
@@ -368,7 +368,9 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"]);
   const ordered = ["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")] as OwnProfileFieldName[];
   const rows = ordered.map((field) => {
-    const row = field === "jobSearchStatus" ? fieldRow(profile, field).replace("<div>", '<div class="notice"><p>Looking for work</p>') : fieldRow(profile, field);
+    const row = field === "jobSearchStatus"
+      ? fieldRow(profile, field).replace("<div>", '<div class="notice">').replace("<dt>Job-search status</dt>", "<dt>Looking for work</dt>")
+      : fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
       const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";

@@ -241,7 +241,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
     : unavailable(PROFILE_FIELD_SPECS.age, birth.freshness.observedAt, "not_recorded");
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
-  const hasPersonWrite = (["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus", "kuwaitiMother"] as const)
+  const hasPersonWrite = (["language", "displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus", "kuwaitiMother"] as const)
     .some(name => preferences[name] !== undefined);
   if (hasPersonWrite) for (const name of ["isProfileCompleted", "pendingFields"] as const) {
     fields[name] = unavailable(PROFILE_FIELD_SPECS[name], "", "not_recorded") as never;

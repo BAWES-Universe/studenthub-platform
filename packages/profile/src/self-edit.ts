@@ -21,6 +21,11 @@ export const SHU372_RULES = Object.freeze({
 } satisfies Partial<Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>>);
 
 export const PERSON_PROFILE_MINIMUM_AGE = 16;
+export function personProfileCalendarDate(value: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function validDate(value: string, today: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -34,7 +39,7 @@ const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
 const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06fa-\u06fc]/u;
 
-export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = new Date().toISOString().slice(0,10)): string | null {
+export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today = personProfileCalendarDate()): string | null {
   if (typeof value !== "string") return null;
   if (field === "gender") return ["male","female","other"].includes(value) ? value : null;
   if (field === "birthDate") return validDate(value, today) ? value : null;
@@ -65,7 +70,7 @@ export function createPersonSelfEdit(options: {
   });
   const normalize = <T extends PreviewRequest | ConfirmRequest>(request: T): T | null => {
     if (!PERSON_SELF_EDIT_FIELDS.includes(request.change.field as PersonSelfEditField)) return request;
-    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, (options.clock?.now() ?? new Date()).toISOString().slice(0,10));
+    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, personProfileCalendarDate(options.clock?.now() ?? new Date()));
     return value === null ? null : { ...request, change: { ...request.change, value } };
   };
   return Object.freeze({
