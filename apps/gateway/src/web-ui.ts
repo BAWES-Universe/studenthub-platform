@@ -32,6 +32,7 @@ import { renderCivilIdRow } from "./civil-id-http.js";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "./area-http.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
+import { deriveProfileForHtml } from "./profile-completeness.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -332,15 +333,17 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
 
 export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, contributions: Contributions = CONTRIBUTIONS, preparedChoices?: Awaited<ReturnType<NonNullable<ProfileEdit["choices"]>>>): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
-  const profile = projectionFrom(result);
+  let profile = projectionFrom(result);
   const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
   const text = (key: ProfileCopyKey, params: Readonly<Record<string, string | number>> = {}): string => PROFILE_COPY[language][key].replace(/\{([A-Za-z]+)\}/g, (_, name: string) => String(params[name] ?? ""));
   const copy = (key: ProfileCopyKey, params?: Readonly<Record<string, string | number>>) => escapeHtml(text(key, params));
   type Key = OwnProfileFieldName | "phone" | "handle" | "kuwaitiMother";
   const label = (key: Key) => text(`field.${key}`);
   const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
-  const loaded = preparedChoices ?? (login.profileEdit?.choices ? await login.profileEdit.choices() : undefined);
+  let loaded: Awaited<ReturnType<NonNullable<ProfileEdit["choices"]>>> | undefined | null = preparedChoices;
+  if (loaded === undefined && login.profileEdit?.choices) { try { loaded = await login.profileEdit.choices(); } catch { loaded = null; } }
   const originChoices = { countries: Array.isArray(loaded?.countries) ? loaded.countries : [], universities: Array.isArray(loaded?.universities) ? loaded.universities : [] };
+  profile = await deriveProfileForHtml(profile, loaded);
   const nationalityId = profile.fields.nationality.state === "available" ? profile.fields.nationality.editValue : undefined;
   const nationalityIsKuwaiti = originChoices.countries.some(item => item.id === nationalityId && item.code === "KW");
   const nationalityAllowsMother = originChoices.countries.some(item => item.id === nationalityId && item.code !== "KW");
