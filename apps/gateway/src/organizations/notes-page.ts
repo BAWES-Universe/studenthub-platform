@@ -129,6 +129,8 @@ export async function handleOrganizationNotesPage(ctx: GatewayRouteContext): Pro
     if (!orgId) return error(ctx, 404);
     const contentType = ctx.request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
     if (contentType !== "application/x-www-form-urlencoded") return invalid(ctx);
+    const visibility = await ctx.login.organizationNotes.list(sessionCookie(ctx.request.headers.cookie), orgId);
+    if (visibility.status !== 200) return failed(ctx, visibility.status);
     return action === "preview" ? await preview(ctx, orgId) : await confirm(ctx, orgId);
   } catch {
     if (!ctx.response.headersSent) return unavailable(ctx);
