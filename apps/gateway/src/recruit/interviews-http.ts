@@ -31,6 +31,7 @@ export interface RecruitInterviews {
   cancel(session: string | undefined, interviewId: string): Promise<RecruitResult<{ interviewId: string; status: "cancelled" }>>;
   evaluate(session: string | undefined, interviewId: string, body: unknown): Promise<RecruitResult<{ interviewId: string; version: number }>>;
   mine(session: string | undefined): Promise<RecruitResult<{ interviews: readonly PersonInterviewView[] }>>;
+  one(session: string | undefined, interviewId: string): Promise<RecruitResult<{ interview: PersonInterviewView }>>;
 }
 
 const FORM_ONLY = ["requestId"];
@@ -90,6 +91,14 @@ export function createRecruitInterviews(p: { sessions: Pick<SessionStore, "get">
       if (!id) return UNAUTHORIZED;
       return { status: 200, body: { interviews: (await p.store.mine(id)).map(personInterviewView) } };
     },
+    async one(s, interviewId) {
+      const id = await principal(s);
+      if (!id) return UNAUTHORIZED;
+      if (!isRecruitId(interviewId)) return NOT_FOUND;
+      const wanted = interviewId.toLowerCase();
+      const row = (await p.store.mine(id)).find((candidate) => candidate.id.toLowerCase() === wanted);
+      return row ? { status: 200, body: { interview: personInterviewView(row) } } : NOT_FOUND;
+    },
   };
 }
 
@@ -121,21 +130,34 @@ ${b.seesInternal ? `<p><label for="i-${html(v.interviewId)}">Internal note (staf
   return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1><p>${html(b.positionTitle)} · ${html(b.company)} · ${html(b.store)}</p>${b.interviews.length ? `<ol class="plain">${b.interviews.map(item).join("")}</ol>` : "<p>No interviews yet.</p>"}${schedule}<p><a class="text-link" href="/recruit/requests/${html(b.requestId)}">Back to the request</a></p></main>`;
 }
 
-export function renderMyInterviews(list: readonly PersonInterviewView[]): string {
-  const item = (v: PersonInterviewView) => `<li><h2>${html(v.positionTitle)}</h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS[v.status]}</span></p><p>${[`${v.kuwaitTime} (Kuwait)`, `${v.durationMinutes} min`, MODE[v.mode], v.location].filter((x): x is string => Boolean(x)).map(html).join(" · ")}</p>${v.outcome ? `<p>${OUTCOME[v.outcome]}</p>` : ""}</li>`;
-  return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1>${list.length ? `<ol class="plain">${list.map(item).join("")}</ol>` : "<p>You have no interviews yet.</p>"}</main>`;
+function renderPersonInterviewItem(v: PersonInterviewView): string {
+  return `<li><h2>${html(v.positionTitle)}</h2><p>${html(v.company)} · ${html(v.store)} · <span class="badge">${STATUS[v.status]}</span></p><p>${[`${v.kuwaitTime} (Kuwait)`, `${v.durationMinutes} min`, MODE[v.mode], v.location].filter((x): x is string => Boolean(x)).map(html).join(" · ")}</p>${v.outcome ? `<p>${OUTCOME[v.outcome]}</p>` : ""}</li>`;
 }
 
-const REQUEST = /^\/recruit\/requests\/([^/]+)\/interviews$/, ACTION = /^\/recruit\/interviews\/([^/]+)\/(cancel|evaluate)$/, MINE = "/recruit/my-interviews";
+export function renderMyInterviews(list: readonly PersonInterviewView[]): string {
+  return `<main id="main" class="profile-main"><h1>Interviews<span class="accent">.</span></h1>${list.length ? `<ol class="plain">${list.map(renderPersonInterviewItem).join("")}</ol>` : "<p>You have no interviews yet.</p>"}</main>`;
+}
+
+export function renderInterviewDetail(interview: PersonInterviewView): string {
+  return `<main id="main" class="profile-main"><h1>Interview<span class="accent">.</span></h1><ol class="plain">${renderPersonInterviewItem(interview)}</ol><p><a class="text-link" href="/recruit/my-interviews">Back to my interviews</a></p></main>`;
+}
+
+const REQUEST = /^\/recruit\/requests\/([^/]+)\/interviews$/, ACTION = /^\/recruit\/interviews\/([^/]+)\/(cancel|evaluate)$/, DETAIL = /^\/recruit\/interviews\/([^/]+)$/, MINE = "/recruit/my-interviews";
 
 export async function handleRecruitInterviews(req: IncomingMessage, res: ServerResponse, s: RecruitInterviews | undefined, origin: string | undefined, write: RecruitPageWriter, wantsHtml: boolean): Promise<boolean> {
   const path = new URL(req.url ?? "/", "http://x").pathname;
-  const request = REQUEST.exec(path), action = ACTION.exec(path);
-  if (path !== MINE && !request && !action) return false;
-  const back = request ? { href: `/recruit/requests/${encodeURIComponent(decodeSegment(request))}`, label: "Back to the request" } : path === MINE ? { href: "/", label: "Back home" } : { href: "/recruit/requests", label: "Back to requests" };
+  const request = REQUEST.exec(path), action = ACTION.exec(path), detail = DETAIL.exec(path);
+  if (detail && req.method !== "GET" && req.method !== "HEAD") return false;
+  if (path !== MINE && !request && !action && !detail) return false;
+  const back = detail ? { href: "/recruit/my-interviews", label: "Back to my interviews" } : request ? { href: `/recruit/requests/${encodeURIComponent(decodeSegment(request))}`, label: "Back to the request" } : path === MINE ? { href: "/", label: "Back home" } : { href: "/recruit/requests", label: "Back to requests" };
   try {
     if (!s || !origin) { wantsHtml ? errorPage(write, 503, back) : sendJson(res, { status: 503, body: { error: "recruit_unavailable" } }); return true; }
     const session = sessionCookie(req.headers.cookie);
+    if ((req.method === "GET" || req.method === "HEAD") && detail) {
+      const r = await s.one(session, decodeSegment(detail));
+      if (!wantsHtml) sendJson(res, r); else if (r.status === 200) write(200, "Interview", renderInterviewDetail(r.body.interview)); else errorPage(write, r.status, back);
+      return true;
+    }
     if (req.method === "GET" && (path === MINE || request)) {
       if (path === MINE) {
         const r = await s.mine(session);
