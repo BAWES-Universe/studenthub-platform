@@ -35,6 +35,15 @@ export class PostgresOrganizationStoresStore {
   }
   async close() { if (this.#owns) await this.#pool.end(); }
 
+  async countMany(orgIds: readonly string[]): Promise<Map<string, number>> {
+    if (orgIds.length === 0) return new Map();
+    const rows = await this.#pool.query<{ org_id: string; count: number }>(
+      "SELECT org_id, count(*)::int AS count FROM organization_stores WHERE status='active' AND org_id = ANY($1::text[]) GROUP BY org_id",
+      [orgIds],
+    );
+    return new Map(rows.rows.map((row) => [row.org_id, row.count]));
+  }
+
   async #allowed(c: Client, principalId: string, orgId: string, decision: Decision, lock = false): Promise<boolean> {
     // A missing or deleted organization answers exactly as a refused one.
     if (!await organizationLive(c, orgId, lock)) return false;

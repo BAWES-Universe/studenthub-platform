@@ -5,6 +5,7 @@ import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository } from "@studenthub/profile";
 import {
   InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
+  type OrganizationStoreCounts,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createCompanyDirectory } from "../src/company-directory.js";
@@ -15,7 +16,7 @@ const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean } = {}) {
+async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -33,7 +34,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   const { parentA, childA1, unrelatedB } = SYNTHETIC_ORGANIZATION_FIXTURES;
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-b", unrelatedB],
-  ])) });
+  ])), storeCounts: options.storeCounts });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
     ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
@@ -152,4 +153,18 @@ test("SHU-163/AC-08 ACCESS failures stay private and HTML escapes registry names
   }
   const workspace = await (await missing.get("/workspace?org_id=root&role=staff", html)).text();
   assert.doesNotMatch(workspace, /\/workspace\/companies/, "no link without a configured directory");
+});
+
+test("SHU168_PAGE renders source store counts and unavailable state in HTML and JSON", async (t) => {
+  const counted = await fixture(t, { storeCounts: { countMany: async () => new Map([["org-a", 3]]) } });
+  const body = await (await counted.get()).json();
+  assert.deepEqual(body.directory.entries.map((entry: { orgId: string; storeCount: number }) => [entry.orgId, entry.storeCount]), [["org-a", 3], ["org-b", 0]]);
+  const countedPage = await (await counted.get(STAFF_LIST, html)).text();
+  assert.match(countedPage, /<th scope="col">Sub-companies<\/th><th scope="col">Stores<\/th>/);
+  assert.match(countedPage, /Synthetic Retail Group[\s\S]*<td>2<\/td><td>3<\/td>/);
+  assert.match(countedPage, /Synthetic Cafe[\s\S]*<td>0<\/td><td>0<\/td>/);
+
+  const unconfigured = await fixture(t);
+  const unconfiguredPage = await (await unconfigured.get(STAFF_LIST, html)).text();
+  assert.equal((unconfiguredPage.match(/<td><span class="missing" data-state="unavailable">Unavailable<\/span><\/td>/g) ?? []).length, 2);
 });
