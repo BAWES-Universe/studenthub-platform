@@ -1,12 +1,19 @@
-// Mutants are sibling modules; dist files are never overwritten.
-import assert from"node:assert/strict";import{spawnSync}from"node:child_process";import{readFile,unlink,writeFile}from"node:fs/promises";import{fileURLToPath}from"node:url";
+// Each behavioral mutant is a sibling of a freshly-built module and is loaded
+// through swap-module; compiled files are never overwritten.
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 const dist=new URL("../../../dist/apps/gateway/",import.meta.url),people=new URL("src/people-directory.js",dist),web=new URL("src/web-ui.js",dist),suite=fileURLToPath(new URL("test/people-directory.test.js",dist)),hook=new URL("./helpers/swap-module.mjs",import.meta.url).href;
 const cases=[
- ["drop staff check","DIR_ACCESS","if (!await isPeopleStaff(options.authz, session.personId))","if (false)"],
- ["accept self scope","DIR_ACCESS",'g.scope === "subtree"','(g.scope === "subtree" || g.scope === "self")'],
- ["accept repeated key","DIR_QUERY","params.getAll(key).length !== 1","false"],
+  ["drop the staff check","DIR_ACCESS every refused persona","DIR_ACCESS candidate/self/candidate:person-2 text/html status",people,"if (!await isPeopleStaff(options.authz, session.personId))","if (false)"],
+  ["accept a self-scope grant","DIR_ACCESS every refused persona","DIR_ACCESS staff/self/root text/html status",people,'g.scope === "subtree"','(g.scope === "subtree" || g.scope === "self")'],
+  ["accept a repeated key","DIR_QUERY closed vocabulary","DIR_QUERY rejects page=1&page=2",people,"params.getAll(key).length !== 1","false"],
+  ["render the full phone","DIR_ROWS HTML and JSON","DIR_ROWS HTML omits +96550000000",web,"e(maskPhone(r.phoneLast4))",'e("+9655000" + r.phoneLast4)'],
+  ["read the store once per row","DIR_ONE_QUERY fixed reads","DIR_ONE_QUERY html 1 rows store",people,"options.store.page(query, kuwaitDate((options.now ?? (() => new Date()))()))","(async()=>{const value=await options.store.page(query,kuwaitDate((options.now??(()=>new Date()))()));await Promise.all(value.rows.map(()=>options.store.page(query,kuwaitDate((options.now??(()=>new Date()))()))));return value})()"],
+  ["show the sidebar link for a non-staff context","DIR_ACCESS sidebar link","DIR_ACCESS sidebar root/recruiter",web,"!DIRECTORY_ROLES.has(active.role) || !DEFAULT_OPERATOR_ORG_IDS.includes(active.orgId)","false || !DEFAULT_OPERATOR_ORG_IDS.includes(active.orgId)"],
 ];
-const esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-for(const[name,prefix,from,to]of cases){const original=await readFile(people,"utf8");assert.equal(original.split(from).length-1,1,`${name}: needle binds exactly once`);const target=new URL(people.href.replace(/\.js$/,`-mutant-${process.pid}.js`));try{await writeFile(target,original.replace(from,to));const swaps={[people.href]:target.href},register=`import{register}from"node:module";register(${JSON.stringify(hook)},{data:${JSON.stringify(swaps)}});`,r=spawnSync(process.execPath,["--import",`data:text/javascript,${encodeURIComponent(register)}`,"--test",`--test-name-pattern=^${esc(prefix)}`,suite],{encoding:"utf8",timeout:60000});assert.notEqual(r.status,0,`${name} survived`);assert.match(r.stdout+r.stderr,/AssertionError|test failed/);console.log(`KILLED ${name}`)}finally{await unlink(target).catch(()=>{});assert.equal(await readFile(people,"utf8"),original)}}
-// Renderer needles are pinned too; gateway listener tests kill these in CI.
-const rendered=await readFile(web,"utf8");for(const needle of['maskPhone(r.phoneLast4)','peopleLink(active, login)'])assert.equal(rendered.split(needle).length-1,1,`${needle}: needle binds exactly once`);
+const escape=text=>text.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+function run(prefix,swaps){const register=`import{register}from"node:module";register(${JSON.stringify(hook)},{data:${JSON.stringify(swaps)}});`;const result=spawnSync(process.execPath,["--import",`data:text/javascript,${encodeURIComponent(register)}`,"--test","--test-reporter=tap",`--test-name-pattern=^${escape(prefix)}`,suite],{encoding:"utf8",timeout:60000});assert.equal(result.error,undefined,`${prefix} runner must execute`);return{...result,output:result.stdout+result.stderr};}
+for(const[item,prefix,message,source,from,to]of cases){const original=await readFile(source,"utf8");assert.equal(original.split(from).length-1,1,`${item}: needle binds exactly once in ${fileURLToPath(source)}`);const target=new URL(source.href.replace(/\.js$/,`-mutant-${process.pid}.js`));try{const control=run(prefix,{});assert.equal(control.status,0,`${item}: unmutated control passes\n${control.output}`);assert.match(control.output,new RegExp(`\\nok \\d+ - ${escape(prefix)}`),`${item}: control ran named test`);await writeFile(target,original.replace(from,to));const mutant=run(prefix,{[source.href]:target.href});assert.notEqual(mutant.status,0,`${item}: mutant survived\n${mutant.output}`);assert.match(mutant.output,new RegExp(`\\nnot ok \\d+ - ${escape(prefix)}`),`${item}: named test fails`);assert.match(mutant.output,/name: 'AssertionError'/,`${item}: dies by AssertionError\n${mutant.output}`);assert.match(mutant.output,new RegExp(`error: (?:'|\\|-\\n\\s+)${escape(message)}`),`${item}: dies on ${message}\n${mutant.output}`);assert.doesNotMatch(mutant.output,/SyntaxError|ERR_MODULE_NOT_FOUND/,`${item}: mutant loads`);console.log(`KILLED ${item} -> ${message}`);}finally{await unlink(target).catch(error=>{if(error.code!=="ENOENT")throw error;});assert.equal(await readFile(source,"utf8"),original,`${item}: compiled file unchanged`);}}
+console.log(`${cases.length}/${cases.length} people-directory mutants killed`);
