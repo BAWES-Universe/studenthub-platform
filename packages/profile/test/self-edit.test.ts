@@ -156,3 +156,14 @@ test("SHU413_AGE an implausibly old stored birth date keeps the date and makes o
   assert.equal(result.profile.fields.age.state, "unavailable");
   assert.equal(result.profile.fields.gender.state, "available");
 });
+
+test("SHU374_PHONE accepts only canonical Kuwaiti phone values and clearing", () => {
+  for (const value of ["+96550000000", ""]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), value);
+  for (const value of ["50000000", "+965 5000 0000", "00965-50000000"]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), "+96550000000");
+  for (const value of ["+9655000000", "+965500000000", "phone"]) assert.equal(normalizePersonSelfEditValue("phone", value, TODAY), null);
+});
+
+test("SHU374_HANDLE accepts a stable lowercase profile handle and clearing", () => {
+  for (const value of ["noor-al-sabah", "noor_2026", ""]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), value);
+  for (const value of ["Noor", "noor al-sabah", "-noor", "noor-"]) assert.equal(normalizePersonSelfEditValue("handle", value, TODAY), null);
+});

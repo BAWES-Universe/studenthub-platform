@@ -141,3 +141,22 @@ test("SHU413_WRITE Postgres writes every choice twice with stable text state", a
     { gender: "female", birthDate: "2000-02-29", drivingLicence: "false", jobSearchStatus: "open_to_offers" });
   for (const field of Object.keys(changes)) assert.match(preferences[field]!.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
+
+test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone holder the same refusal", async () => {
+  const ids = [`shu374-${randomUUID()}`, `shu374-${randomUUID()}`], authz = new PostgresAuthzStore(pool);
+  for (const id of ids) await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const store = new PostgresPersonProfileStore({ pool });
+  const write = async (id: string, field: "phone" | "handle", value: string) => {
+    const writer = createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) });
+    const principalRef = safeWritePrincipalRef(id), change = { personRef: personRecordRef(id), field, value };
+    const preview = await writer.preview({ principalRef, change }); assert.ok(preview.ok); if (!preview.ok) return preview;
+    return writer.confirm({ principalRef, change, token: preview.token });
+  };
+  assert.deepEqual(await write(ids[0]!, "phone", "50000000"), { ok: true });
+  assert.deepEqual(await write(ids[0]!, "phone", "+965 5000 0000"), { ok: true });
+  assert.deepEqual(await write(ids[0]!, "handle", "first-person"), { ok: true });
+  assert.deepEqual(await write(ids[0]!, "handle", "first_person"), { ok: true });
+  assert.deepEqual(await write(ids[1]!, "phone", "00965-50000000"), { ok: false, reason: "invalid_value" });
+  const preferences = await store.readOwnPreferences(ids[0]!) as Record<string, { value: unknown }>;
+  assert.deepEqual({ phone: preferences.phone!.value, handle: preferences.handle!.value }, { phone: "+96550000000", handle: "first_person" });
+});

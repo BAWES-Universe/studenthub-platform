@@ -96,7 +96,8 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField: string } }): string {
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField: string } } | undefined): string {
+  if (!field) return "Not recorded";
   if (field.state === "unavailable") return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
   if (field.value === true) return "Yes";
   if (field.value === false) return "No";
@@ -109,7 +110,7 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
   return String(field.value);
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", drivingLicence: "Driving licence", jobSearchStatus: "Looking for work", phone: "Phone number", handle: "Profile link" };
 const shownAfter = (field: PersonSelfEditField, value: string) => field === "drivingLicence" ? value === "true" ? "Yes" : "No"
   : field === "gender" ? ({ male: "Male", female: "Female", other: "Other" })[value]!
     : field === "jobSearchStatus" ? ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[value]!
@@ -122,6 +123,8 @@ function editControl(selected: PersonSelfEditField, value: string, invalid = fal
   if (selected === "jobSearchStatus") return radios([["not_looking","Not looking right now"],["active","Actively looking for work"],["open_to_offers","Open to offers"]]);
   if (selected === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
   if (selected === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
+  if (selected === "phone") return `<input type="tel" name="value" value="${esc(value)}" maxlength="16"${described}>`;
+  if (selected === "handle") return `<input name="value" value="${esc(value)}" maxlength="30"${described}>`;
   return `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}"${described}>`;
 }
 export function profileEditSummary(value: string): string {

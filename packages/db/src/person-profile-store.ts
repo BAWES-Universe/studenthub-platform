@@ -5,11 +5,12 @@ import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./safe-write-store.js";
 
-export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus"] as const;
+export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle"] as const;
 export type PersonProfileField = (typeof PERSON_PROFILE_FIELDS)[number];
 const COLUMNS: Record<PersonProfileField, string> = {
   displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time",
   gender: "gender", birthDate: "birth_date", drivingLicence: "driving_licence", jobSearchStatus: "job_search_status",
+  phone: "phone", handle: "profile_handle",
 };
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
@@ -45,7 +46,8 @@ export class PostgresPersonProfileStore {
               pp.preferred_time, pp.preferred_time_written_at,
               pp.gender::text, pp.gender_written_at, pp.birth_date::text, pp.birth_date_written_at,
               pp.driving_licence::text, pp.driving_licence_written_at,
-              pp.job_search_status::text, pp.job_search_status_written_at
+              pp.job_search_status::text, pp.job_search_status_written_at,
+              pp.phone::text, pp.phone_written_at, pp.profile_handle::text, pp.profile_handle_written_at
          FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id WHERE p.id=$1`, [principalId]);
     const row = rows[0];
     if (!row) return null;
@@ -103,6 +105,7 @@ export class PostgresPersonProfileStore {
       if (databaseError.code === "23505" && databaseError.constraint === "authorization_mutation_audit_safe_write_token") {
         return { ok: false, reason: "token_already_used" };
       }
+      if (databaseError.code === "23505" && ["person_profiles_phone_uq", "person_profiles_profile_handle_uq"].includes(String(databaseError.constraint))) return { ok: false, reason: "invalid_value" };
       if (databaseError.code === "23514") return { ok: false, reason: "invalid_value" };
       throw error;
     }

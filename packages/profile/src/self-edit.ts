@@ -9,7 +9,7 @@ import {
   type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 
-export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus"] as const;
+export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle"] as const;
 export type PersonSelfEditField = (typeof PERSON_SELF_EDIT_FIELDS)[number];
 
 export const PERSON_PROFILE_MINIMUM_AGE = 16;
@@ -23,6 +23,8 @@ export const SHU372_RULES = Object.freeze({
   birthDate: Object.freeze({ maxLength: 10, allowClear: false, accepts: ["2000-02-29"], refuses: ["", "2000-02-30", "2010-10-31"] }),
   drivingLicence: Object.freeze({ maxLength: 5, allowClear: false, accepts: ["true", "false"], refuses: ["", "yes", "1"] }),
   jobSearchStatus: Object.freeze({ maxLength: 14, allowClear: false, accepts: ["not_looking", "active", "open_to_offers"], refuses: ["", "looking", "1"] }),
+  phone: Object.freeze({ maxLength: 32, allowClear: true, accepts: ["+96550000000", ""], refuses: ["+9655000000", "+965500000000", "phone"] }),
+  handle: Object.freeze({ maxLength: 30, allowClear: true, accepts: ["noor-al-sabah", "noor_2026", ""], refuses: ["Noor", "noor al-sabah", "-noor", "noor-"] }),
 } satisfies Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
 
 const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
@@ -57,14 +59,22 @@ export function isPersonProfileMinimumAge(value: string, today: string): boolean
 
 export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today: string): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.normalize("NFC");
+  let normalized = value.normalize("NFC");
   const rule = SHU372_RULES[field];
   if ([...normalized].length > rule.maxLength || FORBIDDEN.test(normalized)) return null;
   if (normalized === "") return rule.allowClear ? "" : null;
+  if (field === "phone") {
+    if (!/^[+0-9 ()-]+$/.test(normalized) || normalized.trim() !== normalized) return null;
+    const compact = normalized.replace(/[ ()-]/g, "");
+    const digits = compact.startsWith("+") ? compact.slice(1) : compact.startsWith("00") ? compact.slice(2) : compact;
+    normalized = digits.length === 8 ? `+965${digits}` : digits.startsWith("965") ? `+${digits}` : compact;
+  }
   if (field === "gender" && !["male", "female", "other"].includes(normalized)) return null;
   if (field === "birthDate" && !validBirthDate(normalized, today)) return null;
   if (field === "drivingLicence" && !["true", "false"].includes(normalized)) return null;
   if (field === "jobSearchStatus" && !["not_looking", "active", "open_to_offers"].includes(normalized)) return null;
+  if (field === "phone" && !/^\+965[0-9]{8}$/.test(normalized)) return null;
+  if (field === "handle" && !/^[a-z0-9](?:[a-z0-9_-]{1,28}[a-z0-9])?$/.test(normalized)) return null;
   if (normalized !== normalized.trim() || /\s{2}/u.test(normalized)) return null;
   if ((field === "displayName" || field === "arabicName") && !NAME.test(normalized)) return null;
   if (field === "arabicName" && !ARABIC_LETTER.test(normalized)) return null;

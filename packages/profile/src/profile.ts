@@ -184,7 +184,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "drivingLicence" | "jobSearchStatus" | "phone" | "handle", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -228,6 +228,17 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
       if (name === "birthDate") fields.age = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS.age.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) });
     }
+  }
+  for (const name of ["phone", "handle"] as const) {
+    const preference = preferences[name];
+    if (!preference || preference.value === null) continue;
+    try {
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preference.updatedAt) || !Number.isFinite(Date.parse(preference.updatedAt))) throw new TypeError("malformed preference timestamp");
+      const valid = name === "phone" ? /^\+965[0-9]{8}$/.test(String(preference.value)) : /^[a-z0-9](?:[a-z0-9_-]{1,28}[a-z0-9])?$/.test(String(preference.value));
+      if (!valid) continue;
+      const spec = fieldSpec(name, name === "phone" ? "Phone number" : "Profile link", "Platform-owned contact value.", text(name === "phone" ? 16 : 30));
+      fields[name] = written(spec, String(preference.value), preference.updatedAt);
+    } catch { /* A bad contact value is omitted without affecting the profile. */ }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
