@@ -3,7 +3,14 @@ import {randomBytes,randomUUID} from "node:crypto";
 import {after,before,beforeEach,test} from "node:test";
 import pg from "pg";
 import {runMigrations} from "../src/migrate.js";
-import {PostgresPeopleDirectoryStore} from "../src/postgres-people-directory-store.js";
+import {classifyPeopleDirectorySearch,PostgresPeopleDirectoryStore} from "../src/postgres-people-directory-store.js";
+import {classifySearchTerm} from "../../profile/src/people-directory.js";
+
+test("DIRDB_SEARCH database and profile search classifiers stay identical",()=>{
+  for(const value of ["c00123","+965 5000 0000","50000000","٥٠٠٠٠٠٠٠","00965-5000-0000","0000","123","https://studenthub.test/people/Noor_26",`Noor & | ! : * ( ) ' " < > نور`]){
+    assert.deepEqual(classifyPeopleDirectorySearch(value),classifySearchTerm(value),`database classifier must mirror profile classifier for ${value}`);
+  }
+});
 
 test("DIRDB_ONE one page is exactly one pool statement for zero, one, and sixty rows",async()=>{
   for(const count of [0,1,60]){
@@ -39,7 +46,7 @@ async function completePerson(label:string,options:{status?:"not_looking"|"activ
   const id=`shu618-${randomUUID()}`,country=options.nationality??await catalogue("country",`Country ${label}`,"US"),area=await catalogue("area",`Area ${label}`),now="2026-11-13T08:00:00Z";ids.push(id);
   await pool.query("INSERT INTO principals(id,display_name,email) VALUES($1::text,$2::text,$3::text)",[id,`Universe ${label}`,`${label}@test.invalid`]);
   await pool.query(`INSERT INTO person_profiles(principal_id,display_name,display_name_written_at,arabic_name,arabic_name_written_at,objective,objective_written_at,gender,gender_written_at,birth_date,birth_date_written_at,driving_licence,driving_licence_written_at,job_search_status,job_search_status_written_at,phone,phone_written_at,profile_handle,profile_handle_written_at,nationality_id,nationality_id_written_at,kuwaiti_mother,kuwaiti_mother_written_at)
-    VALUES($1::text,$2::text,$3::timestamptz,'اسم كامل',$3::timestamptz,'Objective',$3::timestamptz,'female',$3::timestamptz,'2000-01-01',$3::timestamptz,false,$3::timestamptz,$4::text,CASE WHEN $4::text IS NULL THEN NULL ELSE $3::timestamptz END,$5::text,$3::timestamptz,$6::text,$3::timestamptz,$7::uuid,$3::timestamptz,$8::boolean,CASE WHEN $8::boolean IS NULL THEN NULL ELSE $3::timestamptz END)`,[id,`${label} Person`,now,options.status===undefined?"active":options.status,options.phone??`+9655${randomBytes(3).toString("hex").replace(/[a-f]/g,"1").slice(0,7)}`,`h${randomBytes(5).toString("hex")}`,country,options.kuwaitiMother??false]);
+    VALUES($1::text,$2::text,$3::timestamptz,'اسم كامل',$3::timestamptz,'Objective',$3::timestamptz,'female',$3::timestamptz,'2000-01-01',$3::timestamptz,false,$3::timestamptz,$4::text,CASE WHEN $4::text IS NULL THEN NULL ELSE $3::timestamptz END,$5::text,$3::timestamptz,$6::text,$3::timestamptz,$7::uuid,$3::timestamptz,$8::boolean,CASE WHEN $8::boolean IS NULL THEN NULL ELSE $3::timestamptz END)`,[id,`${label} Person`,now,options.status===undefined?"active":options.status,options.phone??`+9655${randomBytes(3).toString("hex").replace(/[a-f]/g,"1").slice(0,7)}`,`h${randomBytes(5).toString("hex")}`,country,"kuwaitiMother" in options?options.kuwaitiMother:false]);
   await pool.query("INSERT INTO person_locations(principal_id,area_id,revision,written_at,updated_at) VALUES($1::text,$2::uuid,1,$3::timestamptz,$3::timestamptz)",[id,area,now]);
   await pool.query("INSERT INTO person_civil_ids(principal_id,country,number_ciphertext,number_hash,key_version,expiry_date,revision) VALUES($1::text,'KW',decode('01','hex'),decode($2::text,'hex'),1,'2030-01-01',1)",[id,randomBytes(32).toString("hex")]);
   for(const kind of ["education","skill"])await pool.query("INSERT INTO candidate_profile_records(id,owner_principal_id,kind,status,fields,created_at,updated_at) VALUES($1::uuid,$2::text,$3::text,'active','{}'::jsonb,$4::timestamptz,$4::timestamptz)",[randomUUID(),id,kind,now]);
@@ -59,7 +66,7 @@ test("DIRDB_SEARCH Postgres searches names, employee id, normalized phone, suffi
 test("DIRDB_SHOWN imported-only people remain visible with their Universe identity",{skip:!URL},async()=>{
   const id=`shu618-${randomUUID()}`;ids.push(id);
   await pool.query("INSERT INTO principals(id,display_name,email) VALUES($1::text,$2::text,$3::text)",[id,"Imported Universe",`${id}@test.invalid`]);
-  await pool.query("INSERT INTO legacy_account_links(principal_id,legacy_candidate_id,linked_by_ref,method) VALUES($1::text,$2::text,$3::text,'staff')",[id,String(Date.now()).slice(-9),randomBytes(32).toString("hex")]);
+  await pool.query("INSERT INTO legacy_account_links(principal_id,legacy_candidate_id,linked_by_ref,method) VALUES($1::text,'987654321',$2::text,'staff')",[id,randomBytes(32).toString("hex")]);
   const result=await store.page({q:"imported",page:1},"2026-11-13");
   const row=result.rows.find(value=>value.principalId===id);
   assert.ok(row,"an imported snapshot must appear before a self-edit creates person_profiles");
@@ -90,7 +97,7 @@ test("DIRDB_FILTERS database filters all civil states, fields, paging, and stabl
   assert.equal((await store.page({q:"civilcase",nationality:country,page:1},"2026-11-13")).total,6,"nationality combines with q");
   assert.equal((await store.page({q:"civilcase",details:"complete",page:1},"2026-11-13")).total,5,"details filter combines with q and excludes the released civil record");
 
-  for(let index=0;index<27;index++)await person({name:`Paged ${String(index).padStart(2,"0")} Person`});
+  for(let index=0;index<27;index++)await person({name:`Paged ${String.fromCharCode(97+Math.floor(index/26))}${String.fromCharCode(97+index%26)} Person`});
   const ties=[await person({name:"Paged Tie Person"}),await person({name:"Paged Tie Person"})].sort();
   const first=await store.page({q:"paged",page:1},"2026-11-13"),second=await store.page({q:"paged",page:2},"2026-11-13"),past=await store.page({q:"paged",page:3},"2026-11-13");
   assert.equal(first.rows.length,25,"page size is 25");assert.equal(second.rows.length,4);assert.deepEqual(past,{rows:[],total:29},"past-end page retains true total");
@@ -131,9 +138,12 @@ test("DIRDB_DETAILS every SQL-covered requirement contributes exactly one missin
 
 test("DIRDB_SHOWN database row contains the bounded staff projection",{skip:!URL},async()=>{
   const country=await catalogue("country","Shown Country","US"),id=await completePerson("Shown Person",{status:"open_to_offers",nationality:country,phone:"+96550001234"});
+  const reviewer=`shu618-shown-reviewer-${randomUUID()}`;ids.push(reviewer);
+  await pool.query("INSERT INTO principals(id) VALUES($1::text)",[reviewer]);
+  await pool.query("INSERT INTO civil_id_review_decisions(id,subject_principal_id,reviewer_principal_id,decision,reason,civil_revision,confirm_ref,decided_at) VALUES($1::uuid,$2::text,$3::text,'confirmed',NULL,1,$4::text,clock_timestamp())",[randomUUID(),id,reviewer,randomBytes(32).toString("hex")]);
   await pool.query("INSERT INTO legacy_account_links(principal_id,legacy_candidate_id,linked_by_ref,method) VALUES($1::text,'618',$2::text,'staff')",[id,randomBytes(32).toString("hex")]);
   const row=(await store.page({q:"shown",page:1},"2026-11-13")).rows.find(value=>value.principalId===id);assert.ok(row);
-  assert.deepEqual(row,{principalId:id,name:"Shown Person Person",universeName:"Universe Shown Person",arabicName:"اسم كامل",workStatus:"open_to_offers",nationality:{id:country,name:"Shown Country"},detailsMissing:0,civilState:"recorded",imported:true,employeeId:"C00618",phoneLast4:"1234"},"row shows every allowed field and only the phone's final four digits");
+  assert.deepEqual(row,{principalId:id,name:"Shown Person Person",universeName:"Universe Shown Person",arabicName:"اسم كامل",workStatus:"open_to_offers",nationality:{id:country,name:"Shown Country"},detailsMissing:0,civilState:"checked",imported:true,employeeId:"C00618",phoneLast4:"1234"},"row shows every allowed field including the civil decision and only the phone's final four digits");
 });
 
 test("DIRDB_ONE migration creates only the required directory indexes",{skip:!URL},async()=>{

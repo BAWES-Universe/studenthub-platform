@@ -5,7 +5,7 @@ type DirectoryQuery = { q?: string; status?: "not_looking"|"active"|"open_to_off
 type ClassifiedSearch = { employeeId:string|null; phone:string|null; phoneSuffix:string|null; handle:string|null; nameTokens:readonly string[] };
 type DirectoryRow = {principalId:string;name:string|null;universeName:string|null;arabicName:string|null;workStatus:"not_looking"|"active"|"open_to_offers"|null;nationality:{id:string;name:string}|null;detailsMissing:number;civilState:"none"|"waiting"|"rejected"|"expired"|"checked"|"recorded";imported:boolean;employeeId:string|null;phoneLast4:string|null};
 
-const classify = async (q: string): Promise<ClassifiedSearch> => {
+export const classifyPeopleDirectorySearch = (q: string): ClassifiedSearch => {
   // The profile package is built after db, so keep this package acyclic while using the identical closed classifier rules.
   const digit = (c:string) => /[0-9]/.test(c) ? c : /[\u0660-\u0669]/.test(c) ? String(c.charCodeAt(0)-0x0660) : /[\u06f0-\u06f9]/.test(c) ? String(c.charCodeAt(0)-0x06f0) : c;
   const text=q.trim().normalize("NFC"), employee=/^c0*([1-9][0-9]*)$/i.exec(text), converted=text.replace(/[\u0660-\u0669\u06f0-\u06f9]/g,digit);
@@ -57,7 +57,7 @@ WITH source AS (
    OR ($5::text IS NOT NULL AND (s.principal_id IN (SELECT principal_id FROM person_profiles WHERE to_tsvector('simple',coalesce(display_name,'')||' '||coalesce(arabic_name,'')) @@ to_tsquery('simple',$5::text))
      OR s.principal_id IN (SELECT id FROM principals WHERE to_tsvector('simple',coalesce(display_name,'')) @@ to_tsquery('simple',$5::text)))))
   AND ($6::text IS NULL OR ($6::text='unset' AND s.work_status IS NULL) OR s.work_status=$6::text)
-  AND ($7::uuid IS NULL OR s.nationality_id=$7::uuid::text) AND ($8::text IS NULL OR s.civil_state=$8::text)
+  AND ($7::uuid IS NULL OR s.principal_id IN (SELECT principal_id FROM person_profiles WHERE nationality_id=$7::uuid)) AND ($8::text IS NULL OR s.civil_state=$8::text)
   AND ($9::text IS NULL OR ($9::text='complete' AND s.details_missing=0) OR ($9::text='missing' AND s.details_missing>0))
 ), page_rows AS (
  SELECT * FROM filtered ORDER BY lower(coalesce(name,universe_name,'')) COLLATE "C",principal_id LIMIT 25 OFFSET $10::integer
@@ -71,7 +71,7 @@ export class PostgresPeopleDirectoryStore {
   constructor(options:{pool?:pg.Pool;connectionString?:string}){this.#owns=!options.pool;this.#pool=options.pool??new pg.Pool({connectionString:options.connectionString??databaseUrl()});}
   async close(){if(this.#owns)await this.#pool.end();}
   async page(query:DirectoryQuery,today:string):Promise<{rows:DirectoryRow[];total:number}>{
-    const c=query.q===undefined?null:await classify(query.q), ts=c&&c.nameTokens.length?c.nameTokens.map(token=>`${token}:*`).join(" & "):null;
+    const c=query.q===undefined?null:classifyPeopleDirectorySearch(query.q), ts=c&&c.nameTokens.length?c.nameTokens.map(token=>`${token}:*`).join(" & "):null;
     const searchAbsent=query.q===undefined?null:"";
     const result=await this.#pool.query<{total:number;rows:Array<Record<string,unknown>>}>(SQL,[c?.employeeId??searchAbsent,c?.phone??null,c?.phoneSuffix??null,c?.handle??null,ts,query.status??null,query.nationality??null,query.civil??null,query.details??null,Math.max(0,query.page-1)*25,today]);
     return {rows:(result.rows[0]?.rows??[]) as DirectoryRow[],total:result.rows[0]?.total??0};
