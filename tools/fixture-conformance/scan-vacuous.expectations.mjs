@@ -1,7 +1,7 @@
 // SHU-63 fixture — declared acceptance oracle for the `scanVacuousTests` contract.
 //
 // Each row states the report the helper MUST produce for `src`, per the contract
-// documented in tools/fixture/scan-vacuous.mjs (lines 19-22): a body is VACUOUS
+// documented in tools/fixture/scan-vacuous.mjs (lines 6-17): a body is VACUOUS
 // when no assertion CALL appears inside it, where an assertion call is
 // `expect(...)`, a node:assert call, a node:test context assertion, or a `throw`
 // statement.
@@ -45,7 +45,7 @@ export const EXPECTATIONS = Object.freeze([
   {
     name: "a body whose assertion is mentioned only inside a string literal",
     src: 'test("stub", () => { const s = "assert.equal(1, 2)"; });',
-    expected: [],
+    expected: ["stub"],
   },
   {
     name: "a body whose assertion is mentioned only inside a template literal",
