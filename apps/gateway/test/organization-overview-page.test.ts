@@ -101,7 +101,7 @@ test("OVW_ESCAPE company names are escaped", async (t) => {
 
 test("OVW_DEGRADE unavailable data is a notice and failures are plain 503 pages", async (t) => {
   const noticeResponse = await (await fixture(t, { unavailable: true })).get("/organization/org-a");
-  assert.equal(noticeResponse.status, 200); const notice = await noticeResponse.text();
+  assert.equal(noticeResponse.status, 200, "OVW_DEGRADE unavailable is a notice"); const notice = await noticeResponse.text();
   assert.match(notice, /Company details couldn’t be loaded\./, "OVW_DEGRADE unavailable is a notice"); assert.doesNotMatch(notice, /profile-fields/);
   const response = await (await fixture(t, { throwing: true })).get("/organization/org-a"); const body = await response.text();
   assert.equal(response.status, 503); assert.doesNotMatch(body, /private navigation detail|Error:/);
@@ -114,11 +114,18 @@ test("OVW_PASSTHROUGH reserved and nested organization routes pass through", asy
   const fallback = '{"ok":false,"error":"not_found"}';
   const post = await f.request("/organization/org-a", true, "POST");
   assert.equal(post.status, 404); assert.equal(await post.text(), fallback, "OVW_PASSTHROUGH POST /organization/org-a bytes");
-  for (const path of ["/organization/create", "/organization/assigned-companies", "/organization/onboarding", "/organization/org-a/edit", "/organization/org-a/stores"]) {
+  const passthroughs = [
+    ["/organization/create", 503, '{"error":"organization_creation_unavailable"}'],
+    ["/organization/assigned-companies", 503, '{"error":"unavailable"}'],
+    ["/organization/onboarding", 404, fallback],
+    ["/organization/org-a/edit", 404, fallback],
+    ["/organization/org-a/stores", 404, fallback],
+  ] as const;
+  for (const [path, status, expectedBody] of passthroughs) {
     const response = await f.get(path); const body = await response.text();
     assert.equal(calls.length, 0, `OVW_PASSTHROUGH ${path}`);
-    assert.equal(response.status, 404, `OVW_PASSTHROUGH ${path} status`);
-    assert.equal(body, fallback, `OVW_PASSTHROUGH ${path} bytes`);
+    assert.equal(response.status, status, `OVW_PASSTHROUGH ${path} status`);
+    assert.equal(body, expectedBody, `OVW_PASSTHROUGH ${path} bytes`);
   }
   const work = await f.get("/organization/org-a/work"); const workBody = await work.text();
   assert.equal(calls.length, 0, "OVW_PASSTHROUGH work bypasses overview navigation");
