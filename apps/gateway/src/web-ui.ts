@@ -336,7 +336,16 @@ function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): str
   }
   const observed = field.freshness.observedAt.slice(0, 10);
   const source = field.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`;
-  return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">${source}</small></div>`;
+  return fieldRowHtml(contract.label, field, fieldFormatters[name] ?? String, source);
+}
+
+function fieldRowHtml(
+  label: string,
+  field: ProfileField<unknown>,
+  formatter: (value: unknown) => string,
+  source: string,
+): string {
+  return `<div><dt>${escapeHtml(label)}</dt><dd>${fieldText(field, formatter)}</dd><small class="field-meta">${source}</small></div>`;
 }
 
 export async function profileDocument(result: BrowserResponse, login: BrowserLoginApplication): Promise<{ status: number; html: string }> {
@@ -372,10 +381,15 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const selectedCountry = profile.choices?.countries.find(item => item.id === profile.selectedChoiceIds?.nationality);
   if (selectedCountry?.code !== "KW" && (profile.kuwaitiMother !== undefined || selectedCountry !== undefined)) {
     const mother = profile.kuwaitiMother;
-    const shown = mother ? fieldText(mother, value => value ? "Yes" : "No") : '<span class="missing" data-state="unavailable">Not recorded</span>';
+    const displayedMother = mother ?? ({
+      state: "unavailable", reason: "not_recorded",
+      provenance: profile.fields.nationality.provenance,
+      freshness: profile.fields.nationality.freshness,
+    } as ProfileField<unknown>);
     const value = mother?.state === "available" ? String(mother.value) : "";
     const form = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<label><input type="radio" name="value" value="true"${value === "true" ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false"${value === "false" ? " checked" : ""}>No</label><label><input type="radio" name="value" value=""${value === "" ? " checked" : ""}>Not recorded</label></label><button class="button primary" type="submit">Review change</button></form>` : "";
-    rows += `<div><dt>Kuwaiti mother</dt><dd>${shown}</dd><small class="field-meta">${mother?.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0, 10))}` : "Not recorded"}</small>${form}</div>`;
+    const source = mother?.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(mother.freshness.observedAt.slice(0, 10))}` : "Not recorded";
+    rows += fieldRowHtml("Kuwaiti mother", displayedMother, value => value ? "Yes" : "No", source).replace("</div>", `${form}</div>`);
   }
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
