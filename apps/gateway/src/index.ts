@@ -374,8 +374,12 @@ export function createGatewayServer(
       }
       if (html) {
         try {
+          let civilIdSuggestion;
+          if (result.status===200 && login.civilIdSuggestion && typeof result.body?.personId==="string" && url.searchParams.get("person_id")===null) {
+            try { civilIdSuggestion=await login.civilIdSuggestion.current(result.body.personId); } catch { civilIdSuggestion=undefined; }
+          }
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, civilIdSuggestion);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
