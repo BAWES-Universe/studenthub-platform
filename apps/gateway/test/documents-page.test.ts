@@ -15,6 +15,7 @@ import { createLoginApplication } from '../src/login-application.js';
 import { createGatewayServer } from '../src/index.js';
 import type { BrowserLoginApplication } from '../src/web-ui.js';
 import { handleCandidateDocuments } from '../src/candidate-documents-http.js';
+import { handleDocumentsActions } from '../src/documents-actions-http.js';
 const { handleDocumentsPage, documentsPage } = await import(process.env.SHU366_PAGE_MODULE ?? '../src/documents-page.js');
 const SESSION = 's'.repeat(43), OTHER = 'o'.repeat(43), origin = 'https://documents.test.invalid';
 async function rig(t: TestContext, language = 'en') {
@@ -25,14 +26,15 @@ async function rig(t: TestContext, language = 'en') {
   const loginRig = createSyntheticLoginRig(createLoginApplication);
   await loginRig.sessions.put({ id: SESSION, personId: 'person-1' });
   await loginRig.sessions.put({ id: OTHER, personId: 'person-2' });
-  let transactions = 0, lists = 0, deliveries = 0, broken = false, profileBroken = false;
+  let transactions = 0, lists = 0, deliveries = 0, broken = false, profileBroken = false, deliveryBroken = false;
   const now = 1_800_000_000_000;
   const service = new CandidateDocuments({ store: { transaction: fn => { transactions++; if (broken) throw new Error('RAW_ERROR private/key https://delivery.invalid?token=secret'); return disk.transaction(fn); } }, authz, origin, orgId: 'org-a', signingKey: randomBytes(32), now: () => now, authenticate: async credential => {
     const session = await loginRig.sessions.get(credential); return session ? { kind: 'principal', principalId: session.personId } : null;
   } });
   const originalList = service.list.bind(service);
   service.list = async credential => { lists++; return originalList(credential); };
-  service.issueDelivery = async () => { deliveries++; throw new Error('Unexpected delivery'); };
+  const originalIssueDelivery = service.issueDelivery.bind(service);
+  service.issueDelivery = async (credential, id) => { deliveries++; if (deliveryBroken) throw new Error('Unexpected delivery'); return originalIssueDelivery(credential, id); };
   const repository = new OwnProfileRepository({ principals: authz, source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnPreferences() { return { language: language === 'ar' ? 'ar' : 'en', updatedAt: '2026-11-05T00:00:00Z' }; } } });
   const profileReads: unknown[] = [], sessionReads: unknown[] = [];
   const login: BrowserLoginApplication = { ...loginRig.app, profile: async request => { sessionReads.push(request); return loginRig.app.profile(request); }, web: { origin, returnTo: `${origin}/profile`, profiles: { async readOwn(request) { profileReads.push(request); if (profileBroken) throw new Error('RAW_PROFILE_ERROR'); return repository.readOwn(request); } } } };
@@ -40,6 +42,7 @@ async function rig(t: TestContext, language = 'en') {
   const server = createServer(async (request, response) => {
     // Dynamic module seam exercises the genuine page mutant, not a duplicate renderer.
     if (await handleDocumentsPage(request, response, configured ? service : undefined, login)) return;
+    if (await handleDocumentsActions(request, response, configured ? service : undefined, login)) return;
     if (await handleCandidateDocuments(request, response, configured ? service : undefined, login)) return;
     response.writeHead(404); response.end();
   });
@@ -48,7 +51,8 @@ async function rig(t: TestContext, language = 'en') {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const url = `http://127.0.0.1:${address.port}`;
   const get = (path = '/profile/documents', session: string | undefined = SESSION, accept = 'text/html') => fetch(url + path, { headers: { accept, ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}) } });
-  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), unconfigure: () => { configured = false; }, missOrganization: () => { (service.options as { orgId: string }).orgId = 'missing-org'; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
+  const post = (path: string, body = '', session = SESSION, requestOrigin = origin) => fetch(url + path, { method: 'POST', redirect: 'manual', headers: { accept: 'text/html', cookie: `__Host-studenthub_session=${session}`, origin: requestOrigin, 'content-type': 'application/x-www-form-urlencoded' }, body });
+  return { service, login, loginRig, disk, authz, url, get, post, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), unconfigure: () => { configured = false; }, missOrganization: () => { (service.options as { orgId: string }).orgId = 'missing-org'; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; }, breakDelivery: () => { deliveryBroken = true; } };
 }
 function pdf(): Buffer {
   let text = '%PDF-1.4\n'; const offsets: number[] = [];
@@ -57,9 +61,10 @@ function pdf(): Buffer {
   text += `xref\n0 4\n0000000000 65535 f \n${offsets.map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(text);
 }
-async function finalize(f: Awaited<ReturnType<typeof rig>>, session = SESSION) {
-  const bytes = pdf();
-  const authorized = await f.service.authorizeUpload(session, f.key(), { type: 'resume', mime: 'application/pdf', size: bytes.length, expectedVersion: null });
+async function finalize(f: Awaited<ReturnType<typeof rig>>, session = SESSION, type: 'resume'|'personal-photo' = 'resume') {
+  const bytes = type === 'resume' ? pdf() : Buffer.from('\x89PNG\r\n\x1a\nphoto');
+  const expectedVersion = (await f.service.list(session)).find(row => row.type === type)?.version ?? null;
+  const authorized = await f.service.authorizeUpload(session, f.key(), { type, mime: type === 'resume' ? 'application/pdf' : 'image/png', size: bytes.length, expectedVersion });
   const ticket = authorized.body as { uploadId: string; objectKey: string; credential: string };
   assert.equal(authorized.status, 201);
   assert.equal((await f.service.put(session, f.key(), ticket.uploadId, ticket.objectKey, ticket.credential, bytes)).status, 204);
@@ -83,6 +88,9 @@ test('SHU366_PAGE finalized file appears once with closed slots and one list', a
   assert.equal((html.match(/<form method="post" enctype="multipart\/form-data"/g) ?? []).length, 4);
   assert.equal((html.match(/<input type="file" name="file"/g) ?? []).length, 4);
   assert.equal((html.match(/<input type="hidden" name="submission"/g) ?? []).length, 4);
+  assert.equal((html.match(/href="\/profile\/documents\/resume\/remove"/g) ?? []).length, 1);
+  assert.equal((html.match(/action="\/profile\/documents\/resume\/view"/g) ?? []).length, 1);
+  for (const type of ['personal-photo', 'civil-id-front', 'civil-id-back']) assert.doesNotMatch(html, new RegExp(`/profile/documents/${type}/(?:remove|view)`));
   assert.match(html, /lang="en" dir="ltr"/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(response.headers.get('content-security-policy')!, /default-src 'none'/);
@@ -199,4 +207,95 @@ test('SHU366_PAGE concurrent revocation at primitive authentication is sign-in40
   assert.equal(calls, 3, 'revocation reaches the non-empty-list primitive authentication');
   assert.equal(response.status, 401);
   assert.match(await response.text(), /Sign in to view your documents/);
+});
+
+const hidden = (html: string, name: string) => {
+  const value = new RegExp(`name="${name}" value="([^"]+)"`).exec(html)?.[1];
+  assert.ok(value, `${name} is present`); return value;
+};
+
+test('Q14_2_REMOVE real lifecycle confirms, removes once, renders empty and holds bytes', async t => {
+  const f = await rig(t); await finalize(f);
+  const beforeConfirm = f.counts();
+  const confirm = await f.get('/profile/documents/resume/remove'); const confirmHtml = await confirm.text();
+  assert.equal(confirm.status, 200); assert.match(confirmHtml, /Remove your CV\?/); assert.match(confirmHtml, /href="\/profile\/documents">Cancel/);
+  assert.equal(f.counts().lists - beforeConfirm.lists, 1); assert.equal(f.counts().deliveries, beforeConfirm.deliveries);
+  const stateBefore = await f.disk.transaction(async state => structuredClone(state));
+  for (const row of stateBefore.documents) { assert.doesNotMatch(confirmHtml, new RegExp(`${row.id}|${row.version}`)); }
+  const body = new URLSearchParams({ stamp: hidden(confirmHtml, 'stamp'), submission: hidden(confirmHtml, 'submission') }).toString();
+  const beforePost = f.counts(); const removed = await f.post('/profile/documents/resume/remove', body);
+  assert.equal(removed.status, 303); assert.equal(removed.headers.get('location'), '/profile/documents'); assert.equal(f.counts().lists - beforePost.lists, 1);
+  const replay = await f.post('/profile/documents/resume/remove', body); assert.equal(replay.status, 409);
+  const page = await f.get(); const html = await page.text(); assert.match(html, /id="document-resume"[^]*?<strong>Not uploaded<\/strong>/);
+  const state = await f.disk.transaction(async value => value);
+  assert.equal(state.documents.length, 0); assert.equal(state.retired.length, 1); assert.equal(state.lifecycle?.cleanup.length, 1);
+  assert.equal(state.lifecycle?.cleanup[0]?.status, 'held'); assert.equal(state.lifecycle?.audit.filter(row => row.operation === 'remove').length, 1);
+  assert.deepEqual(await f.service.cleanup(), { held: 1, deleted: 0 });
+});
+
+test('Q14_2_REMOVE stale, empty, other-slot and other-person stamps remove nothing', async t => {
+  const f = await rig(t); await finalize(f);
+  const confirmHtml = await (await f.get('/profile/documents/resume/remove')).text();
+  const originalStamp = hidden(confirmHtml, 'stamp'), submission = hidden(confirmHtml, 'submission');
+  await finalize(f, SESSION, 'resume');
+  for (const [path, stamp] of [['/profile/documents/resume/remove', originalStamp], ['/profile/documents/personal-photo/remove', originalStamp]]) {
+    const response = await f.post(path, new URLSearchParams({ stamp, submission }).toString());
+    assert.equal(response.status, 409); assert.match(await response.text(), /Back to My documents/);
+  }
+  const other = await finalize(f, OTHER); const otherRow = (other.result.body as {metadata:{version:string}}).metadata;
+  const otherService = f.service;
+  const otherConfirm = await f.get('/profile/documents/resume/remove', OTHER); const otherHtml = await otherConfirm.text();
+  const response = await f.post('/profile/documents/resume/remove', new URLSearchParams({ stamp: hidden(otherHtml, 'stamp'), submission: hidden(otherHtml, 'submission') }).toString(), SESSION);
+  assert.equal(response.status, 409); assert.ok(otherRow.version); assert.equal((await otherService.list(SESSION)).length, 1);
+  const empty = await f.get('/profile/documents/personal-photo/remove'); assert.equal(empty.status, 409);
+  const state = await f.disk.transaction(async value => value); assert.equal(state.lifecycle?.audit.filter(row => row.operation === 'remove').length ?? 0, 0);
+});
+
+test('Q14_2_VIEW real delivery redirect serves owner bytes and refuses another person', async t => {
+  const f = await rig(t); const uploaded = await finalize(f);
+  const pageBefore = f.counts(); await f.get(); assert.equal(f.counts().deliveries, pageBefore.deliveries);
+  const confirm = await f.get('/profile/documents/resume/remove'); await confirm.text(); assert.equal(f.counts().deliveries, pageBefore.deliveries);
+  const before = f.counts(); const viewed = await f.post('/profile/documents/resume/view');
+  assert.equal(viewed.status, 303); assert.equal(f.counts().lists - before.lists, 1); assert.equal(f.counts().deliveries - before.deliveries, 1);
+  const location = viewed.headers.get('location'); assert.ok(location?.startsWith(`${origin}/private-documents/delivery?t=`)); if (!location) throw new Error('missing delivery location');
+  const path = new URL(location).pathname + new URL(location).search;
+  const owner = await f.get(path); assert.equal(owner.status, 200); assert.deepEqual(Buffer.from(await owner.arrayBuffer()), uploaded.bytes);
+  assert.equal(owner.headers.get('content-disposition')?.startsWith('attachment'), true); assert.equal((await f.get(path, OTHER)).status, 403);
+  assert.equal((await f.get('/profile/documents/resume/view')).status, 404);
+  assert.equal((await f.post('/profile/documents/personal-photo/view')).headers.get('location'), '/profile/documents');
+});
+
+test('Q14_2_OWNER action authentication, origin and slot checks precede document reads', async t => {
+  const f = await rig(t); const before = f.counts();
+  assert.equal((await f.get('/profile/documents/resume/remove', undefined)).status, 401);
+  assert.equal((await f.post('/profile/documents/resume/view', '', SESSION, 'https://wrong.invalid')).status, 403);
+  assert.equal((await f.post('/profile/documents/not-a-slot/view')).status, 404);
+  assert.deepEqual(f.counts(), before);
+});
+
+test('Q14_2_AVATAR and Q14_2_SHOWN real profile is best effort, negotiated, no-store and JSON-clean', async t => {
+  const f = await rig(t); const start = async () => { const server = createGatewayServer(undefined, undefined, undefined, f.login, null, undefined, f.service); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => { server.closeAllConnections(); server.close(); }); const address = server.address(); assert.ok(address && typeof address !== 'string'); return `http://127.0.0.1:${address.port}`; };
+  const gateway = await start(), headers = { cookie: `__Host-studenthub_session=${SESSION}`, accept: 'text/html' };
+  const initial = await fetch(gateway + '/profile', { headers }); const initialHtml = await initial.text();
+  const monogram = '<div class="p-monogram" aria-hidden="true">Y</div>';
+  assert.equal(initial.status, 200); assert.ok(initialHtml.includes(monogram)); assert.equal(initial.headers.get('cache-control'), 'no-store');
+  await finalize(f, SESSION, 'personal-photo'); const before = f.counts();
+  const photo = await fetch(gateway + '/profile', { headers }); const photoHtml = await photo.text();
+  assert.equal(photo.status, 200); assert.match(photoHtml, /<img class="p-monogram" src="https:\/\/documents\.test\.invalid\/private-documents\/delivery\?t=[^"]+" alt="">/);
+  assert.equal(f.counts().lists - before.lists, 1); assert.equal(f.counts().deliveries - before.deliveries, 1);
+  for (const accept of ['application/json,text/html', 'text/html;q=0']) {
+    const counts = f.counts(); const json = await fetch(gateway + '/profile', { headers: { ...headers, accept } }); const body = await json.text();
+    assert.equal(json.status, 200); assert.doesNotMatch(body, /private-documents\/delivery|https:\/\/documents\.test\.invalid/); assert.deepEqual(f.counts(), counts);
+  }
+  const confirmHtml = await (await f.get('/profile/documents/personal-photo/remove')).text();
+  const removal = await f.post('/profile/documents/personal-photo/remove', new URLSearchParams({ stamp: hidden(confirmHtml, 'stamp'), submission: hidden(confirmHtml, 'submission') }).toString());
+  assert.equal(removal.status, 303); assert.match(await (await f.get()).text(), /id="document-personal-photo"[^]*?<strong>Not uploaded<\/strong>/);
+  const afterRemoval = await fetch(gateway + '/profile', { headers }); assert.equal(afterRemoval.status, 200); assert.ok((await afterRemoval.text()).includes(monogram));
+  await finalize(f, SESSION, 'personal-photo'); const afterUpload = await fetch(gateway + '/profile', { headers }); assert.equal(afterUpload.status, 200); assert.match(await afterUpload.text(), /<img class="p-monogram"/);
+  f.breakDelivery(); const fallback = await fetch(gateway + '/profile', { headers }); assert.equal(fallback.status, 200); assert.ok((await fallback.text()).includes(monogram));
+  f.breakStore(); const listFallback = await fetch(gateway + '/profile', { headers }); assert.equal(listFallback.status, 200); assert.ok((await listFallback.text()).includes(monogram));
+  const absentServer = createGatewayServer(undefined, undefined, undefined, f.login, null);
+  await new Promise<void>(resolve => absentServer.listen(0, '127.0.0.1', resolve)); t.after(() => { absentServer.closeAllConnections(); absentServer.close(); });
+  const absentAddress = absentServer.address(); assert.ok(absentAddress && typeof absentAddress !== 'string');
+  const absent = await fetch(`http://127.0.0.1:${absentAddress.port}/profile`, { headers }); assert.equal(absent.status, 200); assert.ok((await absent.text()).includes(monogram));
 });
