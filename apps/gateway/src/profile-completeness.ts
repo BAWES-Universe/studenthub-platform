@@ -26,16 +26,15 @@ export async function prepareProfileCompleteness(request: IncomingMessage, respo
     const ownerId = (await records.sessions.get(session))?.personId;
     const avatar = currentProfileAvatar();
     if (!ownerId || !avatar) throw new Error("completeness unavailable");
-    const [principal, background, civil, choices] = await Promise.all([
-      authz.store.getPrincipal(ownerId), records.service.background(ownerId), login.civilId.readOwn(ownerId), login.profileEdit.choices(),
+    const [principal, background, choices] = await Promise.all([
+      authz.store.getPrincipal(ownerId), records.service.background(ownerId), login.profileEdit.choices(),
     ]);
     if (!principal) throw new Error("completeness unavailable");
     const countries = choices.countries.map(country => ({ id: country.id, code: country.code, name: country.name })) as readonly Country[];
     reads.set(request, { choices: { countries, universities: choices.universities }, principal, evidence: {
       emailPresent: typeof principal.email === "string" && principal.email.trim().length > 0,
       documents: avatar.documents, hasEducation: background.education.length > 0, hasSkill: background.skill.length > 0,
-      civilIdRecorded: civil?.maskedNumber !== null && civil?.maskedNumber !== undefined,
-      civilExpiryRecorded: civil?.expiry !== null && civil?.expiry !== undefined, countries,
+      countries,
     } });
   } catch { reads.set(request, {}); }
 }

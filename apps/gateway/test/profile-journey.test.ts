@@ -6,7 +6,9 @@ import { OWN_PROFILE_FIELD_NAMES, OWN_PROFILE_VERSION, PROFILE_PARITY_REVISION, 
 import { PROFILE_COPY, type ProfileLanguage } from "../src/ui/profile-copy.js";
 import { PROFILE_KIT_CSS } from "../src/ui/profile-kit.js";
 import { createGatewayServer } from "../src/index.js";
-import { profileDocument, pageDocument, renderLanding, renderError, renderWorkspace, renderCompanyDirectory, type BrowserLoginApplication } from "../src/web-ui.js";
+import type { BrowserLoginApplication } from "../src/web-ui.js";
+const webUi=await import(process.env.SHU570_WEB_UI_MODULE??"../src/web-ui.js");
+const {profileDocument,pageDocument,renderLanding,renderError,renderWorkspace,renderCompanyDirectory}=webUi;
 
 const country = "22222222-2222-4222-8222-222222222222";
 function fixture(language: ProfileLanguage, empty = false): OwnProfileProjection {
@@ -27,6 +29,29 @@ function fixture(language: ProfileLanguage, empty = false): OwnProfileProjection
 }
 const login = {browserEdit:{},profileEdit:{async choices(){return {countries:[{id:country,name:"Jordan",code:"JO"}],universities:[]};}},preferences:{},navigation:{}} as unknown as BrowserLoginApplication;
 const render = (language: ProfileLanguage, empty = false) => profileDocument({status:200,body:fixture(language,empty)},login);
+
+test("Q14_4_CHECKLIST each translated requirement carries its exact target in fixed order",async()=>{
+  const requirements=["nationality","display_name","arabic_name","gender","objective","personal_photo","email","phone","birth_date","civil_id","civil_expiry","civil_front","civil_back","driving_licence","location","kuwaiti_mother","education","skill"] as const;
+  const targets:Readonly<Record<(typeof requirements)[number],string|undefined>>={nationality:"/profile/edit/nationality",display_name:"/profile/edit/displayName",arabic_name:"/profile/edit/arabicName",gender:"/profile/edit/gender",objective:"/profile/edit/objective",personal_photo:"/profile/documents",email:undefined,phone:"/profile/edit/phone",birth_date:"/profile/edit/birthDate",civil_id:"#field-civilId",civil_expiry:"#field-civilId",civil_front:"/profile/documents",civil_back:"/profile/documents",driving_licence:"/profile/edit/drivingLicence",location:"#field-area",kuwaiti_mother:"/profile/edit/kuwaitiMother",education:"/profile/background",skill:"/profile/background"};
+  for(const language of ["en","ar"] as const){const base=fixture(language),freshness={kind:"derived" as const,observedAt:"2026-11-10T00:00:00.000Z"},provenance=base.fields.pendingFields.provenance;
+    const fields={...base.fields,pendingFields:{state:"available" as const,value:requirements,provenance,freshness},isProfileCompleted:{state:"available" as const,value:false,provenance,freshness}};
+    const html=(await profileDocument({status:200,body:{...base,fields}},login)).html;
+    assert.ok(html.indexOf('id="profile-summary"')<html.indexOf('class="p-card p-checklist"'));
+    let previous=-1;for(const requirement of requirements){const words=PROFILE_COPY[language][`pending.${requirement}`];const target=targets[requirement];const item=target?`<li><a href="${target}">${words}</a>${requirement==="email"?` <span>${PROFILE_COPY[language]["profile.emailUniverse"]}</span>`:""}</li>`:`<li>${words}${requirement==="email"?` <span>${PROFILE_COPY[language]["profile.emailUniverse"]}</span>`:""}</li>`;const at=html.indexOf(item);assert.ok(at>previous,`${requirement} words and target`);previous=at;}
+  }
+});
+
+test("Q14_4_CHECKLIST imported completeness is never presented as a live complete check",async()=>{
+  const html=(await render("en")).html;assert.match(html,/Couldn&#39;t check right now/);assert.doesNotMatch(html,/class="p-card p-checklist"[^]*?<h2[^>]*>Profile complete/);
+});
+
+test("Q14_4_SHOWN complete, removed photo, then cleared name render only the changed requirements",async()=>{
+  const base=fixture("en"),freshness={kind:"derived" as const,observedAt:"2026-11-10T00:00:00.000Z"},provenance=base.fields.pendingFields.provenance;
+  const show=async(pending:readonly string[])=>{const fields={...base.fields,pendingFields:{state:"available" as const,value:pending,provenance,freshness},isProfileCompleted:{state:"available" as const,value:pending.length===0,provenance,freshness}};return(await profileDocument({status:200,body:{...base,fields} as never},login)).html;};
+  assert.match(await show([]),/<h2 id="profile-checklist">Profile complete<\/h2>/);
+  const photo=await show(["personal_photo"]);assert.match(photo,/<ul><li><a href="\/profile\/documents">Personal photo<\/a><\/li><\/ul>/);
+  const photoAndName=await show(["display_name","personal_photo"]);assert.match(photoAndName,/<ul><li><a href="\/profile\/edit\/displayName">Display name<\/a><\/li><li><a href="\/profile\/documents">Personal photo<\/a><\/li><\/ul>/);
+});
 
 function shell(html: string, language: ProfileLanguage) {
   assert.ok(html.includes(`<html lang="${language}" dir="${language === "ar" ? "rtl" : "ltr"}">`),"U3A_SHELL document locale");

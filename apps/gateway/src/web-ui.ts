@@ -351,7 +351,6 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const nationalityIsKuwaiti = originChoices.countries.some(item => item.id === nationalityId && item.code === "KW");
   const nationalityAllowsMother = originChoices.countries.some(item => item.id === nationalityId && item.code !== "KW");
   if (nationalityAllowsMother && !nationalityIsKuwaiti) editable.add("kuwaitiMother");
-  const hasWrites = Object.values(profile.fields).some(field => field.freshness.kind === "written_by_person");
   const hasImported = Object.values(profile.fields).some(field => field.freshness.kind === "imported_snapshot" && field.state === "available");
   const legacyLinkState = profile.legacyLinkState === "linked" ? "linked" : profile.legacyLinkState === "unlinked" ? "unlinked" : undefined;
   const legacyAccountMark = hasImported && login.legacyLink ? `<p class="p-notice">${copy("profile.legacyImported")}</p>` : "";
@@ -407,7 +406,8 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     if (requirement === "education" || requirement === "skill") return "/profile/background";
     return undefined;
   };
-  const checklist = profile.fields.pendingFields.state !== "available" || profile.fields.isProfileCompleted.state !== "available"
+  const derivedChecklist = profile.fields.pendingFields.freshness.kind === "derived" && profile.fields.isProfileCompleted.freshness.kind === "derived";
+  const checklist = !derivedChecklist || profile.fields.pendingFields.state !== "available" || profile.fields.isProfileCompleted.state !== "available"
     ? `<section class="p-card p-checklist" aria-labelledby="profile-checklist"><h2 id="profile-checklist">${copy("profile.checkFailed")}</h2></section>`
     : profile.fields.pendingFields.value.length === 0
       ? `<section class="p-card p-checklist" aria-labelledby="profile-checklist"><h2 id="profile-checklist">${copy("profile.complete")}</h2></section>`

@@ -11,9 +11,7 @@ export interface CompletenessEvidence {
   readonly documents: readonly { readonly type: string }[];
   readonly hasEducation: boolean;
   readonly hasSkill: boolean;
-  readonly civilIdRecorded: boolean;
-  readonly civilExpiryRecorded: boolean;
-  readonly countries: readonly { readonly id: string; readonly code: string }[];
+  readonly countries: readonly { readonly id: string; readonly code: string; readonly name?: string }[];
   readonly observedAt?: string;
 }
 
@@ -28,8 +26,10 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   const nationality = fields.nationality;
   let nationalityCode: string | undefined;
   if (nationality.state === "available") {
-    if (!nationality.editValue) throw new Error("nationality choice unavailable");
-    nationalityCode = evidence.countries.find(country => country.id === nationality.editValue)?.code;
+    const country = nationality.editValue
+      ? evidence.countries.find(item => item.id === nationality.editValue)
+      : evidence.countries.find(item => item.name === nationality.value);
+    nationalityCode = country?.code;
     if (!nationalityCode) throw new Error("nationality choice unavailable");
   }
   const documents = new Set(evidence.documents.map(document => document.type));
@@ -44,8 +44,9 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   require("email", evidence.emailPresent);
   require("phone", importedFallback("phone", present(fields.phone)));
   require("birth_date", present(fields.birthDate));
-  require("civil_id", importedFallback("civil_id", evidence.civilIdRecorded));
-  require("civil_expiry", importedFallback("civil_expiry", evidence.civilExpiryRecorded));
+  const civil = fields.civilId?.state === "available" ? fields.civilId.value : undefined;
+  require("civil_id", importedFallback("civil_id", civil?.maskedNumber != null));
+  require("civil_expiry", importedFallback("civil_expiry", civil?.expiry != null));
   require("civil_front", documents.has("civil-id-front"));
   require("civil_back", documents.has("civil-id-back"));
   require("driving_licence", present(fields.drivingLicence));
