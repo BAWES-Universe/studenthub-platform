@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, PERSON_PROFILE_MINIMUM_AGE, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -115,7 +115,7 @@ function error(write: ProfileEditPageWriter, status: number) { write(status, "Ed
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
   const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
   let message = `Enter a value that follows the rules for ${label.toLowerCase()}.`;
-  if (selected === "birthDate") { const valid = /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)); const today = new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kuwait",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); message = !valid ? "Enter a valid birth date." : value > today ? "Birth date cannot be in the future." : "You must be at least 16 years old."; }
+  if (selected === "birthDate") { const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)?.slice(1).map(Number); const parsed = parts ? new Date(Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!)) : undefined; const valid = !!parsed && parsed.getUTCFullYear() === parts![0] && parsed.getUTCMonth() === parts![1]! - 1 && parsed.getUTCDate() === parts![2]; const today = new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kuwait",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); message = !valid ? "Enter a valid birth date." : value > today ? "Birth date cannot be in the future." : `You need to be at least ${PERSON_PROFILE_MINIMUM_AGE} to complete a StudentHub profile`; }
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {

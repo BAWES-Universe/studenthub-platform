@@ -88,6 +88,8 @@ test("SHU373_PAGE each profile control is in its own form and choices are read o
   assert.equal(writtenReads,1);assert.equal(catalogueReads,1);
   for(const [label,needle] of [["Gender",'type="radio" name="value" value="male"'],["Birth date",'type="date" name="value"'],["Nationality",`<option value="${country}" selected>Jordan`],["University",`<option value="${university}" selected>Approved University`],["Driving licence",'type="radio" name="value" value="true"'],["Kuwaiti mother",'name="field" value="kuwaitiMother"'],["Looking for work",'type="radio" name="value" value="active"']] as const){const form=html.match(new RegExp(`<form[^>]*aria-label="Change ${label}"[\\s\\S]*?</form>`))?.[0]??"";assert.match(form,new RegExp(needle));}
   assert.match(html,/>None<\/option><option value="">Not listed<\/option>/);assert.match(html,/Staff add new universities/);assert.match(html,/<dt>Kuwaiti mother<\/dt><dd>No<\/dd>/);
+  assert.match(html,/<div class="notice" data-profile-work-status><strong>Looking for work: Actively looking<\/strong><\/div><dl class="profile-fields">/);
+  assert.doesNotMatch(html,/<dl class="profile-fields">[\s\S]*?<p>Not listed\? Staff add new universities\.<\/p>/);
 });
 
 test("landing is public HTML with an exact configured login link and no profile reads", async (t) => {
