@@ -2,7 +2,7 @@ import {
   listEffectiveContexts, resolveActiveContext, type AuthzStore, type Role,
 } from "@studenthub/contracts";
 import type { SessionStore } from "@studenthub/login-contract";
-import type { OrganizationAccountManagerEventRow, OrganizationCounts, OrganizationDeletionRecords, OrganizationReader, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
+import type { OrganizationAccountManagerEventRow, OrganizationCounts, OrganizationDeletionRecords, OrganizationReader, OrganizationStatusEventRow, OrganizationView, SubOrganizationSummary } from "@studenthub/organizations";
 
 /** Only public display fields for contexts belonging to the signed-in person. */
 export interface WorkspaceContext {
@@ -27,6 +27,8 @@ export type OrganizationCountsPanel =
 export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null|{readonly kind:"unavailable"};
 export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>;history?(principalId:string,orgId:string):Promise<readonly OrganizationAccountManagerEventRow[]|null>}
 export type OrganizationAccountManagerHistoryPanel=readonly OrganizationAccountManagerEventRow[]|{readonly kind:"unavailable";readonly length?:never};
+export type OrganizationStatusHistoryPanel=readonly OrganizationStatusEventRow[]|{readonly kind:"unavailable";readonly length?:never};
+export interface OrganizationStatusHistoryReader{history(principalId:string,orgId:string):Promise<readonly OrganizationStatusEventRow[]|null>}
 export type OrganizationReaderWithAccountManagers=OrganizationReader&{readonly accountManagers?:OrganizationAccountManagerReader};
 
 export type NavigationResult =
@@ -38,6 +40,7 @@ export type NavigationResult =
     readonly subOrganizations?: SubOrganizationsPanel;
     readonly accountManager?: OrganizationAccountManagerPanel;
     readonly accountManagerHistory?: OrganizationAccountManagerHistoryPanel;
+    readonly statusHistory?: OrganizationStatusHistoryPanel;
   } }
   | { readonly status: 400 | 401 | 403 | 503; readonly body: { readonly error: string } };
 
@@ -51,6 +54,7 @@ export function createContextNavigation(
   store: AuthzStore,
   organizationReader?: OrganizationReaderWithAccountManagers,
   deletions?: OrganizationDeletionRecords,
+  statusHistoryReader?: OrganizationStatusHistoryReader,
 ): ContextNavigation {
   return {
     async open(sessionId, selection) {
@@ -134,8 +138,13 @@ export function createContextNavigation(
           if(accountManagers.history)try { const history=await accountManagers.history(session.personId,active.orgId); if(history)accountManagerHistory=history.slice(0,5); }
           catch { accountManagerHistory={kind:"unavailable"}; }
         }
-        const shownOrganization=accountManager!==undefined||accountManagerHistory!==undefined?{...organization,...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{})}:organization;
-        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}) } };
+        let statusHistory:OrganizationStatusHistoryPanel|undefined;
+        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&statusHistoryReader){
+          try { const history=await statusHistoryReader.history(session.personId,active.orgId); if(history)statusHistory=history.slice(0,5); }
+          catch { statusHistory={kind:"unavailable"}; }
+        }
+        const shownOrganization=accountManager!==undefined||accountManagerHistory!==undefined||statusHistory!==undefined?{...organization,...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}),...(statusHistory!==undefined?{statusHistory}:{})}:organization;
+        return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}),...(statusHistory!==undefined?{statusHistory}:{}) } };
       } catch {
         return { status: 503, body: { error: "context_unavailable" } };
       }
