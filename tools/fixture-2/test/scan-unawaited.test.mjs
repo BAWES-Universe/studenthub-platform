@@ -22,3 +22,37 @@ test("SHU-254 fixture: reports a single-line source", () => {
     { line: 1, helper: "loadConfig" },
   ]);
 });
+
+test("SHU-254 fixture: ignores helper-shaped text inside string literals", () => {
+  assert.deepEqual(findUnawaitedCalls('"fetchJson()"'), []);
+  assert.deepEqual(findUnawaitedCalls("const s = 'it\\'s sendMail()';"), []);
+  assert.deepEqual(findUnawaitedCalls("const s = `loadConfig()`;"), []);
+});
+
+test("SHU-254 fixture: ignores trailing inline comments", () => {
+  assert.deepEqual(findUnawaitedCalls("const x = 1; // sendMail()"), []);
+  assert.deepEqual(findUnawaitedCalls("const x = 1; /* fetchJson() */"), []);
+});
+
+test("SHU-254 fixture: ignores calls inside a multi-line block comment", () => {
+  const src = "/*\n sendMail();\n*/\nconst b = 2;";
+  assert.deepEqual(findUnawaitedCalls(src), []);
+});
+
+test("SHU-254 fixture: accepts any spacing after await", () => {
+  assert.deepEqual(findUnawaitedCalls("await  loadConfig()"), []);
+  assert.deepEqual(findUnawaitedCalls("await\tsendMail(1);"), []);
+  assert.deepEqual(findUnawaitedCalls("await (fetchJson());"), []);
+});
+
+test("SHU-254 fixture: still reports real calls beside quoted and awaited text", () => {
+  assert.deepEqual(findUnawaitedCalls('log("fetchJson()"); sendMail(1);'), [
+    { line: 1, helper: "sendMail" },
+  ]);
+  assert.deepEqual(findUnawaitedCalls("await fetchJson(); fetchJson();"), [
+    { line: 1, helper: "fetchJson" },
+  ]);
+  assert.deepEqual(findUnawaitedCalls("const s = `x${loadConfig()}`;"), [
+    { line: 1, helper: "loadConfig" },
+  ]);
+});
