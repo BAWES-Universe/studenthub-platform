@@ -156,3 +156,29 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not treat unrelated member calls as test declarations", () => {
+  const source = [
+    'runner.test("method", () => { work(); });',
+    'runner . it("spaced-method", () => { work(); });',
+    'test("real", () => { work(); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
+
+test("does not mistake similarly named member calls for assertions", () => {
+  const source = [
+    'test("member-expect", () => { logger.expect(value); });',
+    'test("member-assert", () => { console.assert(value); });',
+    'test("member-throw", () => { object.throw; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["member-expect", "member-assert", "member-throw"],
+  );
+});

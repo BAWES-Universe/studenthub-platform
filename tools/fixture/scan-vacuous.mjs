@@ -18,7 +18,15 @@
 
 const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
-  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
+  /(?<![\w$.])(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|(?<![\w$.])throw\b/;
+
+function isBareTestCall(source, index) {
+  // A word boundary alone also finds member calls such as `runner.test(...)`.
+  // The contract covers the node:test globals, not arbitrary methods with the
+  // same names. Whitespace between a member operator and the method is valid,
+  // so inspect the previous non-whitespace character.
+  return source.slice(0, index).trimEnd().at(-1) !== ".";
+}
 
 function startsRegex(source, index) {
   const prefix = source.slice(0, index).trimEnd();
@@ -205,6 +213,7 @@ export function scanVacuousTests(fileText) {
   let match;
   while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
+    if (!isBareTestCall(searchableText, callIndex)) continue;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
