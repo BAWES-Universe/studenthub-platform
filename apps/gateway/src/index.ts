@@ -28,6 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
+import { handleProfileEditPage } from "./profile-edit-http.js";
 import { handleOrganizationProfile, type OrganizationProfile } from "./organization-profile.js";
 import { handleOrganizationStatus, type OrganizationStatus } from "./organization-status.js";
 import {handleOrganizationCommercialTerms,type OrganizationCommercialTerms} from "./organization-commercial-terms.js";
@@ -192,6 +193,7 @@ export function createGatewayServer(
         return field?.state === "available" ? field.value : undefined;
       })) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
+    if (await handleProfileEditPage(request,response,login?.profileEdit,login?.web?.origin,(status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body)))) return;
     if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,
       (login as BrowserLoginApplication & { organizationProfile?: OrganizationProfile } | undefined)?.organizationProfile,

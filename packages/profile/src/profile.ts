@@ -183,10 +183,13 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+type WrittenPreferences = Readonly<{ language?: unknown; updatedAt: string; displayName?: unknown; arabicName?: unknown;
+  objective?: unknown; intro?: unknown; preferredTime?: unknown }>;
+
+function applyPreferences(profile: OwnProfileProjection, preferences: WrittenPreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
-  try {
+  if (Object.hasOwn(preferences, "language")) try {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
       || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
@@ -198,6 +201,14 @@ function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
+  }
+  for (const [property, name] of [["displayName", "displayName"], ["arabicName", "arabicName"], ["objective", "objective"], ["intro", "intro"], ["preferredTime", "preferredTime"]] as const) {
+    if (!Object.hasOwn(preferences, property)) continue;
+    try {
+      fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preferences[property], profile.asOfDate) as never, preferences.updatedAt) as never;
+    } catch {
+      fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }) }) as never;
+    }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.

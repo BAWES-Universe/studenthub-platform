@@ -80,6 +80,8 @@ test("HTML negotiation is opt-in and preserves JSON defaults and preferences", (
   }
 });
 
+test("SHU372_PAGE My profile shows all five stored values with their edit controls",async(t)=>{const f=await fixture(t);Object.assign(f.login,{profileEdit:{preview:async()=>({status:400,body:{error:"unused"}}),confirm:async()=>({status:400,body:{error:"unused"}})}});const body=await(await fetch(`${f.url}/profile`,{headers:BROWSER})).text();for(const [field,value] of [["display_name","Noor Al-Sabah"],["arabic_name","نور الصباح"],["objective","Build welcoming customer experiences"],["intro","Student and part-time retail teammate."],["preferred_time","Weekday evenings"]]){assert.match(body,new RegExp(`/profile/edit/${field}/preview`));assert.ok(body.includes(String(value)),`${field} is shown`)}});
+
 test("landing is public HTML with an exact configured login link and no profile reads", async (t) => {
   const f = await fixture(t);
   const response = await fetch(`${f.url}/?return_to=https://attacker.invalid`, {
