@@ -28,6 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
+import { handleAdminAccess } from "./admin-access.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
 import { handleProfileBrowserEdit } from "./profile-browser-edit-http.js";
@@ -263,6 +264,8 @@ export function createGatewayServer(
       if(result.status===200){if(html)writeHtml(response,result.status,renderAdminJobs(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}
     }
 
+    if (await handleAdminAccess(request,response,login?.access,login?.web?.origin,html)) return;
+
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
       const selected = new URL(request.url, "http://gateway.invalid").searchParams;
       const orgId = selected.get("org_id"), role = selected.get("role");
@@ -420,7 +423,8 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);
+          const ownAccess = await login.access?.own(cookieValue(request.headers.cookie,"__Host-studenthub_session")) ?? [];
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, ownAccess);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

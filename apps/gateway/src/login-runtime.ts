@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { readLiveLoginSessionPerson, safeWritePrincipalRef } from "@studenthub/db";
+import { readLiveLoginSessionPerson, safeWritePrincipalRef, PostgresAccessStore } from "@studenthub/db";
 import { createProfileBrowserEdit } from "./profile-browser-edit-http.js";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
@@ -48,6 +48,7 @@ import {createOrganizationCreation}from"./organization-creation.js";
 import {createPayContracts}from"./pay-contracts-http.js";
 import { createBankDetails } from "./bank-details.js";
 import { createAdminJobs } from "./admin-jobs.js";
+import { createAdminAccess } from "./admin-access.js";
 import { createJobRegistry,writeJobAlert } from "../../../packages/observability/src/jobs.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 import { ExportService } from "../../../packages/exports/src/exports.js";
@@ -311,6 +312,7 @@ export function createRuntimeLoginFromEnv(
     store: authzStore, source: new UnconfiguredApprovedOrganizationAdapter(), statusRecords:organizationStatusStore,commercialTerms:organizationCommercialTermsStore,approvedToHire:organizationApprovedToHireStore,deletions:organizationDeletionStore,storeCounts:organizationStoresStore,accountManagers:organizationAccountManagerReads,profiles:organizationProfileReads,
   });
   const exportsStore=new PostgresExportsStore({connectionString:value("DATABASE_URL")});
+  const accessStore=new PostgresAccessStore({connectionString:value("DATABASE_URL")});
   const exportsService=new ExportService(exportsStore,[createCompanyDirectoryExport(organizations) as never]);
   return {
     application: {
@@ -319,6 +321,7 @@ export function createRuntimeLoginFromEnv(
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
       exports:createExportsHttp(loginStore.sessions,exportsService),
       ...({adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert))} as {}),
+      ...({access:createAdminAccess({sessions:loginStore.sessions,authz:authzStore,store:accessStore,...(safeWriteKey?{secret:safeWriteKey}:{})})} as {}),
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
@@ -390,7 +393,7 @@ export function createRuntimeLoginFromEnv(
     },
     async close() {
       await Promise.all([browserSessionPool?.end(), loginStore.close(), authzStore.close(), safeWrites?.close(), personProfiles?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
-        organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close(),jobRuns.close(),exportsStore.close()]);
+        organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close(),jobRuns.close(),exportsStore.close(),accessStore.close()]);
     },
   };
 }

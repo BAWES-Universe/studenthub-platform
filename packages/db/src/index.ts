@@ -49,4 +49,5 @@ export {PostgresOrganizationAccountManagerStore,ORGANIZATION_ACCOUNT_MANAGER_OPE
 export {PostgresOrganizationAccountManagerReads} from "./postgres-organization-account-manager-reads.js";
 export { PostgresPersonProfileStore, PersonProfileBrowserRetryableError, PERSON_PROFILE_FIELDS, type PersonProfileField, type PersonProfileBrowserOptions, type PersonProfileBrowserPrepared, type PersonProfileShownFallback, type PersonProfileSessionLiveness, type PersonProfileImportedFallback } from "./person-profile-store.js";
 export { PostgresJobRunsStore } from "./postgres-job-runs-store.js";
+export { PostgresAccessStore, type AccessPerson, type AccessGrantView, type OwnAccessGrantView } from "./postgres-access-store.js";
 export { PostgresExportsStore } from "./postgres-exports-store.js";

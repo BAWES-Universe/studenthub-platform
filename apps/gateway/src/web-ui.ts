@@ -25,6 +25,8 @@ import type { ActiveOrganization } from "./context-navigation.js";
 import type { CompanyDirectoryPage, CompanyDirectoryResult } from "./company-directory.js";
 import type { AssignedCompaniesResult, OrganizationAccountManager } from "./organization-account-manager.js";
 import type { ExportsHttp } from "./exports-http.js";
+import type { AdminAccess } from "./admin-access.js";
+import type { AccessGrantView, AccessPerson, OwnAccessGrantView } from "@studenthub/db";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -37,6 +39,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly profileEdit?: ProfileEdit;
   readonly browserEdit?: ProfileBrowserEdit;
   readonly bankDetails?: BankDetailsService;
+  readonly access?: AdminAccess;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
@@ -315,7 +318,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
   return projection as OwnProfileProjection;
 }
 
-export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false): Promise<{ status: number; html: string }> {
+export async function profileDocument(result: BrowserResponse, login: Partial<BrowserLoginApplication>, verifiedNotice?: VerifiedProfileNotice, documentsAvailable = false, access:readonly OwnAccessGrantView[]=[]): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login as BrowserLoginApplication) };
   const profile = projectionFrom(result);
   const language: ProfileLanguage = profile.fields.language.state === "available" && profile.fields.language.value === "ar" ? "ar" : "en";
@@ -377,9 +380,13 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;
   const details = `<details id="section-details" class="p-card p-details"><summary>${copy("section.details")}</summary><p class="p-hint">${copy("profile.detailsHint")}</p><dl class="p-fields">${(["committed","isProfileCompleted","pendingFields","employeeIdentifier","civilExpired","language"] as const).map(row).join("")}</dl>${provenance}</details>`;
   const localBrand = brand.replace('aria-label="StudentHub home"', `aria-label="${copy("profile.home")}"`);
-  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${summary}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"])}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
+  const accessList=`<section class="p-card" aria-labelledby="access-title"><h2 id="access-title">Access</h2>${access.length?`<ul>${access.map(g=>`<li>${escapeHtml(g.organizationName)} — ${escapeHtml(g.role)} (${escapeHtml(g.scope)})</li>`).join("")}</ul>`:"<p>No roles assigned.</p>"}</section>`;
+  const html = `<div class="profile-ui p-journey"><header class="p-topbar">${localBrand}<div class="p-header-actions">${languageForm}<form action="/logout" method="post"><button class="p-button" type="submit">${copy("action.signOut")}</button></form></div></header><div class="p-layout"><aside class="p-rail">${navigation}<p class="p-meta">StudentHub · ${copy("profile.connected")}</p></aside><main id="main" class="p-main p-stack"><header class="p-header"><h1 id="profile-heading">${copy("nav.profile")}</h1><p class="p-hint">${copy("profile.intro")}</p></header>${verifiedNotice ? profileNotice(verifiedNotice.title,verifiedNotice.message).html : ""}${summary}${accessList}${sections}${section("work",["objective","intro","preferredTime"])}${section("personal",["displayName","arabicName","phone","handle","gender","birthDate","age","nationality",...(profile.fields.kuwaitiMother || nationalityAllowsMother ? ["kuwaitiMother" as const] : []),"area","drivingLicence"])}${section("background",["university"],`<p class="p-hint">${copy("profile.backgroundHint")}</p><a class="p-background-link" href="/profile/background">${copy("action.background")} <span aria-hidden="true">${language === "ar" ? "←" : "→"}</span></a>`)}${details}<section class="p-guide"><p>${copy("profile.missingHint")}</p>${login.browserEdit ? `<p>${copy("profile.editHint")}</p>` : ""}<p>${copy("help.privacy")}</p><p>${copy("help.language")}</p></section><footer class="p-footer">StudentHub · ${copy("profile.connected")}</footer></main></div></div>`;
   return {status:200,html:pageDocument(text("nav.profile"),html,language)};
 }
+
+export function renderAdminAccess(people:readonly AccessPerson[]):string{return pageDocument("Access",`<main id="main"><h1>Access</h1><form method="get"><label>Find a person <input name="q"></label><button type="submit">Search</button></form><ul>${people.map(p=>`<li><a href="/admin/access/${encodeURIComponent(p.principalId)}">${escapeHtml(p.displayName??"Unnamed person")}</a> — ${escapeHtml(p.email??"No email")}</li>`).join("")}</ul></main>`)}
+export function renderAdminAccessPerson(value:{person:AccessPerson;grants:readonly AccessGrantView[]}):string{return pageDocument("Person access",`<main id="main"><h1>${escapeHtml(value.person.displayName??"Unnamed person")}</h1><p>${escapeHtml(value.person.email??"No email")}</p><table><thead><tr><th>Organization</th><th>Role</th><th>Scope</th><th>Granted by</th><th>Date</th><th>Reason</th></tr></thead><tbody>${value.grants.map(g=>`<tr><td>${escapeHtml(g.organizationName)}</td><td>${escapeHtml(g.role)}</td><td>${escapeHtml(g.scope)}</td><td>${g.grantedBy?escapeHtml(g.grantedBy.displayName??g.grantedBy.principalId):"Unknown"}</td><td>${g.grantedAt?escapeHtml(g.grantedAt):"Unknown"}</td><td>${g.reason?escapeHtml(g.reason):"Unknown"}</td></tr>`).join("")}</tbody></table></main>`)}
 
 export const WEB_CSS = `
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172433;background:#f7f9fc;font-synthesis:none;line-height:1.5;font-size:16px;--blue:#2256e8;--muted:#566579;--border:#dfe5ef}
