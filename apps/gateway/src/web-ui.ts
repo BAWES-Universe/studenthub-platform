@@ -337,7 +337,11 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const text = (key: ProfileCopyKey, params: Readonly<Record<string, string | number>> = {}): string => PROFILE_COPY[language][key].replace(/\{([A-Za-z]+)\}/g, (_, name: string) => String(params[name] ?? ""));
   const copy = (key: ProfileCopyKey, params?: Readonly<Record<string, string | number>>) => escapeHtml(text(key, params));
   type Key = OwnProfileFieldName | "phone" | "handle" | "kuwaitiMother";
-  const label = (key: Key) => text(`field.${key}`);
+  const label = (key: Key) => profile.fields.pendingFields.freshness.kind !== "derived" && key === "isProfileCompleted"
+    ? language === "ar" ? "اكتمال الملف الشخصي عند الاستيراد" : "Imported profile completeness"
+    : profile.fields.pendingFields.freshness.kind !== "derived" && key === "pendingFields"
+      ? language === "ar" ? "متطلبات الملف الشخصي المستوردة" : "Imported profile requirements"
+      : text(`field.${key}`);
   const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
   const loaded = login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
   const originChoices = { countries: Array.isArray(loaded?.countries) ? loaded.countries : [], universities: Array.isArray(loaded?.universities) ? loaded.universities : [] };
@@ -354,6 +358,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
     ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
   const formatted = (key: Key): string => {
     const field = profile.fields[key];
+    if ((key === "isProfileCompleted" || key === "pendingFields") && profile.fields.pendingFields.freshness.kind !== "derived" && hasWrites) return text("profile.checkedLater");
     if (!field || field.state !== "available") return text(field?.freshness.kind === "written_by_person" || !field ? "value.missing" : "value.unavailable");
     const value = field.value;
     if (key === "gender") return text(({male:"value.male",female:"value.female",other:"value.other"} as const)[String(value) as "male" | "female" | "other"] ?? "value.unavailable");
@@ -393,10 +398,11 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const avatar = currentProfileAvatar()?.avatarUrl;
   const summary = `<section id="profile-summary" class="p-card p-identity" aria-labelledby="profile-name">${avatar ? `<img class="p-monogram" src="${escapeHtml(avatar)}" alt="">` : `<div class="p-monogram" aria-hidden="true">${escapeHtml(initial)}</div>`}<div class="p-identity-text"><p class="p-kicker">${copy("profile.account")}</p><h2 id="profile-name"><bdi dir="auto">${escapeHtml(name)}</bdi></h2>${profile.fields.arabicName.state === "available" ? `<p lang="ar"><bdi dir="auto">${escapeHtml(profile.fields.arabicName.value)}</bdi></p>` : ""}${profile.fields.objective.state === "available" ? `<p class="p-lead"><bdi dir="auto">${escapeHtml(profile.fields.objective.value)}</bdi></p>` : ""}</div><dl class="p-status">${row("jobSearchStatus")}</dl></section>`;
   const completeness = (() => { const pending = profile.fields.pendingFields;
+    if (pending.freshness.kind !== "derived") return "";
     if (pending.state !== "available") return `<section class="p-card p-completeness"><h2>${copy("profile.checkFailed")}</h2></section>`;
     if (pending.value.length === 0) return `<section class="p-card p-completeness"><h2>${copy("profile.completeHeading")}</h2></section>`;
     const edits: Record<string,string> = {display_name:"displayName",arabic_name:"arabicName",objective:"objective",gender:"gender",birth_date:"birthDate",phone:"phone",driving_licence:"drivingLicence",nationality:"nationality",kuwaiti_mother:"kuwaitiMother"};
-    const target = (item: typeof pending.value[number]): string | undefined => item === "email" ? undefined : ["personal_photo","civil_front","civil_back"].includes(item) ? "/profile/documents" : ["education","skill"].includes(item) ? "/profile/background" : item === "location" ? "#field-area" : ["civil_id","civil_expiry"].includes(item) ? "#field-civilId" : login.browserEdit ? `/profile/edit/${edits[item]}` : `#field-${edits[item]}`;
+    const target = (item: typeof pending.value[number]): string | undefined => item === "email" ? undefined : ["personal_photo","civil_front","civil_back"].includes(item) ? "/profile/documents" : ["education","skill"].includes(item) ? "/profile/background" : item === "location" ? "#field-area" : ["civil_id","civil_expiry"].includes(item) ? "#field-civilId" : edits[item] ? login.browserEdit ? `/profile/edit/${edits[item]}` : `#field-${edits[item]}` : undefined;
     return `<section class="p-card p-completeness"><h2>${copy("profile.finishHeading")}</h2><ul>${pending.value.map(item => { const href=target(item), words=copy(`pending.${item}` as ProfileCopyKey); return `<li>${href ? `<a href="${href}">${words}</a>` : `${words} <span class="p-meta">${copy("profile.emailAccount")}</span>`}</li>`; }).join("")}</ul></section>`; })();
   const navigation = `<nav class="p-nav" aria-label="${copy("nav.main")}">${contributions.navigation.filter(item => item.visible(login)).map(item => `<a href="${item.href}"${item.current ? ' aria-current="page"' : ""}>${copy(item.labelKey)}</a>${item.key === "profile" && documentsAvailable ? `<a href="/profile/documents">${copy("nav.documents")}</a>` : ""}`).join("")}</nav>`;
   const sections = `<nav class="p-sections" aria-label="${copy("nav.sections")}">${(["work","personal","background","details"] as const).map(key => `<a href="#section-${key}">${copy(`section.${key}`)}</a>`).join("")}</nav>`;

@@ -53,6 +53,32 @@ test("Q14_4_RULES blank nationality is missing while an unknown nationality fail
   assert.equal(unknown.fields.pendingFields.state,"unavailable");
 });
 
+test("Q14_4_RULES every projected text or answer field has positive, empty, and whitespace cases", () => {
+  const cases = [
+    ["display_name","displayName"],["arabic_name","arabicName"],["gender","gender"],["objective","objective"],
+    ["birth_date","birthDate"],["location","area"],["nationality","nationality"],
+  ] as const;
+  for (const [requirement,key] of cases) {
+    const original=base(), field=original.fields[key];
+    const positive=deriveProfileCompleteness(original,evidence).fields.pendingFields;
+    assert.equal(positive.state === "available" && positive.value.includes(requirement),false,`${requirement} positive`);
+    for(const value of ["","   "]){const changed={...field,state:"available" as const,value,editValue:value};const result=deriveProfileCompleteness({...original,fields:{...original.fields,[key]:changed}},evidence);assert.equal(result.fields.pendingFields.state==="available"&&result.fields.pendingFields.value.includes(requirement),true,`${requirement} ${JSON.stringify(value)}`)}
+  }
+});
+
+test("Q14_4_RULES written projected values win over different imported pending values",()=>{
+  const profile=base(), imported={...profile.fields.pendingFields,value:["objective","display_name"] as const,freshness:{kind:"imported_snapshot" as const,observedAt:"2026-01-01"}};
+  const result=deriveProfileCompleteness({...profile,fields:{...profile.fields,pendingFields:imported}},evidence);
+  assert.equal(result.fields.pendingFields.state==="available"&&result.fields.pendingFields.value.includes("objective"),false);
+  assert.equal(result.fields.pendingFields.state==="available"&&result.fields.pendingFields.value.includes("display_name"),false);
+});
+
+test("Q14_4_RULES no snapshot leaves imported-only requirements missing",()=>{
+  const profile=base(), absent={...profile.fields.pendingFields,state:"unavailable" as const,reason:"not_imported" as const,freshness:{kind:"not_imported" as const,observedAt:"" as const}};
+  const result=deriveProfileCompleteness({...profile,fields:{...profile.fields,pendingFields:absent,phone:undefined,civilId:undefined,kuwaitiMother:undefined}},{...evidence,nationalityCode:"JO"});
+  assert.deepEqual(result.fields.pendingFields.state==="available"&&result.fields.pendingFields.value.filter(x=>["phone","civil_id","civil_expiry","kuwaiti_mother"].includes(x)),["phone","civil_id","civil_expiry","kuwaiti_mother"]);
+});
+
 test("Q14_4_RULES imported pending list is fallback only for unprojected values", () => {
   const profile=base();
   const imported={...profile.fields.pendingFields,value:["phone","civil_id","civil_expiry","kuwaiti_mother","personal_photo"] as const,

@@ -8,6 +8,7 @@ import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
 import { createProfileEdit } from "../profile-edit-http.js";
+import { recordProfileCompletenessPrincipal } from "../profile-completeness.js";
 import { HttpLegacyLogin } from "../legacy-login.js";
 import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
@@ -50,7 +51,11 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
   const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
   const area = createArea({ store: personLocations });
-  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
+  const profiles = new OwnProfileRepository({ principals: { async getPrincipal(id: string) {
+    const principal = await access.authzStore.getPrincipal(id);
+    recordProfileCompletenessPrincipal(principal);
+    return principal;
+  } }, source: profileSource,
     ...({ preferences: { async readOwnPreferences(id: string) {
       const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id).catch(() => null)]);
       const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };

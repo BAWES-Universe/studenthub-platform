@@ -3,6 +3,15 @@ import { currentProfileAvatar } from "./profile-avatar.js";
 import { addNotificationBell, profileDocument, wantsHtml } from "./web-ui.js";
 import type { GatewayRouteContext } from "./routes/context.js";
 import type { OriginChoices } from "./profile-edit-http.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+type ProfilePrincipal = Awaited<ReturnType<GatewayRouteContext["authz"]["store"]["getPrincipal"]>>;
+const principalReads = new AsyncLocalStorage<{ principal?: ProfilePrincipal }>();
+export function enterProfileCompletenessRequest(): void { principalReads.enterWith({}); }
+export function recordProfileCompletenessPrincipal(principal: ProfilePrincipal): void {
+  const current = principalReads.getStore();
+  if (current) current.principal = principal;
+}
 
 const cookie = (header: string | undefined): string | undefined => header?.split(";").map(v => v.trim())
   .find(v => v.startsWith("__Host-studenthub_session="))?.split("=")[1];
@@ -30,14 +39,13 @@ export async function handleProfileCompleteness(ctx: GatewayRouteContext): Promi
     }
     const cached = currentProfileAvatar();
     const reads = await Promise.allSettled([
-      ctx.authz.store.getPrincipal(personId),
       ctx.profileRecords?.service.background(personId),
-      cached ? Promise.resolve(cached.documents) : session && ctx.documents ? ctx.documents.list(session) : undefined,
+      html ? Promise.resolve(cached?.documents) : session && ctx.documents ? ctx.documents.list(session) : undefined,
       ctx.login.profileEdit?.choices?.(),
     ]);
-    const value = <T>(index:number):T|undefined => reads[index]?.status === "fulfilled" ? reads[index].value as T|undefined : undefined;
-    const principal=value<Awaited<ReturnType<typeof ctx.authz.store.getPrincipal>>>(0), background=value<Awaited<ReturnType<NonNullable<typeof ctx.profileRecords>["service"]["background"]>>>(1);
-    const documents=value<readonly {readonly type:string}[]>(2), choices=value<OriginChoices>(3);
+    const value = <T>(index:number):T|undefined => { const read = reads[index]; return read?.status === "fulfilled" ? read.value as T|undefined : undefined; };
+    const principal=principalReads.getStore()?.principal, background=value<Awaited<ReturnType<NonNullable<typeof ctx.profileRecords>["service"]["background"]>>>(0);
+    const documents=value<readonly {readonly type:string}[]>(1), choices=value<OriginChoices>(2);
     const nationality = own.profile.fields.nationality;
     const nationalityId = nationality.state === "available" ? nationality.editValue : undefined;
     const countries = Array.isArray(choices?.countries) ? choices.countries : [];
@@ -50,7 +58,7 @@ export async function handleProfileCompleteness(ctx: GatewayRouteContext): Promi
     });
     if (html) {
       const notice = await ctx.login.browserEdit?.notice(session, ctx.request.headers.cookie);
-      const renderedLogin = ctx.login.profileEdit && choices ? { ...ctx.login, profileEdit: { ...ctx.login.profileEdit, choices: async () => choices } } : ctx.login;
+      const renderedLogin = ctx.login.profileEdit ? choices ? { ...ctx.login, profileEdit: { ...ctx.login.profileEdit, choices: async () => choices } } : { ...ctx.login, profileEdit: undefined } : ctx.login;
       const page = await profileDocument({ status: 200, body: profile }, renderedLogin, notice?.notice, ctx.documents !== undefined);
       let rendered = page.html;
       try { rendered = addNotificationBell(rendered, await ctx.login.notifications?.count(session) ?? 0); }

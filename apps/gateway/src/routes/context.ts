@@ -19,6 +19,7 @@ import type { LegacyLinkService } from "../legacy-link-http.js";
 import type { CivilIdService } from "@studenthub/profile";
 import type { AreaHttp } from "../area-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
+import { enterProfileCompletenessRequest } from "../profile-completeness.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilId?: CivilIdService;
@@ -57,6 +58,7 @@ export type GatewayRoute = {
 
 export async function runRoutes(routes: readonly GatewayRoute[], ctx: GatewayRouteContext): Promise<boolean> {
   enterProfileAvatarRequest(ctx.request);
+  enterProfileCompletenessRequest();
   for (const route of routes) {
     if (await route.handle(ctx)) return true;
   }
