@@ -507,11 +507,13 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const identity = { kind: "principal" as const, principalId: request.principalId };
       const contexts = await listEffectiveContexts(identity, this.#store);
       const covered = new Set(contexts.filter((context) => context.role === request.role).map((context) => context.orgId));
-      const coveredChildIds = children.filter((child) => covered.has(child.id)).map((child) => child.id);
+      const coveredChildIds = children.filter((child) => !this.#operators.has(child.id) && covered.has(child.id)).map((child) => child.id);
       const deletedIds = coveredChildIds.length > 0 && this.#deletions
         ? await this.#deletions.deletedAmong(coveredChildIds) : new Set<string>();
-      const visibleChildren = children.filter((child) => covered.has(child.id) && !deletedIds.has(child.id));
-      const snapshots = await this.#source.readSnapshots(visibleChildren.map((child) => child.id));
+      const visibleChildren = children.filter((child) => !this.#operators.has(child.id)
+        && covered.has(child.id) && !deletedIds.has(child.id));
+      const snapshots = visibleChildren.length > 0
+        ? await this.#source.readSnapshots(visibleChildren.map((child) => child.id)) : new Map();
       const batchRecords = visibleChildren.length > 0 && this.#statusRecords?.readMany
         ? await this.#statusRecords.readMany(visibleChildren.map((child) => child.id))
         : undefined;
@@ -548,7 +550,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const identity = { kind: "principal" as const, principalId: request.principalId };
       const contexts = await listEffectiveContexts(identity, this.#store);
       const covered = new Set(contexts.filter((context) => context.role === request.role).map((context) => context.orgId));
-      const coveredChildIds = children.filter((child) => covered.has(child.id)).map((child) => child.id);
+      const coveredChildIds = children.filter((child) => !this.#operators.has(child.id) && covered.has(child.id)).map((child) => child.id);
       const deletedIds = coveredChildIds.length > 0 && this.#deletions
         ? await this.#deletions.deletedAmong(coveredChildIds) : new Set<string>();
       const subOrganizations = coveredChildIds.filter((orgId) => !deletedIds.has(orgId)).length;
@@ -603,7 +605,8 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
       const termsBatch=shown.length>0&&this.#commercialTerms?await this.#commercialTerms.readMany(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
-      const snapshots = await this.#source.readSnapshots(shown.map((org) => org.id));
+      const snapshots = shown.length > 0
+        ? await this.#source.readSnapshots(shown.map((org) => org.id)) : new Map();
       let managers:ReadonlyMap<string,OrganizationAccountManagerRecord>|undefined;
       if(shown.length>0&&this.#accountManagers)try{managers=await this.#accountManagers.readMany(shown.map((org)=>org.id));}
       catch{if(filters.accountManager!==undefined)return{kind:"unavailable"};}

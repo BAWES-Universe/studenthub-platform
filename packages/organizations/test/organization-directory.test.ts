@@ -16,6 +16,8 @@ import {
   type OrganizationAccountManagerRecords,
   type OrganizationDeletionRecords,
   type OrganizationCommercialTermsRecords,
+  type OrganizationStatusRecords,
+  type OrganizationApprovedToHireRecords,
 } from "../src/index.js";
 import * as builtIn from "../src/organizations.js";
 
@@ -313,32 +315,48 @@ test("SHU339_FILTER_UNAVAILABLE refuses missing and failing ports after authoriz
 
 test("SHU357_DIRECTORY_DEGRADES only an unfiltered manager column degrades",async()=>{const failing={readMany:async()=>{throw new Error("down")}};const{repository}=await setup({accountManagers:failing});const open=await repository.listOrganizations(STAFF);assert.equal(open.kind,"found");if(open.kind==="found")assert.ok(open.directory.entries.every(entry=>!("accountManager" in entry)));assert.deepEqual(await repository.listOrganizations({...STAFF,filters:{accountManager:"staff"}}),{kind:"unavailable"})});
 
-test("SHU361_DIRECTORY_FIXED directory snapshot reads stay fixed as company count grows", async () => {
-  async function callsFor(extraCount: number) {
-    const batches: string[][] = [];
+test("SHU361_DIRECTORY_FIXED every directory port stays fixed at 1, 20, and 60 companies with filters and paging", async () => {
+  async function callsFor(companyCount: number, request: { filters?: OrganizationDirectoryFilters; page?: number }) {
+    const calls = { snapshots: 0, status: 0, approved: 0, terms: 0, stores: 0, managers: 0, deletionSingle: 0, deletionBatch: 0, authz: 0 };
     const source: ApprovedOrganizationAdapter = {
       async readSnapshot() { throw new Error("per-row snapshot read"); },
       async readSnapshots(orgIds) {
-        batches.push([...orgIds]);
+        calls.snapshots++;
         return new Map(orgIds.map((orgId) => [orgId, { kind: "unconfigured" as const }]));
       },
     };
-    const extraOrganizations = Array.from({ length: extraCount }, (_, index) => ({
-      id: `org-fixed-${index}`, name: `Fixed ${index}`, parentOrgId: "root",
+    const companies = Array.from({ length: companyCount }, (_, index) => ({
+      id: `org-fixed-${index}`, name: `Fixed ${String(index).padStart(2, "0")}`, parentOrgId: "root",
     }));
-    const { store } = await setup({ source, extraOrganizations });
-    let authzCalls = 0;
+    const store = new InMemoryAuthzStore({
+      principals: PEOPLE,
+      organizations: [{ id: "root", name: "StudentHub" }, ...companies],
+    });
+    await store.grantMany("staff", [{ orgId: "root", role: "staff", scope: "subtree" }]);
     const countedStore = new Proxy(store, { get(target, property, receiver) {
       const member = Reflect.get(target, property, receiver);
       if (typeof member !== "function") return member;
-      return (...args: unknown[]) => { authzCalls++; return member.apply(target, args); };
+      return (...args: unknown[]) => { calls.authz++; return member.apply(target, args); };
     } });
-    const repository = new OrganizationRepository({ store: countedStore, source });
-    const result = await repository.listOrganizations(STAFF);
+    const statusRecords: OrganizationStatusRecords = { async read() { throw new Error("per-row status read"); }, async readMany() { calls.status++; return new Map(); } };
+    const approvedToHire: OrganizationApprovedToHireRecords = { async read() { throw new Error("per-row approved read"); }, async readMany() { calls.approved++; return new Map(); } };
+    const commercialTerms: OrganizationCommercialTermsRecords = { async read() { throw new Error("per-row terms read"); }, async readMany() { calls.terms++; return new Map(); } };
+    const storeCounts: OrganizationStoreCounts = { async countMany() { calls.stores++; return new Map(); } };
+    const accountManagers: OrganizationAccountManagerRecords = { async readMany() { calls.managers++; return new Map(); } };
+    const deletions: OrganizationDeletionRecords = {
+      async isDeleted() { calls.deletionSingle++; return false; },
+      async deletedAmong() { calls.deletionBatch++; return new Set(); },
+    };
+    const repository = new OrganizationRepository({ store: countedStore, source, statusRecords, approvedToHire, commercialTerms, storeCounts, accountManagers, deletions });
+    const result = await repository.listOrganizations({ ...STAFF, ...request });
     assert.equal(result.kind, "found");
-    return { snapshotBatches: batches.length, authzCalls };
+    return calls;
   }
-  assert.deepEqual(await callsFor(0), await callsFor(60));
+  for (const request of [{}, { filters: { query: "Fixed" } }, { page: 2 }] as const) {
+    const counts = await Promise.all([1, 20, 60].map((size) => callsFor(size, request)));
+    assert.deepEqual(counts[1], counts[0], JSON.stringify(request));
+    assert.deepEqual(counts[2], counts[0], JSON.stringify(request));
+  }
 });
 
 test("SHU361_SHOWN batched directory values are shown to staff", async () => {
