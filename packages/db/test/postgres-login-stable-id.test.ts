@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, beforeEach, test } from "node:test";
 import pg from "pg";
 
@@ -47,9 +48,23 @@ test("Q14L_REASSIGN Postgres locks mismatch, revokes sessions, and keeps origina
   const store = makeStore();
   const identity = await store.identities.createForSubject("issuer", "person@example.invalid", {});
   await store.identities.bindStableId?.("issuer", "person@example.invalid", "original_123");
+  await pool.query("INSERT INTO organizations (id, name) VALUES ($1::text, $2::text)", ["org-one", "One"]);
+  await pool.query(
+    "INSERT INTO grants (principal_id, org_id, role, scope) VALUES ($1::text, $2::text, $3::text, $4::text)",
+    [identity.personId, "org-one", "finance", "self"],
+  );
   await store.sessions.put({ id: "session-one", personId: identity.personId });
   assert.equal(await store.identities.bindStableId?.("issuer", "person@example.invalid", "different_456"), "mismatch");
   assert.equal(await store.sessions.get("session-one"), undefined);
+  const sessionHash = createHash("sha256").update("session-one").digest("base64url");
+  const authorization = await pool.query<{ role: string }>(
+    `SELECT grant_row.role
+       FROM login_sessions AS session
+       JOIN grants AS grant_row ON grant_row.principal_id = session.person_id
+      WHERE session.id = $1::text`,
+    [sessionHash],
+  );
+  assert.deepEqual(authorization.rows, [], "authorization read after refusal returns no finance grant");
   assert.equal(await store.identities.bindStableId?.("issuer", "person@example.invalid", "original_123"), "locked");
   assert.deepEqual(await store.identities.findBySubject("issuer", "person@example.invalid"), identity);
 });

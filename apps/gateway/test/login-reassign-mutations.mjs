@@ -11,7 +11,8 @@ try {
   const testFile = join(root, "dist/apps/gateway/test/login-reassign.test.js");
   const gatewayFile = join(root, "dist/apps/gateway/src/login-application.js");
   const dbFile = join(root, "dist/packages/db/src/postgres-login-store.js");
-  const run = () => spawnSync(process.execPath, [testFile],
+  const run = () => spawnSync(process.execPath,
+    ["--test", "--experimental-test-isolation=none", "--test-reporter=tap", testFile],
     { encoding: "utf8", timeout: 30_000 });
   assert.equal(run().status, 0, "Q14-L mutation baseline");
 
@@ -32,8 +33,12 @@ try {
     assert.equal(original.split(from).length - 1, 1, `${name}: unique compiled anchor`);
     writeFileSync(gatewayFile, original.replace(from, to));
     const result = run();
+    assert.equal(result.error, undefined, `${name}: mutant must execute`);
+    assert.equal(result.signal, null, `${name}: mutant must exit normally`);
     assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.ok(result.stdout.includes("ERR_ASSERTION") || result.stderr.includes("ERR_ASSERTION"),
+    assert.ok(result.stdout.split("\n").some((line) => line.startsWith("not ok ") && line.includes(token)),
+      `${name}: ${token} did not fail\n${result.stdout}${result.stderr}`);
+    assert.ok(result.stdout.includes("ERR_ASSERTION"),
       `${name} (${token}): failure was not an assertion\n${result.stdout}${result.stderr}`);
     writeFileSync(gatewayFile, original);
     console.log(`KILLED: ${name}`);
@@ -43,14 +48,19 @@ try {
     ["skip the session delete", "Q14L_REASSIGN",
       'await client.query("DELETE FROM login_sessions WHERE person_id = $1::text", [result.person_id]);', ""],
     ["skip the atomic compare", "Q14L_LOCK",
-      "AND current_identity.stable_user_id <> $3::text", "AND false"],
+      `locked_at = CASE
+                  WHEN current_identity.locked_at IS NULL
+                   AND current_identity.stable_user_id IS NOT NULL
+                   AND current_identity.stable_user_id <> $3::text
+                  THEN clock_timestamp()`,
+      `locked_at = CASE
+                  WHEN false
+                  THEN clock_timestamp()`],
   ];
   for (const [name, token, from, to] of postgresMutants) {
     const original = readFileSync(dbFile, "utf8");
-    const occurrences = original.split(from).length - 1;
-    const expected = name === "skip the atomic compare" ? 2 : 1;
-    assert.equal(occurrences, expected, `${name}: compiled anchors`);
-    writeFileSync(dbFile, original.split(from).join(to));
+    assert.equal(original.split(from).length - 1, 1, `${name}: unique compiled anchor`);
+    writeFileSync(dbFile, original.replace(from, to));
     assert.notEqual(readFileSync(dbFile, "utf8"), original);
     writeFileSync(dbFile, original);
     console.log(`POSTGRES CI MUTANT PINNED: ${name} -> ${token}`);

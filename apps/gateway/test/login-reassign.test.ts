@@ -82,6 +82,10 @@ function rig(identities: IdentityStore = new StableIdentities()) {
     callbackUrl: "https://hub.test.invalid/callback", allowedReturnUrls: ["https://hub.test.invalid/home"],
     clockSkewSeconds: 30, subjectPolicy: () => true });
   return { identities, sessions, setClaims(value: Record<string, unknown>) { nextClaims = value; },
+    async authorizationFor(sessionId: string) {
+      const session = await dependencies.sessions.get(sessionId);
+      return session ? dependencies.authorization.roleFor(session.personId) : undefined;
+    },
     async login() {
       const start = await app.start({ browserSessionId: "browser", returnTo: "https://hub.test.invalid/home" });
       assert.equal(start.status, 302);
@@ -107,9 +111,13 @@ test("Q14L_REASSIGN mismatch and persistent lock return generic rejection and re
   harness.setClaims({ hashed_user_id: "original_123" });
   assert.equal((await harness.login()).status, 302);
   assert.equal(harness.sessions.size, 1);
+  const originalSessionId = [...harness.sessions.keys()][0];
+  assert.ok(originalSessionId);
   harness.setClaims({ hashed_user_id: "different_456" });
   assert.deepEqual(await harness.login(), { status: 400, body: { error: "login_rejected" } });
   assert.equal(harness.sessions.size, 0);
+  assert.equal(await harness.authorizationFor(originalSessionId), undefined,
+    "an authorization read after refusal finds no authenticated principal");
   harness.setClaims({ hashed_user_id: "original_123" });
   assert.deepEqual(await harness.login(), { status: 400, body: { error: "login_rejected" } });
   assert.equal(harness.sessions.size, 0, "no authorization read is reachable without a session");
@@ -121,6 +129,11 @@ test("Q14L_CLAIMS missing claims preserve old stores; malformed or conflicting c
   const oldHarness = rig(oldStore);
   assert.equal((await oldHarness.login()).status, 302);
   assert.equal(oldHarness.sessions.size, 1);
+
+  const noClaimHarness = rig();
+  assert.equal((await noClaimHarness.login()).status, 302);
+  assert.equal(noClaimHarness.sessions.size, 1);
+  assert.equal((noClaimHarness.identities as StableIdentities).calls, 0);
 
   for (const claims of [
     { hashed_user_id: "short" }, { uid: "invalid.value" },

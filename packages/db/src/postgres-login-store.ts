@@ -250,7 +250,7 @@ export class PostgresLoginStore {
     const { rows } = await this.#pool.query<{
       issuer: string; subject_hash: string; person_id: string; locked_at: Date;
     }>(
-      `SELECT issuer, encode(sha256(subject::bytea), 'hex') AS subject_hash,
+      `SELECT issuer, encode(sha256(convert_to(subject, 'UTF8')), 'hex') AS subject_hash,
               person_id, locked_at
          FROM external_identities
         WHERE locked_at IS NOT NULL
