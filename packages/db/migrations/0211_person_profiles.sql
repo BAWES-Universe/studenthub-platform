@@ -1,0 +1,39 @@
+-- SHU-392: platform-owned self-edited profile text. PostgreSQL char_length and
+-- JavaScript spread both count Unicode code points. Explicit forbidden ranges
+-- avoid locale-sensitive character classes; names otherwise accept every script.
+CREATE FUNCTION person_profile_text_valid(value text, maximum integer, require_two_words boolean)
+RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+ SELECT value IS NFC NORMALIZED
+   AND char_length(value) BETWEEN 1 AND maximum
+   AND value !~ '[\u0000-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]'
+   AND value !~ '^ | $|  '
+   AND (NOT require_two_words OR value ~ '^[^ ]+ [^ ]+( [^ ]+)*$')
+$$;
+
+CREATE TABLE person_profiles (
+ principal_id text PRIMARY KEY REFERENCES principals(id),
+ display_name text CHECK (display_name IS NULL OR person_profile_text_valid(display_name,255,true)),
+ display_name_written_at timestamptz CHECK (display_name IS NULL OR display_name_written_at IS NOT NULL),
+ arabic_name text CHECK (arabic_name IS NULL OR person_profile_text_valid(arabic_name,255,true)),
+ arabic_name_written_at timestamptz CHECK (arabic_name IS NULL OR arabic_name_written_at IS NOT NULL),
+ objective text CHECK (objective IS NULL OR person_profile_text_valid(objective,100,false)),
+ objective_written_at timestamptz CHECK (objective IS NULL OR objective_written_at IS NOT NULL),
+ introduction text CHECK (introduction IS NULL OR person_profile_text_valid(introduction,5000,false)),
+ introduction_written_at timestamptz CHECK (introduction IS NULL OR introduction_written_at IS NOT NULL),
+ preferred_time text CHECK (preferred_time IS NULL OR person_profile_text_valid(preferred_time,100,false)),
+ preferred_time_written_at timestamptz CHECK (preferred_time IS NULL OR preferred_time_written_at IS NOT NULL)
+);
+
+CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(audit_operation TEXT, summary JSONB)
+RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$
+ SELECT CASE
+  WHEN audit_operation='principal.register' THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['existed','identityCount','displayNamePresent','emailPresent'] AND summary-ARRAY['existed','identityCount','displayNamePresent','emailPresent']='{}'::jsonb AND jsonb_typeof(summary->'existed')='boolean' AND jsonb_typeof(summary->'displayNamePresent')='boolean' AND jsonb_typeof(summary->'emailPresent')='boolean' AND jsonb_typeof(summary->'identityCount')='number' AND summary->>'identityCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  WHEN audit_operation IN ('grants.grant','grants.revoke','grants.clear') THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['grantCount','selfCount','subtreeCount'] AND summary-ARRAY['grantCount','selfCount','subtreeCount']='{}'::jsonb AND jsonb_typeof(summary->'grantCount')='number' AND jsonb_typeof(summary->'selfCount')='number' AND jsonb_typeof(summary->'subtreeCount')='number' AND summary->>'grantCount' ~ '^(0|[1-9][0-9]{0,17})$' AND summary->>'selfCount' ~ '^(0|[1-9][0-9]{0,17})$' AND summary->>'subtreeCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  WHEN audit_operation IN ('profile.safe_write','organization.profile.safe_write','organization.status.safe_write','organization.commercial_terms.safe_write','organization.approved_to_hire.safe_write','organization.note.safe_write','organization.deletion.safe_write','pay_contract.create.safe_write','pay_contract.update.safe_write','pay_contract.remove.safe_write','candidate.bank_details.safe_write','organization.account_manager.safe_write') THEN jsonb_typeof(summary)='object' AND ((summary ?& ARRAY['valuePresent'] AND summary-ARRAY['valuePresent']='{}'::jsonb AND jsonb_typeof(summary->'valuePresent')='boolean') OR (summary ?& ARRAY['contractVersion','personRef','changeSetDigest','fields','committedAt','tokenRef'] AND summary-ARRAY['contractVersion','personRef','changeSetDigest','fields','committedAt','tokenRef']='{}'::jsonb AND jsonb_typeof(summary->'contractVersion')='string' AND summary->>'contractVersion' ~ '^[0-9]+\.[0-9]+\.[0-9]+$' AND jsonb_typeof(summary->'personRef')='string' AND summary->>'personRef' ~ '^[0-9a-f]{64}$' AND jsonb_typeof(summary->'changeSetDigest')='string' AND summary->>'changeSetDigest' ~ '^[0-9a-f]{64}$' AND jsonb_typeof(summary->'tokenRef')='string' AND summary->>'tokenRef' ~ '^[0-9a-f]{64}$' AND jsonb_typeof(summary->'fields')='array' AND jsonb_array_length(summary->'fields')=1 AND ((audit_operation='profile.safe_write' AND summary->'fields'->>0 IN ('language','displayName','arabicName','objective','intro','preferredTime')) OR (audit_operation='organization.profile.safe_write' AND summary->'fields'->>0 IN ('name_en','name_ar','description_en','description_ar','website')) OR (audit_operation='organization.status.safe_write' AND summary->'fields'='["status"]'::jsonb) OR (audit_operation='organization.commercial_terms.safe_write' AND summary->'fields'->>0 IN ('hourly_rate','bonus_commission','currency_code')) OR (audit_operation='organization.approved_to_hire.safe_write' AND summary->'fields'='["approved_to_hire"]'::jsonb) OR (audit_operation='organization.note.safe_write' AND summary->'fields'->>0 IN ('note','note_phone_call','note_email','note_meeting','note_interview','note_task')) OR (audit_operation='organization.deletion.safe_write' AND summary->'fields'='["deletion"]'::jsonb) OR (audit_operation='pay_contract.create.safe_write' AND summary->'fields'='["pay_contract"]'::jsonb) OR (audit_operation='pay_contract.update.safe_write' AND summary->'fields'='["pay_contract_terms"]'::jsonb) OR (audit_operation='pay_contract.remove.safe_write' AND summary->'fields'='["pay_contract_removal"]'::jsonb) OR (audit_operation='candidate.bank_details.safe_write' AND summary->'fields'='["bank_details"]'::jsonb) OR (audit_operation='organization.account_manager.safe_write' AND summary->'fields'='["account_manager"]'::jsonb)) AND jsonb_typeof(summary->'committedAt')='string' AND summary->>'committedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'))
+  WHEN audit_operation IN ('profile_record.create','profile_record.update','profile_record.remove','profile_record.restore','profile_record.replace') THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['kind','activeCount'] AND summary-ARRAY['kind','activeCount']='{}'::jsonb AND summary->>'kind' IN ('education','experience','skill','link') AND jsonb_typeof(summary->'activeCount')='number' AND summary->>'activeCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  WHEN audit_operation IN ('pay_contract.create','pay_contract.update','pay_contract.remove') THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['payModel','contractCount'] AND summary-ARRAY['payModel','contractCount']='{}'::jsonb AND summary->>'payModel' IN ('hourly','fixed_price','monthly_salary') AND jsonb_typeof(summary->'contractCount')='number' AND summary->>'contractCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  WHEN audit_operation IN ('organization.brand.link','organization.brand.unlink') THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['brandCount'] AND summary-ARRAY['brandCount']='{}'::jsonb AND jsonb_typeof(summary->'brandCount')='number' AND summary->>'brandCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  WHEN audit_operation='organization.create' THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['childCount'] AND summary-ARRAY['childCount']='{}'::jsonb AND jsonb_typeof(summary->'childCount')='number' AND summary->>'childCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  WHEN audit_operation IN ('organization.store.create','organization.store.update','organization.store.remove') THEN jsonb_typeof(summary)='object' AND summary ?& ARRAY['storeCount'] AND summary-ARRAY['storeCount']='{}'::jsonb AND jsonb_typeof(summary->'storeCount')='number' AND summary->>'storeCount' ~ '^(0|[1-9][0-9]{0,17})$'
+  ELSE FALSE END
+$$;

@@ -49,6 +49,7 @@ export type RejectionReason = (typeof REJECTION_REASONS)[number];
 export interface FieldPolicy {
   readonly allowed: readonly string[];
   readonly maxValueLength: number;
+  readonly allowClear?: boolean;
 }
 
 export interface ChangeRequest {

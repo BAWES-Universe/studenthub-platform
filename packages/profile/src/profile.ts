@@ -183,10 +183,13 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
   });
 }
 
-function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown; updatedAt: string }> | null): OwnProfileProjection {
+type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime", WrittenPreference>>>;
+
+function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
   const fields = { ...profile.fields };
-  try {
+  if (preferences.language !== undefined && preferences.updatedAt !== undefined) try {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)
       || !Number.isFinite(Date.parse(preferences.updatedAt))) throw new TypeError("malformed preference timestamp");
     fields.language = written(PROFILE_FIELD_SPECS.language,
@@ -198,6 +201,18 @@ function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{
       provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
+  }
+  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const) {
+    const preference = preferences[name];
+    if (!preference) continue;
+    try {
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preference.updatedAt)
+        || !Number.isFinite(Date.parse(preference.updatedAt))) throw new TypeError("malformed preference timestamp");
+      fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
+    } catch {
+      fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
+        freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
+    }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
@@ -280,7 +295,7 @@ export class OwnProfileRepository {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
       const preferences = this.#preferences
-        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) : null;
+        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) as ProfilePreferences | null : null;
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
       if (link.kind === "unconfigured") {
         const today = this.#today();
