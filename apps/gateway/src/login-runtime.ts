@@ -320,7 +320,7 @@ export function createRuntimeLoginFromEnv(
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
       exports:createExportsHttp(loginStore.sessions,exportsService),
-      ...({adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert))} as {}),
+      ...({adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert,async()=>undefined))} as {}),
       ...({adminOutbox:createAdminOutbox(loginStore.sessions,authzStore,emailOutbox)}as{}),
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
