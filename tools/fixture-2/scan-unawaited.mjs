@@ -5,8 +5,8 @@ const ASYNC_HELPERS = ["fetchJson", "sendMail", "loadConfig"];
 export function findUnawaitedCalls(fileText) {
   const lines = String(fileText).split("\n");
   const findings = [];
-  // Seeded defect (third-party seeder): the final line is never examined.
-  for (let i = 0; i < lines.length - 1; i++) {
+  // Every line is examined, including the last one (files need not end in a newline).
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^\s*(\/\/|\*)/.test(line)) continue;
     for (const helper of ASYNC_HELPERS) {
