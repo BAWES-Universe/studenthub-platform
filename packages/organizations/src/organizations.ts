@@ -196,16 +196,31 @@ function inheritedDecimal(name: "hourlyRate" | "bonusCommission", row: Row, pare
   return parent[sourceField] === null ? unavailable(name, "not_recorded") : available(name, decimal(parent[sourceField]));
 }
 
-function storedDecimal(name:"hourlyRate"|"bonusCommission",row:Row|undefined,parent:Row|null|undefined,own:OrganizationCommercialTermRecord,parentRecord:OrganizationCommercialTermRecord):OrganizationField<string>{
-  if(own.kind==="value")return available(name,decimal(own.value));
-  const ownField=own.kind==="absent"&&row!==undefined?inheritedDecimal(name,row,null):unavailable(name,"not_recorded");
-  if(ownField.state==="available")return ownField;
-  if(parent===null)return ownField;
-  if(parentRecord.kind==="value")return available(name,decimal(parentRecord.value));
-  if(parentRecord.kind==="cleared")return unavailable(name,"not_recorded");
-  if(parent===undefined)return unavailable(name,"not_imported");
-  const sourceField=ORGANIZATION_FIELD_CONTRACT[name].sourceField;
-  return parent[sourceField] === null ? unavailable(name, "not_recorded") : available(name, decimal(parent[sourceField]));
+function storedDecimal(
+  name: "hourlyRate" | "bonusCommission",
+  row: Row | undefined,
+  parent: Row | null | undefined,
+  own: OrganizationCommercialTermRecord,
+  parentRecord: OrganizationCommercialTermRecord,
+): OrganizationField<string> {
+  if (own.kind === "value") return available(name, decimal(own.value));
+
+  // An absent stored record is deliberately indistinguishable from having no
+  // commercial-terms port: retain every detail of the legacy snapshot result.
+  if (own.kind === "absent") {
+    if (row === undefined) return unavailable(name, "not_imported");
+    const ownSnapshot = inheritedDecimal(name, row, null);
+    if (ownSnapshot.state === "available" || ownSnapshot.reason === "not_imported") return ownSnapshot;
+  }
+
+  if (parent === null) return unavailable(name, "not_recorded");
+  if (parentRecord.kind === "value") return available(name, decimal(parentRecord.value));
+  if (parentRecord.kind === "cleared") return unavailable(name, "not_recorded");
+
+  // Route the parent snapshot through the legacy implementation. A synthetic
+  // null own value is needed when an explicit clear overrides a populated row.
+  const sourceField = ORGANIZATION_FIELD_CONTRACT[name].sourceField;
+  return inheritedDecimal(name, { [sourceField]: null }, parent);
 }
 
 function observedAt(row: Row): string {
