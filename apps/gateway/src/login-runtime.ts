@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { UNIVERSE_SUBJECT_POLICY } from "@bawes/actor-assertion";
 import { PostgresAuthzStore, PostgresLoginStore, PostgresSafeWriteStore, PostgresOrganizationProfileStore,
-  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationNotesStore } from "@studenthub/db";
+  PostgresBankDetailsStore, PostgresFinanceReferenceResolver, PostgresPayContractStore, PostgresPayContractSafeWriteStore, PostgresOrganizationStatusStore,PostgresOrganizationCommercialTermsStore,PostgresOrganizationApprovedToHireStore,PostgresOrganizationNotesStore,PostgresOrganizationBrandsStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
@@ -23,7 +23,7 @@ import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organi
   organizationStatusDecision, organizationStatusStateDecision, organizationStatusEvent, organizationStatusRecordRef, organizationStatusPrincipalRef,
   organizationCommercialTermsDecision,organizationCommercialTermsStateDecision,organizationCommercialTermsRecordRef,organizationCommercialTermsPrincipalRef,
   organizationApprovedToHireDecision,organizationApprovedToHireStateDecision,organizationApprovedToHireRecordRef,organizationApprovedToHirePrincipalRef,
-  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,organizationNoteTypeOf,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
+  organizationNoteDecision,organizationNoteRecordRef,organizationNotePrincipalRef,organizationNoteTypeOf,organizationBrandDecision,organizationBrandLinkOutcome,organizationBrandUnlinkOutcome,DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 import {payContractWriteDecision,payContractReadAccess,payContractCreator,payContractCreateCheck,payContractCompanyRecordRef,payContractPrincipalRef,payContractRecordRef,payContractChanger,payContractStateDecision,payContractEditableValue,payContractChangeCheck} from "@studenthub/pay-contracts";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
@@ -33,6 +33,7 @@ import { createOrganizationStatus } from "./organization-status.js";
 import {createOrganizationCommercialTerms}from"./organization-commercial-terms.js";
 import {createOrganizationApprovedToHire}from"./organization-approved-to-hire.js";
 import {createOrganizationNotes}from"./organization-notes.js";
+import {createOrganizationBrands}from"./organization-brands.js";
 import {createPayContracts}from"./pay-contracts-http.js";
 import { createBankDetails } from "./bank-details.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
@@ -226,6 +227,7 @@ export function createRuntimeLoginFromEnv(
   const organizationCommercialTermsStore=new PostgresOrganizationCommercialTermsStore({connectionString:value("DATABASE_URL"),decision:organizationCommercialTermsDecision,stateDecision:organizationCommercialTermsStateDecision,recordRef:organizationCommercialTermsRecordRef,principalRef:organizationCommercialTermsPrincipalRef});
   const organizationApprovedToHireStore=new PostgresOrganizationApprovedToHireStore({connectionString:value("DATABASE_URL"),decision:organizationApprovedToHireDecision,stateDecision:organizationApprovedToHireStateDecision,recordRef:organizationApprovedToHireRecordRef,principalRef:organizationApprovedToHirePrincipalRef});
   const organizationNotesStore=new PostgresOrganizationNotesStore({connectionString:value("DATABASE_URL"),decision:organizationNoteDecision,recordRef:organizationNoteRecordRef,principalRef:organizationNotePrincipalRef,noteType:organizationNoteTypeOf});
+  const organizationBrandsStore=new PostgresOrganizationBrandsStore({connectionString:value("DATABASE_URL"),decision:organizationBrandDecision,linkOutcome:organizationBrandLinkOutcome,unlinkOutcome:organizationBrandUnlinkOutcome});
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: value("DATABASE_URL") }) : undefined;
@@ -281,6 +283,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWriteKey?{organizationCommercialTerms:createOrganizationCommercialTerms({sessions:loginStore.sessions,store:organizationCommercialTermsStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationApprovedToHire:createOrganizationApprovedToHire({sessions:loginStore.sessions,store:organizationApprovedToHireStore,secret:safeWriteKey})}:{}),
       ...(safeWriteKey?{organizationNotes:createOrganizationNotes({sessions:loginStore.sessions,store:organizationNotesStore,secret:safeWriteKey})}:{}),
+      ...({organizationBrands:createOrganizationBrands({sessions:loginStore.sessions,store:organizationBrandsStore})} as {}),
       ...{payContracts:createPayContracts({sessions:loginStore.sessions,store:payContractWrites,contracts:payContracts,
         ...(safeWriteKey?{secret:safeWriteKey,check:payContractCreateCheck({references:payContractReferences,contracts:payContracts,candidates:payContractWrites}),changeCheck:payContractChangeCheck({references:payContractReferences,contracts:payContracts})}: {})})},
       web: {
@@ -296,7 +299,7 @@ export function createRuntimeLoginFromEnv(
     },
     async close() {
       await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationNotesStore.close(),
-        bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
+        organizationBrandsStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
     },
   };
 }
