@@ -341,8 +341,9 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   if (nationalityAllowsMother && !nationalityIsKuwaiti) editable.add("kuwaitiMother");
   const hasWrites = Object.values(profile.fields).some(field => field.freshness.kind === "written_by_person");
   const hasImported = Object.values(profile.fields).some(field => field.freshness.kind === "imported_snapshot" && field.state === "available");
+  const legacyLinkState = profile.legacyLinkState === "linked" ? "linked" : profile.legacyLinkState === "unlinked" ? "unlinked" : undefined;
   const legacyAccountMark = hasImported && login.legacyLink ? `<p class="p-notice">${copy("profile.legacyImported")}</p>` : "";
-  const legacyAccountPrompt = !hasImported && login.legacyLink ? `<p class="p-notice">${copy("profile.legacyPrompt")} <a class="text-link" href="/profile/link-account">${copy("profile.legacyLink")}</a></p>` : "";
+  const legacyAccountPrompt = legacyLinkState !== "linked" && !hasImported && login.legacyLink ? `<p class="p-notice">${copy("profile.legacyPrompt")} <a class="text-link" href="/profile/link-account">${copy("profile.legacyLink")}</a></p>` : "";
   const date = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value.slice(0,10)) && Number.isFinite(Date.parse(value.slice(0,10)))
     ? new Intl.DateTimeFormat(language === "ar" ? "ar-KW" : "en-GB", {day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value.slice(0,10))) : value;
   const formatted = (key: Key): string => {

@@ -3,7 +3,7 @@ import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
 import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { OwnProfileRepository, createPersonImportedFallbackReader, type ApprovedProfileAdapter } from "@studenthub/profile";
+import { OwnProfileRepository, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -17,7 +17,7 @@ type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
 export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, approvedProfiles: ApprovedProfileAdapter): Wired<{
   readonly application: Record<string, unknown>;
-  readonly web: { readonly profiles: OwnProfileRepository };
+  readonly web: { readonly profiles: OwnProfileReader };
   readonly browserSessionPool: pg.Pool | undefined;
   readonly sessions: typeof access.loginStore.sessions;
 }> {
@@ -64,6 +64,12 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     sessions, authz:access.authzStore, origin: process.env.OIDC_CALLBACK_URL ? new URL(process.env.OIDC_CALLBACK_URL).origin : "",
     resetUrl:legacyConfig.resetUrl, secret:safeWriteKey,
   }) : undefined;
+  const webProfiles: OwnProfileReader = legacyStore ? { async readOwn(request) {
+    const result = await profiles.readOwn(request);
+    if (result.kind !== "found") return result;
+    const status = await legacyStore.status(request.targetPersonId);
+    return { kind: "found", profile: Object.freeze({ ...result.profile, legacyLinkState: status.linked ? "linked" : "unlinked" }) };
+  } } : profiles;
   return {
     services: { application: {
       ...(safeWrites && safeWriteKey
@@ -113,7 +119,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         ? { bankDetails: createBankDetails({ sessions: access.loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
-      }, web: { profiles }, browserSessionPool, sessions,
+      }, web: { profiles: webProfiles }, browserSessionPool, sessions,
     },
     async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close()]); },
   };
