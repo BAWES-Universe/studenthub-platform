@@ -156,3 +156,17 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not treat assertion-like methods on other objects as assertions", () => {
+  const source = [
+    'test("expect-method", () => { mock.expect(value); });',
+    'test("assert-method", () => { helper.assert(value); });',
+    'test("context-lookalike", () => { helper.t.assert.ok(value); });',
+    'test("throw-method", () => { syntax.throw(value); });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["expect-method", "assert-method", "context-lookalike", "throw-method"],
+  );
+});
