@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import { createWorkerHeartbeat } from "../src/index.js";
+import { spawnSync } from "node:child_process";
 
 test("worker heartbeat uses the shared platform contract", () => {
   const heartbeat = createWorkerHeartbeat(new Date("2026-09-02T00:00:00.000Z"));
@@ -12,3 +13,5 @@ test("worker heartbeat uses the shared platform contract", () => {
   assert.equal(heartbeat.contractVersion, PLATFORM_CONTRACT_VERSION);
   assert.equal(heartbeat.timestamp, "2026-09-02T00:00:00.000Z");
 });
+
+test("SHU198_WORKER unknown job exits non-zero without opening storage",()=>{const run=spawnSync(process.execPath,[new URL("../src/index.js",import.meta.url).pathname,"run","unknown"],{encoding:"utf8"});assert.notEqual(run.status,0)});

@@ -1,6 +1,6 @@
 /** Local rule evaluation only. No notification or external integration is activated. */
 export interface Alert {
-  code: 'journey_failures' | 'journey_latency' | 'telemetry_dropped' | 'telemetry_unavailable';
+  code: 'journey_failures' | 'journey_latency' | 'telemetry_dropped' | 'telemetry_unavailable' | 'job_failed' | 'job_overlap' | 'job_missed';
   owner: 'platform-on-call';
   runbook: 'docs/observability.md';
 }

@@ -132,6 +132,11 @@ outputs point to this runbook. Evaluation is local and sending is disabled.
 | journey_latency | At least 20 observations, with more than 5% exceeding 1 second | Inspect the affected journey/dependency, without logging request bodies or widening Sentry capture |
 | telemetry_dropped | Any queue drop during this process lifetime | Check local transport pressure and event volume; do not retry indefinitely or block requests |
 | telemetry_unavailable | Worker creation, error, exit, post or acknowledgment deadline failure | Confirm business health independently; inspect local host resources; restart only under the operator's environment procedure |
+| job_failed | A registered job run failed, including loss of its lease | Inspect the closed job name and durable run outcome; reproduce with synthetic inputs; never add exception text to the run or alert |
+| job_overlap | A run was refused because the same job already held a live lease | Confirm the existing run is progressing and its lease is renewing; do not start overlapping work |
+| job_missed | The last successful run is older than its declared interval times the grace factor | Check host scheduling and the latest scrubbed run outcome, then restore the operator-managed schedule |
+
+The three job alerts are owned by **platform-on-call** and use this document as their runbook. Job runs retain only a closed job name, timestamps, numeric duration and closed outcome. The read-only `/admin/jobs` page is restricted to principals with an admin grant on an operator organization and performs two bulk run reads regardless of registry size.
 
 For `dependency_unavailable`, inspect configured dependency health using approved
 operator tooling. For `render_failure`, reproduce with synthetic profile data.
