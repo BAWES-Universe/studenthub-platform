@@ -64,7 +64,7 @@ const mutations = [
   ],
   [
     "ignore written profile values", "SHU371_SHOWN_OVER_SNAPSHOT",
-    "if (!written)\n                    return profile;", "if (true)\n                    return profile;",
+    "if (!hasWritten)\n                    return profile;", "if (true)\n                    return profile;",
   ],
   [
     "mislabel person-written freshness", "SHU371_SHOWN_OVER_SNAPSHOT",

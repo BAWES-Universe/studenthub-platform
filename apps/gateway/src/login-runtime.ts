@@ -221,8 +221,8 @@ export function createRuntimeLoginFromEnv(
   const safeWriteKey = safeWriteSigningKey(env.SAFE_WRITE_SIGNING_KEY);
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
-  const safeWrites = new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") });
-  const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles, preferences: safeWrites });
+  const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
+  const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles, ...(safeWrites ? { preferences: safeWrites } : {}) });
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
@@ -284,7 +284,7 @@ export function createRuntimeLoginFromEnv(
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
       ...(safeWriteKey
-        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
+        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites!, secret: safeWriteKey }) }
         : {}),
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
@@ -313,7 +313,7 @@ export function createRuntimeLoginFromEnv(
       },
     },
     async close() {
-      await Promise.all([loginStore.close(), authzStore.close(), safeWrites.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
+      await Promise.all([loginStore.close(), authzStore.close(), safeWrites?.close(), organizationProfileStore?.close(), organizationProfileReads.close(), organizationStatusStore.close(),organizationCommercialTermsStore.close(),organizationApprovedToHireStore.close(),organizationAccountManagerStore.close(),organizationAccountManagerReads.close(),organizationNotesStore.close(),
         organizationBrandsStore.close(),organizationStoresStore.close(),organizationCreationStore.close(),organizationDeletionStore.close(),bankDetailsStore?.close(), banks?.close(),payContracts.close(),payContractReferences.close(),payContractWrites.close()]);
     },
   };
