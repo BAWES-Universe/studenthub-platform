@@ -154,6 +154,7 @@ export class RefreshingJwksResolver implements JwksResolver {
 
 export interface RuntimeLogin {
   readonly application: BrowserLoginApplication;
+  readonly civilIdReview?: ReturnType<typeof wireProfile>["services"]["web"];
   close(): Promise<void>;
 }
 
@@ -255,6 +256,7 @@ export function createRuntimeLoginFromEnv(
   Object.defineProperty(runtimeApplication,"notifications",{value:notifications,enumerable:false});
   return {
     application: runtimeApplication,
+    ...(profile.services.web.civilIdReview?{civilIdReview:profile.services.web}:{}),
     async close() {
       await Promise.all([access.close(), profile.close(), organizationArea.close(), payContractArea.close(), ops.close(),notificationStore.close()]);
     },

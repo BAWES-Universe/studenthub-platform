@@ -4,6 +4,10 @@ import { handleLanguagePreference, handleLanguagePreferencePage } from "../langu
 import { handleBankDetails } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
+import { handleCivilIdReview } from "../civil-id-review-http.js";
+
+export const civilIdReviewRoute: GatewayRoute = { name: "civil-id-review", handle: (ctx) =>
+  handleCivilIdReview(ctx.request, ctx.response, ctx.civilIdReview) };
 
 export const profileEditPageRoute: GatewayRoute = { name: "profile-edit-page", handle: (ctx) =>
   handleProfileEditPage(ctx.request, ctx.response, ctx.login?.profileEdit, ctx.login?.web?.origin,

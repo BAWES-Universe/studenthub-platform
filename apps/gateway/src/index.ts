@@ -5,6 +5,9 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
 import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import type { CivilIdReviewHttp } from './civil-id-review-http.js';
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
+import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -150,6 +153,7 @@ export function createGatewayServer(
   profileRecords?: ProfileRecordsRuntime,
   organizationDocuments?: OrganizationDocumentsRuntime,
   universeEmbed?: UniverseEmbedConfig,
+  civilIdReview?: CivilIdReviewHttp,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -180,7 +184,7 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
-    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, catalogue,
+    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, civilIdReview, catalogue,
       profileRecords, organizationDocuments, writeHtml, pageDocument, renderError };
     if (await runRoutes(ROUTES, ctx)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
@@ -290,7 +294,9 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined) : renderError(503)), {}, true);
+        let civilIdCount:number|undefined;
+        if(result.status===200&&result.body.active&&(result.body.active.role==="staff"||result.body.active.role==="admin")&&civilIdReview){const who=await login?.profile({sessionId:cookieValue(request.headers.cookie,"__Host-studenthub_session")});const id=who?.status===200?who.body?.personId:undefined;if(typeof id==="string")civilIdCount=await civilIdReview.store.countPending({excludePrincipalId:id});}
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined, civilIdCount) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -348,6 +354,7 @@ export function createGatewayServer(
       let result: import("@studenthub/login-contract").BrowserResponse;
       let completeness: ProfileCompletenessResult | undefined;
       let civilIdSuggestion: import("@studenthub/profile").CivilIdSuggestion | undefined;
+      let civilIdReviewState: import("@studenthub/profile").CivilIdReviewState | undefined;
       try {
         result = await login.profile({
           sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
@@ -375,6 +382,7 @@ export function createGatewayServer(
               ...(typeof result.body?.email === "string" ? { email: result.body.email } : {}), profile: profile.profile,
               avatar: currentProfileAvatar(), records: profileRecords, dependencies: login.web.profileCompleteness });
             completeness = gathered.result;
+            if(login.civilIdReview)civilIdReviewState=await login.civilIdReview.stateFor(requesterPrincipalId)??undefined;
             result = { status: 200, body: gathered.profile };
           } else {
           result = profile.kind === "found"
@@ -391,7 +399,7 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness, civilIdSuggestion);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness, civilIdSuggestion, civilIdReviewState);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
@@ -571,6 +579,7 @@ if (entrypoint === import.meta.url) {
   const runtimeLogin = createRuntimeLoginFromEnv();
   const universeEmbed = createUniverseEmbedConfigFromEnv(process.env, runtimeLogin?.application.web?.origin);
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
+  const runtimeCivilIdReview = runtimeDocuments?.service&&runtimeLogin?.civilIdReview?.civilIdReview&&runtimeLogin.civilIdReview.civilIdVault ? {store:runtimeLogin.civilIdReview.civilIdReview,vault:runtimeLogin.civilIdReview.civilIdVault,ocr:runtimeLogin.civilIdReview.civilIdOcr,documents:new StaffDocuments({documents:runtimeDocuments.service,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:runtimeLogin.civilIdReview.civilIdReview}),secret:Buffer.from(runtimeDocuments.service.options.signingKey),origin:runtimeDocuments.service.options.origin} : undefined;
   const runtimeOrganizationDocuments = await createRuntimeOrganizationDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
   const runtimeProfileRecords = createRuntimeProfileRecordsFromEnv();
@@ -587,6 +596,7 @@ if (entrypoint === import.meta.url) {
     runtimeProfileRecords,
     runtimeOrganizationDocuments,
     universeEmbed,
+    runtimeCivilIdReview,
   );
   server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
   server.listen(port, host, () => {

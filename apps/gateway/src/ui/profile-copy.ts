@@ -3,6 +3,11 @@ export type ProfileLanguage = 'en' | 'ar';
 
 const english = {
   "profile.changeField": "Change {field}",
+  "civilId.checked": "Checked",
+  "civilId.rejected": "Rejected: {reason}",
+  "civilId.waiting": "Waiting for StudentHub to check",
+  "civilId.fixDetails": "Fix it",
+  "civilId.fixPhotos": "Fix it",
   "editor.title": "Edit profile",
   "editor.unavailable": "Profile update unavailable.",
   "editor.required": "Required",
@@ -212,6 +217,11 @@ export type ProfileCopyKey = keyof typeof english;
 
 const arabic = {
   "profile.changeField": "تغيير {field}",
+  "civilId.checked": "تم التحقق",
+  "civilId.rejected": "مرفوض: {reason}",
+  "civilId.waiting": "بانتظار تحقق StudentHub",
+  "civilId.fixDetails": "تصحيح",
+  "civilId.fixPhotos": "تصحيح الصور",
   "editor.title": "تعديل الملف الشخصي",
   "editor.unavailable": "تحديث الملف الشخصي غير متاح.",
   "editor.required": "مطلوب",

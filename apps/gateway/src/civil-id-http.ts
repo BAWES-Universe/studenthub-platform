@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { CIVIL_ID_MESSAGES, type CivilIdReason, type CivilIdService } from "@studenthub/profile";
+import { profileCopyText } from "./ui/profile-copy.js";
 
 const LIMIT=8192;
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
@@ -25,8 +26,10 @@ export async function handleCivilId(request:IncomingMessage,response:ServerRespo
   if(result.ok||result.reason==="submission_reused"){finish(303,{location:"/profile#field-civilId"});return true;}if(result.reason==="stale_revision"){write(409,"Civil ID",page(await service.readOwn(principal),CIVIL_ID_MESSAGES.stale_revision));return true;}write(result.reason==="duplicate"?409:400,"Civil ID",page({country:params.get("country"),expiry:params.get("expiry")||null,revision},CIVIL_ID_MESSAGES[result.reason]));return true;
 }
 
-export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null):string{
-  const label=language==="ar"?"البطاقة المدنية":"Civil ID",change=language==="ar"?"تغيير":"Change",missing=language==="ar"?"غير مسجل":"Not recorded",waiting=language==="ar"?"بانتظار تحقق StudentHub":"Waiting for StudentHub to check";
+export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null,state?:import("@studenthub/profile").CivilIdReviewState):string{
+  const label=language==="ar"?"البطاقة المدنية":"Civil ID",change=language==="ar"?"تغيير":"Change",missing=language==="ar"?"غير مسجل":"Not recorded",waiting=profileCopyText(language,"civilId.waiting");
   const shown=value?(value.maskedNumber??missing)+(value.expiry?`, ${language==="ar"?"تنتهي":"expires"} ${value.expiry}`:""):missing;
-  return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${value?.needsReview?`<p class="p-meta">${waiting}</p>`:""}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a></div></dd></div>`;
+  const status=state?.state==="checked"?profileCopyText(language,"civilId.checked"):state?.state==="rejected"?profileCopyText(language,"civilId.rejected",{reason:state.reason}):state?.state==="waiting"||value?.needsReview?waiting:"";
+  const fixes=state?.state==="rejected"?` <a class="p-edit" href="/profile/civil-id">${profileCopyText(language,"civilId.fixDetails")}</a> <a class="p-edit" href="/profile/documents">${profileCopyText(language,"civilId.fixPhotos")}</a>`:"";
+  return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${status?`<p class="p-meta">${esc(status)}${fixes}</p>`:""}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a></div></dd></div>`;
 }

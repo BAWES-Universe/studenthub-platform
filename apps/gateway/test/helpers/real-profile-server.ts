@@ -31,6 +31,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../../src/index.js";
 import type { BrowserLoginApplication } from "../../src/web-ui.js";
 import { composeOwnProfiles } from "../../src/wiring/profile.js";
+import type { CivilIdReviewHttp } from "../../src/civil-id-review-http.js";
 
 export const REAL_PROFILE_ORIGIN = "https://studenthub.test.invalid";
 export const REAL_PROFILE_PERSON = "person-1";
@@ -46,6 +47,7 @@ export type RealProfileServices = {
   readonly vault: CivilIdVault;
   readonly profiles: ReturnType<typeof composeOwnProfiles>;
   readonly now: () => Date;
+  readonly authz: InMemoryAuthzStore;
 };
 
 export type RealProfileServerOptions = {
@@ -59,6 +61,8 @@ export type RealProfileServerOptions = {
   readonly countries?: readonly { readonly id: string; readonly code: string | null }[];
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
+  /** Staff Civil ID review composition under test; requests still use this helper's real login. */
+  readonly civilIdReview?: (services: RealProfileServices) => CivilIdReviewHttp;
 };
 
 const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -95,7 +99,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const countedCivil = { ...civilId, async readOwn(id: string) { counts.civilReads++; return civilId.readOwn(id); } } as typeof civilId;
   const profiles = composeOwnProfiles({ principals: authz, source, civilId: countedCivil, area, today: options.today ?? (() => kuwaitDate(now())) });
   const countedProfiles = { async readOwn(request: Parameters<typeof profiles.readOwn>[0]) { counts.profileReads++; return profiles.readOwn(request); } };
-  const services: RealProfileServices = { civilId, civilStore, vault, profiles, now };
+  const services: RealProfileServices = { civilId, civilStore, vault, profiles, now, authz };
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,
@@ -106,7 +110,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     web: { origin: REAL_PROFILE_ORIGIN, returnTo: rig.config.allowedReturnUrls[1], profiles: countedProfiles,
       profileCompleteness: { choices: async () => ({ countries: options.countries ?? [] }), civilId: countedCivil } },
   } as BrowserLoginApplication;
-  const server = createGatewayServer(undefined, undefined, undefined, login);
+  const server = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, undefined, undefined, undefined, undefined, undefined, options.civilIdReview?.(services));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address();

@@ -20,6 +20,7 @@ import type { CivilIdService } from "@studenthub/profile";
 import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
 import type { AreaHttp } from "../area-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
+import type { CivilIdReviewHttp } from "../civil-id-review-http.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilId?: CivilIdService;
@@ -44,6 +45,7 @@ export interface GatewayRouteContext {
   readonly login: GatewayRouteLogin | undefined;
   readonly authz: AuthzMiddleware;
   readonly documents: CandidateDocuments | undefined;
+  readonly civilIdReview: CivilIdReviewHttp | undefined;
   readonly catalogue: ReferenceCatalogue | undefined;
   readonly profileRecords: ProfileRecordsRuntime | undefined;
   readonly organizationDocuments: OrganizationDocumentsRuntime | undefined;
