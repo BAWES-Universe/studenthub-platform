@@ -69,9 +69,9 @@ test("NOTEDET_SHOW a listed note has a read-only escaped detail page", async (t)
 
 test("NOTEDET_MINE selects only the requested note from one list call", async (t) => {
   const f = await fixture(t);
-  const found = await f.request("/organization/org-a/notes/7");
+  const found = await f.request("/organization/org-a/notes/8");
   assert.equal(found.status, 200); const foundBody = await found.text();
-  assert.match(foundBody, /Line one/); assert.doesNotMatch(foundBody, /Other note/, "NOTEDET_MINE only the requested note is rendered");
+  assert.match(foundBody, /Other note/); assert.doesNotMatch(foundBody, /Line one/, "NOTEDET_MINE only the requested note is rendered");
   assert.deepEqual(f.calls.list, ["org-a"], "NOTEDET_MINE list is called once for the company");
   const expected = renderError(404, f.login);
   for (const path of ["/organization/org-a/notes/999", "/organization/org-b/notes/7"]) {
