@@ -12,7 +12,7 @@ CREATE TABLE civil_id_review_decisions (
  CHECK (subject_principal_id <> reviewer_principal_id),
  CHECK ((decision='confirmed' AND reason IS NULL) OR
         (decision='rejected' AND reason IS NOT NULL AND char_length(reason) BETWEEN 1 AND 300
-         AND reason !~ '[\\x00-\\x1F\\x7F]'))
+         AND reason !~ E'[\\x00-\\x1F\\x7F]'))
 );
 CREATE INDEX civil_id_review_decisions_subject ON civil_id_review_decisions(subject_principal_id,decided_at DESC,id);
 CREATE INDEX civil_id_review_decisions_time ON civil_id_review_decisions(decided_at DESC);

@@ -42,6 +42,7 @@ import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
 import { gatherProfileCompleteness } from "./profile-completeness.js";
 import type { ProfileCompletenessResult } from "@studenthub/profile";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -293,7 +294,14 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "context_unavailable" } };
       }
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined) : renderError(503)), {}, true);
+        let civilIdReviewCount:number|undefined;
+        const active=result.status===200?result.body.active:null;
+        const sessionId=cookieValue(request.headers.cookie,"__Host-studenthub_session");
+        if(civilReview&&sessionId&&active&&(active.role==="staff"||active.role==="admin")&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(active.orgId)){
+          const session=await civilReview.sessions.get(sessionId);
+          if(session)civilIdReviewCount=await civilReview.store.countPending({excludePrincipalId:session.personId});
+        }
+        writeHtml(response, result.status, await signedInHtml(login,sessionId,login ? renderWorkspace(result, login, documents !== undefined,civilIdReviewCount) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }

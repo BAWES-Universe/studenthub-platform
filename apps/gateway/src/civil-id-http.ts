@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { CIVIL_ID_MESSAGES, type CivilIdReason, type CivilIdService } from "@studenthub/profile";
+import { profileCopyText } from "./ui/profile-copy.js";
 
 const LIMIT=8192;
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
@@ -28,6 +29,6 @@ export async function handleCivilId(request:IncomingMessage,response:ServerRespo
 export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null,decision?:{state:"waiting"|"checked"|"rejected";reason:string|null}|null):string{
   const label=language==="ar"?"البطاقة المدنية":"Civil ID",change=language==="ar"?"تغيير":"Change",missing=language==="ar"?"غير مسجل":"Not recorded",waiting=language==="ar"?"بانتظار تحقق StudentHub":"Waiting for StudentHub to check";
   const shown=value?(value.maskedNumber??missing)+(value.expiry?`, ${language==="ar"?"تنتهي":"expires"} ${value.expiry}`:""):missing;
-  const state=decision?.state==="checked"?"Checked":decision?.state==="rejected"?`Rejected: ${esc(decision.reason??"")}`:value?.needsReview?waiting:"";
-  return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${state?`<p class="p-meta">${state}</p>`:""}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a>${decision?.state==="rejected"?` <a class="p-edit" href="/profile/documents">Fix it</a>`:""}</div></dd></div>`;
+  const state=decision?.state==="checked"?profileCopyText(language,"civilId.checked"):decision?.state==="rejected"?profileCopyText(language,"civilId.rejected",{reason:decision.reason??""}):value?.needsReview?waiting:"";
+  return `<div id="field-civilId" class="p-row" tabindex="-1"><dt>${label}</dt><dd><bdi class="p-value" dir="ltr">${esc(shown)}</bdi>${state?`<p class="p-meta">${esc(state)}</p>`:""}<div class="p-row-actions"><a class="p-edit" href="/profile/civil-id">${change}</a>${decision?.state==="rejected"?` <a class="p-edit" href="/profile/documents">${profileCopyText(language,"civilId.fix")}</a>`:""}</div></dd></div>`;
 }

@@ -149,7 +149,7 @@ test("U1_A11Y: phone recovery never echoes a submitted phone value", () => {
 
 test("U1_COPY: all dictionary keys and placeholders match, every value is nonempty and interpolated safely", () => {
   const keys = Object.keys(PROFILE_COPY.en) as ProfileCopyKey[];
-  assert.equal(keys.length, 203);
+  assert.equal(keys.length, 206);
   assert.deepEqual(keys.sort(), Object.keys(PROFILE_COPY.ar).sort());
   const parameters = (value: string) => [...new Set(Array.from(value.matchAll(/\{([A-Za-z]+)\}/g), match => match[1]!))].sort();
   for (const key of keys) {
