@@ -67,8 +67,9 @@ export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: 
     normalized = normalized.replace(/[\u0660-\u0669\u06f0-\u06f9]/g, character => String(character.charCodeAt(0) % 16));
     if (!/^[+0-9 ()-]+$/.test(normalized) || normalized.trim() !== normalized) return null;
     const compact = normalized.replace(/[ ()-]/g, "");
+    const international = compact.startsWith("+") || compact.startsWith("00");
     const digits = compact.startsWith("+") ? compact.slice(1) : compact.startsWith("00") ? compact.slice(2) : compact;
-    normalized = digits.length === 8 ? `+965${digits}` : digits.startsWith("965") ? `+${digits}` : compact;
+    normalized = digits.length === 8 && !international ? `+965${digits}` : international || digits.startsWith("965") ? `+${digits}` : compact;
   }
   if (field === "gender" && !["male", "female", "other"].includes(normalized)) return null;
   if (field === "birthDate" && !validBirthDate(normalized, today)) return null;

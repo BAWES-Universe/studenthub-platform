@@ -112,6 +112,10 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
   if (field.provenance?.sourceField === "candidate_job_search_status") {
     return ({ not_looking: "Not looking right now", active: "Actively looking for work", open_to_offers: "Open to offers" })[String(field.value)] ?? String(field.value);
   }
+  if (field.provenance?.sourceField === "phone" && /^\+965[0-9]{8}$/.test(String(field.value))) {
+    const value = String(field.value);
+    return `${value.slice(0,4)} ${value.slice(4,8)} ${value.slice(8)}`;
+  }
   return String(field.value);
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
