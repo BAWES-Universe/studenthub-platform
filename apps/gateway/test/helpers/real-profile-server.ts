@@ -68,7 +68,7 @@ export type RealProfileServerOptions = {
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
   /** Wire the staff Civil ID review routes through the production gateway composition. */
-  readonly civilIdReview?: { readonly documents?:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string; readonly staffGrant?:{readonly orgId:"root"|"candidate-documents";readonly role:"staff"|"admin"|"owner";readonly scope:"self"|"subtree"} };
+  readonly civilIdReview?: { readonly documents?:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string; readonly staffGrant?:{readonly orgId:"root"|"candidate-documents";readonly role:"staff"|"admin"|"org-owner";readonly scope:"self"|"subtree"} };
 };
 
 const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);

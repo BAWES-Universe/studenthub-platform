@@ -64,7 +64,16 @@ test("REV_ORIGIN confirmation POST also rejects wrong origin and cross-site befo
 
 test("REV_STAFF refused grant kinds are byte-identical on every route",async t=>{
   const baseline=await rig(t),notFound=await(await baseline.get("/workspace/civil-ids/unknown")).text();
-  for(const staffGrant of [{orgId:"root",role:"staff",scope:"self"},{orgId:"candidate-documents",role:"admin",scope:"subtree"},{orgId:"root",role:"owner",scope:"subtree"}] as const){const d=await documents(),x=await startRealProfileServer(t,{civilIdReview:{documents:d.service,staffGrant}});assert.equal(await x.login.civilIdReview!.isStaff(REAL_PROFILE_PERSON),false,"REV_STAFF refused grant isStaff false");for(const [method,path] of [["GET","/workspace/civil-ids"],["GET",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`],["POST",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`],["POST",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`],["GET","/workspace/civil-ids/delivery?t=bad"]]){const r=await fetch(x.url+path,{method,headers:{cookie:x.cookie()}});assert.equal(r.status,404,"REV_STAFF refused grant gets 404 on every route");assert.equal(await r.text(),notFound,"REV_STAFF refused grant bodies match person 404")}}
+  for(const staffGrant of [{orgId:"root",role:"staff",scope:"self"},{orgId:"candidate-documents",role:"admin",scope:"subtree"},{orgId:"root",role:"org-owner",scope:"subtree"}] as const){const d=await documents(),x=await startRealProfileServer(t,{civilIdReview:{documents:d.service,staffGrant}});assert.equal(await x.login.civilIdReview!.isStaff(REAL_PROFILE_PERSON),false,"REV_STAFF refused grant isStaff false");for(const [method,path] of [["GET","/workspace/civil-ids"],["GET",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`],["POST",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`],["POST",`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision/confirm`],["GET","/workspace/civil-ids/delivery?t=bad"]]){const r=await fetch(x.url+path,{method,headers:{cookie:x.cookie()}});assert.equal(r.status,404,"REV_STAFF refused grant gets 404 on every route");assert.equal(await r.text(),notFound,"REV_STAFF refused grant bodies match person 404")}}
+});
+
+test("REV_STAFF delivery refuses a live token after the person leaves the queue",async t=>{
+  const x=await rig(t),page=await(await x.get(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`)).text(),link=/<img[^>]+src="([^"]+)"/.exec(page)?.[1];assert.ok(link);
+  const row=x.civilStore.rows.get(REAL_PROFILE_OTHER_PERSON)!;x.civilStore.rows.set(REAL_PROFILE_OTHER_PERSON,{...row,needsReview:false});
+  const expected=await(await x.get("/workspace/civil-ids/unknown")).text(),delivered=await x.get(link);
+  assert.equal(delivered.status,404,"REV_STAFF non-waiting delivery is 404");assert.equal(await delivered.text(),expected,"REV_STAFF non-waiting delivery body is byte-identical");
+  x.documentState.documents[0]!.scope.personId="unknown";const unknownLink=await x.login.civilIdReview!.staffDocuments!.issue(REAL_PROFILE_SESSION,"unknown","civil-id-front","civil_id_review"),unknown=await x.get(unknownLink.url);
+  assert.equal(unknown.status,404,"REV_STAFF unknown delivery is 404");assert.equal(await unknown.text(),expected,"REV_STAFF unknown delivery body is byte-identical");
 });
 
 test("REV_STAFF authorized person refusals cover both POST routes and non-waiting rows",async t=>{
