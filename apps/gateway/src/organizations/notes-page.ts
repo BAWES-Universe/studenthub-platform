@@ -4,7 +4,8 @@ import type { ActionToken } from "@studenthub/safe-write-contract";
 import type { GatewayRouteContext } from "../routes/context.js";
 import { ORGANIZATION_PAGE_RESERVED, organizationPageOrgId } from "./overview-page.js";
 
-const PAGE = /^\/organization\/([^/]+)\/notes(?:\/(preview|confirm))?$/;
+const PAGE = /^\/organization\/([^/]+)\/notes(?:\/([^/]+))?$/;
+const NOTE_ID = /^[1-9][0-9]{0,18}$/;
 const BODY_LIMIT = 32_768;
 const TOKEN_KEYS = ["changeSetDigest", "expectedBeforeDigest", "expiresAt", "issuedAt", "mac", "principalRef", "tokenId"] as const;
 const TYPE_LABEL: Readonly<Record<OrganizationNoteType, string>> = { internal_note: "Internal note", phone_call: "Phone call", email: "Email", meeting: "Meeting", interview: "Interview", task: "Task" };
@@ -86,6 +87,24 @@ async function listPage(ctx: GatewayRouteContext, orgId: string, query: URLSearc
   return true;
 }
 
+async function detailPage(ctx: GatewayRouteContext, orgId: string, noteId: string, query: URLSearchParams): Promise<boolean> {
+  if (query.size !== 0) return invalid(ctx);
+  const service = ctx.login?.organizationNotes;
+  if (!service) return unavailable(ctx);
+  const result = await service.list(sessionCookie(ctx.request.headers.cookie), orgId);
+  if (result.status !== 200) return failed(ctx, result.status);
+  const notes = (result.body as { notes?: OrganizationNoteView[] }).notes;
+  if (!Array.isArray(notes)) return unavailable(ctx);
+  const note = notes.find((candidate) => candidate.noteId === noteId);
+  if (!note) return error(ctx, 404);
+  const company = `/organization/${encodeURIComponent(orgId)}`;
+  const notesPath = `${company}/notes`;
+  const label = TYPE_LABEL[note.noteType];
+  const body = `<main id="main" class="profile-main"><nav aria-label="Breadcrumb"><a href="${escapeHtml(company)}">Company</a> <a href="${escapeHtml(notesPath)}">Notes</a></nav><h1>${escapeHtml(label)}</h1><time datetime="${escapeHtml(note.createdAt)}">${escapeHtml(note.createdAt)}</time><p style="white-space: pre-wrap">${escapeHtml(note.text)}</p></main>`;
+  ctx.writeHtml(ctx.response, 200, ctx.pageDocument(label, body));
+  return true;
+}
+
 async function preview(ctx: GatewayRouteContext, orgId: string): Promise<boolean> {
   const values = await readForm(ctx.request, ["field", "value"]);
   if (!values || !validField(values.field) || values.value.trim().length === 0) return invalid(ctx);
@@ -116,13 +135,19 @@ export async function handleOrganizationNotesPage(ctx: GatewayRouteContext): Pro
   const match = PAGE.exec(requestUrl.pathname);
   if (!match) return false;
   const action = match[2];
-  if (action ? ctx.request.method !== "POST" : ctx.request.method !== "GET" && ctx.request.method !== "HEAD") return false;
+  const mutation = action === "preview" || action === "confirm";
+  if (mutation ? ctx.request.method !== "POST" : ctx.request.method !== "GET" && ctx.request.method !== "HEAD") return false;
+  if (action === "receipts") return false;
   let decoded: string | undefined;
   try { decoded = decodeURIComponent(match[1]!); } catch { decoded = undefined; }
   if (decoded && ORGANIZATION_PAGE_RESERVED.includes(decoded)) return error(ctx, 404);
   const orgId = organizationPageOrgId(match[1]!);
   try {
     if (!action) return orgId ? await listPage(ctx, orgId, requestUrl.searchParams) : error(ctx, 404);
+    if (!mutation) {
+      if (!NOTE_ID.test(action)) return error(ctx, 404);
+      return orgId ? await detailPage(ctx, orgId, action, requestUrl.searchParams) : error(ctx, 404);
+    }
     const origin = ctx.login?.web?.origin;
     if (!origin || !ctx.login?.organizationNotes) return unavailable(ctx);
     if (ctx.request.headers.origin !== origin || ctx.request.headers["sec-fetch-site"] === "cross-site") return plain(ctx, 403, "Note not saved", "This note must be added from StudentHub itself.");
