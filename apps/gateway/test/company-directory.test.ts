@@ -58,8 +58,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
 const html = { accept: "text/html" };
 
 test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspace", async (t) => {
-  const absent={hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const}};
-  const f = await fixture(t,{commercialTerms:{async read(){return absent},async readMany(ids){return new Map(ids.map(id=>[id,{...absent,currencyCode:id==="org-a"?{kind:"value"as const,value:"USD"}:{kind:"absent"as const}}]))}}});
+  const f = await fixture(t);
   const workspace = await (await f.get("/workspace?org_id=root&role=staff", html)).text();
   assert.match(workspace, /href="\/workspace\/companies\?org_id=root&amp;role=staff">Companies<\/a>/);
   const recruiter = await (await f.get("/workspace?org_id=org-b&role=recruiter", html)).text();
@@ -79,10 +78,25 @@ test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspac
   assert.match(page.headers.get("content-security-policy")!, /script-src 'self'/);
   assert.match(text, /<a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>/);
   assert.match(text, /Under review/);
-  assert.match(text, /USD/);
   assert.match(text, /aria-current="page">Companies<\/a>/);
   assert.match(text, /Companies 1–2 of 2/);
   assert.doesNotMatch(text, /Organization A1|Synthetic Retail Kuwait City|SENSITIVE-/, "sub-companies open from their parent");
+});
+
+test("SHU353_SHOWN directory renders the written currency in the company row", async (t) => {
+  const absent = { hourlyRate: { kind: "absent" as const }, bonusCommission: { kind: "absent" as const } };
+  const f = await fixture(t, { commercialTerms: {
+    async read() { return absent; },
+    async readMany(ids) {
+      return new Map(ids.map((id) => [id, {
+        ...absent,
+        currencyCode: id === "org-a" ? { kind: "value" as const, value: "USD" } : { kind: "absent" as const },
+      }]));
+    },
+  } });
+
+  const text = await (await f.get(STAFF_LIST, html)).text();
+  assert.match(text, /<tr><th scope="row"><a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>.*?<\/th><td>Under review<\/td><td>Yes<\/td><td>USD<\/td>/);
 });
 
 test("SHU-163/AC-07 PAGE filters reach the directory and survive paging links", async (t) => {
