@@ -15,6 +15,7 @@ import { createLoginApplication } from '../src/login-application.js';
 import { createGatewayServer } from '../src/index.js';
 import type { BrowserLoginApplication } from '../src/web-ui.js';
 import { handleCandidateDocuments } from '../src/candidate-documents-http.js';
+import { handleDocumentsUpload } from '../src/documents-upload-http.js';
 const { handleDocumentsPage, documentsPage } = await import(process.env.SHU366_PAGE_MODULE ?? '../src/documents-page.js');
 const SESSION = 's'.repeat(43), OTHER = 'o'.repeat(43), origin = 'https://documents.test.invalid';
 async function rig(t: TestContext, language = 'en') {
@@ -31,13 +32,14 @@ async function rig(t: TestContext, language = 'en') {
     const session = await loginRig.sessions.get(credential); return session ? { kind: 'principal', principalId: session.personId } : null;
   } });
   const originalList = service.list.bind(service);
-  service.list = async credential => { lists++; return originalList(credential); };
+  service.list = async (credential, includeFinalizedAt) => { lists++; return originalList(credential, includeFinalizedAt); };
   service.issueDelivery = async () => { deliveries++; throw new Error('Unexpected delivery'); };
   const repository = new OwnProfileRepository({ principals: authz, source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnPreferences() { return { language: language === 'ar' ? 'ar' : 'en', updatedAt: '2026-11-05T00:00:00Z' }; } } });
   const profileReads: unknown[] = [], sessionReads: unknown[] = [];
   const login: BrowserLoginApplication = { ...loginRig.app, profile: async request => { sessionReads.push(request); return loginRig.app.profile(request); }, web: { origin, returnTo: `${origin}/profile`, profiles: { async readOwn(request) { profileReads.push(request); if (profileBroken) throw new Error('RAW_PROFILE_ERROR'); return repository.readOwn(request); } } } };
   let configured = true;
   const server = createServer(async (request, response) => {
+    if (await handleDocumentsUpload(request, response, configured ? service : undefined)) return;
     // Dynamic module seam exercises the genuine page mutant, not a duplicate renderer.
     if (await handleDocumentsPage(request, response, configured ? service : undefined, login)) return;
     if (await handleCandidateDocuments(request, response, configured ? service : undefined, login)) return;
@@ -79,7 +81,8 @@ test('SHU366_PAGE finalized file appears once with closed slots and one list', a
   assert.ok(html.includes(`PDF · ${finalized.bytes.length} bytes`));
   assert.equal(f.counts().lists - before.lists, 1); assert.equal(f.counts().deliveries, 0);
   for (const row of (await f.disk.transaction(async state => state.documents))) { assert.ok(!html.includes(row.id)); assert.ok(!html.includes(row.version)); }
-  assert.doesNotMatch(html, /uploads\/|delivery|<script|<form|<input|Date unavailable|timestamp|type="file"/);
+  assert.doesNotMatch(html, /uploads\/|delivery|<script|Date unavailable|timestamp/);
+  assert.equal((html.match(/<form method="post" enctype="multipart\/form-data"/g) ?? []).length, 4);
   assert.match(html, /lang="en" dir="ltr"/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(response.headers.get('content-security-policy')!, /default-src 'none'/);
@@ -191,4 +194,21 @@ test('SHU366_PAGE concurrent revocation at primitive authentication is sign-in40
   assert.equal(calls, 3, 'revocation reaches the non-empty-list primitive authentication');
   assert.equal(response.status, 401);
   assert.match(await response.text(), /Sign in to view your documents/);
+});
+
+test('Q14_1_UPLOAD plain form uploads and renders the finalized file', async t => {
+  const f = await rig(t);
+  const page = await f.get(), markup = await page.text();
+  const section = markup.split('id="document-personal-photo"')[1]!.split('</form>')[0]!;
+  const submission = /name="submission" value="([^"]+)"/.exec(section)![1]!;
+  const form = new FormData();
+  form.set('submission', submission);
+  form.set('file', new Blob([new Uint8Array(Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63606060000000040001f61738550000000049454e44ae426082','hex'))], { type: 'image/png' }), 'never-shown.png');
+  const uploaded = await fetch(f.url + '/profile/documents/personal-photo/upload', { method: 'POST', redirect: 'manual', headers: {
+    cookie: `__Host-studenthub_session=${SESSION}`, origin, 'sec-fetch-site': 'same-origin', 'idempotency-key': 'ignored-client-value',
+  }, body: form });
+  assert.equal(uploaded.status, 303); assert.equal(uploaded.headers.get('location'), '/profile/documents');
+  const shown = await (await f.get()).text();
+  assert.match(shown, /id="document-personal-photo"[^]*?<strong>On file<\/strong>/);
+  assert.doesNotMatch(shown, /never-shown\.png/); assert.match(shown, /PNG/); assert.match(shown, /Nov 2027/);
 });

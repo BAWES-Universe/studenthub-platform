@@ -46,8 +46,8 @@ function version(v: unknown): string | null {
 export class CandidateDocuments {
   readonly primitive: PrivateDocuments;
   constructor(readonly options: CandidateDocumentOptions) {
-    if (!/^[\w-]{1,128}$/.test(options.orgId)) throw new TypeError('invalid candidate-document configuration');
-    this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: options.orgId });
+    const configuredOrg = typeof options.orgId === 'string' && /^[\w-]{1,128}$/.test(options.orgId) ? options.orgId : '__document_org_unconfigured__';
+    this.primitive = new PrivateDocuments({ ...options, ownDocumentOrgId: configuredOrg });
   }
   private now(): number {
     const now = (this.options.now ?? Date.now)();
@@ -55,6 +55,7 @@ export class CandidateDocuments {
     return now;
   }
   async principal(credential: unknown): Promise<string> {
+    if (typeof this.options.orgId !== 'string' || !/^[\w-]{1,128}$/.test(this.options.orgId)) throw new LifecycleError(503, 'unavailable');
     if (typeof credential !== 'string' || !credential.length || credential.length > 8192) return deny();
     const identity = await this.options.authenticate(credential);
     if (!identity) return deny();
@@ -237,14 +238,21 @@ export class CandidateDocuments {
       return result;
     });
   }
-  async list(credential: unknown): Promise<Metadata[]> {
+  async list(credential: unknown, includeFinalizedAt = false): Promise<(Metadata & { finalizedAt?: number })[]> {
     const principalId = await this.principal(credential);
     return this.options.store.transaction(async s => {
       if (await this.principal(credential) !== principalId) return deny();
-      const result: Metadata[] = [];
+      const result: (Metadata & { finalizedAt?: number })[] = [];
+      const committed = s.lifecycle?.uploads.filter(ticket => ticket.committed) ?? [];
+      const finalized = s.lifecycle?.audit.filter(entry => entry.operation === 'finalize') ?? [];
       for (const type of CANDIDATE_DOCUMENT_TYPES) {
         const d = this.current(s,principalId,type);
-        if (d) result.push(await this.bound(s).metadata(credential,d.id));
+        if (d) {
+          const metadata = await this.bound(s).metadata(credential,d.id);
+          let finalizedAt: number | undefined;
+          for (let index = committed.length - 1; index >= 0; index--) if (committed[index]!.principalId === principalId && committed[index]!.type === type) { finalizedAt = finalized[index]?.at; break; }
+          result.push(!includeFinalizedAt || finalizedAt === undefined ? metadata : { ...metadata, finalizedAt });
+        }
       }
       this.auditRead(s, principalId, 'list');
       return result;
