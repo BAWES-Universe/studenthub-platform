@@ -8,9 +8,10 @@
 //
 // This directory is the fixture's acceptance oracle. It lives OUTSIDE the
 // fixture's own directory on purpose: it is consumed by the reviewer at review
-// time, and the fixture lane runs no package script over it, so a row that
-// disagrees with the contract is invisible to `node --test` and can only be
-// caught by reading it against the contract.
+// time. Because no package script reaches this directory, a row that disagrees
+// with the contract used to be invisible to `node --test`; the fixture test file
+// now drives every row below through `scanVacuousTests`, so such a row fails the
+// lane instead of only being catchable by reading it against the contract.
 export const EXPECTATIONS = Object.freeze([
   {
     name: "a body with no assertion at all",
@@ -45,7 +46,7 @@ export const EXPECTATIONS = Object.freeze([
   {
     name: "a body whose assertion is mentioned only inside a string literal",
     src: 'test("stub", () => { const s = "assert.equal(1, 2)"; });',
-    expected: [],
+    expected: ["stub"],
   },
   {
     name: "a body whose assertion is mentioned only inside a template literal",

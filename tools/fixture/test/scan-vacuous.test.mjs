@@ -6,6 +6,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scanVacuousTests } from "../scan-vacuous.mjs";
+import { EXPECTATIONS } from "../../fixture-conformance/scan-vacuous.expectations.mjs";
+
+// The acceptance oracle lives outside this directory and no package script
+// reaches it, so drive every declared row through the helper here. A row that
+// disagrees with the documented contract now fails the lane.
+for (const row of EXPECTATIONS) {
+  test(`acceptance oracle: ${row.name}`, () => {
+    assert.deepEqual(
+      scanVacuousTests(row.src).map((entry) => entry.name),
+      row.expected,
+    );
+  });
+}
 
 test("reports a test body that contains no assertion call", () => {
   const report = scanVacuousTests('test("empty", () => { const a = 1; });');
