@@ -16,9 +16,12 @@
 // Returns an array of { name, start, end } in source order, where `start`/`end`
 // are the indices of the body's braces.
 
-const TEST_CALL_RE = /\b(?:test|it)\s*\(/g;
+// A member named `test`/`it` is not a test declaration (for example,
+// `thing.test()`). Excluding a preceding identifier or dot also keeps names
+// such as `contest()` out of candidate discovery.
+const TEST_CALL_RE = /(?<![\w$.])(?:test|it)\s*\(/g;
 const RECOGNISED_ASSERTION_RE =
-  /\b(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|\bthrow\b/;
+  /(?<![\w$.])(?:expect|assert(?:\s*\.\s*[A-Za-z_$][\w$]*)?|t\s*\.\s*assert\s*\.\s*[A-Za-z_$][\w$]*)\s*\(|(?<![\w$.])throw\b/;
 
 function startsRegex(source, index) {
   const prefix = source.slice(0, index).trimEnd();
@@ -119,22 +122,26 @@ function codeOnly(source) {
 }
 
 function testName(source, callIndex, bodyStart) {
-  for (let start = callIndex; start < bodyStart; start += 1) {
-    const quote = source[start];
-    if (quote !== '"' && quote !== "'") continue;
+  const openingParenthesis = source.indexOf("(", callIndex);
+  if (openingParenthesis === -1 || openingParenthesis >= bodyStart) return null;
 
-    let name = "";
-    for (let i = start + 1; i < bodyStart; i += 1) {
-      const ch = source[i];
-      if (ch === quote) return name;
-      if (ch === "\\" && i + 1 < bodyStart) {
-        name += source.slice(i, i + 2);
-        i += 1;
-      } else {
-        name += ch;
-      }
+  // Only a quoted first argument supplies a name. Looking for any quote before
+  // the body can incorrectly borrow one from `test(makeName("x"), ...)`.
+  let start = openingParenthesis + 1;
+  while (/\s/.test(source[start] ?? "")) start += 1;
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'") return null;
+
+  let name = "";
+  for (let i = start + 1; i < bodyStart; i += 1) {
+    const ch = source[i];
+    if (ch === quote) return name;
+    if (ch === "\\" && i + 1 < bodyStart) {
+      name += source.slice(i, i + 2);
+      i += 1;
+    } else {
+      name += ch;
     }
-    return null;
   }
   return null;
 }

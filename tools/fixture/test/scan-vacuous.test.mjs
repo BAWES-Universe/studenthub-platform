@@ -72,6 +72,32 @@ test("does not borrow a name from source after an unquoted test name", () => {
   assert.equal(report[0].name, null);
 });
 
+test("does not borrow a nested string from a dynamic test name", () => {
+  const report = scanVacuousTests('test(makeName("wrong"), () => { work(); });');
+  assert.equal(report.length, 1);
+  assert.equal(report[0].name, null);
+});
+
+test("ignores member calls named test or it", () => {
+  const source = [
+    'runner.test("not-a-test", () => { work(); });',
+    'runner.it("also-not-a-test", () => { work(); });',
+    'test("real", () => { work(); });',
+  ].join("\n");
+  assert.deepEqual(scanVacuousTests(source).map((entry) => entry.name), ["real"]);
+});
+
+test("does not treat member calls as recognised assertions", () => {
+  const source = [
+    'test("member-expect", () => { helper.expect(value); });',
+    'test("member-assert", () => { helper.assert(value); });',
+  ].join("\n");
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["member-expect", "member-assert"],
+  );
+});
+
 test("rejects a non-string argument with a TypeError", () => {
   assert.throws(() => scanVacuousTests(42), TypeError);
 });
