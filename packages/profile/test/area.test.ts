@@ -1,0 +1,8 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { InMemoryLocationStore,createArea,groupAreasByGovernorate,nearestArea,validateCoordinates } from "../src/area.js";
+
+const areas=[{id:"b",nameEn:"Salmiya",nameAr:"السالمية",governorateEn:"Hawalli",governorateAr:"حولي",latitude:29.3375,longitude:48.0758},{id:"a",nameEn:"Other",latitude:29.3375,longitude:48.0758}];
+test("Q14_5_AREA groups translated names and detail-less areas",()=>{assert.deepEqual(groupAreasByGovernorate(areas,"ar").map(g=>g.governorate),["Other areas","حولي"]);assert.equal(groupAreasByGovernorate(areas,"ar")[1]!.areas[0]!.name,"السالمية");});
+test("Q14_5_COORDINATES validates, rounds, limits distance, and breaks ties by id",()=>{assert.deepEqual(validateCoordinates(1.1234567,2.1234567),{latitude:1.123457,longitude:2.123457});assert.throws(()=>validateCoordinates(91,1));assert.throws(()=>validateCoordinates(1,null));assert.equal(nearestArea(areas,29.3375,48.0758)?.id,"a");assert.equal(nearestArea(areas,0,0),null);});
+test("Q14_5_AREA saves selection, clearing, coordinates and idempotency",async()=>{const store=new InMemoryLocationStore(areas),service=createArea({store});let result=await service.save({principalId:"p",areaId:"b",latitude:1,longitude:2,expectedRevision:0,submissionId:"one"});assert.equal(result.ok,true);result=await service.save({principalId:"p",areaId:"b",latitude:1,longitude:2,expectedRevision:0,submissionId:"one"});assert.equal(result.ok&&result.reused,true);assert.deepEqual(await service.readOwn("p"),result.ok?result.location:null);assert.deepEqual(await service.save({principalId:"p",areaId:"missing",latitude:null,longitude:null,expectedRevision:1,submissionId:"two"}),{ok:false,reason:"area_unavailable"});});

@@ -18,6 +18,7 @@ import {
   type OwnProfileReadRequest,
   type OwnProfileReadResult,
   type OwnProfilePreferencesReader,
+  type OwnProfileLocationReader,
   type PendingProfileRequirement,
   type ProfileField,
   type UnavailableProfileField,
@@ -266,6 +267,13 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
   return Object.freeze({ ...profile, fields: Object.freeze(fields) });
 }
 
+function applyLocation(profile:OwnProfileProjection,location:Awaited<ReturnType<OwnProfileLocationReader["readOwn"]>>):OwnProfileProjection{
+  if(!location)return profile;const fields={...profile.fields};const language=fields.language.state==="available"?fields.language.value:"en";
+  fields.area=location.areaId===null?Object.freeze({state:"unavailable",reason:"not_recorded",provenance:provenance(PROFILE_FIELD_SPECS.area.sourceField),freshness:Object.freeze({kind:"written_by_person",observedAt:location.updatedAt})}):Object.freeze({...written(PROFILE_FIELD_SPECS.area,language==="ar"&&location.areaNameAr?location.areaNameAr:location.areaNameEn??"",location.updatedAt),editValue:location.areaId});
+  if(location.latitude!==null&&location.longitude!==null){const spec=fieldSpec("person_locations.latitude/longitude","Coordinates","Coordinates shared by this person for their own profile only.",value=>value);fields.coordinates=written(spec,Object.freeze({latitude:location.latitude,longitude:location.longitude}),location.updatedAt);}
+  return Object.freeze({...profile,fields:Object.freeze(fields)});
+}
+
 function importedAt(row: Readonly<Record<string, unknown>>): string {
   const value = row.imported_at;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
@@ -320,17 +328,20 @@ export class OwnProfileRepository {
   readonly #source: ApprovedProfileAdapter;
   readonly #today: () => string;
   readonly #preferences?: OwnProfilePreferencesReader;
+  readonly #location?: OwnProfileLocationReader;
 
   constructor(options: {
     readonly principals: Pick<PrincipalStore, "getPrincipal">;
     readonly source: ApprovedProfileAdapter;
     readonly today?: () => string;
     readonly preferences?: OwnProfilePreferencesReader;
+    readonly location?: OwnProfileLocationReader;
   }) {
     this.#principals = options.principals;
     this.#source = options.source;
     this.#today = options.today ?? (() => kuwaitDate(new Date()));
     this.#preferences = options.preferences;
+    this.#location = options.location;
   }
 
   async readOwn(request: OwnProfileReadRequest): Promise<OwnProfileReadResult> {
@@ -338,8 +349,8 @@ export class OwnProfileRepository {
     try {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
-      const preferences = this.#preferences
-        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) as ProfilePreferences | null : null;
+      const [preferences,location] = await Promise.all([this.#preferences
+        ? this.#preferences.readOwnPreferences(request.requesterPrincipalId) as Promise<ProfilePreferences | null> : Promise.resolve(null),this.#location?this.#location.readOwn(request.requesterPrincipalId):Promise.resolve(null)]);
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
       if (link.kind === "unconfigured") {
         const today = this.#today();
@@ -351,14 +362,14 @@ export class OwnProfileRepository {
           provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "not_imported", observedAt: "" }),
         })])) as unknown as OwnProfileFields;
-        return { kind: "found", profile: applyPreferences(Object.freeze({
+        return { kind: "found", profile: applyLocation(applyPreferences(Object.freeze({
           version: OWN_PROFILE_VERSION, asOfDate: today, fields: Object.freeze(fields),
-        }), preferences) };
+        }), preferences),location) };
       }
       if (link.kind !== "linked") return { kind: "not_found" };
       const row = await this.#source.readCandidate(link.candidateRef);
       if (row === undefined) return { kind: "unavailable" };
-      return { kind: "found", profile: applyPreferences(projectApprovedProfile(row, this.#today()), preferences) };
+      return { kind: "found", profile: applyLocation(applyPreferences(projectApprovedProfile(row, this.#today()), preferences),location) };
     } catch {
       return { kind: "unavailable" };
     }

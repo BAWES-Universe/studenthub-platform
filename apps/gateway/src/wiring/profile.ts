@@ -1,9 +1,9 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { CivilIdVault, OwnProfileRepository, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -48,7 +48,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
-  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
+  const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
+  const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource, location:{readOwn:(id)=>personLocations.readOwnProfile(id).catch(()=>null)},
     ...(safeWrites && personProfiles || civilId ? { preferences: { async readOwnPreferences(id: string) {
       const [language, person, civil] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id)]);
       const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}) };
@@ -76,6 +77,7 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
     const status = await legacyStore.status(request.targetPersonId);
     return { kind: "found", profile: Object.freeze({ ...result.profile, legacyLinkState: status.linked ? "linked" : "unlinked" }) };
   } } : profiles;
+  const area={service:createArea({store:personLocations}),origin:settings.callbackUrl?new URL(settings.callbackUrl).origin:"",async authorize(sessionId:string){const own=await sessions.get(sessionId);if(!own||!await access.authzStore.getPrincipal(own.personId))return null;const preference=await safeWrites?.readOwnPreferences(own.personId);return {principalId:own.personId,language:preference?.language==="ar"?"ar" as const:"en" as const};}};
   return {
     services: { application: {
       ...(safeWrites && safeWriteKey
@@ -126,8 +128,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      area,
       }, web: { profiles: webProfiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
   };
 }
