@@ -1,11 +1,12 @@
 DO $$
 DECLARE definition text;
+DECLARE expected_definition constant text := $definition$CHECK ((catalogue_type = ANY (ARRAY['country'::text, 'currency'::text, 'bank'::text, 'tag'::text, 'brand'::text, 'mall'::text, 'university'::text, 'major'::text, 'degree'::text, 'degree-group'::text])))$definition$;
 BEGIN
   SELECT pg_get_constraintdef(oid) INTO definition
   FROM pg_constraint
   WHERE conrelid = 'catalogue_items'::regclass
     AND conname = 'catalogue_items_catalogue_type_check';
-  IF definition IS NULL OR definition NOT LIKE '%country%' OR definition LIKE '%area%' THEN
+  IF definition IS DISTINCT FROM expected_definition THEN
     RAISE EXCEPTION 'catalogue_items catalogue type check is not the expected ten-kind constraint';
   END IF;
 END $$;

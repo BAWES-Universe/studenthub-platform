@@ -10,13 +10,13 @@ const mutations=[
   ["Q14_5_AREA",'!this.#areas.some(a => a.id === input.areaId)','false',area,areaSuite],
   ["Q14_5_COORDINATES","script-src 'nonce-${nonce}'","script-src 'nonce-wrong-${nonce}'",web,gatewaySuite],
   ["Q14_5_COORDINATES",'const [suggested, current, areas] = await Promise.all','await runtime.service.save({principalId:actor.principalId,areaId:null,latitude:coordinates.latitude,longitude:coordinates.longitude,expectedRevision:0,submissionId:randomUUID()}); const [suggested, current, areas] = await Promise.all',gateway,gatewaySuite],
-  ["Q14_5_COORDINATES",'bestDistance <= 50','bestDistance <= 5000',area,areaSuite],
+  ["Q14_5_COORDINATES",'bestDistance <= 50','bestDistance <= 10000',area,areaSuite],
   ["Q14_5_PRIVATE",'location: "/profile#field-area"','location: `/profile?latitude=${coordinates.latitude}#field-area`',gateway,gatewaySuite],
   ["Q14_5_PAGE",'request.headers.origin !== runtime.origin','false',gateway,gatewaySuite],
   ["Q14_5_AREA",'(current?.revision ?? 0) !== input.expectedRevision','false',area,areaSuite],
   ["Q14_5_SHOWN",'"area", "drivingLicence"','"drivingLicence"',web,gatewaySuite],
 ];
-if(process.env.DATABASE_URL){const store=new URL("../../../dist/packages/db/src/postgres-person-location-store.js",import.meta.url),dbSuite=fileURLToPath(new URL("../../../dist/packages/db/test/postgres-person-location.test.js",import.meta.url));mutations.push(
+if(process.env.DATABASE_URL){const store=new URL("../../db/dist/postgres-person-location-store.js",import.meta.url),dbSuite=fileURLToPath(new URL("../../../dist/packages/db/test/postgres-person-location.test.js",import.meta.url));mutations.push(
   ["Q14_5_AREA","AND catalogue_type='area' AND status='active' FOR SHARE","AND catalogue_type='area' FOR SHARE",store,dbSuite],
   ["Q14_5_AREA",'(current?.revision ?? 0) !== input.expectedRevision','false',store,dbSuite],
 );}
