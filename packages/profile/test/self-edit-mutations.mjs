@@ -38,3 +38,22 @@ for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite]
     assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
   } finally { await writeFile(selectedModule, original); }
 }
+
+// CI's Postgres run also proves that the active-only catalogue boundary is
+// load-bearing. Keep this here with the card's other mutants while allowing
+// the ordinary, database-free profile suite to run locally.
+if (process.env.DATABASE_URL) {
+  const catalogueModule = new URL("../../../dist/packages/db/src/person-profile-store.js", import.meta.url);
+  const catalogueSuite = fileURLToPath(new URL("../../../dist/packages/db/test/postgres-person-profile.test.js", import.meta.url));
+  const from = "WHERE status='active' AND catalogue_type IN ('country','university')";
+  const to = "WHERE status IN ('active','deleted') AND catalogue_type IN ('country','university')";
+  const original = await readFile(catalogueModule, "utf8");
+  assert.equal(original.split(from).length - 1, 1);
+  try {
+    await writeFile(catalogueModule, original.replace(from, to));
+    const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^SHU415_CATALOGUE ", catalogueSuite], { encoding: "utf8", env: process.env });
+    assert.notEqual(result.status, 0, "SHU415_CATALOGUE status-filter mutant survived");
+    assert.match(result.stdout + result.stderr, /not ok \d+ - SHU415_CATALOGUE /);
+    assert.match(result.stdout + result.stderr, /ERR_ASSERTION/);
+  } finally { await writeFile(catalogueModule, original); }
+}

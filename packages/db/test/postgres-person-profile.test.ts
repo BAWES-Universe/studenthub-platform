@@ -191,6 +191,26 @@ test("SHU415_CATALOGUE choices contain only active countries and universities", 
   assert.ok(choices.universities.some(item => item.id === items[1][0]));
   assert.ok(!choices.countries.some(item => item.id === items[2][0]));
   assert.ok(!choices.universities.some(item => item.id === items[3][0]));
+  // The profile read resolves stored ids through the same catalogue rows that
+  // supply the controls; ids are edit values and names are what people see.
+  const id = `shu415-catalogue-${randomUUID()}`;
+  await new PostgresAuthzStore(pool).registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  await pool.query(`INSERT INTO person_profiles(principal_id,nationality_id,nationality_id_written_at,university_id,university_id_written_at)
+    VALUES($1,$2,$3,$4,$3)`, [id, items[0][0], now, items[1][0]]);
+  const preferences = await new PostgresPersonProfileStore({ pool }).readOwnPreferences(id) as Record<string, { value: unknown; editValue?: string }>;
+  assert.deepEqual(preferences.nationality, { value: items[0][2], editValue: items[0][0], updatedAt: now });
+  assert.deepEqual(preferences.university, { value: items[1][2], editValue: items[1][0], updatedAt: now });
+  const profiles = new OwnProfileRepository({ principals: new PostgresAuthzStore(pool), source: {
+    resolveLink: async () => ({ kind: "unconfigured" as const }), readCandidate: async () => undefined,
+  }, preferences: new PostgresPersonProfileStore({ pool }) as never, today: () => "2026-10-30" });
+  const found = await profiles.readOwn({ requesterPrincipalId: id, targetPersonId: id });
+  assert.equal(found.kind, "found");
+  if (found.kind === "found") {
+    const html = (await profileDocument({ status: 200, body: found.profile }, {} as BrowserLoginApplication)).html;
+    assert.match(html, new RegExp(`<dt>Nationality</dt><dd>${items[0][2]}</dd>`));
+    assert.match(html, new RegExp(`<dt>University</dt><dd>${items[1][2]}</dd>`));
+    assert.doesNotMatch(html, new RegExp(`${items[0][0]}|${items[1][0]}`));
+  }
 });
 
 test("SHU415_WRITE origin fields write twice, None is NULL, and Kuwaiti nationality refuses every mother value", async () => {
@@ -213,8 +233,8 @@ test("SHU415_WRITE origin fields write twice, None is NULL, and Kuwaiti national
   const cleared = (await pool.query("SELECT university_id,kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0];
   assert.equal(cleared?.university_id, null);
   assert.equal(cleared?.kuwaiti_mother, null);
-  for (const value of ["46666666-6666-4666-8666-666666666666", "44444444-4444-4444-8444-444444444444"]) {
-    assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "university", value } }), { ok: false, reason: "invalid_value" });
+  for (const field of ["nationality", "university"] as const) for (const value of ["46666666-6666-4666-8666-666666666666", field === "nationality" ? "43333333-3333-4333-8333-333333333333" : "44444444-4444-4444-8444-444444444444"]) {
+    assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field, value } }), { ok: false, reason: "invalid_value" });
     assert.equal((await pool.query("SELECT university_id FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.university_id, null);
   }
   await write("kuwaitiMother", "false");
