@@ -73,8 +73,8 @@ const mutations = [
   ],
   [
     "restore per-company snapshot reads", "SHU361_DIRECTORY_FIXED",
-    "const snapshots = await this.#source.readSnapshots(shown.map((org) => org.id));",
-    "const snapshots = new Map(await Promise.all(shown.map(async (org) => [org.id, await this.#source.readSnapshot(org.id)])));",
+    "await this.#source.readSnapshots(shown.map((org) => org.id))",
+    "new Map(await Promise.all(shown.map(async (org) => [org.id, await this.#source.readSnapshot(org.id)])))",
   ],
   [
     "discard source store counts", "SHU168_STORE_COUNT",

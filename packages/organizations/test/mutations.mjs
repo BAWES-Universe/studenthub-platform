@@ -38,8 +38,8 @@ const mutations = [
   ],
   [
     "restore per-child snapshot reads", "SHU361_CHILDREN_FIXED",
-    "const snapshots = await this.#source.readSnapshots(visibleChildren.map((child) => child.id));",
-    "const snapshots = new Map(await Promise.all(visibleChildren.map(async (child) => [child.id, await this.#source.readSnapshot(child.id)])));",
+    "await this.#source.readSnapshots(visibleChildren.map((child) => child.id))",
+    "new Map(await Promise.all(visibleChildren.map(async (child) => [child.id, await this.#source.readSnapshot(child.id)])))",
   ],
   [
     "count a nested hierarchy", "SHU334_COUNTS_NESTED",
