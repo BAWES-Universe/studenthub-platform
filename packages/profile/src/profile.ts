@@ -192,6 +192,10 @@ type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; pro
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
+  const preferenceKeys = Object.keys(preferences).filter(key => key !== "profileChoices");
+  if (preferenceKeys.length === 0) {
+    return Object.freeze({ ...profile, profileChoices: preferences.profileChoices ?? [], writtenChoiceIds: Object.freeze({}) });
+  }
   const fields = { ...profile.fields };
   if (preferences.language !== undefined && preferences.updatedAt !== undefined) try {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preferences.updatedAt)

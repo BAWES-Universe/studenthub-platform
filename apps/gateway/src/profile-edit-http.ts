@@ -97,13 +97,14 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
-export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
+export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string }; readonly provenance?: { readonly sourceField?: string } }): string {
   if (field.state === "available") {
     const value = field.value;
     if (typeof value === "boolean") return value ? "Yes" : "No";
-    const labels: Readonly<Record<string, string>> = { male: "Male", female: "Female", other: "Other", active: "Actively looking", open_to_offers: "Open to offers" };
-    if (value === "not_looking") return "Not looking right now";
-    return labels[String(value)] ?? String(value);
+    const source = field.provenance?.sourceField;
+    if (source === "candidate_gender") return ({ male: "Male", female: "Female", other: "Other" } as Readonly<Record<string, string>>)[String(value)] ?? String(value);
+    if (source === "candidate_job_search_status") return ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" } as Readonly<Record<string, string>>)[String(value)] ?? String(value);
+    return String(value);
   }
   return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }

@@ -19,7 +19,7 @@ const mutations = [
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
   ["SHU373_WRITE", "[\"male\", \"female\", \"other\"].includes(normalized)", "false"],
   ["SHU373_AGE", "minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE", "minimum.getUTCFullYear()"],
-  ["SHU373_CATALOGUE", "if (!choice)\n                        throw new TypeError(\"unknown profile choice\");", "if (false)\n                        throw new TypeError(\"unknown profile choice\");", profileModuleFile, suite],
+  ["SHU373_CATALOGUE", "item.type === (name === \"nationality\" ? \"country\" : \"university\")", "item.type !== (name === \"nationality\" ? \"country\" : \"university\")", profileModuleFile, suite],
   ["SHU373_PAGE", "not_looking: \"Not looking right now\"", "not_looking: \"not_looking\"", pageModuleFile, pageSuite],
 ];
 for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite] of mutations) {

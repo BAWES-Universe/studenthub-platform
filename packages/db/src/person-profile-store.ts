@@ -111,7 +111,7 @@ export class PostgresPersonProfileStore {
       if ((field === "drivingLicence" || field === "kuwaitiMother") && input.value !== "") stored = input.value === "true";
       if (field === "nationality") {
         await client.query(`INSERT INTO person_profiles (principal_id,nationality_id,nationality_written_at,kuwaiti_mother,kuwaiti_mother_written_at)
-          VALUES ($1,$2,clock_timestamp(),CASE WHEN $3 THEN NULL ELSE NULL END,CASE WHEN $3 THEN clock_timestamp() ELSE NULL END)
+          VALUES ($1,$2,clock_timestamp(),NULL::boolean,CASE WHEN $3 THEN clock_timestamp() ELSE NULL END)
           ON CONFLICT (principal_id) DO UPDATE SET nationality_id=EXCLUDED.nationality_id,nationality_written_at=EXCLUDED.nationality_written_at,
           kuwaiti_mother=CASE WHEN $3 THEN NULL ELSE person_profiles.kuwaiti_mother END,
           kuwaiti_mother_written_at=CASE WHEN $3 THEN clock_timestamp() ELSE person_profiles.kuwaiti_mother_written_at END`, [id, stored, catalogueChoice?.code === "KW"]);
