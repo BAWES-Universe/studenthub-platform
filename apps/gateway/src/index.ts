@@ -310,9 +310,9 @@ export function createGatewayServer(
     }
 
     if (request.method === "GET" && request.url && /^\/exports\/[^/]+$/.test(requestPath(request.url))) {
-      const bytes=await login?.exports?.download(cookieValue(request.headers.cookie,"__Host-studenthub_session"),decodeURIComponent(requestPath(request.url).slice(9)));
+      const bytes=await login?.exports?.download(cookieValue(request.headers.cookie,"__Host-studenthub_session"),requestPath(request.url).slice(9));
       if(!bytes){writeBrowserResponseSafely(response,{status:404,body:{error:"not_found"}});return;}
-      response.writeHead(200,{"content-type":"text/csv; charset=utf-8","content-disposition":'attachment; filename="company-directory.csv"',"cache-control":"no-store"});response.end(bytes);return;
+      response.writeHead(200,{"content-type":"text/csv; charset=utf-8","content-disposition":'attachment; filename="company-directory.csv"',"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer"});response.end(bytes);return;
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace") {
