@@ -22,6 +22,7 @@ const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
     (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 import { handleCivilId } from "../civil-id-http.js";
 import { handleArea } from "../area-http.js";
+import { handleProfileCompleteness } from "../profile-completeness.js";
 
 const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCivilId(ctx.request, ctx.response,
   ctx.login?.civilId, ctx.login?.web?.origin, async (session) => { if (!ctx.login) return undefined;
@@ -29,6 +30,7 @@ const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCi
     return result.status === 200 && typeof result.body?.personId === "string" ? result.body.personId : undefined; },
   (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 const areaRoute: GatewayRoute = { name: "area", handle: (ctx) => handleArea(ctx.request, ctx.response, ctx.login?.area) };
+const profileCompletenessRoute: GatewayRoute = { name: "profile-completeness", handle: handleProfileCompleteness };
 
 export const ROUTES: readonly GatewayRoute[] = [
   catalogueRoute,
@@ -59,6 +61,7 @@ export const ROUTES: readonly GatewayRoute[] = [
   legacyLinkRoute,
   civilIdRoute,
   areaRoute,
+  profileCompletenessRoute,
 ];
 
 export { runRoutes } from "./context.js";
