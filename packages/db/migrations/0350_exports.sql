@@ -9,7 +9,7 @@ CREATE TABLE exports (
  expires_at timestamptz NOT NULL,
  csv_bytes bytea,
  CHECK (octet_length(csv_bytes) <= 5242880),
- CHECK ((outcome='created') = (csv_bytes IS NOT NULL)),
+ CHECK (outcome='created' OR csv_bytes IS NULL),
  CHECK (expires_at > created_at)
 );
 CREATE INDEX exports_expires_at_idx ON exports(expires_at);

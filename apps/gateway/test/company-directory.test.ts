@@ -219,6 +219,7 @@ test("SHU339_PAGE resolves me, filters JSON, validates queries and renders the m
   assert.equal((await (await f.get(`${STAFF_LIST}&manager=`)).json()).directory.entries.length, 2);
   const page = await (await f.get(`${STAFF_LIST}&manager=me`, html)).text();
   assert.match(page, /<select name="manager">[\s\S]*?<option value="me" selected>Me<\/option>/);
+  assert.match(page, /<form method="post" action="\/exports\/company-directory\?org_id=root&amp;role=staff&amp;manager=me">/);
 });
 
 test("SHU359_PICKER staff sees names and fallback never exposes the selected principal",async(t)=>{const f=await fixture(t,{managerPicker:{directoryManagers:async()=>[{principalId:"staff-secret",displayName:"Staff Name"},{principalId:"unnamed-secret",displayName:null}]}});let page=await(await f.get(STAFF_LIST,html)).text();assert.match(page,/>Staff Name<\/option>/);assert.match(page,/>Unnamed staff member<\/option>/);assert.doesNotMatch(page,/>staff-secret<|>unnamed-secret</);const failed=await fixture(t,{accountManagers:{readMany:async()=>new Map()},managerPicker:{directoryManagers:async()=>{throw new Error("down")}}});page=await(await failed.get(`${STAFF_LIST}&manager=selected-secret`,html)).text();assert.match(page,/<select name="manager">/);assert.match(page,/>Any<\/option>[\s\S]*>Me<\/option>/);assert.match(page,/>Selected account manager<\/option>/);assert.doesNotMatch(page,/>selected-secret</)})
