@@ -1,4 +1,11 @@
-import test from "node:test";
+import test,{after,before} from "node:test";
 import assert from "node:assert/strict";
-import {PostgresCivilIdReviewStore} from "../src/postgres-civil-id-review-store.js";
-test("REV_DECIDE postgres civil ID review store exports its transactional API",()=>{assert.equal(typeof PostgresCivilIdReviewStore,"function");});
+import {randomUUID} from "node:crypto";
+import pg from "pg";
+import {runMigrations} from "@studenthub/db";
+const URL=process.env.DATABASE_URL??"";let pool:pg.Pool;
+before(async()=>{if(!URL)throw Error("DATABASE_URL is required for civil ID review database tests");pool=new pg.Pool({connectionString:URL});await runMigrations(pool)});after(async()=>pool.end());
+async function principals(){const subject=`shu590-subject-${randomUUID()}`,reviewer=`shu590-reviewer-${randomUUID()}`;await pool.query("INSERT INTO principals(id) VALUES($1::text),($2::text)",[subject,reviewer]);return {subject,reviewer}}
+async function insert(subject:string,reviewer:string,decision:string,reason:string|null,ref=randomUUID().replaceAll("-","").padEnd(64,"0")){return pool.query("INSERT INTO civil_id_review_decisions(id,subject_principal_id,reviewer_principal_id,decision,reason,civil_revision,confirm_ref) VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,1,$6::text)",[randomUUID(),subject,reviewer,decision,reason,ref])}
+test("REV_EXACT every decision CHECK independently refuses its bad branch and accepts both valid kinds",async()=>{const {subject,reviewer}=await principals();for(const [decision,reason] of [["rejected",null],["rejected","bad\nreason"],["rejected","x".repeat(301)],["confirmed","reason"]] as const)await assert.rejects(insert(subject,reviewer,decision,reason),/check constraint/i);await insert(subject,reviewer,"confirmed",null);await insert(subject,reviewer,"rejected","wrong expiry");const other=await principals();await assert.rejects(insert(other.subject,other.subject,"confirmed",null),/check constraint/i)});
+test("REV_EXACT decisions and views are append-only, including TRUNCATE, and confirm_ref is unique",async()=>{const {subject,reviewer}=await principals(),ref=randomUUID().replaceAll("-","").padEnd(64,"0");await insert(subject,reviewer,"confirmed",null,ref);await assert.rejects(insert(subject,reviewer,"confirmed",null,ref),/unique/i);await assert.rejects(pool.query("UPDATE civil_id_review_decisions SET civil_revision=2 WHERE confirm_ref=$1::text",[ref]),/append-only/i);await assert.rejects(pool.query("DELETE FROM civil_id_review_decisions WHERE confirm_ref=$1::text",[ref]),/append-only/i);await assert.rejects(pool.query("TRUNCATE civil_id_review_decisions"),/append-only/i)});
