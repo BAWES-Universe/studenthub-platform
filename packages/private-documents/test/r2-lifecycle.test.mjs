@@ -1,11 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash,createHmac,randomBytes} from 'node:crypto';
+import {createHash,createHmac,randomBytes,randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {S3Client} from '@aws-sdk/client-s3';
 import {R2Objects,R2DocumentStore,emptyPackedSnapshot} from '../../../dist/packages/private-documents/src/r2-storage.js';
 import {createCandidateDocuments,createRuntimeCandidateDocumentsFromEnv} from '../../../dist/apps/gateway/src/candidate-documents-runtime.js';
 import {createGatewayServer} from '../../../dist/apps/gateway/src/index.js';
+import {handleDocumentsUpload} from '../../../dist/apps/gateway/src/documents-upload-http.js';
 import {InMemoryAuthzStore} from '../../../dist/packages/contracts/src/index.js';
 import {createIdempotencyKey} from '../../../dist/packages/idempotency-contract/src/index.js';
 import {png,pdf} from './candidate-fixtures.mjs';
@@ -147,4 +148,16 @@ test('SHU-145/R2-07 complete R2 configuration constructs ports without contactin
   DOCUMENT_R2_ACCESS_KEY_ID:accessKeyId,DOCUMENT_R2_SECRET_ACCESS_KEY:secretAccessKey};
  const runtime=await createRuntimeCandidateDocumentsFromEnv(env);assert.ok(runtime.service.options.directUploads);assert.ok(runtime.service.options.store instanceof R2DocumentStore);await runtime.close();
  await assert.rejects(createRuntimeCandidateDocumentsFromEnv({...env,DOCUMENT_ROOT:'/no-fallback'}),{message:'invalid candidate-document configuration'});
+});
+
+test('Q14_1_ONE_PATH browser upload computes R2 digests and keeps capabilities server-side',async t=>{
+ const f=await fixture(t),bytes=png(),boundary='shu548r2',submission=`1800000000000.${randomUUID()}`;
+ const body=Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="submission"\r\n\r\n${submission}\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="private.png"\r\nContent-Type: image/png\r\n\r\n`),bytes,Buffer.from(`\r\n--${boundary}--\r\n`)]);
+ const request=Readable.from([body]);request.method='POST';request.url='/profile/documents/personal-photo/upload';request.headers={cookie:`__Host-studenthub_session=${f.sessions.alice}`,origin,'content-type':`multipart/form-data; boundary=${boundary}`,'content-length':String(body.length)};
+ let status=0,headers={},responseBody='';const response={setHeader(){},writeHead(code,value){status=code;headers=value;},end(value=''){responseBody=value;}};
+ const calls=[];const service=new Proxy(f.service,{get(target,key,receiver){const value=Reflect.get(target,key,receiver);if(['list','authorizeUpload','put','finalize'].includes(key)&&typeof value==='function')return (...args)=>{calls.push(key);return value.apply(target,args);};return value;}});
+ await handleDocumentsUpload(request,response,service,{profile:async({sessionId})=>sessionId===f.sessions.alice?{status:200,body:{personId:'alice'}}:{status:401}});
+ assert.equal(status,303);assert.equal(headers.location,'/profile/documents');assert.deepEqual(calls,['list','authorizeUpload','put','finalize']);
+ const exposed=JSON.stringify({headers,responseBody,location:headers.location});for(const secret of ['directUpload','credential','objectKey','uploadId','X-Amz'])assert.doesNotMatch(exposed,new RegExp(secret));
+ const snapshot=f.snapshot();assert.equal(snapshot.state.documents.length,1);assert.equal(snapshot.state.documents[0].size,bytes.length);
 });

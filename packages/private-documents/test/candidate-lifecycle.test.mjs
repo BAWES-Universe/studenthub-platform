@@ -13,6 +13,13 @@ import {createIdempotencyKey} from '../../../dist/packages/idempotency-contract/
 
 const origin='https://documents.example.test';
 import {png,pdf} from './candidate-fixtures.mjs';
+
+test('UPL_NO_ORG list refuses a missing configured organization without reading storage',async t=>{
+ const f=await fixture(t);let reads=0;
+ const service=createCandidateDocuments({...f.ports,orgId:'missing-org',store:{transaction:async fn=>{reads++;return f.store.transaction(fn);}}});
+ await assert.rejects(service.list(f.tokens.alice),error=>error?.status===403&&error?.code==='denied');
+ assert.equal(reads,0);
+});
 async function fixture(t){
  const root=await mkdtemp(join(tmpdir(),'shu145-'));t.after(()=>rm(root,{recursive:true,force:true}));
  const disk=await FileDocumentStore.create(join(root,'private'));

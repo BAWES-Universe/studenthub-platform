@@ -48,7 +48,7 @@ async function rig(t: TestContext, language = 'en') {
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const url = `http://127.0.0.1:${address.port}`;
   const get = (path = '/profile/documents', session: string | undefined = SESSION, accept = 'text/html') => fetch(url + path, { headers: { accept, ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}) } });
-  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), unconfigure: () => { configured = false; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
+  return { service, login, loginRig, disk, authz, url, get, profileReads, sessionReads, key: () => createIdempotencyKey(new Date(now)), counts: () => ({ transactions, lists, deliveries }), unconfigure: () => { configured = false; }, missOrganization: () => { (service.options as { orgId: string }).orgId = 'missing-org'; }, breakStore: () => { broken = true; }, breakProfile: () => { profileBroken = true; } };
 }
 function pdf(): Buffer {
   let text = '%PDF-1.4\n'; const offsets: number[] = [];
@@ -125,6 +125,11 @@ test('SHU366_PAGE trusted EN and AR errors are closed and no data is leaked', as
   }
   const f = await rig(t); f.breakProfile(); const response = await f.get();
   assert.equal(response.status, 503); assert.doesNotMatch(await response.text(), /RAW_PROFILE_ERROR/); assert.equal(f.counts().transactions, 0);
+});
+test('UPL_NO_ORG page closes a missing document organization as an opaque 503', async t => {
+  const f = await rig(t); f.missOrganization(); const before = f.counts(); const response = await f.get(); const html = await response.text();
+  assert.equal(response.status, 503); assert.match(html, /Documents are temporarily unavailable/); assert.doesNotMatch(html, /missing-org|denied|error/);
+  assert.equal(f.counts().transactions, before.transactions);
 });
 test('SHU366_PAGE queries and request bodies never select identity or locale', async t => {
   const f = await rig(t, 'ar'); await finalize(f, OTHER);

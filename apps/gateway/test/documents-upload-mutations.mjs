@@ -10,7 +10,7 @@ const cases = [
   ['Q14_1_OWNER', 'request.headers.origin !== service.options.origin', 'false'],
   ['Q14_1_ONE_PATH', "submissionKey(form.submission, 'finalize')", "submissionKey(form.submission, 'bytes')"],
   ['Q14_1_ONE_PATH', "await service.finalize(session, submissionKey(form.submission, 'finalize'), { uploadId: ticket.uploadId });", ''],
-  ['Q14_1_REFUSALS', "else if (lifecycle.status === 400)", 'else if (false)'],
+  ['Q14_1_REFUSALS', "await service.finalize(session, submissionKey(form.submission, 'finalize'), { uploadId: ticket.uploadId });", "try { await service.finalize(session, submissionKey(form.submission, 'finalize'), { uploadId: ticket.uploadId }); } catch { response.writeHead(303, { location: '/profile/documents', 'cache-control': 'no-store' }); response.end(); return true; }"],
   ['Q14_1_REPLACE', 'expectedVersion: current?.version ?? null', 'expectedVersion: null'],
 ];
 function run(module, token) { return spawnSync(process.execPath, ['--test', `--test-name-pattern=^${token}`, suite], { encoding: 'utf8', timeout: 30000, env: { ...process.env, SHU548_UPLOAD_MODULE: module } }); }

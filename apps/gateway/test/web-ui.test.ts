@@ -578,7 +578,7 @@ test("U2B_MOTHER_LINK: unconditional edit-link mutant dies at named assertion", 
 });
 
 
-test("SHU366_PAGE_NAV: profile and workspace document links require configured service", async (t) => {
+test("UPL_NAV_COPY profile and workspace document links use the shared English and Arabic copy", async (t) => {
   // Only configuration presence is under test here; the real document lifecycle
   // and its one-list page rendering are covered by documents-page.test.ts.
   const configured = await fixture(t, { documents: {} as CandidateDocuments });
