@@ -41,12 +41,13 @@ WITH source AS (
   CASE WHEN pc.principal_id IS NULL OR pc.released_at IS NOT NULL OR (pc.number_hash IS NULL AND pc.expiry_date IS NULL) THEN 'none'
        WHEN pc.needs_review THEN 'waiting' WHEN decision.decision='rejected' THEN 'rejected'
        WHEN pc.expiry_date<$11::date THEN 'expired' WHEN decision.decision='confirmed' THEN 'checked' ELSE 'recorded' END AS civil_state
- FROM principals p JOIN person_profiles pp ON pp.principal_id=p.id
+ FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id
  LEFT JOIN catalogue_items ci ON ci.id=pp.nationality_id AND ci.catalogue_type='country'
  LEFT JOIN person_locations pl ON pl.principal_id=p.id
  LEFT JOIN person_civil_ids pc ON pc.principal_id=p.id
  LEFT JOIN LATERAL (SELECT d.decision FROM civil_id_review_decisions d WHERE d.subject_principal_id=p.id AND d.civil_revision=pc.revision ORDER BY d.decided_at DESC,d.id DESC LIMIT 1) decision ON true
  LEFT JOIN legacy_account_links lal ON lal.principal_id=p.id
+ WHERE pp.principal_id IS NOT NULL OR lal.principal_id IS NOT NULL
 ), filtered AS (
  SELECT * FROM source s WHERE
   ($1::text IS NULL OR s.principal_id IN (SELECT principal_id FROM legacy_account_links WHERE legacy_candidate_id=$1::text)
