@@ -44,7 +44,7 @@ for (const [name, prefix, message, from, to] of cases) {
     assert.notEqual(mutant.status, 0, `${name}: the mutant survived\n${mutant.output}`);
     assert.match(mutant.output, new RegExp(`\\nnot ok \\d+ - ${escape(prefix)}`), `${name}: its named test fails`);
     assert.match(mutant.output, /name: 'AssertionError'/, `${name}: it dies by an AssertionError\n${mutant.output}`);
-    assert.match(mutant.output, new RegExp(`error: (?:'|\\|-\\n\\s+)${escape(message)}`), `${name}: it dies on its own assertion message\n${mutant.output}`);
+    assert.match(mutant.output, new RegExp(`error: (?:[\"']|\\|-\\r?\\n\\s+)${escape(message)}`), `${name}: it dies on its own assertion message\n${mutant.output}`);
     assert.doesNotMatch(mutant.output, /SyntaxError|ERR_MODULE_NOT_FOUND/, `${name}: the mutant loads`);
     console.log(`KILLED ${name} -> ${message}`);
   } finally {
