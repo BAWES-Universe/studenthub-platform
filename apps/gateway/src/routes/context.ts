@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthzMiddleware } from "../authz-middleware.js";
 import type { CandidateDocuments } from "../../../../packages/private-documents/src/candidate-lifecycle.js";
+import type { StaffDocuments } from "../../../../packages/private-documents/src/staff-delivery.js";
 import type { ReferenceCatalogue } from "@studenthub/reference-catalogue";
 import type { ProfileRecordsRuntime } from "../profile-records-http.js";
 import type { OrganizationDocumentsRuntime } from "../organization-documents-http.js";
@@ -44,6 +45,7 @@ export interface GatewayRouteContext {
   readonly login: GatewayRouteLogin | undefined;
   readonly authz: AuthzMiddleware;
   readonly documents: CandidateDocuments | undefined;
+  readonly staffDocuments: StaffDocuments | undefined;
   readonly catalogue: ReferenceCatalogue | undefined;
   readonly profileRecords: ProfileRecordsRuntime | undefined;
   readonly organizationDocuments: OrganizationDocumentsRuntime | undefined;

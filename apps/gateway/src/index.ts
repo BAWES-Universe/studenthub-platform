@@ -5,6 +5,8 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
 import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
+import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -157,6 +159,7 @@ export function createGatewayServer(
 
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.
   // Otherwise retain Node's existing automatic Host-header requirement.
+  const staffDocuments = documents && login?.civilIdReview ? new StaffDocuments({ documents, staffOrgIds: DEFAULT_OPERATOR_ORG_IDS, audit: login.civilIdReview.store }) : undefined;
   return createServer({ requireHostHeader: universeEmbed === undefined }, (request, response) => {
     if (gateUniverseEmbedRequest(request, response, universeEmbed)) return;
     const span = newSpan(); // Ignore incoming request/trace IDs: they can contain PII.
@@ -180,7 +183,7 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
-    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, catalogue,
+    const ctx = { request, response, login: login as GatewayRouteLogin | undefined, authz, documents, staffDocuments, catalogue,
       profileRecords, organizationDocuments, writeHtml, pageDocument, renderError };
     if (await runRoutes(ROUTES, ctx)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {

@@ -18,9 +18,9 @@ test("PREP_ORDER routes retain the exact gateway handler order", async () => {
     "organization-profile", "organization-status", "organization-commercial-terms",
     "organization-approved-to-hire", "organization-notes", "pay-contracts", "organization-brands",
     "organization-stores", "organization-deletion", "organization-creation",
-    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "area",
+    "organization-account-manager-page", "organization-account-manager", "profile-records", "legacy-link", "civil-id", "civil-id-suggestion", "civil-id-review", "area",
   ]);
-  assert.equal(ROUTES.length, 29);
+  assert.equal(ROUTES.length, 30);
   for (const route of ROUTES) assert.equal(typeof route.handle, "function");
 });
 
@@ -44,7 +44,7 @@ test("PREP_LOOP compiled gateway delegates once before built-in routes", async (
   assert.equal((source.match(/runRoutes\(ROUTES,/g) ?? []).length, 1);
   assert.ok(source.indexOf("runRoutes(ROUTES,") < source.indexOf('request.url?.split("?", 1)[0] === "/"'));
   for (const name of [
-    "handleCatalogue", "handleCandidateDocuments", "handleOrganizationDocuments", "handleProfileEditPage",
+    "handleCatalogue", "handleCandidateDocuments", "handleOrganizationDocuments", "handleProfileEditPage", "handleCivilIdReview",
     "handleProfileEdit", "handleProfileBrowserEdit", "handleLanguagePreferencePage", "handleLanguagePreference",
     "handleBankDetails", "handleOrganizationProfile", "handleOrganizationStatus", "handleOrganizationCommercialTerms",
     "handleOrganizationApprovedToHire", "handleOrganizationNotes", "handlePayContracts", "handleOrganizationBrands",

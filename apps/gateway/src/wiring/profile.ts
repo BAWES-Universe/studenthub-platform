@@ -13,6 +13,7 @@ import { createLegacyLinkService } from "../legacy-link-http.js";
 import type { Wired, WiringSettings } from "./context.js";
 import type { wireAccess } from "./access.js";
 import type { ProfileCompletenessDependencies } from "../profile-completeness.js";
+import { DEFAULT_OPERATOR_ORG_IDS } from "@studenthub/organizations";
 
 type ReturnTypeAccess = ReturnType<typeof wireAccess>["services"];
 
@@ -81,6 +82,11 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const CivilIdOcrStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdOcrStore: typeof import("../../../../packages/db/src/postgres-civil-id-ocr-store.js").PostgresCivilIdOcrStore }).CivilIdOcrStore;
   const civilSuggestionStore = civilKey ? new CivilIdOcrStore({ connectionString: databaseUrl }) : undefined;
   const civilIdSuggestion = civilSuggestionStore && civilId && civilStore && civilVault ? composeCivilIdSuggestion({ store: civilSuggestionStore, civilId, civilStore, vault: civilVault }) : undefined;
+  const CivilIdReviewStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdReviewStore: new (options:{connectionString:string}) => import("@studenthub/profile").CivilIdReviewStore & {close():Promise<void>} }).CivilIdReviewStore;
+  const civilReviewStore = civilKey ? new CivilIdReviewStore({ connectionString: databaseUrl }) : undefined;
+  const civilIdReview = civilReviewStore && civilVault ? { store: civilReviewStore, vault: civilVault,
+    isStaff: async (principalId:string) => (await access.authzStore.listGrantsForPrincipal(principalId)).some(grant => (grant.role === "staff" || grant.role === "admin") && grant.scope === "subtree" && (DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(grant.orgId)),
+    reading: civilSuggestionStore ? (principalId:string) => civilSuggestionStore.currentSuggestion(principalId, kuwaitDate(new Date())) : undefined } : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -166,9 +172,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
       ...(civilIdSuggestion ? { civilIdSuggestion } : {}),
+      ...(civilIdReview ? { civilIdReview } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles, ...(personProfiles && civilId ? { profileCompleteness: { choices: () => personProfiles.readOriginChoices(), civilId } } : {}) }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(), civilSuggestionStore?.close(), civilReviewStore?.close()]); },
   };
 }
