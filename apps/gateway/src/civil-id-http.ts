@@ -15,7 +15,8 @@ export async function handleCivilId(request:IncomingMessage,response:ServerRespo
   const current=await service.readOwn(principal);
   if(request.method==="GET"){write(200,"Civil ID",page(current));return true;}
   if(request.method!=="POST"){response.writeHead(405,{allow:"GET, POST"});response.end();return true;}
-  if(request.headers.origin!==origin){request.resume();write(403,"Civil ID",page(current,"We could not verify this request."));return true;}
+  const requestOrigin=request.headers.origin;
+  if(!requestOrigin||!origin||requestOrigin!==origin||request.headers["sec-fetch-site"]==="cross-site"){request.resume();write(403,"Civil ID",page(current,"We could not verify this request."));return true;}
   if(!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(request.headers["content-type"]??"")||Number(request.headers["content-length"])>LIMIT){request.resume();write(400,"Civil ID",page(current,"Invalid request."));return true;}
   const raw=await body(request);if(raw===null){write(400,"Civil ID",page(current,"Invalid request."));return true;}const params=new URLSearchParams(raw);const keys=[...params.keys()].sort();if(keys.join()!==["country","expiry","number","revision","submissionId"].sort().join()||keys.some((k,i)=>i>0&&k===keys[i-1])){write(400,"Civil ID",page(current,"Invalid request."));return true;}
   const revision=Number(params.get("revision"));const submissionId=params.get("submissionId")??"";if(!Number.isSafeInteger(revision)||revision<0||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionId)){write(400,"Civil ID",page(current,"Invalid request."));return true;}

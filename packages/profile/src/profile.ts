@@ -1,4 +1,5 @@
 import type { PrincipalStore } from "@studenthub/contracts";
+import { kuwaitDate } from "./self-edit.js";
 
 import {
   OWN_PROFILE_VERSION,
@@ -327,7 +328,7 @@ export class OwnProfileRepository {
   }) {
     this.#principals = options.principals;
     this.#source = options.source;
-    this.#today = options.today ?? (() => new Date().toISOString().slice(0, 10));
+    this.#today = options.today ?? (() => kuwaitDate(new Date()));
     this.#preferences = options.preferences;
   }
 
