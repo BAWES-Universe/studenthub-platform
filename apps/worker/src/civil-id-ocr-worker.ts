@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { CivilIdOcrError, CivilIdVault, runCivilIdOcr, type CivilIdOcrReader } from "../../../packages/profile/src/index.js";
-import { PostgresCivilIdOcrStore } from "../../../packages/db/src/profile/index.js";
+import { PostgresCivilIdOcrStore } from "../../../packages/db/src/postgres-civil-id-ocr-store.js";
 import { openCivilIdPhotoSourceFromEnv } from "../../../packages/private-documents/src/civil-id-reads.js";
 type Fetch=typeof globalThis.fetch;
 const hex=(value:string|Buffer)=>createHash("sha256").update(value).digest("hex");
