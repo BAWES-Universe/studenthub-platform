@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const actions=new URL('../../../dist/apps/gateway/src/documents-actions-http.js',import.meta.url),avatar=new URL('../../../dist/apps/gateway/src/profile-avatar.js',import.meta.url);
 const suites={actions:fileURLToPath(new URL('../../../dist/apps/gateway/test/documents-actions-http.test.js',import.meta.url)),avatar:fileURLToPath(new URL('../../../dist/apps/gateway/test/profile-avatar.test.js',import.meta.url))};
 const cases=[
- ['Q14_2_REMOVE',actions,suites.actions,"!document || !equal(supplied, stamp(service, session, type, document.version))","!document"],
+ ['Q14_2_REMOVE',actions,suites.actions,"!document || !equal(supplied, stamp(service, personId, type, document.version))","!document"],
  ['Q14_2_VIEW',actions,suites.actions,"action === 'view' ? request.method !== 'POST'","action === 'view' ? false"],
  ['Q14_2_OWNER',actions,suites.actions,"request.headers.origin !== service.options.origin","false"],
  ['Q14_2_AVATAR',avatar,suites.avatar,"await service.issueDelivery(session, photo.id).then(v => v.url).catch(() => undefined)","await service.issueDelivery(session, photo.id).then(v => v.url)"],
