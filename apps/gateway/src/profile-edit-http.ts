@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SessionStore } from "@studenthub/login-contract";
-import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, SHU372_RULES, type PersonSelfEditField } from "@studenthub/profile";
+import { createPersonSelfEdit, PERSON_SELF_EDIT_FIELDS, type PersonSelfEditField } from "@studenthub/profile";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { ActionToken, Receipt, RejectionReason, SafeWriteClock, SafeWriteSecret, SafeWriteStore } from "@studenthub/safe-write-contract";
 
@@ -16,7 +16,7 @@ export interface ProfileEdit {
   receipt(session: string | undefined, ref: string): Promise<ProfileEditResult>;
 }
 const TOKEN_KEYS = ["changeSetDigest", "expectedBeforeDigest", "expiresAt", "issuedAt", "mac", "principalRef", "tokenId"] as const;
-const BODY_LIMIT = 8192;
+const BODY_LIMIT = 65536;
 const PREVIEW = "/profile/edit/preview", CONFIRM = "/profile/edit/confirm";
 const RECEIPT = /^\/profile\/edit\/receipts\/([0-9a-f]{64})$/;
 
@@ -88,14 +88,20 @@ export async function handleProfileEdit(request: IncomingMessage, response: Serv
   return true;
 }
 export type ProfileEditPageWriter = (status: number, title: string, body: string) => void;
+export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
 export function profileEditSummary(value: string): string {
   let result = "", count = 0;
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) { const length = [...segment].length; if (count + length > 120) break; result += segment; count += length; }
   return result + (result.length < value.length ? "…" : "");
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
-export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter): Promise<boolean> {
+function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
+  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
+  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+}
+export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
   const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
   if ((path !== PREVIEW && path !== CONFIRM) || !request.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")) return false;
   if (request.method !== "POST") { error(write, 404); return true; } if (!service || !origin) { error(write, 503); return true; }
@@ -104,10 +110,14 @@ export async function handleProfileEditPage(request: IncomingMessage, response: 
     const values = await body(request, true) as Record<string, string> | undefined; if (!values) { error(write, 400); return true; }
     if (path === PREVIEW) {
       if (Object.keys(values).sort().join() !== "field,value") { error(write, 400); return true; }
-      const result = await service.preview(cookie(request.headers.cookie), values); if (result.status !== 200) { error(write, result.status); return true; }
-      const selected = field(values.field)!; const action = (result.body as { token: ActionToken }).token;
+      const selected = field(values.field); if (!selected || typeof values.value !== "string") { error(write, 400); return true; }
+      const sessionId = cookie(request.headers.cookie);
+      const result = await service.preview(sessionId, values); if (result.status !== 200) { if (result.status === 400 && (result.body as { error?: string }).error === "invalid_value") invalidForm(write, selected, values.value); else error(write, result.status); return true; }
+      const action = (result.body as { token: ActionToken }).token;
       const hidden = TOKEN_KEYS.map(key => `<input type="hidden" name="token.${key}" value="${esc(action[key])}">`).join("");
-      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${esc(SHU372_RULES[selected] ? selected : "field")}: <strong>${esc(profileEditSummary(values.value!)) || "Not recorded"}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
+      const before = await shownValue?.(sessionId, selected);
+      const summary = (value: string | undefined) => value ? esc(profileEditSummary(value)) : "Not recorded";
+      write(200, "Review profile change", `<main id="main" class="profile-main"><h1>Review profile change<span class="accent">.</span></h1><p>${FIELD_LABELS[selected]}: <strong>${summary(before)}</strong> → <strong>${summary(values.value!)}</strong></p><form method="post" action="${CONFIRM}"><input type="hidden" name="field" value="${selected}"><input type="hidden" name="value" value="${esc(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`); return true;
     }
     const expected = ["field", "value", ...TOKEN_KEYS.map(key => `token.${key}`)].sort(); if (Object.keys(values).sort().join() !== expected.join()) { error(write, 400); return true; }
     const action = Object.fromEntries(TOKEN_KEYS.map(key => [key, values[`token.${key}`]]));
