@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+const dist=new URL("../../../dist/apps/gateway/",import.meta.url),http=new URL("src/pay-contracts-http.js",dist);
+const suite=fileURLToPath(new URL("test/organization-contracts-page.test.js",dist));
+const hook=new URL("./helpers/swap-module.mjs",import.meta.url).href;
+const cases=[
+  ["show candidateTotal in place of companyTotal","ORGCON_COMPANY_TERMS full views","ORGCON_COMPANY_TERMS candidate and transfer values never render",'terms.payModel === "fixed_price" ? `${String(terms.companyTotal ?? "")} (${String(terms.completionPercentage ?? "")}% complete)`','terms.payModel === "fixed_price" ? `${String(terms.candidateTotal ?? "")} (${String(terms.completionPercentage ?? "")}% complete)`'],
+  ["drop escaping on a displayed value","ORGCON_SHOW authorized readers","ORGCON_SHOW every displayed value is escaped","<td>${escapeHtml(amount)}</td>","<td>${amount}</td>"],
+  ["turn thrown listCompany into 404","ORGCON_UNAVAILABLE configuration","ORGCON_UNAVAILABLE HTML failure is 503","if (pageMatch && wantsHtml(req.headers.accept))\n                organizationContractsHtml(req, res, 503, pageOrgId, { error: \"safe_write_unavailable\" });","if (pageMatch && wantsHtml(req.headers.accept))\n                organizationContractsHtml(req, res, 404, pageOrgId, { error: \"safe_write_unavailable\" });"],
+  ["accept a query string","ORGCON_DENY private refusals","ORGCON_DENY query string is rejected","if (url.search) {","if (false) {"],
+];
+const escape=text=>text.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+function run(prefix,swaps){const register=`import{register}from"node:module";register(${JSON.stringify(hook)},{data:${JSON.stringify(swaps)}});`;const result=spawnSync(process.execPath,["--import",`data:text/javascript,${encodeURIComponent(register)}`,"--test","--test-reporter=tap",`--test-name-pattern=^${escape(prefix)}`,suite],{encoding:"utf8",timeout:60000});assert.equal(result.error,undefined,`${prefix} runner must execute`);return{...result,output:result.stdout+result.stderr};}
+for(const [name,prefix,message,from,to] of cases){const original=await readFile(http,"utf8");assert.equal(original.split(from).length-1,1,`${name}: the needle binds exactly once in ${fileURLToPath(http)}`);const target=new URL(http.href.replace(/\.js$/,`-mutant-${process.pid}.js`));try{const control=run(prefix,{});assert.equal(control.status,0,`${name}: the unmutated control passes\n${control.output}`);assert.match(control.output,new RegExp(`\\nok \\d+ - ${escape(prefix)}`),`${name}: the control ran its named test`);await writeFile(target,original.replace(from,to));const mutant=run(prefix,{[http.href]:target.href});assert.notEqual(mutant.status,0,`${name}: the mutant survived\n${mutant.output}`);assert.match(mutant.output,new RegExp(`\\nnot ok \\d+ - ${escape(prefix)}`),`${name}: its named test fails`);assert.match(mutant.output,/name: 'AssertionError'/,`${name}: it dies by an assertion\n${mutant.output}`);assert.match(mutant.output,new RegExp(`error: (?:'|\\|-\\n\\s+)${escape(message)}`),`${name}: it dies on its own assertion\n${mutant.output}`);assert.doesNotMatch(mutant.output,/SyntaxError|ERR_MODULE_NOT_FOUND/,`${name}: the mutant loads`);console.log(`KILLED ${name}`);}finally{await unlink(target).catch(error=>{if(error.code!=="ENOENT")throw error});assert.equal(await readFile(http,"utf8"),original,`${name}: the compiled file is unchanged`);}}
+console.log(`${cases.length}/${cases.length} organization contracts page mutants killed`);
