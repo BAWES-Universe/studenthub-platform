@@ -16,6 +16,7 @@ import {
   type OwnProfileProjection,
   type OwnProfileReadRequest,
   type OwnProfileReadResult,
+  type OwnProfilePreferenceReader,
   type PendingProfileRequirement,
   type ProfileField,
   type UnavailableProfileField,
@@ -156,6 +157,11 @@ function freshness(observedAt: string): FieldFreshness {
   return Object.freeze({ kind: "imported_snapshot", observedAt });
 }
 
+function isInstant(value: string): boolean {
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
+}
+
 function unavailable(spec: FieldSpec, observedAt: string, reason: UnavailableProfileField["reason"]): UnavailableProfileField {
   return Object.freeze({
     state: "unavailable",
@@ -227,15 +233,18 @@ export class OwnProfileRepository {
   readonly #principals: Pick<PrincipalStore, "getPrincipal">;
   readonly #source: ApprovedProfileAdapter;
   readonly #today: () => string;
+  readonly #preferences?: OwnProfilePreferenceReader;
 
   constructor(options: {
     readonly principals: Pick<PrincipalStore, "getPrincipal">;
     readonly source: ApprovedProfileAdapter;
     readonly today?: () => string;
+    readonly preferences?: OwnProfilePreferenceReader;
   }) {
     this.#principals = options.principals;
     this.#source = options.source;
     this.#today = options.today ?? (() => new Date().toISOString().slice(0, 10));
+    this.#preferences = options.preferences;
   }
 
   async readOwn(request: OwnProfileReadRequest): Promise<OwnProfileReadResult> {
@@ -243,6 +252,23 @@ export class OwnProfileRepository {
     try {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
+      const written = await this.#preferences?.readOwnLanguage(request.requesterPrincipalId);
+      const overlay = (profile: OwnProfileProjection): OwnProfileProjection => {
+        if (!written) return profile;
+        try {
+          const value = PROFILE_FIELD_SPECS.language.parse(written.value, profile.asOfDate) as LanguagePreference;
+          if (!isInstant(written.updatedAt)) throw new TypeError("malformed preference timestamp");
+          return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields, language: Object.freeze({
+            state: "available", value, provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
+            freshness: Object.freeze({ kind: "person_written", observedAt: written.updatedAt }),
+          }) }) });
+        } catch { return Object.freeze({ ...profile, fields: Object.freeze({ ...profile.fields,
+          language: Object.freeze({ state: "unavailable", reason: "not_recorded",
+            provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
+            freshness: Object.freeze({ kind: "person_written", observedAt: "" }),
+          }),
+        }) }); }
+      };
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
       if (link.kind === "unconfigured") {
         const today = this.#today();
@@ -254,14 +280,14 @@ export class OwnProfileRepository {
           provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "not_imported", observedAt: "" }),
         })])) as unknown as OwnProfileFields;
-        return { kind: "found", profile: Object.freeze({
+        return { kind: "found", profile: overlay(Object.freeze({
           version: OWN_PROFILE_VERSION, asOfDate: today, fields: Object.freeze(fields),
-        }) };
+        })) };
       }
       if (link.kind !== "linked") return { kind: "not_found" };
       const row = await this.#source.readCandidate(link.candidateRef);
       if (row === undefined) return { kind: "unavailable" };
-      return { kind: "found", profile: projectApprovedProfile(row, this.#today()) };
+      return { kind: "found", profile: overlay(projectApprovedProfile(row, this.#today())) };
     } catch {
       return { kind: "unavailable" };
     }

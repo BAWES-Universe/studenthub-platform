@@ -104,6 +104,27 @@ test("PROFILE-OWNER port returns not_found for another person before reading the
   assert.equal(linkReads, 1);
 });
 
+test("SHU371_SHOWN_OVER_SNAPSHOT written language wins and malformed storage is unavailable", async () => {
+  const principals = new InMemoryAuthzStore({ principals: PEOPLE });
+  const source = new InMemoryApprovedProfileAdapter({ links: [{ principalId: "person-populated", candidateRef: "candidate-populated" }], rows: new Map([["candidate-populated", SYNTHETIC_PROFILE_FIXTURES.populated]]) });
+  let value: unknown = "ar";
+  const profiles = new OwnProfileRepository({ principals, source, today: () => "2026-09-13", preferences: { async readOwnLanguage() { return { value, updatedAt: "2026-09-13T13:00:00.000Z" }; } } });
+  const shown = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(shown.kind === "found" && shown.profile.fields.language.state === "available" && shown.profile.fields.language.value, "ar");
+  assert.equal(shown.kind === "found" && shown.profile.fields.language.freshness.kind, "person_written");
+  value = "<raw-malformed>";
+  const malformed = await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-populated" });
+  assert.equal(malformed.kind === "found" && malformed.profile.fields.language.state, "unavailable");
+  assert.doesNotMatch(JSON.stringify(malformed), /raw-malformed/);
+});
+
+test("SHU371_PROJECTION another person's request reads no written preference", async () => {
+  let reads = 0;
+  const profiles = new OwnProfileRepository({ principals: new InMemoryAuthzStore({ principals: PEOPLE }), source: new UnconfiguredApprovedProfileAdapter(), preferences: { async readOwnLanguage() { reads++; return null; } } });
+  assert.deepEqual(await profiles.readOwn({ requesterPrincipalId: "person-populated", targetPersonId: "person-other" }), { kind: "not_found" });
+  assert.equal(reads, 0);
+});
+
 test("missing, duplicate and many-to-one immutable linkage fail closed", async () => {
   assert.deepEqual(await repository().readOwn({ requesterPrincipalId: "person-other", targetPersonId: "person-other" }), { kind: "not_found" });
   for (const links of [
