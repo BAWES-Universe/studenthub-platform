@@ -5,6 +5,8 @@ import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-ru
 import { type OrganizationDocumentsRuntime } from './organization-documents-http.js';
 import { createRuntimeOrganizationDocumentsFromEnv } from './organization-documents-runtime.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
+import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import type {BrowserResponse} from "@studenthub/login-contract";
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -153,6 +155,10 @@ export function createGatewayServer(
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
+  }
+  if (login?.civilIdReview && documents && !(login.civilIdReview as import("./civil-id-review-http.js").CivilIdReviewHttpService).staffDocuments) {
+    const review=login.civilIdReview as import("./civil-id-review-http.js").CivilIdReviewHttpService;
+    Object.assign(review,{staffDocuments:new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:review.store})});
   }
 
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.

@@ -4,6 +4,13 @@ import { handleLanguagePreference, handleLanguagePreferencePage } from "../langu
 import { handleBankDetails } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
+import { handleCivilIdReview } from "../civil-id-review-http.js";
+
+export const civilIdReviewRoute: GatewayRoute = { name: "civil-id-review", handle: (ctx) => handleCivilIdReview(ctx.request, ctx.response,
+  ctx.login?.civilIdReview, ctx.login?.web?.origin, async (session) => { if (!ctx.login) return undefined;
+    const result = await ctx.login.profile({ sessionId: session });
+    return result.status === 200 && typeof result.body?.personId === "string" ? result.body.personId : undefined; },
+  (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 
 export const profileEditPageRoute: GatewayRoute = { name: "profile-edit-page", handle: (ctx) =>
   handleProfileEditPage(ctx.request, ctx.response, ctx.login?.profileEdit, ctx.login?.web?.origin,

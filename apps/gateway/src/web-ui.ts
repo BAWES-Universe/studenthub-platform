@@ -52,6 +52,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
   readonly civilIdSuggestion?: CivilIdSuggestionService;
+  readonly civilIdReview?: { store: import("@studenthub/profile").CivilIdReviewStore; isStaff(principalId: string): Promise<boolean> };
   readonly area?: AreaHttp;
   readonly web?: {
     readonly origin: string;

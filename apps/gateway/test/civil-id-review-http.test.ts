@@ -1,0 +1,34 @@
+import test, { type TestContext } from "node:test";
+import assert from "node:assert/strict";
+import { createHmac, randomUUID } from "node:crypto";
+import { CandidateDocuments } from "../../../packages/private-documents/src/candidate-lifecycle.js";
+import { StaffDocuments } from "../../../packages/private-documents/src/staff-delivery.js";
+import { InMemoryCivilIdReviewStore } from "@studenthub/profile";
+import { isCivilIdReviewStaff } from "../src/civil-id-review-http.js";
+import { REAL_PROFILE_CIVIL_KEY, REAL_PROFILE_ORIGIN, REAL_PROFILE_OTHER_PERSON, REAL_PROFILE_SESSION, startRealProfileServer } from "./helpers/real-profile-server.js";
+
+async function fixture(t:TestContext,{photos=true}={}){
+ let review!:InMemoryCivilIdReviewStore,staff!:StaffDocuments;
+ const server=await startRealProfileServer(t,{reviewStaff:true,extend:({civilId,civilStore,vault,authz,now})=>{
+   review=new InMemoryCivilIdReviewStore({civilStore,names:(id:string)=>id===REAL_PROFILE_OTHER_PERSON?"Other Person":id});
+   const png=Buffer.from("89504e470d0a1a0a00","hex"),docs=photos?["front","back"].map(side=>({id:randomUUID(),version:randomUUID(),type:`civil-id-${side}`,mime:"image/png",size:png.length,scope:{orgId:"candidate-documents",personId:REAL_PROFILE_OTHER_PERSON},acl:"private",data:png.toString("base64")})):[];
+   const state={format:1 as const,documents:docs,retired:[]};const documentStore={transaction:async<T>(fn:(s:typeof state)=>Promise<T>)=>fn(state)};
+   const candidate=new CandidateDocuments({store:documentStore as never,authz,orgId:"candidate-documents",origin:REAL_PROFILE_ORIGIN,signingKey:Buffer.from(REAL_PROFILE_CIVIL_KEY,"base64"),now:()=>now().getTime(),authenticate:async c=>c===REAL_PROFILE_SESSION?{kind:"principal" as const,principalId:"person-1"}:null});
+   staff=new StaffDocuments({documents:candidate,staffOrgIds:["root"],audit:review,now:()=>now().getTime()});
+   return {civilIdReview:{store:review,vault,staffDocuments:staff,secret:Buffer.from(REAL_PROFILE_CIVIL_KEY,"base64"),now,isStaff:async (id:string)=>isCivilIdReviewStaff(await authz.listGrantsForPrincipal(id))}} as never;
+ }});
+ await server.civilId.save({principalId:REAL_PROFILE_OTHER_PERSON,submissionId:randomUUID(),revision:0,country:"KW",number:"290010100000",expiry:"2027-12-31"});
+ return {server,review,staff};
+}
+
+test("REV_QUEUE real HTTP queue masks, ages, pages and negotiates JSON",async t=>{const f=await fixture(t);const html=await f.server.get("/workspace/civil-ids");assert.equal(html.status,200,"REV_QUEUE queue GET works");const text=await html.text();assert.match(text,/Other Person/);assert.match(text,/•••• •••• 0000/);assert.doesNotMatch(text,/290010100000/,"REV_QUEUE queue omits full number");assert.doesNotMatch(text,/2026-11-12T/);const json=await fetch(f.server.url+"/workspace/civil-ids?page=1",{headers:{cookie:f.server.cookie(),accept:"application/json"}});assert.equal(json.status,200);assert.equal((await json.json()).rows.length,1);assert.equal((await f.server.get("/workspace/civil-ids?page=1&page=2")).status,400)});
+
+test("REV_STAFF real HTTP gate and own-row rules",async t=>{const f=await fixture(t);await f.server.civilId.save({principalId:"person-1",submissionId:randomUUID(),revision:0,country:"KW",number:"290010100001",expiry:"2027-01-01"});assert.equal((await f.server.get("/workspace/civil-ids/person-1")).status,403,"REV_STAFF own row refused");assert.equal((await fetch(f.server.url+"/workspace/civil-ids")).status,401,"REV_STAFF no session denied");await f.server.authz.clearGrantsForPrincipal("person-1");await f.server.authz.grantMany("person-1",[{orgId:"root",role:"staff",scope:"self"}]);assert.equal(await f.server.login.civilIdReview!.isStaff("person-1"),false,"REV_STAFF self scope is not staff");assert.equal((await f.server.get("/workspace/civil-ids")).status,404,"REV_STAFF grant re-read")});
+
+test("REV_DECIDE real HTTP preview confirm and missing-photo reject",async t=>{const f=await fixture(t);const path=`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`;assert.equal((await f.server.get(path)).status,200);assert.equal((await f.server.post(path+"/decision",{decision:"rejected",reason:"",revision:"1"})).status,400,"REV_DECIDE reject reason required");const preview=await f.server.post(path+"/decision",{decision:"rejected",reason:"Photo is unclear",revision:"1"});assert.equal(preview.status,200,"REV_DECIDE preview works");const token=(await preview.text()).match(/name="confirmation" value="([^"]+)/)?.[1];assert.ok(token);const [payload]=token.split("."),claim=JSON.parse(Buffer.from(payload!,"base64url").toString());claim.expires=claim.issued;const expiredPayload=Buffer.from(JSON.stringify(claim)).toString("base64url"),expired=expiredPayload+"."+createHmac("sha256",Buffer.from(REAL_PROFILE_CIVIL_KEY,"base64")).update("civil-id-review-confirm-v1\0"+expiredPayload).digest("base64url");assert.equal((await f.server.post(path+"/decision/confirm",{confirmation:expired})).status,409,"REV_DECIDE expired confirmation refused");await f.server.civilId.save({principalId:REAL_PROFILE_OTHER_PERSON,submissionId:randomUUID(),revision:1,expiry:"2028-01-01"});assert.equal((await f.server.post(path+"/decision/confirm",{confirmation:token})).status,409,"REV_DECIDE stale revision refused")});
+
+test("REV_IMAGES real HTTP page and delivery audit every image",async t=>{const f=await fixture(t);const page=await f.server.get(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}`),text=await page.text();assert.match(text,/290010100000/,"REV_IMAGES full number only on decision page");const links=[...text.matchAll(/src="([^"]+)/g)].map(x=>x[1]!);assert.equal(links.length,2);const image=await f.server.get(links[0]!);assert.equal(image.status,200);assert.ok(f.review.views.some(v=>v.kind==="civil_id_page"));assert.ok(f.review.views.some(v=>v.kind==="civil_id_image_deliver"))});
+
+test("REV_SECRECY real HTTP queue and confirmation omit full number",async t=>{const f=await fixture(t);assert.doesNotMatch(await (await f.server.get("/workspace/civil-ids")).text(),/290010100000/,"REV_SECRECY queue omits full number");const p=await f.server.post(`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`,{decision:"rejected",reason:"bad",revision:"1"});assert.doesNotMatch(await p.text(),/290010100000/)});
+
+test("REV_ORIGIN real HTTP rejects before parsing decision posts",async t=>{const f=await fixture(t);const r=await fetch(f.server.url+`/workspace/civil-ids/${REAL_PROFILE_OTHER_PERSON}/decision`,{method:"POST",headers:{cookie:f.server.cookie(),origin:"https://evil.invalid","content-type":"application/x-www-form-urlencoded"},body:"garbage"});assert.equal(r.status,403,"REV_ORIGIN wrong origin denied");assert.equal(f.review.decisions.length,0)});
