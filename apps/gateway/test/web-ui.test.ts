@@ -599,3 +599,41 @@ test("UPL_NAV_COPY profile and workspace document links use the shared English a
   assert.doesNotMatch(renderWorkspace(navigation, configured.login, false), /href="\/profile\/documents"/);
   assert.doesNotMatch(renderWorkspace(navigation, configured.login), /href="\/profile\/documents"/);
 });
+
+test("Q14_2_AVATAR rendered profile uses only a delivery URL and failures preserve the monogram", async (t) => {
+  const absent = await fixture(t);
+  const absentResponse = await fetch(`${absent.url}/profile`, { headers: BROWSER });
+  assert.equal(absentResponse.status, 200);
+  const monogram = /<div class="p-monogram" aria-hidden="true">[^<]+<\/div>/.exec(await absentResponse.text())?.[0];
+  assert.ok(monogram);
+  let lists = 0, deliveries = 0;
+  const documents = {
+    options: { origin: ORIGIN, signingKey: Buffer.alloc(32) },
+    async list() { lists++; return [{ id: "photo-private-id", version: "private-version", type: "personal-photo", mime: "image/png", size: 8 }]; },
+    async issueDelivery() { deliveries++; return { url: "/private-documents/delivery?t=signed-token", expiresAt: 60 }; },
+  } as unknown as CandidateDocuments;
+  const f = await fixture(t, { documents });
+  const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.match(html, /<img class="p-monogram p-avatar" src="\/private-documents\/delivery\?t=signed-token" alt="">/);
+  assert.doesNotMatch(html, /photo-private-id|private-version/);
+  assert.deepEqual({ lists, deliveries }, { lists: 1, deliveries: 1 });
+
+  const json = await fetch(`${f.url}/profile`, { headers: { accept: "application/json", cookie: BROWSER.cookie } });
+  assert.equal(json.status, 200);
+  assert.doesNotMatch(await json.text(), /private-documents\/delivery|signed-token/);
+  assert.deepEqual({ lists, deliveries }, { lists: 1, deliveries: 1 });
+
+  for (const failure of ["list", "delivery"] as const) {
+    const broken = await fixture(t, { documents: {
+      options: documents.options,
+      async list() { if (failure === "list") throw new Error("list unavailable"); return [{ id: "photo-private-id", version: "v", type: "personal-photo", mime: "image/png", size: 8 }]; },
+      async issueDelivery() { throw new Error("delivery unavailable"); },
+    } as unknown as CandidateDocuments });
+    const fallback = await fetch(`${broken.url}/profile`, { headers: BROWSER });
+    assert.equal(fallback.status, 200, failure);
+    assert.ok((await fallback.text()).includes(monogram));
+  }
+});

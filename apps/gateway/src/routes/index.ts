@@ -12,7 +12,7 @@ import { prepareProfileAvatar } from "../profile-avatar.js";
 const documentsUploadRoute: GatewayRoute = { name: "documents-upload", handle: (ctx) =>
   handleDocumentsUpload(ctx.request, ctx.response, ctx.documents, ctx.login) };
 const documentsActionsRoute: GatewayRoute = { name: "documents-actions", handle: async (ctx) => {
-  prepareProfileAvatar(ctx.request, ctx.documents);
+  prepareProfileAvatar(ctx.request, ctx.documents, ctx.response);
   return handleDocumentsActions(ctx.request, ctx.response, ctx.documents, ctx.login);
 } };
 
