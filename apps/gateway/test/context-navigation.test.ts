@@ -307,7 +307,7 @@ test("SHU91_HISTORY: cached history hides the old context and revalidates before
   assert.doesNotMatch(profile.headers.get("content-security-policy")!, /script-src/, "profile CSP remains unchanged");
 });
 
-test("SHU-159/AC-09 CARD the selected workspace shows only the active role's company projection", async (t) => {
+test("SHU353_SHOWN company card renders the written currency in its closed projection", async (t) => {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -321,9 +321,10 @@ test("SHU-159/AC-09 CARD the selected workspace shows only the active role's com
   await store.grantMany("person-1", [
     { orgId: "org-a", role: "org-owner" }, { orgId: "org-a", role: "candidate" }, { orgId: "org-b", role: "staff" },
   ]);
+  const commercialTerms={async read(id:string){return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:id==="org-a"?{kind:"value"as const,value:"USD"}:{kind:"absent"as const}}}};
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", SYNTHETIC_ORGANIZATION_FIXTURES.parentA],
-  ])) });
+  ])), commercialTerms });
   const login: BrowserLoginApplication = { ...rig.app, navigation: createContextNavigation(rig.sessions, store, organizations) };
   const server = createGatewayServer(undefined, undefined, undefined, login);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -336,10 +337,12 @@ test("SHU-159/AC-09 CARD the selected workspace shows only the active role's com
   assert.equal(owner.organization.kind, "found");
   assert.equal(owner.organization.view.audience, "employer");
   assert.equal(owner.organization.view.fields.legalName.value, "Synthetic Retail Group");
+  assert.equal(owner.organization.view.fields.currencyCode.value, "USD");
   assert.equal(Object.hasOwn(owner.organization.view.fields, "email"), false, "SHU-159/AC-09 employer card has no staff fields");
   const html = await (await get("/workspace?org_id=org-a&role=org-owner", { accept: "text/html" })).text();
   assert.match(html, /Synthetic Retail Group/);
   assert.match(html, /Hourly rate<\/dt><dd>1\.500/);
+  assert.match(html, /Currency<\/dt><dd>USD/);
   assert.doesNotMatch(html, /SENSITIVE-|hello@synthetic-retail|Company email/);
 
   // A role without a company projection gets no card; the selection still works.

@@ -174,7 +174,8 @@ export interface OrganizationStatusRecords {
   readMany?(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationStatusRecord>>;
 }
 export type OrganizationCommercialTermRecord={readonly kind:"absent"}|{readonly kind:"cleared"}|{readonly kind:"value";readonly value:string};
-export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}>}
+export type OrganizationCommercialTermsRecord={readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord;readonly currencyCode?:OrganizationCommercialTermRecord};
+export interface OrganizationCommercialTermsRecords{read(orgId:string):Promise<OrganizationCommercialTermsRecord>;readMany?(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationCommercialTermsRecord>>}
 export type OrganizationApprovedToHireRecord={readonly kind:"absent"}|{readonly kind:"value";readonly value:boolean};
 export interface OrganizationApprovedToHireRecords{read(orgId:string):Promise<OrganizationApprovedToHireRecord>;readMany(orgIds:readonly string[]):Promise<ReadonlyMap<string,OrganizationApprovedToHireRecord>>}
 export interface OrganizationStoreCounts { countMany(orgIds: readonly string[]): Promise<ReadonlyMap<string, number>> }
@@ -243,6 +244,12 @@ function storedDecimal(
   return inheritedDecimal(name, { [sourceField]: null }, parent);
 }
 
+function storedCurrency(row: Row | undefined, record: OrganizationCommercialTermRecord | undefined): OrganizationField<string> {
+  if (record?.kind === "value") return available("currencyCode", currency(record.value));
+  if (record?.kind === "cleared") return unavailable("currencyCode", "not_recorded");
+  return row === undefined ? unavailable("currencyCode", "not_imported") : plainField("currencyCode", row) as OrganizationField<string>;
+}
+
 function observedAt(row: Row): string {
   const value = row.imported_at;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
@@ -276,7 +283,7 @@ export function projectOrganizationFields(
   row: Row | undefined,
   parent: Row | null | undefined,
   record?: OrganizationStatusRecord,
-  terms?:{readonly own:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord};readonly parent:{readonly hourlyRate:OrganizationCommercialTermRecord;readonly bonusCommission:OrganizationCommercialTermRecord}},
+  terms?:{readonly own:OrganizationCommercialTermsRecord;readonly parent:OrganizationCommercialTermsRecord},
   approvedRecord?:OrganizationApprovedToHireRecord,
   profile?: OrganizationProfileRecord,
 ): Readonly<Record<string, OrganizationField<unknown>>> {
@@ -285,6 +292,8 @@ export function projectOrganizationFields(
   for (const name of names) {
     if(name==="approvedToHire"&&approvedRecord?.kind==="value"){
       fields[name]=available(name,approvedRecord.value);
+    } else if (name === "currencyCode" && terms) {
+      fields[name] = storedCurrency(row, terms.own.currencyCode);
     } else if (name === "status" && (row !== undefined || record?.kind === "status")) {
       fields[name] = deriveOrganizationStatus(row ?? {}, record);
     } else if (name === "statusOverride" && record !== undefined && record.kind !== "absent") {
@@ -347,7 +356,7 @@ function matchesDirectoryFilters(entry: OrganizationDirectoryEntry, filters: Org
   return filters.currencyCode === undefined || availableValue(entry.currencyCode) === filters.currencyCode;
 }
 
-function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record:OrganizationStatusRecord|undefined,approvedRecord:OrganizationApprovedToHireRecord|undefined,storeCount: number | null): OrganizationDirectoryEntry {
+function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record:OrganizationStatusRecord|undefined,approvedRecord:OrganizationApprovedToHireRecord|undefined,terms:OrganizationCommercialTermsRecord|undefined,storeCount: number | null): OrganizationDirectoryEntry {
   const field = <T>(name: "legalName" | "commonNameEn" | "commonNameAr" | "currencyCode" | "approvedToHire") =>
     (row === undefined ? unavailable(name, "not_imported") : plainField(name, row)) as OrganizationField<T>;
   return Object.freeze({
@@ -357,7 +366,7 @@ function directoryEntry(org: Organization, row: Row | undefined, subOrganization
     legalName: field<string>("legalName"),
     commonNameEn: field<string>("commonNameEn"),
     commonNameAr: field<string>("commonNameAr"),
-    currencyCode: field<string>("currencyCode"),
+    currencyCode: storedCurrency(row, terms?.currencyCode),
     approvedToHire: approvedRecord?.kind==="value"?available("approvedToHire",approvedRecord.value):field<boolean>("approvedToHire"),
     status: row === undefined && record?.kind !== "status" ? unavailable("status", "not_imported") : deriveOrganizationStatus(row ?? {},record),
     storeCount,
@@ -585,6 +594,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         ? await this.#statusRecords.readMany(shown.map((org) => org.id))
         : undefined;
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
+      const termsBatch=shown.length>0&&this.#commercialTerms?.readMany?await this.#commercialTerms.readMany(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
       const managers = filters.accountManager !== undefined && shown.length > 0 ? await this.#accountManagers?.readMany(shown.map((org) => org.id)) : undefined;
       const entries: OrganizationDirectoryEntry[] = [];
@@ -597,7 +607,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
           : await this.#statusRecords?.read(org.id);
         const children = organizations.filter((child) => child.parentOrgId === org.id && covered.has(child.id)).length;
         const approvedRecord=approvedBatch?.get(org.id)??{kind:"absent" as const};
-        const entry = directoryEntry(org, row, children, statusRecord,approvedRecord,storeTotals ? storeTotals.get(org.id) ?? 0 : null);
+        const entry = directoryEntry(org, row, children, statusRecord,approvedRecord,termsBatch?.get(org.id),storeTotals ? storeTotals.get(org.id) ?? 0 : null);
         if (matchesDirectoryFilters(entry, filters)) entries.push(entry);
       }
       entries.sort((a, b) => a.registryName.localeCompare(b.registryName) || a.orgId.localeCompare(b.orgId));

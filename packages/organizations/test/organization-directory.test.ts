@@ -15,6 +15,7 @@ import {
   type OrganizationStoreCounts,
   type OrganizationAccountManagerRecords,
   type OrganizationDeletionRecords,
+  type OrganizationCommercialTermsRecords,
 } from "../src/index.js";
 import * as builtIn from "../src/organizations.js";
 
@@ -36,6 +37,7 @@ async function setup(options: {
   readonly storeCounts?: OrganizationStoreCounts;
   readonly accountManagers?: OrganizationAccountManagerRecords;
   readonly deletions?: OrganizationDeletionRecords;
+  readonly commercialTerms?: OrganizationCommercialTermsRecords;
 } = {}) {
   const store = new InMemoryAuthzStore({
     principals: PEOPLE,
@@ -62,7 +64,7 @@ async function setup(options: {
   const source = options.source ?? new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-a2", childA2], ["org-b", unrelatedB],
   ]));
-  return { store, repository: new OrganizationRepository({ store, source, storeCounts: options.storeCounts, accountManagers: options.accountManagers, deletions: options.deletions }) };
+  return { store, repository: new OrganizationRepository({ store, source, storeCounts: options.storeCounts, accountManagers: options.accountManagers, deletions: options.deletions, commercialTerms: options.commercialTerms }) };
 }
 
 function entries(result: OrganizationDirectoryResult): readonly OrganizationDirectoryEntry[] {
@@ -85,6 +87,17 @@ const ENTRY_KEYS = [
   "storeCount", "subOrganizationCount",
 ];
 const SENTINELS = /SENSITIVE-|company_auth_key|password|reset_token|commercial_licence|company_logo|staff_id|followup|hourly|commission|email|example\.invalid/i;
+
+test("SHU353_DIRECTORY_CURRENCY written currencies are shown and filtered with one batch read",async()=>{
+  const calls:string[][]=[];
+  const absent={hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const}};
+  const commercialTerms:OrganizationCommercialTermsRecords={async read(){throw new Error("per-row read")},async readMany(orgIds){calls.push([...orgIds]);return new Map(orgIds.map(id=>[id,{...absent,currencyCode:id==="org-a"?{kind:"value"as const,value:"USD"}:{kind:"cleared"as const}}]))}};
+  const {repository}=await setup({commercialTerms});
+  assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{currencyCode:"USD"}})),["org-a"]);
+  assert.deepEqual(calls,[["org-a","org-b"]]);
+  const list=entries(await repository.listOrganizations(STAFF));
+  assert.deepEqual(list.map(entry=>[entry.orgId,value(entry,"currencyCode")]),[["org-a","USD"],["org-b","unavailable:not_recorded"]]);
+});
 
 test("SHU-163/parity-contract staff list top-level companies with one status rule and grant coverage", async () => {
   const { repository } = await setup();

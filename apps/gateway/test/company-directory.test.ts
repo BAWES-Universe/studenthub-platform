@@ -7,6 +7,7 @@ import {
   InMemoryApprovedOrganizationAdapter, OrganizationRepository, SYNTHETIC_ORGANIZATION_FIXTURES,
   type OrganizationStoreCounts,
   type OrganizationAccountManagerRecords,
+  type OrganizationCommercialTermsRecords,
 } from "@studenthub/organizations";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createCompanyDirectory } from "../src/company-directory.js";
@@ -17,7 +18,7 @@ const SESSION = "d".repeat(43);
 const headers = { cookie: `__Host-studenthub_session=${SESSION}` };
 const STAFF_LIST = "/workspace/companies?org_id=root&role=staff";
 
-async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords } = {}) {
+async function fixture(t: TestContext, options: { readonly withDirectory?: boolean; readonly storeCounts?: OrganizationStoreCounts; readonly accountManagers?: OrganizationAccountManagerRecords; readonly commercialTerms?:OrganizationCommercialTermsRecords } = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   const store = new InMemoryAuthzStore({
@@ -35,7 +36,7 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
   const { parentA, childA1, unrelatedB } = SYNTHETIC_ORGANIZATION_FIXTURES;
   const organizations = new OrganizationRepository({ store, source: new InMemoryApprovedOrganizationAdapter(new Map<string, unknown>([
     ["org-a", parentA], ["org-a1", childA1], ["org-b", unrelatedB],
-  ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers });
+  ])), storeCounts: options.storeCounts, accountManagers: options.accountManagers, commercialTerms:options.commercialTerms });
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store, organizations),
     ...(options.withDirectory === false ? {} : { companies: createCompanyDirectory(rig.sessions, store, organizations) }),
@@ -57,7 +58,8 @@ async function fixture(t: TestContext, options: { readonly withDirectory?: boole
 const html = { accept: "text/html" };
 
 test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspace", async (t) => {
-  const f = await fixture(t);
+  const absent={hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const}};
+  const f = await fixture(t,{commercialTerms:{async read(){return absent},async readMany(ids){return new Map(ids.map(id=>[id,{...absent,currencyCode:id==="org-a"?{kind:"value"as const,value:"USD"}:{kind:"absent"as const}}]))}}});
   const workspace = await (await f.get("/workspace?org_id=root&role=staff", html)).text();
   assert.match(workspace, /href="\/workspace\/companies\?org_id=root&amp;role=staff">Companies<\/a>/);
   const recruiter = await (await f.get("/workspace?org_id=org-b&role=recruiter", html)).text();
@@ -77,6 +79,7 @@ test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspac
   assert.match(page.headers.get("content-security-policy")!, /script-src 'self'/);
   assert.match(text, /<a href="\/workspace\?org_id=org-a&amp;role=staff">Synthetic Retail Group<\/a>/);
   assert.match(text, /Under review/);
+  assert.match(text, /USD/);
   assert.match(text, /aria-current="page">Companies<\/a>/);
   assert.match(text, /Companies 1–2 of 2/);
   assert.doesNotMatch(text, /Organization A1|Synthetic Retail Kuwait City|SENSITIVE-/, "sub-companies open from their parent");
