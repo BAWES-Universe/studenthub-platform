@@ -58,12 +58,12 @@ export async function gatherProfileCompleteness(
   const freshness = { kind: "derived" as const, observedAt: profile.asOfDate };
   const fields = result.kind === "available" ? {
     ...profile.fields,
-    isProfileCompleted: { ...profile.fields.isProfileCompleted, state: "available" as const, value: result.pendingFields.length === 0, freshness },
-    pendingFields: { ...profile.fields.pendingFields, state: "available" as const, value: result.pendingFields, freshness },
+    isProfileCompleted: { state: "available" as const, value: result.pendingFields.length === 0, provenance: profile.fields.isProfileCompleted.provenance, freshness },
+    pendingFields: { state: "available" as const, value: result.pendingFields, provenance: profile.fields.pendingFields.provenance, freshness },
   } : {
     ...profile.fields,
-    isProfileCompleted: { ...profile.fields.isProfileCompleted, state: "unavailable" as const, reason: "check_failed" as const, freshness },
-    pendingFields: { ...profile.fields.pendingFields, state: "unavailable" as const, reason: "check_failed" as const, freshness },
+    isProfileCompleted: { state: "unavailable" as const, reason: "check_failed" as const, provenance: profile.fields.isProfileCompleted.provenance, freshness },
+    pendingFields: { state: "unavailable" as const, reason: "check_failed" as const, provenance: profile.fields.pendingFields.provenance, freshness },
   };
   return { result, profile: Object.freeze({ ...profile, fields: Object.freeze(fields) }), ...(choices.state === "available" ? { choices: choices.value } : {}) };
 }

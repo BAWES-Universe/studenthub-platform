@@ -38,7 +38,7 @@ import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
 import { createUniverseEmbedConfigFromEnv, type UniverseEmbedConfig } from "./universe/embed-policy.js";
 import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
-const { gatherProfileCompleteness } = await import(process.env.SHU588_COMPLETENESS_MODULE ?? "./profile-completeness.js");
+import { gatherProfileCompleteness } from "./profile-completeness.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
 
 export * from "./authz-middleware.js";
