@@ -143,9 +143,11 @@ test("SHU342_PROFILE_INVALID isolates malformed stored fields and port failures"
 test("SHU352_SHOWN a maximum-length saved company name is shown on the company card", async () => {
   const savedNameEn = "N".repeat(255), savedNameAr = "ن".repeat(255);
   const {repository}=await setup({profiles:{async read(){return{name_en:savedNameEn,name_ar:savedNameAr}}}});
-  const view=found(await repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"}));
-  assert.equal(value(view,"commonNameEn"),savedNameEn);
-  assert.equal(value(view,"commonNameAr"),savedNameAr);
+  for (const [principalId, role] of [["owner-a", "org-owner"], ["staff", "staff"], ["admin", "admin"]] as const) {
+    const view=found(await repository.read({principalId,orgId:"org-a",role}));
+    assert.equal(value(view,"commonNameEn"),savedNameEn);
+    assert.equal(value(view,"commonNameAr"),savedNameAr);
+  }
 });
 
 test("SHU-159/parity-contract two organizations, conflicting status fields, self and subtree grants", async () => {

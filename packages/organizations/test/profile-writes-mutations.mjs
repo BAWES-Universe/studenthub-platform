@@ -10,6 +10,7 @@ const mutations=[
  ["accept cross organization","SHU-300/AC-03 cross-org",'row.org_id === orgId && row.role === "org-owner"','row.role === "org-owner"'],
  ["ignore stale state","SHU-300/AC-04 stale-confirm","return current === expectedBefore;","return true;"],
  ["allow overlong company names","SHU352_NAME_TOO_LONG","value.length <= ORGANIZATION_PROFILE_NAME_MAX_LENGTH","true"],
+ ["reject maximum-length company names","SHU352_NAME_FITS","value.length <= ORGANIZATION_PROFILE_NAME_MAX_LENGTH","value.length < ORGANIZATION_PROFILE_NAME_MAX_LENGTH"],
 ];
 function run(pattern,module){const r=spawnSync(process.execPath,["--test","--test-reporter=tap",...(pattern?[`--test-name-pattern=^${pattern} `]:[]),suite],{encoding:"utf8",env:{...process.env,...(module?{SHU300_TEST_MODULE:module}:{})},timeout:30000});return {...r,output:r.stdout+r.stderr};}
 assert.equal(run().status,0);
