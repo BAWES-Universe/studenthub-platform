@@ -118,3 +118,26 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
   await pool.query("INSERT INTO person_profiles(principal_id,objective,objective_written_at) VALUES($1,'Concurrent',clock_timestamp())", [id]);
   assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
 });
+
+test("SHU373_WRITE each choice writes twice and a Kuwaiti-mother clear stores NULL", async () => {
+  const id = `shu373-${randomUUID()}`, country = randomUUID(), university = randomUUID(), authz = new PostgresAuthzStore(pool);
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES
+    ($1,'country','Jordan',$3,'JO','active',$4,$4,clock_timestamp(),clock_timestamp()),
+    ($2,'university','Test University',$5,NULL,'active',$4,$4,clock_timestamp(),clock_timestamp())`, [country, university, `jordan-${country}`, "a".repeat(64), `university-${university}`]);
+  const store = new PostgresPersonProfileStore({ pool });
+  const write = async (field: "gender"|"birthDate"|"nationality"|"university"|"drivingLicence"|"kuwaitiMother"|"jobSearchStatus", value: string) => {
+    const request = { principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field, value } };
+    const preview = await createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) }).preview(request); assert.ok(preview.ok); if (!preview.ok) return;
+    assert.ok((await createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) }).confirm({ ...request, token: preview.token })).ok);
+  };
+  for (const [field, first, second] of [["gender","male","female"],["birthDate","2000-01-01","2000-01-02"],["nationality",country,country],["university",university,university],["drivingLicence","true","false"],["kuwaitiMother","true",""] ,["jobSearchStatus","active","open_to_offers"]] as const) { await write(field, first); await write(field, second); }
+  const row = (await pool.query("SELECT birth_date::text,driving_licence::text,kuwaiti_mother::text,job_search_status FROM person_profiles WHERE principal_id=$1", [id])).rows[0];
+  assert.deepEqual(row, { birth_date: "2000-01-02", driving_licence: "false", kuwaiti_mother: null, job_search_status: "open_to_offers" });
+});
+
+test("SHU373_CATALOGUE one query reads active country and university choices", async () => {
+  const store = new PostgresPersonProfileStore({ pool }), choices = await store.readProfileChoices();
+  assert.ok(choices.countries.every(item => item.type === "country"));
+  assert.ok(choices.universities.every(item => item.type === "university"));
+});

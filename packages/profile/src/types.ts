@@ -83,7 +83,13 @@ export interface OwnProfileProjection {
   /** Date used for age and civil-expiry derivations. */
   readonly asOfDate: string;
   readonly fields: Readonly<OwnProfileFields>;
+  readonly choices?: ProfileChoices;
+  readonly selectedChoiceIds?: Readonly<{ nationality?: string; university?: string }>;
+  readonly kuwaitiMother?: ProfileField<boolean>;
 }
+
+export interface ProfileChoice { readonly id: string; readonly name: string; readonly code?: string }
+export interface ProfileChoices { readonly countries: readonly ProfileChoice[]; readonly universities: readonly ProfileChoice[] }
 
 export interface OwnProfileFieldContract {
   readonly label: string;
@@ -125,4 +131,5 @@ export interface OwnProfileReader {
 /** Platform-owned profile values, read in one fixed-cost lookup for one person. */
 export interface OwnProfilePreferencesReader {
   readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null>;
+  readProfileChoices?(): Promise<ProfileChoices>;
 }

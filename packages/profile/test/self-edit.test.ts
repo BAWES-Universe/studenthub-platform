@@ -15,6 +15,23 @@ test("SHU372_RULES every shared rule example has the specified result", () => {
   assert.equal(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah"), "Noël Al-Sabah");
 });
 
+test("SHU373_AGE birth dates require the single minimum age and valid calendar dates", () => {
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-01-01"), "2010-01-01");
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2020-01-01"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "not-a-date"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2024-02-30"), null);
+});
+
+test("SHU373_CATALOGUE choices accept ids rather than display names", () => {
+  assert.equal(normalizePersonSelfEditValue("nationality", "11111111-1111-4111-8111-111111111111"), "11111111-1111-4111-8111-111111111111");
+  assert.equal(normalizePersonSelfEditValue("university", "Kuwait University"), null);
+});
+
+test("SHU373_WRITE all seven choice values pass the safe-write rules", () => {
+  const values = { gender: "female", birthDate: "2000-02-29", nationality: "11111111-1111-4111-8111-111111111111", university: "22222222-2222-4222-8222-222222222222", drivingLicence: "false", kuwaitiMother: "", jobSearchStatus: "open_to_offers" } as const;
+  for (const [field, value] of Object.entries(values)) assert.equal(normalizePersonSelfEditValue(field as never, value), value);
+});
+
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {
   const dates = ["2026-10-01T01:00:00.000Z", "2026-10-02T02:00:00.000Z", "2026-10-03T03:00:00.000Z", "2026-10-04T04:00:00.000Z", "2026-10-05T05:00:00.000Z"];
   const values = { displayName: "Noor Al-Sabah", arabicName: "نور الصباح", objective: "A new objective", intro: "A new introduction", preferredTime: "Early mornings" };

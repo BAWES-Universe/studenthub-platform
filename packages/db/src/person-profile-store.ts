@@ -5,10 +5,12 @@ import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./safe-write-store.js";
 
-export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
+export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"] as const;
 export type PersonProfileField = (typeof PERSON_PROFILE_FIELDS)[number];
 const COLUMNS: Record<PersonProfileField, string> = {
   displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time",
+  gender: "gender", birthDate: "birth_date", nationality: "nationality_id", university: "university_id",
+  drivingLicence: "driving_licence", kuwaitiMother: "kuwaiti_mother", jobSearchStatus: "job_search_status",
 };
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
@@ -41,16 +43,37 @@ export class PostgresPersonProfileStore {
     const { rows } = await this.#pool.query(
       `SELECT pp.display_name, pp.display_name_written_at, pp.arabic_name, pp.arabic_name_written_at,
               pp.objective, pp.objective_written_at, pp.introduction, pp.introduction_written_at,
-              pp.preferred_time, pp.preferred_time_written_at
-         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id WHERE p.id=$1`, [principalId]);
+              pp.preferred_time, pp.preferred_time_written_at, pp.gender, pp.gender_written_at,
+              pp.birth_date::text birth_date, pp.birth_date_written_at, pp.nationality_id, pp.nationality_written_at,
+              country.name nationality_name, country.code nationality_code,
+              pp.university_id, pp.university_written_at, university.name university_name,
+              pp.driving_licence::text driving_licence, pp.driving_licence_written_at,
+              pp.kuwaiti_mother::text kuwaiti_mother, pp.kuwaiti_mother_written_at,
+              pp.job_search_status, pp.job_search_status_written_at
+         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id
+         LEFT JOIN catalogue_items country ON country.id=pp.nationality_id AND country.catalogue_type='country'
+         LEFT JOIN catalogue_items university ON university.id=pp.university_id AND university.catalogue_type='university'
+         WHERE p.id=$1`, [principalId]);
     const row = rows[0];
     if (!row) return null;
     const result: Record<string, unknown> = {};
     for (const [field, column] of Object.entries(COLUMNS)) {
       const at = row[`${column}_written_at`];
-      if (at instanceof Date) result[field] = Object.freeze({ value: row[column], updatedAt: at.toISOString() });
+      if (at instanceof Date) {
+        const raw = row[column];
+        const value = field === "drivingLicence" || field === "kuwaitiMother" ? raw === null ? null : raw === "true"
+          : field === "nationality" ? raw === null ? null : { id: raw, name: row.nationality_name, code: row.nationality_code }
+          : field === "university" ? raw === null ? null : { id: raw, name: row.university_name } : raw;
+        result[field] = Object.freeze({ value, updatedAt: at.toISOString() });
+      }
     }
     return Object.freeze(result);
+  }
+
+  async readProfileChoices() {
+    const { rows } = await this.#pool.query(`SELECT id,catalogue_type AS type,name,code FROM catalogue_items
+      WHERE status='active' AND catalogue_type IN ('country','university') ORDER BY catalogue_type,normalized_name COLLATE "C",id`);
+    return Object.freeze({ countries: Object.freeze(rows.filter(row => row.type === "country")), universities: Object.freeze(rows.filter(row => row.type === "university")) });
   }
 
   async readReceipt(principalId: string, receiptRef: string): Promise<Receipt | null> {
@@ -69,7 +92,7 @@ export class PostgresPersonProfileStore {
 
   async #exists(client: pg.Pool | pg.PoolClient, id: string) { return (await client.query("SELECT 1 FROM principals WHERE id=$1", [id])).rows.length === 1; }
   async #readField(id: string, field: PersonProfileField) {
-    const { rows } = await this.#pool.query(`SELECT ${COLUMNS[field]} AS value FROM person_profiles WHERE principal_id=$1`, [id]);
+    const { rows } = await this.#pool.query(`SELECT ${COLUMNS[field]}::text AS value FROM person_profiles WHERE principal_id=$1`, [id]);
     return rows[0]?.value ?? null;
   }
   async #commit(id: string, input: CommitInput): Promise<CommitOutcome> {
@@ -83,8 +106,14 @@ export class PostgresPersonProfileStore {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [id]);
       if ((await client.query(`SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2`, [SAFE_WRITE_OPERATION, spent])).rows.length) throw new Refusal("token_already_used");
       if (!await this.#exists(client, id)) throw new Refusal("not_own_record");
-      const current = (await client.query(`SELECT ${column} AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
+      const current = (await client.query(`SELECT ${column}::text AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
       if (current !== input.expectedBefore) throw new Refusal("state_changed");
+      if ((field === "nationality" || field === "university") && input.value !== "") {
+        const expectedType = field === "nationality" ? "country" : "university";
+        const resolved = (await client.query("SELECT code FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active'", [input.value, expectedType])).rows[0];
+        if (!resolved) throw new Refusal("invalid_value");
+        if (field === "nationality" && resolved.code === "KW") await client.query("UPDATE person_profiles SET kuwaiti_mother=NULL,kuwaiti_mother_written_at=clock_timestamp() WHERE principal_id=$1", [id]);
+      }
       await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
         ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, input.value === "" ? null : input.value]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
