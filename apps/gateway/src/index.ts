@@ -38,6 +38,8 @@ import { ROUTES, runRoutes } from "./routes/index.js";
 import type { GatewayRouteLogin } from "./routes/context.js";
 import { createUniverseEmbedConfigFromEnv, type UniverseEmbedConfig } from "./universe/embed-policy.js";
 import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
+import { gatherProfileCompleteness } from "./profile-completeness.js";
+import { currentProfileAvatar } from "./profile-avatar.js";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -352,12 +354,16 @@ export function createGatewayServer(
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      let authorizedPersonId: string | undefined;
+      let authorizedEmail: unknown;
       if (result.status === 200 && login.web) {
         try {
           const requesterPrincipalId = result.body?.personId;
           if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
             throw new Error("invalid authorized profile");
           }
+          authorizedPersonId = requesterPrincipalId;
+          authorizedEmail = result.body?.email;
           const profile = await login.web.profiles.readOwn({
             requesterPrincipalId,
             targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
@@ -374,8 +380,12 @@ export function createGatewayServer(
       }
       if (html) {
         try {
+          let completeness: Awaited<ReturnType<typeof gatherProfileCompleteness>> | undefined;
+          if (result.status === 200 && authorizedPersonId) {
+            completeness = await gatherProfileCompleteness(authorizedPersonId, result.body as never, authorizedEmail, { login, profileRecords, documents: currentProfileAvatar() });
+          }
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(completeness ? { ...result, body: completeness.profile } : result, login, notice?.notice, documents !== undefined, undefined, completeness?.result);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';

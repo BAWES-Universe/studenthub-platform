@@ -220,6 +220,11 @@ export function createRuntimeLoginFromEnv(
         if (!await access.services.authzStore.getPrincipal(personId)) throw new Error("unknown principal");
         return "self";
       },
+      async principalFor(personId) {
+        const principal = await access.services.authzStore.getPrincipal(personId);
+        if (!principal) throw new Error("unknown principal");
+        return { role: "self", ...(typeof principal.email === "string" ? { email: principal.email } : {}) };
+      },
     },
     jwks: new RefreshingJwksResolver(issuer, jwksUrl),
   }, {

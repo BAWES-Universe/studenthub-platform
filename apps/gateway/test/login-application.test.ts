@@ -47,6 +47,25 @@ test("the real profile path reports persistent dependency failure as unavailable
   });
 });
 
+test("Q14_4_EMAIL profile carries a non-empty principal email without adding a second authorization read", async () => {
+  for (const email of ["person@example.invalid", "", undefined]) {
+    const rig = createSyntheticLoginRig(createLoginApplication);
+    await rig.sessions.put({ id: "synthetic-session", personId: "person-1" });
+    let reads = 0;
+    (rig.authorization as typeof rig.authorization & { principalFor(): Promise<{ role: string; email?: string }> }).principalFor = async () => { reads += 1; return { role: "self", ...(email === undefined ? {} : { email }) }; };
+    assert.deepEqual(await rig.app.profile({ sessionId: "synthetic-session" }), {
+      status: 200,
+      body: { personId: "person-1", role: "self", ...(email ? { email } : {}) },
+    });
+    assert.equal(reads, 1);
+  }
+  const fallback = createSyntheticLoginRig(createLoginApplication);
+  await fallback.sessions.put({ id: "synthetic-session", personId: "person-1" });
+  assert.deepEqual(await fallback.app.profile({ sessionId: "synthetic-session" }), {
+    status: 200, body: { personId: "person-1", role: "candidate" },
+  });
+});
+
 test("runtime configuration rejects non-HTTPS identity endpoints before opening PostgreSQL", () => {
   assert.throws(
     () => createRuntimeLoginFromEnv({
