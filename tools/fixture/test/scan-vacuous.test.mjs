@@ -156,3 +156,49 @@ test("does not recognise assertion text inside a regex literal", () => {
   );
   assert.deepEqual(report.map((entry) => entry.name), ["regex-assertion"]);
 });
+
+test("does not treat a RegExp.prototype.test call as a test declaration", () => {
+  const source = [
+    'test("matches", () => { assert.ok(/a/.test(value)); });',
+    'test("vacuous", () => { const value = 1; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["vacuous"],
+  );
+});
+
+test("does not treat a dotted it call as a test declaration", () => {
+  const source = [
+    'test("delegates", () => { harness.it("inner", () => {}); assert.ok(harness); });',
+    'test("empty", () => { const value = 1; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["empty"],
+  );
+});
+
+test("does not treat an optional-chained test call as a test declaration", () => {
+  const report = scanVacuousTests('suite?.test("delegated", () => { work(); });');
+  assert.deepEqual(report, []);
+});
+
+test("does not borrow a body across a property call that spans lines", () => {
+  const source = [
+    'test("wraps", () => {',
+    "  assert.ok(",
+    "    matcher",
+    "      .test(value),",
+    "  );",
+    "});",
+    'it("vacuous", () => { const value = 1; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["vacuous"],
+  );
+});

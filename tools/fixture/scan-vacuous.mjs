@@ -9,6 +9,11 @@
 // brace-delimited block that follows the call's opening parenthesis. A body is
 // VACUOUS when no assertion call appears inside it.
 //
+// Only a bare `test`/`it` reference declares a test. A property call such as
+// `matcher.test(value)` or `harness.it(...)` is not a test declaration and so
+// contributes no body; that excludes the dotted subtest forms (`t.test(...)`)
+// too.
+//
 // An assertion call is documented as `expect(...)`, a node:assert call
 // (`assert(...)`, `assert.ok(...)`, `assert.equal(...)`, ...), a node:test
 // context assertion (`t.assert.*`), or a `throw` statement.
@@ -188,6 +193,13 @@ function braceBody(source, callIndex) {
   return null;
 }
 
+function isPropertyCall(source, index) {
+  // `\b` in TEST_CALL_RE treats the dot of `matcher.test(value)` as a word
+  // boundary, so the member name matches like a bare call. Anything whose
+  // callee is a property access is not a test declaration.
+  return source.slice(0, index).trimEnd().endsWith(".");
+}
+
 /**
  * Report the test bodies in `fileText` that contain no recognised assertion.
  * Pure: no I/O, no globals. Throws TypeError for a non-string input.
@@ -205,6 +217,9 @@ export function scanVacuousTests(fileText) {
   let match;
   while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
+    // Skipped before braceBody: a property call has no body of its own, so the
+    // scan would otherwise run on and borrow an unrelated later block.
+    if (isPropertyCall(searchableText, callIndex)) continue;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;
     if (RECOGNISED_ASSERTION_RE.test(codeOnly(body.text))) continue;
