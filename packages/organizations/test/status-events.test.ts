@@ -48,3 +48,27 @@ test("SHU-313 real status write records only committed changes",async()=>{
   assert.deepEqual(await writer.confirm({principalRef:principal,change:{...change,value:"under_review"},token:stalePreview.token}),{ok:false,reason:"state_changed"});
   assert.equal(events.length,1);
 });
+
+test("SHU335_HISTORY_VIEW returns normalized newest-first entries without leaking row fields",()=>{
+  const instant="2025-01-02T03:04:05.000Z";
+  const rows=[
+    {from_status:"under_review",to_status:"active",occurred_at:new Date("2025-01-01T00:00:00.000Z"),receipt_ref:"secret-1"},
+    {from_status:"active",to_status:"inactive",occurred_at:instant,receipt_ref:"secret-2"},
+    {from_status:"inactive",to_status:null,occurred_at:"2025-01-03T00:00:00.000Z",receipt_ref:"secret-3"},
+  ];
+  const history=subject.organizationStatusHistoryView(rows);
+  assert.deepEqual(history,[
+    {from:"inactive",to:null,occurredAt:"2025-01-03T00:00:00.000Z"},
+    {from:"active",to:"inactive",occurredAt:instant},
+    {from:"under_review",to:"active",occurredAt:"2025-01-01T00:00:00.000Z"},
+  ]);
+  assert.deepEqual(Object.keys(history[0]!).sort(),["from","occurredAt","to"]);
+  assert.equal(new Date(instant).toISOString(),history[1]!.occurredAt);
+});
+
+test("SHU335_HISTORY_LIMIT returns exactly the newest 50 rows",()=>{
+  const rows=Array.from({length:60},(_,i)=>({from_status:null,to_status:"active",occurred_at:new Date(Date.UTC(2025,0,1,0,0,i)).toISOString()}));
+  const history=subject.organizationStatusHistoryView(rows);
+  assert.equal(history.length,50);
+  assert.deepEqual(history.map(row=>row.occurredAt),rows.slice(10).reverse().map(row=>row.occurred_at));
+});

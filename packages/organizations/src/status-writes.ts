@@ -12,6 +12,14 @@ export function organizationStatusEvent(before:string|null,value:string):{from:O
   if(from===to)return null;
   return {from,to};
 }
+export interface OrganizationStatusEventRow { readonly from_status: string | null; readonly to_status: string | null; readonly occurred_at: Date | string }
+export interface OrganizationStatusHistoryEntry { readonly from: OrganizationStatus | null; readonly to: OrganizationStatus | null; readonly occurredAt: string }
+export const ORGANIZATION_STATUS_HISTORY_LIMIT = 50;
+export function organizationStatusHistoryView(rows: readonly OrganizationStatusEventRow[]): OrganizationStatusHistoryEntry[] {
+  return rows.map(row => ({ from: row.from_status as OrganizationStatus | null, to: row.to_status as OrganizationStatus | null, occurredAt: new Date(row.occurred_at).toISOString() }))
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+    .slice(0, ORGANIZATION_STATUS_HISTORY_LIMIT);
+}
 export interface OrganizationStatusGrantRow { readonly org_id:string; readonly role:string; readonly scope:string }
 
 export function organizationStatusDecision(rows:readonly OrganizationStatusGrantRow[], orgId:string,
