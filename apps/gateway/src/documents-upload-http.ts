@@ -26,7 +26,7 @@ async function boundedBody(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []; let total = 0;
   for await (const value of request.iterator({ destroyOnReturn: false })) {
     const chunk = Buffer.from(value); total += chunk.length;
-    if (total > LIMIT) { request.resume(); throw new LifecycleError(413, 'too_large'); }
+    if (total > LIMIT) { request.destroy(); throw new LifecycleError(413, 'too_large'); }
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -41,7 +41,8 @@ function multipart(body: Buffer, contentType: string): Parsed {
   let offset = boundary.length;
   while (true) {
     if (body.subarray(offset, offset + 2).toString() === '--') {
-      if (offset + 4 !== body.length || body.subarray(offset + 2).toString() !== '\r\n') throw new LifecycleError(400, 'invalid');
+      const epilogue = body.subarray(offset + 2);
+      if (epilogue.length !== 0 && !epilogue.equals(Buffer.from('\r\n'))) throw new LifecycleError(400, 'invalid');
       break;
     }
     if (body.subarray(offset, offset + 2).toString() !== '\r\n') throw new LifecycleError(400, 'invalid');
@@ -115,7 +116,7 @@ export async function handleDocumentsUpload(request: IncomingMessage, response: 
     const e = error instanceof LifecycleError ? error : new LifecycleError(503, 'unavailable');
     if (e.status === 413 || e.code === 'too_large') html(response, 413, slot, 'The file is too large. The size limit is 10 MiB.');
     else if (e.status === 409 || e.code === 'conflict' || e.code === 'key_payload_mismatch') html(response, 409, slot, 'Your documents changed. Try again.');
-    else if (e.status === 400 || e.code === 'invalid') html(response, 400, slot, e.code === 'no_file' ? 'Choose a file first.' : 'Choose a valid file in an accepted format.');
+    else if (e.status === 400 || e.code === 'invalid' || e.code === 'no_file') html(response, 400, slot, e.code === 'no_file' ? 'Choose a file first.' : 'Choose a valid file in an accepted format.');
     else if (e.status === 403 || e.code === 'denied') html(response, 403, slot, 'This upload was refused.');
     else html(response, 503, slot, 'Documents are temporarily unavailable.');
   }
