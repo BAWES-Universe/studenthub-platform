@@ -1,10 +1,12 @@
 // SHU-63 fixture — declared acceptance oracle for the `scanVacuousTests` contract.
 //
-// Each row states the report the helper MUST produce for `src`, per the contract
-// documented in tools/fixture/scan-vacuous.mjs (lines 19-22): a body is VACUOUS
-// when no assertion CALL appears inside it, where an assertion call is
-// `expect(...)`, a node:assert call, a node:test context assertion, or a `throw`
-// statement.
+// Each row states the report the helper MUST produce for `src`, per the CONTRACT
+// block of tools/fixture/scan-vacuous.mjs: a body is VACUOUS when no assertion
+// CALL appears inside it, where an assertion call is `expect(...)`, a node:assert
+// call, a node:test context assertion, or a `throw` statement.
+//
+// Assertion text that appears only inside a comment, a string literal, a template
+// literal, or a regex literal is not a call, so such a body IS vacuous.
 //
 // This directory is the fixture's acceptance oracle. It lives OUTSIDE the
 // fixture's own directory on purpose: it is consumed by the reviewer at review
@@ -45,7 +47,7 @@ export const EXPECTATIONS = Object.freeze([
   {
     name: "a body whose assertion is mentioned only inside a string literal",
     src: 'test("stub", () => { const s = "assert.equal(1, 2)"; });',
-    expected: [],
+    expected: ["stub"],
   },
   {
     name: "a body whose assertion is mentioned only inside a template literal",
