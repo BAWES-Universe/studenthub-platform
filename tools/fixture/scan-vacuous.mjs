@@ -146,9 +146,13 @@ export function scanVacuousTests(fileText) {
     throw new TypeError("scanVacuousTests(fileText): fileText must be a string");
   }
   const report = [];
+  // Keep source positions intact while excluding test-like text in comments and
+  // literals from candidate discovery. braceBody still receives the original
+  // source so the reported brace indices remain exact.
+  const searchableText = codeOnly(fileText);
   TEST_CALL_RE.lastIndex = 0;
   let match;
-  while ((match = TEST_CALL_RE.exec(fileText)) !== null) {
+  while ((match = TEST_CALL_RE.exec(searchableText)) !== null) {
     const callIndex = match.index;
     const body = braceBody(fileText, callIndex + match[0].length - 1);
     if (!body) continue;

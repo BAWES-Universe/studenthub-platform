@@ -97,3 +97,17 @@ test("reports a body whose only assertion is inside a line comment or string", (
     ["line-comment", "string"],
   );
 });
+
+test("ignores test-like calls inside comments and string literals", () => {
+  const source = [
+    '// test("comment", () => { const value = 1; });',
+    'const example = \'it("string", () => { const value = 2; });\';',
+    '/* it("block", () => { const value = 3; }); */',
+    'test("real", () => { const value = 4; });',
+  ].join("\n");
+
+  assert.deepEqual(
+    scanVacuousTests(source).map((entry) => entry.name),
+    ["real"],
+  );
+});
