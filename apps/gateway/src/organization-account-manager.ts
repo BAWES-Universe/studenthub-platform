@@ -20,7 +20,7 @@ async function form(req:IncomingMessage,allowed:readonly string[]):Promise<Recor
  const chunks:Buffer[]=[];let size=0;for await(const chunk of req.iterator({destroyOnReturn:false})){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>BODY_LIMIT){req.resume();return undefined}chunks.push(bytes)}
  const out:Record<string,string>={};for(const[key,value]of new URLSearchParams(Buffer.concat(chunks).toString("utf8"))){if(!allowed.includes(key)||Object.hasOwn(out,key))return undefined;out[key]=value}return Object.keys(out).length===allowed.length?out:undefined
 }
-function pageError(write:OrganizationAccountManagerPageWriter,status:number):void{write(status,"Account manager",`<main id="main" class="error-page"><h1>The account manager wasn’t changed.</h1><p>${status===401?"Your session has ended. Sign in and try again.":status===409?"The company changed while you were reviewing. Open it again and retry.":"You no longer have permission to make this change, or the choice is no longer eligible."}</p><a class="button primary" href="/workspace">Back to workspaces</a></main>`)}
+function pageError(write:OrganizationAccountManagerPageWriter,status:number):void{write(status,"Account manager",status===401?"":`<main id="main" class="error-page"><h1>The account manager wasn’t changed.</h1><p>${status===409?"The company changed while you were reviewing. Open it again and retry.":status===503?"The account manager service is unavailable. Please try again in a moment.":status===404?"This company is no longer available to you.":"You no longer have permission to make this change, or the choice is no longer eligible."}</p><a class="button primary" href="/workspace">Back to workspaces</a></main>`)}
 /** Native browser safe-write page. It delegates all decisions and mutations to the JSON service. */
 export async function handleOrganizationAccountManagerPage(req:IncomingMessage,res:ServerResponse,service:OrganizationAccountManager|undefined,origin:string|undefined,write:OrganizationAccountManagerPageWriter):Promise<boolean>{
  const path=new URL(req.url??"/","http://invalid").pathname;if(path!==FORM_PREVIEW&&path!==FORM_CONFIRM)return false;
@@ -29,17 +29,18 @@ export async function handleOrganizationAccountManagerPage(req:IncomingMessage,r
  const session=cookie(req.headers.cookie);
  try{
   if(path===FORM_PREVIEW){
-   const values=await form(req,["orgId","value"]);if(!values){pageError(write,400);return true}
+   const values=await form(req,["orgId","value","companyName","fromName"]);if(!values){pageError(write,400);return true}
    const change={orgId:values.orgId,field:"account_manager",value:values.value};
    const result=await service.preview(session,change);if(result.status!==200){pageError(write,result.status);return true}
    const options=await service.options(session,values.orgId!);if(options.status!==200){pageError(write,options.status);return true}
-   const chosen=values.value==="none"?"None":options.body.managers.find(manager=>manager.principalId===values.value)?.displayName??"Unnamed staff member";
+   const chosen=values.value==="none"?"No account manager":options.body.managers.find(manager=>manager.principalId===values.value)?.displayName??"Unnamed staff member";
    const body=result.body as{token:ActionToken};const hidden=TOKEN_KEYS.map(key=>`<input type="hidden" name="token.${key}" value="${html(body.token[key as keyof ActionToken])}">`).join("");
-   write(200,"Review account manager",`<main id="main" class="profile-main"><h1>Review account manager change<span class="accent">.</span></h1><p>New account manager: <strong>${html(chosen)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="orgId" value="${html(values.orgId!)}"><input type="hidden" name="value" value="${html(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/workspace">Cancel</a></main>`);return true
+   const card=`/workspace?${new URLSearchParams({org_id:values.orgId!,role:"admin"})}`;
+   write(200,"Review account manager",`<main id="main" class="profile-main"><h1>Review account manager change<span class="accent">.</span></h1><p>Company: <strong>${html(values.companyName!)}</strong></p><p><strong>${html(values.fromName!)}</strong> → <strong>${html(chosen)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="orgId" value="${html(values.orgId!)}"><input type="hidden" name="value" value="${html(values.value!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="${html(card)}">Cancel</a></main>`);return true
   }
   const names=["orgId","value",...TOKEN_KEYS.map(key=>`token.${key}`)];const values=await form(req,names);if(!values){pageError(write,400);return true}
   const actionToken=Object.fromEntries(TOKEN_KEYS.map(key=>[key,values[`token.${key}`]]));
   const result=await service.confirm(session,{orgId:values.orgId,field:"account_manager",value:values.value,token:actionToken});if(result.status!==200){pageError(write,result.status);return true}
-  write(200,"Account manager changed",`<main id="main" class="profile-main"><h1>Account manager changed<span class="accent">.</span></h1><p role="status">The company card and account manager history now show the confirmed change.</p><a class="button primary" href="/workspace">Back to workspaces</a></main>`);return true
+  const location=`/workspace?${new URLSearchParams({org_id:values.orgId!,role:"admin"})}`;res.writeHead(303,{location,"cache-control":"no-store"});res.end();return true
  }catch{if(!res.headersSent)pageError(write,503);else res.destroy();return true}
 }

@@ -24,7 +24,7 @@ export type SubOrganizationsPanel =
 export type OrganizationCountsPanel =
   | { readonly kind: "found"; readonly counts: OrganizationCounts }
   | { readonly kind: "unavailable" };
-export type OrganizationAccountManagerPanel={readonly displayName:string|null}|null|{readonly kind:"unavailable"};
+export type OrganizationAccountManagerPanel={readonly principalId:string;readonly displayName:string|null}|null|{readonly kind:"unavailable"};
 export type OrganizationAccountManagerOptionsPanel=readonly OrganizationEligibleAccountManager[]|{readonly kind:"unavailable";readonly length?:never};
 export interface OrganizationAccountManagerReader{manager(principalId:string,orgId:string):Promise<{manager:{principalId:string;displayName:string|null}|null}|null>;history?(principalId:string,orgId:string):Promise<readonly OrganizationAccountManagerEventRow[]|null>;eligibleManagers?(principalId:string,orgId:string):Promise<readonly OrganizationEligibleAccountManager[]|null>}
 export type OrganizationAccountManagerHistoryPanel=readonly OrganizationAccountManagerEventRow[]|{readonly kind:"unavailable";readonly length?:never};
@@ -135,7 +135,7 @@ export function createContextNavigation(
         let accountManager:OrganizationAccountManagerPanel|undefined,accountManagerHistory:OrganizationAccountManagerHistoryPanel|undefined,accountManagerOptions:OrganizationAccountManagerOptionsPanel|undefined;
         const accountManagers=organizationReader.accountManagers;
         if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){
-          try { const result=await accountManagers.manager(session.personId,active.orgId); if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null; }
+          try { const result=await accountManagers.manager(session.personId,active.orgId); if(result)accountManager=result.manager?{principalId:result.manager.principalId,displayName:result.manager.displayName}:null; }
           catch { accountManager={kind:"unavailable"}; }
           if(accountManagers.history)try { const history=await accountManagers.history(session.personId,active.orgId); if(history)accountManagerHistory=history.slice(0,5); }
           catch { accountManagerHistory={kind:"unavailable"}; }
