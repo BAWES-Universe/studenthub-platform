@@ -91,7 +91,7 @@ test("SHU371_PAGE_FLOW real profile routes preview the shown value, confirm, and
   assert.match(shown, /id="field-language"[\s\S]*?<dt>Language<\/dt><dd><bdi[^>]*>English<\/bdi>/,
     "SHU371_SHOWN_OVER_SNAPSHOT renders written English over Arabic snapshot");
   assert.match(shown, /class="p-provenance"[\s\S]*?<dt>Language<\/dt><dd>Updated by you on 15 Sept 2026<\/dd>/, "SHU371_SHOWN_OVER_SNAPSHOT retains actual write date in provenance");
-  assert.match(shown, /Checked once your documents are on file/);
+  assert.match(shown, /Couldn&#39;t check right now/);
 });
 
 test("SHU371_PAGE_FLOW unavailable page write renders an HTML 503", async (t) => {

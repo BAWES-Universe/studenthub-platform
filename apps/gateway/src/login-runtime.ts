@@ -214,6 +214,11 @@ export function createRuntimeLoginFromEnv(
     sessions: profile.services.sessions,
     identities: access.services.loginStore.identities,
     authorization: {
+      async principalFor(personId) {
+        const principal = await access.services.authzStore.getPrincipal(personId);
+        if (!principal) throw new Error("unknown principal");
+        return { role: "self", ...(typeof principal.email === "string" && principal.email.trim().length > 0 ? { email: principal.email } : {}) };
+      },
       async roleFor(personId) {
         // Session ownership proves access to this one profile. The principal
         // must still exist in the persistent authz store on every request.
@@ -244,6 +249,7 @@ export function createRuntimeLoginFromEnv(
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
           ? new URL("/profile", callbackUrl).href : undefined,
         profiles: profile.services.web.profiles,
+        ...(profile.services.web.profileCompleteness ? { profileCompleteness: profile.services.web.profileCompleteness } : {}),
       },
     } as BrowserLoginApplication;
   Object.defineProperty(runtimeApplication,"notifications",{value:notifications,enumerable:false});
