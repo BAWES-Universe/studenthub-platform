@@ -12,7 +12,7 @@ const hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 // [mutant, named test, assertion message, needle in the compiled module, replacement]
 const cases = [
   ["open as owner without a held-context check", "OVW_DENY every authenticated refusal", "OVW_DENY /organization/org-b?role=org-owner is hidden",
-    "!contexts.body.contexts.some((item) => item.orgId === orgId && item.role === role)", "false"],
+    "(!heldAtOrganization && !heldThroughSubtree)", "false"],
   ["show Edit to every role", "OVW_LINKS actions", "OVW_LINKS staff has no Edit",
     'role === "org-owner" ? `<a href="${base}/edit">Edit company details</a>` : ""', '`<a href="${base}/edit">Edit company details</a>`'],
   ["allow create as an organization id", "OVW_PASSTHROUGH reserved", "OVW_PASSTHROUGH /organization/create",

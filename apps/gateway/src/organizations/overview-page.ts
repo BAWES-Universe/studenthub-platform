@@ -76,8 +76,11 @@ export async function handleOrganizationOverviewPage(ctx: GatewayRouteContext): 
   if (contexts.status !== 200) return unavailable(ctx);
   const requestedRole = roles[0];
   const role = requestedRole ?? ROLE_ORDER.find((candidate) => contexts.body.contexts.some((item) => item.orgId === orgId && item.role === candidate));
+  const heldAtOrganization = role && contexts.body.contexts.some((item) => item.orgId === orgId && item.role === role);
+  const heldThroughSubtree = role && (role === "staff" || role === "admin")
+    && contexts.body.contexts.some((item) => item.role === role);
   if (!role || !ROLE_ORDER.includes(role as Role)
-    || !contexts.body.contexts.some((item) => item.orgId === orgId && item.role === role)) return error(ctx, 404);
+    || (!heldAtOrganization && !heldThroughSubtree)) return error(ctx, 404);
   let result;
   try { result = await navigation.open(session, new URLSearchParams({ org_id: orgId, role })); } catch { return unavailable(ctx); }
   if (result.status === 503) return unavailable(ctx);
