@@ -10,6 +10,7 @@
  * implementation is behaviorally interchangeable.
  */
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import pg from "pg";
 import { createGatewayServer } from "../../../apps/gateway/src/index.js";
@@ -41,6 +42,13 @@ import {
 // .github/workflows/ci.yml); local runs export it (e.g. the SHU-55 lab
 // database at 127.0.0.1:55432/studenthub_authz).
 const DB_URL = process.env.DATABASE_URL ?? "";
+
+async function expectedMigrationVersions(): Promise<string[]> {
+  return (await readdir("packages/db/migrations"))
+    .filter((file) => file.endsWith(".sql"))
+    .sort()
+    .map((file) => file.slice(0, -4));
+}
 
 const ACME = "acme";
 const ACME_INDIA = "acme-india";
@@ -1571,18 +1579,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
       );
       assert.deepEqual(
         rows.map((r) => r.version),
-        [
-          "0001_create_authz_tables",
-          "0002_enforce_single_root_admin",
-          "0003_create_login_tables",
-          "0004_create_authorization_mutation_audit",
-          "0145_candidate_private_documents",
-          "0146_reference_catalogue",
-          "0147_person_language_safe_write",
-          "0148_candidate_profile_records",
-          "0150_organization_profile",
-          "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write", "0197_catalogue_bank_payment_details", "0198_organization_notes_refuse_delete", "0199_organization_note_types", "0200_organization_brands", "0201_organization_deletion", "0202_organization_stores", "0203_organization_creation", "0204_organization_account_managers", "0205_organization_currency", "0206_catalogue_currency_details", "0207_organization_account_managers_principal_index", "0208_organization_account_manager_events", "0209_organization_status_events_org_occurred_index", "0210_grants_org_id_index",
-        ],
+        await expectedMigrationVersions(),
         "each migration is recorded exactly once",
       );
       const idx = await poolA.query<{ n: number }>(
@@ -1624,18 +1621,7 @@ test(
         );
         assert.deepEqual(
           rows.map((r) => r.version),
-          [
-            "0001_create_authz_tables",
-            "0002_enforce_single_root_admin",
-            "0003_create_login_tables",
-            "0004_create_authorization_mutation_audit",
-            "0145_candidate_private_documents",
-            "0146_reference_catalogue",
-            "0147_person_language_safe_write",
-            "0148_candidate_profile_records",
-            "0150_organization_profile",
-            "0182_pay_contracts", "0183_candidate_bank_details", "0184_organization_status_override", "0191_organization_status_events", "0192_organization_commercial_terms", "0193_organization_approved_to_hire", "0194_organization_notes", "0195_pay_contract_create_safe_write", "0196_pay_contract_change_safe_write", "0197_catalogue_bank_payment_details", "0198_organization_notes_refuse_delete", "0199_organization_note_types", "0200_organization_brands", "0201_organization_deletion", "0202_organization_stores", "0203_organization_creation", "0204_organization_account_managers", "0205_organization_currency", "0206_catalogue_currency_details", "0207_organization_account_managers_principal_index", "0208_organization_account_manager_events", "0209_organization_status_events_org_occurred_index", "0210_grants_org_id_index",
-          ],
+          await expectedMigrationVersions(),
         );
       } finally {
         await pool.end();
