@@ -15,7 +15,7 @@ import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
-import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
+import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db/profile";
 import type { CommitInput, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
 
 test("SHU-84/AC-01 CONFORMANCE the builder the gateway serves passes SHU-82's suite unmodified", async () => {
@@ -738,7 +738,7 @@ test("LANGUAGE_REVIEW_HISTORY_GUARD_MUTANT removing the actionable Review opt-in
       import { Readable } from 'node:stream';
       import { createLanguagePreference, handleLanguagePreferencePage } from ${JSON.stringify(pathToFileURL(modulePath).href)};
       import { pageDocument, writeHtml } from ${JSON.stringify(new URL("../src/web-ui.js", import.meta.url).href)};
-      import { personRecordRef } from '@studenthub/db';
+      import { personRecordRef } from '@studenthub/db/profile';
       const session='a'.repeat(43), personId='synthetic-review-history-person';
       const service=createLanguagePreference({
         sessions:{get:async(id)=>id===session?{id,personId}:undefined},

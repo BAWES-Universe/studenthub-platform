@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { CommitInput, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { bankDetailsRecordRef, InMemoryFinanceReferenceResolver } from "@studenthub/pay-contracts";
-import { principalAuditRef } from "@studenthub/db";
+import { principalAuditRef } from "@studenthub/db/access";
 import { createBankDetails, handleBankDetails, type BankDetailsService } from "../src/bank-details.js";
 
 // Synthetic fixtures only: a made-up person, bank and checksum-valid test IBAN.

@@ -15,7 +15,7 @@ import {
 } from "@studenthub/safe-write-contract";
 import {
   LANGUAGE_FIELD, LANGUAGES, personRecordRef, safeWritePrincipalRef,
-} from "@studenthub/db";
+} from "@studenthub/db/profile";
 import type { ProfileLanguage } from "./ui/profile-copy.js";
 
 /**

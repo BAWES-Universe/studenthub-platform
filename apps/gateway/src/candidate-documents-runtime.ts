@@ -1,5 +1,5 @@
 import { R2Objects, R2DocumentStore, PostgresDocumentSnapshot, type DirectUploadPort } from '../../../packages/private-documents/src/r2-storage.js';
-import { PostgresAuthzStore, PostgresLoginStore } from '@studenthub/db';
+import { PostgresAuthzStore, PostgresLoginStore } from '@studenthub/db/access';
 import type { AuthzStore } from '@studenthub/contracts';
 import type { SessionStore } from '@studenthub/login-contract';
 import { FileDocumentStore, type DocumentStore } from '../../../packages/private-documents/src/index.js';

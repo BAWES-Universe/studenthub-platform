@@ -1,5 +1,7 @@
 import pg from "pg";
-import { PostgresCatalogueStore, PostgresLoginStore, PostgresProfileRecordStore, PostgresReferenceResolver } from "@studenthub/db";
+import { PostgresCatalogueStore } from "@studenthub/db/catalogue";
+import { PostgresLoginStore } from "@studenthub/db/access";
+import { PostgresProfileRecordStore, PostgresReferenceResolver } from "@studenthub/db/profile";
 import { ProfileRecords } from "@studenthub/profile-records";
 import { ReferenceCatalogue } from "@studenthub/reference-catalogue";
 import type { ProfileRecordsRuntime } from "./profile-records-http.js";

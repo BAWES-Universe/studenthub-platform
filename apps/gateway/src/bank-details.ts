@@ -9,7 +9,7 @@ import {
   buildBankDetailsWrite, catalogueBankDetailsCheck, parseBankDetailsValue, validateBankDetails,
   type BankDetails, type FinanceReferenceResolver,
 } from "@studenthub/pay-contracts";
-import { principalAuditRef } from "@studenthub/db";
+import { principalAuditRef } from "@studenthub/db/access";
 
 /**
  * SHU-182 (F1): a signed-in candidate changes their own bank details through

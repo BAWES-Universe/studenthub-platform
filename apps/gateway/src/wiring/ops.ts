@@ -1,4 +1,5 @@
-import { PostgresEmailOutboxStore, PostgresExportsStore, PostgresJobRunsStore } from "@studenthub/db";
+import { PostgresExportsStore, PostgresJobRunsStore } from "@studenthub/db/ops";
+import { PostgresEmailOutboxStore } from "@studenthub/db/notifications";
 import { createAdminJobs } from "../admin-jobs.js";
 import { createAdminOutbox } from "../admin-outbox.js";
 import { createExportsHttp } from "../exports-http.js";

@@ -6,7 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createBrowserWriteTokens, browserBaselineDigest, browserChangeSetDigest, type BrowserWriteToken, type Receipt, type BrowserWriteOutcome } from "@studenthub/safe-write-contract";
-import { PersonProfileBrowserRetryableError } from "@studenthub/db";
+import { PersonProfileBrowserRetryableError } from "@studenthub/db/profile";
 import { createProfileBrowserEdit, handleProfileBrowserEdit, type BrowserProfilePrepared, type BrowserProfileSession } from "../src/profile-browser-edit-http.js";
 import type { PersonSelfEditField } from "@studenthub/profile";
 const S="s".repeat(43), ACTOR="a".repeat(64), PERSON="b".repeat(64), O="https://example.invalid", SECRET="a-secret-of-at-least-thirty-two-bytes", NOW=new Date("2026-11-04T12:00:00.000Z");

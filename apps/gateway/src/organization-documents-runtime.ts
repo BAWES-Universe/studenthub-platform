@@ -1,4 +1,5 @@
-import { PostgresAuthzStore, PostgresLoginStore, PostgresOrganizationDeletionStore } from '@studenthub/db';
+import { PostgresAuthzStore, PostgresLoginStore } from '@studenthub/db/access';
+import { PostgresOrganizationDeletionStore } from '@studenthub/db/organizations';
 import type { AuthzStore } from '@studenthub/contracts';
 import type { SessionStore } from '@studenthub/login-contract';
 import { organizationDeletionDecision, organizationDeletionBlockers, organizationDeletionRecordRef, organizationDeletionPrincipalRef } from '@studenthub/organizations';
