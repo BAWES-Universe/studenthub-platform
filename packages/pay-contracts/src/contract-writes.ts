@@ -60,16 +60,16 @@ export function buildPayContractCreateWrite(input: { store: SafeWriteStore; secr
     ...(input.clock ? { clock: input.clock } : {}), ...(input.tokenLifetimeMs === undefined ? {} : { tokenLifetimeMs: input.tokenLifetimeMs }) });
   const checked = async (request: PreviewRequest | ConfirmRequest) => {
     if (typeof request.change?.value !== "string") return "invalid" as const;
-    // The conformance adapter deliberately uses synthetic refs and exercises the
-    // contract's own refusal ordering; production always supplies the real check.
-    if (input.check === acceptAnyPayContractCreateValue) return "ok" as const;
     const owned = await input.store.ownedRecord(request.principalRef);
-    if (owned !== request.change.personRef) return "owner" as const;
+    // Let the contract preserve its own validation/refusal ordering when the
+    // record is not owned. It will still return not_own_record for a valid
+    // request, without invoking the domain check and leaking domain facts.
+    if (owned !== request.change.personRef) return "delegate" as const;
     return await input.check(input.companyId, request.change.value) ? "ok" as const : "invalid" as const;
   };
   return {
-    preview: async (request) => { const verdict=await checked(request);return verdict==="owner"?{ok:false,reason:"not_own_record"}:verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.preview(request); },
-    confirm: async (request) => { const verdict=await checked(request);return verdict==="owner"?{ok:false,reason:"not_own_record"}:verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.confirm(request); },
+    preview: async (request) => { const verdict=await checked(request);return verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.preview(request); },
+    confirm: async (request) => { const verdict=await checked(request);return verdict==="invalid"?{ok:false,reason:"invalid_value"}:implementation.confirm(request); },
   };
 }
 
