@@ -7,6 +7,8 @@ const moduleFile = new URL("../../../dist/packages/profile/src/self-edit.js", im
 const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/self-edit.test.js", import.meta.url));
 const pageModuleFile = new URL("../../../dist/apps/gateway/src/profile-edit-http.js", import.meta.url);
 const pageSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/profile-edit-http.test.js", import.meta.url));
+const webUiModuleFile = new URL("../../../dist/apps/gateway/src/web-ui.js", import.meta.url);
+const webUiSuite = fileURLToPath(new URL("../../../dist/apps/gateway/test/web-ui.test.js", import.meta.url));
 const profileModuleFile = new URL("../../../dist/packages/profile/src/profile.js", import.meta.url);
 const mutations = [
   ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
@@ -17,7 +19,9 @@ const mutations = [
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
   ["SHU373_AGE", "minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE", "minimum.getUTCFullYear() + PERSON_PROFILE_MINIMUM_AGE"],
+  ["SHU373_WRITE", '["male", "female", "other"].includes(value)', '["male", "female", "other"].includes(value) && false'],
   ["SHU373_CATALOGUE", ".find(choice => choice.id === preference.value)?.name", ".find(choice => choice.id !== preference.value)?.name", profileModuleFile, suite],
+  ["SHU373_PAGE", "profile.profileChoices?.countries.map(item =>", "profile.profileChoices?.countries.filter(() => false).map(item =>", webUiModuleFile, webUiSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
 for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite] of mutations) {
