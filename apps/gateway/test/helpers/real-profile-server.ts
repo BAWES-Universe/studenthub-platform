@@ -46,6 +46,8 @@ export type RealProfileServices = {
   readonly vault: CivilIdVault;
   readonly profiles: ReturnType<typeof composeOwnProfiles>;
   readonly now: () => Date;
+  readonly authz: InMemoryAuthzStore;
+  readonly sessions: ReturnType<typeof createSyntheticLoginRig>["sessions"];
 };
 
 export type RealProfileServerOptions = {
@@ -57,6 +59,8 @@ export type RealProfileServerOptions = {
   readonly today?: () => string;
   /** The countries the completeness check reads, as wireProfile's personProfiles.readOriginChoices() returns them. */
   readonly countries?: readonly { readonly id: string; readonly code: string | null }[];
+  /** Give person-1 a live staff subtree grant on the default operator organization. */
+  readonly peopleStaff?: boolean;
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
 };
@@ -75,6 +79,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     createPrincipal({ id: REAL_PROFILE_OTHER_PERSON, pbuuids: ["pbuuid-2"] }),
   ] });
   await authz.grantMany(REAL_PROFILE_PERSON, [{ orgId: `candidate:${REAL_PROFILE_PERSON}`, role: "candidate", scope: "self" }]);
+  if (options.peopleStaff) await authz.grantMany(REAL_PROFILE_PERSON, [{ orgId: "root", role: "staff", scope: "subtree" }]);
   const rows = new Map<string, unknown>([
     ["candidate-1", options.row ?? { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_language_pref: "en" }],
     ["candidate-2", { ...SYNTHETIC_PROFILE_FIXTURES.partial, candidate_id: 232, candidate_name: "Other Person" }],
@@ -95,7 +100,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const countedCivil = { ...civilId, async readOwn(id: string) { counts.civilReads++; return civilId.readOwn(id); } } as typeof civilId;
   const profiles = composeOwnProfiles({ principals: authz, source, civilId: countedCivil, area, today: options.today ?? (() => kuwaitDate(now())) });
   const countedProfiles = { async readOwn(request: Parameters<typeof profiles.readOwn>[0]) { counts.profileReads++; return profiles.readOwn(request); } };
-  const services: RealProfileServices = { civilId, civilStore, vault, profiles, now };
+  const services: RealProfileServices = { civilId, civilStore, vault, profiles, now, authz, sessions: rig.sessions };
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,

@@ -4,6 +4,8 @@ import { handleLanguagePreference, handleLanguagePreferencePage } from "../langu
 import { handleBankDetails } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
+import { peopleDirectoryJson, renderPeopleDirectory } from "../people-directory.js";
+import { wantsHtml } from "../web-ui.js";
 
 export const profileEditPageRoute: GatewayRoute = { name: "profile-edit-page", handle: (ctx) =>
   handleProfileEditPage(ctx.request, ctx.response, ctx.login?.profileEdit, ctx.login?.web?.origin,
@@ -46,3 +48,14 @@ export const bankDetailsRoute: GatewayRoute = { name: "bank-details", handle: (c
 export const profileRecordsRoute: GatewayRoute = { name: "profile-records", handle: (ctx) =>
   handleProfileRecords(ctx.request, ctx.response, ctx.profileRecords,
     (status, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument("Education and experience", body))) };
+
+export const peopleDirectoryRoute: GatewayRoute = { name: "people-directory", handle: async (ctx) => {
+  if (ctx.request.method !== "GET" || !ctx.request.url || new URL(ctx.request.url, "http://gateway.invalid").pathname !== "/workspace/people") return false;
+  const html = wantsHtml(ctx.request.headers.accept);
+  const cookie = ctx.request.headers.cookie?.split(";").map(value => value.trim()).find(value => value.startsWith("__Host-studenthub_session="))?.slice(26);
+  const result = await ctx.login?.people?.open(cookie, new URL(ctx.request.url, "http://gateway.invalid").searchParams, html)
+    ?? { status: 404 as const, body: { error: "not_found" } };
+  if (html) ctx.writeHtml(ctx.response, result.status, renderPeopleDirectory(result), {}, true);
+  else { ctx.response.writeHead(result.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", vary: "Accept", "x-content-type-options": "nosniff" }); ctx.response.end(JSON.stringify(peopleDirectoryJson(result))); }
+  return true;
+} };
