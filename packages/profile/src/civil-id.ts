@@ -74,7 +74,8 @@ export class InMemoryCivilIdStore implements CivilIdStore {
   async numberMatchesOwn(id: string, country: CivilIdCountry, hash: Buffer) { const row=this.rows.get(id); return row?.country===country && !!this.sealed.get(id)?.hash.equals(hash); }
   async save(w: CivilIdWrite): Promise<CivilIdStoreResult> {
     const key = `${w.principalId}:${w.submissionId}`; if (this.submissions.has(key)) return { ok: false, reason: "submission_reused" };
-    const old = this.rows.get(w.principalId); if ((old?.revision ?? 0) !== w.revision) return { ok: false, reason: "stale_revision" };
+    const stored = this.rows.get(w.principalId); const old = stored?.releasedAt ? undefined : stored; if ((old?.revision ?? 0) !== w.revision) return { ok: false, reason: "stale_revision" };
+    if (stored?.releasedAt) this.sealed.delete(w.principalId);
     if (w.sealed && w.country && [...this.rows.values()].some(r => r.principalId !== w.principalId && !r.releasedAt && r.country === w.country && this.sealed.get(r.principalId)?.hash.equals(w.sealed!.hash))) return { ok: false, reason: "duplicate" };
     if (w.sealed) this.sealed.set(w.principalId, w.sealed);
     this.submissions.add(key); const active = this.sealed.get(w.principalId); const record: CivilIdRecord = { principalId: w.principalId, country: w.country, maskedNumber: active && w.country ? maskCivilId(w.country, active.ciphertext.subarray(0,4).toString("ascii")) : null, expiry: w.expiry,
@@ -91,7 +92,7 @@ export function createCivilId(options: { readonly store: CivilIdStore; readonly 
   return Object.freeze({
     async readOwn(principalId: string) { const r = await options.store.read(principalId); if (!r || r.releasedAt) return null; return { country: r.country, maskedNumber: r.maskedNumber, expiry: r.expiry, needsReview: r.needsReview, revision: r.revision, updatedAt: r.updatedAt }; },
     async save(input: { principalId: string; submissionId: string; revision: number; country?: string; number?: string; expiry?: string }) {
-      const old = await options.store.read(input.principalId); const typed = input.number !== undefined && input.number !== "";
+      const stored = await options.store.read(input.principalId); const old = stored?.releasedAt ? null : stored; const typed = input.number !== undefined && input.number !== "";
       if(await options.store.submissionRecorded(input.principalId,input.submissionId)) return {ok:false,reason:"submission_reused" as const};
       if (old?.country && input.country && input.country !== old.country && !typed) return { ok: false, reason: "number_required_for_country_change" as const };
       let country = old?.country ?? null; let sealed:SealedCivilId|null = null; const changed: ("country"|"number"|"expiry")[] = [];

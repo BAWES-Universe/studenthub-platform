@@ -1,6 +1,6 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresPersonCivilIdStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
 import { CivilIdVault, OwnProfileRepository, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter } from "@studenthub/profile";
@@ -20,10 +20,11 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   readonly sessions: typeof access.loginStore.sessions;
 }> {
   const { databaseUrl, safeWriteKey } = settings;
+  const CivilIdStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdStore: typeof import("../../../../packages/db/src/postgres-person-civil-id-store.js").PostgresPersonCivilIdStore }).CivilIdStore;
   const civilRaw = process.env.CIVIL_ID_ENCRYPTION_KEY;
   const civilKey = civilRaw === undefined ? undefined : Buffer.from(civilRaw, "base64");
   if (civilRaw !== undefined && (civilKey!.length !== 32 || civilKey!.toString("base64") !== civilRaw)) throw new Error("CIVIL_ID_ENCRYPTION_KEY must be canonical base64 for 32 bytes");
-  const civilStore = civilKey ? new PostgresPersonCivilIdStore({ connectionString: databaseUrl }) : undefined;
+  const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
   const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";

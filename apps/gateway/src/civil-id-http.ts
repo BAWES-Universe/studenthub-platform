@@ -11,17 +11,18 @@ export const CIVIL_ID_REASON_MESSAGES:Readonly<Record<CivilIdReason,string>>=CIV
 
 export async function handleCivilId(request:IncomingMessage,response:ServerResponse,service:CivilIdService|undefined,origin:string|undefined,authorize:(session:string)=>Promise<string|undefined>,write:(status:number,title:string,body:string)=>void):Promise<boolean>{
   const path=request.url?.split("?",1)[0];if(path!=="/profile/civil-id")return false;
-  if(!service){response.writeHead(404);response.end();return true;} const session=cookie(request.headers.cookie);if(!session){write(401,"Sign in",page(null,"Sign in again to continue safely."));return true;}const principal=await authorize(session);if(!principal){write(401,"Sign in",page(null,"Sign in again to continue safely."));return true;}
+  const finish=(status:number,headers:Record<string,string>={})=>{response.writeHead(status,{"cache-control":"no-store","referrer-policy":"no-referrer",...headers});response.end();};
+  if(!service){finish(404);return true;} const session=cookie(request.headers.cookie);if(!session){write(401,"Sign in",page(null,"Sign in again to continue safely."));return true;}const principal=await authorize(session);if(!principal){write(401,"Sign in",page(null,"Sign in again to continue safely."));return true;}
   const current=await service.readOwn(principal);
   if(request.method==="GET"){write(200,"Civil ID",page(current));return true;}
-  if(request.method!=="POST"){response.writeHead(405,{allow:"GET, POST"});response.end();return true;}
+  if(request.method!=="POST"){finish(405,{allow:"GET, POST"});return true;}
   const requestOrigin=request.headers.origin;
   if(!requestOrigin||!origin||requestOrigin!==origin||request.headers["sec-fetch-site"]==="cross-site"){request.resume();write(403,"Civil ID",page(current,"We could not verify this request."));return true;}
   if(!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/i.test(request.headers["content-type"]??"")||Number(request.headers["content-length"])>LIMIT){request.resume();write(400,"Civil ID",page(current,"Invalid request."));return true;}
   const raw=await body(request);if(raw===null){write(400,"Civil ID",page(current,"Invalid request."));return true;}const params=new URLSearchParams(raw);const keys=[...params.keys()].sort();if(keys.join()!==["country","expiry","number","revision","submissionId"].sort().join()||keys.some((k,i)=>i>0&&k===keys[i-1])){write(400,"Civil ID",page(current,"Invalid request."));return true;}
   const revision=Number(params.get("revision"));const submissionId=params.get("submissionId")??"";if(!Number.isSafeInteger(revision)||revision<0||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionId)){write(400,"Civil ID",page(current,"Invalid request."));return true;}
   const result=await service.save({principalId:principal,submissionId,revision,country:params.get("country")??"",number:params.get("number")??"",expiry:params.get("expiry")??""});
-  if(result.ok||result.reason==="submission_reused"){response.writeHead(303,{location:"/profile#field-civilId"});response.end();return true;}const status=result.reason==="duplicate"||result.reason==="stale_revision"?409:400;write(status,"Civil ID",page(await service.readOwn(principal),CIVIL_ID_MESSAGES[result.reason]));return true;
+  if(result.ok||result.reason==="submission_reused"){finish(303,{location:"/profile#field-civilId"});return true;}const status=result.reason==="duplicate"||result.reason==="stale_revision"?409:400;write(status,"Civil ID",page(current,CIVIL_ID_MESSAGES[result.reason]));return true;
 }
 
 export function renderCivilIdRow(language:"en"|"ar",value:{country:string|null;maskedNumber:string|null;expiry:string|null;needsReview:boolean}|null):string{
