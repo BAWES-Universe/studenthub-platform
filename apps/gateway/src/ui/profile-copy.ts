@@ -201,6 +201,11 @@ const english = {
   "pending.kuwaiti_mother": "Kuwaiti mother",
   "pending.education": "Education",
   "pending.skill": "Skill",
+  "civilReview.checked": "Checked",
+  "civilReview.rejected": "Rejected: {reason}",
+  "civilReview.waiting": "Waiting for StudentHub to check",
+  "civilReview.fixCivilId": "Fix Civil ID",
+  "civilReview.fixDocuments": "Fix documents",
 } as const;
 
 export type ProfileCopyKey = keyof typeof english;
@@ -405,6 +410,11 @@ const arabic = {
   "pending.kuwaiti_mother": "الأم كويتية",
   "pending.education": "التعليم",
   "pending.skill": "المهارة",
+  "civilReview.checked": "تم التحقق",
+  "civilReview.rejected": "مرفوض: {reason}",
+  "civilReview.waiting": "بانتظار تحقق StudentHub",
+  "civilReview.fixCivilId": "تصحيح البطاقة المدنية",
+  "civilReview.fixDocuments": "تصحيح المستندات",
 } as const satisfies Record<ProfileCopyKey, string>;
 
 export const PROFILE_COPY = Object.freeze({
