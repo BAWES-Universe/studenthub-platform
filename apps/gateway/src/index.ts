@@ -343,6 +343,7 @@ export function createGatewayServer(
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/profile") {
       const url = new URL(request.url, "http://gateway.invalid");
       let result: import("@studenthub/login-contract").BrowserResponse;
+      let requesterPrincipalId: string|undefined;
       try {
         result = await login.profile({
           sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
@@ -354,10 +355,11 @@ export function createGatewayServer(
       }
       if (result.status === 200 && login.web) {
         try {
-          const requesterPrincipalId = result.body?.personId;
-          if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
+          const authorizedPersonId = result.body?.personId;
+          if (typeof authorizedPersonId !== "string" || authorizedPersonId.length === 0) {
             throw new Error("invalid authorized profile");
           }
+          requesterPrincipalId = authorizedPersonId;
           const profile = await login.web.profiles.readOwn({
             requesterPrincipalId,
             targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
@@ -374,8 +376,12 @@ export function createGatewayServer(
       }
       if (html) {
         try {
+          let civilIdSuggestion;
+          if (result.status === 200 && requesterPrincipalId && (!url.searchParams.has("person_id") || url.searchParams.get("person_id") === requesterPrincipalId)) {
+            try { civilIdSuggestion = await login.civilIdSuggestion?.current(requesterPrincipalId); } catch { civilIdSuggestion = undefined; }
+          }
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, civilIdSuggestion);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
