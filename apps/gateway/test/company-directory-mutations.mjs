@@ -24,6 +24,8 @@ try {
       "${escapeHtml(name)}</a>${common}", "${name}</a>${common}"],
     ["company-directory.js", "the manager filter is dropped", "SHU339_PAGE", "filters.accountManager = manager;", ""],
     ["company-directory.js", "me is not resolved", "SHU339_PAGE", "accountManager: session.personId", 'accountManager: "me"'],
+    ["company-directory.js", "eligible-manager failure breaks the page", "SHU359_PICKER", "eligibleAccountManagers = undefined;", "throw new Error('mutated listing failure');"],
+    ["web-ui.js", "unlisted manager choice is dropped", "SHU359_PICKER", 'option(accountManagerSelection, "Current selection", accountManagerSelection)', '""'],
   ];
   for (const [module, name, pattern, from, to] of mutants) {
     const file = join(root, "dist/apps/gateway/src", module);

@@ -97,10 +97,9 @@ export function createCompanyDirectory(
         if (result.kind === "unavailable") return { status: 503, body: { error: "directory_unavailable" } };
         const org = await store.getOrganization(parsed.orgId);
         if (!org) return { status: 403, body: { error: "context_forbidden" } };
-        const eligibleAccountManagers = (parsed.role === "staff" || parsed.role === "admin") && accountManagers?.eligibleManagers
-          ? await accountManagers.eligibleManagers(session.personId, parsed.orgId) : undefined;
-        if (eligibleAccountManagers === null) {
-          return { status: 403, body: { error: "context_forbidden" } };
+        let eligibleAccountManagers:readonly {principalId:string;displayName:string|null}[]|undefined;
+        if ((parsed.role === "staff" || parsed.role === "admin") && accountManagers?.eligibleManagers) {
+          try { eligibleAccountManagers=(await accountManagers.eligibleManagers(session.personId,parsed.orgId))??undefined; } catch { eligibleAccountManagers=undefined; }
         }
         return { status: 200, body: {
           active: { orgId: org.id, role: parsed.role as WorkspaceContext["role"], organizationName: org.name },
