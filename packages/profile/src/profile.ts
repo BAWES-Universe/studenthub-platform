@@ -40,7 +40,7 @@ function fieldSpec(sourceField: string, label: string, semantics: string, parse:
 
 function text(maxLength = 500): Parser {
   return (value) => {
-    if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+    if (typeof value !== "string" || value.trim().length === 0 || Array.from(value).length > maxLength) {
       throw new TypeError("malformed approved profile value");
     }
     return value;
@@ -209,11 +209,16 @@ function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<R
     if (!writtenFields.includes(name)) continue;
     hasWrittenValue = true;
     const timestamp = preferences[`${column}_updated_at`];
-    if (typeof timestamp !== "string") throw new TypeError("malformed profile write timestamp");
+    if (typeof timestamp !== "string") continue;
     const raw = preferences[column];
-    fields[name] = raw === null ? Object.freeze({ state: "unavailable", reason: "not_recorded",
-      provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({kind:"written_by_person",observedAt:timestamp}) }) as never
-      : written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(raw, profile.asOfDate), timestamp) as never;
+    try {
+      fields[name] = raw === null ? Object.freeze({ state: "unavailable", reason: "not_recorded",
+        provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({kind:"written_by_person",observedAt:timestamp}) }) as never
+        : written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(raw, profile.asOfDate), timestamp) as never;
+    } catch {
+      fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded",
+        provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({kind:"written_by_person",observedAt:timestamp}) }) as never;
+    }
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.

@@ -225,7 +225,7 @@ export function createRuntimeLoginFromEnv(
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: value("DATABASE_URL") }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({connectionString:value("DATABASE_URL")}) : undefined;
   const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles,
-    ...(personProfiles ? { preferences: personProfiles as never } : safeWrites ? {preferences:safeWrites} : {}) });
+    ...(personProfiles ? { preferences: personProfiles } : safeWrites ? {preferences:safeWrites} : {}) });
   const organizationProfileStore = safeWriteKey ? new PostgresOrganizationProfileStore({ connectionString:value("DATABASE_URL"),
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
@@ -287,7 +287,12 @@ export function createRuntimeLoginFromEnv(
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
       ...(safeWrites && safeWriteKey
-        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
+        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: {
+          forPrincipal:(id:string)=>safeWrites.forPrincipal(id),
+          // profile.safe_write is shared by the language and text cards. A
+          // well-formed receipt for the other card is unknown on this route.
+          readReceipt:async(id:string,ref:string)=>{try{return await safeWrites.readReceipt(id,ref);}catch(error){if(error instanceof Error&&error.message==="malformed safe-write receipt")return null;throw error;}},
+        }, secret: safeWriteKey }) }
         : {}),
       ...(personProfiles&&safeWriteKey?{profileEdit:createProfileEdit({sessions:loginStore.sessions,store:personProfiles,secret:safeWriteKey})}:{}),
       ...(bankDetailsStore && banks && safeWriteKey

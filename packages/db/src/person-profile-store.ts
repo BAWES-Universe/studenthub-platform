@@ -7,7 +7,7 @@ import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./
 
 const SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
 type SelfEditField = typeof SELF_EDIT_FIELDS[number];
-const SELF_EDIT_CLEAR = "__studenthub_clear_profile_value__";
+const SELF_EDIT_CLEAR = "\0";
 
 const COLUMNS: Readonly<Record<SelfEditField, string>> = Object.freeze({
   displayName: "display_name", arabicName: "arabic_name", objective: "objective",
@@ -44,10 +44,11 @@ export class PostgresPersonProfileStore {
       ||!Array.isArray(s?.fields)||s.fields.length!==1||!SELF_EDIT_FIELDS.includes(s.fields[0])) throw new Error("malformed profile receipt");
     return Object.freeze({contractVersion:s.contractVersion,receiptRef:row.request_ref,personRef:s.personRef,principalRef:row.actor_principal_ref,changeSetDigest:s.changeSetDigest,fields:Object.freeze(s.fields),committedAt:s.committedAt});
   }
-  async readOwnPreferences(principalId:string): Promise<Record<string,unknown>|null> {
+  async readOwnPreferences(principalId:string): Promise<Readonly<{language:unknown;updatedAt:string}>|null> {
     const {rows}=await this.#pool.query(`SELECT pp.language,pp.updated_at AS language_updated_at,p.display_name,p.display_name_updated_at,p.arabic_name,p.arabic_name_updated_at,p.objective,p.objective_updated_at,p.introduction,p.introduction_updated_at,p.preferred_time,p.preferred_time_updated_at,p.written_fields FROM principals x LEFT JOIN person_preferences pp ON pp.principal_id=x.id LEFT JOIN person_profiles p ON p.principal_id=x.id WHERE x.id=$1`,[principalId]);
     const row=rows[0]; if(!row)return null;
-    return Object.freeze(Object.fromEntries(Object.entries(row).map(([key,value])=>[key,value instanceof Date?value.toISOString():value])));
+    const normalized=Object.fromEntries(Object.entries(row).map(([key,value])=>[key,value instanceof Date?value.toISOString():value]));
+    return Object.freeze({...normalized,updatedAt:String(normalized.language_updated_at??"")}) as Readonly<{language:unknown;updatedAt:string}>;
   }
   async #exists(c:pg.Pool|pg.PoolClient,id:string){return (await c.query("SELECT 1 FROM principals WHERE id=$1",[id])).rows.length===1;}
   async #read(c:pg.Pool|pg.PoolClient,id:string,field:SelfEditField):Promise<string|null>{const col=COLUMNS[field];const r=await c.query(`SELECT ${col} AS value FROM person_profiles WHERE principal_id=$1`,[id]);return r.rows[0]?.value??null;}

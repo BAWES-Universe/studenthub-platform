@@ -4,7 +4,9 @@ import { BENEFICIARY_NAME_FORBIDDEN_RANGES } from "@studenthub/pay-contracts";
 
 export const SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
 export type SelfEditField = typeof SELF_EDIT_FIELDS[number];
-export const SELF_EDIT_CLEAR = "__studenthub_clear_profile_value__";
+// PostgreSQL text cannot contain NUL and the parser refuses it below, making
+// this an out-of-band contract value rather than something a person can type.
+export const SELF_EDIT_CLEAR = "\0";
 
 const LIMITS: Readonly<Record<SelfEditField, number>> = Object.freeze({
   displayName: 255, arabicName: 255, objective: 100, intro: 5_000, preferredTime: 100,
@@ -32,7 +34,7 @@ export function parseSelfEditValue(field: SelfEditField, input: unknown): SelfEd
   if ((field === "displayName" || field === "arabicName") && !value.includes(" ")) {
     return { ok: false, reason: "Enter at least two names." };
   }
-  if (field === "arabicName" && !/[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/u.test(value)) {
+  if (field === "arabicName" && !Array.from(value).some(char => /\p{Script=Arabic}/u.test(char) && /\p{Letter}/u.test(char))) {
     return { ok: false, reason: "Enter a name containing an Arabic letter." };
   }
   return { ok: true, value, cleared: false };
