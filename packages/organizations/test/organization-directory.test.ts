@@ -246,7 +246,7 @@ test("SHU168_STORE_COUNT_SCOPE batches only covered live top-level companies and
   assert.deepEqual(await failing.repository.listOrganizations(STAFF), { kind: "unavailable" });
 });
 
-test("SHU355_RULE filters by the current manager before the existing directory filters", async () => {
+test("SHU339_FILTER filters by the current manager before the existing directory filters", async () => {
   const calls: string[][] = [];
   const accountManagers: OrganizationAccountManagerRecords = { readMany: async (orgIds) => {
     calls.push([...orgIds]); return new Map([["org-a", {principalId:"staff-self-a",displayName:"Staff A"}], ["org-b", {principalId:"admin",displayName:"Admin"}]]);
@@ -260,6 +260,13 @@ test("SHU355_RULE filters by the current manager before the existing directory f
   assert.deepEqual(ids(await list("staff-self-a", { status: "inactive" })), []);
   assert.deepEqual(ids(await list("staff-self-a", { currencyCode: "USD" })), []);
   const before = calls.length; assert.deepEqual(ids(await repository.listOrganizations(STAFF)), ["org-a", "org-b", "org-c"]); assert.equal(calls.length, before+1);
+});
+
+test("SHU355_RULE applies the shared current-manager rule to directory filtering",async()=>{
+  const accountManagers:OrganizationAccountManagerRecords={readMany:async()=>new Map([["org-a",{principalId:"current",displayName:"Current Manager"}]])};
+  const{repository}=await setup({accountManagers});
+  assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{accountManager:"current"}})),["org-a"]);
+  assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{accountManager:"revoked"}})),[]);
 });
 
 test("SHU355_SHOWN projects the current manager for rendering and distinguishes an unavailable port",async()=>{

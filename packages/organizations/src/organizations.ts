@@ -598,7 +598,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
       const termsBatch=shown.length>0&&this.#commercialTerms?.readMany?await this.#commercialTerms.readMany(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
-      const managers = shown.length > 0 && this.#accountManagers ? await this.#accountManagers.readMany(shown.map((org) => org.id)) : undefined;
+      const managers = shown.length > 0 ? await this.#accountManagers?.readMany(shown.map((org) => org.id)) : undefined;
       const entries: OrganizationDirectoryEntry[] = [];
       for (const org of shown) {
         if (filters.accountManager !== undefined && managers?.get(org.id)?.principalId !== filters.accountManager) continue;
