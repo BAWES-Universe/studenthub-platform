@@ -65,6 +65,31 @@ test("SHU-254 fixture: a slash inside a string literal is not a comment", () => 
   ]);
 });
 
+test("SHU-254 fixture: helper text inside a string literal is not a call", () => {
+  assert.deepEqual(findUnawaitedCalls('const example = "fetchJson()";'), []);
+  assert.deepEqual(findUnawaitedCalls("const example = 'sendMail(a)';"), []);
+  assert.deepEqual(
+    findUnawaitedCalls("const s = 'sendMail(a)'; loadConfig();"),
+    [{ line: 1, helper: "loadConfig" }],
+  );
+});
+
+test("SHU-254 fixture: helper text inside a template literal is not a call", () => {
+  assert.deepEqual(findUnawaitedCalls("const t = `fetchJson()`;"), []);
+  const src = "const t = `a\nfetchJson()\nb`; sendMail();";
+  assert.deepEqual(findUnawaitedCalls(src), [{ line: 3, helper: "sendMail" }]);
+});
+
+test("SHU-254 fixture: a call inside a template interpolation is scanned", () => {
+  assert.deepEqual(findUnawaitedCalls("const t = `x${fetchJson()}y`;"), [
+    { line: 1, helper: "fetchJson" },
+  ]);
+  assert.deepEqual(findUnawaitedCalls("const t = `${await fetchJson()}`;"), []);
+  assert.deepEqual(findUnawaitedCalls("const t = `${sendMail({ to: a })}`;"), [
+    { line: 1, helper: "sendMail" },
+  ]);
+});
+
 test("SHU-254 fixture: a slash inside a multi-line template literal is not a comment", () => {
   const src = "const message = `first\nhttp://example`; sendMail();";
   assert.deepEqual(findUnawaitedCalls(src), [{ line: 2, helper: "sendMail" }]);
