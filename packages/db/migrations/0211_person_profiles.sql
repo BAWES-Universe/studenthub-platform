@@ -4,7 +4,7 @@ CREATE FUNCTION person_profile_text_valid(value text, maximum integer) RETURNS b
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
  SELECT char_length(value) BETWEEN 1 AND maximum
    AND value !~ '^[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]|[ \t\n\r\f\v\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$'
-   AND value !~ '[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]'
+   AND value !~ '[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]'
 $$;
 
 CREATE FUNCTION person_profile_name_valid(value text, arabic boolean) RETURNS boolean
@@ -15,7 +15,7 @@ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
 $$;
 
 CREATE TABLE person_profiles (
-  principal_id text PRIMARY KEY REFERENCES principals(id),
+  principal_id text PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
   candidate_name text CHECK (candidate_name IS NULL OR person_profile_name_valid(candidate_name,false)),
   candidate_name_updated_at timestamptz,
   candidate_name_ar text CHECK (candidate_name_ar IS NULL OR person_profile_name_valid(candidate_name_ar,true)),

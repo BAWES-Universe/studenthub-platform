@@ -111,7 +111,8 @@ test("real login application serves the same typed projection to HTML and JSON w
   assert.doesNotMatch(body, /Other Person|registry@example|person-1|person-2|SENSITIVE-|candidate_civil_id|candidate_resume/);
   assert.deepEqual(f.reads, ["person-1"]);
   assert.match(body, /method="post"/);
-  assert.match(body, /editing isn’t enabled/);
+  assert.match(body, /You can edit your name, objective, introduction and preferred time above/);
+  assert.doesNotMatch(body, /Read-only|editing isn’t enabled/);
   for (const accept of ["application/json", "*/*", "text/html;q=0, application/json"]) {
     const api = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, accept } });
     const projection = await api.json();

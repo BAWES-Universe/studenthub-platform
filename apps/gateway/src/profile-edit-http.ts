@@ -5,7 +5,9 @@ import { isSelfEditField, parseSelfEditInput, SELF_EDIT_CLEAR, SELF_EDIT_FIELDS,
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 
 const TOKEN_KEYS=["changeSetDigest","expectedBeforeDigest","expiresAt","issuedAt","mac","principalRef","tokenId"] as const;
-const LIMIT=8192, RECEIPT=/^\/profile\/edit\/receipts\/([0-9a-f]{64})$/, SHARED_RECEIPT=/^\/profile\/receipts\/([0-9a-f]{64})$/;
+// A 5,000-code-point value can occupy 20,000 UTF-8 bytes and 60,000 bytes
+// when application/x-www-form-urlencoded percent-encodes it.
+const LIMIT=65536, RECEIPT=/^\/profile\/edit\/receipts\/([0-9a-f]{64})$/, SHARED_RECEIPT=/^\/profile\/receipts\/([0-9a-f]{64})$/;
 export interface ProfileEditStore { forPrincipal(id:string):SafeWriteStore; readReceipt(id:string,ref:string):Promise<Receipt|null>; }
 export interface ProfileEditService { preview(session:string|undefined,body:unknown):Promise<any>; confirm(session:string|undefined,body:unknown):Promise<any>; receipt(session:string|undefined,ref:string):Promise<any>; }
 const exact=(v:unknown,keys:readonly string[]):v is Record<string,unknown>=>!!v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).sort().join()===([...keys].sort().join());
@@ -13,7 +15,9 @@ const refusal=(reason:string)=>({status:reason==="not_own_record"?403:reason==="
 
 export function createProfileEdit(ports:{sessions:Pick<SessionStore,"get">;store:ProfileEditStore;secret:SafeWriteSecret}):ProfileEditService{
   const principal=async(s:string|undefined)=>s?(await ports.sessions.get(s))?.personId:undefined;
-  const writer=(id:string,field:SelfEditField)=>createSafeWrite({store:ports.store.forPrincipal(id),secret:ports.secret,policy:{allowed:[field],maxValueLength:Math.max(SELF_EDIT_LIMITS[field],SELF_EDIT_CLEAR.length)}});
+  // safe-write's generic policy counts UTF-16 units. Two units per accepted
+  // code point keeps it from rejecting values accepted by the field parser.
+  const writer=(id:string,field:SelfEditField)=>createSafeWrite({store:ports.store.forPrincipal(id),secret:ports.secret,policy:{allowed:[field],maxValueLength:Math.max(SELF_EDIT_LIMITS[field]*2,SELF_EDIT_CLEAR.length)}});
   return{
     async preview(session,body){const id=await principal(session);if(!id)return{status:401,body:{error:"unauthorized"}};if(!exact(body,["field","value"])||!isSelfEditField(body.field))return{status:400,body:{error:"invalid_request"}};let value:string;try{value=parseSelfEditInput(body.field,body.value)}catch{return refusal("invalid_value")}const r=await writer(id,body.field).preview({principalRef:safeWritePrincipalRef(id),change:{personRef:personRecordRef(id),field:body.field,value}});return r.ok?{status:200,body:{changes:r.changes,token:r.token}}:refusal(r.reason)},
     async confirm(session,body){const id=await principal(session);if(!id)return{status:401,body:{error:"unauthorized"}};if(!exact(body,["field","value","token"])||!isSelfEditField(body.field)||!exact(body.token,TOKEN_KEYS))return{status:400,body:{error:"invalid_request"}};if(!TOKEN_KEYS.every(k=>typeof (body.token as any)[k]==="string"))return{status:400,body:{error:"invalid_request"}};let value:string;try{value=parseSelfEditInput(body.field,body.value)}catch{return refusal("invalid_value")}const r=await writer(id,body.field).confirm({principalRef:safeWritePrincipalRef(id),change:{personRef:personRecordRef(id),field:body.field,value},token:body.token as unknown as ActionToken});return r.ok?{status:200,body:{receipt:r.receipt}}:refusal(r.reason)},
@@ -35,7 +39,7 @@ export async function handleProfileEdit(req:IncomingMessage,res:ServerResponse,s
 }
 
 const label=(f:SelfEditField)=>f.replaceAll("_"," ").replace(/^./,x=>x.toUpperCase());
-const shown=(v:string|null)=>v===null||v===SELF_EDIT_CLEAR?"Not recorded":v.length>160?`${v.slice(0,157)}…`:v;
+const shown=(v:string|null)=>{if(v===null||v===SELF_EDIT_CLEAR)return "Not recorded";const points=Array.from(v);return points.length>160?`${points.slice(0,157).join("")}…`:v};
 const fieldForm=(field:SelfEditField,value:string,reason?:string)=>`<form method="post" action="/profile/edit/${field}/preview"><label>${label(field)}${field==="intro"?`<textarea name="value" maxlength="5000">${esc(value)}</textarea>`:`<input name="value" value="${esc(value)}" maxlength="${SELF_EDIT_LIMITS[field]}">`}</label>${reason?`<p role="alert">${esc(reason)}</p>`:""}<button class="button primary" type="submit">Review change</button></form>`;
 function pageError(write:(s:number,t:string,b:string)=>void,status:number,field:SelfEditField,value:string,reason:string){write(status,"Profile edit",`<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1>${fieldForm(field,value,reason)}<a class="text-link" href="/profile">Cancel</a></main>`)}
 export async function handleProfileEditPage(req:IncomingMessage,res:ServerResponse,service:ProfileEditService|undefined,origin:string|undefined,write:(s:number,t:string,b:string)=>void){

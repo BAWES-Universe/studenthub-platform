@@ -11,7 +11,7 @@ const mutations=[
  ["SHU372_RULES","allow forbidden controls",profile,"FORBIDDEN.test(value)","false"],
  ["SHU372_RULES","drop Arabic-script requirement",profile,"!/[\\u0620-\\u064A\\u066E-\\u06D3\\u06FA-\\u06FC\\u0750-\\u077F\\u08A0-\\u08C9\\uFB50-\\uFBC2\\uFBD3-\\uFD8F\\uFD92-\\uFDC7\\uFDF0-\\uFDFB\\uFE70-\\uFEFC]/u.test(value)","false"],
  ["SHU372_WRITE","wrong allowed field",gateway,"allowed: [field]","allowed: [\"objective\"]"],
- ["SHU372_PAGE","drop preview shortening",gateway,"v.length > 160","false"],
+ ["SHU372_PAGE","drop preview shortening",gateway,"points.length > 160","false"],
  ["SHU372_OWNER","wrong owner",gateway,"writer(id, body.field).preview","writer(\"other\", body.field).preview"],
 ];
 const run=token=>new Promise((resolve,reject)=>{const child=spawn(process.execPath,["--test","--test-reporter=tap",`--test-name-pattern=^${token} `,suites[token]],{stdio:["ignore","pipe","pipe"]});let output="";child.stdout.on("data",x=>output+=x);child.stderr.on("data",x=>output+=x);child.on("error",reject);child.on("close",status=>resolve({status,output}))});
