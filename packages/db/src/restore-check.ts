@@ -94,9 +94,12 @@ async function sequences(db: Queryable): Promise<SequenceRow[]> {
 }
 
 async function triggers(db: Queryable): Promise<TriggerRow[]> {
-  const result = await db.query<TriggerRow>(`SELECT trigger_name, event_object_table AS table_name
-    FROM information_schema.triggers WHERE trigger_schema = 'public'
-    GROUP BY trigger_name, event_object_table ORDER BY event_object_table, trigger_name`);
+  const result = await db.query<TriggerRow>(`SELECT t.tgname AS trigger_name, rel.relname AS table_name
+    FROM pg_catalog.pg_trigger t
+    JOIN pg_catalog.pg_class rel ON rel.oid = t.tgrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = rel.relnamespace
+    WHERE n.nspname = 'public' AND NOT t.tgisinternal
+    ORDER BY rel.relname, t.tgname`);
   return result.rows;
 }
 

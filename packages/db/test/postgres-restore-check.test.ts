@@ -108,10 +108,10 @@ test("SHU104_INTEGRITY reports foreign-key, sequence, and append-only trigger fa
 
   const brokenTrigger = await copy("trigger");
   pool = new pg.Pool({ connectionString: brokenTrigger.url });
-  await pool.query("DROP TRIGGER authorization_mutation_audit_append_only ON authorization_mutation_audit");
+  await pool.query("DROP TRIGGER authorization_mutation_audit_no_truncate ON authorization_mutation_audit");
   await pool.end();
   const triggerReport = await checkRestore(urlFor(sourceName), brokenTrigger.url);
-  assert.ok(triggerReport.triggers.some((row) => row.constraint === "authorization_mutation_audit_append_only" && !row.ok));
+  assert.ok(triggerReport.triggers.some((row) => row.constraint === "authorization_mutation_audit_no_truncate" && !row.ok));
 });
 
 test("SHU104_SAFE_TARGET enforces scratch target and records recovery timing", async () => {
