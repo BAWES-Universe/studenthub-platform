@@ -42,7 +42,7 @@ import {handleOrganizationAccountManager,type OrganizationAccountManager} from "
 import { handleBankDetails } from "./bank-details.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, pageDocument,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace, renderCompanyDirectory, renderAssignedCompanies, pageDocument,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -224,6 +224,21 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
+      return;
+    }
+
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
+      const service = login?.organizationAccountManager;
+      let result: import("./organization-account-manager.js").AssignedCompaniesResult;
+      try {
+        result = service
+          ? await service.assigned(cookieValue(request.headers.cookie, "__Host-studenthub_session"))
+          : { status: 503, body: { error: "unavailable" } };
+      } catch {
+        result = { status: 503, body: { error: "unavailable" } };
+      }
+      if (html) writeHtml(response, result.status, login ? renderAssignedCompanies(result, login) : renderError(503), {}, true);
+      else writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       return;
     }
 

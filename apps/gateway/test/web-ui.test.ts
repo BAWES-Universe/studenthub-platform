@@ -12,7 +12,8 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies } from "../src/web-ui.js";
+import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 
 const SESSION = "s".repeat(43);
 const OTHER_SESSION = "t".repeat(43);
@@ -365,4 +366,16 @@ test("unconfigured browser login gives a truthful unavailable page and leaves ma
   assert.equal((await fetch(`${url}/profile`, { headers: { accept: "text/html" } })).status, 503);
   assert.equal((await fetch(`${url}/profile`)).status, 404);
   assert.equal((await fetch(`${url}/assets/missing.css`)).status, 404);
+});
+
+test("SHU354_PAGE renders a read-only My companies page and workspace link", () => {
+  const login={organizationAccountManager:{} as OrganizationAccountManager} as BrowserLoginApplication;
+  const body=renderAssignedCompanies({status:200,body:{companies:[]}},login);
+  assert.match(body,/My companies/);assert.match(body,/Read-only/);assert.match(body,/No companies assigned/);assert.match(body,/href="\/workspace\/my-companies"/);
+});
+
+test("SHU354_SHOWN shows each assigned name as a company link without principal ids", () => {
+  const login={organizationAccountManager:{} as OrganizationAccountManager} as BrowserLoginApplication;
+  const body=renderAssignedCompanies({status:200,body:{companies:[{orgId:"company-one",name:"Alpha & One"},{orgId:"company-two",name:"Beta"}]}},login);
+  assert.match(body,/Alpha &amp; One/);assert.match(body,/Beta/);assert.match(body,/org_id=company-one&amp;role=staff/);assert.doesNotMatch(body,/principal|person-1/);
 });

@@ -1,0 +1,1 @@
+CREATE INDEX organization_account_managers_principal_id_idx ON organization_account_managers(principal_id);
