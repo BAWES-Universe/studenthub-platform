@@ -3,7 +3,7 @@ CREATE TABLE notifications (
   recipient_principal_id text NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   kind text NOT NULL CHECK (kind IN ('organization.status_changed')),
   subject_reference text NOT NULL CHECK (subject_reference ~ '^organization:.+'),
-  parameters jsonb NOT NULL CHECK (jsonb_typeof(parameters)='object' AND parameters ? 'status' AND jsonb_object_length(parameters)=1 AND parameters->>'status' IN ('active','under_review','inactive','none')),
+  parameters jsonb NOT NULL CHECK (jsonb_typeof(parameters)='object' AND parameters=jsonb_build_object('status',parameters->'status') AND parameters->>'status' IS NOT NULL AND parameters->>'status' IN ('active','under_review','inactive','none')),
   dedupe_key text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   read_at timestamptz

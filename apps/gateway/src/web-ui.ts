@@ -30,6 +30,7 @@ import type {NotificationPage} from "../../../packages/notifications/src/notific
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
+  readonly notificationCount?: number;
   readonly notifications?: import("./notifications-http.js").NotificationsHttp;
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
@@ -48,6 +49,7 @@ export interface BrowserLoginApplication extends LoginApplication {
 }
 
 export function notificationBell(unread:number):string{return `<a class="nav-item" href="/notifications" aria-label="Notifications${unread?` (${unread} unread)`:""}">Notifications${unread?` <span class="badge">${unread}</span>`:""}</a>`}
+export function addNotificationBell(html:string,unread:number):string{const end="</a>";const brandAt=html.indexOf('class="brand"');const at=brandAt<0?-1:html.indexOf(end,brandAt);return at<0?html:html.slice(0,at+end.length)+notificationBell(unread)+html.slice(at+end.length)}
 export function renderNotifications(page:NotificationPage):string{const items=page.items.map(item=>`<li class="profile-card"><a href="${escapeHtml(item.href)}">${escapeHtml(item.text)}</a>${item.read?"":`<form method="post" action="/notifications/${escapeHtml(item.id)}/read"><button type="submit">Mark read</button></form>`}</li>`).join("");return workspaceDocument("Notifications",`<header class="topbar">${brand}${notificationBell(page.unreadCount)}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out</button></form></header><main id="main" class="profile-main"><h1>Notifications<span class="accent">.</span></h1><form method="post" action="/notifications/read-all"><button type="submit">Mark all read</button></form><ol>${items}</ol></main>`)}
 
 /** HTML is opt-in. Missing, wildcard and JSON-preferred Accept keep the API. */
