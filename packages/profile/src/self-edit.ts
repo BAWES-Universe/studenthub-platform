@@ -9,7 +9,7 @@ import {
   type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 
-export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
+export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"] as const;
 export type PersonSelfEditField = (typeof PERSON_SELF_EDIT_FIELDS)[number];
 
 export const SHU372_RULES = Object.freeze({
@@ -18,16 +18,34 @@ export const SHU372_RULES = Object.freeze({
   objective: Object.freeze({ maxLength: 100, allowClear: true, accepts: ["Build welcoming customer experiences", ""], refuses: [" a", "a  b", "a\u00a0\u00a0b"] }),
   intro: Object.freeze({ maxLength: 5_000, allowClear: true, accepts: ["Student and part-time retail teammate.", "", "a"], refuses: ["a  b", " a"] }),
   preferredTime: Object.freeze({ maxLength: 100, allowClear: true, accepts: ["Weekday evenings", ""], refuses: ["Weekday  evenings", " evenings", "Build teams\u00a0", "Weekday\u00a0\u00a0evenings"] }),
-} satisfies Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
+} satisfies Partial<Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>>);
 
 const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
 const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06fa-\u06fc]/u;
 
-export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown): string | null {
+export const PERSON_PROFILE_MINIMUM_AGE = 16;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown, today?: string): string | null {
   if (typeof value !== "string") return null;
+  if (field === "gender") return ["male", "female", "other"].includes(value) ? value : null;
+  if (field === "drivingLicence") return ["true", "false"].includes(value) ? value : null;
+  if (field === "kuwaitiMother") return ["", "true", "false"].includes(value) ? value : null;
+  if (field === "jobSearchStatus") return ["not_looking", "active", "open_to_offers"].includes(value) ? value : null;
+  if (field === "nationality") return UUID.test(value) ? value : null;
+  if (field === "university") return value === "" || UUID.test(value) ? value : null;
+  if (field === "birthDate") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const [y,m,d] = value.split("-").map(Number), date = new Date(Date.UTC(y!,m!-1,d));
+    if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m!-1 || date.getUTCDate() !== d) return null;
+    const minimum = new Date(`${today ?? new Date().toISOString().slice(0,10)}T00:00:00Z`);
+    minimum.setUTCFullYear(minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE);
+    return date <= minimum ? value : null;
+  }
   const normalized = value.normalize("NFC");
-  const rule = SHU372_RULES[field];
+  const rule = SHU372_RULES[field as keyof typeof SHU372_RULES];
+  if (!rule) return null;
   if ([...normalized].length > rule.maxLength || FORBIDDEN.test(normalized)) return null;
   if (normalized === "") return rule.allowClear ? "" : null;
   if (normalized !== normalized.trim() || /\s{2}/u.test(normalized)) return null;
@@ -45,9 +63,10 @@ export function createPersonSelfEdit(options: {
     ...options,
     policy: { allowed: PERSON_SELF_EDIT_FIELDS, maxValueLength: 5_000, allowClear: true },
   });
+  const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(options.clock?.now() ?? new Date());
   const normalize = <T extends PreviewRequest | ConfirmRequest>(request: T): T | null => {
     if (!PERSON_SELF_EDIT_FIELDS.includes(request.change.field as PersonSelfEditField)) return request;
-    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value);
+    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value, today());
     return value === null ? null : { ...request, change: { ...request.change, value } };
   };
   return Object.freeze({

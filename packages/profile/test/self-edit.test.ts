@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
+import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue, PERSON_PROFILE_MINIMUM_AGE } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
@@ -13,6 +13,35 @@ test("SHU372_RULES every shared rule example has the specified result", () => {
   assert.equal(normalizePersonSelfEditValue("displayName", "Noor Al-Sabah"), "Noor Al-Sabah");
   assert.equal(normalizePersonSelfEditValue("arabicName", "نور الصباح"), "نور الصباح");
   assert.equal(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah"), "Noël Al-Sabah");
+});
+
+test("SHU373_AGE accepts sixteen and older with no maximum and rejects malformed, future, and under-sixteen dates", () => {
+  assert.equal(PERSON_PROFILE_MINIMUM_AGE, 16);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-10-30", "2026-10-30"), "2010-10-30");
+  assert.equal(normalizePersonSelfEditValue("birthDate", "1800-01-01", "2026-10-30"), "1800-01-01");
+  for (const value of ["2010-10-31", "2027-01-01", "not-a-date", "2020-02-30"]) assert.equal(normalizePersonSelfEditValue("birthDate", value, "2026-10-30"), null);
+});
+
+test("SHU373_CATALOGUE resolves active ids for display and isolates unknown ids", async () => {
+  const country = "11111111-1111-4111-8111-111111111111", university = "22222222-2222-4222-8222-222222222222";
+  const repository = new OwnProfileRepository({ principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "p@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "unconfigured" }) }, today: () => "2026-10-30",
+    preferences: { readOwnPreferences: async () => ({ nationality: { value: country, updatedAt: "2026-10-30T12:00:00.000Z" }, university: { value: university, updatedAt: "2026-10-30T12:00:00.000Z" } }),
+      readProfileChoices: async () => ({ countries: [{ id: country, name: "Jordan", code: "JO" }], universities: [] }) } } as never);
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" }); assert.equal(result.kind, "found"); if (result.kind !== "found") return;
+  assert.equal(result.profile.fields.nationality.state === "available" && result.profile.fields.nationality.value, "Jordan");
+  assert.equal(result.profile.fields.university.state, "unavailable");
+});
+
+test("SHU373_PAGE Kuwaiti-mother is offered by country code, never the nationality name", async () => {
+  const id="11111111-1111-4111-8111-111111111111";
+  for (const [code,offered] of [["KW",false],["JO",true]] as const) { const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"})},today:()=>"2026-10-30",preferences:{readOwnPreferences:async()=>({nationality:{value:id,updatedAt:"2026-10-30T12:00:00.000Z"}}),readProfileChoices:async()=>({countries:[{id,name:"Kuwaiti",code}],universities:[]})} as never}); const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind==="found")assert.equal(Boolean(result.profile.fields.kuwaitiMother),offered); }
+});
+
+test("SHU373_PAGE an accepted very old stored birth date makes only Age unavailable", async () => {
+  const repository = new OwnProfileRepository({ principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "p@example.invalid" }) }, source: { resolveLink: async () => ({ kind: "linked", candidateRef: "c" }), readCandidate: async () => ({ ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_birth_date: "1800-01-01" }) }, today: () => "2026-10-30" });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" }); assert.equal(result.kind, "found"); if (result.kind !== "found") return;
+  assert.equal(result.profile.fields.birthDate.state, "available"); assert.equal(result.profile.fields.age.state, "unavailable"); assert.equal(result.profile.fields.displayName.state, "available");
 });
 
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {

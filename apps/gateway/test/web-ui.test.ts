@@ -12,7 +12,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
-import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml } from "../src/web-ui.js";
+import { type BrowserLoginApplication, wantsHtml, renderAssignedCompanies, renderWorkspace, writeHtml, profileDocument } from "../src/web-ui.js";
 import type { ServerResponse } from "node:http";
 import type { OrganizationAccountManager } from "../src/organization-account-manager.js";
 import { organizationAssignedCompaniesView } from "@studenthub/organizations";
@@ -78,6 +78,16 @@ test("HTML negotiation is opt-in and preserves JSON defaults and preferences", (
   for (const accept of ["text/html", "TEXT/HTML; Q=1", "text/html,application/xhtml+xml,*/*;q=0.8", "text/html;q=0.9,application/json;q=0.2"]) {
     assert.equal(wantsHtml(accept), true, accept);
   }
+});
+
+test("SHU373_PAGE each profile control is in its own form and choices are read once", async () => {
+  const country="11111111-1111-4111-8111-111111111111", university="22222222-2222-4222-8222-222222222222"; let writtenReads=0, catalogueReads=0;
+  const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"})},today:()=>"2026-10-30",preferences:{readOwnPreferences:async()=>{writtenReads++;return{gender:{value:"male",updatedAt:"2026-10-30T12:00:00.000Z"},birthDate:{value:"2000-01-01",updatedAt:"2026-10-30T12:00:00.000Z"},nationality:{value:country,updatedAt:"2026-10-30T12:00:00.000Z"},university:{value:university,updatedAt:"2026-10-30T12:00:00.000Z"},drivingLicence:{value:true,updatedAt:"2026-10-30T12:00:00.000Z"},kuwaitiMother:{value:false,updatedAt:"2026-10-30T12:00:00.000Z"},jobSearchStatus:{value:"active",updatedAt:"2026-10-30T12:00:00.000Z"}}},readProfileChoices:async()=>{catalogueReads++;return{countries:[{id:country,name:"Jordan",code:"JO"}],universities:[{id:university,name:"Approved University"}]}}} as never});
+  const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")return;
+  const html=(await profileDocument({status:200,body:result.profile},{profileEdit:{}} as BrowserLoginApplication)).html;
+  assert.equal(writtenReads,1);assert.equal(catalogueReads,1);
+  for(const [label,needle] of [["Gender",'type="radio" name="value" value="male"'],["Birth date",'type="date" name="value"'],["Nationality",`<option value="${country}" selected>Jordan`],["University",`<option value="${university}" selected>Approved University`],["Driving licence",'type="radio" name="value" value="true"'],["Kuwaiti mother",'name="field" value="kuwaitiMother"'],["Looking for work",'type="radio" name="value" value="active"']] as const){const form=html.match(new RegExp(`<form[^>]*aria-label="Change ${label}"[\\s\\S]*?</form>`))?.[0]??"";assert.match(form,new RegExp(needle));}
+  assert.match(html,/>None<\/option><option value="">Not listed<\/option>/);assert.match(html,/Staff add new universities/);assert.match(html,/<dt>Kuwaiti mother<\/dt><dd>No<\/dd>/);
 });
 
 test("landing is public HTML with an exact configured login link and no profile reads", async (t) => {

@@ -118,3 +118,28 @@ test("SHU372_OWNER Postgres refuses another person and a stale before value", as
   await pool.query("INSERT INTO person_profiles(principal_id,objective,objective_written_at) VALUES($1,'Concurrent',clock_timestamp())", [id]);
   assert.deepEqual(await writer.confirm({ principalRef, change, token: preview.token }), { ok: false, reason: "state_changed" });
 });
+
+test("SHU373_WRITE every choice writes twice, booleans clear to NULL, and KW guards refuse", async () => {
+  const id = `shu373-${randomUUID()}`, authz = new PostgresAuthzStore(pool), marker = randomUUID();
+  await authz.registerPrincipal(createPrincipal({ id, email: `${id}@example.invalid`, pbuuids: [] }));
+  const country = randomUUID(), kw = randomUUID(), university = randomUUID(), actor = "a".repeat(64);
+  for (const [choiceId,type,name,code] of [[country,"country",`Jordan ${marker}`,"JO"],[kw,"country",`Kuwait ${marker}`,"KW"],[university,"university",`University ${marker}`,null]] as const)
+    await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at) VALUES($1,$2,$3,lower($3),$4,'active',$5,$5,clock_timestamp(),clock_timestamp())`, [choiceId,type,name,code,actor]);
+  const store = new PostgresPersonProfileStore({ pool });
+  const write = async (field: string, value: string) => { const request = { principalRef: safeWritePrincipalRef(id), change: { personRef: personRecordRef(id), field, value } }; const writer = createPersonSelfEdit({ store: store.forPrincipal(id), secret: "s".repeat(32) }); const preview = await writer.preview(request); assert.ok(preview.ok, `${field} preview`); if (!preview.ok) return preview; return writer.confirm({ ...request, token: preview.token }); };
+  for (const [field,a,b] of [["gender","male","female"],["birthDate","2000-01-01","1999-12-31"],["nationality",country,kw],["university",university,""],["drivingLicence","true","false"],["jobSearchStatus","active","not_looking"]] as const) { assert.ok((await write(field,a)).ok, `${field} first`); assert.ok((await write(field,b)).ok, `${field} second`); }
+  assert.ok((await write("nationality",country)).ok); assert.ok((await write("kuwaitiMother","true")).ok); assert.ok((await write("kuwaitiMother","")).ok);
+  assert.equal((await pool.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1",[id])).rows[0].kuwaiti_mother,null);
+  assert.ok((await write("nationality",kw)).ok); assert.deepEqual(await write("kuwaitiMother","true"), { ok:false, reason:"invalid_value" });
+  assert.equal((await pool.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1",[id])).rows[0].kuwaiti_mother,null);
+  await assert.rejects(pool.query("UPDATE person_profiles SET kuwaiti_mother=true,kuwaiti_mother_written_at=clock_timestamp() WHERE principal_id=$1",[id]), (error: { code?: string }) => error.code === "23514");
+});
+
+test("SHU373_CATALOGUE reads active country and university choices only", async () => {
+  const marker=randomUUID(), actor="b".repeat(64), activeCountry=randomUUID(), deletedCountry=randomUUID(), activeUniversity=randomUUID(), deletedUniversity=randomUUID();
+  for (const [id,type,name,status] of [[activeCountry,"country",`Active country ${marker}`,"active"],[deletedCountry,"country",`Deleted country ${marker}`,"deleted"],[activeUniversity,"university",`Active university ${marker}`,"active"],[deletedUniversity,"university",`Deleted university ${marker}`,"deleted"]] as const)
+    await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at) VALUES($1,$2,$3,lower($3),$4,$5,$5,clock_timestamp(),clock_timestamp(),CASE WHEN $4='deleted' THEN clock_timestamp() END)`,[id,type,name,status,actor]);
+  const choices=await new PostgresPersonProfileStore({pool}).readProfileChoices();
+  assert.ok(choices.countries.some(item=>item.id===activeCountry)); assert.ok(!choices.countries.some(item=>item.id===deletedCountry));
+  assert.ok(choices.universities.some(item=>item.id===activeUniversity)); assert.ok(!choices.universities.some(item=>item.id===deletedUniversity));
+});

@@ -73,9 +73,11 @@ export interface OwnProfileFields {
   readonly pendingFields: ProfileField<readonly PendingProfileRequirement[]>;
   readonly employeeIdentifier: ProfileField<string>;
   readonly civilExpired: ProfileField<boolean>;
+  /** Conditional field: published only when recorded or offered for a non-Kuwaiti nationality. */
+  readonly kuwaitiMother?: ProfileField<boolean>;
 }
 
-export type OwnProfileFieldName = keyof OwnProfileFields;
+export type OwnProfileFieldName = Exclude<keyof OwnProfileFields, "kuwaitiMother">;
 
 export interface OwnProfileProjection {
   readonly [key: string]: unknown;
@@ -83,7 +85,11 @@ export interface OwnProfileProjection {
   /** Date used for age and civil-expiry derivations. */
   readonly asOfDate: string;
   readonly fields: Readonly<OwnProfileFields>;
+  readonly profileChoices?: ProfileChoices;
 }
+
+export interface ProfileChoice { readonly id: string; readonly name: string; readonly code?: string }
+export interface ProfileChoices { readonly countries: readonly ProfileChoice[]; readonly universities: readonly ProfileChoice[] }
 
 export interface OwnProfileFieldContract {
   readonly label: string;
@@ -105,7 +111,7 @@ export type ApprovedProfileLink =
  */
 export interface ApprovedProfileAdapter {
   resolveLink(principalId: string): Promise<ApprovedProfileLink>;
-  readCandidate(candidateRef: string): Promise<unknown | undefined>;
+  readCandidate?(candidateRef: string): Promise<unknown | undefined>;
 }
 
 export interface OwnProfileReadRequest {
@@ -124,5 +130,6 @@ export interface OwnProfileReader {
 
 /** Platform-owned profile values, read in one fixed-cost lookup for one person. */
 export interface OwnProfilePreferencesReader {
-  readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null>;
+  readOwnPreferences(principalId: string): Promise<Readonly<Record<string, unknown>> | null>;
+  readProfileChoices?(): Promise<ProfileChoices>;
 }
