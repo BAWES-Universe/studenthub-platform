@@ -87,7 +87,7 @@ test("SHU-163/AC-07 PAGE staff open a read-only company list from their workspac
 
 test("SHU-163/AC-07 PAGE filters reach the directory and survive paging links", async (t) => {
   const f = await fixture(t);
-  const filtered = await (await f.get(`${STAFF_LIST}&q=%20cafe%20&status=under_review&approved=yes&currency=KWD`)).json();
+  const filtered = await (await f.get(`${STAFF_LIST}&q=%20cafe%20&status=under_review&approved=yes&currency=kwd`)).json();
   assert.deepEqual(filtered.filters, { query: "cafe", status: "under_review", approvedToHire: true, currencyCode: "KWD" });
   assert.deepEqual(filtered.directory.entries.map((entry: { orgId: string }) => entry.orgId), ["org-b"]);
   // Empty form fields mean "any", as a GET form submits them.
@@ -116,7 +116,7 @@ test("SHU-163/AC-08 ACCESS only a current staff or admin context opens the list"
   }
   for (const query of [
     "", "org_id=root", "role=staff", "org_id=root&role=staff&role=admin", "org_id=root&role=staff&staff_id=77",
-    "org_id=root&role=staff&status=approved", "org_id=root&role=staff&approved=1", "org_id=root&role=staff&currency=kwd",
+    "org_id=root&role=staff&status=approved", "org_id=root&role=staff&approved=1", "org_id=root&role=staff&currency=12d",
     "org_id=root&role=staff&page=0", "org_id=root&role=staff&page=1.5", `org_id=root&role=staff&q=${"x".repeat(101)}`,
   ]) {
     const response = await f.get(`/workspace/companies?${query}`);

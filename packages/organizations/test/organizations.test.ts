@@ -76,11 +76,16 @@ test("SHU353_CARD_CURRENCY written currency overlays the snapshot only after aut
   const calls:string[]=[];
   const commercialTerms={async read(id:string){calls.push(id);return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:id==="org-a1"?{kind:"cleared"as const}:{kind:"value"as const,value:"USD"}}}};
   const {repository}=await setup({commercialTerms});
-  assert.equal(value(found(await repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"USD");
+  for (const [principalId,role] of [["owner-a","org-owner"],["staff","staff"],["admin","admin"]] as const) {
+    assert.equal(value(found(await repository.read({principalId,orgId:"org-a",role})),"currencyCode"),"USD");
+  }
   calls.length=0;
   assert.deepEqual(await repository.read({principalId:"nobody",orgId:"org-a",role:"org-owner"}),{kind:"not_found"});
   assert.deepEqual(calls,[]);
   assert.equal(value(found(await repository.read({principalId:"owner-a-subtree",orgId:"org-a1",role:"org-owner"})),"currencyCode"),"unavailable:not_recorded");
+  const absentTerms={async read(){return{hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const},currencyCode:{kind:"absent"as const}}}};
+  assert.equal(value(found(await (await setup({commercialTerms:absentTerms})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"KWD");
+  assert.equal(value(found(await (await setup({commercialTerms:absentTerms,unconfigured:true})).repository.read({principalId:"owner-a",orgId:"org-a",role:"org-owner"})),"currencyCode"),"unavailable:not_imported");
 });
 
 test("SHU342_PROFILE_STORED stored profile overlays only its five company-card fields", async () => {

@@ -94,7 +94,8 @@ test("SHU353_DIRECTORY_CURRENCY written currencies are shown and filtered with o
   const commercialTerms:OrganizationCommercialTermsRecords={async read(){throw new Error("per-row read")},async readMany(orgIds){calls.push([...orgIds]);return new Map(orgIds.map(id=>[id,{...absent,currencyCode:id==="org-a"?{kind:"value"as const,value:"USD"}:{kind:"cleared"as const}}]))}};
   const {repository}=await setup({commercialTerms});
   assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{currencyCode:"USD"}})),["org-a"]);
-  assert.deepEqual(calls,[["org-a","org-b"]]);
+  assert.deepEqual(ids(await repository.listOrganizations({...STAFF,filters:{currencyCode:"usd"}})),["org-a"]);
+  assert.deepEqual(calls,[["org-a","org-b"],["org-a","org-b"]]);
   const list=entries(await repository.listOrganizations(STAFF));
   assert.deepEqual(list.map(entry=>[entry.orgId,value(entry,"currencyCode")]),[["org-a","USD"],["org-b","unavailable:not_recorded"]]);
 });
@@ -164,7 +165,7 @@ test("SHU-163/AC-03 FILTERS search and filters match available values only", asy
   }
   assert.deepEqual(ids(await bareList({ query: "Organization A" })), ["org-a"]);
   for (const filters of [
-    { query: " Cafe" }, { query: "" }, { query: "x".repeat(101) }, { status: "approved" }, { currencyCode: "kwd" },
+    { query: " Cafe" }, { query: "" }, { query: "x".repeat(101) }, { status: "approved" }, { currencyCode: "12d" },
     { approvedToHire: 1 }, { staffId: 77 },
   ]) {
     assert.deepEqual(await list(filters as OrganizationDirectoryFilters), { kind: "invalid" }, JSON.stringify(filters));

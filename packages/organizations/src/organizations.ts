@@ -332,7 +332,7 @@ function validDirectoryFilters(filters: OrganizationDirectoryFilters): boolean {
   if (status !== undefined && !DIRECTORY_STATUSES.has(status)) return false;
   if (approvedToHire !== undefined && typeof approvedToHire !== "boolean") return false;
   if (accountManager !== undefined && (typeof accountManager !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(accountManager))) return false;
-  return currencyCode === undefined || (typeof currencyCode === "string" && /^[A-Z]{3}$/.test(currencyCode));
+  return currencyCode === undefined || (typeof currencyCode === "string" && /^[A-Za-z]{3}$/.test(currencyCode));
 }
 
 function searchable(value: string): string {
@@ -353,7 +353,8 @@ function matchesDirectoryFilters(entry: OrganizationDirectoryEntry, filters: Org
   }
   if (filters.status !== undefined && availableValue(entry.status) !== filters.status) return false;
   if (filters.approvedToHire !== undefined && availableValue(entry.approvedToHire) !== filters.approvedToHire) return false;
-  return filters.currencyCode === undefined || availableValue(entry.currencyCode) === filters.currencyCode;
+  return filters.currencyCode === undefined
+    || availableValue(entry.currencyCode) === filters.currencyCode.toUpperCase();
 }
 
 function directoryEntry(org: Organization, row: Row | undefined, subOrganizationCount: number, record:OrganizationStatusRecord|undefined,approvedRecord:OrganizationApprovedToHireRecord|undefined,terms:OrganizationCommercialTermsRecord|undefined,storeCount: number | null): OrganizationDirectoryEntry {

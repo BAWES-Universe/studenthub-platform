@@ -55,8 +55,8 @@ export function parseCompanyDirectoryQuery(query: URLSearchParams): Parsed {
   }
   const currency = query.get("currency");
   if (currency) {
-    if (!/^[A-Z]{3}$/.test(currency)) return { ok: false };
-    filters.currencyCode = currency;
+    if (!/^[A-Za-z]{3}$/.test(currency)) return { ok: false };
+    filters.currencyCode = currency.toUpperCase();
   }
   const manager = query.get("manager");
   if (manager) {
