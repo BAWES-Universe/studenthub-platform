@@ -128,7 +128,7 @@ export function createContextNavigation(
         }
         let accountManager:OrganizationAccountManagerPanel|undefined,accountManagerHistory:OrganizationAccountManagerHistoryPanel|undefined;
         const accountManagers=organizationReader.accountManagers;
-        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const[result,history]=await Promise.all([accountManagers.manager(session.personId,active.orgId),accountManagers.history?.(session.personId,active.orgId)]);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null;if(history)accountManagerHistory=history}
+        if(read.kind==="found"&&(active.role==="staff"||active.role==="admin")&&accountManagers){const[result,history]=await Promise.all([accountManagers.manager(session.personId,active.orgId),accountManagers.history?.(session.personId,active.orgId)]);if(result)accountManager=result.manager?{displayName:result.manager.displayName}:null;if(history)accountManagerHistory=history.slice(0,5)}
         const shownOrganization=accountManager!==undefined||accountManagerHistory!==undefined?{...organization,...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{})}:organization;
         return { status: 200, body: { contexts, active, organization:shownOrganization, ...(counts ? { counts } : {}), ...(panel ? { subOrganizations: panel } : {}),...(accountManager!==undefined?{accountManager}:{}),...(accountManagerHistory!==undefined?{accountManagerHistory}:{}) } };
       } catch {
