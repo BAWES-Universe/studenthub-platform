@@ -6,6 +6,7 @@ const LABELS: Readonly<Record<CatalogueType, string>> = {
   country: "Countries", currency: "Currencies", bank: "Banks", tag: "Tags", brand: "Brands", mall: "Malls",
   university: "Universities", major: "Majors", degree: "Degrees", "degree-group": "Degree groups", area: "Areas",
 };
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function escapeHtml(value: unknown): string {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -33,7 +34,7 @@ function unavailable(ctx: GatewayRouteContext): boolean {
 export async function handleReferenceDataPage(ctx: GatewayRouteContext): Promise<boolean> {
   if (!ctx.login?.navigation) return false;
   const url = new URL(ctx.request.url ?? "/", "http://gateway.invalid");
-  const match = /^\/reference-data(?:\/([^/]+))?$/.exec(url.pathname);
+  const match = /^\/reference-data(?:\/([^/]+)(?:\/([^/]+))?)?$/.exec(url.pathname);
   if (!match || (ctx.request.method !== "GET" && ctx.request.method !== "HEAD")) return false;
 
   let navigation;
@@ -53,6 +54,27 @@ export async function handleReferenceDataPage(ctx: GatewayRouteContext): Promise
     if (!ctx.catalogue) return unavailable(ctx);
     const links = CATALOGUE_TYPES.map((catalogue) => `<li><a href="/reference-data/${catalogue}">${LABELS[catalogue]}</a></li>`).join("");
     ctx.writeHtml(ctx.response, 200, ctx.pageDocument("Reference data", `<main id="main" class="profile-main"><h1>Reference data</h1><ul>${links}</ul></main>`));
+    return true;
+  }
+
+  const id = match[2];
+  if (id !== undefined) {
+    if (url.searchParams.size !== 0) return plain(ctx, 400);
+    if (!UUID_PATTERN.test(id)) return plain(ctx, 404);
+    if (!ctx.catalogue) return unavailable(ctx);
+    try {
+      const item = await ctx.catalogue.resolveHistorical(type, id);
+      if (!item) return plain(ctx, 404);
+      const label = LABELS[type];
+      const removed = item.status === "deleted";
+      const escapedName = escapeHtml(String(item.name));
+      const removedDate = removed ? `<dt>Removed</dt><dd>${escapeHtml(item.deletedAt ?? "None")}</dd>` : "";
+      const content = `<main id="main" class="profile-main"><nav aria-label="Breadcrumb"><a href="/reference-data">Reference data</a></nav><p><a href="/reference-data/${type}">Back to ${escapeHtml(label)}</a></p><h1>${escapedName}</h1><dl><dt>Code</dt><dd>${escapeHtml(item.code ?? "None")}</dd><dt>State</dt><dd>${removed ? "Removed" : "Active"}</dd><dt>Created</dt><dd>${escapeHtml(item.createdAt)}</dd><dt>Updated</dt><dd>${escapeHtml(item.updatedAt)}</dd>${removedDate}</dl></main>`;
+      ctx.writeHtml(ctx.response, 200, ctx.pageDocument(item.name, content));
+    } catch (error) {
+      if (error instanceof CatalogueError && error.code === "invalid_catalogue_id") return plain(ctx, 404);
+      return unavailable(ctx);
+    }
     return true;
   }
 
