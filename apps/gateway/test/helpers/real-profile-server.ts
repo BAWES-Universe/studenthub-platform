@@ -66,7 +66,7 @@ export type RealProfileServerOptions = {
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
   /** Wire the staff Civil ID review routes through the production gateway composition. */
-  readonly civilIdReview?: { readonly documents?:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string };
+  readonly civilIdReview?: { readonly documents?:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string; readonly staffGrant?:{readonly orgId:"root"|"candidate-documents";readonly role:"staff"|"admin"|"owner";readonly scope:"self"|"subtree"} };
 };
 
 const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -83,7 +83,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     createPrincipal({ id: REAL_PROFILE_OTHER_PERSON, pbuuids: ["pbuuid-2"] }),
   ] });
   await authz.grantMany(REAL_PROFILE_PERSON, [{ orgId: `candidate:${REAL_PROFILE_PERSON}`, role: "candidate", scope: "self" }]);
-  if(options.civilIdReview)await authz.grantMany(options.civilIdReview.staffPrincipalId??REAL_PROFILE_PERSON,[{orgId:"root",role:"staff",scope:"subtree"}]);
+  if(options.civilIdReview)await authz.grantMany(options.civilIdReview.staffPrincipalId??REAL_PROFILE_PERSON,[options.civilIdReview.staffGrant??{orgId:"root",role:"staff",scope:"subtree"}]);
   const rows = new Map<string, unknown>([
     ["candidate-1", options.row ?? { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_language_pref: "en" }],
     ["candidate-2", { ...SYNTHETIC_PROFILE_FIXTURES.partial, candidate_id: 232, candidate_name: "Other Person" }],
