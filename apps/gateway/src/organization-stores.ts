@@ -13,11 +13,11 @@ type Refusal = { kind: "not_found" | "brand_not_found" | "mall_not_found" };
 export interface OrganizationStoresStore {
   create(principalId: string, orgId: string, store: OrganizationStoreFields): Promise<{ kind: "created"; storeId: string } | Refusal>;
   update(principalId: string, orgId: string, storeId: string, store: OrganizationStoreFields): Promise<{ kind: "updated" | "unchanged" | "store_not_found" } | Refusal>;
-  remove(principalId: string, orgId: string, storeId: string): Promise<{ kind: "removed" | "not_found" | "store_not_found" }>;
+  remove(principalId: string, orgId: string, storeId: string): Promise<{ kind: "removed" | "not_found" | "store_not_found" | "store_in_use" }>;
   list(principalId: string, orgId: string): Promise<OrganizationStoreRow[] | null>;
   childOrganizations(orgId: string): Promise<readonly string[]>;
 }
-type Result = { status: 200; body: unknown } | { status: 400 | 401 | 403 | 404 | 503; body: { error: string } };
+type Result = { status: 200; body: unknown } | { status: 400 | 401 | 403 | 404 | 409 | 503; body: { error: string } };
 export interface OrganizationStores {
   create(session: string | undefined, body: unknown): Promise<Result>;
   update(session: string | undefined, body: unknown): Promise<Result>;
@@ -61,7 +61,7 @@ export function createOrganizationStores(p: { sessions: Pick<SessionStore, "get"
       if (!object(body) || !keys(body, "orgId,storeId") || !org(body.orgId) || !isOrganizationStoreId(body.storeId)) return BAD;
       const storeId = body.storeId.toLowerCase();
       const r = await p.store.remove(id, body.orgId, storeId);
-      return r.kind === "removed" ? { status: 200, body: { storeId, changed: true } } : refusal(r.kind);
+      return r.kind === "removed" ? { status: 200, body: { storeId, changed: true } } : r.kind === "store_in_use" ? { status: 409, body: { error: "store_in_use" } } : refusal(r.kind);
     },
     async list(s, orgId) {
       const id = await principal(s);
