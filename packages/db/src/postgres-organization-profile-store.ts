@@ -103,8 +103,9 @@ export class PostgresOrganizationProfileStore {
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
       if (error instanceof Refusal) return { ok: false, reason: error.reason };
-      if ((error as { code?: string; constraint?: string }).code === "23505"
-        && (error as { constraint?: string }).constraint === "authorization_mutation_audit_organization_profile_token") return { ok: false, reason: "token_already_used" };
+      // Either the token reference or its deterministic receipt may win a
+      // racing insert. Both mean this confirm has already been consumed.
+      if ((error as { code?: string }).code === "23505") return { ok: false, reason: "token_already_used" };
       throw error;
     } finally { client.release(); }
   }
