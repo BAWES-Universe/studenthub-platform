@@ -5,7 +5,7 @@ import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePers
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
-test("SHU392_RULES every shared rule example has the specified result", () => {
+test("SHU372_RULES every shared rule example has the specified result", () => {
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
     for (const value of rule.accepts) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value), value.normalize("NFC"), `${field} accepts ${value}`);
     for (const value of rule.refuses) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value), null, `${field} refuses ${value}`);

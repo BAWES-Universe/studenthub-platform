@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 const moduleFile = new URL("../../../dist/packages/profile/src/self-edit.js", import.meta.url);
 const suite = fileURLToPath(new URL("../../../dist/packages/profile/test/self-edit.test.js", import.meta.url));
 const mutations = [
-  ["SHU392_RULES", "normalized !== normalized.trim()", "false"],
-  ["SHU392_RULES", "/\\s{2}/u.test(normalized)", "false"],
-  ["SHU392_RULES", "!NAME.test(normalized)", "false"],
-  ["SHU392_RULES", "!ARABIC_LETTER.test(normalized)", "false"],
-  ["SHU392_RULES", "value.normalize(\"NFC\")", "value"],
+  ["SHU372_RULES", "normalized !== normalized.trim()", "false"],
+  ["SHU372_RULES", "/\\s{2}/u.test(normalized)", "false"],
+  ["SHU372_RULES", "!NAME.test(normalized)", "false"],
+  ["SHU372_RULES", "!ARABIC_LETTER.test(normalized)", "false"],
+  ["SHU372_RULES", "value.normalize(\"NFC\")", "value"],
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
 ];

@@ -7,7 +7,7 @@ RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
    AND char_length(value) BETWEEN 1 AND maximum
    AND value !~ '[\u0001-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]'
    AND value COLLATE "pg_c_utf8" !~ '^[[:space:]\u00A0]|[[:space:]\u00A0]$|[[:space:]\u00A0]{2}'
-   AND (NOT require_two_words OR value COLLATE "pg_c_utf8" ~ '^[[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F-]+( [[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F-]+)+$')
+   AND (NOT require_two_words OR value COLLATE "pg_c_utf8" ~ '^[[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]+([-''\.][[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]+)*( [[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]+([-''\.][[:alpha:]\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]+)*)+$')
    AND (NOT require_arabic OR value ~ '[\u0621-\u063A\u0641-\u064A\u066E-\u066F\u0671-\u06D3\u06FA-\u06FC]')
 $$;
 

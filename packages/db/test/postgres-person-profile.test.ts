@@ -17,9 +17,9 @@ test("SHU392_PG_RULES the CHECK and application share every SHU372_RULES example
     const requireWords = field === "displayName" || field === "arabicName";
     for (const value of rule.accepts) {
       if (value === "") continue; // clearing is represented by SQL NULL
-      assert.equal((await pool.query<{ ok: boolean }>("SELECT person_profile_text_valid($1,$2,$3) ok", [value, rule.maxLength, requireWords])).rows[0]!.ok, true, `${field} accepts ${value}`);
+      assert.equal((await pool.query<{ ok: boolean }>("SELECT person_profile_text_valid($1,$2,$3,$4) ok", [value, rule.maxLength, requireWords, field === "arabicName"])).rows[0]!.ok, true, `${field} accepts ${value}`);
     }
-    for (const value of rule.refuses) assert.equal((await pool.query<{ ok: boolean }>("SELECT person_profile_text_valid($1,$2,$3) ok", [value, rule.maxLength, requireWords])).rows[0]!.ok, false, `${field} refuses ${value}`);
+    for (const value of rule.refuses) assert.equal((await pool.query<{ ok: boolean }>("SELECT person_profile_text_valid($1,$2,$3,$4) ok", [value, rule.maxLength, requireWords, field === "arabicName"])).rows[0]!.ok, false, `${field} refuses ${value}`);
   }
 });
 
