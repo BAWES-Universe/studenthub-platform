@@ -18,8 +18,8 @@ for(const [pattern,needle,replacement] of cases){
  assert.equal(original.split(needle).length-1,1,`${pattern} needle binds once`);
  const target=new URL(`../../../dist/apps/gateway/src/documents-upload-mutant-${process.pid}.js`,import.meta.url);
  try{
-  const control=run(source.href,pattern);assert.equal(control.error,undefined);assert.equal(control.status,0,control.stdout+control.stderr);
+  const control=run(source.href,pattern),controlOutput=control.stdout+control.stderr;assert.equal(control.error,undefined);assert.equal(control.signal,null);assert.equal(control.status,0,controlOutput);assert.match(controlOutput,new RegExp(`ok \\d+ - ${pattern} `));
   await writeFile(target,original.replace(needle,replacement));const mutant=run(target.href,pattern);
-  assert.equal(mutant.error,undefined);assert.notEqual(mutant.status,0,`${pattern} mutant survived`);assert.match(mutant.stdout+mutant.stderr,/AssertionError|not ok/);
+  const mutantOutput=mutant.stdout+mutant.stderr;assert.equal(mutant.error,undefined);assert.equal(mutant.signal,null);assert.notEqual(mutant.status,0,`${pattern} mutant survived`);assert.match(mutantOutput,new RegExp(`not ok \\d+ - ${pattern} `));assert.match(mutantOutput,/AssertionError|ERR_ASSERTION/);assert.doesNotMatch(mutantOutput,/SyntaxError|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/);
  }finally{await unlink(target).catch(error=>{if(error.code!=='ENOENT')throw error;});assert.equal(await readFile(source,'utf8'),original);}
 }
