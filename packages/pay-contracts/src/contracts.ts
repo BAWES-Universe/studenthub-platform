@@ -83,7 +83,7 @@ export function normalizeTerms(value: unknown): ContractTerms {
   return Object.freeze({ payModel: "monthly_salary", candidateTotal, companyTotal, salaryDay });
 }
 
-interface EditableFields {
+export interface NormalizedPayContractUpdate {
   readonly startDate: IsoDate;
   readonly endDate?: IsoDate;
   readonly currencyId: string;
@@ -93,13 +93,13 @@ interface EditableFields {
   readonly terms: ContractTerms;
 }
 
-export interface NormalizedPayContractCreate extends EditableFields {
+export interface NormalizedPayContractCreate extends NormalizedPayContractUpdate {
   readonly candidateId: string;
   readonly companyId: string;
   readonly storeId: string;
 }
 
-function normalizeEditable(raw: Record<string, unknown>): EditableFields {
+function normalizeEditable(raw: Record<string, unknown>): NormalizedPayContractUpdate {
   const startDate = date(raw.startDate, "invalid_start_date");
   const endDate = raw.endDate === undefined || raw.endDate === null || raw.endDate === "" ? undefined : date(raw.endDate, "invalid_end_date");
   if (endDate !== undefined && endDate < startDate) invalid("invalid_end_date");
@@ -126,6 +126,11 @@ export function normalizePayContractCreate(input: unknown): NormalizedPayContrac
   const companyId = partyId(raw.companyId, "invalid_company");
   const storeId = partyId(raw.storeId, "invalid_store");
   return Object.freeze({ candidateId, companyId, storeId, ...normalizeEditable(raw) });
+}
+
+/** Normalize precisely the replace-style editable payload. */
+export function normalizePayContractUpdate(input: unknown): NormalizedPayContractUpdate {
+  return Object.freeze(normalizeEditable(closedObject(input, UPDATABLE)));
 }
 
 /**
@@ -202,7 +207,7 @@ export class PayContracts {
   async update(actorId: string, idInput: unknown, input: unknown): Promise<PayContract> {
     requireActor(actorId);
     const id = requireId(idInput);
-    const fields = normalizeEditable(closedObject(input, UPDATABLE));
+    const fields = normalizePayContractUpdate(input);
     const previous = await this.store.get(id);
     await this.assertCurrency(fields.currencyId, previous?.currencyId);
     return this.store.transaction(async (tx) => {
