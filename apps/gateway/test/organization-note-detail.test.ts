@@ -57,7 +57,7 @@ async function fixture(t: TestContext, options: Options = {}) {
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address(); assert.ok(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}`;
-  const request = (path: string, session: string | undefined = SESSION, method = "GET") => fetch(`${base}${path}`, {
+  const request = (path: string, session: string | null = SESSION, method = "GET") => fetch(`${base}${path}`, {
     method, redirect: "manual", headers: { accept: "text/html", ...(session ? { cookie: `__Host-studenthub_session=${session}` } : {}) },
   });
   return { request, calls, login };
@@ -98,7 +98,7 @@ test("NOTEDET_MINE selects the requested note from exactly one list call", async
 
 test("NOTEDET_DENY preserves authentication, query and method refusals", async (t) => {
   const f = await fixture(t);
-  const none = await f.request("/organization/org-a/notes/2", undefined);
+  const none = await f.request("/organization/org-a/notes/2", null);
   assert.equal(none.status, 401); assert.equal(await none.text(), renderError(401, f.login), "NOTEDET_DENY no session is renderError(401)");
   for (const session of [OWNER, OTHER]) {
     const denied = await f.request("/organization/org-a/notes/2", session); assert.equal(denied.status, 404); assert.equal(await denied.text(), renderError(404, f.login));
