@@ -22,7 +22,7 @@ const legacyLinkRoute: GatewayRoute = { name: "legacy-link", handle: (ctx) =>
     (status, title, body) => ctx.writeHtml(ctx.response, status, ctx.pageDocument(title, body))) };
 import { handleCivilId } from "../civil-id-http.js";
 import { handleArea } from "../area-http.js";
-const {handleCivilIdReview}=await import(process.env.SHU600_REVIEW_MODULE??"../civil-id-review-http.js") as typeof import("../civil-id-review-http.js");
+import { handleCivilIdReview } from "../civil-id-review-http.js";
 
 const civilIdRoute: GatewayRoute = { name: "civil-id", handle: (ctx) => handleCivilId(ctx.request, ctx.response,
   ctx.login?.civilId, ctx.login?.web?.origin, async (session) => { if (!ctx.login) return undefined;
