@@ -32,3 +32,7 @@ CREATE TABLE civil_id_ocr_jobs (
 CREATE INDEX civil_id_ocr_claim ON civil_id_ocr_jobs(status,not_before,created_at) WHERE status IN ('pending','running') AND superseded_at IS NULL;
 CREATE INDEX civil_id_ocr_person ON civil_id_ocr_jobs(principal_id,side,created_at DESC);
 CREATE INDEX civil_id_ocr_lease ON civil_id_ocr_jobs(lease_expires_at) WHERE status = 'running';
+CREATE TABLE civil_id_ocr_sweeps (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  swept_at timestamptz NOT NULL
+);
