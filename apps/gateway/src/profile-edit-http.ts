@@ -95,7 +95,19 @@ export function shownProfileValue(field: { readonly state: "available" | "unavai
     : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
-const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time" };
+const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", nationality: "Nationality", university: "University", drivingLicence: "Driving licence", jobSearchStatus: "Job-search status" };
+function editControl(field: PersonSelfEditField, value: string, error = false): string {
+  const described = error ? ' aria-describedby="value-error"' : "";
+  const options: Partial<Record<PersonSelfEditField, readonly [string, string][]>> = {
+    gender: [["male","Male"],["female","Female"],["other","Other"]], drivingLicence: [["true","Yes"],["false","No"]],
+    jobSearchStatus: [["not_looking","Not looking"],["active","Actively looking"],["open_to_offers","Open to offers"]],
+  };
+  if (options[field]) return `<select name="value"${described}>${options[field]!.map(([key,label])=>`<option value="${key}"${value===key?' selected':''}>${label}</option>`).join("")}</select>`;
+  if (field === "birthDate") return `<input type="date" name="value" value="${esc(value)}"${described}>`;
+  if (field === "intro") return `<textarea name="value" maxlength="5000"${described}>${esc(value)}</textarea>`;
+  const maximum = field === "displayName" || field === "arabicName" ? 255 : field === "objective" || field === "preferredTime" ? 100 : 36;
+  return `<input name="value" value="${esc(value)}" maxlength="${maximum}"${described}>`;
+}
 export function profileEditSummary(value: string): string {
   let result = "", count = 0;
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)) { const length = [...segment].length; if (count + length > 120) break; result += segment; count += length; }
@@ -103,7 +115,7 @@ export function profileEditSummary(value: string): string {
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
-  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
+  const label = FIELD_LABELS[selected], control = editControl(selected, value, true);
   write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {

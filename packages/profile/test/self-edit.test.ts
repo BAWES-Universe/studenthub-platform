@@ -5,6 +5,28 @@ import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePers
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
+test("SHU373_WRITE platform choices use enums and booleans, never legacy codes", () => {
+  assert.equal(normalizePersonSelfEditValue("gender", "female"), "female");
+  assert.equal(normalizePersonSelfEditValue("gender", "2"), null);
+  assert.equal(normalizePersonSelfEditValue("drivingLicence", "true"), "true");
+  assert.equal(normalizePersonSelfEditValue("jobSearchStatus", "open_to_offers"), "open_to_offers");
+  assert.equal(normalizePersonSelfEditValue("jobSearchStatus", "2"), null);
+});
+
+test("SHU373_AGE the one minimum-age setting accepts 16 with no maximum", () => {
+  const today = new Date(), date = (years: number) => new Date(Date.UTC(today.getUTCFullYear() - years, today.getUTCMonth(), today.getUTCDate())).toISOString().slice(0, 10);
+  assert.equal(normalizePersonSelfEditValue("birthDate", date(16)), date(16));
+  assert.equal(normalizePersonSelfEditValue("birthDate", date(15)), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "1900-01-01"), "1900-01-01");
+});
+
+test("SHU373_CATALOGUE catalogue choices are ids, never names", () => {
+  const id = "123e4567-e89b-12d3-a456-426614174000";
+  assert.equal(normalizePersonSelfEditValue("nationality", id.toUpperCase()), id);
+  assert.equal(normalizePersonSelfEditValue("university", id), id);
+  assert.equal(normalizePersonSelfEditValue("nationality", "Kuwaiti"), null);
+});
+
 test("SHU372_RULES every shared rule example has the specified result", () => {
   for (const [field, rule] of Object.entries(SHU372_RULES)) {
     for (const value of rule.accepts) assert.equal(normalizePersonSelfEditValue(field as keyof typeof SHU372_RULES, value), value.normalize("NFC"), `${field} accepts ${value}`);

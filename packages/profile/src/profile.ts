@@ -184,7 +184,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "nationality" | "university" | "drivingLicence" | "jobSearchStatus", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -202,7 +202,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
   }
-  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const) {
+  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const) {
     const preference = preferences[name];
     if (!preference) continue;
     try {
@@ -218,6 +218,11 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
     }
+  }
+  const birth = preferences.birthDate;
+  if (birth && fields.birthDate.state === "available") {
+    fields.age = written(PROFILE_FIELD_SPECS.age,
+      PROFILE_FIELD_SPECS.age.parse(fields.birthDate.value, profile.asOfDate) as number, birth.updatedAt);
   }
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.

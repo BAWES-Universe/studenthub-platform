@@ -347,13 +347,17 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
   const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
   const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
+  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"]);
   const rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
     const row = fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
-      const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";
-      const control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
+      // Catalogue display names are intentionally never submitted as references.
+      // Their controls start empty because commits accept ids only.
+      const value = field === "nationality" || field === "university" ? ""
+        : profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";
+      const choices: Partial<Record<OwnProfileFieldName, readonly [string,string][]>> = { gender:[["male","Male"],["female","Female"],["other","Other"]], drivingLicence:[["true","Yes"],["false","No"]], jobSearchStatus:[["not_looking","Not looking"],["active","Actively looking"],["open_to_offers","Open to offers"]] };
+      const control = choices[field] ? `<select name="value">${choices[field]!.map(([key,label])=>`<option value="${key}"${value===key?' selected':''}>${label}</option>`).join("")}</select>` : field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">` : field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : field === "nationality" || field === "university" ? 36 : 100}">`;
       return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
     return row;

@@ -5,11 +5,14 @@ import { principalAuditRef } from "./authorization-audit.js";
 import { databaseUrl } from "./connection.js";
 import { personRecordRef, SAFE_WRITE_OPERATION, safeWritePrincipalRef } from "./safe-write-store.js";
 
-export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
+export const PERSON_PROFILE_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const;
 export type PersonProfileField = (typeof PERSON_PROFILE_FIELDS)[number];
 const COLUMNS: Record<PersonProfileField, string> = {
   displayName: "display_name", arabicName: "arabic_name", objective: "objective", intro: "introduction", preferredTime: "preferred_time",
+  gender: "gender", birthDate: "birth_date", nationality: "nationality_id", university: "university_id",
+  drivingLicence: "driving_licence", jobSearchStatus: "job_search_status",
 };
+const BOOLEAN_FIELDS = new Set<PersonProfileField>(["drivingLicence"]);
 const REFERENCE = /^[0-9a-f]{64}$/;
 const tokenRef = (value: string) => createHash("sha256").update("studenthub:safe-write-token-ref:v1\0").update(value).digest("hex");
 
@@ -41,8 +44,16 @@ export class PostgresPersonProfileStore {
     const { rows } = await this.#pool.query(
       `SELECT pp.display_name, pp.display_name_written_at, pp.arabic_name, pp.arabic_name_written_at,
               pp.objective, pp.objective_written_at, pp.introduction, pp.introduction_written_at,
-              pp.preferred_time, pp.preferred_time_written_at
-         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id WHERE p.id=$1`, [principalId]);
+              pp.preferred_time, pp.preferred_time_written_at,
+              pp.gender, pp.gender_written_at, pp.birth_date::text, pp.birth_date_written_at,
+              country.name AS nationality_id, pp.nationality_written_at,
+              university.name AS university_id, pp.university_written_at,
+              pp.driving_licence, pp.driving_licence_written_at, pp.kuwaiti_mother, pp.kuwaiti_mother_written_at,
+              pp.job_search_status, pp.job_search_status_written_at
+         FROM principals p LEFT JOIN person_profiles pp ON pp.principal_id=p.id
+         LEFT JOIN catalogue_items country ON country.id=pp.nationality_id AND country.catalogue_type='country'
+         LEFT JOIN catalogue_items university ON university.id=pp.university_id AND university.catalogue_type='university'
+         WHERE p.id=$1`, [principalId]);
     const row = rows[0];
     if (!row) return null;
     const result: Record<string, unknown> = {};
@@ -84,9 +95,20 @@ export class PostgresPersonProfileStore {
       if ((await client.query(`SELECT 1 FROM authorization_mutation_audit WHERE operation=$1 AND after_summary->>'tokenRef'=$2`, [SAFE_WRITE_OPERATION, spent])).rows.length) throw new Refusal("token_already_used");
       if (!await this.#exists(client, id)) throw new Refusal("not_own_record");
       const current = (await client.query(`SELECT ${column} AS value FROM person_profiles WHERE principal_id=$1 FOR UPDATE`, [id])).rows[0]?.value ?? null;
-      if (current !== input.expectedBefore) throw new Refusal("state_changed");
+      const comparable = current instanceof Date ? current.toISOString().slice(0, 10) : typeof current === "boolean" ? String(current) : current;
+      if (comparable !== input.expectedBefore) throw new Refusal("state_changed");
+      if (field === "nationality" || field === "university") {
+        const type = field === "nationality" ? "country" : "university";
+        const reference = await client.query(`SELECT code FROM catalogue_items WHERE id=$1::uuid AND catalogue_type=$2 AND status='active'`, [input.value, type]);
+        if (!reference.rowCount) throw new Refusal("invalid_value");
+        if (field === "nationality" && reference.rows[0]?.code === "KW") {
+          const mother = (await client.query("SELECT kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.kuwaiti_mother;
+          if (mother === true) throw new Refusal("invalid_value");
+        }
+      }
+      const stored = BOOLEAN_FIELDS.has(field) ? input.value === "true" : input.value;
       await client.query(`INSERT INTO person_profiles (principal_id, ${column}, ${column}_written_at) VALUES ($1,$2,clock_timestamp())
-        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, input.value === "" ? null : input.value]);
+        ON CONFLICT (principal_id) DO UPDATE SET ${column}=EXCLUDED.${column}, ${column}_written_at=EXCLUDED.${column}_written_at`, [id, stored]);
       await client.query(`INSERT INTO authorization_mutation_audit (request_ref,actor_principal_ref,operation,target_principal_ref,target_org_refs,before_summary,after_summary)
         VALUES ($1,$2,$3,$2,'{}',$4::jsonb,$5::jsonb)`, [input.receipt.receiptRef, input.receipt.principalRef, SAFE_WRITE_OPERATION,
         JSON.stringify({ valuePresent: current !== null }), JSON.stringify({ contractVersion: input.receipt.contractVersion, personRef: input.receipt.personRef,
