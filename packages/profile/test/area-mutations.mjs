@@ -7,10 +7,10 @@ const gatewaySuite="dist/apps/gateway/test/area-http.test.js";
 const postgresSuite="dist/packages/db/test/postgres-person-location.test.js";
 const mutations=[
   ["Q14_5_CATALOGUE","packages/reference-catalogue/dist/types.js",'"degree-group", "area"','"degree-group"',gatewaySuite],
-  ["Q14_5_SHOWN","packages/profile/dist/profile.js",'language === "ar" && location.areaNameAr','false && location.areaNameAr',gatewaySuite],
+  ["Q14_5_AREA","packages/profile/dist/profile.js",'language === "ar" && location.areaNameAr','false && location.areaNameAr',gatewaySuite],
   ["Q14_5_COORDINATES","dist/apps/gateway/src/area-http.js","script-src 'nonce-${nonce}'","script-src 'nonce-wrong'",gatewaySuite],
   ["Q14_5_COORDINATES","dist/apps/gateway/src/area-http.js","service.area.confirmation(person, body.latitude, body.longitude, \"en\")","service.area.save({ principalId: person })",gatewaySuite],
-  ["Q14_5_COORDINATES","packages/profile/dist/area.js","bestDistance <= 50","bestDistance <= 5000",profileSuite],
+  ["Q14_5_COORDINATES","dist/packages/profile/src/area.js","bestDistance <= 50","bestDistance <= 5000",profileSuite],
   ["Q14_5_PRIVATE","dist/apps/gateway/src/area-http.js",'location: "/profile#field-area"','location: `/profile?latitude=${body.latitude}&longitude=${body.longitude}#field-area`',gatewaySuite],
   ["Q14_5_PAGE","dist/apps/gateway/src/area-http.js","request.headers.origin !== service.origin","false",gatewaySuite],
   ["Q14_5_SHOWN","dist/apps/gateway/src/web-ui.js",'"area", "drivingLicence"','"drivingLicence"',gatewaySuite],
