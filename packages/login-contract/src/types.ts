@@ -75,6 +75,7 @@ export interface ClaimedProfile {
   readonly phone?: string;
   readonly name?: string;
   readonly dateOfBirth?: string;
+  readonly stableUserId?: string;
 }
 
 export interface IdentityStore {
@@ -82,6 +83,11 @@ export interface IdentityStore {
   createForSubject(issuer: string, subject: string, claims: ClaimedProfile): Promise<ExternalIdentity>;
   /** Forbidden migration escape hatch: conformance fails if login calls this. */
   findLegacyMatch(claims: ClaimedProfile): Promise<ExternalIdentity | undefined>;
+  bindStableId?(
+    issuer: string,
+    subject: string,
+    stableUserId: string,
+  ): Promise<"bound" | "matched" | "mismatch" | "locked">;
 }
 
 export interface AuthorizationStore {
