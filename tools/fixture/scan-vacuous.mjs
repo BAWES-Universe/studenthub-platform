@@ -56,10 +56,34 @@ function codeOnly(source) {
   let quote = null;
   let lineComment = false;
   let blockComment = false;
+  // Each entry is the brace depth of an active `${ ... }` expression, or
+  // zero while reading the non-executable text of that template literal.
+  const templates = [];
 
   for (let i = 0; i < source.length; i += 1) {
     const ch = source[i];
     const next = source[i + 1];
+
+    if (templates.at(-1) === 0) {
+      if (ch === "\\") {
+        result += " ";
+        if (i + 1 < source.length) {
+          result +=
+            source[i + 1] === "\n" || source[i + 1] === "\r" ? source[i + 1] : " ";
+          i += 1;
+        }
+      } else if (ch === "`") {
+        result += " ";
+        templates.pop();
+      } else if (ch === "$" && next === "{") {
+        result += " {";
+        templates[templates.length - 1] = 1;
+        i += 1;
+      } else {
+        result += ch === "\n" || ch === "\r" ? ch : " ";
+      }
+      continue;
+    }
 
     if (lineComment) {
       if (ch === "\n" || ch === "\r") {
@@ -107,9 +131,18 @@ function codeOnly(source) {
       } else {
         result += ch;
       }
-    } else if (ch === '"' || ch === "'" || ch === "`") {
+    } else if (ch === '"' || ch === "'") {
       result += " ";
       quote = ch;
+    } else if (ch === "`") {
+      result += " ";
+      templates.push(0);
+    } else if (templates.length > 0 && ch === "{") {
+      templates[templates.length - 1] += 1;
+      result += ch;
+    } else if (templates.length > 0 && ch === "}") {
+      templates[templates.length - 1] -= 1;
+      result += ch;
     } else {
       result += ch;
     }
@@ -140,44 +173,13 @@ function testName(source, callIndex, bodyStart) {
 }
 
 function braceBody(source, callIndex) {
+  const searchableSource = codeOnly(source);
   let open = -1;
   let depth = 0;
-  let quote = null;
-  let lineComment = false;
-  let blockComment = false;
 
-  for (let i = callIndex; i < source.length; i += 1) {
-    const ch = source[i];
-    const next = source[i + 1];
-
-    if (lineComment) {
-      if (ch === "\n" || ch === "\r") lineComment = false;
-      continue;
-    }
-    if (blockComment) {
-      if (ch === "*" && next === "/") {
-        blockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (quote) {
-      if (ch === "\\") i += 1;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "/" && next === "/") {
-      lineComment = true;
-      i += 1;
-    } else if (ch === "/" && next === "*") {
-      blockComment = true;
-      i += 1;
-    } else if (ch === "/" && startsRegex(source, i)) {
-      const end = regexEnd(source, i);
-      if (end !== i) i = end;
-    } else if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-    } else if (ch === "{") {
+  for (let i = callIndex; i < searchableSource.length; i += 1) {
+    const ch = searchableSource[i];
+    if (ch === "{") {
       if (open === -1) open = i;
       depth += 1;
     } else if (ch === "}" && open !== -1) {

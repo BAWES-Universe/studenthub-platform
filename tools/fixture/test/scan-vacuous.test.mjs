@@ -117,6 +117,21 @@ test("reports a body whose only assertion is inside a template literal", () => {
   assert.deepEqual(report.map((entry) => entry.name), ["template"]);
 });
 
+test("recognises an assertion in a template interpolation", () => {
+  const report = scanVacuousTests(
+    'test("template-expression", () => { const result = `${assert.ok(value)}`; });',
+  );
+  assert.deepEqual(report, []);
+});
+
+test("matches the body around braces in a template interpolation", () => {
+  const source =
+    'test("template-braces", () => { const result = `${condition ? { value: 1 } : {}}`; work(); });';
+  const report = scanVacuousTests(source);
+  assert.equal(report.length, 1);
+  assert.equal(report[0].end, source.lastIndexOf("}"));
+});
+
 test("ignores test-like calls inside comments and string literals", () => {
   const source = [
     '// test("comment", () => { const value = 1; });',
