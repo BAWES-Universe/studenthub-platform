@@ -90,8 +90,13 @@ test('STAFFDOC_AUDIT writes first and fails closed',async()=>{
 
 test('STAFFDOC_BYTES hydrates exact R2 bytes and hardens response',async()=>{
  const f=await rig(),link=await f.service.issue(f.credentials.staff,'subject','civil-id-front','civil_id_review');
- assert.equal(f.counts().objectReads,0,'issue does not hydrate');const result=await f.service.deliver(f.credentials.staff,link.url);
+ assert.equal(f.counts().objectReads,0,'issue does not hydrate');
+ const delivered=await f.service.deliver(f.credentials.staff,link.url).then(result=>result,e=>e?.code);
+ assert.notEqual(typeof delivered,'string','stored R2 bytes served');
+ const result=delivered;
  assert.deepEqual(result.bytes,f.front,'stored R2 bytes served');assert.equal(f.counts().objectReads,1,'read hydrator called exactly once');
  assert.deepEqual(result.headers,{'Content-Type':'image/png','Content-Length':String(f.front.length),'Content-Disposition':'inline','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; sandbox"},'hardened inline headers');
- assert.doesNotMatch(link.url,/immutable|r2:|[0-9a-f]{8}-[0-9a-f-]{27}/,'link leaks no storage path or document id');
+ const payload=new URL(link.url,'https://documents.example.test').searchParams.get('t').split('.')[0];
+ const decoded=Buffer.from(payload,'base64url').toString('utf8');
+ assert.equal(decoded.includes(f.frontId)||decoded.includes(`immutable/${f.frontVersion}`)||decoded.includes('r2:'),false,'link leaks no storage path or document id');
 });
