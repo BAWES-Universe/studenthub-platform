@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+const dist = new URL("../../../dist/apps/gateway/", import.meta.url), page = new URL("src/organizations/stores-page.js", dist), suite = fileURLToPath(new URL("test/organization-store-detail.test.js", dist)), hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
+const cases = [
+  ["serve the first listed store", "STOREDET_MINE", "STOREDET_MINE hidden store is 404", "const store = stores.find((candidate) => candidate.storeId === storeId);", "const store = stores[0];"],
+  ["drop detail name escaping", "STOREDET_SHOW", "STOREDET_SHOW store name is escaped", "<h1>${escapeHtml(store.name)}</h1>", "<h1>${store.name}</h1>"],
+  ["map thrown detail list to 404", "STOREDET_UNAVAILABLE", "STOREDET_UNAVAILABLE failure is 503", "catch {\n        return unavailable(ctx);\n    }", "catch {\n        return error(ctx, 404);\n    }"],
+  ["accept detail query", "STOREDET_DENY", "STOREDET_DENY query is 400", "if (requestUrl.searchParams.size !== 0)\n        return error(ctx, 400);", "if (false)\n        return error(ctx, 400);"],
+];
+const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function run(prefix, swaps) { const register = `import{register}from"node:module";register(${JSON.stringify(hook)},{data:${JSON.stringify(swaps)}});`; const result = spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(register)}`, "--test", "--test-reporter=tap", `--test-name-pattern=^${escape(prefix)} `, suite], { encoding: "utf8", timeout: 60000 }); assert.equal(result.error, undefined, `${prefix} runner must execute`); return { ...result, output: result.stdout + result.stderr }; }
+for (const [name, prefix, message, from, to] of cases) { const original = await readFile(page, "utf8"); assert.equal(original.split(from).length - 1, 1, `${name}: needle binds exactly once in ${fileURLToPath(page)}`); const target = new URL(page.href.replace(/\.js$/, `-mutant-${process.pid}.js`)); try { const control = run(prefix, {}); assert.equal(control.status, 0, `${name}: unmutated control passes\n${control.output}`); assert.match(control.output, new RegExp(`\\nok \\d+ - ${escape(prefix)} `), `${name}: control ran named test`); await writeFile(target, original.replace(from, to)); const mutant = run(prefix, { [page.href]: target.href }); assert.notEqual(mutant.status, 0, `${name}: mutant survived\n${mutant.output}`); assert.match(mutant.output, new RegExp(`\\nnot ok \\d+ - ${escape(prefix)} `), `${name}: named test fails`); assert.match(mutant.output, /name: 'AssertionError'/); assert.match(mutant.output, new RegExp(`error: (?:'|\\|-\\n\\s+)${escape(message)}`), `${name}: dies on own assertion`); assert.doesNotMatch(mutant.output, /SyntaxError|ERR_MODULE_NOT_FOUND/); } finally { await unlink(target).catch((error) => { if (error.code !== "ENOENT") throw error; }); assert.equal(await readFile(page, "utf8"), original, `${name}: dist is byte-identical`); } console.log(`KILLED ${name}`); }
+console.log(`${cases.length}/${cases.length} organization store detail mutants killed`);
