@@ -20,6 +20,7 @@ import type { CivilIdService } from "@studenthub/profile";
 import type { CivilIdSuggestionService } from "../civil-id-suggestion-http.js";
 import type { AreaHttp } from "../area-http.js";
 import type { PeopleDirectoryPage } from "../people-directory.js";
+import type { CivilIdReviewService } from "../civil-id-review-http.js";
 import { enterProfileAvatarRequest } from "../profile-avatar.js";
 
 export type GatewayRouteLogin = BrowserLoginApplication & {
@@ -27,6 +28,7 @@ export type GatewayRouteLogin = BrowserLoginApplication & {
   readonly civilIdSuggestion?: CivilIdSuggestionService;
   readonly area?: AreaHttp;
   readonly people?: PeopleDirectoryPage;
+  readonly civilIdReview?: CivilIdReviewService;
   readonly organizationProfile?: OrganizationProfile;
   readonly organizationStatus?: OrganizationStatus;
   readonly organizationCommercialTerms?: OrganizationCommercialTerms;

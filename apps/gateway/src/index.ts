@@ -41,6 +41,8 @@ import { gateUniverseEmbedRequest } from "./universe/embed-host-gate.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
 import { gatherProfileCompleteness } from "./profile-completeness.js";
 import type { ProfileCompletenessResult } from "@studenthub/profile";
+import { StaffDocuments } from '../../../packages/private-documents/src/staff-delivery.js';
+import { DEFAULT_OPERATOR_ORG_IDS } from '@studenthub/organizations';
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -154,6 +156,8 @@ export function createGatewayServer(
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
+
+  if(login?.civilIdReview){const review=login.civilIdReview;if(documents&&!review.staffDocuments)review.staffDocuments=new StaffDocuments({documents,staffOrgIds:DEFAULT_OPERATOR_ORG_IDS,audit:review.store,now:review.now?()=>review.now!().getTime():undefined});if(review.staffDocuments&&!review.secret)review.secret=randomBytes(32)}
 
   // When reserved, the terminal gate supplies the missing-Host 400 and policy.
   // Otherwise retain Node's existing automatic Host-header requirement.

@@ -56,6 +56,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly legacyLink?: LegacyLinkService;
   readonly civilId?: CivilIdService;
   readonly civilIdSuggestion?: CivilIdSuggestionService;
+  readonly civilIdReview?: import("./civil-id-review-http.js").CivilIdReviewService;
   readonly area?: AreaHttp;
   readonly web?: {
     readonly origin: string;

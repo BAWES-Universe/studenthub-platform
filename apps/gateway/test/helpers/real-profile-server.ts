@@ -32,6 +32,8 @@ import {
 import { createGatewayServer, createLoginApplication } from "../../src/index.js";
 import type { BrowserLoginApplication } from "../../src/web-ui.js";
 import { composeOwnProfiles } from "../../src/wiring/profile.js";
+import type { CivilIdReviewService } from "../../src/civil-id-review-http.js";
+import type { CandidateDocuments } from "../../../../packages/private-documents/src/candidate-lifecycle.js";
 
 export const REAL_PROFILE_ORIGIN = "https://studenthub.test.invalid";
 export const REAL_PROFILE_PERSON = "person-1";
@@ -62,6 +64,8 @@ export type RealProfileServerOptions = {
   readonly countries?: readonly { readonly id: string; readonly code: string | null }[];
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
+  readonly civilIdReview?: (services: RealProfileServices) => CivilIdReviewService;
+  readonly documents?: CandidateDocuments;
 };
 
 const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -105,11 +109,12 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     // As wireProfile: the area service with the session store and origin.
     area: { area, sessions: rig.sessions, origin: REAL_PROFILE_ORIGIN },
     ...(options.extend?.(services) ?? {}),
+    ...(options.civilIdReview ? { civilIdReview: options.civilIdReview(services) } : {}),
     // As wireProfile: the completeness check reads the same civil ID service.
     web: { origin: REAL_PROFILE_ORIGIN, returnTo: rig.config.allowedReturnUrls[1], profiles: countedProfiles,
       profileCompleteness: { choices: async () => ({ countries: options.countries ?? [] }), civilId: countedCivil } },
   } as BrowserLoginApplication;
-  const server = createGatewayServer(undefined, undefined, undefined, login);
+  const server = createGatewayServer(undefined, undefined, undefined, login, undefined, undefined, options.documents);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address();
