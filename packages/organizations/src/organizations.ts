@@ -504,18 +504,20 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const children = organizations.filter((org) => org.parentOrgId === request.orgId);
       // A sub-organization lists no sub-organizations; data that claims some is refused.
       if (parentOrgId !== null && children.length > 0) throw new HierarchyViolation("nested sub-organizations");
-      const visibleChildren: Organization[] = [];
-      for (const child of children) {
-        // Sub-organizations are visible only through an explicit covering grant.
-        if (await this.#authorize(request, child.id) === undefined) continue;
-        visibleChildren.push(child);
-      }
+      const identity = { kind: "principal" as const, principalId: request.principalId };
+      const contexts = await listEffectiveContexts(identity, this.#store);
+      const covered = new Set(contexts.filter((context) => context.role === request.role).map((context) => context.orgId));
+      const coveredChildIds = children.filter((child) => covered.has(child.id)).map((child) => child.id);
+      const deletedIds = coveredChildIds.length > 0 && this.#deletions
+        ? await this.#deletions.deletedAmong(coveredChildIds) : new Set<string>();
+      const visibleChildren = children.filter((child) => covered.has(child.id) && !deletedIds.has(child.id));
+      const snapshots = await this.#source.readSnapshots(visibleChildren.map((child) => child.id));
       const batchRecords = visibleChildren.length > 0 && this.#statusRecords?.readMany
         ? await this.#statusRecords.readMany(visibleChildren.map((child) => child.id))
         : undefined;
       const summaries: SubOrganizationSummary[] = [];
       for (const child of visibleChildren) {
-        const row = snapshotRow(await this.#source.readSnapshot(child.id), child.id, request.orgId);
+        const row = snapshotRow(snapshots.get(child.id) ?? { kind: "missing" }, child.id, request.orgId);
         const statusRecord = batchRecords
           ? batchRecords.get(child.id) ?? { kind: "absent" as const }
           : await this.#statusRecords?.read(child.id);
@@ -543,10 +545,13 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       if (companyParentOf(organizations, request.orgId, this.#operators) !== null && children.length > 0) {
         throw new HierarchyViolation("nested sub-organizations");
       }
-      let subOrganizations = 0;
-      for (const child of children) {
-        if (await this.#authorize(request, child.id) !== undefined) subOrganizations++;
-      }
+      const identity = { kind: "principal" as const, principalId: request.principalId };
+      const contexts = await listEffectiveContexts(identity, this.#store);
+      const covered = new Set(contexts.filter((context) => context.role === request.role).map((context) => context.orgId));
+      const coveredChildIds = children.filter((child) => covered.has(child.id)).map((child) => child.id);
+      const deletedIds = coveredChildIds.length > 0 && this.#deletions
+        ? await this.#deletions.deletedAmong(coveredChildIds) : new Set<string>();
+      const subOrganizations = coveredChildIds.filter((orgId) => !deletedIds.has(orgId)).length;
       const totals = this.#storeCounts ? await this.#storeCounts.countMany([request.orgId]) : undefined;
       return { kind: "found", counts: Object.freeze({
         stores: totals ? totals.get(request.orgId) ?? 0 : null,
@@ -598,6 +603,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       const approvedBatch=shown.length>0&&this.#approvedToHire?await this.#approvedToHire.readMany(shown.map(org=>org.id)):undefined;
       const termsBatch=shown.length>0&&this.#commercialTerms?await this.#commercialTerms.readMany(shown.map(org=>org.id)):undefined;
       const storeTotals = shown.length > 0 && this.#storeCounts ? await this.#storeCounts.countMany(shown.map((org) => org.id)) : undefined;
+      const snapshots = await this.#source.readSnapshots(shown.map((org) => org.id));
       let managers:ReadonlyMap<string,OrganizationAccountManagerRecord>|undefined;
       if(shown.length>0&&this.#accountManagers)try{managers=await this.#accountManagers.readMany(shown.map((org)=>org.id));}
       catch{if(filters.accountManager!==undefined)return{kind:"unavailable"};}
@@ -605,7 +611,7 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
       for (const org of shown) {
         if (filters.accountManager !== undefined && managers?.get(org.id)?.principalId !== filters.accountManager) continue;
         // As in legacy (`filterParent`), the list holds top-level companies; sub-organizations open from their parent.
-        const row = snapshotRow(await this.#source.readSnapshot(org.id), org.id, null);
+        const row = snapshotRow(snapshots.get(org.id) ?? { kind: "missing" }, org.id, null);
         const statusRecord = batchRecords
           ? batchRecords.get(org.id) ?? { kind: "absent" as const }
           : await this.#statusRecords?.read(org.id);

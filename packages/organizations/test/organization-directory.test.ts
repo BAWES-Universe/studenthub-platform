@@ -209,7 +209,10 @@ test("SHU-163/AC-06 UNAVAILABLE malformed or unreadable data refuses the list in
     ["org-a", { ...parentA, parent_org_id: "org-b" }], ["org-b", unrelatedB],
   ])) });
   assert.deepEqual(await mismatched.repository.listOrganizations(STAFF), { kind: "unavailable" });
-  const failing = await setup({ source: { readSnapshot: async () => { throw new Error("source down"); } } });
+  const failing = await setup({ source: {
+    readSnapshot: async () => { throw new Error("source down"); },
+    readSnapshots: async () => { throw new Error("source down"); },
+  } });
   assert.deepEqual(await failing.repository.listOrganizations(STAFF), { kind: "unavailable" });
 });
 
@@ -309,6 +312,43 @@ test("SHU339_FILTER_UNAVAILABLE refuses missing and failing ports after authoriz
 });
 
 test("SHU357_DIRECTORY_DEGRADES only an unfiltered manager column degrades",async()=>{const failing={readMany:async()=>{throw new Error("down")}};const{repository}=await setup({accountManagers:failing});const open=await repository.listOrganizations(STAFF);assert.equal(open.kind,"found");if(open.kind==="found")assert.ok(open.directory.entries.every(entry=>!("accountManager" in entry)));assert.deepEqual(await repository.listOrganizations({...STAFF,filters:{accountManager:"staff"}}),{kind:"unavailable"})});
+
+test("SHU361_DIRECTORY_FIXED directory snapshot reads stay fixed as company count grows", async () => {
+  async function callsFor(extraCount: number) {
+    const batches: string[][] = [];
+    const source: ApprovedOrganizationAdapter = {
+      async readSnapshot() { throw new Error("per-row snapshot read"); },
+      async readSnapshots(orgIds) {
+        batches.push([...orgIds]);
+        return new Map(orgIds.map((orgId) => [orgId, { kind: "unconfigured" as const }]));
+      },
+    };
+    const extraOrganizations = Array.from({ length: extraCount }, (_, index) => ({
+      id: `org-fixed-${index}`, name: `Fixed ${index}`, parentOrgId: "root",
+    }));
+    const { store } = await setup({ source, extraOrganizations });
+    let authzCalls = 0;
+    const countedStore = new Proxy(store, { get(target, property, receiver) {
+      const member = Reflect.get(target, property, receiver);
+      if (typeof member !== "function") return member;
+      return (...args: unknown[]) => { authzCalls++; return member.apply(target, args); };
+    } });
+    const repository = new OrganizationRepository({ store: countedStore, source });
+    const result = await repository.listOrganizations(STAFF);
+    assert.equal(result.kind, "found");
+    return { snapshotBatches: batches.length, authzCalls };
+  }
+  assert.deepEqual(await callsFor(0), await callsFor(60));
+});
+
+test("SHU361_SHOWN batched directory values are shown to staff", async () => {
+  const { repository } = await setup();
+  const list = entries(await repository.listOrganizations(STAFF));
+  assert.deepEqual(list.map((entry) => [entry.orgId, value(entry, "legalName"), value(entry, "status")]), [
+    ["org-a", "Synthetic Retail Group", "active"],
+    ["org-b", "Synthetic Cafe Company", "under_review"],
+  ]);
+});
 
 test("SHU357_TERMS_BATCH_REQUIRED a configured directory adapter must provide its batch read",()=>{const commercialTerms={read:async()=>({hourlyRate:{kind:"absent"as const},bonusCommission:{kind:"absent"as const}})};if(false){
   // @ts-expect-error SHU-357: directory-capable commercial terms adapters require the fixed-cost batch read.
