@@ -17,7 +17,7 @@ const value = <T>(base: OwnProfileProjection, v: T) => ({ state:"available" as c
   provenance:base.fields.nationality.provenance, freshness:{kind:"written_by_person" as const,observedAt:"2026-11-10T00:00:00.000Z"} });
 const evidence = (extra: Partial<Parameters<typeof deriveProfileCompleteness>[1]> = {}) => ({
   emailPresent:true, documents:[{type:"personal-photo"},{type:"civil-id-front"},{type:"civil-id-back"}], hasEducation:true, hasSkill:true,
-  countries:[{id:"kw",code:"KW",name:"Kuwaiti"}], observedAt:"2026-11-10T00:00:00.000Z", ...extra,
+  countries:[{id:"kw",code:"KW",name:"Kuwait"}], observedAt:"2026-11-10T00:00:00.000Z", ...extra,
 });
 
 test("Q14_4_RULES requirements use live answers, documents and active records in fixed order",()=>{
@@ -55,7 +55,39 @@ test("Q14_4_RULES a real imported nationality is resolved through the catalogue 
   assert.equal(imported.fields.nationality.state==="available"&&imported.fields.nationality.editValue,undefined);
   const result=deriveProfileCompleteness(imported,evidence());
   assert.deepEqual(result.fields.pendingFields.state==="available"?result.fields.pendingFields.value:[],[]);
-  assert.throws(()=>deriveProfileCompleteness(imported,evidence({countries:[{id:"x",code:"KW",name:"Unknown"}]})),/nationality choice unavailable/);
+  assert.deepEqual(deriveProfileCompleteness(imported,evidence({countries:[{id:"x",code:"KW",name:"Kuwaiti"}]})).fields.pendingFields.state,"available",
+    "an imported adjective is never matched to a catalogue display name");
+  const written={...imported,fields:{...imported.fields,nationality:{...imported.fields.nationality,editValue:"missing",freshness:{kind:"written_by_person" as const,observedAt:"2026-11-10T00:00:00.000Z"}}}};
+  assert.throws(()=>deriveProfileCompleteness(written,evidence()),/nationality choice unavailable/);
+});
+
+test("Q14_4_RULES every unconditional requirement has its own negative fixture",()=>{
+  const base=projection();
+  const cases=[
+    ["display_name","displayName"],["arabic_name","arabicName"],["gender","gender"],["objective","objective"],
+    ["birth_date","birthDate"],["nationality","nationality"],["driving_licence","drivingLicence"],["location","area"],
+  ] as const;
+  for(const [requirement,key] of cases){
+    const field=base.fields[key];
+    const result=deriveProfileCompleteness({...base,fields:{...base.fields,[key]:{...field,state:"unavailable",reason:"not_recorded"}} as never},evidence());
+    assert.deepEqual(result.fields.pendingFields.state==="available"?result.fields.pendingFields.value:[],[requirement],requirement);
+  }
+  for(const [requirement,extra] of [["email",{emailPresent:false}],["education",{hasEducation:false}],["skill",{hasSkill:false}]] as const){
+    const result=deriveProfileCompleteness(base,evidence(extra));
+    assert.deepEqual(result.fields.pendingFields.state==="available"?result.fields.pendingFields.value:[],[requirement],requirement);
+  }
+});
+
+test("Q14_4_RULES Kuwaiti mother is missing after a write and imported absence can satisfy it",()=>{
+  const base=projection();
+  const civil=value(base,{country:"KW" as const,maskedNumber:"•••• 1234",expiry:"2028-01-01",needsReview:false});
+  const afterWrite={...base,fields:{...base.fields,civilId:civil,pendingFields:{...base.fields.pendingFields,state:"unavailable" as const,reason:"not_recorded" as const},kuwaitiMother:undefined} as never};
+  const nonKw=evidence({countries:[{id:"kw",code:"BH",name:"Bahrain"}]});
+  const missing=deriveProfileCompleteness(afterWrite,nonKw).fields.pendingFields;
+  assert.deepEqual(missing.state==="available"?missing.value:[],["kuwaiti_mother"]);
+  const imported=projectApprovedProfile({...SYNTHETIC_PROFILE_FIXTURES.populated,candidate_pending_profile:""},"2026-11-10");
+  const importedResult=deriveProfileCompleteness(imported,evidence({countries:[{id:"kw",code:"BH",name:"Bahrain"}]})).fields.pendingFields;
+  assert.deepEqual(importedResult.state==="available"?importedResult.value:[],[]);
 });
 
 test("Q14_4_RULES imported pending fallback is limited to imported-only live values",()=>{

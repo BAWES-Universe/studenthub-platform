@@ -25,11 +25,8 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   const importedFallback = (requirement: PendingProfileRequirement, live: boolean): boolean => live || (!!pending && !pending.has(requirement));
   const nationality = fields.nationality;
   let nationalityCode: string | undefined;
-  if (nationality.state === "available") {
-    const country = nationality.editValue
-      ? evidence.countries.find(item => item.id === nationality.editValue)
-      : evidence.countries.find(item => item.name === nationality.value);
-    nationalityCode = country?.code;
+  if (nationality.state === "available" && nationality.editValue) {
+    nationalityCode = evidence.countries.find(item => item.id === nationality.editValue)?.code;
     if (!nationalityCode) throw new Error("nationality choice unavailable");
   }
   const documents = new Set(evidence.documents.map(document => document.type));
@@ -51,7 +48,15 @@ export function deriveProfileCompleteness(profile: OwnProfileProjection, evidenc
   require("civil_back", documents.has("civil-id-back"));
   require("driving_licence", present(fields.drivingLicence));
   require("location", present(fields.area));
-  if (nationalityCode !== undefined && nationalityCode !== "KW") require("kuwaiti_mother", importedFallback("kuwaiti_mother", present(fields.kuwaitiMother)));
+  // Imported projections intentionally carry no catalogue id.  In that case the
+  // imported pending list is authoritative for this imported-only answer.  Once
+  // a nationality is written, its catalogue id (and only its code) controls the
+  // conditional requirement.
+  if (nationalityCode === undefined) {
+    if (pending?.has("kuwaiti_mother")) require("kuwaiti_mother", present(fields.kuwaitiMother));
+  } else if (nationalityCode !== "KW") {
+    require("kuwaiti_mother", importedFallback("kuwaiti_mother", present(fields.kuwaitiMother)));
+  }
   require("education", evidence.hasEducation);
   require("skill", evidence.hasSkill);
   const observedAt = evidence.observedAt ?? new Date().toISOString();

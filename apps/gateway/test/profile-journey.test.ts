@@ -7,7 +7,7 @@ import { PROFILE_COPY, type ProfileLanguage } from "../src/ui/profile-copy.js";
 import { PROFILE_KIT_CSS } from "../src/ui/profile-kit.js";
 import { createGatewayServer } from "../src/index.js";
 import type { BrowserLoginApplication } from "../src/web-ui.js";
-const webUi=await import(process.env.SHU570_WEB_UI_MODULE??"../src/web-ui.js");
+const webUi=await import(process.env.SHU570_WEB_UI_MODULE??"../src/web-ui.js") as typeof import("../src/web-ui.js");
 const {profileDocument,pageDocument,renderLanding,renderError,renderWorkspace,renderCompanyDirectory}=webUi;
 
 const country = "22222222-2222-4222-8222-222222222222";
