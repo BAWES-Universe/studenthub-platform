@@ -11,6 +11,7 @@ CREATE TABLE email_outbox (
 );
 CREATE INDEX email_outbox_claim_idx ON email_outbox(state,next_attempt_at);
 CREATE INDEX email_outbox_admin_idx ON email_outbox(created_at DESC,id DESC);
+CREATE INDEX email_outbox_recipient_idx ON email_outbox(recipient_principal_id);
 CREATE TABLE email_attempts (
  message_id UUID NOT NULL REFERENCES email_outbox(id) ON DELETE CASCADE, attempt_number INTEGER NOT NULL,
  class TEXT NOT NULL CHECK(class IN ('account.notice')), outcome TEXT NOT NULL CHECK(outcome IN ('sent','failed','not_sent')),
