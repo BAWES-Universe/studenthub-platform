@@ -50,3 +50,13 @@ RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
    summary->'fields'->>0 IN ('gender','birthDate','nationality','university','drivingLicence','kuwaitiMother','jobSearchStatus') AND
    jsonb_typeof(summary->'committedAt')='string' AND summary->>'committedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$')
 $$;
+
+-- CHECK expressions retain function OIDs across a rename. Recreate the two
+-- constraints so they bind to the widened function above, not the 0211 body.
+ALTER TABLE authorization_mutation_audit
+ DROP CONSTRAINT auth_audit_before_summary_shape,
+ DROP CONSTRAINT auth_audit_after_summary_shape,
+ ADD CONSTRAINT auth_audit_before_summary_shape
+   CHECK (authorization_audit_summary_valid(operation,before_summary)),
+ ADD CONSTRAINT auth_audit_after_summary_shape
+   CHECK (authorization_audit_summary_valid(operation,after_summary));

@@ -238,6 +238,10 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
           if (!choice) throw new TypeError("unknown profile choice"); value = choice.name; writtenChoiceIds[name] = choice.id;
         } else if (name === "drivingLicence") {
           if (typeof value !== "boolean") throw new TypeError("malformed boolean");
+        } else if (name === "gender") {
+          if (typeof value !== "string" || !["male","female","other"].includes(value)) throw new TypeError("malformed gender");
+        } else if (name === "jobSearchStatus") {
+          if (typeof value !== "string" || !["not_looking","active","open_to_offers"].includes(value)) throw new TypeError("malformed work status");
         } else value = PROFILE_FIELD_SPECS[name].parse(value, profile.asOfDate);
         fields[name] = written(PROFILE_FIELD_SPECS[name], value as never, preference.updatedAt) as never;
       }

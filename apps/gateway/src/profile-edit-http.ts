@@ -98,8 +98,12 @@ export type ProfileEditPageWriter = (status: number, title: string, body: string
 /** The text rendered for this field on My profile, including its missing-state label. */
 export type ShownProfileValue = (sessionId: string | undefined, field: PersonSelfEditField) => Promise<string | undefined>;
 export function shownProfileValue(field: { readonly state: "available" | "unavailable"; readonly value?: unknown; readonly freshness: { readonly kind: string } }): string {
-  return field.state === "available" ? String(field.value)
-    : field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
+  if (field.state === "available") {
+    const value = field.value;
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return ({ male: "Male", female: "Female", other: "Other", not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" } as Record<string,string>)[String(value)] ?? String(value);
+  }
+  return field.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
 }
 const esc = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 const FIELD_LABELS: Readonly<Record<PersonSelfEditField, string>> = { displayName: "Display name", arabicName: "Arabic name", objective: "Objective", intro: "Introduction", preferredTime: "Preferred time", gender: "Gender", birthDate: "Birth date", nationality: "Nationality", university: "University", drivingLicence: "Driving licence", kuwaitiMother: "Kuwaiti mother", jobSearchStatus: "Looking for work" };
@@ -110,8 +114,13 @@ export function profileEditSummary(value: string): string {
 }
 function error(write: ProfileEditPageWriter, status: number) { write(status, "Edit profile", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your profile wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`); }
 function invalidForm(write: ProfileEditPageWriter, selected: PersonSelfEditField, value: string) {
-  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
-  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">Enter a value that follows the rules for ${label.toLowerCase()}.</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+  const label = FIELD_LABELS[selected], control = selected === "intro" ? `<textarea name="value" maxlength="5000" aria-describedby="value-error">${esc(value)}</textarea>` : selected === "birthDate" ? `<input type="date" name="value" value="${esc(value)}" aria-describedby="value-error">` : `<input name="value" value="${esc(value)}" maxlength="${selected === "displayName" || selected === "arabicName" ? 255 : 100}" aria-describedby="value-error">`;
+  let message = `Enter a value that follows the rules for ${label.toLowerCase()}.`;
+  if (selected === "birthDate") {
+    const valid = /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`));
+    message = valid ? "You need to be at least 16 to complete a StudentHub profile." : "Enter a valid birth date that is not in the future.";
+  }
+  write(400, "Edit profile", `<main id="main" class="profile-main"><h1>Change ${label}<span class="accent">.</span></h1><form method="post" action="${PREVIEW}"><input type="hidden" name="field" value="${selected}"><label>${label}${control}</label><p id="value-error">${message}</p><button class="button primary" type="submit">Review change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
 }
 export async function handleProfileEditPage(request: IncomingMessage, response: ServerResponse, service: ProfileEdit | undefined, origin: string | undefined, write: ProfileEditPageWriter, shownValue?: ShownProfileValue): Promise<boolean> {
   const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
