@@ -1,19 +1,31 @@
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 
-export const REQUIRED_DEPLOYMENT_ENV = Object.freeze([
-  "DATABASE_URL",
-  "OIDC_ISSUER",
-  "OIDC_CLIENT_ID",
-  "OIDC_CLIENT_SECRET",
-  "OIDC_CALLBACK_URL",
-  "OIDC_AUTHORIZATION_URL",
-  "OIDC_TOKEN_URL",
-  "OIDC_JWKS_URL",
-  "LOGIN_ALLOWED_RETURN_URLS",
+export const CONFIG_SCHEMA = Object.freeze([
+  Object.freeze({ name: "DATABASE_URL", required: true, kind: "url", secret: true }),
+  Object.freeze({ name: "OIDC_ISSUER", required: true, kind: "url", secret: false }),
+  Object.freeze({ name: "OIDC_CLIENT_ID", required: true, kind: "string", secret: false }),
+  Object.freeze({ name: "OIDC_CLIENT_SECRET", required: true, kind: "string", secret: true }),
+  Object.freeze({ name: "OIDC_CALLBACK_URL", required: true, kind: "url", secret: false }),
+  Object.freeze({ name: "OIDC_AUTHORIZATION_URL", required: true, kind: "url", secret: false }),
+  Object.freeze({ name: "OIDC_TOKEN_URL", required: true, kind: "url", secret: false }),
+  Object.freeze({ name: "OIDC_JWKS_URL", required: true, kind: "url", secret: false }),
+  Object.freeze({ name: "LOGIN_ALLOWED_RETURN_URLS", required: true, kind: "url-list", secret: false }),
+  Object.freeze({ name: "HOST", required: false, kind: "literal", secret: false, literal: "0.0.0.0" }),
+  Object.freeze({ name: "PLATFORM_DATABASE_HOSTS", required: false, kind: "host-list", secret: false }),
 ]);
 
+export const REQUIRED_DEPLOYMENT_ENV = Object.freeze(
+  CONFIG_SCHEMA.filter(({ required }) => required).map(({ name }) => name),
+);
+
 export function validateDeploymentEnv(env = process.env) {
+  const declaredNames = new Set(CONFIG_SCHEMA.map(({ name }) => name));
+  const unknown = Object.keys(env).find(
+    (name) => (name.startsWith("OIDC_") || name.startsWith("LOGIN_")) && !declaredNames.has(name),
+  );
+  if (unknown) throw new Error(`unknown configuration variable ${unknown}`);
+
   const missing = REQUIRED_DEPLOYMENT_ENV.filter((name) => !env[name]?.trim());
   if (missing.length > 0) {
     throw new Error(`missing required deployment variables: ${missing.join(", ")}`);
@@ -53,6 +65,20 @@ export function validateDeploymentEnv(env = process.env) {
     profileUrl.username = "";
     profileUrl.password = "";
     throw new Error(`LOGIN_ALLOWED_RETURN_URLS must include ${profileUrl.href}`);
+  }
+
+  for (const { name, kind } of CONFIG_SCHEMA) {
+    const value = env[name];
+    if (value === undefined || kind === "string" || kind === "literal" || name === "DATABASE_URL" || name === "OIDC_CALLBACK_URL") continue;
+    const parts = kind === "url-list" || kind === "host-list" ? value.split(",").map((part) => part.trim()) : [value];
+    if (parts.some((part) => !part)) throw new Error(`${name} must be a valid ${kind}`);
+    if (kind === "url" || kind === "url-list") {
+      try {
+        for (const part of parts) new URL(part);
+      } catch {
+        throw new Error(`${name} must be a valid ${kind}`);
+      }
+    }
   }
 }
 
