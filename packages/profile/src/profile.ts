@@ -18,6 +18,7 @@ import {
   type OwnProfileReadResult,
   type OwnProfilePreferencesReader,
   type PendingProfileRequirement,
+  type ProfileChoice,
   type ProfileField,
   type UnavailableProfileField,
 } from "./types.js";
@@ -129,15 +130,17 @@ const PROFILE_FIELD_SPECS = Object.freeze({
   language: fieldSpec("candidate_language_pref", "Language", "Production language preference, en or ar.", exactEnum<LanguagePreference>(new Map([["en", "en"], ["ar", "ar"]]))),
   area: fieldSpec("candidate_area_uuid→area.area_name_en", "Area", "Approved display value resolved from the production area foreign key; coordinates are excluded.", text(255)),
   drivingLicence: fieldSpec("candidate_driving_license", "Driving licence", "Production code 1/2 mapped to yes/no.", exactEnum<boolean>(new Map([[1, true], [2, false]]))),
-  jobSearchStatus: fieldSpec("candidate_job_search_status", "Job-search status", "Production code 0/1/2 mapped to not looking/active/open to offers.", exactEnum<JobSearchStatus>(new Map([[0, "not_looking"], [1, "active"], [2, "open_to_offers"]]))),
+  kuwaitiMother: fieldSpec("candidate_mom_kuwaiti", "Kuwaiti mother", "Whether a non-Kuwaiti person has a Kuwaiti mother.", exactEnum<boolean>(new Map<unknown, boolean>([[1, true], [0, false], [true, true], [false, false]]))),
+  jobSearchStatus: fieldSpec("candidate_job_search_status", "Looking for work", "Production code 0/1/2 mapped to not looking/active/open to offers.", exactEnum<JobSearchStatus>(new Map([[0, "not_looking"], [1, "active"], [2, "open_to_offers"]]))),
   committed: fieldSpec("candidate_committed", "Committed", "Production 0/1 commitment marker mapped to a boolean.", exactEnum<boolean>(new Map([[0, false], [1, true]]))),
   isProfileCompleted: fieldSpec("is_incomplete_profile", "Profile complete", "Inverse of the imported production incomplete marker, whose final reviewed meaning includes conditional Kuwaiti-mother, education and skill requirements.", (value) => !exactEnum<boolean>(new Map([[0, false], [1, true]]))(value, "")),
   pendingFields: fieldSpec("candidate_pending_profile", "Pending profile requirements", "Closed safe names for all reviewed production completeness requirements; values and document locations are never included.", pendingFields),
   employeeIdentifier: fieldSpec("candidate_id", "Employee identifier", "Display-only C plus the production candidate id padded to at least five digits.", candidateIdentifier),
   civilExpired: fieldSpec("candidate_civil_expiry_date", "Civil ID expired", "Boolean derived by comparing the recorded expiry date with the response date; the date and civil number are excluded.", (value, today) => dateOnly(value) < today),
 } satisfies Record<OwnProfileFieldName, FieldSpec>);
+const KUWAITI_MOTHER_SPEC = fieldSpec("candidate_mom_kuwaiti", "Kuwaiti mother", "Whether a non-Kuwaiti person has a Kuwaiti mother.", exactEnum<boolean>(new Map<unknown, boolean>([[1, true], [0, false], [true, true], [false, false]])));
 
-export const OWN_PROFILE_FIELD_NAMES = Object.freeze(Object.keys(PROFILE_FIELD_SPECS) as OwnProfileFieldName[]);
+export const OWN_PROFILE_FIELD_NAMES = Object.freeze(Object.keys(PROFILE_FIELD_SPECS).filter(name => name !== "kuwaitiMother") as OwnProfileFieldName[]);
 
 export const OWN_PROFILE_FIELD_CONTRACT: Readonly<Record<OwnProfileFieldName, OwnProfileFieldContract>> =
   Object.freeze(Object.fromEntries(OWN_PROFILE_FIELD_NAMES.map((name) => {
@@ -184,7 +187,8 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime", WrittenPreference>>>;
+type ChoiceField = "gender" | "birthDate" | "nationality" | "university" | "drivingLicence" | "kuwaitiMother" | "jobSearchStatus";
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string; profileChoices?: readonly ProfileChoice[] } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | ChoiceField, WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -219,12 +223,40 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
     }
   }
+  const choices = preferences.profileChoices ?? [];
+  const writtenChoiceIds: Partial<Record<"nationality" | "university", string>> = {};
+  let kuwaitiMother: ProfileField<boolean> | undefined;
+  for (const name of ["gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const) {
+    const preference = preferences[name]; if (!preference) continue;
+    try {
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(preference.updatedAt) || !Number.isFinite(Date.parse(preference.updatedAt))) throw new TypeError("malformed preference timestamp");
+      if (preference.value === null) fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
+      else {
+        let value: unknown = preference.value;
+        if (name === "nationality" || name === "university") {
+          const choice = choices.find(item => item.id === preference.value && item.type === (name === "nationality" ? "country" : "university"));
+          if (!choice) throw new TypeError("unknown profile choice"); value = choice.name; writtenChoiceIds[name] = choice.id;
+        } else if (name === "drivingLicence") {
+          if (typeof value !== "boolean") throw new TypeError("malformed boolean");
+        } else value = PROFILE_FIELD_SPECS[name].parse(value, profile.asOfDate);
+        fields[name] = written(PROFILE_FIELD_SPECS[name], value as never, preference.updatedAt) as never;
+      }
+    } catch {
+      fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
+    }
+  }
+  const motherPreference = preferences.kuwaitiMother;
+  if (motherPreference) kuwaitiMother = motherPreference.value === null
+    ? Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(KUWAITI_MOTHER_SPEC.sourceField), freshness: Object.freeze({ kind: "written_by_person", observedAt: motherPreference.updatedAt }) })
+    : written(KUWAITI_MOTHER_SPEC, Boolean(motherPreference.value), motherPreference.updatedAt);
   // Imported completeness cannot describe a profile once a platform-owned
   // field has been written. Nobody wrote these derived fields themselves.
   for (const name of ["isProfileCompleted", "pendingFields"] as const) {
     fields[name] = unavailable(PROFILE_FIELD_SPECS[name], "", "not_recorded") as never;
   }
-  return Object.freeze({ ...profile, fields: Object.freeze(fields) });
+  const birth = fields.birthDate;
+  if (birth.state === "available" && birth.freshness.kind === "written_by_person") fields.age = written(PROFILE_FIELD_SPECS.age, ageOn(String(birth.value), profile.asOfDate), birth.freshness.observedAt);
+  return Object.freeze({ ...profile, fields: Object.freeze(fields), profileChoices: choices, writtenChoiceIds: Object.freeze(writtenChoiceIds), ...(kuwaitiMother ? { kuwaitiMother } : {}) });
 }
 
 function importedAt(row: Readonly<Record<string, unknown>>): string {

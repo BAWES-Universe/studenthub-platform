@@ -97,3 +97,25 @@ test("SHU372_OWNER another record and ownership lost after preview are refused",
   x.loseOwner();
   assert.deepEqual(await x.writer.confirm({ ...request, token: preview.token }), { ok: false, reason: "not_own_record" });
 });
+
+test("SHU373_WRITE choice values use the shared safe-write flow", async () => {
+  for (const [field, value] of Object.entries({ gender: "male", birthDate: "2000-02-29", nationality: "11111111-1111-4111-8111-111111111111", university: "", drivingLicence: "true", kuwaitiMother: "false", jobSearchStatus: "active" })) {
+    assert.equal(normalizePersonSelfEditValue(field as never, value), value);
+  }
+});
+
+test("SHU373_AGE minimum age uses Kuwait's calendar date and one setting", async () => {
+  const values = new Map<string,string|null>();
+  const store: SafeWriteStore = { ownedRecord: async () => "b".repeat(64), readField: async (_r,f) => values.get(f) ?? null, commit: async () => ({ ok: true }) };
+  const writer = createPersonSelfEdit({ store, secret: "s".repeat(32), clock: { now: () => new Date("2026-10-30T21:30:00.000Z") } });
+  const request = (value:string) => ({ principalRef: "a".repeat(64), change: { personRef: "b".repeat(64), field: "birthDate", value } });
+  assert.equal((await writer.preview(request("2010-10-31"))).ok, true);
+  assert.deepEqual(await writer.preview(request("2010-11-01")), { ok: false, reason: "invalid_value" });
+});
+
+test("SHU373_CATALOGUE written ids resolve to names and an unknown id affects only its field", async () => {
+  const preferences = { nationality: { value: "11111111-1111-4111-8111-111111111111", updatedAt: "2026-10-30T12:00:00.000Z" }, university: { value: "22222222-2222-4222-8222-222222222222", updatedAt: "2026-10-30T12:00:00.000Z" }, profileChoices: [{ id: "11111111-1111-4111-8111-111111111111", type: "country", name: "Jordan", code: "JO" }] };
+  const repository = new OwnProfileRepository({ principals: { getPrincipal: async () => ({ id: "person", pbuuids: [] }) }, source: { resolveLink: async () => ({ kind: "unconfigured" }) as const, readCandidate: async () => undefined }, preferences: { readOwnPreferences: async () => preferences } as never, today: () => "2026-10-31" });
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" }); assert.equal(result.kind,"found");
+  if(result.kind === "found") { assert.equal(result.profile.fields.nationality.state,"available"); assert.equal(result.profile.fields.university.state,"unavailable"); }
+});

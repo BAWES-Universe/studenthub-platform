@@ -319,7 +319,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
   pendingFields: (value) => Array.isArray(value) && value.length > 0
@@ -347,17 +347,29 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
   const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
   const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
-  const rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
+  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"]);
+  const choices = profile.profileChoices ?? [], selectedIds = profile.writtenChoiceIds ?? {};
+  const nationalityChoice = choices.find(choice => choice.type === "country" && choice.id === selectedIds.nationality);
+  const offerKuwaitiMother = profile.kuwaitiMother !== undefined || (nationalityChoice !== undefined && nationalityChoice.code !== "KW");
+  const orderedFields = ["jobSearchStatus", ...OWN_PROFILE_FIELD_NAMES.filter(field => field !== "jobSearchStatus")] as OwnProfileFieldName[];
+  const rows = orderedFields.map((field) => {
     const row = fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
       const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";
-      const control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
+      const radios = (values: readonly (readonly [string,string])[]) => values.map(([option,label]) => `<label><input type="radio" name="value" value="${option}"${value === option ? " checked" : ""}>${label}</label>`).join("");
+      const select = (type: "country" | "university") => `<select name="value">${type === "university" ? `<option value=""${!selectedIds.university ? " selected" : ""}>None</option><option value="not-listed">Not listed</option>` : ""}${choices.filter(choice => choice.type === type).map(choice => `<option value="${escapeHtml(choice.id)}"${selectedIds[field as "nationality" | "university"] === choice.id ? " selected" : ""}>${escapeHtml(choice.name)}</option>`).join("")}</select>${type === "university" ? "<small>Can’t find yours? Choose Not listed. Staff add new universities.</small>" : ""}`;
+      const control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>`
+        : field === "gender" ? radios([["male","Male"],["female","Female"],["other","Other"]])
+        : field === "drivingLicence" ? radios([["true","Yes"],["false","No"]])
+        : field === "jobSearchStatus" ? radios([["not_looking","Not looking right now"],["active","Actively looking"],["open_to_offers","Open to offers"]])
+        : field === "birthDate" ? `<input type="date" name="value" value="${escapeHtml(value)}">`
+        : field === "nationality" ? select("country") : field === "university" ? select("university")
+        : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
       return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
     return row;
-  }).join("");
+  }).join("") + (offerKuwaitiMother ? (() => { const mother = profile.kuwaitiMother ?? { state: "unavailable" as const, reason: "not_recorded" as const, provenance: profile.fields.nationality.provenance, freshness: { kind: "not_imported" as const, observedAt: "" as const } }; const observed = mother.freshness.observedAt.slice(0,10), source = mother.freshness.kind === "written_by_person" ? `Updated by you · ${escapeHtml(observed)}` : `StudentHub snapshot · ${escapeHtml(observed)}`; const value = mother.state === "available" ? String(mother.value) : ""; const form = login.profileEdit ? `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label>Change Kuwaiti mother<label><input type="radio" name="value" value="true"${value === "true" ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false"${value === "false" ? " checked" : ""}>No</label></label><button class="button primary" type="submit">Review change</button></form>` : ""; return `<div><dt>Kuwaiti mother</dt><dd>${fieldText(mother, v => v ? "Yes" : "No")}</dd><small class="field-meta">${source}</small>${form}</div>`; })() : "");
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 

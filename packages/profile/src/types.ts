@@ -67,6 +67,7 @@ export interface OwnProfileFields {
   readonly language: ProfileField<LanguagePreference>;
   readonly area: ProfileField<string>;
   readonly drivingLicence: ProfileField<boolean>;
+  readonly kuwaitiMother: ProfileField<boolean>;
   readonly jobSearchStatus: ProfileField<JobSearchStatus>;
   readonly committed: ProfileField<boolean>;
   readonly isProfileCompleted: ProfileField<boolean>;
@@ -83,7 +84,12 @@ export interface OwnProfileProjection {
   /** Date used for age and civil-expiry derivations. */
   readonly asOfDate: string;
   readonly fields: Readonly<OwnProfileFields>;
+  readonly profileChoices?: readonly ProfileChoice[];
+  readonly writtenChoiceIds?: Readonly<Partial<Record<"nationality" | "university", string>>>;
+  readonly kuwaitiMother?: ProfileField<boolean>;
 }
+
+export interface ProfileChoice { readonly id: string; readonly type: "country" | "university"; readonly name: string; readonly code?: string }
 
 export interface OwnProfileFieldContract {
   readonly label: string;
@@ -124,5 +130,5 @@ export interface OwnProfileReader {
 
 /** Platform-owned profile values, read in one fixed-cost lookup for one person. */
 export interface OwnProfilePreferencesReader {
-  readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown; updatedAt: string }> | null>;
+  readOwnPreferences(principalId: string): Promise<Readonly<Record<string, unknown>> | null>;
 }

@@ -9,8 +9,9 @@ import {
   type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 
-export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime"] as const;
+export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"] as const;
 export type PersonSelfEditField = (typeof PERSON_SELF_EDIT_FIELDS)[number];
+export const PERSON_PROFILE_MINIMUM_AGE = 16;
 
 export const SHU372_RULES = Object.freeze({
   displayName: Object.freeze({ maxLength: 255, allowClear: false, accepts: ["Noor Al-Sabah", "Abdul-Aziz Al Saud", "O'Brien Smith", "St.John Smith", "نور الصباح"], refuses: ["Noor", "Ahmed 3", " Noor Al-Sabah", "Noor  Al-Sabah", "Noor\u00a0Al-Sabah", "O''Brien Smith", ".Noor Smith", "Noor. Smith"] }),
@@ -18,7 +19,7 @@ export const SHU372_RULES = Object.freeze({
   objective: Object.freeze({ maxLength: 100, allowClear: true, accepts: ["Build welcoming customer experiences", ""], refuses: [" a", "a  b", "a\u00a0\u00a0b"] }),
   intro: Object.freeze({ maxLength: 5_000, allowClear: true, accepts: ["Student and part-time retail teammate.", "", "a"], refuses: ["a  b", " a"] }),
   preferredTime: Object.freeze({ maxLength: 100, allowClear: true, accepts: ["Weekday evenings", ""], refuses: ["Weekday  evenings", " evenings", "Build teams\u00a0", "Weekday\u00a0\u00a0evenings"] }),
-} satisfies Record<PersonSelfEditField, { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
+} satisfies Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime", { maxLength: number; allowClear: boolean; accepts: readonly string[]; refuses: readonly string[] }>);
 
 const FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 const NAME = /^[\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*(?: [\p{L}\p{M}]+(?:['.-][\p{L}\p{M}]+)*)+$/u;
@@ -27,6 +28,13 @@ const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06
 export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.normalize("NFC");
+  if (field === "gender") return ["male", "female", "other"].includes(normalized) ? normalized : null;
+  if (field === "drivingLicence") return ["true", "false"].includes(normalized) ? normalized : null;
+  if (field === "kuwaitiMother") return ["", "true", "false"].includes(normalized) ? normalized : null;
+  if (field === "jobSearchStatus") return ["not_looking", "active", "open_to_offers"].includes(normalized) ? normalized : null;
+  if (field === "nationality") return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized) ? normalized : null;
+  if (field === "university") return normalized === "" || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized) ? normalized : null;
+  if (field === "birthDate") return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
   const rule = SHU372_RULES[field];
   if ([...normalized].length > rule.maxLength || FORBIDDEN.test(normalized)) return null;
   if (normalized === "") return rule.allowClear ? "" : null;
@@ -47,7 +55,17 @@ export function createPersonSelfEdit(options: {
   });
   const normalize = <T extends PreviewRequest | ConfirmRequest>(request: T): T | null => {
     if (!PERSON_SELF_EDIT_FIELDS.includes(request.change.field as PersonSelfEditField)) return request;
-    const value = normalizePersonSelfEditValue(request.change.field as PersonSelfEditField, request.change.value);
+    const selected = request.change.field as PersonSelfEditField;
+    const value = normalizePersonSelfEditValue(selected, request.change.value);
+    if (selected === "birthDate" && value !== null) {
+      const parts = value.split("-").map(Number), date = new Date(Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!));
+      if (date.getUTCFullYear() !== parts[0] || date.getUTCMonth() !== parts[1]! - 1 || date.getUTCDate() !== parts[2]) return null;
+      const now = options.clock?.now() ?? new Date();
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+      const [year, month, day] = today.split("-").map(Number);
+      const minimum = new Date(Date.UTC(year!, month! - 1, day!)); minimum.setUTCFullYear(minimum.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE);
+      if (date > minimum) return null;
+    }
     return value === null ? null : { ...request, change: { ...request.change, value } };
   };
   return Object.freeze({
