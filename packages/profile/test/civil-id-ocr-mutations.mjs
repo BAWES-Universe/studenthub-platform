@@ -1,0 +1,3 @@
+import assert from "node:assert/strict";import {readFile} from "node:fs/promises";
+const source=await readFile(new URL("../dist/civil-id-ocr.js",import.meta.url),"utf8");
+for(const [name,needle] of [["OCR_PARSE","expiry = date"],["OCR_PARSE","normalizeCivilIdNumber"],["OCR_JOB","documentId === p.documentId"],["OCR_JOB","o.store.current"],["OCR_LEASE","j.leaseOwner === owner"],["OCR_FAILURE","e instanceof CivilIdOcrError"],["OCR_FAILURE",'status: "unreadable"'],["OCR_SECRECY","numberCiphertext"],["OCR_REVIEW","needsReview: true"],["OCR_BASELINE","if (!this.baseline)"]])assert.equal(source.includes(needle),true,`${name} mutation binding missing: ${needle}`);

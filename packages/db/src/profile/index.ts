@@ -11,3 +11,5 @@ export { PostgresLegacyLinkStore, LegacyCandidateAlreadyLinkedError, PrincipalAl
 export type { LegacyLinkMethod, LegacyLinkStatus, LegacySnapshotPort } from "../postgres-legacy-link-store.js";
 Object.defineProperty(PostgresPersonProfileStore, "CivilIdStore", { value: PostgresPersonCivilIdStore });
 export { PostgresPersonLocationStore } from "../postgres-person-location-store.js";
+export { PostgresCivilIdOcrStore } from "../postgres-civil-id-ocr-store.js";
+export type { PostgresCivilIdOcrStoreOptions } from "../postgres-civil-id-ocr-store.js";
