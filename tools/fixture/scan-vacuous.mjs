@@ -33,13 +33,44 @@ function testName(source, callIndex) {
 }
 
 function braceBody(source, callIndex) {
-  const open = source.indexOf("{", callIndex);
-  if (open === -1) return null;
+  let open = -1;
   let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let i = callIndex; i < source.length; i += 1) {
     const ch = source[i];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
+    const next = source[i + 1];
+
+    if (lineComment) {
+      if (ch === "\n" || ch === "\r") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === "*" && next === "/") {
+        blockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      lineComment = true;
+      i += 1;
+    } else if (ch === "/" && next === "*") {
+      blockComment = true;
+      i += 1;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+    } else if (ch === "{") {
+      if (open === -1) open = i;
+      depth += 1;
+    } else if (ch === "}" && open !== -1) {
       depth -= 1;
       if (depth === 0) return { start: open, end: i, text: source.slice(open, i + 1) };
     }

@@ -68,6 +68,5 @@ test("does not stop a body at a closing brace inside a string literal", () => {
   const report = scanVacuousTests(
     'test("string-brace", () => { const value = "}"; assert.ok(value); });',
   );
-  const expected = [];
-  assert.deepEqual(expected, []);
+  assert.deepEqual(report, []);
 });
