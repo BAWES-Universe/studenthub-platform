@@ -65,8 +65,9 @@ export async function handleReferenceDataPage(ctx: GatewayRouteContext): Promise
       const item = await ctx.catalogue.resolveHistorical(type, id);
       if (!item) return plain(ctx, 404);
       const removed = item.status === "deleted";
+      const escapedName = escapeHtml(String(item.name));
       const details = `<dl><dt>Code</dt><dd>${escapeHtml(item.code ?? "None")}</dd><dt>State</dt><dd>${removed ? "Removed" : "Active"}</dd><dt>Created</dt><dd>${escapeHtml(item.createdAt)}</dd><dt>Updated</dt><dd>${escapeHtml(item.updatedAt)}</dd>${removed ? `<dt>Removed</dt><dd>${escapeHtml(item.deletedAt)}</dd>` : ""}</dl>`;
-      ctx.writeHtml(ctx.response, 200, ctx.pageDocument(item.name, `<main id="main" class="profile-main"><nav aria-label="Breadcrumb"><a href="/reference-data">Reference data</a></nav><p><a href="/reference-data/${type}">Back to ${LABELS[type]}</a></p><h1>${escapeHtml(item.name)}</h1>${details}</main>`));
+      ctx.writeHtml(ctx.response, 200, ctx.pageDocument(item.name, `<main id="main" class="profile-main"><nav aria-label="Breadcrumb"><a href="/reference-data">Reference data</a></nav><p><a href="/reference-data/${type}">Back to ${LABELS[type]}</a></p><h1>${escapedName}</h1>${details}</main>`));
     } catch (error) {
       if (error instanceof CatalogueError && error.code === "invalid_catalogue_id") return plain(ctx, 404);
       return unavailable(ctx);

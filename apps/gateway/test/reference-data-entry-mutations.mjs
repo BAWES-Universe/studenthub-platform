@@ -8,7 +8,7 @@ const page = new URL("src/reference-data-page.js", dist);
 const suite = fileURLToPath(new URL("test/reference-data-entry.test.js", dist));
 const hook = new URL("./helpers/swap-module.mjs", import.meta.url).href;
 const cases = [
-  ["drop the entry-name escape", "REFENTRY_SHOW staff", "REFENTRY_SHOW entry names are escaped", "escapeHtml(item.name)}</h1>", "String(item.name)}</h1>"],
+  ["drop the entry-name escape", "REFENTRY_SHOW staff", "REFENTRY_SHOW entry names are escaped", "const escapedName = escapeHtml(String(item.name));", "const escapedName = String(item.name);"],
   ["answer 200 for an unknown id", "REFENTRY_FIND reads", "REFENTRY_FIND unknown entries are 404", "if (!item)\n                return plain(ctx, 404);", "if (!item) { ctx.writeHtml(ctx.response, 200, \"\"); return true; }"],
   ["read before the staff check", "REFENTRY_DENY authenticates", "REFENTRY_DENY refused people never resolve an entry", "    let navigation;", "    await ctx.catalogue?.resolveHistorical(match[1], match[2]);\n    let navigation;"],
   ["answer a thrown entry read as 404", "REFENTRY_UNAVAILABLE dependency", "REFENTRY_UNAVAILABLE dependency failure is 503", "if (error instanceof CatalogueError && error.code === \"invalid_catalogue_id\")\n                return plain(ctx, 404);\n            return unavailable(ctx);", "if (error instanceof CatalogueError && error.code === \"invalid_catalogue_id\")\n                return plain(ctx, 404);\n            return plain(ctx, 404);"],
