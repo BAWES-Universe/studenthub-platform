@@ -41,7 +41,11 @@ export class PostgresPersonProfileStore {
       ||typeof s?.contractVersion!=="string"||!/^\d+\.\d+\.\d+$/.test(s.contractVersion)
       ||typeof s?.changeSetDigest!=="string"||!REFERENCE.test(s.changeSetDigest)
       ||typeof s?.committedAt!=="string"||!Number.isFinite(Date.parse(s.committedAt))
-      ||!Array.isArray(s?.fields)||s.fields.length!==1||!SELF_EDIT_FIELDS.includes(s.fields[0])) throw new Error("malformed profile receipt");
+      ||!Array.isArray(s?.fields)||s.fields.length!==1||typeof s.fields[0]!=="string") throw new Error("malformed profile receipt");
+    // profile.safe_write is shared with the language card. A valid receipt for
+    // that route is deliberately indistinguishable from an unknown reference.
+    if(s.fields[0]==="language") return null;
+    if(!SELF_EDIT_FIELDS.includes(s.fields[0] as SelfEditField)) throw new Error("malformed profile receipt");
     return Object.freeze({contractVersion:s.contractVersion,receiptRef:row.request_ref,personRef:s.personRef,principalRef:row.actor_principal_ref,changeSetDigest:s.changeSetDigest,fields:Object.freeze(s.fields),committedAt:s.committedAt});
   }
   async readOwnPreferences(principalId:string): Promise<Readonly<{language:unknown;updatedAt:string}>|null> {

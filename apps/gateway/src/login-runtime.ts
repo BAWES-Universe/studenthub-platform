@@ -43,12 +43,20 @@ import {createOrganizationCreation}from"./organization-creation.js";
 import {createPayContracts}from"./pay-contracts-http.js";
 import { createBankDetails } from "./bank-details.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
+import type { Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
 }
 
 const DEFAULT_OIDC_HTTP_TIMEOUT_MS = 10_000;
+
+export function languageReceiptStore(store: {forPrincipal(id:string):SafeWriteStore;readReceipt(id:string,ref:string):Promise<Receipt|null>}) {
+  return {
+    forPrincipal:(id:string)=>store.forPrincipal(id),
+    readReceipt:async(id:string,ref:string)=>{try{return await store.readReceipt(id,ref);}catch(error){if(error instanceof Error&&error.message==="malformed safe-write receipt")return null;throw error;}},
+  };
+}
 
 export class HttpOidcTransport implements OidcTransport {
   readonly #issuer: string;
@@ -287,12 +295,7 @@ export function createRuntimeLoginFromEnv(
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
       ...(safeWrites && safeWriteKey
-        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: {
-          forPrincipal:(id:string)=>safeWrites.forPrincipal(id),
-          // profile.safe_write is shared by the language and text cards. A
-          // well-formed receipt for the other card is unknown on this route.
-          readReceipt:async(id:string,ref:string)=>{try{return await safeWrites.readReceipt(id,ref);}catch(error){if(error instanceof Error&&error.message==="malformed safe-write receipt")return null;throw error;}},
-        }, secret: safeWriteKey }) }
+        ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: languageReceiptStore(safeWrites), secret: safeWriteKey }) }
         : {}),
       ...(personProfiles&&safeWriteKey?{profileEdit:createProfileEdit({sessions:loginStore.sessions,store:personProfiles,secret:safeWriteKey})}:{}),
       ...(bankDetailsStore && banks && safeWriteKey

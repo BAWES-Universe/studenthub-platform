@@ -5,6 +5,7 @@ import { createProfileEdit, handleProfileEdit, handleProfileEditPage, type Profi
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { personRecordRef, safeWritePrincipalRef } from "@studenthub/db";
 import type { CommitInput, Receipt, SafeWriteStore } from "@studenthub/safe-write-contract";
+import { languageReceiptStore } from "../src/login-runtime.js";
 
 function fixture() {
   const sessions={get:async(id:string)=>id==="mine"?{id,personId:"person-a"}:id==="other"?{id,personId:"person-b"}:undefined};
@@ -48,4 +49,11 @@ test("SHU372_WRITE HTTP routes enforce method, origin, cookie shape, size and pr
   assert.equal(await handleProfileEdit(request(`/profile/receipts/${"a".repeat(64)}`,"GET"),response().r,service,ORIGIN),false);
   out=await send("/profile/edit/confirm","PUT");assert.equal(out.status,404);
   out=await send("/profile/edit/preview","POST","x".repeat(32769),{"content-type":"application/json",origin:ORIGIN,"content-length":"32769"});assert.equal(out.status,400);
+});
+
+test("SHU372_WRITE shared-operation receipts are unknown on the other card's route",async()=>{
+  const safeStore:SafeWriteStore={ownedRecord:async()=>null,readField:async()=>null,commit:async()=>({ok:false,reason:"not_own_record"})};
+  const language=languageReceiptStore({forPrincipal:()=>safeStore,readReceipt:async()=>{throw new Error("malformed safe-write receipt");}});
+  assert.equal(await language.readReceipt("person-a","a".repeat(64)),null);
+  await assert.rejects(languageReceiptStore({forPrincipal:()=>safeStore,readReceipt:async()=>{throw new Error("database unavailable");}}).readReceipt("person-a","a".repeat(64)),/database unavailable/);
 });

@@ -194,7 +194,7 @@ export function createGatewayServer(
       })) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
     const profileEdit=(login as BrowserLoginApplication&{profileEdit?:ProfileEdit}|undefined)?.profileEdit;
-    if(await handleProfileEditPage(request,response,profileEdit,login?.web?.origin,(status,title,body)=>writeHtml(response,status,pageDocument(title,body)),async(sessionId,field)=>{if(!sessionId||!login?.web)return undefined;const auth=await login.profile({sessionId});const id=auth.status===200?auth.body?.personId:undefined;if(typeof id!=="string")return undefined;const result=await login.web.profiles.readOwn({requesterPrincipalId:id,targetPersonId:id});const value=result.kind==="found"?result.profile.fields[field]:undefined;return value?.state==="available"?String(value.value):undefined;}))return;
+    if(await handleProfileEditPage(request,response,profileEdit,login?.web?.origin,(status,title,body)=>writeHtml(response,status,status===401?renderError(401,login):pageDocument(title,body)),async(sessionId,field)=>{if(!sessionId||!login?.web)return undefined;const auth=await login.profile({sessionId});const id=auth.status===200?auth.body?.personId:undefined;if(typeof id!=="string")return undefined;const result=await login.web.profiles.readOwn({requesterPrincipalId:id,targetPersonId:id});const value=result.kind==="found"?result.profile.fields[field]:undefined;return value?.state==="available"?String(value.value):undefined;}))return;
     if(await handleProfileEdit(request,response,profileEdit,login?.web?.origin))return;
     if (await handleBankDetails(request, response, login?.bankDetails, login?.web?.origin)) return;
     if (await handleOrganizationProfile(request, response,
