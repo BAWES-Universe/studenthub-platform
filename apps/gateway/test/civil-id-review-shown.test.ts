@@ -43,7 +43,7 @@ test("REV_SIDEBAR full staff gate controls the real workspace link and one count
   assert.equal(calls,1,"REV_SIDEBAR countPending runs once");
   for(const [org,role,scope] of [["candidate-documents","staff","subtree"],["root","staff","self"],["root","org-owner","subtree"],["root","employer","subtree"],["root","candidate","self"]] as const){
     let deniedCalls=0;
-    const configured=await startRealProfileServer(t,{civilIdReview:{staffGrant:{orgId:org,role:role as "staff",scope},wrapStore:s=>delegate(s,{countPending:async i=>{deniedCalls++;return s.countPending(i)}})},extend:()=>({navigation:navigation(org,role) as never})});
+    const configured=await startRealProfileServer(t,{civilIdReview:{staffGrant:{orgId:org==="candidate-documents"?"root":org,role:role as "staff",scope},wrapStore:s=>delegate(s,{countPending:async i=>{deniedCalls++;return s.countPending(i)}})},extend:()=>({navigation:navigation(org,role) as never})});
     const plain=await startRealProfileServer(t,{extend:()=>({navigation:navigation(org,role) as never})});
     assert.equal(await(await configured.get(`/workspace?org_id=${org}&role=${role}`)).text(),await(await plain.get(`/workspace?org_id=${org}&role=${role}`)).text(),"REV_SIDEBAR denied page stays byte-identical");
     assert.equal(deniedCalls,0,"REV_SIDEBAR denied gate never counts");
