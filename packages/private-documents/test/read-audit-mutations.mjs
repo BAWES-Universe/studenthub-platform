@@ -10,7 +10,7 @@ const mutations=[
  ['audit uses writer pool','RA_NO_LOCK','r2-storage.js',"await this.reader.query('INSERT INTO candidate_document_read_audit","await this.pool.query('INSERT INTO candidate_document_read_audit",'r2-postgres.test.mjs',true],
  ['audit insert skipped','RA_AUDIT_ROW','r2-storage.js',"await this.reader.query('INSERT INTO candidate_document_read_audit (id, operation, principal_ref, occurred_at) VALUES (gen_random_uuid(), $1, $2, to_timestamp($3 / 1000.0))', [entry.operation, entry.principalRef, entry.at]);","await Promise.resolve();",'r2-postgres.test.mjs',true],
  ['hydrates every row','RA_HYDRATE','r2-storage.js','return fn(s);','await Promise.all([...refs.keys()].map(id => s[documentReadHydrator](id))); return fn(s);','read-audit.test.mjs',false],
- ['audit rejection swallowed','RA_FAIL_CLOSED','candidate-lifecycle.js',"catch {\n                throw new LifecycleError(503, 'unavailable');\n            }","catch { return result; }",'read-audit.test.mjs',false],
+ ['audit rejection swallowed','RA_FAIL_CLOSED','candidate-lifecycle.js',"catch {\n            throw new LifecycleError(503, 'unavailable');\n        }","catch { return result; }",'read-audit.test.mjs',false],
  ['audit before ownership','RA_DENIED','candidate-lifecycle.js','const result = await readPath.read(async (s) => {','await readPath.audit({ operation, principalRef: hash(principalId), at: this.now() }); const result = await readPath.read(async (s) => {','read-audit.test.mjs',false]
 ];
 const sandbox=await mkdtemp(join(tmpdir(),'shu563-mutations-'));

@@ -3,7 +3,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import pg from 'pg';
 import { LifecycleError } from './candidate-lifecycle.js';
-import { DocumentError, documentReadHydrator, validateState, type DocumentState, type DocumentStore } from './index.js';
+import { DocumentError, documentReadHydrator, validateReferencedState, validateState, type DocumentState, type DocumentStore } from './index.js';
 import type { UploadTicket } from './lifecycle-state.js';
 
 const digest = (bytes:Buffer):string => createHash('sha256').update(bytes).digest('hex');
@@ -138,6 +138,7 @@ export class R2DocumentStore implements DocumentStore {
           total+=ref.size;if(total>192*1024*1024)throw new Error('unavailable');
           if('version'in row&&s.documents.includes(row))refs.set(row.id,{row,key,digest:ref.digest,size:ref.size});
         }
+        validateReferencedState(s);
         Object.defineProperty(s,documentReadHydrator,{value:async(id:string)=>{const item=refs.get(id);if(!item)return;const bytes=await this.objects.read(item.key,item.size);if(bytes.length!==item.size||digest(bytes)!==item.digest)throw new Error('unavailable');item.row.data=bytes.toString('base64');}});
         return fn(s);
       },

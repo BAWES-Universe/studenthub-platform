@@ -103,6 +103,27 @@ export function validateState(value: unknown): asserts value is DocumentState {
         ids.add(d.id);
     }
 }
+/** Validate an R2-backed state without fetching its private bodies. Object keys,
+ * sizes and digests are validated by the storage adapter before this check. */
+export function validateReferencedState(value: unknown): asserts value is DocumentState {
+    if (!record(value) || value.format !== 1 || !exact(value, ['format', 'documents', 'retired', 'lifecycle']) || !Array.isArray(value.documents) || !Array.isArray(value.retired))
+        fail('unavailable');
+    if (value.lifecycle !== undefined) {
+        const lifecycle = structuredClone(value.lifecycle) as LifecycleState;
+        for (const upload of lifecycle.uploads) { delete upload.data; delete upload.digest; }
+        validateLifecycleState(lifecycle);
+    }
+    const ids = new Set<string>();
+    for (const d of [...value.documents, ...value.retired]) {
+        if (!record(d) || !exact(d, ['id', 'version', 'type', 'mime', 'size', 'scope', 'acl', 'data']) || typeof d.id !== 'string' || !uuid.test(d.id) || typeof d.version !== 'string' || !uuid.test(d.version) || d.acl !== 'private' || typeof d.data !== 'string' || !d.data.startsWith('r2:') || !Number.isSafeInteger(d.size) || (d.size as number) < 1 || typeof d.type !== 'string' || !types.has(d.type) || typeof d.mime !== 'string')
+            fail('unavailable');
+        const scope = scopeOf(d.scope);
+        if (orgType(d.type) !== (scope.personId === undefined) || (d.type === 'video' ? d.mime !== 'video/mp4' || (d.size as number) > 100 * 1024 * 1024 : (d.size as number) > 10 * 1024 * 1024)) fail('unavailable');
+        const mimeOk = d.type === 'video' ? d.mime === 'video/mp4' : d.type === 'resume' ? d.mime === 'application/pdf' : d.type === 'commercial-licence' ? ['application/pdf','image/png','image/jpeg'].includes(d.mime) : ['image/png','image/jpeg'].includes(d.mime);
+        if (!mimeOk) fail('unavailable');
+    }
+    for (const d of value.documents) { if (ids.has(d.id)) fail('unavailable'); ids.add(d.id); }
+}
 /** Durable private filesystem reference adapter for isolated/synthetic storage.
  * No web root, public ACL or unsigned URL capability. A busy/stale lock fails closed;
  * operator recovery must first prove the old writer stopped. Never steal a lock. */
