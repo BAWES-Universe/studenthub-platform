@@ -4,7 +4,8 @@ import { databaseUrl } from "./connection.js";
 type CivilIdPendingRow={principalId:string;name:string|null;country:"KW"|"BH"|null;numberCiphertext:Buffer|null;expiry:string|null;updatedAt:string;reading:"read"|"unreadable"|"failed"|null};
 type CivilIdDecideResult={ok:true}|{ok:false;reason:"already_decided"|"stale_revision"|"not_waiting"|"own_civil_id"};
 type CivilIdReviewState={state:"waiting"}|{state:"checked"}|{state:"rejected";reason:string}|null;
-type StaffView={viewerPrincipalId:string;subjectPrincipalId:string;kind:string;documentType?:string;documentVersion?:string};
+type StaffViewKind="civil_id_page"|"civil_id_image_issue"|"civil_id_image_deliver"|"person_page"|"person_document_issue"|"person_document_deliver";
+type StaffView={viewerPrincipalId:string;subjectPrincipalId:string;kind:StaffViewKind;documentType?:"personal-photo"|"resume"|"civil-id-front"|"civil-id-back";documentVersion?:string};
 type DecideInput={subjectPrincipalId:string;reviewerPrincipalId:string;decision:"confirmed"|"rejected";reason:string|null;civilRevision:number;frontVersion:string|null;backVersion:string|null;confirmRef:string};
 
 type PendingDb={principal_id:string|null;name:string|null;country:"KW"|"BH"|null;number_ciphertext:Buffer|null;expiry:string|null;updated_at:string|null;reading:"read"|"unreadable"|"failed"|null;total:string};
@@ -14,13 +15,13 @@ export class PostgresCivilIdReviewStore {
  constructor(o:{connectionString?:string;pool?:pg.Pool}={}){this.#owns=!o.pool;this.#pool=o.pool??new pg.Pool({connectionString:o.connectionString??databaseUrl()});}
  async close(){if(this.#owns)await this.#pool.end();}
  async listPending({page,excludePrincipalId}:{page:number;excludePrincipalId:string}){const {rows}=await this.#pool.query<PendingDb>(`WITH queue AS (
- SELECT c.principal_id::text,COALESCE(p.display_name,a.display_name) name,c.country,c.number_ciphertext,c.expiry_date::text expiry,c.updated_at::text updated_at,
+ SELECT c.principal_id::text,COALESCE(p.display_name,a.display_name) name,c.country,c.number_ciphertext,c.expiry_date::text expiry,c.updated_at::text updated_at,c.updated_at updated_at_value,
    CASE WHEN j.status IN ('read','unreadable','failed') THEN j.status END reading
  FROM person_civil_ids c JOIN principals a ON a.id=c.principal_id LEFT JOIN person_profiles p ON p.principal_id=c.principal_id
  LEFT JOIN LATERAL (SELECT status FROM civil_id_ocr_jobs WHERE principal_id=c.principal_id AND side='front' AND superseded_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 1) j ON true
  WHERE c.needs_review AND c.released_at IS NULL AND c.principal_id<>$1::text
-), page AS (SELECT * FROM queue ORDER BY updated_at DESC,principal_id LIMIT 25 OFFSET $2::integer), totals AS (SELECT count(*)::text total FROM queue)
-SELECT page.*,totals.total FROM totals LEFT JOIN page ON true ORDER BY page.updated_at DESC,page.principal_id`,[excludePrincipalId,(Math.max(1,page)-1)*25]);
+), page AS (SELECT * FROM queue ORDER BY updated_at_value DESC,principal_id LIMIT 25 OFFSET $2::integer), totals AS (SELECT count(*)::text total FROM queue)
+SELECT page.principal_id,page.name,page.country,page.number_ciphertext,page.expiry,page.updated_at,page.reading,totals.total FROM totals LEFT JOIN page ON true ORDER BY page.updated_at_value DESC,page.principal_id`,[excludePrincipalId,(Math.max(1,page)-1)*25]);
  return {rows:rows.filter(r=>r.principal_id!==null).map(pending),total:Number(rows[0]?.total??0)};}
  async countPending({excludePrincipalId}:{excludePrincipalId:string}){const {rows}=await this.#pool.query<{total:string}>(`SELECT count(*)::text total FROM person_civil_ids WHERE needs_review AND released_at IS NULL AND principal_id<>$1::text`,[excludePrincipalId]);return Number(rows[0]!.total);}
  async readForDecision(id:string){const {rows}=await this.#pool.query<PendingDb&{revision:number;needs_review:boolean}>(`SELECT c.principal_id::text,COALESCE(p.display_name,a.display_name) name,c.country,c.number_ciphertext,c.expiry_date::text expiry,c.updated_at::text updated_at,c.revision,c.needs_review,
