@@ -43,14 +43,14 @@ async function fixture(t: TestContext, options: { calls?: URLSearchParams[]; una
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address(); assert.ok(address && typeof address !== "string");
-  const get = (path: string, authenticated = true) => fetch(`http://127.0.0.1:${address.port}${path}`, { headers: authenticated ? cookie : { accept: "text/html" } });
-  return { get, store };
+  const request = (path: string, authenticated = true, method = "GET") => fetch(`http://127.0.0.1:${address.port}${path}`, { method, headers: authenticated ? cookie : { accept: "text/html" } });
+  return { get: (path: string, authenticated = true) => request(path, authenticated), request, store };
 }
 
 test("OVW_READ member sees exactly the audience projection", async (t) => {
   const f = await fixture(t);
   const owner = await f.get("/organization/org-a1"); const body = await owner.text();
-  assert.equal(owner.status, 200); assert.equal(owner.headers.get("cache-control"), "no-store");
+  assert.equal(owner.status, 200); assert.match(owner.headers.get("content-type") ?? "", /^text\/html\b/); assert.equal(owner.headers.get("cache-control"), "no-store");
   assert.match(body, /<h1>Synthetic Retail Kuwait City<\/h1>/);
   for (const field of ORGANIZATION_FIELDS_BY_AUDIENCE.employer) {
     assert.ok(body.includes(`>${ORGANIZATION_FIELD_CONTRACT[field].label}<`), `OVW_READ shows ${field}`);
@@ -67,6 +67,7 @@ test("OVW_ROLE role selection is complete, deterministic and strict", async (t) 
   calls.length = 0; assert.equal((await f.get("/organization/org-a?role=staff")).status, 200);
   assert.deepEqual(calls.map(String), ["", "org_id=org-a&role=staff"], "OVW_ROLE explicit opens exact pair");
   calls.length = 0; assert.equal((await f.get("/organization/org-a?role=&x=1")).status, 400); assert.equal(calls.length, 0, "OVW_ROLE invalid query reads nothing");
+  assert.equal((await f.get("/organization/org-a?role=staff&role=admin")).status, 400); assert.equal(calls.length, 0, "OVW_ROLE repeated role reads nothing");
 });
 
 test("OVW_DENY every authenticated refusal has the same 404 body", async (t) => {
@@ -99,7 +100,8 @@ test("OVW_ESCAPE company names are escaped", async (t) => {
 });
 
 test("OVW_DEGRADE unavailable data is a notice and failures are plain 503 pages", async (t) => {
-  const notice = await (await (await fixture(t, { unavailable: true })).get("/organization/org-a")).text();
+  const noticeResponse = await (await fixture(t, { unavailable: true })).get("/organization/org-a");
+  assert.equal(noticeResponse.status, 200); const notice = await noticeResponse.text();
   assert.match(notice, /Company details couldn’t be loaded\./, "OVW_DEGRADE unavailable is a notice"); assert.doesNotMatch(notice, /profile-fields/);
   const response = await (await fixture(t, { throwing: true })).get("/organization/org-a"); const body = await response.text();
   assert.equal(response.status, 503); assert.doesNotMatch(body, /private navigation detail|Error:/);
@@ -109,13 +111,16 @@ test("OVW_DEGRADE unavailable data is a notice and failures are plain 503 pages"
 
 test("OVW_PASSTHROUGH reserved and nested organization routes pass through", async (t) => {
   const calls: URLSearchParams[] = []; const f = await fixture(t, { calls });
+  const fallback = '{"ok":false,"error":"not_found"}';
+  const post = await f.request("/organization/org-a", true, "POST");
+  assert.equal(post.status, 404); assert.equal(await post.text(), fallback, "OVW_PASSTHROUGH POST /organization/org-a bytes");
   for (const path of ["/organization/create", "/organization/assigned-companies", "/organization/onboarding", "/organization/org-a/edit", "/organization/org-a/stores"]) {
     const response = await f.get(path); const body = await response.text();
     assert.equal(calls.length, 0, `OVW_PASSTHROUGH ${path}`);
-    if (path === "/organization/onboarding") {
-      assert.equal(response.status, 404, "OVW_PASSTHROUGH /organization/onboarding status");
-      assert.equal(body, '{"ok":false,"error":"not_found"}', "OVW_PASSTHROUGH /organization/onboarding bytes");
-    }
+    assert.equal(response.status, 404, `OVW_PASSTHROUGH ${path} status`);
+    assert.equal(body, fallback, `OVW_PASSTHROUGH ${path} bytes`);
   }
-  await f.get("/organization/org-a/work"); assert.equal(calls.length, 0, "OVW_PASSTHROUGH work reaches its own lane");
+  const work = await f.get("/organization/org-a/work"); const workBody = await work.text();
+  assert.equal(calls.length, 0, "OVW_PASSTHROUGH work bypasses overview navigation");
+  assert.notEqual(workBody, fallback, "OVW_PASSTHROUGH work reaches its own lane");
 });
