@@ -44,16 +44,16 @@ export class PostgresPersonProfileStore {
     const { rows } = await this.#pool.query(`SELECT EXISTS (SELECT 1 FROM catalogue_items WHERE id=$1 AND catalogue_type=$2 AND status='active') AS available`, [value, type]);
     if (rows[0]?.available !== true) return false;
     if (field === "nationality") {
-      const guard = await this.#pool.query(`SELECT NOT (c.code='KW' AND pp.kuwaiti_mother IS NOT NULL) AS available FROM catalogue_items c LEFT JOIN person_profiles pp ON pp.principal_id=$2 WHERE c.id=$1`, [value, principalId]);
+      const guard = await this.#pool.query(`SELECT NOT (COALESCE(c.code='KW',false) AND pp.kuwaiti_mother IS NOT NULL) AS available FROM catalogue_items c LEFT JOIN person_profiles pp ON pp.principal_id=$2 WHERE c.id=$1`, [value, principalId]);
       return guard.rows[0]?.available === true;
     }
     return true;
   }
 
   async readOriginChoices() {
-    const { rows } = await this.#pool.query(`SELECT id::text,name,catalogue_type FROM catalogue_items WHERE status='active' AND catalogue_type IN ('country','university') ORDER BY catalogue_type,normalized_name COLLATE "C",id`);
+    const { rows } = await this.#pool.query(`SELECT id::text,name,code,catalogue_type FROM catalogue_items WHERE status='active' AND catalogue_type IN ('country','university') ORDER BY catalogue_type,normalized_name COLLATE "C",id`);
     return Object.freeze({
-      countries: Object.freeze(rows.filter(row => row.catalogue_type === "country").map(row => Object.freeze({ id: row.id as string, name: row.name as string }))),
+      countries: Object.freeze(rows.filter(row => row.catalogue_type === "country").map(row => Object.freeze({ id: row.id as string, name: row.name as string, code: row.code as string | null }))),
       universities: Object.freeze(rows.filter(row => row.catalogue_type === "university").map(row => Object.freeze({ id: row.id as string, name: row.name as string }))),
     });
   }

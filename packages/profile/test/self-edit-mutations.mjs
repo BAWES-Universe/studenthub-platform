@@ -24,6 +24,7 @@ const mutations = [
   ["SHU374_PAGE", "['phone', 'Phone number', 'tel', 32]", "['phone', 'Phone number', 'text', 32]", webUiModuleFile, pageSuite],
   ["SHU413_PAGE", "summary(shownAfter(selected, after))", "summary(after)", pageModuleFile, pageSuite],
   ["SHU415_PAGE", 'field === "kuwaitiMother" ? value === "" ? "Not recorded" : value === "true" ? "Yes" : "No"', 'field === "kuwaitiMother" ? value', pageModuleFile, pageSuite],
+  ["SHU415_PAGE", 'catalogue.find(item => item.id === after)?.name ?? "Unavailable"', 'catalogue.find(item => item.id === after)?.name ?? "Not recorded"', pageModuleFile, pageSuite],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],
 ];
 for (const [token, from, to, selectedModule = moduleFile, selectedSuite = suite] of mutations) {

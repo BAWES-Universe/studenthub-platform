@@ -1,8 +1,8 @@
 -- SHU-423: platform-owned nationality, university and Kuwaiti-mother answer.
 ALTER TABLE person_profiles
- ADD COLUMN nationality_id uuid REFERENCES catalogue_items(id),
+ ADD COLUMN nationality_id uuid,
  ADD COLUMN nationality_id_written_at timestamptz CHECK (nationality_id IS NULL OR nationality_id_written_at IS NOT NULL),
- ADD COLUMN university_id uuid REFERENCES catalogue_items(id),
+ ADD COLUMN university_id uuid,
  ADD COLUMN university_id_written_at timestamptz CHECK (university_id IS NULL OR university_id_written_at IS NOT NULL),
  ADD COLUMN kuwaiti_mother boolean,
  ADD COLUMN kuwaiti_mother_written_at timestamptz CHECK (kuwaiti_mother IS NULL OR kuwaiti_mother_written_at IS NOT NULL);

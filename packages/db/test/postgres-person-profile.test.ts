@@ -177,12 +177,12 @@ test("SHU374_UNIQUE Postgres writes contact fields twice and gives every phone h
 });
 
 test("SHU415_CATALOGUE choices contain only active countries and universities", async () => {
-  const actor = "a".repeat(64), now = "2026-10-30T00:00:00.000Z";
+  const actor = "a".repeat(64), now = "2026-10-30T00:00:00.000Z", suffix = randomUUID();
   const items = [
-    ["41111111-1111-4111-8111-111111111111", "country", "Kuwait", "kuwait", "KW", "active", null],
-    ["42222222-2222-4222-8222-222222222222", "university", "Kuwait University", "kuwait university", null, "active", null],
-    ["43333333-3333-4333-8333-333333333333", "country", "Deleted country", "deleted country", "DC", "deleted", now],
-    ["44444444-4444-4444-8444-444444444444", "university", "Deleted university", "deleted university", null, "deleted", now],
+    ["41111111-1111-4111-8111-111111111111", "country", `SHU415 Kuwait ${suffix}`, `shu415 kuwait ${suffix}`, "KW", "active", null],
+    ["42222222-2222-4222-8222-222222222222", "university", `SHU415 University ${suffix}`, `shu415 university ${suffix}`, null, "active", null],
+    ["43333333-3333-4333-8333-333333333333", "country", `SHU415 deleted country ${suffix}`, `shu415 deleted country ${suffix}`, "DC", "deleted", now],
+    ["44444444-4444-4444-8444-444444444444", "university", `SHU415 deleted university ${suffix}`, `shu415 deleted university ${suffix}`, null, "deleted", now],
   ] as const;
   for (const item of items) await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,code,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$8,$9) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,status=EXCLUDED.status,deleted_at=EXCLUDED.deleted_at`, [...item.slice(0, 6), actor, now, item[6]]);
@@ -210,11 +210,21 @@ test("SHU415_WRITE origin fields write twice, None is NULL, and Kuwaiti national
   for (const value of [country, country]) await write("nationality", value);
   for (const value of [university, university, ""]) await write("university", value);
   for (const value of ["true", "false", ""]) await write("kuwaitiMother", value);
-  assert.equal((await pool.query("SELECT university_id FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.university_id, null);
+  const cleared = (await pool.query("SELECT university_id,kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0];
+  assert.equal(cleared?.university_id, null);
+  assert.equal(cleared?.kuwaiti_mother, null);
+  for (const value of ["46666666-6666-4666-8666-666666666666", "44444444-4444-4444-8444-444444444444"]) {
+    assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "university", value } }), { ok: false, reason: "invalid_value" });
+    assert.equal((await pool.query("SELECT university_id FROM person_profiles WHERE principal_id=$1", [id])).rows[0]?.university_id, null);
+  }
   await write("kuwaitiMother", "false");
   const kuwait = "41111111-1111-4111-8111-111111111111";
   assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "nationality", value: kuwait } }), { ok: false, reason: "invalid_value" });
   await pool.query("UPDATE person_profiles SET kuwaiti_mother=NULL WHERE principal_id=$1", [id]);
   await write("nationality", kuwait);
   for (const value of ["true", "false", ""]) assert.deepEqual(await writer().preview({ principalRef, change: { personRef: personRecordRef(id), field: "kuwaitiMother", value } }), { ok: false, reason: "invalid_value" });
+  await assert.rejects(pool.query("UPDATE person_profiles SET kuwaiti_mother=false WHERE principal_id=$1", [id]), (error: { code?: string }) => error.code === "23514");
+  const guarded = (await pool.query("SELECT nationality_id,kuwaiti_mother FROM person_profiles WHERE principal_id=$1", [id])).rows[0];
+  assert.equal(guarded?.nationality_id, kuwait);
+  assert.equal(guarded?.kuwaiti_mother, null);
 });
