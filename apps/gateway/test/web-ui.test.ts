@@ -124,6 +124,18 @@ test("real login application serves the same typed projection to HTML and JSON w
   assert.deepEqual(f.reads, ["person-1", "person-1", "person-1", "person-1"]);
 });
 
+test("SHU372_PAGE My profile renders Change forms for all five editable text fields", async (t) => {
+  const f = await fixture(t);
+  (f.login as unknown as { profileEditor: unknown }).profileEditor = {};
+  const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
+  const body = await response.text();
+  for (const field of ["display_name", "arabic_name", "objective", "introduction", "preferred_time"]) {
+    assert.match(body, new RegExp(`name="field" value="${field}"`));
+  }
+  assert.equal((body.match(/action="\/profile\/edit\/preview"/g) ?? []).length, 5);
+  assert.match(body, /editing isn’t enabled/);
+});
+
 test("private HTML is non-cacheable, has a restrictive CSP and loads no remote assets", async (t) => {
   const f = await fixture(t);
   const response = await fetch(`${f.url}/profile`, { headers: BROWSER });

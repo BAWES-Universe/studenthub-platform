@@ -191,7 +191,7 @@ export function createGatewayServer(
         if(result.kind!=="found")return undefined;
         const key={display_name:"displayName",arabic_name:"arabicName",objective:"objective",introduction:"intro",preferred_time:"preferredTime"}[field] as "displayName"|"arabicName"|"objective"|"intro"|"preferredTime";
         const shown=result.profile.fields[key];
-        return shown.state==="available"?String(shown.value):"Unavailable";
+        return shown.state==="available"?String(shown.value):shown.freshness.kind==="written_by_person"?"Not recorded":"Unavailable";
       }))return;
     if(await handleProfileEdit(request,response,editor,login?.web?.origin))return;
     if (await handleCatalogue(request, response, catalogue, authz)) return;

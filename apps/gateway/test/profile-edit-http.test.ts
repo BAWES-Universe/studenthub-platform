@@ -49,6 +49,12 @@ test("SHU372_PAGE handler previews shown value, confirms, replays, cancels and r
  assert.equal((await invoke(service,"field=objective&value=x",{origin:"https://bad.invalid"})).status,403);
 });
 
+test("SHU372_PAGE invalid values re-render beside the field and preserve the submitted input",async()=>{
+ const service:ProfileEditService={preview:async()=>({status:400,body:{error:"invalid_value",reason:"Use at least two words."}}),confirm:async()=>({status:409,body:{}}),receipt:async()=>({status:404,body:{}})};
+ const result=await invoke(service,"field=display_name&value=Prince%26Co");
+ assert.equal(result.status,400);assert.match(result.body,/Use at least two words\./);assert.match(result.body,/value="Prince&amp;Co"/);assert.match(result.body,/name="field" value="display_name"/);
+});
+
 test("SHU372_PAGE form and JSON oversize bodies answer 400 and store failures answer HTML 503",async()=>{
  const throwing:ProfileEditService={preview:async()=>{throw new Error("store")},confirm:async()=>{throw new Error("store")},receipt:async()=>null as never};
  assert.equal((await invoke(throwing,"field=introduction&value="+"ا".repeat(33000))).status,400);

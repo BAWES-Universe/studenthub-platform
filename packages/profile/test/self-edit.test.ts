@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildProfileEditWrite, normalizeProfileEdit, profileEditPolicy } from "../src/self-edit.js";
 import { OwnProfileRepository } from "../src/profile.js";
+import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 import { InMemoryApprovedProfileAdapter } from "../src/adapter.js";
 import { createPrincipal, InMemoryAuthzStore } from "@studenthub/contracts";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
@@ -20,7 +21,7 @@ test("SHU372_RULES names and text use the shared code-point rules",()=>{
 test("SHU372_WRITE each optional field can clear and display name cannot",()=>{for(const f of ["arabic_name","objective","introduction","preferred_time"] as const)assert.deepEqual(normalizeProfileEdit(f,""),{ok:true,value:""});assert.equal(normalizeProfileEdit("display_name","").ok,false);assert.equal(profileEditPolicy("objective").allowClear,true);assert.equal(profileEditPolicy("display_name").allowClear,false)});
 test("SHU372_WRITE a 100-emoji objective survives the read projection",async()=>{
  const id="emoji-person",value="😀".repeat(100);
- const repo=new OwnProfileRepository({principals:new InMemoryAuthzStore({principals:[createPrincipal({id,pbuuids:[]})]}),source:new InMemoryApprovedProfileAdapter(),preferences:{readOwnPreferences:async()=>({language:null,updatedAt:"",objective:value,objectiveWritten:true,objectiveUpdatedAt:"2026-10-29T12:00:00.000Z"})},today:()=>"2026-10-29"});
+ const repo=new OwnProfileRepository({principals:new InMemoryAuthzStore({principals:[createPrincipal({id,pbuuids:[]})]}),source:new InMemoryApprovedProfileAdapter({links:[{principalId:id,candidateRef:"candidate"}],rows:new Map([["candidate",SYNTHETIC_PROFILE_FIXTURES.populated]])}),preferences:{readOwnPreferences:async()=>({language:null,updatedAt:"",objective:value,objectiveWritten:true,objectiveUpdatedAt:"2026-10-29T12:00:00.000Z"})},today:()=>"2026-10-29"});
  const result=await repo.readOwn({requesterPrincipalId:id,targetPersonId:id});assert.equal(result.kind,"found");if(result.kind!=="found")return;
  assert.equal(result.profile.fields.objective.state,"available");if(result.profile.fields.objective.state==="available")assert.equal(result.profile.fields.objective.value,value);
 });

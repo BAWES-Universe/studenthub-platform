@@ -360,7 +360,8 @@ test("SHU-84/AC-09 WHITELIST receipts, errors and audit rows carry only approved
   // Beyond the shapes: no raw person id, email or token material anywhere.
   assert.doesNotMatch(JSON.stringify(emitted), /shu84-|@|tokenId|"mac"|"token"/);
   const { rows } = await admin.query(
-    "SELECT before_summary, after_summary FROM authorization_mutation_audit WHERE operation = 'profile.safe_write'",
+    `SELECT before_summary, after_summary FROM authorization_mutation_audit
+      WHERE operation = 'profile.safe_write' AND after_summary->'fields' = '["language"]'::jsonb`,
   );
   assert.doesNotMatch(JSON.stringify(rows), /shu84-|@|"en"|"ar"/, "audit rows hold no ids, emails or values");
   assert.ok(rows.length > 0);
@@ -426,6 +427,8 @@ test("SHU-84/AC-12 AUTHOR a receipt row that is not well formed is never served"
     principalRef: safeWritePrincipalRef(id), changeSetDigest: "d".repeat(64), fields: ["language"],
     committedAt: "2026-10-04T00:00:00.000Z",
   }, "control: a well-formed row is served");
+  assert.equal(await serving({ ...good, after_summary: { ...good.after_summary, fields: ["objective"] } })
+    .readReceipt(id, "a".repeat(64)), null, "another profile editor's receipt is not found");
   for (const bad of [
     { ...good, actor_principal_ref: null },
     { ...good, actor_principal_ref: "f".repeat(64) },
