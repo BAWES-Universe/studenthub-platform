@@ -67,6 +67,7 @@ export interface OwnProfileFields {
   readonly language: ProfileField<LanguagePreference>;
   readonly area: ProfileField<string>;
   readonly drivingLicence: ProfileField<boolean>;
+  readonly kuwaitiMother: ProfileField<boolean>;
   readonly jobSearchStatus: ProfileField<JobSearchStatus>;
   readonly committed: ProfileField<boolean>;
   readonly isProfileCompleted: ProfileField<boolean>;

@@ -129,6 +129,7 @@ const PROFILE_FIELD_SPECS = Object.freeze({
   language: fieldSpec("candidate_language_pref", "Language", "Production language preference, en or ar.", exactEnum<LanguagePreference>(new Map([["en", "en"], ["ar", "ar"]]))),
   area: fieldSpec("candidate_area_uuid→area.area_name_en", "Area", "Approved display value resolved from the production area foreign key; coordinates are excluded.", text(255)),
   drivingLicence: fieldSpec("candidate_driving_license", "Driving licence", "Production code 1/2 mapped to yes/no.", exactEnum<boolean>(new Map([[1, true], [2, false]]))),
+  kuwaitiMother: fieldSpec("candidate_mom_kuwaiti", "Kuwaiti mother", "Whether the candidate's mother is Kuwaiti.", exactEnum<boolean>(new Map([[true, true], [false, false]]))),
   jobSearchStatus: fieldSpec("candidate_job_search_status", "Job-search status", "Production code 0/1/2 mapped to not looking/active/open to offers.", exactEnum<JobSearchStatus>(new Map([[0, "not_looking"], [1, "active"], [2, "open_to_offers"]]))),
   committed: fieldSpec("candidate_committed", "Committed", "Production 0/1 commitment marker mapped to a boolean.", exactEnum<boolean>(new Map([[0, false], [1, true]]))),
   isProfileCompleted: fieldSpec("is_incomplete_profile", "Profile complete", "Inverse of the imported production incomplete marker, whose final reviewed meaning includes conditional Kuwaiti-mother, education and skill requirements.", (value) => !exactEnum<boolean>(new Map([[0, false], [1, true]]))(value, "")),
@@ -137,7 +138,7 @@ const PROFILE_FIELD_SPECS = Object.freeze({
   civilExpired: fieldSpec("candidate_civil_expiry_date", "Civil ID expired", "Boolean derived by comparing the recorded expiry date with the response date; the date and civil number are excluded.", (value, today) => dateOnly(value) < today),
 } satisfies Record<OwnProfileFieldName, FieldSpec>);
 
-export const OWN_PROFILE_FIELD_NAMES = Object.freeze(Object.keys(PROFILE_FIELD_SPECS) as OwnProfileFieldName[]);
+export const OWN_PROFILE_FIELD_NAMES = Object.freeze(Object.keys(PROFILE_FIELD_SPECS).filter(name => name !== "kuwaitiMother") as OwnProfileFieldName[]);
 
 export const OWN_PROFILE_FIELD_CONTRACT: Readonly<Record<OwnProfileFieldName, OwnProfileFieldContract>> =
   Object.freeze(Object.fromEntries(OWN_PROFILE_FIELD_NAMES.map((name) => {
@@ -184,7 +185,7 @@ function written<T>(spec: FieldSpec, value: T, observedAt: string): AvailablePro
 }
 
 type WrittenPreference = Readonly<{ value: unknown; updatedAt: string }>;
-type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "nationality" | "university" | "drivingLicence" | "jobSearchStatus", WrittenPreference>>>;
+type ProfilePreferences = Readonly<{ language?: unknown; updatedAt?: string } & Partial<Record<"displayName" | "arabicName" | "objective" | "intro" | "preferredTime" | "gender" | "birthDate" | "nationality" | "university" | "drivingLicence" | "kuwaitiMother" | "jobSearchStatus", WrittenPreference>>>;
 
 function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePreferences | null): OwnProfileProjection {
   if (!preferences) return profile;
@@ -202,7 +203,7 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
       freshness: Object.freeze({ kind: "written_by_person", observedAt: preferences.updatedAt }),
     });
   }
-  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const) {
+  for (const name of ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"] as const) {
     const preference = preferences[name];
     if (!preference) continue;
     try {
@@ -212,7 +213,11 @@ function applyPreferences(profile: OwnProfileProjection, preferences: ProfilePre
         fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "written_by_person", observedAt: preference.updatedAt }) }) as never;
       } else {
-        fields[name] = written(PROFILE_FIELD_SPECS[name], PROFILE_FIELD_SPECS[name].parse(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
+        const platformParser = name === "gender" ? exactEnum<Gender>(new Map([["male", "male"], ["female", "female"], ["other", "other"]]))
+          : name === "drivingLicence" || name === "kuwaitiMother" ? exactEnum<boolean>(new Map([[true, true], [false, false]]))
+          : name === "jobSearchStatus" ? exactEnum<JobSearchStatus>(new Map([["not_looking", "not_looking"], ["active", "active"], ["open_to_offers", "open_to_offers"]]))
+          : PROFILE_FIELD_SPECS[name].parse;
+        fields[name] = written(PROFILE_FIELD_SPECS[name], platformParser(preference.value, profile.asOfDate) as never, preference.updatedAt) as never;
       }
     } catch {
       fields[name] = Object.freeze({ state: "unavailable", reason: "not_recorded", provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),

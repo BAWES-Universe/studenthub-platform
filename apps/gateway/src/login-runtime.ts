@@ -293,7 +293,7 @@ export function createRuntimeLoginFromEnv(
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),
-      ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: loginStore.sessions, store: personProfiles, secret: safeWriteKey }) } : {}),
+      ...(personProfiles && safeWriteKey ? { profileEdit: createProfileEdit({ sessions: loginStore.sessions, store: personProfiles, secret: safeWriteKey }), profileChoices: () => personProfiles.readProfileChoices() } : {}),
       ...(bankDetailsStore && banks && safeWriteKey
         ? { bankDetails: createBankDetails({ sessions: loginStore.sessions, store: bankDetailsStore, banks, secret: safeWriteKey }) }
         : {}),

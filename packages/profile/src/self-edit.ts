@@ -9,7 +9,7 @@ import {
   type SafeWriteStore,
 } from "@studenthub/safe-write-contract";
 
-export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "jobSearchStatus"] as const;
+export const PERSON_SELF_EDIT_FIELDS = ["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"] as const;
 export type PersonSelfEditField = (typeof PERSON_SELF_EDIT_FIELDS)[number];
 export const PERSON_PROFILE_MINIMUM_AGE = 16;
 
@@ -28,15 +28,17 @@ const ARABIC_LETTER = /[\u0621-\u063a\u0641-\u064a\u066e-\u066f\u0671-\u06d3\u06
 export function normalizePersonSelfEditValue(field: PersonSelfEditField, value: unknown): string | null {
   if (typeof value !== "string") return null;
   if (field === "gender") return ["male", "female", "other"].includes(value) ? value : null;
-  if (field === "drivingLicence") return value === "true" || value === "false" ? value : null;
+  if (field === "drivingLicence" || field === "kuwaitiMother") return value === "true" || value === "false" ? value : null;
   if (field === "jobSearchStatus") return ["not_looking", "active", "open_to_offers"].includes(value) ? value : null;
-  if (field === "nationality" || field === "university") return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value.toLowerCase() : null;
+  if (field === "nationality" || field === "university") return field === "university" && value === "" ? "" : /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value.toLowerCase() : null;
   if (field === "birthDate") {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
     const [year, month, day] = value.split("-").map(Number) as [number, number, number];
     const date = new Date(Date.UTC(year, month - 1, day));
     if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
-    const today = new Date(), cutoff = new Date(Date.UTC(today.getUTCFullYear() - PERSON_PROFILE_MINIMUM_AGE, today.getUTCMonth(), today.getUTCDate()));
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const current = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    const cutoff = new Date(Date.UTC(Number(current.year) - PERSON_PROFILE_MINIMUM_AGE, Number(current.month) - 1, Number(current.day)));
     return date <= cutoff ? value : null;
   }
   const normalized = value.normalize("NFC");

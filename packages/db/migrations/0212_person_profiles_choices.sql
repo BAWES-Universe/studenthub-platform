@@ -47,6 +47,6 @@ CREATE INDEX person_profiles_university_id_idx ON person_profiles(university_id)
 DO $body$ DECLARE definition text; BEGIN
  SELECT pg_get_functiondef('authorization_audit_summary_valid(text,jsonb)'::regprocedure) INTO definition;
  definition := replace(definition, '''preferredTime'')',
-   '''preferredTime'',''gender'',''birthDate'',''nationality'',''university'',''drivingLicence'',''jobSearchStatus'')');
+   '''preferredTime'',''gender'',''birthDate'',''nationality'',''university'',''drivingLicence'',''kuwaitiMother'',''jobSearchStatus'')');
  EXECUTE definition;
 END $body$;
