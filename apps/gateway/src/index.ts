@@ -292,8 +292,15 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "context_unavailable" } };
       }
+      let civilIdReviewCount:number|undefined;
+      const reviewActive=result.status===200?result.body.active:null;
+      if(html&&login?.civilIdReview&&reviewActive&&(reviewActive.role==="staff"||reviewActive.role==="admin")&&DEFAULT_OPERATOR_ORG_IDS.includes(reviewActive.orgId))try{
+        const identity=await login.profile({sessionId:cookieValue(request.headers.cookie,"__Host-studenthub_session")});
+        const principalId=identity.status===200&&typeof identity.body?.personId==="string"?identity.body.personId:undefined;
+        if(principalId&&await login.civilIdReview.isStaff(principalId))civilIdReviewCount=await login.civilIdReview.store.countPending({excludePrincipalId:principalId});
+      }catch{civilIdReviewCount=undefined;}
       if (html) {
-        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined) : renderError(503)), {}, true);
+        writeHtml(response, result.status, await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),login ? renderWorkspace(result, login, documents !== undefined, civilIdReviewCount) : renderError(503)), {}, true);
       } else {
         writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
       }
@@ -351,6 +358,7 @@ export function createGatewayServer(
       let result: import("@studenthub/login-contract").BrowserResponse;
       let completeness: ProfileCompletenessResult | undefined;
       let civilIdSuggestion: import("@studenthub/profile").CivilIdSuggestion | undefined;
+      let civilIdReview: import("@studenthub/profile").CivilIdReviewState | undefined;
       try {
         result = await login.profile({
           sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
@@ -374,6 +382,9 @@ export function createGatewayServer(
             if ((!url.searchParams.has("person_id") || url.searchParams.get("person_id") === requesterPrincipalId) && login.civilIdSuggestion) {
               try { civilIdSuggestion = await login.civilIdSuggestion.current(requesterPrincipalId) ?? undefined; } catch { civilIdSuggestion = undefined; }
             }
+            if ((!url.searchParams.has("person_id") || url.searchParams.get("person_id") === requesterPrincipalId) && login.civilIdReview) {
+              try { civilIdReview = await login.civilIdReview.store.stateFor(requesterPrincipalId) ?? undefined; } catch { civilIdReview = undefined; }
+            }
             const gathered = await gatherProfileCompleteness({ principalId: requesterPrincipalId,
               ...(typeof result.body?.email === "string" ? { email: result.body.email } : {}), profile: profile.profile,
               avatar: currentProfileAvatar(), records: profileRecords, dependencies: login.web.profileCompleteness });
@@ -394,7 +405,7 @@ export function createGatewayServer(
       if (html) {
         try {
           const notice = await login.browserEdit?.notice(cookieValue(request.headers.cookie, "__Host-studenthub_session"), request.headers.cookie);
-          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness, civilIdSuggestion);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
+          const page = await profileDocument(result, login, notice?.notice, documents !== undefined, undefined, completeness, civilIdSuggestion, civilIdReview);if(page.status===200)page.html=await signedInHtml(login,cookieValue(request.headers.cookie,"__Host-studenthub_session"),page.html);
           writeHtml(response, page.status, page.html, notice?.clearCookie ? { "set-cookie": notice.clearCookie } : {});
         } catch {
           fault = 'render_failure';
