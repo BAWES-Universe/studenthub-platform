@@ -326,7 +326,7 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
     throw new Error("invalid authorized profile");
   }
   const keys = Object.keys(projection.fields);
-  if (keys.some(key => !OWN_PROFILE_FIELD_NAMES.includes(key as OwnProfileFieldName) && key !== "phone" && key !== "handle" && key !== "kuwaitiMother" && key !== "civilId")
+  if (keys.some(key => !OWN_PROFILE_FIELD_NAMES.includes(key as OwnProfileFieldName) && key !== "phone" && key !== "handle" && key !== "kuwaitiMother" && key !== "civilId" && key !== "coordinates")
     || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
     throw new Error("invalid authorized profile");
   }
