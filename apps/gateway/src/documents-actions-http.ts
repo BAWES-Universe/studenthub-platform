@@ -1,0 +1,26 @@
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createIdempotencyKey } from '../../../packages/idempotency-contract/src/index.js';
+import { LifecycleError, type CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
+import { CANDIDATE_DOCUMENT_TYPES, type CandidateDocumentType } from '../../../packages/private-documents/src/lifecycle-state.js';
+import { pageDocument, writeHtml, type BrowserLoginApplication } from './web-ui.js';
+const LABELS:Record<CandidateDocumentType,string>={'personal-photo':'Personal photo',resume:'CV','civil-id-front':'Civil ID front','civil-id-back':'Civil ID back'};
+const cookie=(r:IncomingMessage)=>{const v=(r.headers.cookie?.split(';')??[]).map(x=>x.trim()).filter(x=>x.startsWith('__Host-studenthub_session='));return v.length===1?/^__Host-studenthub_session=([A-Za-z0-9_-]{43})$/.exec(v[0]!)?.[1]:undefined;};
+const esc=(v:string)=>v.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!);
+const page=(title:string,body:string)=>pageDocument(title,`<main id="main" class="profile-ui"><div class="p-shell"><section class="p-main p-card p-stack">${body}</section></div></main>`,'en');
+const stamp=(s:CandidateDocuments,c:string,t:CandidateDocumentType,v:string)=>createHmac('sha256',s.options.signingKey).update(`remove\0${c}\0${t}\0${v}`).digest('base64url');
+const equal=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
+const key=(value:string)=>{const m=/^(\d{13})\.([0-9a-f-]{36})$/i.exec(value);if(!m)throw new LifecycleError(400,'invalid');return createIdempotencyKey(new Date(Number(m[1])),m[2] as `${string}-${string}-${string}-${string}-${string}`);};
+async function fields(r:IncomingMessage){let body='';for await(const chunk of r){body+=chunk;if(body.length>1024)throw new LifecycleError(400,'invalid');}return new URLSearchParams(body);}
+const failure=(r:ServerResponse,status:number,message:string)=>writeHtml(r,status,page('My documents',`<a href="/profile/documents">Back to My documents</a><p role="alert">${esc(message)}</p>`));
+export async function handleDocumentsActions(request:IncomingMessage,response:ServerResponse,service?:CandidateDocuments,login?:BrowserLoginApplication):Promise<boolean>{
+ const route=/^\/profile\/documents\/([^/]+)\/(remove|view)$/.exec((request.url??'').split('?')[0]!);if(!route)return false;const type=route[1] as CandidateDocumentType,action=route[2]!;
+ if(!CANDIDATE_DOCUMENT_TYPES.includes(type)||(action==='view'?request.method!=='POST':!['GET','POST'].includes(request.method??''))){request.resume();response.writeHead(404,{'cache-control':'no-store'});response.end();return true;}
+ const session=cookie(request);if(!session||!login){failure(response,401,'Sign in to manage your documents.');return true;}const auth=await login.profile({sessionId:session});if(auth.status!==200||typeof auth.body?.personId!=='string'){failure(response,401,'Sign in to manage your documents.');return true;}if(!service){failure(response,503,'Documents are temporarily unavailable.');return true;}
+ if(request.method==='POST'&&(request.headers.origin!==service.options.origin||request.headers['sec-fetch-site']==='cross-site')){failure(response,403,'This action must come from My documents.');return true;}
+ try{const document=(await service.list(session)).find(row=>row.type===type);
+  if(action==='view'){if(!document){response.writeHead(303,{location:'/profile/documents','cache-control':'no-store'});response.end();return true;}const delivery=await service.issueDelivery(session,document.id);response.writeHead(303,{location:delivery.url,'cache-control':'no-store'});response.end();return true;}
+  if(request.method==='GET'){if(!document){failure(response,409,'This document changed, check it and try again.');return true;}const submission=`${(service.options.now??Date.now)()}.${randomUUID()}`;writeHtml(response,200,page(`Remove ${LABELS[type]}`,`<a href="/profile/documents">Cancel</a><h1>Remove your ${LABELS[type]}?</h1><p>Staff and employers will no longer see it.</p><form method="post" action="/profile/documents/${type}/remove"><input type="hidden" name="stamp" value="${stamp(service,session,type,document.version)}"><input type="hidden" name="submission" value="${submission}"><button class="p-button p-primary" type="submit">Remove</button></form>`));return true;}
+  const data=await fields(request),supplied=data.get('stamp')??'',submission=data.get('submission')??'';if(!document||!equal(supplied,stamp(service,session,type,document.version))){failure(response,409,'This document changed, check it and try again.');return true;}await service.remove(session,key(submission),{type,expectedVersion:document.version});response.writeHead(303,{location:'/profile/documents','cache-control':'no-store'});response.end();
+ }catch(error){const e=error instanceof LifecycleError?error:new LifecycleError(503,'unavailable');failure(response,e.status===409?409:e.status===400?400:503,e.status===409?'This document changed, check it and try again.':'Documents are temporarily unavailable.');}return true;
+}
