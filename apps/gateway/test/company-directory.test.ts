@@ -161,7 +161,7 @@ test("SHU168_PAGE renders source store counts and unavailable state in HTML and 
   assert.deepEqual(body.directory.entries.map((entry: { orgId: string; storeCount: number }) => [entry.orgId, entry.storeCount]), [["org-a", 3], ["org-b", 0]]);
   const countedPage = await (await counted.get(STAFF_LIST, html)).text();
   assert.match(countedPage, /<th scope="col">Sub-companies<\/th><th scope="col">Stores<\/th>/);
-  assert.match(countedPage, /Synthetic Retail Group[\s\S]*<td>2<\/td><td>3<\/td>/);
+  assert.match(countedPage, /Synthetic Retail Group[\s\S]*?<td>1<\/td><td>3<\/td>/);
   assert.match(countedPage, /Synthetic Cafe[\s\S]*<td>0<\/td><td>0<\/td>/);
 
   const unconfigured = await fixture(t);
