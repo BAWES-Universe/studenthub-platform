@@ -43,7 +43,7 @@ test("ORGCON_SHOW authorized readers see the company contract list and negotiate
   for (const who of ["owner", "finance", "staff", "admin"] as const) {
     const response = await f.request(`/organization/${ORG}/contracts`, who), html = await response.text();
     assert.equal(response.status, 200); assert.match(response.headers.get("content-type")!, /^text\/html/); assert.equal(response.headers.get("cache-control"), "no-store");
-    for (const value of ["2026-03-01", "Open-ended", "Active", "Hourly", "20.000 per hour", "2026-12-31", "Inactive", "Fixed price", "900.000 (40% complete)", "Monthly salary", "500.000 (salary day 25)", `href="/organization/${ORG}"`]) assert.match(html, new RegExp(value));
+    for (const value of ["2026-03-01", "Open-ended", "Active", "Hourly", "20.000 per hour", "2026-12-31", "Inactive", "Fixed price", "900.000 (40% complete)", "Monthly salary", "500.000 (salary day 25)", `href="/organization/${ORG}"`]) assert.ok(html.includes(value), `ORGCON_SHOW renders ${value}`);
     assert.ok(html.indexOf("2026-03-01") < html.indexOf("2026-02-01") && html.indexOf("2026-02-01") < html.indexOf("2026-01-01"), "ORGCON_SHOW rows preserve listCompany order");
   }
   const json = await f.request(`/organization/${ORG}/contracts`, "owner", { headers: { accept: "application/json" } }), api = await f.request(`/pay-contracts/company/${ORG}`, "owner", { headers: { accept: "application/json" } });
