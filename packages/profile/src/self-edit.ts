@@ -151,7 +151,10 @@ export function normalizePersonProfileValue(field: PersonProfileField, input: un
   if ((field === "display_name" || field === "arabic_name") && value !== "" && !LETTER_WORDS.test(value)) {
     return { ok: false, reason: "Enter at least two words using letters." };
   }
-  if (field === "arabic_name" && value !== "" && !/\p{Script=Arabic}/u.test(value)) {
+  // Keep this signal identical to the Arabic blocks admitted by migration
+  // 0211. Script=Arabic is broader (presentation forms, mathematical letters
+  // and Extended-B), which would let preview accept a value the CHECK rejects.
+  if (field === "arabic_name" && value !== "" && !/[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/u.test(value)) {
     return { ok: false, reason: "Arabic name must include an Arabic letter." };
   }
   return { ok: true, value };
