@@ -457,8 +457,13 @@ export class OrganizationRepository implements OrganizationReader, OrganizationD
         .filter((context) => context.role === request.role && within.has(context.orgId)
           && !this.#operators.has(context.orgId))
         .map((context) => context.orgId));
-      const shown = organizations.filter((org) => covered.has(org.id)
-        && companyParentOf(organizations, org.id, this.#operators) === null);
+      const shown: Organization[] = [];
+      for (const org of organizations) {
+        if (!covered.has(org.id)) continue;
+        if (companyParentOf(organizations, org.id, this.#operators) !== null)
+          continue;
+        shown.push(org);
+      }
       const batchRecords = shown.length > 0 && this.#statusRecords?.readMany
         ? await this.#statusRecords.readMany(shown.map((org) => org.id))
         : undefined;
