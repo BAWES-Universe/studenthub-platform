@@ -40,6 +40,8 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const civilStore = civilKey ? new CivilIdStore({ connectionString: databaseUrl }) : undefined;
   const civilId = civilStore && civilKey ? createCivilId({ store: civilStore, vault: new CivilIdVault(civilKey) }) : undefined;
   const civilReviewStore = civilKey && safeWriteKey ? new PostgresCivilIdReviewStore({connectionString:databaseUrl}) : undefined;
+  const CivilIdOcrStore = (PostgresPersonProfileStore as typeof PostgresPersonProfileStore & { CivilIdOcrStore: typeof import("../../../../packages/db/src/postgres-civil-id-ocr-store.js").PostgresCivilIdOcrStore }).CivilIdOcrStore;
+  const civilReviewOcr = civilReviewStore ? new CivilIdOcrStore({connectionString:databaseUrl}) : undefined;
   // Freeze both protocol versions once, never derive them from a request.
   const browserKeyVersion = "profile-browser-key-v1";
   const browserNormalizationVersion = "profile-browser-normalization-v1";
@@ -130,10 +132,10 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
       ...(civilReviewStore && civilKey && safeWriteKey ? { civilIdReview: { store:civilReviewStore,vault:new CivilIdVault(civilKey),secret:safeWriteKey,
-        origin:settings.callbackUrl?new URL(settings.callbackUrl).origin:"",async principal(session:string){return (await access.loginStore.sessions.get(session))?.personId??null;} } } : {}),
+        origin:settings.callbackUrl?new URL(settings.callbackUrl).origin:"",ocr:civilReviewOcr,async principal(session:string){return (await access.loginStore.sessions.get(session))?.personId??null;} } } : {}),
       area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(),civilReviewStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close(),civilReviewStore?.close(),civilReviewOcr?.close()]); },
   };
 }

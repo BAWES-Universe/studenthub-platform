@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {randomBytes,randomUUID} from "node:crypto";
 import {InMemoryAuthzStore} from "../../../dist/packages/contracts/src/index.js";
 import {StaffDocuments} from "../../../dist/packages/private-documents/src/staff-delivery.js";
+import {CandidateDocuments} from "../../../dist/packages/private-documents/src/candidate-lifecycle.js";
+import {png} from "./candidate-fixtures.mjs";
 
 test("REV_IMAGES staff links bind viewer, subject, slot and version and audit before bytes",async()=>{
  const authz=new InMemoryAuthzStore({organizations:[{id:"root",name:"Operator"}],principals:["staff","other","person"].map(id=>({id,pbuuids:[]}))});
@@ -34,3 +36,14 @@ test("REV_IMAGES links expire at 60 seconds and audit failures issue no link or 
 });
 
 test("REV_STAFF civil review purpose refuses a staff member viewing their own subject",async()=>{const authz=new InMemoryAuthzStore({organizations:[{id:"root",name:"Operator"}],principals:[{id:"staff",pbuuids:[]}]});await authz.grantMany("staff",[{orgId:"root",role:"staff",scope:"subtree"}]);const state={format:1,retired:[],documents:[{id:randomUUID(),version:randomUUID(),type:"civil-id-front",mime:"image/png",size:1,scope:{orgId:"docs",personId:"staff"},acl:"private",data:"eA=="}]};const service=new StaffDocuments({orgId:"docs",origin:"https://example.test",signingKey:randomBytes(32),store:{transaction:async fn=>fn(state)},authz,authenticate:async()=>({kind:"principal",principalId:"staff"}),staffOrgIds:["root"],audit:{recordView:async()=>{}}});await assert.rejects(service.issue("s","staff","civil-id-front","civil_id_review"),/denied/)});
+
+test("REV_EXACT owner and staff delivery links are mutually useless on the other MAC label",async()=>{
+ const authz=new InMemoryAuthzStore({organizations:[{id:"root",name:"Operator"},{id:"docs",name:"Documents"}],principals:["staff","person"].map(id=>({id,pbuuids:[]}))});
+ await authz.grantMany("staff",[{orgId:"root",role:"staff",scope:"subtree"}]);
+ const key=randomBytes(32),state={format:1,retired:[],documents:[]},base={orgId:"docs",origin:"https://example.test",signingKey:key,store:{transaction:async fn=>fn(state)},authz};
+ const owner=new CandidateDocuments({...base,authenticate:async token=>token==="owner"?{kind:"principal",principalId:"person"}:null});
+ const staff=new StaffDocuments({...base,authenticate:async token=>token==="staff"?{kind:"principal",principalId:"staff"}:token==="owner"?{kind:"principal",principalId:"person"}:null,staffOrgIds:["root"],audit:{recordView:async()=>{}}});
+ const document=await owner.primitive.upload("owner",{scope:{orgId:"docs",personId:"person"},type:"civil-id-front",mime:"image/png",bytes:png()});
+ const ownerLink=await owner.issueDelivery("owner",document.id),staffLink=await staff.issue("staff","person","civil-id-front","civil_id_review");
+ await assert.rejects(staff.deliver("staff",ownerLink.url),/denied/);await assert.rejects(owner.deliver("owner",staffLink.url),/denied/);
+});
