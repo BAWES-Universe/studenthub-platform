@@ -20,11 +20,11 @@ function refusal(response: ServerResponse, status: number, type: CandidateDocume
 }
 async function readBounded(request: IncomingMessage, limit: number): Promise<Buffer> {
   const length = Number(request.headers['content-length']);
-  if (Number.isFinite(length) && length > limit) { request.resume(); throw new FormError(413, 'too_large'); }
+  if (Number.isFinite(length) && length > limit) { request.pause(); throw new FormError(413, 'too_large'); }
   const chunks: Buffer[] = []; let size = 0;
   for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     const bytes = Buffer.from(chunk); size += bytes.length;
-    if (size > limit) { request.resume(); throw new FormError(413, 'too_large'); }
+    if (size > limit) { request.pause(); throw new FormError(413, 'too_large'); }
     chunks.push(bytes);
   }
   return Buffer.concat(chunks);

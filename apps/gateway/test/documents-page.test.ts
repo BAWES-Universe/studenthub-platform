@@ -97,7 +97,13 @@ test('SHU366_PAGE empty guidance derives from lifecycle admission', async t => {
     const section = html.split(`id="document-${type}"`)[1]!.split('</dd>')[0]!;
     assert.ok(section.includes(`${rule.maxBytes / (1024 * 1024)} MiB`));
     for (const mime of rule.mimeTypes) assert.ok(section.includes(({ 'application/pdf': 'PDF', 'image/png': 'PNG', 'image/jpeg': 'JPEG' } as Record<string, string>)[mime]!));
+    assert.match(section, new RegExp(`<form method="post" enctype="multipart/form-data" action="/profile/documents/${type}/upload">`));
+    assert.match(section, new RegExp(`<input type="file" name="file" accept="${rule.mimeTypes.join(',')}">`));
+    assert.match(section, /<input type="hidden" name="submission" value="[^" ]+">/);
   }
+  assert.equal((html.match(/name="file"/g) ?? []).length, 4);
+  assert.equal((html.match(/name="submission"/g) ?? []).length, 4);
+  assert.doesNotMatch(html, /<script|drag|progress/i);
 });
 test('SHU366_PAGE session refusal precedes even unconfigured service access', async t => {
   for (const mode of ['missing', 'expired', 'revoked']) {
@@ -149,14 +155,14 @@ test('SHU366_PAGE escapes dependency values and never serializes metadata', () =
 });
 
 test('UPL_DATE finalized time renders as a plain Asia/Kuwait date', () => {
-  const html = documentsPage([{ id:'hidden',version:'hidden',type:'resume',mime:'application/pdf',size:42,finalizedAt:1_800_000_000_000 }], 'en');
-  assert.match(html,/PDF · 42 bytes · 15 Jan 2027/);assert.doesNotMatch(html,/1800000000000|hidden/);
+  const html = documentsPage([{ id:'FORBIDDEN_ID',version:'FORBIDDEN_VERSION',type:'resume',mime:'application/pdf',size:42,finalizedAt:1_800_000_000_000 }], 'en');
+  assert.match(html,/PDF · 42 bytes · 15 Jan 2027/);assert.doesNotMatch(html,/1800000000000|FORBIDDEN_ID|FORBIDDEN_VERSION/);
 });
 
 test('Q14_1_SHOWN one projected list renders an uploaded slot without per-row reads', () => {
-  const html = documentsPage([{ id:'hidden',version:'hidden',type:'civil-id-front',mime:'image/jpeg',size:81,finalizedAt:1_800_000_000_000 }], 'en');
+  const html = documentsPage([{ id:'FORBIDDEN_ID',version:'FORBIDDEN_VERSION',type:'civil-id-front',mime:'image/jpeg',size:81,finalizedAt:1_800_000_000_000 }], 'en');
   assert.match(html,/id="document-civil-id-front"[^]*?<strong>On file<\/strong>[^]*?JPEG · 81 bytes/);
-  assert.equal((html.match(/<strong>On file<\/strong>/g)??[]).length,1);assert.doesNotMatch(html,/hidden/);
+  assert.equal((html.match(/<strong>On file<\/strong>/g)??[]).length,1);assert.doesNotMatch(html,/FORBIDDEN_ID|FORBIDDEN_VERSION/);
 });
 test('SHU366_PAGE methods and Accept are opt-in without store access', async t => {
   const f = await rig(t);

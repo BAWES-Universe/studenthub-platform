@@ -46,11 +46,27 @@ test('Q14_1_OWNER cookie and same-origin checks precede body and service access'
   }
   const f = fake(), unknown = exchange(valid(), {}, '/profile/documents/not-a-slot/upload'); await handleDocumentsUpload(unknown.request, unknown.response, f.service);
   assert.equal(unknown.result().status, 404); assert.equal(f.calls.length, 0);
+  const bearer = fake(), onlyBearer = exchange(valid(), { cookie: '', authorization: `Bearer ${SESSION}` });
+  await handleDocumentsUpload(onlyBearer.request, onlyBearer.response, bearer.service);
+  assert.equal(onlyBearer.result().status, 401); assert.equal(bearer.calls.length, 0);
 });
 
 test('Q14_1_LIMIT oversized declared bodies stop before multipart parsing and mutation', async () => {
   const f = fake(), x = exchange(Buffer.alloc(0), { 'content-length': String(10 * 1024 * 1024 + 64 * 1024 + 1) }); await handleDocumentsUpload(x.request, x.response, f.service);
   assert.equal(x.result().status, 413); assert.match(x.result().body, /Personal photo[^]*10 MiB/); assert.deepEqual(f.calls.map(call => call.name), ['list']);
+});
+
+test('Q14_1_LIMIT chunked bodies stop at the bound plus one source chunk', async () => {
+  const chunk = Buffer.alloc(32 * 1024), limit = 10 * 1024 * 1024 + 64 * 1024;
+  let produced = 0;
+  const request = new Readable({ read() { produced += chunk.length; this.push(chunk); } }) as IncomingMessage;
+  Object.assign(request, { method: 'POST', url: '/profile/documents/personal-photo/upload', headers: { cookie: `__Host-studenthub_session=${SESSION}`, origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'multipart/form-data; boundary=shu503-boundary' } });
+  let status = 0, body = '';
+  const response = { writeHead(code: number) { status = code; return this; }, end(value?: string) { body = value ?? ''; return this; } } as unknown as ServerResponse;
+  const f = fake(); await handleDocumentsUpload(request, response, f.service);
+  assert.equal(status, 413); assert.ok(produced <= limit + chunk.length, `read ${produced} bytes`);
+  assert.match(body, /Personal photo[^]*10 MiB/); assert.deepEqual(f.calls.map(call => call.name), ['list']);
+  request.destroy();
 });
 
 test('Q14_1_REFUSALS missing, duplicate and unknown parts are closed HTML errors', async () => {

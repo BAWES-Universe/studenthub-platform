@@ -106,6 +106,15 @@ test('Q14_1_REPLACE failed browser-equivalent replacement retains old row and su
  state=await f.state();assert.equal(state.documents[0].size,png(31).length);assert.equal(state.lifecycle.cleanup.length,1);
 });
 
+test('Q14_1_REPLACE a stale replacement cannot displace the version that committed first',async t=>{
+ const f=await fixture(t),old=(await f.finalize(await f.upload())).body.metadata;
+ const stale=await f.upload('personal-photo',png(32),old.version),winner=await f.upload('personal-photo',png(33),old.version);
+ const committed=(await f.finalize(winner)).body.metadata;
+ assert.equal((await f.finalize(stale)).status,409);
+ const state=await f.state();assert.equal(state.documents.length,1);assert.equal(state.documents[0].version,committed.version);
+ assert.equal(state.documents[0].size,png(33).length);assert.equal(state.lifecycle.cleanup.length,1);
+});
+
 test('UPL_DATE finalized time stays attached to its principal and ticket when commits reorder',async t=>{
  const f=await fixture(t),alice=await f.upload('personal-photo',png(11)),bob=await f.authorize('personal-photo',png(12),null,{actor:'bob'});
  assert.equal(bob.status,201);assert.equal((await f.put(bob.body,png(12),{actor:'bob'})).status,204);
