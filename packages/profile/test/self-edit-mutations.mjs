@@ -13,6 +13,7 @@ const mutations = [
   ["SHU372_RULES", "!NAME.test(normalized)", "false"],
   ["SHU372_RULES", "!ARABIC_LETTER.test(normalized)", "false"],
   ["SHU372_RULES", "value.normalize(\"NFC\")", "value"],
+  ["SHU373_AGE", "minimum.getUTCFullYear()-PERSON_PROFILE_MINIMUM_AGE", "minimum.getUTCFullYear()-17"],
   ["SHU372_WRITE", "return normalized ? safeWrite.preview(normalized)", "return false ? safeWrite.preview(normalized)"],
   ["SHU372_OWNER", "return normalized ? safeWrite.confirm(normalized)", "return false ? safeWrite.confirm(normalized)"],
   ["SHU372_PAGE", "response.writeHead(303, { location: \"/profile\", \"cache-control\": \"no-store\" });", "response.writeHead(200, { location: \"/profile\", \"cache-control\": \"no-store\" });", pageModuleFile, pageSuite],

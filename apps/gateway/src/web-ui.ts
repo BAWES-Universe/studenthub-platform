@@ -302,7 +302,8 @@ function projectionFrom(result: BrowserResponse): OwnProfileProjection {
     throw new Error("invalid authorized profile");
   }
   const keys = Object.keys(projection.fields);
-  if (keys.length !== OWN_PROFILE_FIELD_NAMES.length
+  if (keys.some(key => key !== "kuwaitiMother" && !OWN_PROFILE_FIELD_NAMES.includes(key as OwnProfileFieldName))
+    || keys.length < OWN_PROFILE_FIELD_NAMES.length || keys.length > OWN_PROFILE_FIELD_NAMES.length + 1
     || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
     throw new Error("invalid authorized profile");
   }
@@ -319,6 +320,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
+  kuwaitiMother: (value) => value ? "Yes" : "No",
   jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
@@ -329,7 +331,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
 
 function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): string {
   const field = profile.fields[name] as ProfileField<unknown>;
-  const contract = OWN_PROFILE_FIELD_CONTRACT[name];
+  const contract = name === "kuwaitiMother" ? { label: "Kuwaiti mother" } : OWN_PROFILE_FIELD_CONTRACT[name];
   if ((name === "isProfileCompleted" || name === "pendingFields")
     && Object.values(profile.fields).some(({ freshness }) => freshness.kind === "written_by_person")) {
     return `<div><dt>${escapeHtml(contract.label)}</dt><dd>Checked once your documents are on file</dd><small class="field-meta">Not recorded</small></div>`;
@@ -341,20 +343,41 @@ function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): str
 
 export async function profileDocument(result: BrowserResponse, login: BrowserLoginApplication): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login) };
-  const profile = projectionFrom(result);
+  let profile = projectionFrom(result);
   const displayName = profile.fields.displayName;
   const name = displayName.state === "available" ? displayName.value : undefined;
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
   const language = profile.fields.language.state === "available" ? profile.fields.language.value : "";
   const languageForm = login.preferences ? `<form method="post" action="/profile/language/preview" aria-label="Change language"><label>Change language<select name="language"><option value="en"${language === "en" ? " selected" : ""}>English</option><option value="ar"${language === "ar" ? " selected" : ""}>العربية</option></select></label><button class="button primary" type="submit">Review change</button></form>` : "";
-  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime"]);
-  const rows = OWN_PROFILE_FIELD_NAMES.map((field) => {
+  const editable = new Set<OwnProfileFieldName>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "nationality", "university", "drivingLicence", "kuwaitiMother", "jobSearchStatus"]);
+  const choices = profile.profileChoices;
+  const nationality = profile.fields.nationality.state === "available" ? profile.fields.nationality.value : "";
+  const nationalityChoice = choices?.countries.find(item => profile.fields.nationality.state === "available" && item.id === profile.fields.nationality.choiceId)
+    ?? (choices?.countries.length === 1 ? choices.countries[0] : undefined);
+  const motherRecorded = profile.fields.kuwaitiMother?.state === "available" || profile.fields.kuwaitiMother?.freshness.kind === "written_by_person";
+  const offerMother = motherRecorded || (!!nationalityChoice && nationalityChoice.code !== "KW");
+  const renderedFields = offerMother ? [...OWN_PROFILE_FIELD_NAMES.slice(0,13), "kuwaitiMother" as OwnProfileFieldName, ...OWN_PROFILE_FIELD_NAMES.slice(13)] : OWN_PROFILE_FIELD_NAMES;
+  const rows = renderedFields.map((field) => {
+    if (field === "kuwaitiMother" && !profile.fields.kuwaitiMother) {
+      const unavailable = { state: "unavailable", reason: "not_recorded", provenance: profile.fields.nationality.provenance, freshness: { kind: "written_by_person", observedAt: "" } } as const;
+      profile = { ...profile, fields: { ...profile.fields, kuwaitiMother: unavailable } };
+    }
     const row = fieldRow(profile, field);
     if (field === "language" && languageForm) return row.replace("</div>", `${languageForm}</div>`);
     if (login.profileEdit && editable.has(field)) {
-      const value = profile.fields[field].state === "available" ? String(profile.fields[field].value) : "";
-      const control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
-      return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(OWN_PROFILE_FIELD_CONTRACT[field].label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
+      const current = profile.fields[field];
+      const raw = current?.state === "available" ? current.value : "";
+      const value = String(raw);
+      const option = (id: string, name: string, on: boolean) => `<option value="${escapeHtml(id)}"${on ? " selected" : ""}>${escapeHtml(name)}</option>`;
+      let control = field === "intro" ? `<textarea name="value" maxlength="5000">${escapeHtml(value)}</textarea>` : `<input name="value" value="${escapeHtml(value)}" maxlength="${field === "displayName" || field === "arabicName" ? 255 : 100}">`;
+      if (field === "gender") control = `<select name="value">${[["male","Male"],["female","Female"],["other","Other"]].map(([id,name])=>option(id!,name!,value===id)).join("")}</select>`;
+      if (field === "birthDate") control = `<input type="date" name="value" value="${escapeHtml(value)}">`;
+      if (field === "nationality") control = `<select name="value">${(choices?.countries??[]).map(item=>option(item.id,item.name,current?.state === "available" ? item.id===current.choiceId || (!current.choiceId && item.name===value) : false)).join("")}</select>`;
+      if (field === "university") control = `<select name="value"><option value=""${value===""?" selected":""}>None</option><option value="" disabled>Not listed — staff add new universities</option>${(choices?.universities??[]).map(item=>option(item.id,item.name,current?.state === "available" ? item.id===current.choiceId || (!current.choiceId && item.name===value) : false)).join("")}</select><small class="field-meta">If your university is not listed, staff can add it.</small>`;
+      if (field === "drivingLicence" || field === "kuwaitiMother") control = `<label><input type="radio" name="value" value="true"${raw===true?" checked":""}> Yes</label><label><input type="radio" name="value" value="false"${raw===false?" checked":""}> No</label>${field==="kuwaitiMother"?'<label><input type="radio" name="value" value=""> Not recorded</label>':""}`;
+      if (field === "jobSearchStatus") control = `<select name="value">${[["not_looking","Not looking right now"],["active","Actively looking"],["open_to_offers","Open to offers"]].map(([id,name])=>option(id!,name!,value===id)).join("")}</select>`;
+      const label = field === "kuwaitiMother" ? "Kuwaiti mother" : OWN_PROFILE_FIELD_CONTRACT[field].label;
+      return row.replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change ${escapeHtml(label)}"><input type="hidden" name="field" value="${field}"><label>Change ${escapeHtml(label)}${control}</label><button class="button primary" type="submit">Review change</button></form></div>`);
     }
     return row;
   }).join("");

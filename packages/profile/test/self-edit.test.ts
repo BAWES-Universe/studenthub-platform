@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { OwnProfileRepository, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
+import { OwnProfileRepository, PERSON_PROFILE_MINIMUM_AGE, SHU372_RULES, createPersonSelfEdit, normalizePersonSelfEditValue } from "../src/index.js";
 import type { CommitInput, SafeWriteStore } from "@studenthub/safe-write-contract";
 import { SYNTHETIC_PROFILE_FIXTURES } from "../src/fixtures.js";
 
@@ -13,6 +13,35 @@ test("SHU372_RULES every shared rule example has the specified result", () => {
   assert.equal(normalizePersonSelfEditValue("displayName", "Noor Al-Sabah"), "Noor Al-Sabah");
   assert.equal(normalizePersonSelfEditValue("arabicName", "نور الصباح"), "نور الصباح");
   assert.equal(normalizePersonSelfEditValue("displayName", "Noe\u0308l Al-Sabah"), "Noël Al-Sabah");
+});
+
+test("SHU373_AGE one minimum-age setting accepts sixteen with no maximum", () => {
+  assert.equal(PERSON_PROFILE_MINIMUM_AGE, 16);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-10-30", "2026-10-30"), "2010-10-30");
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2010-10-31", "2026-10-30"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "1900-01-01", "2026-10-30"), "1900-01-01");
+  assert.equal(normalizePersonSelfEditValue("birthDate", "2027-01-01", "2026-10-30"), null);
+  assert.equal(normalizePersonSelfEditValue("birthDate", "not-a-date", "2026-10-30"), null);
+});
+
+test("SHU373_CATALOGUE reads written values and catalogue choices once each", async () => {
+  let writtenReads=0, catalogueReads=0;
+  const repository = new OwnProfileRepository({
+    principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},
+    source:{resolveLink:async()=>({kind:"unconfigured"}) as const,readCandidate:async()=>undefined},
+    preferences:{readOwnPreferences:async()=>{writtenReads++;return null},readProfileChoices:async()=>{catalogueReads++;return {countries:[{id:"1",name:"Jordan",code:"JO"}],universities:[{id:"2",name:"Kuwait University"}]}}},today:()=>"2026-10-30",
+  });
+  const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});
+  assert.equal(result.kind,"found"); assert.deepEqual([writtenReads,catalogueReads],[1,1]);
+  if(result.kind==="found") assert.equal(result.profile.profileChoices?.countries[0]?.name,"Jordan");
+});
+
+test("SHU373_PAGE all seven written values carry their written date into My profile", async()=>{
+  const updatedAt="2026-10-30T12:00:00.000Z";
+  const preferences={gender:{value:"female",updatedAt},birthDate:{value:"2000-01-02",updatedAt},nationality:{value:"1",name:"Jordan",updatedAt},university:{value:"2",name:"Kuwait University",updatedAt},drivingLicence:{value:"true",updatedAt},kuwaitiMother:{value:"false",updatedAt},jobSearchStatus:{value:"active",updatedAt}};
+  const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"}) as const,readCandidate:async()=>undefined},preferences:{readOwnPreferences:async()=>preferences}as never,today:()=>"2026-10-30"});
+  const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")return;
+  for(const[field,value]of Object.entries({gender:"female",birthDate:"2000-01-02",nationality:"Jordan",university:"Kuwait University",drivingLicence:true,kuwaitiMother:false,jobSearchStatus:"active"})){const shown: any=(result.profile.fields as any)[field];assert.equal(shown.value,value);assert.deepEqual(shown.freshness,{kind:"written_by_person",observedAt:updatedAt})}
 });
 
 test("SHU392_S1 each written value is read into its own profile field with its own date", async () => {
