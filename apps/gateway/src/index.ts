@@ -255,7 +255,7 @@ export function createGatewayServer(
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/admin/jobs") {
       const result=await (login as BrowserLoginApplication&{adminJobs?:AdminJobsPage}|undefined)?.adminJobs?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"))??{status:404 as const,body:{error:"not_found" as const}};
-      if(html)writeHtml(response,result.status,renderAdminJobs(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return;
+      if(result.status===200){if(html)writeHtml(response,result.status,renderAdminJobs(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}
     }
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {

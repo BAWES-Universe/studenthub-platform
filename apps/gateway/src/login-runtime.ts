@@ -43,7 +43,7 @@ import {createOrganizationCreation}from"./organization-creation.js";
 import {createPayContracts}from"./pay-contracts-http.js";
 import { createBankDetails } from "./bank-details.js";
 import { createAdminJobs } from "./admin-jobs.js";
-import { createJobRegistry } from "../../../packages/observability/src/jobs.js";
+import { createJobRegistry,writeJobAlert } from "../../../packages/observability/src/jobs.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -293,7 +293,7 @@ export function createRuntimeLoginFromEnv(
       ...application,
       navigation: createContextNavigation(loginStore.sessions, authzStore, Object.assign(organizations,{accountManagers:organizationAccountManagerStore}), organizationDeletionStore, organizationStatusStore),
       companies: createCompanyDirectory(loginStore.sessions, authzStore, organizations, organizationAccountManagerStore),
-      ...({adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRuns,createJobRegistry(jobRuns))} as {}),
+      ...({adminJobs:createAdminJobs(loginStore.sessions,authzStore,jobRuns,createJobRegistry(jobRuns,writeJobAlert))} as {}),
       ...(safeWrites && safeWriteKey
         ? { preferences: createLanguagePreference({ sessions: loginStore.sessions, store: safeWrites, secret: safeWriteKey }) }
         : {}),

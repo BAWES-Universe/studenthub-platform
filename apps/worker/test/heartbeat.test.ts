@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
-import { createWorkerHeartbeat } from "../src/index.js";
+import { createWorkerHeartbeat,writeJobAlert } from "../src/index.js";
 import { spawnSync } from "node:child_process";
 
 test("worker heartbeat uses the shared platform contract", () => {
@@ -15,3 +15,4 @@ test("worker heartbeat uses the shared platform contract", () => {
 });
 
 test("SHU198_WORKER unknown job exits non-zero without opening storage",()=>{const run=spawnSync(process.execPath,[new URL("../src/index.js",import.meta.url).pathname,"run","unknown"],{encoding:"utf8"});assert.notEqual(run.status,0)});
+test("SHU198_WORKER production alert sink writes only scrubbed alert fields",()=>{let output="";writeJobAlert({code:"job_failed",jobName:"heartbeat",owner:"platform-on-call",runbook:"docs/observability.md"},text=>{output+=text});assert.deepEqual(JSON.parse(output),{code:"job_failed",jobName:"heartbeat",owner:"platform-on-call",runbook:"docs/observability.md"})});
