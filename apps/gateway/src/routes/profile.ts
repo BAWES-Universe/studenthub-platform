@@ -5,9 +5,11 @@ import { handleBankDetails } from "../bank-details.js";
 import { handleProfileRecords } from "../profile-records-http.js";
 import type { GatewayRoute } from "./context.js";
 import { renderPeopleDirectory, wantsHtml } from "../web-ui.js";
+import { handleCivilIdReview } from "../civil-id-review-http.js";
 
 const sessionCookie=(value:string|undefined)=>value?.split(";").map(x=>x.trim()).find(x=>x.startsWith("__Host-studenthub_session="))?.slice(26);
 export const peopleDirectoryRoute:GatewayRoute={name:"people-directory",handle:async ctx=>{if(ctx.request.method!=="GET"||ctx.request.url?.split("?",1)[0]!=="/workspace/people")return false;const html=wantsHtml(ctx.request.headers.accept),result=ctx.login?.people?await ctx.login.people.open(sessionCookie(ctx.request.headers.cookie),new URL(ctx.request.url,"http://gateway.invalid").searchParams,html):{status:404 as const,body:{error:"not_found"}};if(result.status===404){ctx.response.writeHead(404,{"content-type":"application/json"});ctx.response.end(JSON.stringify({ok:false,error:"not_found"}));return true}if(html){ctx.writeHtml(ctx.response,result.status,renderPeopleDirectory(result,ctx.login!),{},true);return true}ctx.response.writeHead(result.status,{"content-type":"application/json","cache-control":"no-store",vary:"Accept"});ctx.response.end(JSON.stringify(result.body));return true}};
+export const civilIdReviewRoute:GatewayRoute={name:"civil-id-review",handle:ctx=>handleCivilIdReview(ctx.request,ctx.response,ctx.login?.civilIdReview,ctx.login?.web?.origin,async session=>{if(!ctx.login)return undefined;const result=await ctx.login.profile({sessionId:session});return result.status===200&&typeof result.body?.personId==="string"?result.body.personId:undefined},(title,body)=>ctx.pageDocument(title,body))};
 
 export const profileEditPageRoute: GatewayRoute = { name: "profile-edit-page", handle: (ctx) =>
   handleProfileEditPage(ctx.request, ctx.response, ctx.login?.profileEdit, ctx.login?.web?.origin,

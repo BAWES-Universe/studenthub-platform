@@ -24,6 +24,8 @@ import {
   CivilIdVault,
   InMemoryApprovedProfileAdapter,
   InMemoryCivilIdStore,
+  InMemoryCivilIdOcrStore,
+  InMemoryCivilIdReviewStore,
   InMemoryLocationStore,
   SYNTHETIC_PROFILE_FIXTURES,
   createArea,
@@ -32,6 +34,7 @@ import {
 import { createGatewayServer, createLoginApplication } from "../../src/index.js";
 import type { BrowserLoginApplication } from "../../src/web-ui.js";
 import { composeOwnProfiles } from "../../src/wiring/profile.js";
+import type { CandidateDocuments } from "../../../../packages/private-documents/src/candidate-lifecycle.js";
 
 export const REAL_PROFILE_ORIGIN = "https://studenthub.test.invalid";
 export const REAL_PROFILE_PERSON = "person-1";
@@ -62,6 +65,8 @@ export type RealProfileServerOptions = {
   readonly countries?: readonly { readonly id: string; readonly code: string | null }[];
   /** Extra services on the login application, built from the helper's own. */
   readonly extend?: (services: RealProfileServices) => Partial<BrowserLoginApplication>;
+  /** Wire the staff Civil ID review routes through the production gateway composition. */
+  readonly civilIdReview?: { readonly documents:CandidateDocuments; readonly store?:InMemoryCivilIdReviewStore; readonly ocrStore?:InMemoryCivilIdOcrStore; readonly staffPrincipalId?:string };
 };
 
 const kuwaitDate = (now: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuwait", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -73,11 +78,12 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: REAL_PROFILE_SESSION, personId: REAL_PROFILE_PERSON });
   await rig.sessions.put({ id: REAL_PROFILE_OTHER_SESSION, personId: REAL_PROFILE_OTHER_PERSON });
-  const authz = new InMemoryAuthzStore({ principals: [
+  const authz = new InMemoryAuthzStore({ organizations:[{id:"root",name:"StudentHub"},{id:"candidate-documents",name:"Candidate documents"}], principals: [
     createPrincipal({ id: REAL_PROFILE_PERSON, pbuuids: ["pbuuid-1"], displayName: "Registry Name", email: "registry@example.invalid" }),
     createPrincipal({ id: REAL_PROFILE_OTHER_PERSON, pbuuids: ["pbuuid-2"] }),
   ] });
   await authz.grantMany(REAL_PROFILE_PERSON, [{ orgId: `candidate:${REAL_PROFILE_PERSON}`, role: "candidate", scope: "self" }]);
+  if(options.civilIdReview)await authz.grantMany(options.civilIdReview.staffPrincipalId??REAL_PROFILE_PERSON,[{orgId:"root",role:"staff",scope:"subtree"}]);
   const rows = new Map<string, unknown>([
     ["candidate-1", options.row ?? { ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_language_pref: "en" }],
     ["candidate-2", { ...SYNTHETIC_PROFILE_FIXTURES.partial, candidate_id: 232, candidate_name: "Other Person" }],
@@ -99,9 +105,11 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const profiles = composeOwnProfiles({ principals: authz, source, civilId: countedCivil, area, today: options.today ?? (() => kuwaitDate(now())) });
   const countedProfiles = { async readOwn(request: Parameters<typeof profiles.readOwn>[0]) { counts.profileReads++; return profiles.readOwn(request); } };
   const services: RealProfileServices = { authz, sessions:rig.sessions, civilId, civilStore, vault, profiles, now };
+  const reviewOcr=options.civilIdReview?.ocrStore??new InMemoryCivilIdOcrStore(),reviewStore=options.civilIdReview?.store??(options.civilIdReview?new InMemoryCivilIdReviewStore({civilStore,ocrStore:reviewOcr,names:id=>id===REAL_PROFILE_OTHER_PERSON?"Other Person":"Registry Name"}):undefined);
   const login: BrowserLoginApplication = {
     ...rig.app,
     civilId: countedCivil,
+    ...(options.civilIdReview&&reviewStore?{civilIdReview:{store:reviewStore,vault,ocr:reviewOcr,secret:key,isStaff:async(id:string)=>{const grants=await authz.listGrantsForPrincipal(id);return grants.some(g=>(g.role==="staff"||g.role==="admin")&&g.scope==="subtree"&&g.orgId==="root")}}}:{}),
     // As wireProfile: the area service with the session store and origin.
     area: { area, sessions: rig.sessions, origin: REAL_PROFILE_ORIGIN },
     ...(options.extend?.(services) ?? {}),
@@ -109,7 +117,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
     web: { origin: REAL_PROFILE_ORIGIN, returnTo: rig.config.allowedReturnUrls[1], profiles: countedProfiles,
       profileCompleteness: { choices: async () => ({ countries: options.countries ?? [] }), civilId: countedCivil } },
   } as BrowserLoginApplication;
-  const server = createGatewayServer(undefined, undefined, undefined, login);
+  const server = createGatewayServer(undefined, undefined, undefined, login, null, undefined, options.civilIdReview?.documents);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const address = server.address();
@@ -117,7 +125,7 @@ export async function startRealProfileServer(t: TestContext, options: RealProfil
   const url = `http://127.0.0.1:${address.port}`;
   const cookie = (session = REAL_PROFILE_SESSION) => `__Host-studenthub_session=${session}`;
   return {
-    url, rig, rows, counts, login, ...services,
+    url, rig, rows, counts, login, reviewStore, reviewOcr, ...services,
     cookie,
     /** A browser GET with the session cookie. */
     get: (path: string, session = REAL_PROFILE_SESSION) => fetch(`${url}${path}`, { headers: { accept: "text/html", cookie: cookie(session) }, redirect: "manual" }),
