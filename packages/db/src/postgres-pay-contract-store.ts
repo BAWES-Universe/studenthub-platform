@@ -117,7 +117,7 @@ export class PostgresPayContractStore implements PayContractStore {
   }
 }
 
-function transactionFor(client: PoolClient): PayContractTransaction {
+export function transactionFor(client: PoolClient): PayContractTransaction {
   return {
     async lockPair(candidateId: string, storeId: string) {
       // Concurrent creates for one pair queue here, so the overlap check always sees the other's row.
