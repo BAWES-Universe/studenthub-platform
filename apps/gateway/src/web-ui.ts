@@ -320,7 +320,7 @@ const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unkn
   age: (value) => `${String(value)} years`,
   language: (value) => String(value).toUpperCase(),
   drivingLicence: (value) => value ? "Yes" : "No",
-  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  jobSearchStatus: (value) => ({ not_looking: "Not looking right now", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
   committed: (value) => value ? "Yes" : "No",
   isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
   pendingFields: (value) => Array.isArray(value) && value.length > 0
@@ -369,7 +369,11 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
     return row;
   }).join("") + (profile.fields.kuwaitiMother ? fieldRow(profile, "kuwaitiMother").replace("</div>", `<form method="post" action="/profile/edit/preview" aria-label="Change Kuwaiti mother"><input type="hidden" name="field" value="kuwaitiMother"><label><input type="radio" name="value" value="true"${profile.fields.kuwaitiMother.state === "available" && profile.fields.kuwaitiMother.value ? " checked" : ""}>Yes</label><label><input type="radio" name="value" value="false"${profile.fields.kuwaitiMother.state === "available" && !profile.fields.kuwaitiMother.value ? " checked" : ""}>No</label><button class="button primary" type="submit">Review change</button></form></div>`) : "");
   const workStatus = profile.fields.jobSearchStatus;
-  const workStatusText = fieldText(workStatus, fieldFormatters.jobSearchStatus);
+  // This summary is deliberately plain text: the detailed row owns the single
+  // unavailable-state marker used for this field.
+  const workStatusText = workStatus.state === "available"
+    ? escapeHtml(fieldFormatters.jobSearchStatus!(workStatus.value))
+    : workStatus.freshness.kind === "written_by_person" ? "Not recorded" : "Unavailable";
   return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a><a class="nav-item" href="/profile/background">Education and experience</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><div class="notice" data-profile-work-status><strong>Looking for work: ${workStatusText}</strong></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 

@@ -92,6 +92,20 @@ test("SHU373_PAGE each profile control is in its own form and choices are read o
   assert.doesNotMatch(html,/<dl class="profile-fields">[\s\S]*?<p>Not listed\? Staff add new universities\.<\/p>/);
 });
 
+test("SHU373_PAGE a written 1800 birth date keeps My profile reachable with only Age unavailable", async () => {
+  const repository = new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"})},today:()=>"2026-10-30",preferences:{readOwnPreferences:async()=>({birthDate:{value:"1800-01-01",updatedAt:"2026-10-30T12:00:00.000Z"}}),readProfileChoices:async()=>({countries:[],universities:[]})} as never});
+  const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind!=="found")return;
+  const rendered=await profileDocument({status:200,body:result.profile},{profileEdit:{}} as BrowserLoginApplication);
+  assert.equal(rendered.status,200);assert.match(rendered.html,/<dt>Birth date<\/dt><dd>1800-01-01<\/dd>/);assert.match(rendered.html,/<dt>Age<\/dt><dd><span class="missing"[^>]*>Unavailable<\/span>/);assert.match(rendered.html,/aria-label="Change Birth date"/);
+});
+
+test("SHU373_PAGE unavailable work status has one marker and not-looking wording agrees", async () => {
+  const unavailableRepository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"unavailable",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"linked",candidateRef:"candidate"}),readCandidate:async()=>SYNTHETIC_PROFILE_FIXTURES.unavailable},today:()=>"2026-10-30"});const unavailableResult=await unavailableRepository.readOwn({requesterPrincipalId:"unavailable",targetPersonId:"unavailable"});assert.equal(unavailableResult.kind,"found");if(unavailableResult.kind!=="found")return;const unavailable=await profileDocument({status:200,body:unavailableResult.profile},{ } as BrowserLoginApplication);
+  assert.equal((unavailable.html.match(/data-state="unavailable"/g)??[]).length,19);
+  assert.match(unavailable.html,/data-profile-work-status><strong>Looking for work: Unavailable<\/strong>/);
+  const country="11111111-1111-4111-8111-111111111111";const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"})},today:()=>"2026-10-30",preferences:{readOwnPreferences:async()=>({jobSearchStatus:{value:"not_looking",updatedAt:"2026-10-30T12:00:00.000Z"}}),readProfileChoices:async()=>({countries:[{id:country,name:"Jordan",code:"JO"}],universities:[]})} as never});const found=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(found.kind,"found");if(found.kind!=="found")return;const html=(await profileDocument({status:200,body:found.profile},{} as BrowserLoginApplication)).html;assert.match(html,/data-profile-work-status><strong>Looking for work: Not looking right now<\/strong>/);assert.match(html,/<dt>Looking for work<\/dt><dd>Not looking right now<\/dd>/);
+});
+
 test("landing is public HTML with an exact configured login link and no profile reads", async (t) => {
   const f = await fixture(t);
   const response = await fetch(`${f.url}/?return_to=https://attacker.invalid`, {

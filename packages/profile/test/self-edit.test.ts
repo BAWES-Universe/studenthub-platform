@@ -33,6 +33,17 @@ test("SHU373_CATALOGUE resolves active ids for display and isolates unknown ids"
   assert.equal(result.profile.fields.university.state, "unavailable");
 });
 
+test("SHU373_CATALOGUE a choices object missing countries isolates nationality", async () => {
+  const repository = new OwnProfileRepository({ principals: { getPrincipal: async () => ({ id: "person", pbuuids: [], email: "p@example.invalid" }) },
+    source: { resolveLink: async () => ({ kind: "unconfigured" }) }, today: () => "2026-10-30",
+    preferences: { readOwnPreferences: async () => ({ nationality: { value: "11111111-1111-4111-8111-111111111111", updatedAt: "2026-10-30T12:00:00.000Z" }, gender: { value: "male", updatedAt: "2026-10-30T12:00:00.000Z" } }),
+      readProfileChoices: async () => ({ universities: [] }) } } as never);
+  const result = await repository.readOwn({ requesterPrincipalId: "person", targetPersonId: "person" });
+  assert.equal(result.kind, "found"); if (result.kind !== "found") return;
+  assert.equal(result.profile.fields.nationality.state, "unavailable");
+  assert.equal(result.profile.fields.gender.state, "available");
+});
+
 test("SHU373_PAGE Kuwaiti-mother is offered by country code, never the nationality name", async () => {
   const id="11111111-1111-4111-8111-111111111111";
   for (const [code,offered] of [["KW",false],["JO",true]] as const) { const repository=new OwnProfileRepository({principals:{getPrincipal:async()=>({id:"person",pbuuids:[],email:"p@example.invalid"})},source:{resolveLink:async()=>({kind:"unconfigured"})},today:()=>"2026-10-30",preferences:{readOwnPreferences:async()=>({nationality:{value:id,updatedAt:"2026-10-30T12:00:00.000Z"}}),readProfileChoices:async()=>({countries:[{id,name:"Kuwaiti",code}],universities:[]})} as never}); const result=await repository.readOwn({requesterPrincipalId:"person",targetPersonId:"person"});assert.equal(result.kind,"found");if(result.kind==="found")assert.equal(Boolean(result.profile.fields.kuwaitiMother),offered); }

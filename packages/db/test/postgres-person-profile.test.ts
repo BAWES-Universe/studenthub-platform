@@ -143,3 +143,24 @@ test("SHU373_CATALOGUE reads active country and university choices only", async 
   assert.ok(choices.countries.some(item=>item.id===activeCountry)); assert.ok(!choices.countries.some(item=>item.id===deletedCountry));
   assert.ok(choices.universities.some(item=>item.id===activeUniversity)); assert.ok(!choices.universities.some(item=>item.id===deletedUniversity));
 });
+
+test("SHU373_CATALOGUE refuses deleted, unknown, pending and rejected country and university ids without storing them", async () => {
+  const principalId=`shu373-catalogue-${randomUUID()}`, marker=randomUUID(), actor="c".repeat(64);
+  await new PostgresAuthzStore(pool).registerPrincipal(createPrincipal({id:principalId,email:`${principalId}@example.invalid`,pbuuids:[]}));
+  const deletedCountry=randomUUID(),deletedUniversity=randomUUID();
+  for(const[id,type,name]of[[deletedCountry,"country",`Deleted country ${marker}`],[deletedUniversity,"university",`Deleted university ${marker}`]]as const)
+    await pool.query(`INSERT INTO catalogue_items(id,catalogue_type,name,normalized_name,status,created_by_ref,updated_by_ref,created_at,updated_at,deleted_at) VALUES($1,$2,$3,lower($3),'deleted',$4,$4,clock_timestamp(),clock_timestamp(),clock_timestamp())`,[id,type,name,actor]);
+  // Moderation-pending and rejected ids do not exist in catalogue_items until
+  // approval. Separate typed ids keep the university checks meaningful.
+  const pendingCountry=randomUUID(),rejectedCountry=randomUUID(),unknownCountry=randomUUID();
+  const pendingUniversity=randomUUID(),rejectedUniversity=randomUUID(),unknownUniversity=randomUUID();
+  const store=new PostgresPersonProfileStore({pool});
+  const refuse=async(field:"nationality"|"university",value:string,column:"nationality_id"|"university_id")=>{
+    const request={principalRef:safeWritePrincipalRef(principalId),change:{personRef:personRecordRef(principalId),field,value}};
+    const writer=createPersonSelfEdit({store:store.forPrincipal(principalId),secret:"s".repeat(32)}),preview=await writer.preview(request);assert.ok(preview.ok,`${field} preview ${value}`);if(!preview.ok)return;
+    assert.deepEqual(await writer.confirm({...request,token:preview.token}),{ok:false,reason:"invalid_value"});
+    assert.equal((await pool.query(`SELECT ${column} FROM person_profiles WHERE principal_id=$1`,[principalId])).rows[0]?.[column]??null,null);
+  };
+  for(const id of[deletedCountry,unknownCountry,pendingCountry,rejectedCountry])await refuse("nationality",id,"nationality_id");
+  for(const id of[deletedUniversity,unknownUniversity,pendingUniversity,rejectedUniversity])await refuse("university",id,"university_id");
+});
