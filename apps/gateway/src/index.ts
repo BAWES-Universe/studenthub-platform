@@ -28,6 +28,7 @@ import {
 } from "./authz-middleware.js";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import { renderAdminJobs, type AdminJobsPage } from "./admin-jobs.js";
+import {renderAdminOutbox,type AdminOutboxPage}from"./admin-outbox.js";
 import { parseCompanyDirectoryExportQuery } from "./company-directory.js";
 import { handleLanguagePreference, handleLanguagePreferencePage } from "./language-preference.js";
 import { handleProfileBrowserEdit } from "./profile-browser-edit-http.js";
@@ -262,6 +263,7 @@ export function createGatewayServer(
       const result=await (login as BrowserLoginApplication&{adminJobs?:AdminJobsPage}|undefined)?.adminJobs?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"))??{status:404 as const,body:{error:"not_found" as const}};
       if(result.status===200){if(html)writeHtml(response,result.status,renderAdminJobs(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}
     }
+    if(request.method==="GET"&&request.url&&requestPath(request.url)==="/admin/outbox"){const page=Number(new URL(request.url,"http://gateway.invalid").searchParams.get("page")??"1");const result=await(login as BrowserLoginApplication&{adminOutbox?:AdminOutboxPage}|undefined)?.adminOutbox?.open(cookieValue(request.headers.cookie,"__Host-studenthub_session"),page)??{status:404 as const,body:{error:"not_found" as const}};if(result.status===200){if(html)writeHtml(response,200,renderAdminOutbox(result),{},true);else writeBrowserResponseSafely(response,{...result,headers:{"cache-control":"no-store",vary:"Accept"}});return}}
 
     if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace/my-companies") {
       const selected = new URL(request.url, "http://gateway.invalid").searchParams;

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { disabledTelemetry, observedJob, type Telemetry } from "./index.js";
 import type { Alert } from "./alerts.js";
 
-export const JOB_NAMES = ["heartbeat", "missed_run_check"] as const;
+export const JOB_NAMES = ["heartbeat", "missed_run_check", "email_delivery"] as const;
 export type JobName = typeof JOB_NAMES[number];
 export const JOB_OUTCOMES = ["succeeded", "failed", "refused_overlap"] as const;
 export type JobOutcome = typeof JOB_OUTCOMES[number];
@@ -44,8 +44,8 @@ export async function missedJobAlerts(jobs:readonly Job[],store:Pick<JobRunsStor
   for(const job of jobs){if(signal?.aborted)break;if(isJobMissed(job,successes.get(job.name),now)){const value=alert("job_missed",job.name);alerts.push(value);await emit(value)}}
   return alerts;
 }
-export function createJobRegistry(store:JobRunsStore,emit:(alert:JobAlert)=>void|Promise<void>):readonly Job[]{
-  const jobs:Job[]=[{name:"heartbeat",intervalMs:60_000,work:async()=>({status:"ok"})},{name:"missed_run_check",intervalMs:60_000,work:async signal=>{await missedJobAlerts(jobs,store,emit,new Date(),signal)}}];return Object.freeze(jobs);
+export function createJobRegistry(store:JobRunsStore,emit:(alert:JobAlert)=>void|Promise<void>,emailDelivery:Job["work"]=async()=>undefined):readonly Job[]{
+  const jobs:Job[]=[{name:"heartbeat",intervalMs:60_000,work:async()=>({status:"ok"})},{name:"missed_run_check",intervalMs:60_000,work:async signal=>{await missedJobAlerts(jobs,store,emit,new Date(),signal)}},{name:"email_delivery",intervalMs:60_000,work:emailDelivery}];return Object.freeze(jobs);
 }
 export class MemoryJobRunsStore implements JobRunsStore {
   readonly runs:JobRun[]=[];readonly leases=new Map<JobName,{holder:string;expiresAt:Date}>();failRenewal=false;
