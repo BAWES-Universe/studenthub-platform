@@ -79,7 +79,7 @@ function escapeHtml(value: string): string {
   })[char]!);
 }
 
-const securityHeaders = {
+export const securityHeaders = {
   "cache-control": "no-store",
   "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   // `same-origin`, not `no-referrer`: under `no-referrer` browsers serialize the
