@@ -12,7 +12,7 @@ const env = {
   OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
 };
 
-const always = ["adminJobs", "adminOutbox", "callback", "companies", "exports", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "profile", "start", "web"].sort();
+const always = ["adminJobs", "adminOutbox", "area", "callback", "companies", "exports", "logout", "navigation", "organizationAccountManager", "organizationBrands", "organizationCreation", "organizationStores", "payContracts", "profile", "start", "web"].sort();
 const signed = [...always, "bankDetails", "browserEdit", "organizationApprovedToHire", "organizationCommercialTerms", "organizationDeletion", "organizationNotes", "organizationProfile", "organizationStatus", "preferences", "profileEdit"].sort();
 
 test("PREP_WIRING_SHAPE preserves application and web keys with and without signing", async () => {
@@ -37,7 +37,7 @@ test("PREP_WIRING_SOURCE keeps construction out of the login runtime", async () 
 test("PREP_WIRING_COUNT closes every independently constructed pool exactly once", async (t) => {
   const ended = new Map<pg.Pool, number>();
   t.mock.method(pg.Pool.prototype, "end", async function(this: pg.Pool) { ended.set(this, (ended.get(this) ?? 0) + 1); });
-  for (const [environment, expected] of [[env, 19], [{ ...env, SAFE_WRITE_SIGNING_KEY: Buffer.alloc(32, 7).toString("base64") }, 25]] as const) {
+  for (const [environment, expected] of [[env, 20], [{ ...env, SAFE_WRITE_SIGNING_KEY: Buffer.alloc(32, 7).toString("base64") }, 26]] as const) {
     ended.clear();
     const runtime = createRuntimeLoginFromEnv(environment)!;
     await runtime.close();

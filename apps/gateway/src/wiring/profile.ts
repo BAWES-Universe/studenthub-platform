@@ -1,9 +1,9 @@
 import pg from "pg";
 import { createBrowserWriteTokens } from "@studenthub/safe-write-contract";
-import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
+import { PostgresBankDetailsStore, PostgresLegacyLinkStore, PostgresPersonLocationStore, PostgresPersonProfileStore, PostgresSafeWriteStore, safeWritePrincipalRef } from "@studenthub/db/profile";
 import { readLiveLoginSessionPerson } from "@studenthub/db/access";
 import { PostgresFinanceReferenceResolver } from "@studenthub/db/pay-contracts";
-import { CivilIdVault, OwnProfileRepository, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
+import { CivilIdVault, OwnProfileRepository, createArea, createCivilId, createPersonImportedFallbackReader, type ApprovedProfileAdapter, type OwnProfileReader } from "@studenthub/profile";
 import { createBankDetails } from "../bank-details.js";
 import { createLanguagePreference } from "../language-preference.js";
 import { createProfileBrowserEdit } from "../profile-browser-edit-http.js";
@@ -48,12 +48,14 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
   const importedFallback = createPersonImportedFallbackReader({ source: profileSource });
   const safeWrites = safeWriteKey ? new PostgresSafeWriteStore({ connectionString: databaseUrl }) : undefined;
   const personProfiles = safeWriteKey ? new PostgresPersonProfileStore({ connectionString: databaseUrl }) : undefined;
+  const personLocations = new PostgresPersonLocationStore({ connectionString: databaseUrl });
+  const area = createArea({ store: personLocations });
   const profiles = new OwnProfileRepository({ principals: access.authzStore, source: profileSource,
-    ...(safeWrites && personProfiles || civilId ? { preferences: { async readOwnPreferences(id: string) {
-      const [language, person, civil] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id)]);
-      const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}) };
+    ...({ preferences: { async readOwnPreferences(id: string) {
+      const [language, person, civil, location] = await Promise.all([safeWrites?.readOwnPreferences(id), personProfiles?.readOwnPreferences(id), civilId?.readOwn(id), area.readOwn(id)]);
+      const merged = { ...(language ?? {}), ...(person ?? {}), ...(civil ? { civilId: civil } : {}), ...(location ? { area: location } : {}) };
       return Object.keys(merged).length > 0 ? merged as never : null;
-    } } } : {}) });
+    } } }) });
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: databaseUrl }) : undefined;
   const banks = safeWriteKey ? new PostgresFinanceReferenceResolver({ connectionString: databaseUrl }) : undefined;
@@ -126,8 +128,9 @@ export function wireProfile(settings: WiringSettings, access: ReturnTypeAccess, 
         : {}),
       ...(legacyLink ? { legacyLink } : {}),
       ...(civilId ? { civilId } : {}),
+      area: { area, sessions: access.loginStore.sessions, origin: settings.callbackUrl ? new URL(settings.callbackUrl).origin : "" },
       }, web: { profiles: webProfiles }, browserSessionPool, sessions,
     },
-    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
+    async close() { await Promise.all([browserSessionPool?.end(), safeWrites?.close(), personProfiles?.close(), personLocations.close(), bankDetailsStore?.close(), banks?.close(), legacyStore?.close(), civilStore?.close()]); },
   };
 }
