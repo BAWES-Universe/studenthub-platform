@@ -89,6 +89,14 @@ test("Q14_4_RULES imported pending list is fallback only for unprojected values"
   assert.equal(result.fields.pendingFields.state === "available" && result.fields.pendingFields.value.includes("personal_photo"),false,"documents, not import, decide photos");
 });
 
+test("Q14_4_RULES imported-only requirements absent from the pending list count as met", () => {
+  const profile=base();
+  const imported={...profile.fields.pendingFields,value:[] as const,freshness:{kind:"imported_snapshot" as const,observedAt:"2026-01-01"}};
+  const fields={...profile.fields,pendingFields:imported,phone:undefined,civilId:undefined,kuwaitiMother:undefined};
+  const result=deriveProfileCompleteness({...profile,fields},{...evidence,nationalityCode:"JO"});
+  assert.deepEqual(result.fields.pendingFields.state === "available" && result.fields.pendingFields.value.filter(x=>["phone","civil_id","civil_expiry","kuwaiti_mother"].includes(x)),[]);
+});
+
 test("Q14_4_DERIVED unavailable evidence fails closed and derived values agree", () => {
   const failed=deriveProfileCompleteness(base(),{...evidence,sourcesAvailable:false});
   assert.equal(failed.fields.pendingFields.state,"unavailable"); assert.equal(failed.fields.isProfileCompleted.state,"unavailable");

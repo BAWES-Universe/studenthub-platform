@@ -337,11 +337,7 @@ export async function profileDocument(result: BrowserResponse, login: Partial<Br
   const text = (key: ProfileCopyKey, params: Readonly<Record<string, string | number>> = {}): string => PROFILE_COPY[language][key].replace(/\{([A-Za-z]+)\}/g, (_, name: string) => String(params[name] ?? ""));
   const copy = (key: ProfileCopyKey, params?: Readonly<Record<string, string | number>>) => escapeHtml(text(key, params));
   type Key = OwnProfileFieldName | "phone" | "handle" | "kuwaitiMother";
-  const label = (key: Key) => profile.fields.pendingFields.freshness.kind !== "derived" && key === "isProfileCompleted"
-    ? language === "ar" ? "اكتمال الملف الشخصي عند الاستيراد" : "Imported profile completeness"
-    : profile.fields.pendingFields.freshness.kind !== "derived" && key === "pendingFields"
-      ? language === "ar" ? "متطلبات الملف الشخصي المستوردة" : "Imported profile requirements"
-      : text(`field.${key}`);
+  const label = (key: Key) => text(`field.${key}`);
   const editable = new Set<Key>(["displayName", "arabicName", "objective", "intro", "preferredTime", "gender", "birthDate", "drivingLicence", "jobSearchStatus", "phone", "handle", "nationality", "university"]);
   const loaded = login.profileEdit?.choices ? await login.profileEdit.choices() : undefined;
   const originChoices = { countries: Array.isArray(loaded?.countries) ? loaded.countries : [], universities: Array.isArray(loaded?.universities) ? loaded.universities : [] };

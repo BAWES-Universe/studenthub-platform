@@ -9,7 +9,7 @@ const mutants=[
   ["Q14_4_RULES",'evidence.nationalityCode !== "KW"','evidence.nationalityCode === "KW"'],
   ["Q14_4_RULES",'d.type === "personal-photo"','importedPending(profile)?.has("personal_photo") === false'],
   ["Q14_4_DERIVED","!evidence.sourcesAvailable","false"],
-  ["Q14_4_RULES",'"nationality", "display_name"','"identity_reference", "display_name"'],
+  ["Q14_4_RULES","COMPLETENESS_ORDER.filter(name => missing.has(name))",'["identity_reference", ...COMPLETENESS_ORDER.filter(name => missing.has(name))]'],
 ];
 let killed=0;
 for(const [token,from,to] of mutants){const original=await readFile(source,"utf8");assert.equal(original.split(from).length-1,1,`${token} binding ${from}`);try{await writeFile(source,original.replace(from,to));const run=spawnSync(process.execPath,["--test",`--test-name-pattern=^${token} `,suite],{encoding:"utf8"});assert.notEqual(run.status,0,`${token} mutant survived: ${from}`);killed++;}finally{await writeFile(source,original);}}

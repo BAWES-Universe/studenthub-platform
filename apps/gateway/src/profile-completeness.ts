@@ -38,9 +38,10 @@ export async function handleProfileCompleteness(ctx: GatewayRouteContext): Promi
       return true;
     }
     const cached = currentProfileAvatar();
+    const completenessConfigured = !!ctx.profileRecords && !!ctx.login.profileEdit?.choices;
     const reads = await Promise.allSettled([
       ctx.profileRecords?.service.background(personId),
-      html ? Promise.resolve(cached?.documents) : session && ctx.documents ? ctx.documents.list(session) : undefined,
+      html ? Promise.resolve(cached?.documents) : completenessConfigured && session && ctx.documents ? ctx.documents.list(session) : undefined,
       ctx.login.profileEdit?.choices?.(),
     ]);
     const value = <T>(index:number):T|undefined => { const read = reads[index]; return read?.status === "fulfilled" ? read.value as T|undefined : undefined; };
