@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { createSafeWrite, type FieldPolicy, type SafeWriteClock, type SafeWriteImplementation,
   type SafeWriteSecret, type SafeWriteStore } from "@studenthub/safe-write-contract";
 import { DEFAULT_OPERATOR_ORG_IDS } from "./organizations.js";
+import type { OrganizationStatus } from "./types.js";
 
 export const ORGANIZATION_STATUS_FIELDS = Object.freeze(["status"] as const);
 export const ORGANIZATION_STATUS_POLICY: FieldPolicy = Object.freeze({ allowed: ORGANIZATION_STATUS_FIELDS, maxValueLength: 12 });
 export type OrganizationStatusValue = "active" | "under_review" | "inactive" | "none";
+export function organizationStatusEvent(before:string|null,value:string):{from:OrganizationStatus|null;to:OrganizationStatus|null}|null {
+  const from=before as OrganizationStatus|null,to=value==="none"?null:value as OrganizationStatus;
+  if(from===to)return null;
+  return {from,to};
+}
 export interface OrganizationStatusGrantRow { readonly org_id:string; readonly role:string; readonly scope:string }
 
 export function organizationStatusDecision(rows:readonly OrganizationStatusGrantRow[], orgId:string,

@@ -20,7 +20,7 @@ import {
 import { createLoginApplication } from "./login-application.js";
 import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter, organizationOwnerDecision,
   organizationProfileStateDecision, organizationProfileRecordRef, organizationProfilePrincipalRef,
-  organizationStatusDecision, organizationStatusStateDecision, organizationStatusRecordRef, organizationStatusPrincipalRef } from "@studenthub/organizations";
+  organizationStatusDecision, organizationStatusStateDecision, organizationStatusEvent, organizationStatusRecordRef, organizationStatusPrincipalRef } from "@studenthub/organizations";
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
@@ -213,7 +213,7 @@ export function createRuntimeLoginFromEnv(
     ownerDecision:organizationOwnerDecision,stateDecision:organizationProfileStateDecision,
     recordRef:organizationProfileRecordRef,principalRef:organizationProfilePrincipalRef }) : undefined;
   const organizationStatusStore = new PostgresOrganizationStatusStore({connectionString:value("DATABASE_URL"),
-    decision:organizationStatusDecision,stateDecision:organizationStatusStateDecision,
+    decision:organizationStatusDecision,stateDecision:organizationStatusStateDecision,event:organizationStatusEvent,
     recordRef:organizationStatusRecordRef,principalRef:organizationStatusPrincipalRef});
   // SHU-182: a candidate's own bank details, behind the same signing key.
   const bankDetailsStore = safeWriteKey ? new PostgresBankDetailsStore({ connectionString: value("DATABASE_URL") }) : undefined;
