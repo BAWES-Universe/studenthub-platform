@@ -3,7 +3,7 @@ import { isGrantScope, isRole, type GrantScope, type Role } from "@studenthub/co
 
 export type AccessAction = "grant" | "revoke";
 export interface AccessGrantChange { readonly action: AccessAction; readonly targetPrincipalId: string; readonly organizationId: string; readonly role: Role; readonly scope: GrantScope; readonly reason: string }
-export type AccessWriteReason = "invalid_request"|"not_found"|"self_escalation"|"not_allowed"|"already_held"|"grant_not_held"|"last_operator_admin"|"token_not_issued"|"token_expired"|"token_principal_mismatch"|"token_change_mismatch"|"token_already_used";
+export type AccessWriteReason = "invalid_request"|"not_found"|"self_escalation"|"not_allowed"|"already_held"|"grant_not_held"|"last_operator_admin"|"operator_admin_conflict"|"token_not_issued"|"token_expired"|"token_principal_mismatch"|"token_change_mismatch"|"token_already_used";
 export interface AccessPreviewToken { readonly tokenId:string; readonly callerPrincipalId:string; readonly change:string; readonly issuedAt:string; readonly expiresAt:string; readonly mac:string }
 export type AccessWriteResult<T> = {readonly ok:true;readonly value:T}|{readonly ok:false;readonly reason:AccessWriteReason};
 export interface AccessGrantWriteStore {

@@ -7,7 +7,7 @@ import { insertAuthorizationMutationAudit, resolveAuthorizationMutationContext }
 const DEFAULT_OPERATOR_ORG_IDS:readonly string[]=Object.freeze(["root"]);
 export type AccessCataloguePolicy=(input:{readonly callerGrants:readonly {readonly orgId:string;readonly role:Role;readonly scope:GrantScope}[];readonly targetOrganization:{readonly id:string;readonly name:string;readonly parentOrgId?:string};readonly organizations:readonly {readonly id:string;readonly name:string;readonly parentOrgId?:string}[];readonly role:Role;readonly scope:GrantScope})=>boolean;
 type AccessGrantChange={readonly action:"grant"|"revoke";readonly targetPrincipalId:string;readonly organizationId:string;readonly role:Role;readonly scope:GrantScope;readonly reason:string};
-type AccessWriteReason="invalid_request"|"not_found"|"self_escalation"|"not_allowed"|"already_held"|"grant_not_held"|"last_operator_admin"|"token_not_issued"|"token_expired"|"token_principal_mismatch"|"token_change_mismatch"|"token_already_used";
+type AccessWriteReason="invalid_request"|"not_found"|"self_escalation"|"not_allowed"|"already_held"|"grant_not_held"|"last_operator_admin"|"operator_admin_conflict"|"token_not_issued"|"token_expired"|"token_principal_mismatch"|"token_change_mismatch"|"token_already_used";
 
 export interface AccessPerson {readonly principalId:string;readonly displayName:string|null;readonly email:string|null}
 export interface AccessGrantView {readonly id:string;readonly principalId:string;readonly organizationId:string;readonly organizationName:string;readonly role:Role;readonly scope:GrantScope;readonly grantedBy:{readonly principalId:string;readonly displayName:string|null}|null;readonly grantedAt:string|null;readonly reason:string|null}
@@ -36,6 +36,7 @@ export class PostgresAccessStore {
     if(!this.#catalogue({callerGrants,targetOrganization:{id:org.rows[0]!.id,name:org.rows[0]!.name,...(org.rows[0]!.parent_org_id===null?{}:{parentOrgId:org.rows[0]!.parent_org_id})},organizations,role:change.role,scope:change.scope}))return"not_allowed";
     const held=await c.query<{scope:string}>(`SELECT scope FROM grants WHERE principal_id=$1 AND org_id=$2 AND role=$3${lock?" FOR UPDATE":""}`,[change.targetPrincipalId,change.organizationId,change.role]);const existing=held.rows[0]?.scope;
     if(change.action==="grant"&&existing!==undefined&&(existing==="subtree"||existing===change.scope))return"already_held";
+    if(change.action==="grant"&&change.role==="admin"&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(change.organizationId)){const n=await c.query(`SELECT id FROM grants WHERE org_id=$1 AND role='admin'${lock?" FOR UPDATE":""}`,[change.organizationId]);if((n.rowCount??0)>0)return"operator_admin_conflict"}
     if(change.action==="revoke"&&existing!==change.scope)return"grant_not_held";
     if(change.action==="revoke"&&change.role==="admin"&&(DEFAULT_OPERATOR_ORG_IDS as readonly string[]).includes(change.organizationId)){const n=await c.query(`SELECT id FROM grants WHERE org_id=$1 AND role='admin' FOR UPDATE`,[change.organizationId]);if((n.rowCount??0)<=1)return"last_operator_admin"}
     return null;

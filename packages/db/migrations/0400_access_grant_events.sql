@@ -27,8 +27,6 @@ END;
 $$;
 CREATE TRIGGER access_grant_events_no_change BEFORE UPDATE OR DELETE ON access_grant_events
   FOR EACH ROW EXECUTE FUNCTION access_grant_events_append_only();
-CREATE TRIGGER access_grant_events_no_truncate BEFORE TRUNCATE ON access_grant_events
-  FOR EACH STATEMENT EXECUTE FUNCTION access_grant_events_append_only();
 -- Durable replay protection for the access-specific preview token.
 CREATE TABLE access_grant_spent_tokens (
   token_id TEXT PRIMARY KEY CHECK (token_id ~ '^[0-9a-f]{32}$'),
