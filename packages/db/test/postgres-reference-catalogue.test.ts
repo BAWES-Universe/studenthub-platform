@@ -16,7 +16,12 @@ before(async () => {
   await runMigrations(pool);
 });
 beforeEach(async () => {
-  await pool.query("TRUNCATE catalogue_submissions, catalogue_items, organizations CASCADE");
+  await pool.query("ALTER TABLE organization_notes DISABLE TRIGGER organization_notes_no_truncate");
+  try {
+    await pool.query("TRUNCATE catalogue_submissions, catalogue_items, organizations CASCADE");
+  } finally {
+    await pool.query("ALTER TABLE organization_notes ENABLE TRIGGER organization_notes_no_truncate");
+  }
   await pool.query(
     "INSERT INTO organizations(id,name) VALUES ($1,'Synthetic catalogue staff'),($2,'Synthetic catalogue candidate')",
     [actor.orgId, candidate.orgId],
