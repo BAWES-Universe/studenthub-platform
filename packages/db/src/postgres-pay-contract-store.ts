@@ -99,6 +99,13 @@ export class PostgresPayContractStore implements PayContractStore {
     return rows.map(fromRow);
   }
 
+  async listForCompany(companyId: string): Promise<readonly PayContract[]> {
+    const { rows } = await this.#pool.query<ContractRow>(
+      `SELECT ${COLUMNS} FROM pay_contracts WHERE company_org_id = $1`, [companyId],
+    );
+    return rows.map(fromRow);
+  }
+
   async transaction<T>(work: (tx: PayContractTransaction) => Promise<T>): Promise<T> {
     const client = await this.#pool.connect();
     // A client whose ROLLBACK failed is in an unknown state; the pool must not hand it out again.
