@@ -16,6 +16,7 @@ import {
   type OwnProfileProjection,
   type OwnProfileReadRequest,
   type OwnProfileReadResult,
+  type OwnProfilePreferencesReader,
   type PendingProfileRequirement,
   type ProfileField,
   type UnavailableProfileField,
@@ -174,6 +175,35 @@ function available<T>(spec: FieldSpec, observedAt: string, value: T): AvailableP
   });
 }
 
+function written<T>(spec: FieldSpec, value: T): AvailableProfileField<T> {
+  return Object.freeze({
+    state: "available", value,
+    provenance: provenance(spec.sourceField),
+    freshness: Object.freeze({ kind: "written_by_person", observedAt: "" }),
+  });
+}
+
+function applyPreferences(profile: OwnProfileProjection, preferences: Readonly<{ language: unknown }> | null): OwnProfileProjection {
+  if (!preferences) return profile;
+  const fields = { ...profile.fields };
+  try {
+    fields.language = written(PROFILE_FIELD_SPECS.language,
+      PROFILE_FIELD_SPECS.language.parse(preferences.language, profile.asOfDate) as LanguagePreference);
+  } catch {
+    fields.language = Object.freeze({
+      state: "unavailable", reason: "not_recorded",
+      provenance: provenance(PROFILE_FIELD_SPECS.language.sourceField),
+      freshness: Object.freeze({ kind: "written_by_person", observedAt: "" }),
+    });
+  }
+  // Imported completeness cannot describe a profile once a platform-owned
+  // field has been written. Nobody wrote these derived fields themselves.
+  for (const name of ["isProfileCompleted", "pendingFields"] as const) {
+    fields[name] = unavailable(PROFILE_FIELD_SPECS[name], "", "not_recorded") as never;
+  }
+  return Object.freeze({ ...profile, fields: Object.freeze(fields) });
+}
+
 function importedAt(row: Readonly<Record<string, unknown>>): string {
   const value = row.imported_at;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
@@ -227,15 +257,18 @@ export class OwnProfileRepository {
   readonly #principals: Pick<PrincipalStore, "getPrincipal">;
   readonly #source: ApprovedProfileAdapter;
   readonly #today: () => string;
+  readonly #preferences?: OwnProfilePreferencesReader;
 
   constructor(options: {
     readonly principals: Pick<PrincipalStore, "getPrincipal">;
     readonly source: ApprovedProfileAdapter;
     readonly today?: () => string;
+    readonly preferences?: OwnProfilePreferencesReader;
   }) {
     this.#principals = options.principals;
     this.#source = options.source;
     this.#today = options.today ?? (() => new Date().toISOString().slice(0, 10));
+    this.#preferences = options.preferences;
   }
 
   async readOwn(request: OwnProfileReadRequest): Promise<OwnProfileReadResult> {
@@ -243,6 +276,8 @@ export class OwnProfileRepository {
     try {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
+      const preferences = this.#preferences
+        ? await this.#preferences.readOwnPreferences(request.requesterPrincipalId) : null;
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
       if (link.kind === "unconfigured") {
         const today = this.#today();
@@ -254,14 +289,14 @@ export class OwnProfileRepository {
           provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
           freshness: Object.freeze({ kind: "not_imported", observedAt: "" }),
         })])) as unknown as OwnProfileFields;
-        return { kind: "found", profile: Object.freeze({
+        return { kind: "found", profile: applyPreferences(Object.freeze({
           version: OWN_PROFILE_VERSION, asOfDate: today, fields: Object.freeze(fields),
-        }) };
+        }), preferences) };
       }
       if (link.kind !== "linked") return { kind: "not_found" };
       const row = await this.#source.readCandidate(link.candidateRef);
       if (row === undefined) return { kind: "unavailable" };
-      return { kind: "found", profile: projectApprovedProfile(row, this.#today()) };
+      return { kind: "found", profile: applyPreferences(projectApprovedProfile(row, this.#today()), preferences) };
     } catch {
       return { kind: "unavailable" };
     }

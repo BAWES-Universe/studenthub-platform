@@ -13,15 +13,11 @@ const gateway = new URL("../../../dist/apps/gateway/src/language-preference.js",
 const suite = fileURLToPath(new URL("../../../dist/packages/db/test/safe-write-store.test.js", import.meta.url));
 const mutations = [
   [
-    store, "skip the grant check inside the commit", "SHU-84/AC-06 AUTHORITY",
+    store, "skip the principal check inside the commit", "SHU371_ANY_PERSON",
     "if (!await this.#mayWrite(client, principalId))\n                throw new Refusal(\"not_own_record\");", "",
   ],
   [
-    store, "treat a grantless principal as an owner", "SHU-84/AC-06 AUTHORITY",
-    "WHERE p.id = $1 AND EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = p.id)", "WHERE p.id = $1",
-  ],
-  [
-    store, "accept another principal's references", "SHU-84/AC-06 AUTHORITY",
+    store, "accept another principal's references", "SHU371_ANY_PERSON",
     "if (input.principalRef !== ownPrincipalRef || input.personRef !== ownPersonRef) {", "if (false) {",
   ],
   [

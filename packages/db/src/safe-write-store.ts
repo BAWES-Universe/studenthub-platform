@@ -6,9 +6,7 @@
  * platform database. Every precondition the contract assigns to the store is
  * checked inside one transaction, together with the field and the receipt:
  *
- * - the principal's grant mutations are serialized with this commit by the
- *   same advisory lock PostgresAuthzStore takes, so a revocation either lands
- *   before the ownership check or after the commit, never between them;
+ * - principal removal is checked again inside the committing transaction;
  * - the token is single-use through a unique index on the receipt row, which
  *   holds across processes and restarts;
  * - the field changes only if it still holds the value the preview showed;
@@ -155,15 +153,10 @@ export class PostgresSafeWriteStore {
     return Object.freeze({ ...receipt, fields: Object.freeze([LANGUAGE_FIELD]) }) as Receipt;
   }
 
-  /**
-   * Write authority is re-derived from server-side grants on every call: the
-   * principal must still exist and still hold at least one grant. A person
-   * whose every grant has been revoked can no longer change their record.
-   */
+  /** A personal profile belongs to every extant signed-in principal. */
   async #mayWrite(client: pg.Pool | pg.PoolClient, principalId: string): Promise<boolean> {
     const { rows } = await client.query(
-      `SELECT 1 FROM principals p
-        WHERE p.id = $1 AND EXISTS (SELECT 1 FROM grants g WHERE g.principal_id = p.id)`,
+      "SELECT 1 FROM principals WHERE id = $1",
       [principalId],
     );
     return rows.length === 1;
@@ -175,6 +168,14 @@ export class PostgresSafeWriteStore {
       [principalId],
     );
     return rows[0]?.language ?? null;
+  }
+
+  async readOwnPreferences(principalId: string): Promise<Readonly<{ language: unknown }> | null> {
+    if (typeof principalId !== "string" || principalId.length === 0) throw new TypeError("principal id required");
+    const { rows } = await this.#pool.query<{ language: unknown }>(
+      "SELECT language FROM person_preferences WHERE principal_id = $1", [principalId],
+    );
+    return rows[0] ? Object.freeze({ language: rows[0].language }) : null;
   }
 
   async #commit(principalId: string, input: CommitInput): Promise<CommitOutcome> {
@@ -190,9 +191,8 @@ export class PostgresSafeWriteStore {
     const client = await this.#pool.connect();
     try {
       await client.query("BEGIN");
-      // The lock PostgresAuthzStore takes for every grant mutation of this
-      // principal. Holding it makes the ownership check below and the write
-      // one serialized step with respect to revocation.
+      // Share the principal lock used by authorization mutations. Ownership
+      // itself depends only on the principal still existing.
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))", [principalId]);
       const used = await client.query(
         `SELECT 1 FROM authorization_mutation_audit

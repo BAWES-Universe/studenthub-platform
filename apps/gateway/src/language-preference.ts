@@ -22,8 +22,8 @@ import {
  *
  * Nothing here decides who is asking from the request body: the session does.
  * The body names only the new value and, at confirm, the token the preview
- * issued. Write authority is re-derived from current grants by the store at
- * preview and again inside the commit.
+ * issued. Personal-profile ownership is re-derived from the principal by the
+ * store at preview and again inside the commit.
  */
 export const LANGUAGE_POLICY: FieldPolicy = Object.freeze({
   allowed: Object.freeze([LANGUAGE_FIELD]),
@@ -235,4 +235,69 @@ export async function handleLanguagePreference(
     else response.destroy();
   }
   return true;
+}
+
+const FORM_PREVIEW = "/profile/language/preview";
+const FORM_CONFIRM = "/profile/language/confirm";
+export type LanguagePreferencePageWriter = (status: number, title: string, body: string) => void;
+
+function html(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+}
+
+async function readForm(request: IncomingMessage, allowed: readonly string[]): Promise<Record<string, string> | undefined> {
+  if (!request.headers["content-type"]?.startsWith("application/x-www-form-urlencoded")
+    || Number(request.headers["content-length"]) > BODY_LIMIT) { request.resume(); return undefined; }
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+    const bytes = Buffer.from(chunk); size += bytes.length;
+    if (size > BODY_LIMIT) { request.resume(); return undefined; }
+    chunks.push(bytes);
+  }
+  const result: Record<string, string> = {};
+  for (const [key, value] of new URLSearchParams(Buffer.concat(chunks).toString("utf8"))) {
+    if (!allowed.includes(key) || Object.hasOwn(result, key)) return undefined;
+    result[key] = value;
+  }
+  return Object.keys(result).length === allowed.length ? result : undefined;
+}
+
+function pageError(write: LanguagePreferencePageWriter, status: number): void {
+  write(status, "Language preference", status === 401 ? "" : `<main id="main" class="error-page"><h1>Your language wasn’t changed.</h1><p>${status === 409 ? "Your profile changed while you were reviewing. Open it again and retry." : status === 503 ? "The profile service is unavailable. Please try again in a moment." : "This change is no longer available."}</p><a class="button primary" href="/profile">Back to My profile</a></main>`);
+}
+
+/** Native browser flow; all preview and commit decisions remain in the JSON service. */
+export async function handleLanguagePreferencePage(
+  request: IncomingMessage, response: ServerResponse, service: LanguagePreference | undefined,
+  origin: string | undefined, write: LanguagePreferencePageWriter,
+  shownLanguage?: (sessionId: string | undefined) => Promise<string | undefined>,
+): Promise<boolean> {
+  const path = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
+  if (path !== FORM_PREVIEW && path !== FORM_CONFIRM) return false;
+  // These URLs are shared with the JSON API. Only native browser form posts
+  // belong to this adapter; JSON continues to the existing route unchanged.
+  if (request.headers["content-type"]?.startsWith("application/json")) return false;
+  if (request.method !== "POST") { pageError(write, 404); return true; }
+  if (!service || !origin) { pageError(write, 503); return true; }
+  if (request.headers.origin !== origin || request.headers["sec-fetch-site"] === "cross-site") { request.resume(); pageError(write, 403); return true; }
+  const sessionId = sessionCookie(request.headers.cookie);
+  try {
+    if (path === FORM_PREVIEW) {
+      const values = await readForm(request, ["language"]); if (!values) { pageError(write, 400); return true; }
+      const result = await service.preview(sessionId, { language: values.language });
+      if (result.status !== 200) { pageError(write, result.status); return true; }
+      const body = result.body as { token: ActionToken };
+      const hidden = TOKEN_KEYS.map((key) => `<input type="hidden" name="token.${key}" value="${html(body.token[key as keyof ActionToken])}">`).join("");
+      const before = await shownLanguage?.(sessionId);
+      const label = (value: string | undefined) => value === "en" ? "English" : value === "ar" ? "العربية" : "Unavailable";
+      write(200, "Review language", `<main id="main" class="profile-main"><h1>Review language change<span class="accent">.</span></h1><p>Language: <strong>${label(before)}</strong> → <strong>${label(values.language)}</strong></p><form method="post" action="${FORM_CONFIRM}"><input type="hidden" name="language" value="${html(values.language!)}">${hidden}<button class="button primary" type="submit">Confirm change</button></form><a class="text-link" href="/profile">Cancel</a></main>`);
+      return true;
+    }
+    const names = ["language", ...TOKEN_KEYS.map((key) => `token.${key}`)];
+    const values = await readForm(request, names); if (!values) { pageError(write, 400); return true; }
+    const actionToken = Object.fromEntries(TOKEN_KEYS.map((key) => [key, values[`token.${key}`]]));
+    const result = await service.confirm(sessionId, { language: values.language, token: actionToken });
+    if (result.status !== 200) { pageError(write, result.status); return true; }
+    response.writeHead(303, { location: "/profile", "cache-control": "no-store" }); response.end(); return true;
+  } catch { if (!response.headersSent) pageError(write, 503); else response.destroy(); return true; }
 }

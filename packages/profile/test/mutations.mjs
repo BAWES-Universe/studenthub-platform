@@ -62,6 +62,11 @@ const mutations = [
     'if (link.kind === "unconfigured")', 'if (false)',
     "PROFILE-DEFAULT-JSON unconfigured profile must render instead of 404",
   ],
+  [
+    "keep imported completeness after a person writes", "SHU371_PROJECTION",
+    'for (const name of ["isProfileCompleted", "pendingFields"]) {',
+    'for (const name of []) {',
+  ],
 ];
 
 for (const [name, pattern, from, to, assertion] of mutations) {
