@@ -36,12 +36,15 @@ import type { AreaHttp } from "./area-http.js";
 import { currentProfileAvatar } from "./profile-avatar.js";
 import type { ProfileCompletenessResult } from "@studenthub/profile";
 import type { ProfileCompletenessDependencies } from "./profile-completeness.js";
+import { maskPhone, type PeopleDirectoryRow } from "@studenthub/profile";
+import type { PeopleDirectoryPage, PeopleDirectoryResult } from "./people-directory.js";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
   readonly notifications?: import("./notifications-http.js").NotificationsHttp;
   readonly navigation?: ContextNavigation;
   readonly companies?: CompanyDirectoryPage;
+  readonly people?: PeopleDirectoryPage;
   readonly exports?: ExportsHttp;
   readonly organizationAccountManager?: OrganizationAccountManager;
   /** SHU-84 safe write; absent unless a signing key is configured. */
@@ -204,8 +207,12 @@ function companiesLink(active: WorkspaceContext | null, login: BrowserLoginAppli
   const assigned = myCompaniesLink(active, login);
   if (!active || !login.companies || !DIRECTORY_ROLES.has(active.role)) return assigned;
   const href = `/workspace/companies?${new URLSearchParams({ org_id: active.orgId, role: active.role })}`;
-  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>Companies</a>${assigned}`;
+  return `<a class="nav-item${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}>Companies</a>${peopleLink(active,login)}${assigned}`;
 }
+
+function peopleLink(active:WorkspaceContext|null,login:BrowserLoginApplication,current=false):string{if(!active||!login.people||!DIRECTORY_ROLES.has(active.role))return"";return `<a class="nav-item${current?" active":""}" href="/workspace/people"${current?' aria-current="page"':""}>People</a>`}
+
+export function renderPeopleDirectory(result:PeopleDirectoryResult,login:BrowserLoginApplication):string{if(result.status!==200)return renderError(result.status,login);const{rows,total,page,pageSize,query,countries}=result.body,e=escapeHtml,o=(v:string,l:string,s?:string)=>`<option value="${e(v)}"${s===v?" selected":""}>${e(l)}</option>`,status:Record<string,string>={active:"Actively looking",open_to_offers:"Open to offers",not_looking:"Not looking right now"};const body=rows.map((r:PeopleDirectoryRow)=>`<tr><th scope="row">${e(r.name??r.universeName??"Unnamed")}${r.arabicName?`<span class="field-meta">${e(r.arabicName)}</span>`:""}${r.imported?' <span class="badge">Imported</span>':""}${r.employeeId?` <span class="field-meta">${e(r.employeeId)}</span>`:""}</th><td>${e(r.workStatus?status[r.workStatus]!:"Not recorded")}</td><td>${e(r.nationality?.name??"Not recorded")}</td><td>${r.detailsMissing===0?"Details complete":`${r.detailsMissing} details missing`}</td><td>${e(r.civilState)}</td><td>${r.phoneLast4?e(maskPhone(r.phoneLast4)):"Not recorded"}</td></tr>`).join("");const last=(page-1)*pageSize+rows.length,form=`<form class="directory-filters" method="get" action="/workspace/people" role="search"><label>Search<input type="search" name="q" maxlength="100" value="${e(query.q??"")}"></label><label>Work status<select name="status">${o("","Any",query.status)}${o("active","Actively looking",query.status)}${o("open_to_offers","Open to offers",query.status)}${o("not_looking","Not looking right now",query.status)}${o("unset","Not recorded",query.status)}</select></label><label>Nationality<select name="nationality">${o("","Any",query.nationality)}${countries.map(c=>o(c.id,c.name,query.nationality)).join("")}</select></label><label>Civil ID<select name="civil">${o("","Any",query.civil)}${["none","waiting","rejected","expired","checked","recorded"].map(x=>o(x,x,query.civil)).join("")}</select></label><label>Details<select name="details">${o("","Any",query.details)}${o("complete","Details complete",query.details)}${o("missing","Details missing",query.details)}</select></label><button class="sign-out" type="submit">Search</button></form>`,table=rows.length?`<div class="directory-table"><table><caption>People ${total?((page-1)*pageSize+1):0}–${last} of ${total}</caption><thead><tr><th>Name</th><th>Work status</th><th>Nationality</th><th>Details</th><th>Civil ID</th><th>Phone</th></tr></thead><tbody>${body}</tbody></table></div>`:`<p class="empty-contexts" role="status">${total?"There are no more people on this page.":"No people match these filters."}</p>`;return workspaceDocument("People",`<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out">Sign out</button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item" href="/workspace">Workspaces</a>${peopleLink({orgId:"root",role:"staff",organizationName:"StudentHub"},login,true)}</nav></aside><main id="main" class="profile-main"><div class="profile-heading"><h1>People<span class="accent">.</span></h1><span class="badge">Read-only</span></div>${form}${table}<section class="next-note"><p>Photo and ID images are checked on the person's page.</p><p>Until final import, search and filters use details saved in the new platform.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`)}
 
 function myCompaniesLink(active: WorkspaceContext | BrowserLoginApplication | null, login?: BrowserLoginApplication, current = false): string {
   if (active && !("role" in active)) return "";
