@@ -4,6 +4,8 @@ import { createRuntimeCatalogueFromEnv } from './catalogue-runtime.js';
 import { handleProfileRecords, PROFILE_RECORDS_CSS, type ProfileRecordsRuntime } from './profile-records-http.js';
 import { createRuntimeProfileRecordsFromEnv } from './profile-records-runtime.js';
 import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-runtime.js';
+import { createRuntimeOrganizationDocumentsFromEnv,handleOrganizationDocuments } from './organization-documents-runtime.js';
+import type {PrivateDocuments} from '../../../packages/private-documents/src/index.js';
 import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import type { ReferenceCatalogue } from '@studenthub/reference-catalogue';
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
@@ -131,12 +133,13 @@ export function createGatewayServer(
   adapter: McpAdapter = new UnconfiguredMcpAdapter(),
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
   authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
-  login?: BrowserLoginApplication,
+  login?: BrowserLoginApplication & { readonly organizationProfile?: OrganizationProfileService },
   sourceRevision: string | null = readImageSourceRevision(),
   telemetry: Telemetry = disabledTelemetry,
   documents?: CandidateDocuments,
   catalogue?: ReferenceCatalogue,
   profileRecords?: ProfileRecordsRuntime,
+  organizationDocuments?: PrivateDocuments,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -166,8 +169,9 @@ export function createGatewayServer(
     try {
     if (await handleCatalogue(request, response, catalogue, authz)) return;
     if (await handleCandidateDocuments(request, response, documents)) return;
+    if (await handleOrganizationDocuments(request,response,organizationDocuments)) return;
     if (await handleLanguagePreference(request, response, login?.preferences, login?.web?.origin)) return;
-    if (await handleOrganizationProfile(request, response, (login as (BrowserLoginApplication & {organizationProfile?:OrganizationProfileService})|undefined)?.organizationProfile, login?.web?.origin)) return;
+    if (await handleOrganizationProfile(request, response, login?.organizationProfile, login?.web?.origin)) return;
     if (await handleProfileRecords(request, response, profileRecords,
       (status, body) => writeHtml(response, status, pageDocument("Education and experience", body)))) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
@@ -499,6 +503,7 @@ if (entrypoint === import.meta.url) {
   const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
   const runtimeCatalogue = createRuntimeCatalogueFromEnv();
   const runtimeProfileRecords = createRuntimeProfileRecordsFromEnv();
+  const runtimeOrganizationDocuments = await createRuntimeOrganizationDocumentsFromEnv();
   const telemetry = new Telemetry(telemetryMode(process.env));
   const server = createGatewayServer(
     new UnconfiguredMcpAdapter(),
@@ -510,8 +515,9 @@ if (entrypoint === import.meta.url) {
     runtimeDocuments?.service,
     runtimeCatalogue?.service,
     runtimeProfileRecords,
+    runtimeOrganizationDocuments?.service,
   );
-  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void runtimeOrganizationDocuments?.close(); void runtimeCatalogue?.close(); void runtimeProfileRecords?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });

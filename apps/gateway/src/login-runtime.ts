@@ -21,7 +21,7 @@ import { OrganizationRepository, UnconfiguredApprovedOrganizationAdapter } from 
 import { createContextNavigation } from "./context-navigation.js";
 import { createCompanyDirectory } from "./company-directory.js";
 import { createLanguagePreference } from "./language-preference.js";
-import { createOrganizationProfileService } from "./organization-profile.js";
+import { createOrganizationProfileService, type OrganizationProfileService } from "./organization-profile.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -153,7 +153,7 @@ export class RefreshingJwksResolver implements JwksResolver {
 }
 
 export interface RuntimeLogin {
-  readonly application: BrowserLoginApplication;
+  readonly application: BrowserLoginApplication & { readonly organizationProfile?: OrganizationProfileService };
   close(): Promise<void>;
 }
 
