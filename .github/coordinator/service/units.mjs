@@ -31,6 +31,29 @@ function serviceConfiguration({ serviceUser = 'shu-coordinator', serviceGroup = 
   return { serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile };
 }
 
+// Conservative single-line subset of systemd.exec EnvironmentFile=.
+// Refuse dollar syntax and continuations rather than interpreting shell features.
+function environmentValue(raw) {
+  raw = raw.replace(/^[ \t\r]+|[ \t\r]+$/g, '');
+  if (/[\x00\r\n$]/.test(raw)) return undefined;
+  const delimiter = /^["']/.test(raw) ? raw[0] : null;
+  if (delimiter && (raw.length < 2 || raw.at(-1) !== delimiter)) return undefined;
+  const body = delimiter ? raw.slice(1, -1) : raw;
+  let value = '';
+  for (let i = 0; i < body.length; i++) {
+    const character = body[i];
+    // Only an escaped double quote or the other quote kind is literal in quotes.
+    if (character === delimiter || (!delimiter && /["']/.test(character))) return undefined;
+    if (character === '\\' && delimiter !== "'") {
+      if (++i === body.length) return undefined;
+      const next = body[i];
+      // Double quotes preserve unknown escapes; unquoted escapes remove the slash.
+      value += delimiter === '"' && !/["\\`$]/.test(next) ? '\\' + next : next;
+    } else value += character;
+  }
+  return value;
+}
+
 // Inspect key names and nonempty values only; never include contents in errors.
 // Restrict the accepted format to unambiguous single-line systemd assignments.
 function environmentBindings(identity) {
@@ -52,9 +75,8 @@ function environmentBindings(identity) {
       if (/^\s*(?:[#;].*)?$/.test(line)) continue;
       const match = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
       assert.ok(match && !result.has(match[1]), 'SHU251_ENV_CONTENT: unique single-line assignments required');
-      const raw = match[2];
-      const value = /^(?:"[^"\\]*"|'[^'\\]*')$/.test(raw) ? raw.slice(1, -1) : raw;
-      assert.ok(value.trim().length > 0 && !/["'\\]/.test(value), 'SHU251_ENV_CONTENT: nonempty unambiguous values required');
+      const value = environmentValue(match[2]);
+      assert.ok(value !== undefined && value.trim().length > 0, 'SHU251_ENV_CONTENT: well-formed nonempty unambiguous effective values required');
       result.set(match[1], value);
     }
     return result;
