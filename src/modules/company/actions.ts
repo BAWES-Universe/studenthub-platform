@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireRoleCapability } from "@/modules/auth/session";
+import { companyErrorResultSchema } from "./schemas";
 
 const addContactSchema = z.object({
   companyId: z
@@ -30,7 +31,10 @@ export async function addCompanyContact(_prevState: { error: string }, formData:
   });
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+    const errResult = { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+    const errParsed = companyErrorResultSchema.safeParse(errResult);
+    if (!errParsed.success) console.error("[modules/company] addCompanyContact output validation failed:", errParsed.error.issues);
+    return errResult;
   }
 
   let contactUuid: string;
@@ -78,7 +82,10 @@ export async function addCompanyContact(_prevState: { error: string }, formData:
   });
 
   revalidatePath("/company/contacts");
-  return { error: "" };
+  const okResult = { error: "" };
+  const okParsed = companyErrorResultSchema.safeParse(okResult);
+  if (!okParsed.success) console.error("[modules/company] addCompanyContact output validation failed:", okParsed.error.issues);
+  return okResult;
 }
 
 export async function removeCompanyContact(_prevState: { error: string }, formData: FormData) {
@@ -86,7 +93,10 @@ export async function removeCompanyContact(_prevState: { error: string }, formDa
   const companyContactUuid = formData.get("companyContactUuid");
 
   if (typeof companyContactUuid !== "string" || !companyContactUuid.trim()) {
-    return { error: "Invalid contact." };
+    const errResult = { error: "Invalid contact." };
+    const errParsed = companyErrorResultSchema.safeParse(errResult);
+    if (!errParsed.success) console.error("[modules/company] removeCompanyContact output validation failed:", errParsed.error.issues);
+    return errResult;
   }
 
   await prisma.company_contact.delete({
@@ -94,7 +104,10 @@ export async function removeCompanyContact(_prevState: { error: string }, formDa
   });
 
   revalidatePath("/company/contacts");
-  return { error: "" };
+  const okResult = { error: "" };
+  const okParsed = companyErrorResultSchema.safeParse(okResult);
+  if (!okParsed.success) console.error("[modules/company] removeCompanyContact output validation failed:", okParsed.error.issues);
+  return okResult;
 }
 
 const addStoreSchema = z.object({
@@ -120,7 +133,10 @@ export async function addCompanyStore(_prevState: { error: string }, formData: F
   });
 
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+    const errResult = { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+    const errParsed = companyErrorResultSchema.safeParse(errResult);
+    if (!errParsed.success) console.error("[modules/company] addCompanyStore output validation failed:", errParsed.error.issues);
+    return errResult;
   }
 
   await prisma.store.create({
@@ -136,7 +152,10 @@ export async function addCompanyStore(_prevState: { error: string }, formData: F
   });
 
   revalidatePath("/company/stores");
-  return { error: "" };
+  const okResult = { error: "" };
+  const okParsed = companyErrorResultSchema.safeParse(okResult);
+  if (!okParsed.success) console.error("[modules/company] addCompanyStore output validation failed:", okParsed.error.issues);
+  return okResult;
 }
 
 export async function removeCompanyStore(_prevState: { error: string }, formData: FormData) {
@@ -145,7 +164,10 @@ export async function removeCompanyStore(_prevState: { error: string }, formData
   const storeId = Number(storeIdRaw);
 
   if (!Number.isInteger(storeId) || storeId <= 0) {
-    return { error: "Invalid store." };
+    const errResult = { error: "Invalid store." };
+    const errParsed = companyErrorResultSchema.safeParse(errResult);
+    if (!errParsed.success) console.error("[modules/company] removeCompanyStore output validation failed:", errParsed.error.issues);
+    return errResult;
   }
 
   await prisma.store.update({
@@ -154,5 +176,8 @@ export async function removeCompanyStore(_prevState: { error: string }, formData
   });
 
   revalidatePath("/company/stores");
-  return { error: "" };
+  const okResult = { error: "" };
+  const okParsed = companyErrorResultSchema.safeParse(okResult);
+  if (!okParsed.success) console.error("[modules/company] removeCompanyStore output validation failed:", okParsed.error.issues);
+  return okResult;
 }

@@ -92,8 +92,8 @@ export function CandidateEditForm({ candidate, countries, universities, banks, s
   const [, removeCertAction, removeCertPending] = useActionState(removeCandidateCertificate, { error: "" });
   const [addEduState, addEduAction, addEduPending] = useActionState(addCandidateEducation, { success: false } as EducationState);
   const [removeEduState, removeEduAction, removeEduPending] = useActionState(removeCandidateEducation, { success: false } as EducationState);
-  const [addLangState, addLangAction, addLangPending] = useActionState(addCandidateLanguage, { success: false } as LanguageState);
-  const [removeLangState, removeLangAction, removeLangPending] = useActionState(removeCandidateLanguage, { success: false } as LanguageState);
+  const [addLangState, addLangAction, addLangPending] = useActionState<LanguageState, FormData>(addCandidateLanguage, { success: false } as LanguageState);
+  const [removeLangState, removeLangAction, removeLangPending] = useActionState<LanguageState, FormData>(removeCandidateLanguage, { success: false } as LanguageState);
 
   useEffect(() => {
     if (addEduState.success) { toast.success("Education added", { description: "Your education entry has been added." }); }
