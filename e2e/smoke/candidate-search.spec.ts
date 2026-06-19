@@ -1,9 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { getFixtures, disconnectPrisma, signSession } from "../fixtures/auth";
+import { getMockFixtures } from "../fixtures/mock";
 
-test.afterAll(async () => {
-  await disconnectPrisma();
-});
+const mockFixtures = getMockFixtures();
 
 test.describe("Candidate search", () => {
   test.describe.configure({ mode: "serial" });
@@ -12,9 +10,8 @@ test.describe("Candidate search", () => {
   let staffCookie: string;
 
   test.beforeAll(async () => {
-    const fixtures = await getFixtures();
-    adminCookie = fixtures.get("admin")!.cookie;
-    staffCookie = fixtures.get("staff")!.cookie;
+    adminCookie = mockFixtures.get("admin")!.cookie;
+    staffCookie = mockFixtures.get("staff")!.cookie;
   });
 
   test("admin can access candidate search page", async ({ browser }) => {
