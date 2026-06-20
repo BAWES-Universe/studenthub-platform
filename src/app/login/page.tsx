@@ -28,14 +28,14 @@ export default async function LoginPage({
     <main className="min-h-svh w-[min(1160px,calc(100%_-_28px))] mx-auto grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(400px,500px)] content-start items-start gap-4 pt-[18px] pb-[42px] max-sm:w-[min(calc(100%_-_20px),720px)]">
       {/* Nav - spans full width */}
       <nav
-        className="col-span-full sticky top-3 z-20 min-h-[62px] flex items-center justify-between gap-3.5 border border-[color-mix(in_srgb,var(--line)_84%,transparent)] rounded-lg bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] p-2 shadow-[0_18px_50px_rgba(16,24,40,0.08)] max-sm:static max-sm:flex-col max-sm:items-stretch"
+        className="col-span-full sticky top-3 z-20 min-h-[62px] flex items-center justify-between gap-3.5 border border-[color-mix(in_srgb,var(--border)_84%,transparent)] rounded-lg bg-[color-mix(in_srgb,var(--card)_92%,transparent)] p-2 shadow-[0_18px_50px_rgba(16,24,40,0.08)] max-sm:static max-sm:flex-col max-sm:items-stretch"
         aria-label="StudentHub login navigation"
       >
         <Link
-          className="inline-flex items-center gap-2.5 text-[var(--ink)] px-2 no-underline"
+          className="inline-flex items-center gap-2.5 text-foreground px-2 no-underline"
           href="/"
         >
-          <span className="size-9 inline-flex items-center justify-center rounded-lg bg-[var(--ink)] text-[var(--surface)] font-black">
+          <span className="size-9 inline-flex items-center justify-center rounded-lg bg-card text-white font-black">
             SH
           </span>
           <strong>StudentHub</strong>
@@ -44,13 +44,13 @@ export default async function LoginPage({
       </nav>
 
       {/* Intro */}
-      <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--blue)_9%,transparent),transparent_48%),var(--surface)] p-[clamp(22px,4vw,48px)]">
+      <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[linear-gradient(135deg,color-mix(in_srgb,#1f73b7_9%,transparent),transparent_48%),var(--card)] p-[clamp(22px,4vw,48px)]">
         <div>
-          <p className="text-[var(--blue)] text-[11px] font-black uppercase">One StudentHub login</p>
+          <p className="text-[#1f73b7] text-[11px] font-black uppercase">One StudentHub login</p>
           <h1 className="mt-0 max-w-[760px] text-[clamp(44px,6.4vw,92px)] leading-[0.94] max-sm:text-[40px]">
             Sign in once. We&rsquo;ll open the right workspace.
           </h1>
-          <p className="text-[var(--muted)] max-w-[620px] leading-relaxed">
+          <p className="text-muted-foreground max-w-[620px] leading-relaxed">
             No more guessing whether you are entering as admin, staff, candidate, company, or inspector. Your production
             credentials decide what you can see and do.
           </p>
@@ -59,7 +59,7 @@ export default async function LoginPage({
               (item) => (
                 <span
                   key={item}
-                  className="min-h-8 inline-flex items-center border border-[var(--line)] rounded-full bg-[color-mix(in_srgb,var(--surface)_88%,transparent)] px-3 text-[var(--blue)] text-[11px] font-black uppercase"
+                  className="min-h-8 inline-flex items-center border border-[var(--border)] rounded-full bg-[color-mix(in_srgb,var(--card)_88%,transparent)] px-3 text-[#1f73b7] text-[11px] font-black uppercase"
                 >
                   {item}
                 </span>
@@ -67,21 +67,21 @@ export default async function LoginPage({
             )}
           </div>
         </div>
-        <Link href="/" className="inline-block mt-4 text-sm no-underline text-[var(--muted)] hover:text-[var(--blue)]">
+        <Link href="/" className="inline-block mt-4 text-sm no-underline text-muted-foreground hover:text-[#1f73b7]">
           Back to landing
         </Link>
       </section>
 
       {/* Login panel */}
       <section
-        className="self-start border border-[#c5cfdd] rounded-lg bg-[var(--surface)] shadow-[0_30px_90px_rgba(16,24,40,0.16)] dark:border-[var(--line)]"
+        className="self-start border border-border rounded-lg bg-card shadow-[0_30px_90px_rgba(16,24,40,0.16)] dark:border-[var(--border)]"
         aria-label="StudentHub sign in"
       >
         {params.error === "expired" ? (
-          <p className="text-[var(--destructive)] font-bold m-0 p-4 pb-0">That verified account choice expired. Sign in again to continue.</p>
+          <p className="text-destructive font-bold m-0 p-4 pb-0">That verified account choice expired. Sign in again to continue.</p>
         ) : null}
         {params.error === "account" ? (
-          <p className="text-[var(--destructive)] font-bold m-0 p-4 pb-0">Choose a verified account to continue.</p>
+          <p className="text-destructive font-bold m-0 p-4 pb-0">Choose a verified account to continue.</p>
         ) : null}
         <LoginForm />
       </section>
@@ -91,10 +91,10 @@ export default async function LoginPage({
         {roleNotes.map(({ icon: Icon, label, detail }) => (
           <article
             key={label}
-            className="grid gap-1.5 border border-[var(--line)] rounded-lg bg-[var(--surface)] p-3.5"
+            className="grid gap-1.5 border-border rounded-lg bg-card p-3.5"
           >
-            <Icon className="size-4 text-[var(--blue)] shrink-0" aria-hidden="true" />
-            <span className="text-[var(--muted)] text-xs font-extrabold uppercase">{label}</span>
+            <Icon className="size-4 text-[#1f73b7] shrink-0" aria-hidden="true" />
+            <span className="text-muted-foreground text-xs font-extrabold uppercase">{label}</span>
             <strong className="text-sm">{detail}</strong>
           </article>
         ))}
