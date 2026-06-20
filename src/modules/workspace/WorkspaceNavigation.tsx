@@ -9,7 +9,7 @@ import type { NavItem } from "./navigation";
 export function WorkspaceNavigation({ items, role }: { items: NavItem[]; role: string }) {
   const pathname = usePathname();
   return (
-    <nav className="workspaceRailNav" aria-label={`${role} workspace navigation`}>
+    <nav className="w-full grid content-start gap-1" aria-label={`${role} workspace navigation`}>
       {items.map((item) => {
         const active = isActive(pathname, item.href);
         const Icon = item.icon;

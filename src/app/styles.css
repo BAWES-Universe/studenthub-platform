@@ -430,17 +430,7 @@ body {
   color: var(--blue);
 }
 
-[data-theme="dark"] .workspaceMark,
-[data-theme="dark"] .commandBrand,
-[data-theme="dark"] .brandMark {
-  background: #e7ecf5;
-  color: #090d14;
-}
 
-[data-theme="dark"] .workspaceMark span,
-[data-theme="dark"] .commandBrand span {
-  background: rgba(9, 13, 20, 0.12);
-}
 
 .shell {
   min-height: 100svh;
@@ -457,84 +447,6 @@ body {
   grid-template-columns: none;
 }
 
-.workspaceRail {
-  position: sticky;
-  top: 0;
-  height: 100svh;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  justify-items: center;
-  gap: 12px;
-  border-right: 1px solid #e2e6ee;
-  background: var(--surface);
-  padding: 14px 12px;
-}
-
-.workspaceMark {
-  text-decoration: none;
-}
-
-.workspaceMark {
-  width: 100%;
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--ink);
-  color: var(--surface);
-  padding: 0 12px;
-}
-
-.workspaceMark span {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.14);
-  font-weight: 900;
-}
-
-.workspaceMark strong {
-  font-size: 15px;
-  font-weight: 900;
-}
-
-.workspaceRailNav {
-  width: 100%;
-  display: grid;
-  align-content: start;
-  gap: 4px;
-}
-
-.workspaceRailFooter {
-  width: 100%;
-  display: grid;
-  gap: 8px;
-}
-
-.workspaceSignout button,
-.themeToggle {
-  width: 100%;
-  min-height: 40px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-soft);
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.workspaceSignout button:hover,
-.themeToggle:hover {
-  border-color: var(--blue);
-  color: var(--blue);
-}
 
 .workspaceStage {
   min-width: 0;
