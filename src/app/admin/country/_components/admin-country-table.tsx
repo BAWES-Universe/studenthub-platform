@@ -5,6 +5,20 @@ import { useRouter } from "next/navigation";
 import { useActionState } from "react";
 import { DataTable } from "@/modules/workspace/DataTable";
 import { WorkspaceShell } from "@/modules/workspace/WorkspaceShell";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { Route } from "next";
 
 import type { SessionUser } from "@/modules/auth/types";
@@ -29,10 +43,10 @@ export function AdminCountryTable({ session, records }: Props) {
       ]}
     >
       <section className="mb-6">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+        <Card className="p-5">
           <h3 className="text-sm font-semibold mb-3 text-foreground">Add a country</h3>
           <CreateCountryForm onSuccess={() => router.refresh()} />
-        </div>
+        </Card>
       </section>
 
       <DataTable
@@ -99,28 +113,75 @@ export function AdminCountryTable({ session, records }: Props) {
             key: "actions",
             label: "",
             render: (row) => (
-              <button
-                type="button"
-                className="text-xs px-2 py-1 rounded hover:bg-red-500/10 text-destructive"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (confirm(`Delete country "${row.country_name_en || row.country_name_ar || "Unnamed"}"?`)) {
-                    try {
-                      await deleteCountry(row.country_id);
-                      router.refresh();
-                    } catch {
-                      alert("Failed to delete country");
-                    }
-                  }
+              <DeleteCountryButton
+                countryId={row.country_id}
+                countryName={row.country_name_en || row.country_name_ar || "Unnamed"}
+                onDelete={async () => {
+                  await deleteCountry(row.country_id);
+                  router.refresh();
                 }}
-              >
-                Delete
-              </button>
+              />
             ),
           },
         ]}
       />
     </WorkspaceShell>
+  );
+}
+
+function DeleteCountryButton({
+  countryId,
+  countryName,
+  onDelete,
+}: {
+  countryId: number;
+  countryName: string;
+  onDelete: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive" size="sm">
+          Delete
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete country</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to delete <strong>{countryName}</strong>? This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <p className="text-sm text-destructive font-medium">{error}</p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={loading}
+            onClick={async (e) => {
+              e.preventDefault();
+              setLoading(true);
+              setError(null);
+              try {
+                await onDelete();
+                setOpen(false);
+              } catch {
+                setError("Failed to delete country");
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            {loading ? "Deleting..." : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -157,9 +218,6 @@ function CreateCountryForm({ onSuccess }: { onSuccess: () => void }) {
   );
   const formRef = useRef<HTMLFormElement>(null);
 
-  const inputClass = "h-9 rounded-lg px-3 text-sm border";
-  const inputStyle = { background: "var(--surface)", borderColor: "var(--border)", color: "var(--ink)" };
-
   return (
     <form
       ref={formRef}
@@ -169,43 +227,43 @@ function CreateCountryForm({ onSuccess }: { onSuccess: () => void }) {
     >
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Name (English)</label>
-        <input name="country_name_en" maxLength={100} placeholder="e.g. Kuwait" className={inputClass} style={inputStyle} />
+        <Input name="country_name_en" maxLength={100} placeholder="e.g. Kuwait" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Name (Arabic)</label>
-        <input name="country_name_ar" maxLength={100} placeholder="مثال: الكويت" className={inputClass} style={inputStyle} />
+        <Input name="country_name_ar" maxLength={100} placeholder="مثال: الكويت" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Nationality (English)</label>
-        <input name="country_nationality_name_en" maxLength={100} placeholder="e.g. Kuwaiti" className={inputClass} style={inputStyle} />
+        <Input name="country_nationality_name_en" maxLength={100} placeholder="e.g. Kuwaiti" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Nationality (Arabic)</label>
-        <input name="country_nationality_name_ar" maxLength={100} placeholder="مثال: كويتي" className={inputClass} style={inputStyle} />
+        <Input name="country_nationality_name_ar" maxLength={100} placeholder="مثال: كويتي" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">ISO</label>
-        <input name="iso" maxLength={3} placeholder="KWT" className={inputClass} style={inputStyle} />
+        <Input name="iso" maxLength={3} placeholder="KWT" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Emoji</label>
-        <input name="emoji" maxLength={255} placeholder="🇰🇼" className={inputClass} style={inputStyle} />
+        <Input name="emoji" maxLength={255} placeholder="🇰🇼" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Phone Code</label>
-        <input name="country_code" type="number" placeholder="965" className={inputClass} style={inputStyle} />
+        <Input name="country_code" type="number" placeholder="965" />
       </div>
       <div className="grid gap-1">
         <label className="text-xs font-medium text-muted-foreground">Currency</label>
-        <input name="currency_code" maxLength={3} placeholder="KWD" className={inputClass} style={inputStyle} />
+        <Input name="currency_code" maxLength={3} placeholder="KWD" />
       </div>
-      <button
+      <Button
         type="submit"
         disabled={pending}
-        className="h-9 rounded-lg px-4 text-sm font-semibold bg-primary text-primary-foreground col-span-2 md:col-span-4 justify-self-start"
+        className="col-span-2 md:col-span-4 justify-self-start"
       >
         {pending ? "Adding..." : "Add Country"}
-      </button>
+      </Button>
       {state?.error ? (
         <p className="text-xs w-full text-destructive col-span-full">{state.error}</p>
       ) : null}
