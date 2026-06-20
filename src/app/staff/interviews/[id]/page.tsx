@@ -54,9 +54,9 @@ export default async function StaffInterviewDetailPage({
     >
       <FactPanel title="Interview Details" facts={facts} />
 
-      <section className="detailPanel">
-        <h2>Actions</h2>
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+      <section className="rounded-lg border border-border bg-card mt-5">
+        <h2 className="m-0 px-4 py-[18px] text-base font-bold text-foreground border-b border-border">Actions</h2>
+        <div className="flex flex-wrap gap-2 p-4">
           {interview.status !== 1 && (
             <form action={updateInterviewStatusAction}>
               <input type="hidden" name="interview_uuid" value={interview.request_interview_uuid} />
@@ -81,8 +81,8 @@ export default async function StaffInterviewDetailPage({
         </div>
       </section>
 
-      <section className="detailPanel">
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+      <section className="rounded-lg border border-border bg-card mt-5">
+        <div className="flex flex-wrap gap-2 p-4">
           {interview.candidate?.candidate_id && (
             <Link href={`/staff/candidates?candidate=${interview.candidate.candidate_id}` as Route}>
               <Button variant="outline">View Candidate</Button>
@@ -100,8 +100,8 @@ export default async function StaffInterviewDetailPage({
       </section>
 
       {notice && (
-        <section className="detailPanel">
-          <p className="notice">
+        <section className="rounded-lg border border-border bg-card mt-5">
+          <p className="px-4 py-3 text-sm text-muted-foreground">
             {notice === "interview-updated" && "Interview updated successfully."}
             {notice === "not-found" && "Interview not found."}
             {notice === "missing-fields" && "Missing required fields."}
