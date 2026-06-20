@@ -4,6 +4,7 @@ import type { SessionUser } from "@/modules/auth/types";
 import type { Route } from "next";
 import { logoutAction } from "@/modules/auth/actions";
 import { ThemeToggle } from "@/modules/theme/ThemeToggle";
+import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { navForRole } from "./navigation";
 import { WorkspaceMobileNavigation, WorkspaceNavigation } from "./WorkspaceNavigation";
@@ -44,16 +45,22 @@ export function WorkspaceShell({
   const navItems = navForRole(session.role);
 
   const rail = (
-    <aside className="workspaceRail">
-      <Link className="workspaceMark" href="/app" aria-label="StudentHub app">
-        <span>SH</span>
-        <strong>StudentHub</strong>
+    <aside className="sticky top-0 h-screen grid grid-rows-[auto_1fr_auto] justify-items-center gap-3 border-r border-border bg-card p-3">
+      <Link
+        className="w-full min-h-12 flex items-center gap-2.5 px-3 border border-border rounded-lg bg-[var(--ink)] text-[var(--surface)] no-underline transition-opacity hover:opacity-90"
+        href="/app"
+        aria-label="StudentHub app"
+      >
+        <span className="w-[30px] h-[30px] inline-flex items-center justify-center rounded-[7px] bg-white/14 font-black">SH</span>
+        <strong className="text-sm font-black">StudentHub</strong>
       </Link>
       <WorkspaceNavigation items={navItems} role={session.role} />
-      <div className="workspaceRailFooter">
+      <div className="w-full grid gap-2">
         <ThemeToggle />
-        <form className="workspaceSignout" action={logoutAction}>
-          <button type="submit">Sign out</button>
+        <form action={logoutAction}>
+          <Button variant="outline" size="sm" type="submit" className="w-full font-black">
+            Sign out
+          </Button>
         </form>
       </div>
     </aside>
