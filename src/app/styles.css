@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url("../styles/shell.css") layer(components);
 
 @theme {
   --color-background: var(--background);
@@ -17,17 +18,180 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-overlay: var(--overlay);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --radius: var(--radius);
+  --font-size-label: 0.8125rem;
 }
 
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
+  scroll-behavior: smooth;
   color-scheme: light;
+  /* ------------------------------------------------------------------ */
+  /* Typography scale                                                    */
+  /* ------------------------------------------------------------------ */
+  --fs-hero: 3rem;        /* 48px */
+  --fs-h1: 1.75rem;       /* 28px */
+  --fs-h2: 1.5rem;        /* 24px */
+  --fs-h3: 1.25rem;       /* 20px */
+  --fs-body: 0.9375rem;   /* 15px */
+  --fs-sm: 0.8125rem;     /* 13px */
+  --fs-xs: 0.75rem;       /* 12px */
+  --fs-xxs: 0.6875rem;    /* 11px */
+
+  /* Font weights */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ------------------------------------------------------------------ */
+  /* Spacing system (4px base)                                           */
+  /* ------------------------------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Layout gaps */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 12px;
+  --gap-lg: 16px;
+  --gap-xl: 24px;
+  --gap-2xl: 32px;
+
+  /* ------------------------------------------------------------------ */
+  /* Border radii                                                         */
+  /* ------------------------------------------------------------------ */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 999px;
+
+  /* ------------------------------------------------------------------ */
+  /* Shadows (light)                                                      */
+  /* ------------------------------------------------------------------ */
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.10);
+  --shadow-xl: 0 22px 80px rgba(16, 24, 40, 0.12);
+
+  /* ------------------------------------------------------------------ */
+  /* Animation timing                                                     */
+  /* ------------------------------------------------------------------ */
+  --dur-fast: 120ms;
+  --dur-default: 160ms;
+  --dur-slow: 240ms;
+  --dur-modal: 300ms;
+
+  /* ------------------------------------------------------------------ */
+  /* Design system — StudentHub OS aesthetic                             */
+  /* ------------------------------------------------------------------ */
+
+  /* Glass morphism */
+  --sh-glass-bg: rgba(255, 255, 255, 0.05);
+  --sh-glass-bg-strong: rgba(255, 255, 255, 0.10);
+  --sh-glass-border: rgba(255, 255, 255, 0.10);
+  --sh-glass-border-strong: rgba(255, 255, 255, 0.18);
+  --sh-glass-blur: 20px;
+
+  /* Zendesk coral — primary accent (per DESIGN_SYSTEM.md) */
+  --sh-coral: #eb6651;
+  --sh-coral-hover: #d45441;
+  --sh-coral-light: #fef1ef;
+  --sh-coral-glow: 0 0 12px rgba(235, 102, 81, 0.25);
+
+  /* Glow effects */
+  --sh-glow-sm: 0 0 12px rgba(11, 99, 206, 0.20);
+  --sh-glow-md: 0 0 24px rgba(11, 99, 206, 0.30);
+  --sh-glow-lg: 0 0 48px rgba(11, 99, 206, 0.40);
+
+  /* Animation */
+  --sh-easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --sh-easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Status colors (with glow variants) */
+  --sh-success: #24835b;
+  --sh-success-bg: rgba(36, 131, 91, 0.10);
+  --sh-success-glow: 0 0 12px rgba(36, 131, 91, 0.25);
+  --sh-warning: #a66212;
+  --sh-warning-bg: rgba(166, 98, 18, 0.10);
+  --sh-warning-glow: 0 0 12px rgba(166, 98, 18, 0.25);
+  --sh-error: #b42318;
+  --sh-error-bg: rgba(180, 35, 24, 0.10);
+  --sh-error-glow: 0 0 12px rgba(180, 35, 24, 0.25);
+  --sh-info: #0b63ce;
+  --sh-info-bg: rgba(11, 99, 206, 0.10);
+  --sh-info-glow: 0 0 12px rgba(11, 99, 206, 0.25);
+
+  /* Amber/accent CTA */
+  --sh-amber: #f59e0b;
+  --sh-amber-deep: #d97706;
+  --sh-amber-glow: 0 4px 14px rgba(245, 158, 11, 0.35);
+  --sh-amber-glow-hover: 0 8px 28px rgba(245, 158, 11, 0.50);
+  --sh-amber-bg: rgba(245, 158, 11, 0.10);
+
+  /* OS spacing */
+  --sh-space-xs: 4px;
+  --sh-space-sm: 8px;
+  --sh-space-md: 12px;
+  --sh-space-lg: 16px;
+  --sh-space-xl: 24px;
+  --sh-space-2xl: 32px;
+  --sh-space-3xl: 48px;
+
+  /* OS type scale */
+  --sh-fs-xs: 11px;
+  --sh-fs-sm: 12px;
+  --sh-fs-base: 13px;
+  --sh-fs-md: 14px;
+  --sh-fs-lg: 16px;
+  --sh-fs-xl: 20px;
+  --sh-fs-2xl: 24px;
+  --sh-fs-3xl: 32px;
+
+  /* OS radii */
+  --sh-radius-sm: 6px;
+  --sh-radius-md: 8px;
+  --sh-radius-lg: 12px;
+  --sh-radius-xl: 16px;
+
+  /* Active indicator */
+  --sh-active-width: 3px;
+
+  /* App Header (light mode defaults) */
+  --sh-header-h: 64px;
+  --sh-header-glass-bg: rgba(255, 255, 255, 0.78);
+  --sh-header-glass-border: rgba(214, 220, 231, 0.5);
+  --sh-header-blur: 18px;
+  --sh-header-tab-h: 40px;
+  --sh-header-tab-indicator: 3px;
+
+  /* ------------------------------------------------------------------ */
+  /* Responsive breakpoints (reference — use in @media queries)          */
+  /* ------------------------------------------------------------------ */
+  --bp-sm: 640px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+  --bp-xl: 1280px;
+
+  /* ------------------------------------------------------------------ */
+  /* Legacy tokens — keep until consolidated                              */
+  /* ------------------------------------------------------------------ */
   --ink: #182230;
   --muted: #667085;
-  --faint: #8a95a6;
+  --faint: #5c6a7c;
   --line: #d6dce7;
   --paper: #f5f7fa;
   --surface: #ffffff;
@@ -55,6 +219,7 @@
   --accent-foreground: #12376c;
   --destructive: #b42318;
   --destructive-foreground: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.5);
   --border: var(--line);
   --input: var(--line);
   --ring: #2563eb;
@@ -93,9 +258,55 @@
   --accent-foreground: #cfe4ff;
   --destructive: #ff8a8a;
   --destructive-foreground: #090d14;
+  --overlay: rgba(0, 0, 0, 0.6);
   --border: var(--line);
   --input: var(--line);
   --ring: #8abfff;
+
+  /* Dark mode shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.40);
+  --shadow-xl: 0 24px 90px rgba(0, 0, 0, 0.45);
+
+  /* Dark mode — OS design system */
+
+  /* Zendesk coral (dark mode) */
+  --sh-coral: #eb6651;
+  --sh-coral-hover: #d45441;
+  --sh-coral-light: rgba(235, 102, 81, 0.15);
+  --sh-coral-glow: 0 0 16px rgba(235, 102, 81, 0.30);
+
+  --sh-glass-bg: rgba(255, 255, 255, 0.04);
+  --sh-glass-bg-strong: rgba(255, 255, 255, 0.08);
+  --sh-glass-border: rgba(255, 255, 255, 0.06);
+  --sh-glass-border-strong: rgba(255, 255, 255, 0.12);
+  --sh-glow-sm: 0 0 16px rgba(138, 191, 255, 0.18);
+  --sh-glow-md: 0 0 32px rgba(138, 191, 255, 0.25);
+  --sh-glow-lg: 0 0 56px rgba(138, 191, 255, 0.35);
+  --sh-success: #6ed5a0;
+  --sh-success-bg: rgba(110, 213, 160, 0.10);
+  --sh-success-glow: 0 0 14px rgba(110, 213, 160, 0.25);
+  --sh-warning: #e8ae63;
+  --sh-warning-bg: rgba(232, 174, 99, 0.10);
+  --sh-warning-glow: 0 0 14px rgba(232, 174, 99, 0.25);
+  --sh-error: #ff8a8a;
+  --sh-error-bg: rgba(255, 138, 138, 0.10);
+  --sh-error-glow: 0 0 14px rgba(255, 138, 138, 0.25);
+  --sh-info: #8abfff;
+  --sh-info-bg: rgba(138, 191, 255, 0.10);
+  --sh-info-glow: 0 0 14px rgba(138, 191, 255, 0.25);
+
+  /* Amber/accent CTA (dark mode) */
+  --sh-amber: #fbbf24;
+  --sh-amber-deep: #f59e0b;
+  --sh-amber-glow: 0 4px 14px rgba(251, 191, 36, 0.30);
+  --sh-amber-glow-hover: 0 8px 28px rgba(251, 191, 36, 0.45);
+  --sh-amber-bg: rgba(251, 191, 36, 0.12);
+
+  /* App Header (dark mode) */
+  --sh-header-glass-bg: rgba(17, 24, 36, 0.72);
+  --sh-header-glass-border: rgba(42, 53, 71, 0.5);
 }
 
 * {
@@ -132,12 +343,38 @@ body {
     border-color 160ms ease,
     color 160ms ease,
     box-shadow 160ms ease,
-    transform 160ms ease;
+    transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.uiButton:active {
+  transform: scale(0.97);
 }
 
 .uiButton:focus-visible,
 .uiInput:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--ring) 28%, transparent);
+  outline-offset: 2px;
+}
+
+/* ── Skip-to-content link (visually hidden until focused) ────── */
+.skipLink {
+  position: absolute;
+  top: -100%;
+  left: 12px;
+  z-index: 9999;
+  padding: 8px 16px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 0 0 var(--radius) var(--radius);
+  text-decoration: none;
+  transition: top 120ms ease;
+}
+.skipLink:focus {
+  position: fixed;
+  top: 4px;
+  outline: 3px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -216,6 +453,19 @@ body {
   padding: 0;
 }
 
+/* ── Amber CTA — accent button for employers/highlight actions ── */
+.uiButton_amber {
+  background: linear-gradient(135deg, var(--sh-amber), var(--sh-amber-deep));
+  color: #fff;
+  border: none;
+  box-shadow: var(--sh-amber-glow);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.uiButton_amber:hover {
+  box-shadow: var(--sh-amber-glow-hover);
+  transform: translateY(-1px);
+}
+
 .uiBadge {
   display: inline-flex;
   align-items: center;
@@ -255,6 +505,114 @@ body {
   background: color-mix(in srgb, var(--card) 68%, transparent);
   color: var(--muted-foreground);
 }
+
+.shGlassStrong {
+  background: var(--sh-glass-bg-strong);
+  border-color: var(--sh-glass-border-strong);
+}
+
+.shGlassElevated {
+  background: var(--sh-glass-bg-strong);
+  border-color: var(--sh-glass-border-strong);
+  box-shadow: var(--sh-glow-sm);
+}
+
+.shGlassRadiusSm { border-radius: var(--sh-radius-sm); }
+.shGlassRadiusMd { border-radius: var(--sh-radius-md); }
+.shGlassRadiusLg { border-radius: var(--sh-radius-lg); }
+.shGlassRadiusXl { border-radius: var(--sh-radius-xl); }
+.shGlassRadiusFull { border-radius: 999px; }
+
+/* ── Status Badge — glowing status indicator ───────────────────────── */
+.shStatusBadgeBase {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    box-shadow 200ms var(--sh-easing),
+    border-color 200ms var(--sh-easing);
+}
+
+.shStatusBadge_glow {
+  box-shadow: var(--sh-glow-sm);
+}
+
+.shStatusBadge_sm {
+  padding: 3px 7px;
+  font-size: var(--sh-fs-xs);
+}
+
+.shStatusBadge_md {
+  padding: 5px 10px;
+  font-size: var(--sh-fs-sm);
+}
+
+.shStatusBadge_lg {
+  padding: 7px 12px;
+  font-size: var(--sh-fs-base);
+}
+
+.shStatusBadge_success {
+  background: var(--sh-success-bg);
+  border-color: color-mix(in srgb, var(--sh-success) 20%, transparent);
+  color: var(--sh-success);
+}
+.shStatusBadge_success.shStatusBadge_glow {
+  box-shadow: var(--sh-success-glow);
+}
+
+.shStatusBadge_warning {
+  background: var(--sh-warning-bg);
+  border-color: color-mix(in srgb, var(--sh-warning) 20%, transparent);
+  color: var(--sh-warning);
+}
+.shStatusBadge_warning.shStatusBadge_glow {
+  box-shadow: var(--sh-warning-glow);
+}
+
+.shStatusBadge_error {
+  background: var(--sh-error-bg);
+  border-color: color-mix(in srgb, var(--sh-error) 20%, transparent);
+  color: var(--sh-error);
+}
+.shStatusBadge_error.shStatusBadge_glow {
+  box-shadow: var(--sh-error-glow);
+}
+
+.shStatusBadge_info {
+  background: var(--sh-info-bg);
+  border-color: color-mix(in srgb, var(--sh-info) 20%, transparent);
+  color: var(--sh-info);
+}
+.shStatusBadge_info.shStatusBadge_glow {
+  box-shadow: var(--sh-info-glow);
+}
+
+.shStatusBadge_neutral {
+  background: var(--secondary);
+  border-color: color-mix(in srgb, var(--faint) 15%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* Status dot */
+.shStatusBadgeDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.shStatusDot_success { background: var(--sh-success); }
+.shStatusDot_warning { background: var(--sh-warning); }
+.shStatusDot_error { background: var(--sh-error); }
+.shStatusDot_info { background: var(--sh-info); }
+.shStatusDot_neutral { background: var(--faint); }
 
 .uiCard {
   border: 1px solid var(--border);
@@ -310,22 +668,6 @@ body {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 .lockedRole span {
   color: var(--blue);
   font-size: 11px;
@@ -334,20 +676,9 @@ body {
 }
 
 
-
-
-
-
 .portalChooserHero h1,
 
 .portalChooserHero p:not(.eyebrow),
-
-
-
-
-
-
-
 
 
 .portalChooserHero {
@@ -356,17 +687,11 @@ body {
 }
 
 
-
-[data-theme="dark"] .topbar,
-[data-theme="dark"] .accountBox,
-[data-theme="dark"] .metric,
 [data-theme="dark"] .loginBrandPanel,
 [data-theme="dark"] .loginPanel,
 [data-theme="dark"] .loginPath,
 [data-theme="dark"] .loginProof,
 [data-theme="dark"] .tableSurface,
-[data-theme="dark"] .financePrimary,
-[data-theme="dark"] .financeSteps,
 [data-theme="dark"] .linearFocus,
 [data-theme="dark"] .linearBoard,
 [data-theme="dark"] .linearPeek,
@@ -388,9 +713,8 @@ body {
 [data-theme="dark"] .hubHeader,
 [data-theme="dark"] .hubPanel,
 [data-theme="dark"] .featureTile {
-  border-color: var(--line);
-  background: var(--surface);
-  color: var(--ink);
+  border-color: var(--sh-glass-border);
+  background: var(--sh-glass-bg);
 }
 
 [data-theme="dark"] .roleOption,
@@ -402,23 +726,12 @@ body {
 [data-theme="dark"] .linearFilters a,
 [data-theme="dark"] .journeyQueue,
 [data-theme="dark"] .journeyScopePills a {
-  border-color: var(--line);
-  background: var(--surface-soft);
+  border-color: var(--sh-glass-border);
+  background: var(--sh-glass-bg-strong);
   color: var(--ink);
 }
 
-[data-theme="dark"] .mobileTabBar {
-  border-top-color: var(--line);
-  background: rgba(22, 24, 28, 0.97);
-}
 
-[data-theme="dark"] .mobileTabBar a {
-  color: var(--faint);
-}
-
-[data-theme="dark"] .mobileTabBar a.active {
-  color: var(--blue);
-}
 
 [data-theme="dark"] .loginPath span,
 [data-theme="dark"] .linearLaneHeader span,
@@ -430,33 +743,196 @@ body {
   color: var(--blue);
 }
 
+[data-theme="dark"] .commandBrand,
+[data-theme="dark"] .brandMark {
+  background: #e7ecf5;
+  color: #090d14;
+}
 
 
-.shell {
-  min-height: 100svh;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ── Role Switcher ────────────────────────────────────────────────────── */
+.roleSwitcher {
+  position: relative;
+  width: 100%;
+}
+
+.roleSwitcherCurrent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: default;
+}
+
+.roleSwitcher:hover .roleSwitcherDropdown {
+  display: flex;
+}
+
+.roleSwitcherDropdown {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-sm);
+  overflow: hidden;
+  z-index: 50;
+}
+
+.roleSwitcherOption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms var(--sh-easing);
+}
+
+.roleSwitcherOption:hover {
+  background: color-mix(in srgb, var(--coral) 10%, transparent);
+  color: var(--coral);
+}
+
+.roleSwitcherOption:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Theme toggle in rail ──────────────────────────────────────────── */
+.themeToggle {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    all 180ms var(--sh-easing);
+}
+
+.themeToggle:hover {
+  border-color: var(--sh-glass-border-strong);
+  background: var(--sh-glass-bg-strong);
+  color: var(--ink);
+}
+
+
+
+
+/* ── Page transitions ─────────────────────────────────────────────────── */
+@keyframes shFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shGlowPulse {
+  0%, 100% { box-shadow: var(--sh-glow-sm); }
+  50% { box-shadow: var(--sh-glow-md); }
+}
+
+@keyframes shFloat {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-12px); }
+}
+
+
+
+/* ── Glass Metric Card ────────────────────────────────────────────────── */
+.shMetricCard {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
-  background: var(--paper);
+  gap: 4px;
+  padding: var(--sh-space-lg);
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-lg);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
+  transition:
+    transform 200ms var(--sh-easing),
+    box-shadow 200ms var(--sh-easing),
+    border-color 200ms var(--sh-easing);
 }
 
-/* Embedded mode: WorkspaceShell inside a WorkspaceOS layout.
-   The layout already provides the rail, so the inner shell is just a wrapper. */
-.shellEmbedded {
-  display: block;
-  min-height: 0;
-  grid-template-columns: none;
+.shMetricCard:hover {
+  transform: translateY(-1px);
+  border-color: var(--sh-glass-border-strong);
+  box-shadow: var(--sh-glow-sm);
 }
 
-
-.workspaceStage {
-  min-width: 0;
-  width: calc(100vw - 236px);
-  overflow-x: hidden;
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  padding: 14px;
+.shMetricCard-label {
+  font-size: var(--sh-fs-sm);
+  font-weight: 500;
+  color: var(--muted);
 }
+
+.shMetricCard-value {
+  font-size: var(--sh-fs-2xl);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.shMetricCard-trend {
+  font-size: var(--sh-fs-sm);
+  font-weight: 600;
+}
+
+.shMetricCard-trend[data-direction="up"] { color: var(--sh-success); }
+.shMetricCard-trend[data-direction="down"] { color: var(--sh-error); }
+.shMetricCard-trend[data-direction="flat"] { color: var(--muted); }
 
 .workTabs {
   display: flex;
@@ -564,25 +1040,7 @@ body {
   border-color: var(--line);
 }
 
-.topbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
-  align-items: center;
-  gap: 18px;
-  border: 1px solid #dfe4ed;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  padding: 16px 18px;
-}
 
-.eyebrow {
-  color: var(--blue);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-  margin: 0 0 10px;
-}
 
 h1,
 h2,
@@ -613,41 +1071,7 @@ h2 {
   background: var(--surface);
 }
 
-.accountBox {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: 8px;
-}
 
-.accountBox strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.accountBox span {
-  color: var(--blue);
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.accountBox small {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.accountBox button,
-
-.accountBox button {
-  width: 100%;
-  margin-top: 6px;
-}
 
 .loginShell {
   min-height: 100svh;
@@ -661,8 +1085,6 @@ h2 {
 }
 
 
-
-
 .brandMark {
   width: 44px;
   height: 44px;
@@ -673,7 +1095,6 @@ h2 {
   color: #fff;
   font-weight: 900;
 }
-
 
 
 .loginSignal span,
@@ -709,11 +1130,6 @@ h2 {
   border: 1px solid var(--line);
   background: #fff;
 }
-
-
-
-
-
 
 
 .loginProof div {
@@ -753,14 +1169,6 @@ h2 {
   overflow-wrap: anywhere;
   font-size: 14px;
 }
-
-
-
-
-
-
-
-
 
 
 .rolePicker {
@@ -855,10 +1263,6 @@ h2 {
   color: var(--muted);
   font-size: 12px;
 }
-
-
-
-
 
 
 .formError {
@@ -966,22 +1370,6 @@ h2 {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @media (max-width: 760px) {
 }
 
@@ -999,102 +1387,8 @@ h2 {
   font-size: 15px;
 }
 
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
 
-.financeStart {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
-  gap: 12px;
-}
 
-.financePrimary,
-.financeSteps,
-.tableSurface {
-  border: 1px solid #dfe4ed;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.financePrimary {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  padding: 18px;
-}
-
-.financePrimary span,
-.financeSteps article span {
-  color: var(--blue);
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.financePrimary h2 {
-  max-width: 620px;
-  font-size: 26px;
-  line-height: 1.08;
-  margin-bottom: 0;
-}
-
-.financePrimary p {
-  max-width: 640px;
-  color: var(--muted);
-  line-height: 1.5;
-  margin-bottom: 0;
-}
-
-.financePrimary a {
-  width: fit-content;
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 8px;
-  background: #111827;
-  color: #fff;
-  padding: 0 13px;
-  font-weight: 900;
-  text-decoration: none;
-}
-
-.financeSteps {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  overflow: hidden;
-}
-
-.financeSteps article {
-  min-width: 0;
-  min-height: 118px;
-  display: grid;
-  align-content: center;
-  gap: 6px;
-  border-right: 1px solid #e2e6ee;
-  border-bottom: 1px solid #e2e6ee;
-  padding: 14px;
-}
-
-.financeSteps article:nth-child(2n) {
-  border-right: 0;
-}
-
-.financeSteps article:nth-last-child(-n + 2) {
-  border-bottom: 0;
-}
-
-.financeSteps strong {
-  color: #101828;
-  font-size: 17px;
-}
-
-.financeSteps small {
-  color: var(--muted);
-  line-height: 1.4;
-}
 
 .linearDesk {
   display: grid;
@@ -1647,11 +1941,7 @@ h2 {
   color: var(--blue);
 }
 
-.mobileTabBar {
-  display: none;
-  -webkit-tap-highlight-color: transparent;
-  user-select: none;
-}
+
 
 .featureGrid {
   display: grid;
@@ -1689,23 +1979,120 @@ h2 {
   transform: translateY(-1px);
 }
 
-.metric {
-  min-height: 118px;
-  padding: 18px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+/* ------------------------------------------------------------------ */
+/*  MetricCard — glass card with value, label, sparkline, trend.       */
+/*  Replaces the old bordered .metric block.                           */
+/* ------------------------------------------------------------------ */
+
+.shMetricCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 130px;
+  padding: var(--space-4) var(--space-5);
+  background: var(--sh-glass-bg);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--radius-xl);
+  transition:
+    transform var(--dur-slow) var(--sh-easing),
+    box-shadow var(--dur-slow) var(--sh-easing),
+    border-color var(--dur-slow) var(--sh-easing);
+  animation: shMetricFadeIn 400ms var(--sh-easing) both;
 }
 
-.metric strong {
+.shMetricCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--sh-glass-border-strong);
+}
+
+.shMetricCardClickable {
+  cursor: pointer;
+}
+
+.shMetricCardClickable:hover {
+  background: var(--sh-glass-bg-strong);
+}
+
+.shMetricCardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+}
+
+.shMetricCardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
+.shMetricCardLabel {
+  font-size: var(--sh-fs-sm);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.shMetricCardTrend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.shMetricCardTrend small {
+  font-size: var(--sh-fs-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--muted);
+}
+
+.shMetricCardTrend[data-trend="up"] small { color: var(--sh-success); }
+.shMetricCardTrend[data-trend="down"] small { color: var(--sh-error); }
+
+.shMetricCardValue {
   display: block;
-  font-size: 38px;
-  line-height: 1;
-  margin: 16px 0 10px;
+  font-size: var(--sh-fs-3xl);
+  font-weight: var(--weight-semibold);
+  line-height: 1.1;
+  color: var(--foreground);
+  letter-spacing: -0.02em;
 }
 
-.metric p {
+.shMetricCardNote {
+  font-size: var(--sh-fs-xs);
   color: var(--faint);
-  margin-bottom: 0;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.shMetricCardChart {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  margin-top: var(--space-2);
+}
+
+.shMetricSparkline {
+  opacity: 0.7;
+  transition: opacity var(--dur-default) var(--sh-easing);
+}
+
+.shMetricCard:hover .shMetricSparkline {
+  opacity: 1;
+}
+
+@keyframes shMetricFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .workspace {
@@ -1717,10 +2104,7 @@ h2 {
 
 .focus,
 .rail,
-.dataList {
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
+
 
 .focus {
   display: grid;
@@ -1770,15 +2154,9 @@ h2 {
   margin: 18px 0 0;
 }
 
-.lists {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
 
-.dataList {
-  min-height: 360px;
-}
+
+
 
 .tableSurface {
   margin-top: 20px;
@@ -1787,14 +2165,7 @@ h2 {
   box-shadow: 0 12px 44px rgba(16, 24, 40, 0.05);
 }
 
-.commandSurface {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  padding: 14px;
-}
+
 
 .searchForm {
   display: grid;
@@ -2922,78 +3293,184 @@ tr:last-child td {
   font-size: 15px;
 }
 
-.detailGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
 
-.listHeader.compact {
-  min-height: 56px;
-}
 
-.compactRows .row {
-  min-height: 72px;
-}
 
-.emptyState {
-  display: grid;
-  gap: 6px;
-  padding: 18px;
-  color: var(--muted);
-}
 
-.emptyState strong {
-  color: var(--ink);
-  font-size: 15px;
-}
+
+
 
 .emptyTableRow td {
   padding: 0;
 }
 
-.listHeader {
-  min-height: 62px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 18px 14px;
-  border-bottom: 1px solid var(--line);
+/* ------------------------------------------------------------------ */
+/*  Empty State — StudentHub OS edition (glass, illustration, CTAs)   */
+/* ------------------------------------------------------------------ */
+
+.shEmptyStateOs {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+  padding: 40px 24px;
+  background: var(--sh-glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-lg);
+  animation: shEmptyEnter 360ms var(--sh-easing) both;
+  transition:
+    background 200ms var(--sh-easing),
+    border-color 200ms var(--sh-easing);
 }
 
-.listHeader h2 {
-  margin-bottom: 0;
+[data-theme="dark"] .shEmptyStateOs {
+  background: var(--sh-glass-bg);
 }
 
-.listHeader span {
-  min-width: 30px;
-  min-height: 30px;
+.shEmptyStateOsIllust {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+
+.shEmptyStateOsMessage {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  max-width: 380px;
+}
+
+.shEmptyStateOsHint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+  max-width: 380px;
+}
+
+.shEmptyStateOsAction {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  color: var(--blue);
-  border: 1px solid #b7cff0;
-  background: #eef5ff;
-  font-weight: 700;
+  gap: 7px;
+  margin-top: 8px;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--sh-glass-border-strong);
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-glass-bg-strong);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 200ms var(--sh-easing),
+    border-color 200ms var(--sh-easing),
+    transform 200ms var(--sh-easing),
+    box-shadow 200ms var(--sh-easing);
 }
 
-.rows {
-  display: grid;
+.shEmptyStateOsAction:hover {
+  background: var(--sh-glass-bg-strong);
+  border-color: var(--sh-info);
+  transform: translateY(-1px);
+  box-shadow: var(--sh-glow-sm);
 }
 
-.row {
-  min-height: 72px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(126px, auto);
-  gap: 16px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--line);
+.shEmptyStateOsAction:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
-.row:last-child {
-  border-bottom: 0;
+.shEmptyStateOsActionIcon {
+  display: inline-flex;
+  color: var(--sh-info);
 }
+
+/* ── Entry animation ────────────────────────────────────────── */
+
+@keyframes shEmptyEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Illustration micro-animations ──────────────────────────── */
+
+.shEmptyIllustration {
+  width: 64px;
+  height: 64px;
+}
+
+.shEmptyIllustAnimateSearch {
+  animation: shEmptyPulse 3s ease-in-out infinite;
+  transform-origin: 44px 42px;
+}
+
+.shEmptyIllustAnimatePen {
+  animation: shEmptyNudge 4s ease-in-out infinite;
+  transform-origin: 44px 46px;
+}
+
+.shEmptyIllustAnimateClock {
+  animation: shEmptySpin 12s linear infinite;
+  transform-origin: 44px 44px;
+}
+
+.shEmptyIllustAnimateError {
+  animation: shEmptyTremor 1.5s ease-in-out infinite;
+}
+
+.shEmptyIllustAnimateX {
+  animation: shEmptyFadeInOut 3s ease-in-out infinite;
+}
+
+.shEmptyIllustAnimateSparkle {
+  animation: shEmptyPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes shEmptyPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes shEmptyNudge {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+
+@keyframes shEmptySpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes shEmptyTremor {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
+  75% { transform: rotate(-1deg); }
+}
+
+@keyframes shEmptyFadeInOut {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+
+
+
+
+
+
 
 .rowMain,
 .rowMeta {
@@ -3003,13 +3480,7 @@ tr:last-child td {
   gap: 6px;
 }
 
-.rowMain strong,
-.rowMain span,
-.rowMeta span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+
 
 .rowMain a {
   color: inherit;
@@ -3027,9 +3498,7 @@ tr:last-child td {
   text-align: right;
 }
 
-.rowMeta strong {
-  font-size: 13px;
-}
+
 
 .commandOS {
   min-height: 100svh;
@@ -3162,9 +3631,10 @@ tr:last-child td {
   grid-template-columns: 220px minmax(280px, 1fr) auto;
   align-items: center;
   gap: 10px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--sh-glass-border);
+  background: var(--sh-glass-bg);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
   padding: 10px 14px;
 }
 
@@ -3184,10 +3654,11 @@ tr:last-child td {
 .commandInspectorHeader span,
 .commandFacts span,
 .commandRelatedHeader span {
-  color: #667085;
+  color: var(--sh-info);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .commandIdentity strong,
@@ -3198,16 +3669,16 @@ tr:last-child td {
 }
 
 .commandIdentity small {
-  color: #667085;
+  color: var(--muted);
 }
 
 .commandSearch {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-glass-bg-strong);
 }
 
 .commandSearch input {
@@ -3225,18 +3696,24 @@ tr:last-child td {
 }
 
 .commandSearch:focus-within {
-  border-color: #8bb4ea;
-  box-shadow: 0 0 0 3px rgba(11, 99, 206, 0.12);
+  border-color: var(--sh-info);
+  box-shadow: var(--sh-glow-sm);
 }
 
 .commandSearch button {
   border: 0;
-  border-left: 1px solid var(--line);
-  background: var(--surface-soft);
-  color: var(--ink);
+  border-left: 1px solid var(--sh-glass-border);
+  background: transparent;
+  color: var(--muted);
   padding: 0 14px;
-  font-weight: 900;
+  font-weight: 700;
+  font-size: 12px;
   cursor: pointer;
+  transition: color 160ms var(--sh-easing);
+}
+
+.commandSearch button:hover {
+  color: var(--sh-info);
 }
 
 .commandTopbar .commandLauncher {
@@ -3641,10 +4118,11 @@ tr:last-child td {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border: 1px solid #f3c2d3;
-  border-radius: 8px;
-  background: #fff8fb;
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-lg);
+  background: color-mix(in srgb, var(--sh-error-bg) 80%, transparent);
   padding: 14px 16px;
+  animation: shSection 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .roleBoundaryNotice div {
@@ -3653,14 +4131,14 @@ tr:last-child td {
 }
 
 .roleBoundaryNotice span {
-  color: var(--rose);
+  color: var(--sh-error);
   font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .roleBoundaryNotice strong {
-  color: #101828;
+  color: var(--ink);
 }
 
 .roleBoundaryNotice p {
@@ -3672,25 +4150,32 @@ tr:last-child td {
   min-height: 38px;
   display: inline-flex;
   align-items: center;
-  border: 1px solid #e8a6bd;
-  border-radius: 8px;
-  background: #fff;
-  color: var(--rose);
+  border: 1px solid var(--sh-glass-border-strong);
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-glass-bg-strong);
+  color: var(--sh-error);
   padding: 0 12px;
-  font-weight: 900;
+  font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
+  transition: background 160ms var(--sh-easing);
+}
+
+.roleBoundaryNotice a:hover {
+  background: var(--sh-glass-bg);
 }
 
 .journeyHero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(250px, 340px);
   gap: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--surface) 96%, var(--blue)), var(--surface));
-  padding: 16px;
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-lg);
+  background: var(--sh-glass-bg);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
+  padding: 20px;
+  animation: shSection 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .journeyHero h1 {
@@ -3715,10 +4200,10 @@ tr:last-child td {
 .journeyQueue span,
 .journeyResults span,
 .journeyGuardrail span {
-  color: #667085;
+  color: var(--sh-info);
   font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -3735,36 +4220,48 @@ tr:last-child td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-soft);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-glass-bg-strong);
   color: var(--ink);
   padding: 0 13px;
-  font-weight: 900;
+  font-weight: 700;
+  font-size: 13px;
   text-decoration: none;
-}
-
-.journeyHeroActions a.primary,
-.journeyCard > a {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-foreground);
+  transition: all 160ms var(--sh-easing);
 }
 
 .journeyHeroActions a:hover,
 .journeyCard > a:hover {
-  border-color: #0b63ce;
-  color: #0b63ce;
-  background: #eef5ff;
+  border-color: var(--sh-info);
+  color: var(--sh-info);
+  background: var(--sh-info-bg);
+}
+
+.journeyHeroActions a.primary,
+.journeyCard > a {
+  border-color: var(--sh-info);
+  background: var(--sh-info);
+  color: #ffffff;
+}
+
+.journeyHeroActions a.primary:hover,
+.journeyCard > a:hover {
+  background: var(--sh-info);
+  opacity: 0.9;
+  border-color: var(--sh-info);
+  color: #ffffff;
 }
 
 .journeyGuardrail {
   display: grid;
   align-content: start;
   gap: 7px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-soft);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-lg);
+  background: var(--sh-glass-bg);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
   padding: 14px;
 }
 
@@ -3788,16 +4285,19 @@ tr:last-child td {
 .journeyCard,
 .journeyPanel {
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-lg);
+  background: var(--sh-glass-bg);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
+  animation: shSection 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .journeyCard {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 10px;
-  padding: 12px;
+  padding: 16px;
 }
 
 .journeyCardHeader {
@@ -3842,15 +4342,15 @@ tr:last-child td {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: #eef2f7;
-  color: #344054;
+  background: var(--sh-info-bg);
+  color: var(--sh-info);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 .journeySteps li strong {
   min-width: 0;
-  color: #344054;
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.3;
 }
@@ -3868,7 +4368,7 @@ tr:last-child td {
 .journeyPanelHeader {
   display: grid;
   gap: 4px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--sh-glass-border);
   padding: 12px 14px;
 }
 
@@ -3883,11 +4383,12 @@ tr:last-child td {
   display: grid;
   align-content: center;
   gap: 5px;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--sh-glass-border);
+  border-bottom: 1px solid var(--sh-glass-border);
   color: var(--ink);
   padding: 12px;
   text-decoration: none;
+  transition: background 160ms var(--sh-easing);
 }
 
 .journeyQueue:nth-child(2n) {
@@ -3895,7 +4396,7 @@ tr:last-child td {
 }
 
 .journeyQueue:hover {
-  background: var(--surface-soft);
+  background: var(--sh-glass-bg-strong);
 }
 
 .journeyQueue strong {
@@ -3905,7 +4406,7 @@ tr:last-child td {
 }
 
 .journeyQueue small {
-  color: #667085;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -3914,7 +4415,7 @@ tr:last-child td {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--sh-glass-border);
   padding: 10px 12px;
 }
 
@@ -3922,21 +4423,22 @@ tr:last-child td {
   min-height: 32px;
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--sh-glass-border);
+  border-radius: var(--sh-radius-md);
   color: var(--ink);
   padding: 0 11px;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
+  transition: all 160ms var(--sh-easing);
 }
 
 .journeyScopePills a.active,
 .journeyScopePills a:hover {
-  border-color: #0b63ce;
-  background: #eef5ff;
-  color: #0b63ce;
+  border-color: var(--sh-info);
+  background: var(--sh-info-bg);
+  color: var(--sh-info);
 }
 
 .journeyResults {
@@ -3950,14 +4452,15 @@ tr:last-child td {
   grid-template-columns: 90px minmax(0, 1fr) minmax(120px, 230px);
   align-items: center;
   gap: 12px;
-  border-radius: 8px;
+  border-radius: var(--sh-radius-md);
   color: var(--ink);
   padding: 10px;
   text-decoration: none;
+  transition: background 160ms var(--sh-easing);
 }
 
 .journeyResults a:hover {
-  background: var(--surface-soft);
+  background: var(--sh-glass-bg);
 }
 
 .journeyResults strong,
@@ -3970,7 +4473,7 @@ tr:last-child td {
 
 .journeyResults small,
 .journeyResults p {
-  color: #667085;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -4481,20 +4984,22 @@ tr:last-child td {
 
 .previewPanel {
   overflow: hidden;
+  animation: shSection 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .previewHeader {
   display: grid;
   gap: 7px;
   padding: 18px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--sh-glass-border);
 }
 
 .previewHeader span {
-  color: var(--blue);
+  color: var(--sh-info);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .previewHeader h2 {
@@ -4515,20 +5020,20 @@ tr:last-child td {
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 18px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--sh-glass-border);
 }
 
 .previewFlags span {
   min-height: 28px;
   display: inline-flex;
   align-items: center;
-  border: 1px solid #b7cff0;
-  background: #eef5ff;
-  border-radius: 7px;
-  color: var(--blue);
+  border: 1px solid var(--sh-glass-border);
+  background: var(--sh-glass-bg-strong);
+  border-radius: var(--sh-radius-sm);
+  color: var(--sh-info);
   padding: 0 9px;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 .previewActions a {
@@ -4536,26 +5041,37 @@ tr:last-child td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
-  background: #fbfcfe;
-  border-radius: 8px;
+  border: 1px solid var(--sh-glass-border);
+  background: var(--sh-glass-bg-strong);
+  border-radius: var(--sh-radius-md);
   color: var(--ink);
   padding: 0 12px;
   font-size: 13px;
-  font-weight: 900;
+  font-weight: 700;
   text-decoration: none;
+  transition: all 160ms var(--sh-easing);
+}
+
+.previewActions a:hover {
+  border-color: var(--sh-info);
+  color: var(--sh-info);
+  background: var(--sh-info-bg);
 }
 
 .previewActions a:first-child {
-  border-color: var(--blue);
-  background: var(--blue);
-  color: #fff;
+  border-color: var(--sh-info);
+  background: var(--sh-info);
+  color: #ffffff;
+}
+
+.previewActions a:first-child:hover {
+  opacity: 0.9;
 }
 
 .previewFacts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--sh-glass-border);
 }
 
 .previewFacts div {
@@ -4563,8 +5079,8 @@ tr:last-child td {
   display: grid;
   gap: 6px;
   padding: 13px 18px;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--sh-glass-border);
+  border-bottom: 1px solid var(--sh-glass-border);
 }
 
 .previewFacts div:nth-child(2n) {
@@ -4573,10 +5089,11 @@ tr:last-child td {
 
 .previewFacts span,
 .previewRelatedHeader span {
-  color: var(--muted);
+  color: var(--sh-info);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .previewFacts strong {
@@ -4589,7 +5106,7 @@ tr:last-child td {
 }
 
 .previewRelated > section {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--sh-glass-border);
 }
 
 .previewRelated > section:last-child {
@@ -4615,10 +5132,11 @@ tr:last-child td {
   padding: 11px 18px;
   color: var(--ink);
   text-decoration: none;
+  transition: background 160ms var(--sh-easing);
 }
 
 .previewRow:hover {
-  background: #fbfcfe;
+  background: var(--sh-glass-bg);
 }
 
 .previewRow strong,
@@ -4637,7 +5155,9 @@ tr:last-child td {
 
 .previewEmpty {
   margin: 0;
-  padding: 0 18px 14px;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .moduleCard {
@@ -4732,155 +5252,329 @@ kbd {
   white-space: nowrap;
 }
 
-.commandOverlay {
+/* ═══════════════════════════════════════════════════════════════════
+   Command Palette — Glass morphism, Raycast-inspired
+   Uses shGlass tokens for dark/light mode consistency.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.shCmdOverlay {
   position: fixed;
   inset: 0;
   z-index: 80;
   display: grid;
   place-items: start center;
   padding: 9vh 16px 24px;
+  animation: shCmdFadeIn 200ms var(--sh-easing) both;
 }
 
-.commandScrim {
+.shCmdScrim {
   position: absolute;
   inset: 0;
   border: 0;
-  background: rgba(15, 23, 42, 0.28);
-  backdrop-filter: blur(7px);
+  background: var(--overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   cursor: default;
 }
 
-.commandMenu {
+.shCmdMenu {
   position: relative;
-  width: min(760px, 100%);
+  width: min(680px, 100%);
   overflow: hidden;
-  border: 1px solid #bfc9d8;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.2);
+  border-radius: var(--sh-radius-lg);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--sh-glass-border),
+    0 24px 80px rgba(0, 0, 0, 0.25);
+  animation: shCmdSlideIn 200ms var(--sh-easing) both;
 }
 
-.commandInputWrap {
+[data-theme="dark"] .shCmdMenu {
+  background: rgba(17, 24, 36, 0.92);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+}
+
+/* ── Input row ─────────────────────────────────────── */
+
+.shCmdInputWrap {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--line);
-  padding: 12px 14px;
+  padding: 14px 16px;
 }
 
-.commandInputWrap > span {
-  width: 30px;
-  height: 30px;
+.shCmdInputIcon {
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  background: #eef5ff;
-  color: var(--blue);
-  font-weight: 900;
+  border-radius: var(--sh-radius-sm);
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
-.commandInputWrap input {
+.shCmdInput {
   min-width: 0;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 16px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.commandList {
-  max-height: min(52vh, 520px);
+.shCmdInput::placeholder {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.shCmdInputEsc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 24px;
+  border-radius: var(--sh-radius-sm);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .shCmdInputEsc {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+/* ── Results list ──────────────────────────────────── */
+
+.shCmdList {
+  max-height: min(48vh, 480px);
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px 8px 8px;
 }
 
-.commandGroup {
+.shCmdGroup {
   display: grid;
-  gap: 3px;
-  margin-bottom: 9px;
+  gap: 2px;
 }
 
-.commandGroup h3 {
-  margin: 8px 8px 4px;
+.shCmdGroup + .shCmdGroup {
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.shCmdGroupLabel {
+  margin: 6px 8px 4px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 800;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.commandGroup button {
+/* ── Command item ──────────────────────────────────── */
+
+.shCmdItem {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--sh-radius-sm);
   background: transparent;
   color: var(--ink);
-  padding: 10px;
+  padding: 9px 10px;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition:
+    background 120ms var(--sh-easing),
+    border-color 120ms var(--sh-easing),
+    box-shadow 120ms var(--sh-easing);
 }
 
-.commandGroup button.active,
-.commandGroup button:hover {
-  border-color: #c8d8ef;
-  background: #f1f6ff;
+.shCmdItem:hover {
+  border-color: var(--sh-glass-border);
+  background: var(--sh-glass-bg);
 }
 
-.commandGroup button > span {
+.shCmdItemActive {
+  border-color: var(--sh-glass-border-strong) !important;
+  background: var(--sh-glass-bg-strong) !important;
+  box-shadow: var(--sh-glow-sm) !important;
+}
+
+.shCmdItemBody {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
-.commandGroup strong,
-.commandGroup small {
+.shCmdItemTitle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.commandGroup small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.commandEmpty {
-  display: grid;
-  gap: 5px;
-  padding: 24px 16px;
-  color: var(--muted);
-}
-
-.commandEmpty strong {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--ink);
 }
 
-.shortcutGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  border-top: 1px solid var(--line);
-  background: var(--line);
+.shCmdItemSub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.shortcutGrid div {
-  min-width: 0;
+/* ── Fuzzy match highlight ─────────────────────────── */
+
+.shCmdMatch {
+  background: transparent;
+  color: var(--sh-info);
+  font-weight: 800;
+}
+
+[data-theme="dark"] .shCmdMatch {
+  color: var(--sh-info);
+}
+
+/* ── Shortcut badge ────────────────────────────────── */
+
+.shCmdShortcut {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 22px;
+  border-radius: var(--sh-radius-sm);
+  padding: 0 6px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+[data-theme="dark"] .shCmdShortcut {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+/* ── Empty state ───────────────────────────────────── */
+
+.shCmdEmpty {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 36px 16px 40px;
+  text-align: center;
+}
+
+.shCmdEmptyIcon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-glass-bg);
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.shCmdEmptyTitle {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shCmdEmptyHint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ── Shortcut footer ───────────────────────────────── */
+
+.shCmdFooter {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+[data-theme="dark"] .shCmdFooter {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.shCmdFooterChord {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fbfcfe;
-  padding: 10px 12px;
+  padding: 5px 8px;
+  border-radius: var(--sh-radius-sm);
+}
+
+.shCmdFooterKey {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 20px;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: var(--surface);
+  border: 1px solid var(--line);
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+[data-theme="dark"] .shCmdFooterKey {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+.shCmdFooterLabel {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Animations ────────────────────────────────────── */
+
+@keyframes shCmdFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shCmdSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 @media (max-width: 1040px) {
@@ -4891,15 +5585,9 @@ kbd {
   .loginShell,
   .loginSignal,
   .featureGrid,
-  .detailGrid,
-  .candidateOpsGrid {
-    grid-template-columns: 1fr;
-  }
-
 
   .loginHero h1 {
     max-width: 560px;
-    font-size: 38px;
     line-height: 1;
   }
 
@@ -4928,12 +5616,6 @@ kbd {
     gap: 14px;
     padding: 16px 0 32px;
   }
-
-
-
-
-
-
 
 
   .studentOS {
@@ -5104,122 +5786,6 @@ kbd {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .financeStart {
-    grid-template-columns: 1fr;
-  }
-
-  .financeSteps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .linearFocus,
-  .linearSplit,
-  .linearActivityGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .linearPeek {
-    position: static;
-  }
-
-  .linearLanes {
-    grid-template-columns: repeat(4, minmax(260px, 1fr));
-  }
-
-  .hubShell {
-    grid-template-columns: 1fr;
-  }
-
-  .hubSidebar {
-    position: static;
-    height: auto;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
-    align-items: stretch;
-  }
-
-  .hubBrand {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .hubProfile {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .hubRoleNav {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    grid-template-columns: repeat(5, minmax(150px, 1fr));
-    overflow-x: auto;
-  }
-
-  .hubSignout {
-    grid-column: 3;
-    grid-row: 1;
-    align-self: stretch;
-  }
-
-  .hubSignout button {
-    height: 100%;
-    min-width: 120px;
-  }
-
-  .hubGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .hubQueues {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .hubWorkstreams {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .opsToolbar,
-  .opsRecordHeader {
-    grid-template-columns: 1fr;
-  }
-
-  .opsStatBar {
-    grid-template-columns: repeat(4, minmax(140px, 1fr));
-    overflow-x: auto;
-  }
-
-  .opsFactStrip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .opsFact:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .opsActionList,
-  .opsRecordSections {
-    grid-template-columns: 1fr;
-  }
-
-  .opsAction,
-  .opsAction:nth-child(3n),
-  .opsRecordSection,
-  .opsRecordSection:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .roleOption {
-    min-height: 66px;
-  }
-
-  .metrics,
-  .factGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .fact:nth-child(2n) {
-    border-right: 0;
-  }
 }
 
 @media (min-width: 901px) and (max-width: 1040px) {
@@ -5345,6 +5911,38 @@ kbd {
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     padding: 6px 4px max(6px, env(safe-area-inset-bottom, 6px));
+  }
+
+  .mobileTabBar a {
+    flex: 1;
+    min-width: 0;
+    max-width: 96px;
+    min-height: 56px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    border: none;
+    border-top: 3px solid transparent;
+    background: transparent;
+    color: var(--faint);
+    padding: 4px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 6px;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .mobileTabBar a svg {
+    flex-shrink: 0;
+  }
+
+  .mobileTabBar a.active {
+    border-top-color: var(--blue);
+    background: transparent;
+    color: var(--blue);
   }
 }
 
@@ -5491,15 +6089,15 @@ kbd {
     width: 100%;
   }
 
-  .commandOverlay {
+  .shCmdOverlay {
     padding: 10px;
   }
 
-  .commandMenu {
+  .shCmdMenu {
     max-height: calc(100svh - 20px);
   }
 
-  .shortcutGrid {
+  .shCmdFooter {
     grid-template-columns: 1fr;
   }
 
@@ -5708,390 +6306,20 @@ kbd {
   }
 
   .financeStart,
-  .financeSteps {
-    grid-template-columns: 1fr;
-  }
-
-  .financeSteps article,
-  .financeSteps article:nth-child(2n),
-  .financeSteps article:nth-last-child(-n + 2) {
-    border-right: 0;
-    border-bottom: 1px solid #e2e6ee;
-  }
-
-  .financeSteps article:last-child {
-    border-bottom: 0;
-  }
-
-  .linearFocus {
-    padding: 14px;
-  }
-
-  .linearFocus h2 {
-    font-size: 24px;
-  }
-
-  .linearFocusTools,
-  .linearSearch {
-    grid-template-columns: 1fr;
-  }
-
-  .linearSearch button {
-    min-height: 40px;
-    border-left: 0;
-    border-top: 1px solid #e2e6ee;
-  }
-
-  .linearWorkflowDock a {
-    min-width: 178px;
-  }
-
-  .linearLanes {
-    display: flex;
-    gap: 10px;
-    overflow-x: auto;
-    background: transparent;
-    padding-bottom: 2px;
-  }
-
-  .linearLane {
-    min-width: min(86vw, 340px);
-    border: 1px solid #dfe4ed;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .linearLane:last-child {
-    border-right: 1px solid #dfe4ed;
-  }
-
-  .linearBoardHeader,
-  .linearLaneHeader,
-  .linearPanelTitle {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .linearPeekFacts,
-  .linearActivityGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .linearFact,
-  .linearFact:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .linearRecordRow {
-    grid-template-columns: 1fr;
-  }
-
-  .metric {
-    min-height: 104px;
-    padding: 14px;
-  }
-
-  .metric strong {
-    font-size: 26px;
-    margin: 12px 0 8px;
-  }
-
-  .metric p {
-    font-size: 13px;
-    line-height: 1.35;
-  }
-
-  .factGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .fact {
-    border-right: 0;
-  }
-
-  .loginProof,
-  .rolePicker {
-    grid-template-columns: 1fr;
-  }
-
-  .loginProof div,
-  .roleOption,
-  .roleOption:nth-of-type(3),
-  .roleOption:nth-of-type(5) {
-    border-right: 1px solid var(--line);
-  }
-
-  .roleOption:nth-of-type(1),
-  .roleOption:nth-of-type(2),
-  .roleOption:nth-of-type(3),
-  .roleOption:nth-of-type(4),
-  .roleOption:nth-of-type(5) {
-    grid-column: auto;
-  }
-
-  .roleOption:nth-of-type(2),
-  .roleOption:nth-of-type(3) {
-    border-top: 1px solid var(--line);
-  }
-
-
-
-
-  .portalChooserHero h1,
-
-
-
-
-
-  .row {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .rowMeta {
-    justify-items: start;
-    text-align: left;
-  }
-
-  .tableSurface {
-    margin-top: 14px;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .commandSurface {
-    margin-top: 12px;
-    padding: 12px;
-  }
-
-  .searchForm {
-    grid-template-columns: 1fr;
-  }
-
-  .opsSearch {
-    grid-template-columns: 1fr;
-  }
-
-  .searchForm button,
-  .opsSearch button {
-    width: 100%;
-  }
-
-  .opsToolbar {
-    margin-top: 12px;
-    padding: 12px;
-  }
-
-  .opsStatBar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-top: 12px;
-  }
-
-  .opsLanes {
-    grid-template-columns: repeat(4, minmax(250px, 1fr));
-    margin-left: -16px;
-    margin-right: -16px;
-    padding: 0 16px 4px;
-  }
-
-  .opsRecord,
-  .opsSidePanel section,
-  .opsLane {
-    box-shadow: none;
-  }
-
-  .opsRecordHeader h2 {
-    font-size: 22px;
-  }
-
-  .opsFactStrip,
-  .opsCoverageGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .opsFact,
-  .opsFact:nth-child(2n),
-  .opsFact:nth-child(4n),
-  .opsCoverageGrid .opsFact:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .opsRecordRow {
-    grid-template-columns: 1fr;
-  }
-
-  .candidateCommand {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-    margin-top: 12px;
-    padding: 14px;
-  }
-
-  .candidateIdentity > strong {
-    font-size: 20px;
-  }
-
-  .candidateActions {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .candidateActions a {
-    padding: 0 10px;
-  }
-
-  .tableHeader {
-    min-height: 0;
-    align-items: flex-start;
-    flex-direction: column;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    padding: 14px;
-  }
-
-  .tableHeader h2 {
-    font-size: 18px;
-  }
-
-  .tableHeader p {
-    font-size: 13px;
-    line-height: 1.45;
-  }
-
-  .tableScroller {
-    overflow: visible;
-  }
-
-  table,
-  thead,
-  tbody,
-  tr,
-  th,
-  td {
-    display: block;
-    min-width: 0;
-    width: 100%;
-  }
-
-  thead {
-    display: none;
-  }
-
-  tbody {
-    display: grid;
-    gap: 10px;
-    margin-top: 10px;
-  }
-
-  tr {
-    border: 1px solid var(--line);
-    background: var(--surface);
-    padding: 12px 14px;
-  }
-
-  tr:last-child td,
-  td {
-    border-bottom: 0;
-  }
-
-  td {
-    display: grid;
-    grid-template-columns: 110px minmax(0, 1fr);
-    gap: 12px;
-    align-items: start;
-    padding: 8px 0;
-    font-size: 14px;
-    overflow-wrap: anywhere;
-  }
-
-  .emptyTableRow td {
-    display: block;
-    padding: 0;
-  }
-
-  .emptyTableRow td::before {
-    content: none;
-  }
-
-  td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 900;
-    text-transform: uppercase;
-  }
-
-  .rowAction {
-    width: 100%;
-  }
-
-  .rowAction a {
-    min-height: 44px;
-    width: 100%;
-  }
-
-  .lists,
-  .detailGrid {
-    gap: 10px;
-  }
-
-  .dataList {
-    min-height: 0;
-  }
-
-  .listHeader {
-    min-height: 52px;
-    padding: 14px;
-  }
-
-  .row {
-    padding: 12px 14px;
-  }
-
-  .rowMain strong,
-  .rowMain span,
-  .rowMeta span {
-    white-space: normal;
-  }
-}
+  
 
 /* Public product entry points */
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 .portalChooserPromise span,
-
-
-
-
-
-
-
 
 
 .portalChooserHero h1,
 
 
-
 .portalChooserPromise,
 
 .portalChooserPromise span,
-
-
-
-
 
 
 .portalChooserHero {
@@ -6102,15 +6330,6 @@ kbd {
 .portalChooserHero h1 {
   max-width: 900px;
 }
-
-
-
-
-
-
-
-
-
 
 
 [data-theme="dark"] .landingHero::after {
@@ -6134,23 +6353,24 @@ kbd {
 }
 
 
-
 .journeyWorkbench .previewPanel {
   grid-column: 1 / -1;
 }
 
 [data-theme="dark"] .previewFlags span {
-  border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
-  background: color-mix(in srgb, var(--blue) 14%, var(--surface));
+  border-color: var(--sh-glass-border);
+  background: var(--sh-glass-bg-strong);
 }
 
 [data-theme="dark"] .previewActions a,
 [data-theme="dark"] .previewRow:hover {
-  background: var(--surface-soft);
-  color: var(--ink);
+  background: var(--sh-glass-bg);
+}
+
 }
 
 @media (min-width: 760px) and (max-width: 1040px) {
+
 
 
 }
@@ -6894,6 +7114,19 @@ kbd {
   font-size: 13px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.sourceBadge {
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+  white-space: nowrap;
+  cursor: help;
 }
 
 .candidateTabs {
@@ -8331,12 +8564,12 @@ kbd {
     padding: 0 8px;
   }
 
-  .commandOverlay .commandMenu {
+  .shCmdOverlay .shCmdMenu {
     width: calc(100vw - 16px);
     max-width: 360px;
   }
 
-  .commandInputWrap input {
+  .shCmdInput {
     font-size: 14px;
   }
 
@@ -8636,6 +8869,67 @@ kbd {
   background: rgba(239, 246, 255, 0.9);
 }
 
+/* ScheduleInterviewForm — inline form on request detail page */
+.scheduleInterviewForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.scheduleInterviewField {
+  display: grid;
+  gap: 6px;
+}
+
+.scheduleInterviewField label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.scheduleInterviewSelect {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 11px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #111827;
+  font: inherit;
+  cursor: pointer;
+}
+
+.scheduleInterviewSelect:focus {
+  outline: 2px solid #eb665120;
+  border-color: #eb6651;
+}
+
+.scheduleInterviewTextarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 11px;
+  background: rgba(248, 250, 252, 0.9);
+  color: #111827;
+  font: inherit;
+  resize: vertical;
+}
+
+.scheduleInterviewTextarea:focus {
+  outline: 2px solid #eb665120;
+  border-color: #eb6651;
+}
+
+.scheduleInterviewActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 [data-theme="dark"] .requestNotice,
 [data-theme="dark"] .requestHero,
 [data-theme="dark"] .requestActionBar,
@@ -8730,69 +9024,6 @@ kbd {
   }
 }
 
-/* ── Transfer Actions ── */
-.transferActions {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.transferActionButtons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.paymentDateForm {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.paymentDateForm input[type="date"] {
-  width: 160px;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 0.875rem;
-}
-
-.payoutList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.payoutRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.payoutRow > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.payoutRow strong {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.payoutRow span,
-.payoutRow small {
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
 
 /* ── Request Create Form ── */
 .requestCreateForm {
@@ -8967,35 +9198,6 @@ kbd {
 .skeletonTable .skeletonRow > span,
 .skeletonContent > span {
   animation: skeletonPulse 1.8s ease-in-out infinite;
-}
-
-/* ── Workspace OS Keyboard Shortcut Hints in Command Palette ── */
-
-.shortcutGrid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-}
-
-.shortcutGrid div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px;
-  border-radius: 6px;
-}
-
-.shortcutGrid kbd {
-  font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
-  font-size: 11px;
-  font-weight: 700;
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 6px;
 }
 
 /* ── Sheet / Slide-in Panel ──────────────────────────────── */
@@ -9214,6 +9416,23 @@ kbd {
   to { transform: translateY(20%); }
 }
 
+/* ── Route transition animations ── */
+
+.pageEnter {
+  animation: slideInUp 300ms ease-out, fadeIn 300ms ease-out;
+}
+
+.pageExit {
+  animation: slideOutDown 200ms ease-in, fadeOut 200ms ease-in;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pageEnter,
+  .pageExit {
+    animation: none !important;
+  }
+}
+
 
 .candidateMissingFields {
   grid-column: 1 / -1;
@@ -9254,4 +9473,1963 @@ kbd {
 
 .candidateMissingFields li a:hover {
   color: var(--foreground);
+}
+
+/* ── Role Layout Shell ──────────────────────────────── */
+
+.roleLayoutShell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* ── Role Header ── */
+.roleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.roleHeaderBranding {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.roleHeaderIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.roleHeaderLabel {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+  white-space: nowrap;
+}
+
+.roleHeaderUser {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.roleHeaderUserInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: right;
+}
+
+.roleHeaderUserRole {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--blue);
+}
+
+.roleHeaderUserName {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.roleHeaderSignout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.roleHeaderSignout:hover {
+  background: var(--surface-soft);
+  color: var(--rose);
+}
+
+/* ── Breadcrumbs ── */
+.breadcrumbs {
+  padding: 0;
+}
+
+.breadcrumbs ol {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.breadcrumbs li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8125rem;
+}
+
+.breadcrumbs a {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.breadcrumbs a:hover {
+  color: var(--ink);
+  background: var(--surface-soft);
+}
+
+.breadcrumbs span[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.breadcrumbSep {
+  color: var(--line);
+  flex-shrink: 0;
+}
+
+.roleBreadcrumbs {
+  padding: 8px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+@media (max-width: 639px) {
+  .breadcrumbs li:not(:last-child) {
+    display: none;
+  }
+}
+
+/* ── Role Content ── */
+.roleContent {
+  flex: 1;
+  padding: 18px 22px;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .roleHeader {
+    padding: 8px 12px;
+  }
+
+  .roleHeaderUserInfo {
+    display: none;
+  }
+
+  .roleBreadcrumbs {
+    padding: 6px 12px;
+  }
+
+  .roleContent {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .roleHeaderLabel {
+    font-size: 0.875rem;
+  }
+
+  .roleHeader {
+    padding: 6px 10px;
+  }
+
+  .roleContent {
+    padding: 8px;
+  }
+}
+
+/* ── Landing page hero: animated gradient ───────────────────────────── */
+.shHeroGradient {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--sh-radius-xl);
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 100%, color-mix(in srgb, var(--blue) 18%, transparent) 0%, transparent 70%),
+    radial-gradient(ellipse 70% 50% at 70% 0%, color-mix(in srgb, var(--blue) 12%, transparent) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 100% 80%, color-mix(in srgb, var(--ring) 10%, transparent) 0%, transparent 60%),
+    var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+  animation: shGradientDrift 12s ease-in-out infinite alternate;
+  z-index: 0;
+}
+
+@keyframes shGradientDrift {
+  0% {
+    background:
+      radial-gradient(ellipse 80% 60% at 0% 100%, color-mix(in srgb, var(--blue) 18%, transparent) 0%, transparent 70%),
+      radial-gradient(ellipse 70% 50% at 70% 0%, color-mix(in srgb, var(--blue) 12%, transparent) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 100% 80%, color-mix(in srgb, var(--ring) 10%, transparent) 0%, transparent 60%),
+      var(--sh-glass-bg);
+  }
+  50% {
+    background:
+      radial-gradient(ellipse 70% 50% at 20% 90%, color-mix(in srgb, var(--blue) 15%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 80% 60% at 60% 10%, color-mix(in srgb, var(--ring) 14%, transparent) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 90% 70%, color-mix(in srgb, var(--blue) 12%, transparent) 0%, transparent 60%),
+      var(--sh-glass-bg);
+  }
+  100% {
+    background:
+      radial-gradient(ellipse 75% 55% at 10% 80%, color-mix(in srgb, var(--ring) 16%, transparent) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 45% at 80% 20%, color-mix(in srgb, var(--blue) 15%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 80% 50% at 40% 100%, color-mix(in srgb, var(--blue) 12%, transparent) 0%, transparent 55%),
+      var(--sh-glass-bg);
+  }
+}
+
+.shHeroMockup {
+  width: min(880px, 72vw);
+  min-height: 510px;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 220px;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--sh-radius-lg);
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15);
+  animation: shMockupFloat 6s var(--sh-easing) infinite alternate;
+}
+
+@keyframes shMockupFloat {
+  0% {
+    transform: translateY(0);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15);
+  }
+  100% {
+    transform: translateY(-8px);
+    box-shadow: 0 32px 100px rgba(0, 0, 0, 0.20);
+  }
+}
+
+.shHeroEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--sh-info-bg);
+  color: var(--sh-info);
+  margin-bottom: 8px;
+  width: fit-content;
+}
+
+.shHeroTitle {
+  margin: 0;
+  font-size: clamp(44px, 6.4vw, 92px);
+  line-height: 0.94;
+  color: var(--ink);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.shHeroHighlight {
+  background: linear-gradient(135deg, var(--ink), var(--sh-coral));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.shHeroBody {
+  max-width: 620px;
+  font-size: clamp(17px, 1.7vw, 21px);
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.shHeroPill {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--sh-coral-light);
+  border: 1px solid color-mix(in srgb, var(--sh-coral) 20%, transparent);
+  color: var(--sh-coral);
+}
+
+/* ── Persona badge — floating label above hero copy ──────────── */
+.shPersonaBadge {
+  position: absolute;
+  top: clamp(18px, 3vw, 32px);
+  right: clamp(18px, 3vw, 32px);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--sh-glass-bg-strong);
+  border: 1px solid var(--sh-glass-border-strong);
+  backdrop-filter: blur(var(--sh-glass-blur));
+  color: var(--sh-info);
+  animation: shBadgeFadeIn 400ms var(--sh-easing) 300ms both;
+  pointer-events: none;
+}
+
+@keyframes shBadgeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1024px) {
+  .shPersonaBadge {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: fit-content;
+    margin-bottom: 8px;
+    animation-delay: 0ms;
+  }
+}
+
+/* ── Proof pill — social proof under CTA ─────────────────────── */
+.shProofPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: var(--sh-success-bg);
+  color: var(--sh-success);
+}
+
+.shBenefitsSection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(18px, 3vw, 38px);
+  padding: clamp(24px, 4vw, 48px);
+  border-radius: var(--sh-radius-xl);
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+  box-shadow: 0 18px 60px rgba(16, 24, 40, 0.08);
+}
+
+@media (max-width: 1024px) {
+  .shBenefitsSection {
+    grid-template-columns: 1fr;
+  }
+  .shHeroMockup {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .shHeroMockup {
+    grid-template-columns: 1fr;
+    min-height: 360px;
+  }
+}
+
+.shBenefitsTitle {
+  margin: 0.35em 0 0.35em;
+  font-size: clamp(22px, 3.4vw, 38px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+/* ── Glass hover enhancement for portal cards ───────────────────────── */
+[data-slot="glass-panel"]:hover {
+  border-color: var(--sh-glass-border-strong) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Login Page — StudentHub OS
+   "Sign in once. We'll open the right workspace."
+   Inspired by Stripe + Linear login — everything is glass, nothing
+   competes with the single CTA.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Full-viewport login — brand on the left, form on the right */
+.shLoginRoot {
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 520px);
+  background: var(--paper);
+}
+
+@media (max-width: 900px) {
+  .shLoginRoot {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+/* ── Brand side — animated gradient + visual statement ──────────────── */
+.shLoginBrand {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 16px;
+  padding: clamp(32px, 5vw, 64px);
+  overflow: hidden;
+}
+
+.shLoginGradient {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 70% at 0% 100%, color-mix(in srgb, var(--sh-coral) 18%, transparent) 0%, transparent 70%),
+    radial-gradient(ellipse 80% 60% at 70% 0%, color-mix(in srgb, var(--sh-coral) 12%, transparent) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 100% 80%, color-mix(in srgb, var(--ring) 8%, transparent) 0%, transparent 60%);
+  animation: shLoginDrift 14s ease-in-out infinite alternate;
+}
+
+@keyframes shLoginDrift {
+  0% {
+    background:
+      radial-gradient(ellipse 90% 70% at 0% 100%, color-mix(in srgb, var(--sh-coral) 20%, transparent) 0%, transparent 70%),
+      radial-gradient(ellipse 80% 60% at 70% 0%, color-mix(in srgb, var(--sh-coral) 14%, transparent) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 100% 80%, color-mix(in srgb, var(--sh-coral) 10%, transparent) 0%, transparent 60%);
+  }
+  50% {
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 90%, color-mix(in srgb, var(--sh-coral) 18%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 85% 65% at 60% 10%, color-mix(in srgb, var(--sh-coral) 12%, transparent) 0%, transparent 55%),
+      radial-gradient(ellipse 70% 50% at 90% 70%, color-mix(in srgb, var(--sh-coral) 14%, transparent) 0%, transparent 60%);
+  }
+  100% {
+    background:
+      radial-gradient(ellipse 85% 65% at 15% 85%, color-mix(in srgb, var(--sh-coral) 16%, transparent) 0%, transparent 60%),
+      radial-gradient(ellipse 75% 55% at 80% 15%, color-mix(in srgb, var(--sh-coral) 18%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 80% 60% at 45% 100%, color-mix(in srgb, var(--sh-coral) 14%, transparent) 0%, transparent 55%);
+  }
+}
+
+.shLoginBrandContent {
+  position: relative;
+  z-index: 1;
+  animation: shLoginBrandFadeIn 600ms var(--sh-easing) both;
+}
+
+.shLoginBrandLogo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.shLoginBrandLogo span {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.shLoginBrandLogo strong {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.shLoginBrandTitle {
+  margin: 0;
+  font-size: clamp(40px, 5vw, 72px);
+  line-height: 0.92;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+.shLoginBrandHighlight {
+  background: linear-gradient(135deg, var(--ink), var(--sh-coral));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.shLoginBrandBody {
+  max-width: 480px;
+  font-size: clamp(15px, 1.4vw, 18px);
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 12px;
+}
+
+.shLoginBrandPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.shLoginBrandPill {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--sh-coral-light);
+  border: 1px solid color-mix(in srgb, var(--sh-coral) 20%, transparent);
+  color: var(--sh-coral);
+}
+
+/* ── Form side — centered card area ────────────────────────────────── */
+.shLoginFormSide {
+  display: grid;
+  align-content: center;
+  padding: 24px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+
+@media (max-width: 900px) {
+  .shLoginFormSide {
+    border-left: none;
+    padding: 16px;
+  }
+}
+
+@keyframes shLoginFormIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.shLoginFormWrap {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+/* ── Staggered entrance ──────────────────────────────────────────────── */
+.shLoginStagger {
+  animation: shLoginFormIn 500ms var(--sh-easing) both;
+}
+.shLoginStagger:nth-child(1) { animation-delay: 80ms; }
+.shLoginStagger:nth-child(2) { animation-delay: 140ms; }
+.shLoginStagger:nth-child(3) { animation-delay: 200ms; }
+.shLoginStagger:nth-child(4) { animation-delay: 260ms; }
+.shLoginStagger:nth-child(5) { animation-delay: 320ms; }
+
+/* ── Clean input overrides for login form ───────────────────────────── */
+.shLoginInput {
+  min-height: 50px !important;
+  padding: 0 14px !important;
+  border-radius: var(--sh-radius-md) !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  font-size: 15px !important;
+  transition:
+    border-color 200ms var(--sh-easing),
+    box-shadow 200ms var(--sh-easing),
+    background 200ms var(--sh-easing) !important;
+}
+
+.shLoginInput::placeholder {
+  color: var(--muted) !important;
+}
+
+.shLoginInput:focus {
+  border-color: var(--sh-coral) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sh-coral) 15%, transparent) !important;
+  background: var(--surface) !important;
+  outline: none !important;
+}
+
+.shLoginInput:hover {
+  border-color: var(--sh-coral-hover) !important;
+  background: var(--surface-soft) !important;
+}
+
+/* ── Login CTA (Zendesk Coral) ──────────────────────────────────────── */
+.shLoginCTA {
+  width: 100%;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-coral);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 200ms var(--sh-easing),
+    box-shadow 200ms var(--sh-easing),
+    background 200ms var(--sh-easing);
+}
+
+.shLoginCTA:hover {
+  background: var(--sh-coral-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--sh-coral-glow);
+}
+
+.shLoginCTA:active {
+  transform: translateY(0);
+}
+
+.shLoginCTA:disabled {
+  pointer-events: none;
+  opacity: 0.56;
+}
+
+/* ── Brand animation (moves with brand side) ────────────────────────── */
+@keyframes shLoginBrandFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ── Solid form card ────────────────────────────────────────────────── */
+.shLoginFormCard {
+  border-radius: var(--sh-radius-xl);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  animation: shLoginFormIn 400ms var(--sh-easing) both;
+  animation-delay: 60ms;
+}
+
+.shLoginFormCardHeader {
+  display: grid;
+  gap: 4px;
+  padding: 28px 28px 12px;
+}
+
+.shLoginFormCardHeader strong {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--ink);
+}
+
+.shLoginFormCardHeader p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.shLoginFormCardBody {
+  padding: 0 28px 28px;
+  display: grid;
+  gap: 16px;
+}
+
+/* ── Mobile: brand panel collapses to a compact header ──────────────── */
+@media (max-width: 900px) {
+  .shLoginBrand {
+    padding: 20px 20px 8px;
+    min-height: auto;
+  }
+
+  .shLoginBrandContent {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .shLoginBrandLogo {
+    margin-bottom: 0;
+  }
+
+  .shLoginBrandLogo span {
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+
+  .shLoginBrandLogo strong {
+    display: none;
+  }
+
+  .shLoginBrandTitle {
+    font-size: clamp(24px, 6vw, 32px);
+  }
+
+  .shLoginBrandPills {
+    display: none;
+  }
+
+  .shLoginFormSide {
+    padding: 12px;
+  }
+
+  .shLoginFormCardHeader {
+    padding: 20px 20px 8px;
+  }
+
+  .shLoginFormCardHeader strong {
+    font-size: 20px;
+  }
+
+  .shLoginFormCardBody {
+    padding: 0 20px 20px;
+  }
+}
+
+/* ── Error state ──────────────────────────────────────────────────────── */
+.shLoginError {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-error-bg);
+  border: 1px solid color-mix(in srgb, var(--sh-error) 20%, transparent);
+  color: var(--sh-error);
+  font-size: 13px;
+  font-weight: 600;
+  animation: shLoginFormIn 300ms var(--sh-easing) both;
+}
+
+/* ── Verified account chooser ──────────────────────────────────────── */
+.shLoginAccountSection {
+  border-top: 1px solid var(--line);
+  padding: 20px 28px;
+  display: grid;
+  gap: 12px;
+}
+
+.shLoginAccountSection strong {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.shLoginAccountSection p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.shLoginAccountBtn {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--sh-radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    background 180ms var(--sh-easing),
+    border-color 180ms var(--sh-easing);
+}
+
+.shLoginAccountBtn:hover {
+  background: var(--surface-soft);
+  border-color: var(--ink);
+}
+
+.shLoginAccountBtn strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shLoginAccountBtn small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* ── Dark mode overrides for login pages ────────────────────────────── */
+[data-theme="dark"] .shLoginGradient {
+  background:
+    radial-gradient(ellipse 90% 70% at 0% 100%, color-mix(in srgb, var(--sh-coral) 16%, transparent) 0%, transparent 70%),
+    radial-gradient(ellipse 80% 60% at 70% 0%, color-mix(in srgb, var(--sh-coral) 10%, transparent) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 100% 80%, color-mix(in srgb, var(--ring) 6%, transparent) 0%, transparent 60%);
+}
+
+@keyframes shLoginGradientDriftDark {
+  0% {
+    background:
+      radial-gradient(ellipse 90% 70% at 0% 100%, color-mix(in srgb, var(--sh-coral) 16%, transparent) 0%, transparent 70%),
+      radial-gradient(ellipse 80% 60% at 70% 0%, color-mix(in srgb, var(--sh-coral) 10%, transparent) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 100% 80%, color-mix(in srgb, var(--ring) 6%, transparent) 0%, transparent 60%);
+  }
+  50% {
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 90%, color-mix(in srgb, var(--sh-coral) 14%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 85% 65% at 60% 10%, color-mix(in srgb, var(--ring) 8%, transparent) 0%, transparent 55%),
+      radial-gradient(ellipse 70% 50% at 90% 70%, color-mix(in srgb, var(--sh-coral) 10%, transparent) 0%, transparent 60%);
+  }
+  100% {
+    background:
+      radial-gradient(ellipse 85% 65% at 15% 85%, color-mix(in srgb, var(--ring) 12%, transparent) 0%, transparent 60%),
+      radial-gradient(ellipse 75% 55% at 80% 15%, color-mix(in srgb, var(--sh-coral) 14%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 80% 60% at 45% 100%, color-mix(in srgb, var(--sh-coral) 10%, transparent) 0%, transparent 55%);
+  }
+}
+
+[data-theme="dark"] .shLoginGradient {
+  animation: shLoginGradientDriftDark 15s ease-in-out infinite alternate;
+}
+
+/* ── OS Landing — Floating Orbs & Ambient Particles ────────────────── */
+.shOrb {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  will-change: transform;
+  z-index: 0;
+}
+
+.shOrbA {
+  width: 420px;
+  height: 420px;
+  top: -120px;
+  left: -80px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--blue) 22%, transparent) 0%, transparent 70%);
+  animation: shOrbADrift 20s var(--sh-easing) infinite alternate;
+}
+
+.shOrbB {
+  width: 340px;
+  height: 340px;
+  bottom: -60px;
+  right: -40px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ring) 16%, transparent) 0%, transparent 70%);
+  animation: shOrbBDrift 25s var(--sh-easing) infinite alternate;
+}
+
+.shOrbC {
+  width: 260px;
+  height: 260px;
+  top: 30%;
+  left: 45%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--sh-info) 12%, transparent) 0%, transparent 70%);
+  animation: shOrbCDrift 18s var(--sh-easing) infinite alternate;
+}
+
+@keyframes shOrbADrift {
+  0% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(60px, 30px) scale(1.08); }
+  66% { transform: translate(20px, 80px) scale(0.95); }
+  100% { transform: translate(80px, -20px) scale(1.04); }
+}
+
+@keyframes shOrbBDrift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-50px, -40px) scale(1.12); }
+  100% { transform: translate(-20px, 20px) scale(0.96); }
+}
+
+@keyframes shOrbCDrift {
+  0% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(30px, -50px) scale(1.18); opacity: 0.9; }
+  100% { transform: translate(-40px, 10px) scale(0.92); opacity: 0.5; }
+}
+
+/* ── OS Landing — Particle grid dots ───────────────────────────────── */
+.shParticleGrid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.15;
+  mask-image: radial-gradient(ellipse 60% 50% at 50% 50%, black, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse 60% 50% at 50% 50%, black, transparent 70%);
+  background-image:
+    radial-gradient(circle, var(--blue) 1px, transparent 1px);
+  background-size: 32px 32px;
+  animation: shParticleDrift 40s linear infinite;
+}
+
+@keyframes shParticleDrift {
+  0% { background-position: 0 0; }
+  100% { background-position: 64px 64px; }
+}
+
+/* ── OS Landing — Section layout container ──────────────────── */
+.shSection {
+  /* Sections animate in on scroll via FadeInSection wrapper */
+  margin-bottom: clamp(8px, 1.5vw, 20px);
+}
+
+/* ── OS Landing — Hero section wrapper ──────────────────────── */
+.shSection:first-of-type {
+  margin-top: 0;
+}
+
+/* ── OS Landing — Smooth theme transitions ─────────────────── */
+/* Only body/html get smooth dark/light theme crossfade */
+html {
+  transition: background-color var(--dur-slow) ease, color-scheme var(--dur-slow) ease;
+}
+body {
+  transition: background-color var(--dur-slow) ease, color var(--dur-slow) ease;
+}
+
+/* ── OS Landing — Premium hero ambient glow behind mockup ──── */
+.shHeroAmbientGlow {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.shHeroAmbientGlow::before {
+  content: '';
+  position: absolute;
+  width: 60%;
+  height: 60%;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -30%);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--blue) 20%, transparent) 0%,
+    color-mix(in srgb, var(--ring) 10%, transparent) 40%,
+    transparent 70%
+  );
+  filter: blur(80px);
+  opacity: 0.6;
+  animation: shAmbientPulse 8s ease-in-out infinite alternate;
+}
+
+@keyframes shAmbientPulse {
+  0% { opacity: 0.4; transform: translate(-50%, -30%) scale(1); }
+  100% { opacity: 0.8; transform: translate(-50%, -30%) scale(1.12); }
+}
+
+/* ── OS Landing — Premium card hover glow ─────────────────── */
+.shCardGlow {
+  position: relative;
+  isolation: isolate;
+  transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shCardGlow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    color-mix(in srgb, var(--sh-info) 10%, transparent) 0%,
+    transparent 60%
+  );
+  opacity: 0;
+  transition: opacity 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.shCardGlow:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 48px rgba(16, 24, 40, 0.12);
+}
+
+.shCardGlow:hover::before {
+  opacity: 1;
+}
+
+/* ── OS Landing — Mockup hover enhancement ────────────────── */
+.shMockupDramatic {
+  transition: box-shadow 600ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shMockupDramatic:hover {
+  box-shadow:
+    0 32px 100px rgba(0, 0, 0, 0.2),
+    0 0 0 1px color-mix(in srgb, var(--sh-info) 15%, transparent),
+    0 0 60px color-mix(in srgb, var(--sh-info) 8%, transparent);
+}
+/* ── OS Landing — Staggered card entrance (within a grid) ──────────── */
+.shCard {
+  opacity: 0;
+  transform: translateY(16px);
+  animation: shCardIn 500ms var(--sh-easing) forwards;
+}
+
+@keyframes shCardIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── OS Landing — Portal card glow-on-hover ────────────────────────── */
+.shPortalCard {
+  position: relative;
+  isolation: isolate;
+  transition: transform 280ms var(--sh-easing), box-shadow 280ms var(--sh-easing);
+}
+
+.shPortalCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(16, 24, 40, 0.12);
+}
+
+.shPortalCard::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: var(--sh-radius-lg);
+  background: radial-gradient(
+    800px circle at 50% 50%,
+    color-mix(in srgb, var(--sh-info) 8%, transparent) 0%,
+    transparent 60%
+  );
+  opacity: 0;
+  transition: opacity 400ms var(--sh-easing);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.shPortalCard:hover::after {
+  opacity: 1;
+}
+
+/* ── OS Landing — Feature card styles ────────────────────────────────── */
+.shCardTitle {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.shCardBody {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.shCardStat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--sh-info);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ── OS Landing — Glow CTA button ───────────────────────────────────── */
+.shGlowButton {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition: box-shadow 280ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shGlowButton::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: radial-gradient(
+    400px circle at 50% 50%,
+    color-mix(in srgb, var(--sh-info) 18%, transparent) 0%,
+    transparent 60%
+  );
+  opacity: 0;
+  transition: opacity 400ms var(--sh-easing);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.shGlowButton:hover::before {
+  opacity: 1;
+}
+
+.shGlowButton:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--sh-info) 22%, transparent);
+}
+
+.shMockupDramatic {
+  width: min(920px, 76vw);
+  min-height: 540px;
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) 240px;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--sh-glass-bg-strong) 60%, var(--surface-soft) 40%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--sh-glass-border);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.15),
+    0 0 0 1px rgba(255, 255, 255, 0.03);
+  animation: shMockupDramaticFloat 6s var(--sh-easing) infinite alternate;
+}
+
+@keyframes shMockupDramaticFloat {
+  0% {
+    transform: translateY(0);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  }
+  100% {
+    transform: translateY(-10px);
+    box-shadow: 0 36px 110px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+}
+
+@keyframes navSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.shMockupRail {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+}
+
+.shMockupRailItem {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  transition: all 200ms var(--sh-easing);
+}
+
+.shMockupRailItem.active {
+  background: var(--sh-info-bg);
+  color: var(--sh-info);
+}
+
+.shMockupMain {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.shMockupSearchArea {
+  min-height: 180px;
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--sh-glass-bg-strong);
+  border: 1px solid var(--sh-glass-border);
+}
+
+.shMockupResult {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  transition: background 200ms var(--sh-easing);
+}
+
+.shMockupResult:hover {
+  background: var(--sh-glass-bg);
+}
+
+.shMockupResultDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.shMockupResultName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.shMockupResultMeta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.shMockupAside {
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+}
+
+.shMockupAsideLabel {
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sh-info);
+}
+
+.shMockupAsideValue {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+.shMockupAsideSmall {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ── OS Landing — Hero text entrance ───────────────────────────────── */
+.shHeroText {
+  opacity: 0;
+  transform: translateY(30px);
+  animation: shHeroTextIn 700ms var(--sh-easing) forwards;
+}
+
+.shHeroText:nth-child(1) { animation-delay: 150ms; }
+.shHeroText:nth-child(2) { animation-delay: 300ms; }
+.shHeroText:nth-child(3) { animation-delay: 450ms; }
+.shHeroText:nth-child(4) { animation-delay: 600ms; }
+.shHeroText:nth-child(5) { animation-delay: 750ms; }
+
+@keyframes shHeroTextIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.shHeroGlowText {
+  background: linear-gradient(135deg, var(--ink) 0%, var(--sh-info) 50%, color-mix(in srgb, var(--ring) 70%, var(--sh-info) 30%) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  background-size: 200% 200%;
+  animation: shGlowTextShift 6s var(--sh-easing) infinite alternate;
+}
+
+@keyframes shGlowTextShift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+/* ── OS Landing — Enhanced benefits ────────────────────────────────── */
+.shBenefitSection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(18px, 3vw, 38px);
+  padding: clamp(28px, 4vw, 52px);
+  border-radius: var(--sh-radius-xl);
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+  box-shadow: 0 18px 60px rgba(16, 24, 40, 0.08);
+}
+
+.shBenefitCard {
+  min-height: 110px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  border-radius: var(--sh-radius-lg);
+  background: var(--sh-glass-bg);
+  border: 1px solid var(--sh-glass-border);
+  transition:
+    background 250ms var(--sh-easing),
+    border-color 250ms var(--sh-easing),
+    transform 250ms var(--sh-easing),
+    box-shadow 250ms var(--sh-easing);
+}
+
+.shBenefitCard:hover {
+  background: var(--sh-glass-bg-strong);
+  border-color: var(--sh-glass-border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--sh-glow-sm);
+}
+
+@media (max-width: 1024px) {
+  .shBenefitSection {
+    grid-template-columns: 1fr;
+  }
+  .shMockupDramatic {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .shMockupDramatic {
+    grid-template-columns: 1fr;
+    min-height: 380px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Candidate Profile — OS Glass Aesthetic
+   Hero header, avatar, info layout embedded in GlassPanel
+   ══════════════════════════════════════════════════════════════════════ */
+
+.shProfileHero {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 24px;
+  animation: shFadeIn 300ms var(--sh-easing) both;
+}
+
+.shProfileAvatar {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--sh-radius-xl);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 20px;
+  font-weight: 900;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
+.shProfileInfo {
+  display: grid;
+  gap: 2px;
+}
+
+.shProfileName {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: var(--sh-tracking);
+}
+
+.shProfileMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.shProfileMetaText {
+  font-size: var(--sh-fs-sm);
+  color: var(--faint);
+}
+
+/* ── OS DataTable — Linear-inspired glass redesign ──────────────────── */
+.shProfileInfoSub {
+  margin: 0;
+  font-size: var(--sh-fs-base);
+  color: var(--muted);
+}
+
+.shProfileMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.shProfileMetaText {
+  font-size: var(--sh-fs-sm);
+  color: var(--faint);
+}
+
+/* ── OS DataTable — Linear-inspired glass redesign ──────────────────── */
+@keyframes shShimmerSlide {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes shRowEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes shFadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.shTableGlass {
+  border-radius: var(--sh-radius-lg, 12px);
+  background: var(--sh-glass-bg, rgba(255,255,255,0.04));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--sh-glass-border, rgba(255,255,255,0.08));
+  box-shadow: 0 12px 48px rgba(16, 24, 40, 0.06);
+  overflow: hidden;
+  transition:
+    background 250ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    border-color 250ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow 250ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+[data-theme="dark"] .shTableGlass {
+  background: var(--sh-glass-bg, rgba(255,255,255,0.03));
+  border-color: var(--sh-glass-border, rgba(255,255,255,0.06));
+  box-shadow: 0 12px 48px rgba(0,0,0,0.3);
+}
+
+.shTableHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--sh-glass-border, rgba(255,255,255,0.06));
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--sh-glass-bg-strong, rgba(255,255,255,0.06));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: background 250ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+.shTableHeader h2 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+
+.shTableHeader p {
+  font-size: 13px;
+  color: var(--muted, #60646c);
+  margin-bottom: 0;
+}
+
+.shTableHeader span {
+  font-size: 12px;
+  color: var(--muted, #60646c);
+  font-weight: 600;
+}
+
+.shTableScroller {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 720px;
+}
+
+.shTable th {
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #60646c);
+  border-bottom: 1px solid var(--sh-glass-border, rgba(255,255,255,0.06));
+  white-space: nowrap;
+  user-select: none;
+}
+
+.shTable td {
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--ink, #e1e4e8);
+  border-bottom: 1px solid var(--sh-glass-border, rgba(255,255,255,0.04));
+  transition: background 200ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+.shTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.shTableRow {
+  transition:
+    background 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    transform 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+  animation: shRowEnter 300ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)) both;
+  cursor: default;
+}
+
+.shTableRow:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+[data-theme="dark"] .shTableRow:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.shTableRow.clickable {
+  cursor: pointer;
+}
+
+.shTableRow.clickable:hover {
+  background: rgba(59,130,246,0.04);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 12px rgba(59,130,246,0.06);
+}
+
+[data-theme="dark"] .shTableRow.clickable:hover {
+  background: rgba(59,130,246,0.06);
+  box-shadow: 0 2px 12px rgba(59,130,246,0.08);
+}
+
+/* Inline action that appears on row hover */
+.shTableRowAction {
+  opacity: 0;
+  transition: opacity 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+tr:hover .shTableRowAction,
+.shTableRow:hover .shTableRowAction {
+  opacity: 1;
+}
+
+.shTableRowAction a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sh-info, #3b82f6);
+  text-decoration: none;
+  transition:
+    background 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    color 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+.shTableRowAction a:hover {
+  background: rgba(59,130,246,0.1);
+  color: #60a5fa;
+}
+
+/* Shimmer skeleton loading */
+.shTableSkeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--sh-glass-bg-strong, rgba(255,255,255,0.06));
+}
+
+.shTableSkeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.06) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shShimmerSlide 1.8s ease-in-out infinite;
+}
+
+[data-theme="dark"] .shTableSkeleton::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.04) 50%,
+    transparent 100%
+  );
+}
+
+/* Glass pagination */
+.shTablePagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--sh-glass-border, rgba(255,255,255,0.06));
+  animation: shFadeSlideUp 300ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)) both;
+}
+
+.shTablePageBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--sh-glass-border, rgba(255,255,255,0.08));
+  background: var(--sh-glass-bg, rgba(255,255,255,0.04));
+  color: var(--ink, #e1e4e8);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    border-color 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    transform 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow 180ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+.shTablePageBtn:hover:not(:disabled) {
+  background: var(--sh-glass-bg-strong, rgba(255,255,255,0.08));
+  border-color: var(--sh-glass-border-strong, rgba(255,255,255,0.12));
+  transform: translateY(-1px);
+  box-shadow: var(--sh-glow-sm, 0 2px 8px rgba(59,130,246,0.1));
+}
+
+.shTablePageBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.shTablePageInfo {
+  font-size: 13px;
+  color: var(--muted, #60646c);
+  font-weight: 500;
+  padding: 0 4px;
+}
+
+/* Glass search bar */
+.shTableSearch {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--sh-glass-border, rgba(255,255,255,0.06));
+  animation: shFadeSlideUp 300ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)) both;
+}
+
+.shTableSearchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.shTableSearchIcon {
+  position: absolute;
+  left: 12px;
+  color: var(--muted, #60646c);
+  pointer-events: none;
+}
+
+.shTableSearchInput {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 34px 0 36px;
+  border-radius: 10px;
+  border: 1px solid var(--sh-glass-border, rgba(255,255,255,0.08));
+  background: var(--sh-glass-bg, rgba(255,255,255,0.04));
+  color: var(--ink, #e1e4e8);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition:
+    border-color 200ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    background 200ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow 200ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+.shTableSearchInput::placeholder {
+  color: var(--muted, #60646c);
+  opacity: 0.6;
+}
+
+.shTableSearchInput:focus {
+  border-color: var(--sh-info, #3b82f6);
+  background: var(--sh-glass-bg-strong, rgba(255,255,255,0.06));
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+
+.shTableSearchClear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #60646c);
+  cursor: pointer;
+  transition:
+    background 150ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1)),
+    color 150ms var(--sh-easing, cubic-bezier(0.16,1,0.3,1));
+}
+
+.shTableSearchClear:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--ink, #e1e4e8);
+}
+
+/* OS empty state inside table */
+.shTableEmptyCell {
+  padding: 0 !important;
+}
+
+/* ── Password Reset specific ──────────────────────────────────── */
+
+/* Back-link below form */
+.shLoginBackLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  transition: color 160ms var(--sh-easing);
+}
+.shLoginBackLink:hover {
+  color: var(--sh-coral);
+}
+
+/* Sent/success confirmation card */
+.shLoginSuccessCard {
+  display: grid;
+  gap: 20px;
+  text-align: center;
+  padding: 32px 24px;
+}
+.shLoginSuccessIcon {
+  justify-self: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-xl);
+  background: var(--sh-success-bg);
+  border: 1px solid color-mix(in srgb, var(--sh-success) 20%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sh-success);
+}
+.shLoginSuccessTitle {
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+.shLoginSuccessBody {
+  font-size: var(--fs-body);
+  color: var(--muted);
+  line-height: 1.5;
+}
+.shLoginSuccessEmail {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ── Quick Facet Chips ──────────────────────────────────────────────────── */
+
+.candidateFacetChips {
+  display: grid;
+  gap: 8px;
+  padding: 6px 10px 10px;
+}
+
+.candidateFacetChipGroup {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.candidateFacetChipLabel {
+  flex: 0 0 auto;
+  min-width: 52px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  line-height: 28px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.candidateFacetChipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.candidateFacetChipList a.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all 120ms ease;
+}
+
+.candidateFacetChipList a.chip:hover {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface));
+  color: var(--blue);
+}
+
+.candidateFacetChipList a.chip.active {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: var(--surface);
+}
+
+.candidateFacetChipList a.chip strong {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.candidateFacetChipList a.chip.active strong {
+  opacity: 0.9;
+}
+
+/* Mobile responsive */
+@media (max-width: 640px) {
+  .candidateFacetChips {
+    gap: 6px;
+    padding: 4px 8px 8px;
+  }
+
+  .candidateFacetChipGroup {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .candidateFacetChipLabel {
+    min-width: 0;
+    line-height: 1.3;
+  }
+
+  .candidateFacetChipList {
+    gap: 3px;
+  }
+
+  .candidateFacetChipList a.chip {
+    min-height: 24px;
+    font-size: 11px;
+    padding: 0 8px;
+  }
+}
+
+/* ── Candidate Search Status Indicator ───────────────────────────── */
+/* Loading bar animation — 30s shrink from full-width to 20%         */
+@keyframes search-progress {
+  0%   { width: 100%; }
+  30%  { width: 70%; }
+  60%  { width: 50%; }
+  100% { width: 20%; }
+}
+
+/* Spinner used by SearchStatusPill */
+@keyframes search-spin {
+  to { transform: rotate(360deg); }
 }

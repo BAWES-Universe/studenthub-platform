@@ -39,7 +39,10 @@ export function WorkspaceNavigation({ items, role }: { items: NavItem[]; role: s
 export function WorkspaceMobileNavigation({ items, role }: { items: NavItem[]; role: string }) {
   const pathname = usePathname();
   return (
-    <nav className="mobileTabBar" aria-label={`${role} mobile navigation`}>
+    <nav
+      className="hidden max-md:flex fixed bottom-0 left-0 right-0 z-50 h-16 border-t border-border bg-card px-1 safe-area-inset-bottom"
+      aria-label={`${role} mobile navigation`}
+    >
       {items.map((item) => {
         const active = isActive(pathname, item.href);
         const Icon = item.icon;
