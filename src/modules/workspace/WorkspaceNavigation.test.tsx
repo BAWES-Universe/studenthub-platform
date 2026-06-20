@@ -1,6 +1,6 @@
-// @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import React from "react";
+import ReactDOM from "react-dom/client";
 import { WorkspaceNavigation, WorkspaceMobileNavigation } from "./WorkspaceNavigation";
 import type { NavItem } from "./navigation";
 
@@ -34,6 +34,15 @@ function mockPath(value: string) {
   mockPathname = value;
 }
 
+// Self-contained render — no @testing-library/react dependency
+function renderInDoc(ui: React.ReactElement): { container: HTMLElement } {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = ReactDOM.createRoot(container);
+  root.render(ui);
+  return { container };
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -54,7 +63,7 @@ const singleNav: NavItem[] = [
 // ---------------------------------------------------------------------------
 
 afterEach(() => {
-  cleanup();
+  document.body.innerHTML = "";
   mockPath("/admin");
 });
 
@@ -64,104 +73,87 @@ afterEach(() => {
 
 describe("WorkspaceNavigation", () => {
   it("renders all nav items as links", () => {
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
     navItems.forEach((item) => {
-      expect(screen.getByText(item.label)).toBeInTheDocument();
+      expect(container.querySelector(`[title="${item.label}"]`)).not.toBeNull();
     });
   });
 
   it("renders each item as a link with the correct href", () => {
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
-    const overviewLink = screen.getByText("Overview").closest("a");
-    expect(overviewLink).toHaveAttribute("href", "/admin");
-
-    const candidatesLink = screen.getByText("Candidates").closest("a");
-    expect(candidatesLink).toHaveAttribute("href", "/admin/candidates");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
+    const links = container.querySelectorAll("a");
+    const hrefs: (string | null)[] = [];
+    links.forEach((l) => hrefs.push(l.getAttribute("href")));
+    navItems.forEach((item) => {
+      expect(hrefs).toContain(item.href);
+    });
   });
 
   it("renders the nav with the correct aria-label", () => {
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
-    const nav = screen.getByRole("navigation");
-    expect(nav).toHaveAttribute("aria-label", "admin workspace navigation");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
+    const nav = container.querySelector("nav[aria-label='admin workspace navigation']");
+    expect(nav).not.toBeNull();
   });
 
   it("applies the role to the aria-label", () => {
-    render(<WorkspaceNavigation items={navItems} role="staff" />);
-
-    const nav = screen.getByRole("navigation");
-    expect(nav).toHaveAttribute("aria-label", "staff workspace navigation");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="staff" />);
+    const nav = container.querySelector("nav[aria-label='staff workspace navigation']");
+    expect(nav).not.toBeNull();
   });
 
   it("marks the active item with aria-current='page' when pathname matches exactly", () => {
     mockPath("/admin/candidates");
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
-    const candidatesLink = screen.getByText("Candidates").closest("a");
-    expect(candidatesLink).toHaveAttribute("aria-current", "page");
-
-    // Companies should not be active because pathname doesn't match
-    const companiesLink = screen.getByText("Companies").closest("a");
-    expect(companiesLink).not.toHaveAttribute("aria-current");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
+    const candidatesLink = container.querySelector('a[href="/admin/candidates"]');
+    expect(candidatesLink?.getAttribute("aria-current")).toBe("page");
+    const companiesLink = container.querySelector('a[href="/admin/companies"]');
+    expect(companiesLink?.hasAttribute("aria-current")).toBe(false);
   });
 
   it("marks the active item when pathname is a sub-route of the item's href", () => {
     mockPath("/admin/candidates/123");
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
-    const candidatesLink = screen.getByText("Candidates").closest("a");
-    expect(candidatesLink).toHaveAttribute("aria-current", "page");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
+    const candidatesLink = container.querySelector('a[href="/admin/candidates"]');
+    expect(candidatesLink?.getAttribute("aria-current")).toBe("page");
   });
 
   it("does not mark any item as active when pathname matches no items", () => {
     mockPath("/some/unknown/path");
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
-    const links = screen.getAllByRole("link");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
+    const links = container.querySelectorAll("a");
     links.forEach((link) => {
-      expect(link).not.toHaveAttribute("aria-current");
+      expect(link.hasAttribute("aria-current")).toBe(false);
     });
   });
 
-  it("applies the correct active classes to the active item", () => {
+  it("applies the CSS class 'active' to the active item", () => {
     mockPath("/admin/candidates");
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
-    const candidatesLink = screen.getByText("Candidates").closest("a");
-    // Active link gets aria-current="page" and the Zendesk blue bg/text classes
-    expect(candidatesLink).toHaveAttribute("aria-current", "page");
-    expect(candidatesLink).toHaveClass("text-[#1f73b7]");
-
-    // Inactive items should not have aria-current
-    const companiesLink = screen.getByText("Companies").closest("a");
-    expect(companiesLink).not.toHaveAttribute("aria-current");
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
+    const candidatesLink = container.querySelector('a[href="/admin/candidates"]');
+    expect(candidatesLink?.classList.contains("active")).toBe(true);
   });
 
   it("renders a title attribute on each link", () => {
-    render(<WorkspaceNavigation items={navItems} role="admin" />);
-
+    const { container } = renderInDoc(<WorkspaceNavigation items={navItems} role="admin" />);
     navItems.forEach((item) => {
-      const link = screen.getByText(item.label).closest("a");
-      expect(link).toHaveAttribute("title", item.label);
+      const link = container.querySelector(`a[title="${item.label}"]`);
+      expect(link).not.toBeNull();
+      expect(link?.getAttribute("title")).toBe(item.label);
     });
   });
 
   it("renders nothing when items array is empty", () => {
-    const { container } = render(<WorkspaceNavigation items={[]} role="admin" />);
-
+    const { container } = renderInDoc(<WorkspaceNavigation items={[]} role="admin" />);
     const nav = container.querySelector("nav");
-    expect(nav).toBeInTheDocument();
+    expect(nav).not.toBeNull();
     expect(nav?.children.length).toBe(0);
   });
 
   it("handles a single nav item", () => {
-    render(<WorkspaceNavigation items={singleNav} role="admin" />);
-
-    expect(screen.getByText("Home")).toBeInTheDocument();
-    const links = screen.getAllByRole("link");
-    expect(links).toHaveLength(1);
+    const { container } = renderInDoc(<WorkspaceNavigation items={singleNav} role="admin" />);
+    expect(container.querySelector('[title="Home"]')).not.toBeNull();
+    const links = container.querySelectorAll("a");
+    expect(links.length).toBe(1);
   });
 });
 
@@ -171,41 +163,36 @@ describe("WorkspaceNavigation", () => {
 
 describe("WorkspaceMobileNavigation", () => {
   it("renders all nav items as links", () => {
-    render(<WorkspaceMobileNavigation items={navItems} role="admin" />);
-
+    const { container } = renderInDoc(<WorkspaceMobileNavigation items={navItems} role="admin" />);
     navItems.forEach((item) => {
-      expect(screen.getByText(item.label)).toBeInTheDocument();
+      expect(container.querySelector(`[title="${item.label}"]`)).not.toBeNull();
     });
   });
 
   it("renders with the correct aria-label", () => {
-    render(<WorkspaceMobileNavigation items={navItems} role="admin" />);
-
-    const nav = screen.getByRole("navigation");
-    expect(nav).toHaveAttribute("aria-label", "admin mobile navigation");
+    const { container } = renderInDoc(<WorkspaceMobileNavigation items={navItems} role="admin" />);
+    const nav = container.querySelector("nav[aria-label='admin mobile navigation']");
+    expect(nav).not.toBeNull();
   });
 
   it("marks the active item with aria-current='page'", () => {
     mockPath("/admin/companies");
-    render(<WorkspaceMobileNavigation items={navItems} role="admin" />);
-
-    const companiesLink = screen.getByText("Companies").closest("a");
-    expect(companiesLink).toHaveAttribute("aria-current", "page");
+    const { container } = renderInDoc(<WorkspaceMobileNavigation items={navItems} role="admin" />);
+    const companiesLink = container.querySelector('a[href="/admin/companies"]');
+    expect(companiesLink?.getAttribute("aria-current")).toBe("page");
   });
 
   it("marks the active item on sub-route matches", () => {
     mockPath("/admin/requests/new");
-    render(<WorkspaceMobileNavigation items={navItems} role="admin" />);
-
-    const requestsLink = screen.getByText("Requests").closest("a");
-    expect(requestsLink).toHaveAttribute("aria-current", "page");
+    const { container } = renderInDoc(<WorkspaceMobileNavigation items={navItems} role="admin" />);
+    const requestsLink = container.querySelector('a[href="/admin/requests"]');
+    expect(requestsLink?.getAttribute("aria-current")).toBe("page");
   });
 
   it("renders nothing when items array is empty", () => {
-    const { container } = render(<WorkspaceMobileNavigation items={[]} role="admin" />);
-
+    const { container } = renderInDoc(<WorkspaceMobileNavigation items={[]} role="admin" />);
     const nav = container.querySelector("nav");
-    expect(nav).toBeInTheDocument();
+    expect(nav).not.toBeNull();
     expect(nav?.children.length).toBe(0);
   });
 });
