@@ -2381,3 +2381,28 @@ export async function getInspectorIdRequestDetail(requestUuid: string) {
     }))
   };
 }
+
+export async function getAdminDegreeRows() {
+  const rows = await prisma.degree.findMany({
+    orderBy: { degree_created_at: "desc" },
+    take: 60,
+    select: {
+      degree_uuid: true,
+      degree_name_en: true,
+      degree_name_ar: true,
+      degree_sort_order: true,
+      degree_created_at: true,
+      degree_updated_at: true,
+      degree_group: { select: { degree_group_name_en: true } }
+    }
+  });
+
+  return rows.map((row) => ({
+    id: row.degree_uuid,
+    name_en: row.degree_name_en,
+    name_ar: row.degree_name_ar ?? "-",
+    group: row.degree_group?.degree_group_name_en ?? "No group",
+    sort_order: row.degree_sort_order ?? 0,
+    updated: formatDate(row.degree_updated_at)
+  }));
+}
