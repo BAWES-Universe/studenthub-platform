@@ -7,7 +7,7 @@ export function RemoveContactButton({ companyContactUuid, contactName }: { compa
   const [, action, pending] = useActionState(removeCompanyContact, { error: "" });
 
   return (
-    <form action={action} style={{ display: "inline" }}>
+    <form action={action} className="inline">
       <input type="hidden" name="companyContactUuid" value={companyContactUuid} />
       <button
         type="submit"

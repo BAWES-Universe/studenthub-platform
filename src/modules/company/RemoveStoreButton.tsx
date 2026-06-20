@@ -7,7 +7,7 @@ export function RemoveStoreButton({ storeId, storeName }: { storeId: number; sto
   const [, action, pending] = useActionState(removeCompanyStore, { error: "" });
 
   return (
-    <form action={action} style={{ display: "inline" }}>
+    <form action={action} className="inline">
       <input type="hidden" name="storeId" value={storeId} />
       <button
         type="submit"
