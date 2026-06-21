@@ -44,7 +44,7 @@ export default async function AdminTransferDetailPage({ params }: { params: Prom
           { label: "Updated", value: formatDate(data.transfer.transfer_updated_at) }
         ]}
       />
-      <section className="detailGrid">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
         <CompactList title="Transfer File Entries" rows={data.fileEntries} />
       </section>
     </WorkspaceShell>
