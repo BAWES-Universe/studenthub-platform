@@ -178,7 +178,7 @@ export async function checkS3Health(): Promise<S3Health> {
   try {
     const client = getS3Client();
     const { Buckets } = await client.send(new ListBucketsCommand({}));
-    const names = (Buckets || []).map((b) => b.Name || "").filter(Boolean);
+    const names = (Buckets || []).map((b: { Name?: string }) => b.Name || "").filter(Boolean);
     return {
       configured: true,
       reachable: true,
