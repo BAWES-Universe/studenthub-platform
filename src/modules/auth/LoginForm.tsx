@@ -16,7 +16,7 @@ export function LoginForm() {
     <div className="grid gap-[14px]">
       <form action={action} className="grid gap-[18px] p-[30px]">
         <div className="grid gap-[7px] pb-2">
-          <span className="text-[#1f73b7] text-xs font-black uppercase">Secure sign in</span>
+          <span className="text-blue-zendesk text-xs font-black uppercase">Secure sign in</span>
           <strong className="text-[28px] leading-[1.1]">Continue to StudentHub</strong>
           <p className="text-muted-foreground leading-relaxed m-0">
             Use your existing production credentials. StudentHub will detect the right account and permissions after
@@ -68,7 +68,7 @@ function VerifiedAccountChooser({ accounts }: { accounts: LoginAccountChoice[] }
   return (
     <section className="grid gap-[14px] p-[30px] pt-0 border-t border-border" aria-label="Verified StudentHub accounts">
       <div className="grid gap-[7px]">
-        <span className="text-[#1f73b7] text-xs font-black uppercase">Verified accounts</span>
+        <span className="text-blue-zendesk text-xs font-black uppercase">Verified accounts</span>
         <strong className="text-[28px] leading-[1.1]">Choose where to continue</strong>
         <p className="text-muted-foreground leading-relaxed m-0">Your password matched more than one active account. Only verified accounts are shown here.</p>
       </div>

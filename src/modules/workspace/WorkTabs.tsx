@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { Route } from "next";
 import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type WorkTab = {
   path: string;
@@ -117,26 +118,41 @@ export function WorkTabs({ state }: { state: WorkTabState }) {
   if (!state.tabs.length) return null;
 
   return (
-    <nav className="workTabs" aria-label="Recently opened records">
+    <nav className="flex items-center gap-1 overflow-x-auto scrollbar-none px-0 pb-0.5" aria-label="Recently opened records">
       {state.tabs.map((tab) => {
         const active = pathname === tab.path;
         return (
-          <span key={tab.path} className={`workTab ${active ? "active" : ""}`}>
+          <span
+            key={tab.path}
+            className={cn(
+              "inline-flex items-center overflow-hidden shrink-0 border rounded-md",
+              active
+                ? "border-blue-zendesk bg-blue-zendesk/5 dark:bg-blue-zendesk/12"
+                : "border-border bg-muted/30 dark:bg-card"
+            )}
+          >
             <button
               type="button"
               onClick={() => router.push(tab.path as Route)}
               aria-current={active ? "page" : undefined}
+              className={cn(
+                "min-h-8 inline-flex items-center border-0 bg-none font-inherit text-[12px] font-bold px-2.5 cursor-pointer whitespace-nowrap",
+                active ? "text-blue-zendesk" : "text-foreground hover:text-foreground"
+              )}
             >
               {tab.label}
             </button>
             <button
               type="button"
-              className="workTabClose"
               aria-label={`Close ${tab.label}`}
               onClick={(e) => {
                 e.stopPropagation();
                 state.closeTab(tab.path);
               }}
+              className={cn(
+                "min-w-6 min-h-6 inline-flex items-center justify-center border-0 border-l border-border bg-none text-muted-foreground cursor-pointer p-0",
+                "hover:text-destructive hover:bg-destructive/10"
+              )}
             >
               <X size={12} />
             </button>
@@ -144,7 +160,15 @@ export function WorkTabs({ state }: { state: WorkTabState }) {
         );
       })}
       {state.tabs.length > 1 ? (
-        <button type="button" className="workTabsClear" onClick={state.closeAll} aria-label="Close all tabs">
+        <button
+          type="button"
+          onClick={state.closeAll}
+          aria-label="Close all tabs"
+          className={cn(
+            "min-h-8 inline-flex items-center border border-transparent rounded-md bg-none text-muted-foreground/70 font-inherit text-[11px] font-semibold px-2.5 cursor-pointer whitespace-nowrap shrink-0",
+            "hover:text-destructive hover:border-border"
+          )}
+        >
           Clear all
         </button>
       ) : null}

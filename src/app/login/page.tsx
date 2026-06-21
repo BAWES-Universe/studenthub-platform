@@ -44,9 +44,9 @@ export default async function LoginPage({
       </nav>
 
       {/* Intro */}
-      <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[linear-gradient(135deg,color-mix(in_srgb,#1f73b7_9%,transparent),transparent_48%),var(--card)] p-[clamp(22px,4vw,48px)]">
+      <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--sh-blue)_9%,transparent),transparent_48%),var(--card)] p-[clamp(22px,4vw,48px)]">
         <div>
-          <p className="text-[#1f73b7] text-[11px] font-black uppercase">One StudentHub login</p>
+          <p className="text-blue-zendesk text-[11px] font-black uppercase">One StudentHub login</p>
           <h1 className="mt-0 max-w-[760px] text-[clamp(44px,6.4vw,92px)] leading-[0.94] max-sm:text-[40px]">
             Sign in once. We&rsquo;ll open the right workspace.
           </h1>
@@ -59,7 +59,7 @@ export default async function LoginPage({
               (item) => (
                 <span
                   key={item}
-                  className="min-h-8 inline-flex items-center border border-[var(--border)] rounded-full bg-[color-mix(in_srgb,var(--card)_88%,transparent)] px-3 text-[#1f73b7] text-[11px] font-black uppercase"
+                  className="min-h-8 inline-flex items-center border border-[var(--border)] rounded-full bg-[color-mix(in_srgb,var(--card)_88%,transparent)] px-3 text-blue-zendesk text-[11px] font-black uppercase"
                 >
                   {item}
                 </span>
@@ -67,7 +67,7 @@ export default async function LoginPage({
             )}
           </div>
         </div>
-        <Link href="/" className="inline-block mt-4 text-sm no-underline text-muted-foreground hover:text-[#1f73b7]">
+        <Link href="/" className="inline-block mt-4 text-sm no-underline text-muted-foreground hover:text-blue-zendesk">
           Back to landing
         </Link>
       </section>
@@ -93,7 +93,7 @@ export default async function LoginPage({
             key={label}
             className="grid gap-1.5 border-border rounded-lg bg-card p-3.5"
           >
-            <Icon className="size-4 text-[#1f73b7] shrink-0" aria-hidden="true" />
+            <Icon className="size-4 text-blue-zendesk shrink-0" aria-hidden="true" />
             <span className="text-muted-foreground text-xs font-extrabold uppercase">{label}</span>
             <strong className="text-sm">{detail}</strong>
           </article>
