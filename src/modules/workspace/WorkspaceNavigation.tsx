@@ -40,7 +40,7 @@ export function WorkspaceMobileNavigation({ items, role }: { items: NavItem[]; r
   const pathname = usePathname();
   return (
     <nav
-      className="hidden max-md:flex fixed bottom-0 left-0 right-0 z-50 h-16 border-t border-border bg-card px-1 safe-area-inset-bottom"
+      className="fixed bottom-0 left-0 right-0 z-50 hidden max-md:flex items-center justify-around border-t border-border bg-background px-1 pb-[env(safe-area-inset-bottom)]"
       aria-label={`${role} mobile navigation`}
     >
       {items.map((item) => {
@@ -50,10 +50,10 @@ export function WorkspaceMobileNavigation({ items, role }: { items: NavItem[]; r
           <Link
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex flex-1 flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-lg no-underline",
-              "min-h-[56px] max-w-[96px] text-[11px] font-semibold transition-colors",
+              buttonVariants({ variant: "ghost", size: "sm" }),
+              "flex flex-col items-center gap-0.5 px-3 py-2 h-auto min-w-0 text-xs font-medium leading-none no-underline",
               active
-                ? "bg-[#1f73b7]/10 text-[#1f73b7] font-bold"
+                ? "text-[#1f73b7]"
                 : "text-muted-foreground hover:text-foreground",
             )}
             href={item.href}
