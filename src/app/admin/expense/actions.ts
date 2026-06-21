@@ -23,7 +23,9 @@ export async function getExpenseDetail(expenseUuid: string) {
     }
   });
 
-  return expense;
+  return expense
+    ? { ...expense, amount: expense.amount ? Number(expense.amount) : null }
+    : null;
 }
 
 export async function updateExpense(
