@@ -3249,48 +3249,6 @@ tr:last-child td {
   background: #eef5ff;
 }
 
-.detailPanel {
-  margin-top: 20px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.detailPanel > h2 {
-  margin: 0;
-  padding: 18px;
-  border-bottom: 1px solid var(--line);
-}
-
-.factGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.fact {
-  min-height: 88px;
-  padding: 16px 18px;
-  border-right: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-
-.fact:nth-child(4n) {
-  border-right: 0;
-}
-
-.fact span {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.fact strong {
-  display: block;
-  overflow-wrap: anywhere;
-  font-size: 15px;
-}
 
 
 
