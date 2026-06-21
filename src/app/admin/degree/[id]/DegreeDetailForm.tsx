@@ -135,7 +135,7 @@ export function DegreeDetailForm({
                 {pending ? "Saving..." : "Save Changes"}
               </Button>
               {state?.success && (
-                <span className="text-sm text-[var(--sh-success)] font-medium">
+                <span className="text-sm text-green-700 font-medium">
                   Saved successfully
                 </span>
               )}
@@ -146,9 +146,9 @@ export function DegreeDetailForm({
 
       <Separator />
 
-      <Card className="border-[var(--sh-error)]/20">
+      <Card className="border-destructive/20">
         <CardHeader>
-          <CardTitle className="text-[var(--sh-error)]">Danger Zone</CardTitle>
+          <CardTitle className="text-destructive">Danger Zone</CardTitle>
           <CardDescription>
             Deleting this degree will also remove it from all candidate education
             records. This action cannot be undone.

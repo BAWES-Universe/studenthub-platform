@@ -28,7 +28,7 @@ export default async function LoginPage({
     <main className="min-h-svh w-[min(1160px,calc(100%_-_28px))] mx-auto grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(400px,500px)] content-start items-start gap-4 pt-[18px] pb-[42px] max-sm:w-[min(calc(100%_-_20px),720px)]">
       {/* Nav - spans full width */}
       <nav
-        className="col-span-full sticky top-3 z-20 min-h-[62px] flex items-center justify-between gap-3.5 border border-[color-mix(in_srgb,var(--border)_84%,transparent)] rounded-lg bg-[color-mix(in_srgb,var(--card)_92%,transparent)] p-2 shadow-[0_18px_50px_rgba(16,24,40,0.08)] max-sm:static max-sm:flex-col max-sm:items-stretch"
+        className="col-span-full sticky top-3 z-20 min-h-[62px] flex items-center justify-between gap-3.5 border border-border/80 rounded-lg bg-card/92 p-2 shadow-[0_18px_50px_rgba(16,24,40,0.08)] max-sm:static max-sm:flex-col max-sm:items-stretch"
         aria-label="StudentHub login navigation"
       >
         <Link
@@ -44,7 +44,7 @@ export default async function LoginPage({
       </nav>
 
       {/* Intro */}
-      <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--sh-blue)_9%,transparent),transparent_48%),var(--card)] p-[clamp(22px,4vw,48px)]">
+      <section className="overflow-hidden rounded-lg border border-border bg-gradient-to-br from-blue/10 via-transparent to-transparent bg-card p-[clamp(22px,4vw,48px)]">
         <div>
           <p className="text-blue-zendesk text-[11px] font-black uppercase">One StudentHub login</p>
           <h1 className="mt-0 max-w-[760px] text-[clamp(44px,6.4vw,92px)] leading-[0.94] max-sm:text-[40px]">
@@ -59,7 +59,7 @@ export default async function LoginPage({
               (item) => (
                 <span
                   key={item}
-                  className="min-h-8 inline-flex items-center border border-[var(--border)] rounded-full bg-[color-mix(in_srgb,var(--card)_88%,transparent)] px-3 text-blue-zendesk text-[11px] font-black uppercase"
+                  className="min-h-8 inline-flex items-center border border-border rounded-full bg-card/90 px-3 text-blue-zendesk text-[11px] font-black uppercase"
                 >
                   {item}
                 </span>
@@ -74,7 +74,7 @@ export default async function LoginPage({
 
       {/* Login panel */}
       <section
-        className="self-start border border-border rounded-lg bg-card shadow-[0_30px_90px_rgba(16,24,40,0.16)] dark:border-[var(--border)]"
+        className="self-start border border-border rounded-lg bg-card shadow-[0_30px_90px_rgba(16,24,40,0.16)] dark:border-border"
         aria-label="StudentHub sign in"
       >
         {params.error === "expired" ? (
