@@ -22,11 +22,11 @@ jobs:
           echo "Checking branch: $BRANCH"
           if echo "$BRANCH" | grep -qiE '^(feature|fix|chore|coder2)/STU-[a-z0-9]+[-a-z0-9]+$'; then
             echo "Branch name OK: $BRANCH"
-          elif echo "$BRANCH" | grep -qiE '^ux/[a-z0-9-]+$'; then
+          elif echo "$BRANCH" | grep -qiE '^(ux|uxdesigner)/[a-z0-9-]+$'; then
             echo "Branch name OK (UX): $BRANCH"
           else
             echo "Branch name REJECTED: $BRANCH"
-            echo "Expected: feature/STU-N-*, fix/STU-N-*, chore/STU-N-*, or coder2/STU-N-* (kebab-case) — UX: ux/*"
+            echo "Expected: feature/STU-N-*, fix/STU-N-*, chore/STU-N-*, or coder2/STU-N-* (kebab-case) — UX: ux/* or uxdesigner/*"
             exit 1
           fi
 
