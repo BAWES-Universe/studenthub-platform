@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url("../styles/shell.css") layer(components);
 
 @theme {
   --color-background: var(--background);
