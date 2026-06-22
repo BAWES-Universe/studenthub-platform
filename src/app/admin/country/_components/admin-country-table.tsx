@@ -7,6 +7,7 @@ import { DataTable } from "@/modules/workspace/DataTable";
 import { WorkspaceShell } from "@/modules/workspace/WorkspaceShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import {
   AlertDialog,
@@ -226,35 +227,35 @@ function CreateCountryForm({ onSuccess }: { onSuccess: () => void }) {
       onSubmit={() => setTimeout(() => { formRef.current?.reset(); }, 100)}
     >
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Name (English)</label>
+        <Label className="text-xs font-medium text-muted-foreground">Name (English)</Label>
         <Input name="country_name_en" maxLength={100} placeholder="e.g. Kuwait" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Name (Arabic)</label>
+        <Label className="text-xs font-medium text-muted-foreground">Name (Arabic)</Label>
         <Input name="country_name_ar" maxLength={100} placeholder="مثال: الكويت" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Nationality (English)</label>
+        <Label className="text-xs font-medium text-muted-foreground">Nationality (English)</Label>
         <Input name="country_nationality_name_en" maxLength={100} placeholder="e.g. Kuwaiti" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Nationality (Arabic)</label>
+        <Label className="text-xs font-medium text-muted-foreground">Nationality (Arabic)</Label>
         <Input name="country_nationality_name_ar" maxLength={100} placeholder="مثال: كويتي" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">ISO</label>
+        <Label className="text-xs font-medium text-muted-foreground">ISO</Label>
         <Input name="iso" maxLength={3} placeholder="KWT" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Emoji</label>
+        <Label className="text-xs font-medium text-muted-foreground">Emoji</Label>
         <Input name="emoji" maxLength={255} placeholder="🇰🇼" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Phone Code</label>
+        <Label className="text-xs font-medium text-muted-foreground">Phone Code</Label>
         <Input name="country_code" type="number" placeholder="965" />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Currency</label>
+        <Label className="text-xs font-medium text-muted-foreground">Currency</Label>
         <Input name="currency_code" maxLength={3} placeholder="KWD" />
       </div>
       <Button
