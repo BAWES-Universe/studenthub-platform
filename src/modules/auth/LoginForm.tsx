@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { LogIn } from "lucide-react";
+import { LogIn, Loader2 } from "lucide-react";
 import { chooseAccountAction, loginAction } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,7 +54,7 @@ export function LoginForm() {
         {state.error ? <p className="text-destructive font-bold m-0">{state.error}</p> : null}
 
         <Button type="submit" disabled={pending} size="lg" className="min-h-[52px]">
-          <LogIn className="size-4" />
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
           {pending ? "Checking credentials..." : "Sign in"}
         </Button>
       </form>
