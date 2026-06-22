@@ -2441,3 +2441,28 @@ export async function getAdminExpenseRows() {
     updated_at: formatDate(row.updated_at)
   }));
 }
+
+export async function getAdminSettingRows() {
+  const rows = await prisma.setting.findMany({
+    orderBy: [{ code: "asc" }, { key: "asc" }],
+    take: 100,
+    select: {
+      setting_uuid: true,
+      code: true,
+      key: true,
+      value: true,
+      serialized: true,
+      created_at: true,
+      updated_at: true,
+    }
+  });
+
+  return rows.map((row) => ({
+    id: row.setting_uuid,
+    code: row.code,
+    key: row.key,
+    value: row.value ? (row.value.length > 80 ? row.value.slice(0, 80) + "..." : row.value) : "—",
+    serialized: row.serialized ? "Yes" : "No",
+    updated: formatDate(row.updated_at),
+  }));
+}
