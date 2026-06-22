@@ -7,6 +7,8 @@ import { WorkspaceShell } from "@/modules/workspace/WorkspaceShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 import type { SessionUser } from "@/modules/auth/types";
 import type { StoryItem } from "../schemas";
@@ -31,10 +33,14 @@ export function AdminStoryTable({ session, stories }: Props) {
       ]}
     >
       <section className="mb-6">
-        <div className="rounded-lg border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold mb-3 text-card-foreground">Add story</h3>
-          <CreateStoryForm onSuccess={() => router.refresh()} />
-        </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold">Add story</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <CreateStoryForm onSuccess={() => router.refresh()} />
+          </CardContent>
+        </Card>
       </section>
 
       <DataTable
@@ -63,13 +69,14 @@ export function AdminStoryTable({ session, stories }: Props) {
                   onCancel={() => setEditingId(null)}
                 />
               ) : (
-                <button
+                <Button
                   type="button"
-                  className="text-sm text-primary hover:underline"
+                  variant="ghost"
+                  className="text-sm p-0 h-auto font-normal"
                   onClick={() => setEditingId(row.story_uuid)}
                 >
                   {row.staff_name ?? "—"}
-                </button>
+                </Button>
               ),
           },
           {
@@ -168,12 +175,16 @@ function CreateStoryForm({ onSuccess }: { onSuccess: () => void }) {
       </div>
       <div className="grid gap-1">
         <Label className="text-xs font-medium">Status</Label>
-        <select name="storyStatus"
-          className="flex h-9 w-fit items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-70 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:ring-destructive/40">
-          <option value="0">Draft</option>
-          <option value="1">Active</option>
-          <option value="2">Closed</option>
-        </select>
+        <Select name="storyStatus" defaultValue="0">
+            <SelectTrigger className="h-9 w-fit">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0">Draft</SelectItem>
+              <SelectItem value="1">Active</SelectItem>
+              <SelectItem value="2">Closed</SelectItem>
+            </SelectContent>
+          </Select>
       </div>
       <Button type="submit" disabled={pending}>
         {pending ? "Adding..." : "Add"}
@@ -210,12 +221,16 @@ function EditStoryForm({
       <Input name="requestUuid" defaultValue={row.request_uuid} required className="w-40 h-8 text-sm" />
       <Input name="staffId" type="number" defaultValue={row.staff_id ?? ""} placeholder="Staff ID" className="w-24 h-8 text-sm" />
       <Input name="numberOfEmployees" type="number" defaultValue={row.number_of_employees ?? ""} placeholder="#" className="w-20 h-8 text-sm" />
-      <select name="storyStatus" defaultValue={row.story_status}
-        className="h-8 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30">
-        <option value="0">Draft</option>
-        <option value="1">Active</option>
-        <option value="2">Closed</option>
-      </select>
+      <Select name="storyStatus" defaultValue={String(row.story_status)}>
+            <SelectTrigger className="h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0">Draft</SelectItem>
+              <SelectItem value="1">Active</SelectItem>
+              <SelectItem value="2">Closed</SelectItem>
+            </SelectContent>
+          </Select>
       <input name="isOld" type="checkbox" defaultChecked={row.is_old ?? false} className="hidden" />
       <Input name="storyTimeSpent" type="number" defaultValue={row.story_time_spent ?? ""} placeholder="Time" className="w-16 h-8 text-sm" />
       <Button type="submit" disabled={pending} size="sm">
