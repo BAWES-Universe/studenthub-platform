@@ -19,7 +19,7 @@ type Props = {
   showBar?: boolean;
 };
 
-const SCORE_COLORS: Record<string, { text: string; bg: string; bar: string }> = {
+const SCORE_COLORS: Record<"strong" | "moderate" | "low" | "weak", { text: string; bg: string; bar: string }> = {
   strong: { text: "text-yellow-600", bg: "bg-yellow-100", bar: "#eab308" },
   moderate: { text: "text-green-600", bg: "bg-green-100", bar: "#16a34a" },
   low: { text: "text-blue-600", bg: "bg-blue-100", bar: "#2563eb" },
