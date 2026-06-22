@@ -7858,35 +7858,6 @@ kbd {
   font-family: monospace;
 }
 
-.loadingPage {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-  gap: 12px;
-}
-
-.loadingSpinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--line);
-  border-top-color: var(--blue);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.loadingPage p {
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-
 /* ── Generic form error ── */
 .formError {
   padding: 8px 12px;

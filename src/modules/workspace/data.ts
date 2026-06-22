@@ -2497,6 +2497,30 @@ export async function getAdminEmailCampaignRows() {
   }));
 }
 
+export async function getAdminWebhookRows() {
+  const rows = await prisma.webhook.findMany({
+    orderBy: { created_at: "desc" },
+    take: 60,
+    select: {
+      webhook_id: true,
+      event: true,
+      endpoint: true,
+      method: true,
+      created_at: true,
+      updated_at: true,
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.webhook_id,
+    event: row.event,
+    endpoint: row.endpoint,
+    method: row.method ?? "-",
+    created: formatDate(row.created_at),
+    updated: formatDate(row.updated_at),
+  }));
+}
+
 export async function getAdminSalaryRows() {
   const rows = await prisma.staff_salary.findMany({
     orderBy: { salary_date: "desc" },

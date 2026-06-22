@@ -89,7 +89,7 @@ export function UniversityDetailForm({ university }: Props) {
                 {pending ? "Saving..." : "Save Changes"}
               </Button>
               {state?.success && (
-                <span className="text-sm text-[var(--sh-success)] font-medium">
+                <span className="text-sm text-[#2e7d32] font-medium">
                   Saved successfully
                 </span>
               )}
