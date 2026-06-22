@@ -48,7 +48,7 @@ export default async function HubPage({
               className={cn(
                 buttonVariants({ variant: "ghost" }),
                 "justify-start gap-0.5 no-underline",
-                (item.href === hubContext || item.href === "/app") && "bg-[#1f73b7]/10 text-[#1f73b7] hover:bg-[#1f73b7]/15"
+                (item.href === hubContext || item.href === "/app") && "bg-blue-zendesk/10 text-blue-zendesk hover:bg-blue-zendesk/15"
               )}
               href={item.href}
               key={item.href}
