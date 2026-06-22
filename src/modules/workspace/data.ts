@@ -2466,3 +2466,33 @@ export async function getAdminSettingRows() {
     updated: formatDate(row.updated_at),
   }));
 }
+
+export async function getAdminEmailCampaignRows() {
+  const rows = await prisma.email_campaign.findMany({
+    orderBy: { created_at: "desc" },
+    take: 60,
+    select: {
+      campaign_uuid: true,
+      subject: true,
+      message: true,
+      progress: true,
+      trigger_date_time: true,
+      is_recurring: true,
+      status: true,
+      target: true,
+      created_at: true,
+      updated_at: true,
+    }
+  });
+
+  return rows.map((row) => ({
+    id: row.campaign_uuid,
+    subject: row.subject ?? "(no subject)",
+    progress: row.progress ?? 0,
+    trigger_at: row.trigger_date_time ? formatDate(row.trigger_date_time) : "Not scheduled",
+    recurring: row.is_recurring ? "Yes" : "No",
+    target: row.target ?? "both",
+    status: row.status ? "Active" : "Inactive",
+    updated: formatDate(row.updated_at),
+  }));
+}

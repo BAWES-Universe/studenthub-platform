@@ -3,6 +3,18 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireRoleCapability } from "@/modules/auth/session";
+import {
+  settingDetailSchema,
+  settingCreateResultSchema,
+} from "@/modules/admin/setting/schemas";
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+async function logOutputError(source: string, error: unknown): Promise<void> {
+  console.error(`[admin/setting] ${source} output failed:`, error);
+}
 
 export async function getSettingDetail(settingUuid: string) {
   await requireRoleCapability("admin", "admin.system");
@@ -20,7 +32,15 @@ export async function getSettingDetail(settingUuid: string) {
     }
   });
 
-  return setting;
+  if (!setting) return null;
+
+  const result = settingDetailSchema.safeParse(setting);
+  if (!result.success) {
+    await logOutputError("getSettingDetail", result.error);
+    return null;
+  }
+
+  return result.data;
 }
 
 export async function updateSetting(
@@ -71,7 +91,14 @@ export async function createSetting(data: {
   });
 
   revalidatePath("/admin/setting");
-  return { uuid };
+
+  const result = settingCreateResultSchema.safeParse({ uuid });
+  if (!result.success) {
+    await logOutputError("createSetting", result.error);
+    return { uuid };
+  }
+
+  return result.data;
 }
 
 export async function deleteSetting(settingUuid: string) {
