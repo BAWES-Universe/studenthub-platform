@@ -42,7 +42,7 @@ export default async function AdminTransfersPage() {
                 href={`/admin/transfers/${latest.id}` as Route}
                 className="mt-2"
               >
-                <Button variant="default" className="bg-[#1f73b7] hover:bg-[#1a5e96]">
+                <Button variant="default" className="bg-blue-zendesk hover:bg-blue-zendesk/90">
                   Open latest run #{latest.id}
                 </Button>
               </Link>
@@ -57,7 +57,7 @@ export default async function AdminTransfersPage() {
             ].map(([step, title, note]) => (
               <Card key={step} className="border border-border bg-muted/30">
                 <CardContent className="p-4 grid gap-1.5">
-                  <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-[#1f73b7] text-white text-sm font-bold">
+                  <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-zendesk text-white text-sm font-bold">
                     {step}
                   </span>
                   <strong className="text-sm font-semibold">{title}</strong>
