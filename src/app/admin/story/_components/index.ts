@@ -1,0 +1,1 @@
+export { AdminStoriesTable } from "./admin-stories-table";
