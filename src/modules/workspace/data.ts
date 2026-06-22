@@ -2441,3 +2441,58 @@ export async function getAdminExpenseRows() {
     updated_at: formatDate(row.updated_at)
   }));
 }
+
+export async function getAdminSettingRows() {
+  const rows = await prisma.setting.findMany({
+    orderBy: [{ code: "asc" }, { key: "asc" }],
+    take: 100,
+    select: {
+      setting_uuid: true,
+      code: true,
+      key: true,
+      value: true,
+      serialized: true,
+      created_at: true,
+      updated_at: true,
+    }
+  });
+
+  return rows.map((row) => ({
+    id: row.setting_uuid,
+    code: row.code,
+    key: row.key,
+    value: row.value ? (row.value.length > 80 ? row.value.slice(0, 80) + "..." : row.value) : "—",
+    serialized: row.serialized ? "Yes" : "No",
+    updated: formatDate(row.updated_at),
+  }));
+}
+
+export async function getAdminEmailCampaignRows() {
+  const rows = await prisma.email_campaign.findMany({
+    orderBy: { created_at: "desc" },
+    take: 60,
+    select: {
+      campaign_uuid: true,
+      subject: true,
+      message: true,
+      progress: true,
+      trigger_date_time: true,
+      is_recurring: true,
+      status: true,
+      target: true,
+      created_at: true,
+      updated_at: true,
+    }
+  });
+
+  return rows.map((row) => ({
+    id: row.campaign_uuid,
+    subject: row.subject ?? "(no subject)",
+    progress: row.progress ?? 0,
+    trigger_at: row.trigger_date_time ? formatDate(row.trigger_date_time) : "Not scheduled",
+    recurring: row.is_recurring ? "Yes" : "No",
+    target: row.target ?? "both",
+    status: row.status ? "Active" : "Inactive",
+    updated: formatDate(row.updated_at),
+  }));
+}
