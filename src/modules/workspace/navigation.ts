@@ -4,7 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   LayoutGrid, User, Mail, ClipboardList, CreditCard,
   Building2, Phone, Store, FileCheck, Search, Users,
-  ArrowRightLeft, Calendar, FileText, Globe, GraduationCap, Layers, MessageSquareText, Settings
+  ArrowRightLeft, Calendar, FileText, Globe, GraduationCap, Layers, MessageSquareText, Settings, Shield,
 } from "lucide-react";
 
 export type NavItem = {
@@ -30,8 +30,9 @@ export function navForRole(role: Role): NavItem[] {
       { label: "Daily Standup", href: "/admin/daily-standup", icon: MessageSquareText },
       { label: "Transfers", href: "/admin/transfers", icon: ArrowRightLeft },
       { label: "Cron Log", href: "/admin/cron-log", icon: Calendar },
+      { label: "Permission Sections", href: "/admin/settings/permission-sections" as Route, icon: Shield },
       { label: "Documents", href: "/admin/documents" as Route, icon: FileText },
-      { label: "Settings", href: "/admin/settings" as Route, icon: Settings }
+      { label: "Settings", href: "/admin/settings" as Route, icon: Settings },
     ];
   }
   if (role === "staff") {
@@ -40,7 +41,7 @@ export function navForRole(role: Role): NavItem[] {
       { label: "Overview", href: "/staff", icon: User },
       { label: "My Requests", href: "/staff/requests", icon: FileCheck },
       { label: "Candidates", href: "/staff/candidates", icon: Users },
-      { label: "Interviews", href: "/staff/interviews" as Route, icon: Calendar }
+      { label: "Interviews", href: "/staff/interviews" as Route, icon: Calendar },
     ];
   }
   if (role === "candidate") {
@@ -49,22 +50,22 @@ export function navForRole(role: Role): NavItem[] {
       { label: "Overview", href: "/candidate", icon: User },
       { label: "Invitations", href: "/candidate/invitations", icon: Mail },
       { label: "Work Logs", href: "/candidate/work-logs", icon: ClipboardList },
-      { label: "Payments", href: "/candidate/payments", icon: CreditCard }
+      { label: "Payments", href: "/candidate/payments", icon: CreditCard },
     ];
   }
   if (role === "company") {
     return [
       SHARED_APP,
       { label: "Overview", href: "/company", icon: User },
-      { label: "Requests", href: "/company/requests", icon: FileCheck },
+      { label: "My Requests", href: "/company/requests", icon: FileCheck },
       { label: "Companies", href: "/company/companies", icon: Building2 },
       { label: "Contacts", href: "/company/contacts" as Route, icon: Phone },
-      { label: "Stores", href: "/company/stores" as Route, icon: Store }
+      { label: "Stores", href: "/company/stores" as Route, icon: Store },
     ];
   }
   return [
     SHARED_APP,
     { label: "Overview", href: "/inspector", icon: User },
-    { label: "ID Requests", href: "/inspector/id-requests", icon: Search }
+    { label: "ID Requests", href: "/inspector/id-requests", icon: Search },
   ];
 }
