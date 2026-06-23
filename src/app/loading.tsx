@@ -1,12 +1,10 @@
-"use client";
-
-import { Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function LoadingPage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-      <div className="size-8 border-[3px] border-border border-t-foreground rounded-full animate-spin" />
-      <p className="text-sm text-muted-foreground">Loading…</p>
+      <Skeleton className="size-8 rounded-full" />
+      <Skeleton className="h-4 w-24" />
     </div>
   );
 }
