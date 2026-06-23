@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { RefreshCw, Home } from "lucide-react";
+import { RefreshCw, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
-export default function ErrorPage({
+export default function StaffErrorPage({
   error,
   reset,
 }: {
@@ -21,10 +21,10 @@ export default function ErrorPage({
           </h1>
           <div className="w-12 h-[3px] rounded-sm bg-[#eb6651]" aria-hidden="true" />
           <h2 className="text-xl font-bold m-0 text-foreground">
-            Something went wrong
+            Staff system error
           </h2>
           <p className="text-[15px] text-muted-foreground leading-relaxed m-0">
-            {error.message || "An unexpected error occurred."}
+            {error.message || "An unexpected error occurred in the staff workspace."}
           </p>
           {error.digest ? (
             <p className="text-xs text-muted-foreground/60">
@@ -37,9 +37,9 @@ export default function ErrorPage({
               Try again
             </Button>
             <Button variant="outline" asChild>
-              <Link href="/">
-                <Home className="h-4 w-4" />
-                Go home
+              <Link href="/staff">
+                <Users className="h-4 w-4" />
+                Staff dashboard
               </Link>
             </Button>
           </div>

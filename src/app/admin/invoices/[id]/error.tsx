@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { RefreshCw, Home } from "lucide-react";
+import { RefreshCw, ArrowLeft } from "lucide-react";
+import type { Route } from "next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
-export default function ErrorPage({
+// ---------------------------------------------------------------------------
+// Admin Invoices [id] — error boundary
+// ---------------------------------------------------------------------------
+
+export default function InvoiceDetailError({
   error,
   reset,
 }: {
@@ -21,10 +26,10 @@ export default function ErrorPage({
           </h1>
           <div className="w-12 h-[3px] rounded-sm bg-[#eb6651]" aria-hidden="true" />
           <h2 className="text-xl font-bold m-0 text-foreground">
-            Something went wrong
+            Failed to load invoice details
           </h2>
           <p className="text-[15px] text-muted-foreground leading-relaxed m-0">
-            {error.message || "An unexpected error occurred."}
+            {error.message ?? "An unexpected error occurred."}
           </p>
           {error.digest ? (
             <p className="text-xs text-muted-foreground/60">
@@ -32,14 +37,14 @@ export default function ErrorPage({
             </p>
           ) : null}
           <div className="flex gap-3 mt-2 flex-wrap justify-center">
-            <Button onClick={reset}>
+            <Button onClick={() => reset()}>
               <RefreshCw className="h-4 w-4" />
               Try again
             </Button>
             <Button variant="outline" asChild>
-              <Link href="/">
-                <Home className="h-4 w-4" />
-                Go home
+              <Link href={"/admin/invoices" as Route}>
+                <ArrowLeft className="h-4 w-4" />
+                Back to invoices
               </Link>
             </Button>
           </div>
