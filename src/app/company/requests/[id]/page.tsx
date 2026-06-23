@@ -37,7 +37,7 @@ export default async function CompanyRequestDetailPage({ params }: { params: Pro
           { label: "Updated", value: formatDate(data.request.request_updated_datetime) }
         ]}
       />
-      <section className="detailGrid">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <CompactList title="Interviews" rows={data.interviews} />
         <CompactList title="Stories" rows={data.stories} />
       </section>
