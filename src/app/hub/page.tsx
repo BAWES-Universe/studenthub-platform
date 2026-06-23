@@ -1,17 +1,17 @@
 import Link from "next/link";
 import { logoutAction } from "@/modules/auth/actions";
 import { requireSession } from "@/modules/auth/session";
-import { roles, type Role } from "@/modules/auth/types";
 import { getUnifiedHub, parseHubScope } from "@/modules/hub/data";
 import { HubShortcuts, type HubCommand } from "@/modules/hub/HubShortcuts";
 import { ThemeToggle } from "@/modules/theme/ThemeToggle";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { roles, type Role } from "@/modules/auth/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function HubPage({
-  searchParams
+  searchParams,
 }: {
   searchParams: Promise<{ q?: string; scope?: string; record?: string; required?: string }>;
 }) {
@@ -20,7 +20,6 @@ export default async function HubPage({
   const scope = parseHubScope(params.scope);
   const requiredRole = parseRequiredRole(params.required);
   const data = await getUnifiedHub(session, { query: params.q, scope, record: params.record });
-  const hubContext = hubContextHref(data.query, data.scope);
   const commands = buildCommands(data);
   const guide = buildRoleGuide(session.role, data);
 
@@ -48,7 +47,7 @@ export default async function HubPage({
               className={cn(
                 buttonVariants({ variant: "ghost" }),
                 "justify-start gap-0.5 no-underline",
-                (item.href === hubContext || item.href === "/app") && "bg-blue-zendesk/10 text-blue-zendesk hover:bg-blue-zendesk/15"
+                (item.href === "/app") && "bg-blue-zendesk/10 text-blue-zendesk hover:bg-blue-zendesk/15"
               )}
               href={item.href}
               key={item.href}

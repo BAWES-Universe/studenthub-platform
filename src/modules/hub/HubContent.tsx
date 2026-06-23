@@ -2,6 +2,7 @@
 
 import type { Route } from "next";
 import Link from "next/link";
+import { ArrowUpRight, Search } from "lucide-react";
 import type { SessionUser } from "@/modules/auth/types";
 import { useWorkspaceOS } from "@/modules/workspace/WorkspaceOSContext";
 import { HubShortcuts, type HubCommand } from "./HubShortcuts";
@@ -138,6 +139,7 @@ export function HubContent({
             Search
           </Button>
         </form>
+
         {embedded ? null : <HubShortcuts commands={commands} />}
       </header>
 
