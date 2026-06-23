@@ -29,6 +29,7 @@ export function navForRole(role: Role): NavItem[] {
       { label: "Universities", href: "/admin/university" as Route, icon: Building2 },
       { label: "Daily Standup", href: "/admin/daily-standup", icon: MessageSquareText },
       { label: "Transfers", href: "/admin/transfers", icon: ArrowRightLeft },
+      { label: "Cron Log", href: "/admin/cron-log", icon: Calendar },
       { label: "Documents", href: "/admin/documents" as Route, icon: FileText },
       { label: "Settings", href: "/admin/settings" as Route, icon: Settings }
     ];
