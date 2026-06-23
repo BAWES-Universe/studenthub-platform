@@ -3,16 +3,16 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FormSelect } from "./FormSelect";
 import { createCompanyRequest, type CompanyRequestFormState } from "./company-create-actions";
 
 interface CompanyRequestCreateFormProps {
@@ -38,96 +38,60 @@ export function CompanyRequestCreateForm({ companies }: CompanyRequestCreateForm
         <CardDescription>Fill in the required details for a new position.</CardDescription>
       </CardHeader>
       <CardContent>
-        <form action={dispatch} className="space-y-5">
-          {/* Company */}
-          <div className="space-y-2">
+        <form action={dispatch} className="grid gap-5">
+          <div className="grid gap-2">
             <Label htmlFor="company_id">Company</Label>
-            <Select name="company_id" required>
-              <SelectTrigger id="company_id">
-                <SelectValue placeholder="Select a company..." />
-              </SelectTrigger>
-              <SelectContent>
-                {companies.map((c) => (
-                  <SelectItem key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <FormSelect
+              name="company_id"
+              options={[
+                { value: "", label: "Select a company..." },
+                ...companies.map((c) => ({ value: String(c.id), label: c.name })),
+              ]}
+              placeholder="Select a company..."
+              required
+            />
             {state.errors?.company_id && (
-              <p className="text-destructive text-sm">{state.errors.company_id}</p>
+              <p className="text-destructive text-sm font-medium">{state.errors.company_id}</p>
             )}
           </div>
 
-          {/* Job Title */}
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="position_title">Job Title</Label>
-            <Input
-              id="position_title"
-              name="position_title"
-              placeholder="e.g. Sales Associate"
-              required
-            />
+            <Input name="position_title" placeholder="e.g. Sales Associate" required />
             {state.errors?.position_title && (
-              <p className="text-destructive text-sm">{state.errors.position_title}</p>
+              <p className="text-destructive text-sm font-medium">{state.errors.position_title}</p>
             )}
           </div>
 
-          {/* Compensation */}
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="compensation">Compensation Type</Label>
-            <Input
-              id="compensation"
-              name="compensation"
-              placeholder="e.g. 300 KWD / month"
-              required
-            />
+            <Input name="compensation" placeholder="e.g. 300 KWD / month" required />
             {state.errors?.compensation && (
-              <p className="text-destructive text-sm">{state.errors.compensation}</p>
+              <p className="text-destructive text-sm font-medium">{state.errors.compensation}</p>
             )}
           </div>
 
-          {/* Store */}
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="store">Store</Label>
-            <Input
-              id="store"
-              name="store"
-              placeholder="e.g. Avenues Mall Branch"
-              required
-            />
+            <Input name="store" placeholder="e.g. Avenues Mall Branch" required />
             {state.errors?.store && (
-              <p className="text-destructive text-sm">{state.errors.store}</p>
+              <p className="text-destructive text-sm font-medium">{state.errors.store}</p>
             )}
           </div>
 
-          {/* Brand */}
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="brand">Brand</Label>
-            <Input
-              id="brand"
-              name="brand"
-              placeholder="e.g. Nike"
-              required
-            />
+            <Input name="brand" placeholder="e.g. Nike" required />
             {state.errors?.brand && (
-              <p className="text-destructive text-sm">{state.errors.brand}</p>
+              <p className="text-destructive text-sm font-medium">{state.errors.brand}</p>
             )}
           </div>
 
-          {/* Vacancy Count */}
-          <div className="space-y-2">
+          <div className="grid gap-2">
             <Label htmlFor="number_of_employees">Vacancy Count</Label>
-            <Input
-              id="number_of_employees"
-              name="number_of_employees"
-              type="number"
-              min={1}
-              defaultValue={1}
-              required
-            />
+            <Input name="number_of_employees" type="number" min={1} defaultValue={1} required />
             {state.errors?.number_of_employees && (
-              <p className="text-destructive text-sm">{state.errors.number_of_employees}</p>
+              <p className="text-destructive text-sm font-medium">{state.errors.number_of_employees}</p>
             )}
           </div>
 
