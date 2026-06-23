@@ -29,7 +29,7 @@ export function AdminUniversityTable({ session, records }: Props) {
       ]}
     >
       <section className="mb-6">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+        <div className="rounded-lg border border-border bg-card p-5">
           <h3 className="text-sm font-semibold mb-3 text-foreground">Add a university</h3>
           <CreateUniversityForm onSuccess={() => router.refresh()} />
         </div>
@@ -131,8 +131,7 @@ function CreateUniversityForm({ onSuccess }: { onSuccess: () => void }) {
           name="university_name_en"
           maxLength={100}
           placeholder="e.g. Kuwait University"
-          className="h-9 rounded-lg px-3 text-sm border"
-          style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--ink)" }}
+          className="h-9 rounded-lg px-3 text-sm border border-border bg-card text-foreground"
         />
       </div>
       <div className="grid gap-1">
@@ -141,8 +140,7 @@ function CreateUniversityForm({ onSuccess }: { onSuccess: () => void }) {
           name="university_name_ar"
           maxLength={100}
           placeholder="مثال: جامعة الكويت"
-          className="h-9 rounded-lg px-3 text-sm border"
-          style={{ background: "var(--surface)", borderColor: "var(--border)", color: "var(--ink)" }}
+          className="h-9 rounded-lg px-3 text-sm border border-border bg-card text-foreground"
         />
       </div>
       <button
