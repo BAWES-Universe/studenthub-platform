@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { respondToInvitation } from "@/modules/candidates/actions";
+import { Button } from "@/components/ui/button";
 
 export function InvitationRespondForm({
   invitationUuid,
@@ -14,9 +15,9 @@ export function InvitationRespondForm({
 
   if (currentStatus === 1 || currentStatus === 2) {
     return (
-      <section className="candidateEditForm">
-        <h2>Response</h2>
-        <p className="formNotice">
+      <section className="grid gap-3">
+        <h2 className="text-lg font-semibold mb-0">Response</h2>
+        <p className="text-sm text-muted-foreground mb-0">
           You have already {currentStatus === 1 ? "accepted" : "rejected"} this invitation.
         </p>
       </section>
@@ -24,31 +25,19 @@ export function InvitationRespondForm({
   }
 
   return (
-    <form action={action} className="candidateEditForm">
-      <h2>Respond to Invitation</h2>
-      {state.error ? <p className="formError">{state.error}</p> : null}
+    <form action={action} className="grid gap-3">
+      <h2 className="text-lg font-semibold mb-0">Respond to Invitation</h2>
+      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
 
       <input type="hidden" name="invitationUuid" value={invitationUuid} />
 
-      <div className="formActions">
-        <button
-          type="submit"
-          name="action"
-          value="accept"
-          disabled={pending}
-          className="acceptButton"
-        >
+      <div className="flex gap-2">
+        <Button type="submit" name="action" value="accept" disabled={pending}>
           {pending ? "Sending..." : "Accept invitation"}
-        </button>
-        <button
-          type="submit"
-          name="action"
-          value="reject"
-          disabled={pending}
-          className="rejectButton"
-        >
+        </Button>
+        <Button type="submit" name="action" value="reject" variant="destructive" disabled={pending}>
           {pending ? "Sending..." : "Reject invitation"}
-        </button>
+        </Button>
       </div>
     </form>
   );

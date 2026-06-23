@@ -36,7 +36,7 @@ export default async function AdminCompanyDetailPage({ params }: { params: Promi
           { label: "Updated", value: formatDate(data.company.company_updated_at) }
         ]}
       />
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
         <CompactList title="Stores" rows={data.stores} />
         <CompactList title="Notes" rows={data.notes} />
       </section>
