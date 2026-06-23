@@ -99,12 +99,12 @@
   /* Design system — StudentHub OS aesthetic                             */
   /* ------------------------------------------------------------------ */
 
-  /* Glass morphism */
-  --sh-glass-bg: rgba(255, 255, 255, 0.05);
-  --sh-glass-bg-strong: rgba(255, 255, 255, 0.10);
-  --sh-glass-border: rgba(255, 255, 255, 0.10);
-  --sh-glass-border-strong: rgba(255, 255, 255, 0.18);
-  --sh-glass-blur: 20px;
+  /* Surface tokens (solid backgrounds — no glass) */
+  --sh-glass-bg: var(--surface);
+  --sh-glass-bg-strong: var(--surface);
+  --sh-glass-border: var(--border);
+  --sh-glass-border-strong: var(--border);
+  --sh-glass-blur: 0px;
 
   /* Zendesk coral — primary accent (per DESIGN_SYSTEM.md) */
   --sh-coral: #eb6651;
@@ -172,9 +172,9 @@
 
   /* App Header (light mode defaults) */
   --sh-header-h: 64px;
-  --sh-header-glass-bg: rgba(255, 255, 255, 0.78);
-  --sh-header-glass-border: rgba(214, 220, 231, 0.5);
-  --sh-header-blur: 18px;
+  --sh-header-glass-bg: var(--surface);
+  --sh-header-glass-border: var(--border);
+  --sh-header-blur: 0px;
   --sh-header-tab-h: 40px;
   --sh-header-tab-indicator: 3px;
 
@@ -277,10 +277,11 @@
   --sh-coral-light: rgba(235, 102, 81, 0.15);
   --sh-coral-glow: 0 0 16px rgba(235, 102, 81, 0.30);
 
-  --sh-glass-bg: rgba(255, 255, 255, 0.04);
-  --sh-glass-bg-strong: rgba(255, 255, 255, 0.08);
-  --sh-glass-border: rgba(255, 255, 255, 0.06);
-  --sh-glass-border-strong: rgba(255, 255, 255, 0.12);
+  /* Surface tokens (solid — no glass, dark mode) */
+  --sh-glass-bg: var(--surface);
+  --sh-glass-bg-strong: var(--surface);
+  --sh-glass-border: var(--border);
+  --sh-glass-border-strong: var(--border);
   --sh-glow-sm: 0 0 16px rgba(138, 191, 255, 0.18);
   --sh-glow-md: 0 0 32px rgba(138, 191, 255, 0.25);
   --sh-glow-lg: 0 0 56px rgba(138, 191, 255, 0.35);
@@ -304,9 +305,9 @@
   --sh-amber-glow-hover: 0 8px 28px rgba(251, 191, 36, 0.45);
   --sh-amber-bg: rgba(251, 191, 36, 0.12);
 
-  /* App Header (dark mode) */
-  --sh-header-glass-bg: rgba(17, 24, 36, 0.72);
-  --sh-header-glass-border: rgba(42, 53, 71, 0.5);
+  /* App Header (dark mode — solid) */
+  --sh-header-glass-bg: var(--surface);
+  --sh-header-glass-border: var(--border);
 }
 
 * {
@@ -711,8 +712,7 @@ body {
 [data-theme="dark"] .commandResult:hover,
 [data-theme="dark"] .commandResult.active,
 [data-theme="dark"] .hubHeader,
-[data-theme="dark"] .hubPanel,
-[data-theme="dark"] .featureTile {
+[data-theme="dark"] .hubPanel {
   border-color: var(--sh-glass-border);
   background: var(--sh-glass-bg);
 }
@@ -895,11 +895,9 @@ body {
   display: grid;
   gap: 4px;
   padding: var(--sh-space-lg);
-  background: var(--sh-glass-bg);
-  border: 1px solid var(--sh-glass-border);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: var(--sh-radius-lg);
-  backdrop-filter: blur(var(--sh-glass-blur));
-  -webkit-backdrop-filter: blur(var(--sh-glass-blur));
   transition:
     transform 200ms var(--sh-easing),
     box-shadow 200ms var(--sh-easing),
@@ -1942,42 +1940,6 @@ h2 {
 }
 
 
-
-.featureGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 20px 0 0;
-}
-
-.featureTile {
-  min-height: 112px;
-  display: grid;
-  align-content: space-between;
-  border: 1px solid var(--line);
-  border-top: 4px solid var(--blue);
-  background: var(--surface);
-  color: var(--ink);
-  padding: 16px;
-  text-decoration: none;
-  box-shadow: 0 10px 36px rgba(16, 24, 40, 0.04);
-}
-
-.featureTile span {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.featureTile strong {
-  color: var(--blue);
-  font-size: 13px;
-}
-
-.featureTile:hover {
-  border-color: #9fb9db;
-  box-shadow: 0 18px 54px rgba(16, 24, 40, 0.09);
-  transform: translateY(-1px);
-}
 
 /* ------------------------------------------------------------------ */
 /*  MetricCard — glass card with value, label, sparkline, trend.       */
@@ -4677,7 +4639,6 @@ kbd {
   .focus,
   .loginShell,
   .loginSignal,
-  .featureGrid,
 
   .loginHero h1 {
     max-width: 560px;

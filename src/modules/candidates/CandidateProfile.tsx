@@ -1,5 +1,9 @@
 import type { Route } from "next";
 import Link from "next/link";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import type { getCandidateDetail } from "@/modules/workspace/data";
 import { formatDate } from "@/modules/workspace/format";
 import { WorkLogStaffActions } from "./WorkLogStaffActions";
@@ -27,10 +31,14 @@ export function CandidateProfile({
   const candidate = detail?.candidate;
   if (!candidate) {
     return (
-      <section className="candidateProfile empty">
-        <strong>No candidate selected</strong>
-        <span>Select a production candidate to view profile, readiness, work history, notes, and documents.</span>
-      </section>
+      <Card className="border-dashed">
+        <CardContent className="flex flex-col items-center gap-2 py-12">
+          <strong className="text-base text-foreground">No candidate selected</strong>
+          <span className="text-sm text-muted-foreground text-center max-w-md">
+            Select a production candidate to view profile, readiness, work history, notes, and documents.
+          </span>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -41,58 +49,88 @@ export function CandidateProfile({
   const profileActions = [...actions, ...legacyProfileActions(detail)];
 
   return (
-    <section className={compact ? "candidateProfile compact" : "candidateProfile"}>
-      <header className="candidateProfileHero">
-        <div className="candidateAvatar" aria-hidden="true">
+    <Card>
+      {/* Hero header */}
+      <CardHeader className="flex flex-row items-start gap-4">
+        <div
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#1f73b7]/10 text-[#1f73b7] text-lg font-bold"
+          aria-hidden="true"
+        >
           {initials(candidate.candidate_name)}
         </div>
-        <div className="candidateProfileTitle">
-          <span>{candidate.candidate_uid ?? `#${candidate.candidate_id}`}</span>
-          <h2>{candidate.candidate_name}</h2>
-          {title !== candidate.candidate_name ? <p>{title}</p> : null}
-          <div className="candidateStatusLine">
-            <strong>{status}</strong>
-            <span>{candidate.store?.company?.company_name ?? candidate.country?.country_name_en ?? "No company context"}</span>
+        <div className="min-w-0 flex-1">
+          <span className="text-[11px] font-bold uppercase text-[#1f73b7]">
+            {candidate.candidate_uid ?? `#${candidate.candidate_id}`}
+          </span>
+          <h2 className="text-2xl font-bold text-foreground mb-0.5 mt-0.5">{candidate.candidate_name}</h2>
+          {title !== candidate.candidate_name ? (
+            <p className="text-sm text-muted-foreground mb-0">{title}</p>
+          ) : null}
+          <div className="flex items-center gap-2 mt-1.5">
+            <Badge variant={candidate.approved === 0 ? "outline" : "default"}>{status}</Badge>
+            <span className="text-sm text-muted-foreground">
+              {candidate.store?.company?.company_name ?? candidate.country?.country_name_en ?? "No company context"}
+            </span>
           </div>
         </div>
-      </header>
+      </CardHeader>
 
-      <div className="candidateProfileActions" aria-label="Candidate actions">
-        {backHref ? <Link href={backHref}>Back to list</Link> : null}
+      {/* Action bar */}
+      <div className="flex flex-wrap items-center gap-1.5 border-y border-border px-6 py-2.5" aria-label="Candidate actions">
+        {backHref ? (
+          <Link className={cn(buttonVariants({ variant: "outline", size: "sm" }), "no-underline")} href={backHref}>
+            Back to list
+          </Link>
+        ) : null}
         {profileActions.map((action) =>
           action.href.startsWith("/") ? (
-            <Link href={action.href as Route} key={`${action.label}-${action.href}`}>
+            <Link
+              className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "no-underline")}
+              href={action.href as Route}
+              key={`${action.label}-${action.href}`}
+            >
               {action.label}
             </Link>
           ) : (
-            <a href={action.href} key={`${action.label}-${action.href}`}>
-              {action.label}
-            </a>
+            <Button variant="ghost" size="sm" asChild key={`${action.label}-${action.href}`}>
+              <a href={action.href}>{action.label}</a>
+            </Button>
           )
         )}
       </div>
 
-      <section className="candidateReadiness" aria-label="Candidate readiness">
-        <div className="candidateReadinessScore">
-          <span>Readiness</span>
-          <strong>{readiness.score}%</strong>
-          <small>{readiness.summary}</small>
-        </div>
-        <div className="candidateReadinessItems">
-          {readiness.items.map((item) => (
-            <div className={item.done ? "done" : "open"} key={item.label}>
-              <span>{item.done ? "Done" : "Open"}</span>
-              <strong>{item.label}</strong>
-            </div>
-          ))}
+      {/* Readiness section */}
+      <section className="border-b border-border px-6 py-4" aria-label="Candidate readiness">
+        <div className="grid grid-cols-[1fr_auto] gap-4 items-center mb-3">
+          <div>
+            <span className="text-[11px] font-bold uppercase text-[#1f73b7]">Readiness</span>
+            <strong className="block text-3xl font-bold text-foreground mt-0.5">{readiness.score}%</strong>
+            <small className="text-sm text-muted-foreground">{readiness.summary}</small>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {readiness.items.map((item) => (
+              <Badge
+                key={item.label}
+                variant={item.done ? "default" : "outline"}
+                className={item.done ? "bg-[#2e7d32]" : ""}
+              >
+                {item.label}
+              </Badge>
+            ))}
+          </div>
         </div>
         {readiness.missing?.length ? (
-          <div className="candidateMissingFields">
-            <span>Missing fields</span>
-            <ul>
+          <div className="mt-3 pt-3 border-t border-border">
+            <span className="text-[11px] font-bold uppercase text-muted-foreground">Missing fields</span>
+            <ul className="mt-1.5 flex flex-wrap gap-1.5">
               {readiness.missing.map((item) => (
                 <li key={item.label}>
-                  <Link href="/candidate/edit">{item.label}</Link>
+                  <Link
+                    className="text-xs text-[#1f73b7] hover:underline"
+                    href="/candidate/edit"
+                  >
+                    {item.label}
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -100,7 +138,8 @@ export function CandidateProfile({
         ) : null}
       </section>
 
-      <section className="candidateFactGrid" aria-label="Candidate facts">
+      {/* Fact grid */}
+      <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px bg-border px-6" aria-label="Candidate facts">
         <Fact label="Email" value={candidate.candidate_email} />
         <Fact label="Phone" value={candidate.candidate_phone ?? "No phone"} />
         <Fact label="Country" value={candidate.country?.country_name_en ?? "Not set"} />
@@ -116,28 +155,31 @@ export function CandidateProfile({
       <CivilIdPanel candidate={candidate} viewerRole={viewerRole} />
 
       {!compact && candidate.candidate_intro ? (
-        <section className="candidateNarrative">
-          <span>Profile intro</span>
-          <p>{candidate.candidate_intro}</p>
+        <section className="border-b border-border px-6 py-4">
+          <span className="text-[11px] font-bold uppercase text-[#1f73b7]">Profile intro</span>
+          <p className="mt-1.5 text-sm text-foreground">{candidate.candidate_intro}</p>
         </section>
       ) : null}
 
-      <section className="candidateProfileColumns">
-        <section className="candidateProfilePanel">
+      {/* Skills / Timeline split */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-px bg-border">
+        <div className="bg-card p-6">
           <PanelHeader title="Skills and tags" count={detail.skills.length + detail.tags.length} />
-          <div className="candidatePills">
+          <div className="flex flex-wrap gap-1.5 mt-3">
             {[...detail.skills, ...detail.tags].slice(0, compact ? 12 : 28).map((item) => (
-              <span key={`${item.title}-${item.id}`}>{item.title}</span>
+              <Badge key={`${item.title}-${item.id}`} variant="secondary">{item.title}</Badge>
             ))}
-            {!detail.skills.length && !detail.tags.length ? <small>No imported skills or tags.</small> : null}
+            {!detail.skills.length && !detail.tags.length ? (
+              <small className="text-muted-foreground">No imported skills or tags.</small>
+            ) : null}
           </div>
-        </section>
+        </div>
 
         <RowsPanel title="Timeline" rows={timeline} limit={compact ? 5 : 12} />
       </section>
 
       {!compact ? (
-        <section className="candidateProfileColumns">
+        <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-px bg-border">
           <RowsPanel title="Education" rows={detail.education} />
           <RowsPanel title="Experience" rows={detail.experiences} />
           <RowsPanel title="Applications" rows={detail.applications} />
@@ -155,19 +197,18 @@ export function CandidateProfile({
           <RowsPanel title="Documents and links" rows={[...detail.idCards, ...detail.certificates, ...detail.links]} />
         </section>
       ) : null}
-    </section>
+    </Card>
   );
 }
 
 function Fact({ label, value }: { label: string; value: string | number }) {
   return (
-    <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className="bg-card p-3">
+      <span className="block text-[11px] font-bold uppercase text-muted-foreground mb-0.5">{label}</span>
+      <strong className="text-sm text-foreground truncate block">{value}</strong>
     </div>
   );
 }
-
 
 function CivilIdPanel({ candidate, viewerRole }: { candidate: NonNullable<CandidateDetailData["candidate"]>; viewerRole?: string }) {
   if (!candidate.candidate_civil_id && !candidate.candidate_civil_expiry_date && !candidate.candidate_civil_photo_front && !candidate.candidate_civil_photo_back && !candidate.candidate_civil_need_verification) {
@@ -186,36 +227,49 @@ function CivilIdPanel({ candidate, viewerRole }: { candidate: NonNullable<Candid
   else if (isNearExpiry) badges.push("Expires soon");
 
   return (
-    <section className="civilIdPanel">
-      <div className="candidatePanelHeader">
-        <span>Civil ID</span>
-        <strong>{badges.length ? badges.join(" · ") : "On file"}</strong>
+    <section className="border-b border-border px-6 py-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[11px] font-bold uppercase text-[#1f73b7]">Civil ID</span>
+        <Badge variant="outline">{badges.length ? badges.join(" · ") : "On file"}</Badge>
       </div>
-      <div className="civilIdPanelBody">
-        <div className="civilIdPanelFields">
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <span>ID Number</span>
-            <strong>{candidate.candidate_civil_id || "—"}</strong>
+            <span className="block text-[11px] font-bold uppercase text-muted-foreground mb-0.5">ID Number</span>
+            <strong className="text-sm text-foreground">{candidate.candidate_civil_id || "—"}</strong>
           </div>
           <div>
-            <span>Expiry date</span>
-            <strong className={isExpired ? "civilIdExpired" : isNearExpiry ? "civilIdWarning" : ""}>
+            <span className="block text-[11px] font-bold uppercase text-muted-foreground mb-0.5">Expiry date</span>
+            <strong className={cn(
+              "text-sm",
+              isExpired ? "text-red-600" : isNearExpiry ? "text-amber-600" : "text-foreground"
+            )}>
               {expiryDate ? formatDate(expiryDate) : "—"}
             </strong>
           </div>
         </div>
         {candidate.candidate_civil_photo_front || candidate.candidate_civil_photo_back ? (
-          <div className="civilIdPhotos">
+          <div className="flex gap-3">
             {candidate.candidate_civil_photo_front ? (
               <div>
-                <span>Photo (front)</span>
-                <img src={candidate.candidate_civil_photo_front} alt="Civil ID front" loading="lazy" />
+                <span className="block text-[10px] font-bold uppercase text-muted-foreground mb-1">Photo (front)</span>
+                <img
+                  src={candidate.candidate_civil_photo_front}
+                  alt="Civil ID front"
+                  loading="lazy"
+                  className="h-20 w-auto rounded border border-border object-cover"
+                />
               </div>
             ) : null}
             {candidate.candidate_civil_photo_back ? (
               <div>
-                <span>Photo (back)</span>
-                <img src={candidate.candidate_civil_photo_back} alt="Civil ID back" loading="lazy" />
+                <span className="block text-[10px] font-bold uppercase text-muted-foreground mb-1">Photo (back)</span>
+                <img
+                  src={candidate.candidate_civil_photo_back}
+                  alt="Civil ID back"
+                  loading="lazy"
+                  className="h-20 w-auto rounded border border-border object-cover"
+                />
               </div>
             ) : null}
           </div>
@@ -227,9 +281,11 @@ function CivilIdPanel({ candidate, viewerRole }: { candidate: NonNullable<Candid
 
 function PanelHeader({ title, count }: { title: string; count: number }) {
   return (
-    <div className="candidatePanelHeader">
-      <span>{title}</span>
-      <strong>{count.toLocaleString("en-US")}</strong>
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[11px] font-bold uppercase text-[#1f73b7]">{title}</span>
+      <Badge variant="outline" className="bg-[#1f73b7]/5 text-[#1f73b7] border-[#1f73b7]/20">
+        {count.toLocaleString("en-US")}
+      </Badge>
     </div>
   );
 }
@@ -244,39 +300,52 @@ function RowsPanel({
   limit?: number;
 }) {
   return (
-    <section className="candidateProfilePanel">
+    <div className="bg-card p-6">
       <PanelHeader title={title} count={rows.length} />
-      <div className="candidateRows">
+      <div className="mt-3 grid gap-0">
         {rows.slice(0, limit).map((row) =>
           row.href ? (
             row.href.startsWith("/") ? (
-              <Link href={row.href as Route} key={`${title}-${row.id}`}>
+              <Link
+                className="block border-b border-border last:border-b-0 py-2 hover:bg-muted/30 no-underline -mx-6 px-6"
+                href={row.href as Route}
+                key={`${title}-${row.id}`}
+              >
                 <RowContent row={row} />
               </Link>
             ) : (
-              <a href={row.href} key={`${title}-${row.id}`}>
+              <a
+                className="block border-b border-border last:border-b-0 py-2 hover:bg-muted/30 -mx-6 px-6"
+                href={row.href}
+                key={`${title}-${row.id}`}
+              >
                 <RowContent row={row} />
               </a>
             )
           ) : (
-            <article key={`${title}-${row.id}`}>
+            <article
+              className="block border-b border-border last:border-b-0 py-2 hover:bg-muted/30 -mx-6 px-6"
+              key={`${title}-${row.id}`}
+            >
               <RowContent row={row} />
             </article>
           )
         )}
-        {!rows.length ? <small>No imported rows visible for this login.</small> : null}
+        {!rows.length ? <small className="text-muted-foreground py-2 block">No imported rows visible for this login.</small> : null}
       </div>
-    </section>
+    </div>
   );
 }
 
 function RowContent({ row }: { row: { title: string; subtitle: string; meta?: string } }) {
   return (
-    <>
-      <strong>{row.title}</strong>
-      <span>{row.subtitle}</span>
-      {row.meta ? <small>{row.meta}</small> : null}
-    </>
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <strong className="block text-sm text-foreground truncate">{row.title}</strong>
+        <span className="text-xs text-muted-foreground truncate">{row.subtitle}</span>
+      </div>
+      {row.meta ? <small className="shrink-0 text-xs text-muted-foreground">{row.meta}</small> : null}
+    </div>
   );
 }
 
@@ -290,18 +359,21 @@ type WorkLogRow = {
 
 function WorkLogStaffPanel({ hours }: { hours: WorkLogRow[] }) {
   return (
-    <section className="candidateProfilePanel">
+    <div className="bg-card p-6">
       <PanelHeader title="Work logs" count={hours.length} />
-      <div className="candidateRows">
+      <div className="mt-3 grid gap-0">
         {hours.slice(0, 8).map((hour) => (
-          <article key={`worklog-${hour.id}`} className="workLogRow">
+          <article
+            key={`worklog-${hour.id}`}
+            className="flex items-center justify-between border-b border-border last:border-b-0 py-2 -mx-6 px-6 hover:bg-muted/30"
+          >
             <RowContent row={hour} />
             <WorkLogStaffActions workLogUuid={String(hour.id)} currentStatus={hour.status} />
           </article>
         ))}
-        {!hours.length ? <small>No work log records for this candidate.</small> : null}
+        {!hours.length ? <small className="text-muted-foreground py-2 block">No work log records for this candidate.</small> : null}
       </div>
-    </section>
+    </div>
   );
 }
 
