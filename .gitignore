@@ -11,3 +11,4 @@ data/*.log
 # Test artifacts
 playwright-report/
 test-results/
+.worktrees/

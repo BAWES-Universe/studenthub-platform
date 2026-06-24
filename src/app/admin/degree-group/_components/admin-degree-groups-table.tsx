@@ -55,13 +55,9 @@ export function AdminDegreeGroupsTable({ session, degreeGroups }: Props) {
                   onCancel={() => setEditingId(null)}
                 />
               ) : (
-                <button
-                  type="button"
-                  className="text-sm hover:underline text-primary"
-                  onClick={() => setEditingId(row.degree_group_uuid)}
-                >
+                <Button variant="link" size="sm" onClick={() => setEditingId(row.degree_group_uuid)}>
                   {row.degree_group_name_en}
-                </button>
+                </Button>
               ),
           },
           {

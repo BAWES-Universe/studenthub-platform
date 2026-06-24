@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 export default function Error({
   error,
   reset,
@@ -11,12 +13,9 @@ export default function Error({
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
       <h2 className="text-lg font-semibold text-destructive">Something went wrong</h2>
       <p className="text-sm text-muted-foreground">Failed to load country details.</p>
-      <button
-        onClick={reset}
-        className="h-9 rounded-lg px-4 text-sm font-semibold bg-primary text-primary-foreground"
-      >
+      <Button variant="link" onClick={reset}>
         Try again
-      </button>
+      </Button>
     </div>
   );
 }

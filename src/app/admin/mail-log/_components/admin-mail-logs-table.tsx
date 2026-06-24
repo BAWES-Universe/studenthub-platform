@@ -63,7 +63,7 @@ export function AdminMailLogsTable({ session, records }: Props) {
             label: "App",
             render: (row) =>
               row.app ? (
-                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-blue-zendesk text-white">
+                <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-sh-coral text-white">
                   {row.app}
                 </span>
               ) : (

@@ -127,7 +127,7 @@ export function WorkTabs({ state }: { state: WorkTabState }) {
             className={cn(
               "inline-flex items-center overflow-hidden shrink-0 border rounded-md",
               active
-                ? "border-blue-zendesk bg-blue-zendesk/5 dark:bg-blue-zendesk/12"
+                ? "border-sh-coral bg-sh-coral/5 dark:bg-sh-coral/[0.12]"
                 : "border-border bg-muted/30 dark:bg-card"
             )}
           >
@@ -137,7 +137,7 @@ export function WorkTabs({ state }: { state: WorkTabState }) {
               aria-current={active ? "page" : undefined}
               className={cn(
                 "min-h-8 inline-flex items-center border-0 bg-none font-inherit text-[12px] font-bold px-2.5 cursor-pointer whitespace-nowrap",
-                active ? "text-blue-zendesk" : "text-foreground hover:text-foreground"
+                active ? "text-sh-coral" : "text-foreground hover:text-foreground"
               )}
             >
               {tab.label}

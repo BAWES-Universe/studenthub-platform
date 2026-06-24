@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { useActionState } from "react";
 import { DataTable } from "@/modules/workspace/DataTable";
 import { WorkspaceShell } from "@/modules/workspace/WorkspaceShell";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { Route } from "next";
 
 import type { SessionUser } from "@/modules/auth/types";
@@ -72,9 +75,9 @@ export function AdminUniversityTable({ session, records }: Props) {
             key: "actions",
             label: "",
             render: (row) => (
-              <button
-                type="button"
-                className="text-xs px-2 py-1 rounded hover:bg-red-500/10 text-destructive"
+              <Button
+                variant="destructive"
+                size="sm"
                 onClick={async (e) => {
                   e.stopPropagation();
                   if (confirm(`Delete university "${row.university_name_en || row.university_name_ar || "Unnamed"}"?`)) {
@@ -88,7 +91,7 @@ export function AdminUniversityTable({ session, records }: Props) {
                 }}
               >
                 Delete
-              </button>
+              </Button>
             ),
           },
         ]}
@@ -126,30 +129,24 @@ function CreateUniversityForm({ onSuccess }: { onSuccess: () => void }) {
       onSubmit={() => setTimeout(() => { formRef.current?.reset(); }, 100)}
     >
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Name (English)</label>
-        <input
+        <Label className="text-xs font-medium text-muted-foreground">Name (English)</Label>
+        <Input
           name="university_name_en"
           maxLength={100}
           placeholder="e.g. Kuwait University"
-          className="h-9 rounded-lg px-3 text-sm border border-border bg-card text-foreground"
         />
       </div>
       <div className="grid gap-1">
-        <label className="text-xs font-medium text-muted-foreground">Name (Arabic)</label>
-        <input
+        <Label className="text-xs font-medium text-muted-foreground">Name (Arabic)</Label>
+        <Input
           name="university_name_ar"
           maxLength={100}
           placeholder="مثال: جامعة الكويت"
-          className="h-9 rounded-lg px-3 text-sm border border-border bg-card text-foreground"
         />
       </div>
-      <button
-        type="submit"
-        disabled={pending}
-        className="h-9 rounded-lg px-4 text-sm font-semibold bg-primary text-primary-foreground"
-      >
+      <Button type="submit" disabled={pending}>
         {pending ? "Adding..." : "Add University"}
-      </button>
+      </Button>
       {state?.error ? (
         <p className="text-xs w-full text-destructive">{state.error}</p>
       ) : null}

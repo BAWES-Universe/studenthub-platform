@@ -50,7 +50,7 @@ export function StaffHome({ data }: { data: StaffWorkspaceData }) {
       {/* Hero Section */}
       <Card className="grid md:grid-cols-[1fr_300px] gap-4 p-4 items-stretch">
         <div className="grid content-center gap-2">
-          <span className="text-blue-zendesk text-xs font-black uppercase tracking-wide">
+          <span className="text-sh-coral text-xs font-black uppercase tracking-wide">
             Staff operating home
           </span>
           <h2 className="text-3xl md:text-5xl leading-[0.98] font-bold m-0 text-foreground">
@@ -78,8 +78,8 @@ export function StaffHome({ data }: { data: StaffWorkspaceData }) {
           </div>
         </div>
 
-        <aside className="grid content-end gap-1.5 border border-border rounded-lg bg-blue-zendesk/5 p-3.5">
-          <span className="text-blue-zendesk text-xs font-black uppercase tracking-wide">
+        <aside className="grid content-end gap-1.5 border border-border rounded-lg bg-sh-coral/5 p-3.5">
+          <span className="text-sh-coral text-xs font-black uppercase tracking-wide">
             Production data loaded
           </span>
           <strong className="text-[42px] leading-[1] font-bold text-foreground">
@@ -110,8 +110,8 @@ export function StaffHome({ data }: { data: StaffWorkspaceData }) {
               )}
             >
               <div className="flex items-center gap-2 w-full">
-                <Icon aria-hidden="true" size={18} className="text-blue-zendesk shrink-0" />
-                <span className="text-blue-zendesk text-xs font-black uppercase tracking-wide ml-auto">
+                <Icon aria-hidden="true" size={18} className="text-sh-coral shrink-0" />
+                <span className="text-sh-coral text-xs font-black uppercase tracking-wide ml-auto">
                   {metricLabel}
                 </span>
               </div>
@@ -119,7 +119,7 @@ export function StaffHome({ data }: { data: StaffWorkspaceData }) {
               <small className="text-muted-foreground text-xs leading-relaxed">
                 {workflow.subtitle}
               </small>
-              <em className="flex items-center gap-1 text-xs font-medium text-blue-zendesk mt-1 not-italic">
+              <em className="flex items-center gap-1 text-xs font-medium text-sh-coral mt-1 not-italic">
                 Open <ArrowRight aria-hidden="true" size={14} />
               </em>
             </Link>
@@ -156,7 +156,7 @@ function StaffRows({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3 px-4">
-        <span className="text-blue-zendesk text-xs font-black uppercase tracking-wide">{title}</span>
+        <span className="text-sh-coral text-xs font-black uppercase tracking-wide">{title}</span>
         <strong className="text-sm font-semibold text-foreground">{rows.length}</strong>
       </CardHeader>
       <CardContent className="grid gap-px p-0">

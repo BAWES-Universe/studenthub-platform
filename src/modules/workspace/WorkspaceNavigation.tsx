@@ -20,7 +20,7 @@ export function WorkspaceNavigation({ items, role }: { items: NavItem[]; role: s
               buttonVariants({ variant: "ghost" }),
               "w-full justify-start gap-3 px-3 no-underline text-sm font-semibold",
               active
-                ? "bg-blue-zendesk/10 text-blue-zendesk font-bold"
+                ? "bg-sh-coral/10 text-sh-coral font-bold"
                 : "text-muted-foreground hover:text-foreground",
             )}
             href={item.href}
@@ -53,7 +53,7 @@ export function WorkspaceMobileNavigation({ items, role }: { items: NavItem[]; r
               "flex flex-1 flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-lg no-underline",
               "min-h-[56px] max-w-[96px] text-[11px] font-semibold transition-colors",
               active
-                ? "bg-blue-zendesk/10 text-blue-zendesk font-bold"
+                ? "bg-sh-coral/10 text-sh-coral font-bold"
                 : "text-muted-foreground hover:text-foreground",
             )}
             href={item.href}

@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 export default function AdminDailyStandupError({
   error,
   reset,
@@ -15,12 +17,9 @@ export default function AdminDailyStandupError({
       <p className="text-muted-foreground text-xs">
         Please try again or contact support if the issue persists.
       </p>
-      <button
-        onClick={reset}
-        className="text-sm text-primary underline underline-offset-4 hover:text-primary/80"
-      >
+      <Button variant="link" onClick={reset}>
         Try again
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 export default function AdminPermissionSectionsError({
   error,
   reset,
@@ -13,12 +15,9 @@ export default function AdminPermissionSectionsError({
       <p className="text-sm text-muted-foreground">
         {error.message ?? "Failed to load permission sections."}
       </p>
-      <button
-        onClick={reset}
-        className="text-sm text-primary hover:underline"
-      >
+      <Button variant="link" onClick={reset}>
         Try again
-      </button>
+      </Button>
     </div>
   );
 }
