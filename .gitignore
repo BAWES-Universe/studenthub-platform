@@ -1,0 +1,7 @@
+node_modules/
+.next/
+.env*
+*.sql
+*.sql.gz
+*.dump
+.DS_Store
