@@ -110,3 +110,17 @@ test("duplicate contact is reported by digest, not by address", () => {
   assert.equal(violations.length, 1);
   assert.equal(JSON.stringify(violations).includes(dataset.candidates[0]!.email), false);
 });
+
+test("duplicate ids are rejected before import", () => {
+  const duplicated: FixtureDataset = {
+    ...dataset,
+    organizations: [dataset.organizations[0]!, dataset.organizations[0]!],
+  };
+
+  const store = new ImportStore();
+  const result = runImport(store, duplicated);
+
+  assert.equal(result.ok, false);
+  assert.equal(store.size, 0);
+  assert.ok(result.violations.some((violation) => violation.rule === "structural.entity.uniqueId"));
+});

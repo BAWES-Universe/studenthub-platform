@@ -23,6 +23,10 @@ function indexById(rows: readonly { id: string }[]): Map<string, string> {
   return new Map(rows.map((row) => [row.id, sha256(row)]));
 }
 
+function hashRows(rows: readonly { id: string }[]): string {
+  return sha256([...rows].sort((left, right) => left.id.localeCompare(right.id)));
+}
+
 /**
  * Compares two datasets and reports counts, per-entity hashes and differences by
  * identifier only. No field value ever enters the report, and the result is
@@ -39,7 +43,7 @@ export function reconcile(source: FixtureDataset, target: FixtureDataset): Recon
     const targetRows = target[entity] as readonly { id: string }[];
 
     counts[entity] = { source: sourceRows.length, target: targetRows.length };
-    hashes[entity] = { source: sha256(sourceRows), target: sha256(targetRows) };
+    hashes[entity] = { source: hashRows(sourceRows), target: hashRows(targetRows) };
 
     const sourceIndex = indexById(sourceRows);
     const targetIndex = indexById(targetRows);
@@ -64,11 +68,14 @@ export function reconcile(source: FixtureDataset, target: FixtureDataset): Recon
     }
   }
 
+  const hashesMatch = ENTITY_KINDS.every(
+    (entity) => hashes[entity].source === hashes[entity].target,
+  );
   const report: ReconciliationReport = {
     counts: Object.freeze(counts),
     hashes: Object.freeze(hashes),
     differences,
-    clean: differences.length === 0,
+    clean: differences.length === 0 && hashesMatch,
   };
 
   assertRedacted(report);

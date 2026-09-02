@@ -80,9 +80,9 @@ export function generateDataset(seed: string, size: FixtureSize = DEFAULT_SIZE):
     const request = requests[Math.floor(random() * requests.length)]!;
     const candidate = candidates[Math.floor(random() * candidates.length)]!;
     const pairKey = `${request.id}:${candidate.id}`;
-    const stage = pick(STAGES, random);
     if (seen.has(pairKey)) continue;
     seen.add(pairKey);
+    const stage = pick(STAGES, random);
     applications.push({
       id: `app-${pad(applications.length + 1)}`,
       requestId: request.id,

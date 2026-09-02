@@ -11,6 +11,10 @@ test("the same seed produces an identical dataset and manifest", () => {
 
   assert.equal(sha256(first), sha256(second));
   assert.deepEqual(buildManifest(first), buildManifest(second));
+  assert.equal(
+    buildManifest(first).manifestHash,
+    "19da68172db15755cc5e5b7d273e07dc68c7a8fadbb318789cdeaa9562b99688",
+  );
 });
 
 test("a different seed produces a different manifest hash", () => {

@@ -1,5 +1,5 @@
 import { shortDigest } from "../../fixtures/src/canonical.js";
-import type { FixtureDataset } from "../../fixtures/src/types.js";
+import { ENTITY_KINDS, type FixtureDataset } from "../../fixtures/src/types.js";
 
 export interface InvariantViolation {
   /** Stable rule identifier, safe to assert on in tests. */
@@ -18,6 +18,21 @@ export interface InvariantViolation {
  */
 export function checkInvariants(dataset: FixtureDataset): readonly InvariantViolation[] {
   const violations: InvariantViolation[] = [];
+
+  for (const entity of ENTITY_KINDS) {
+    const seen = new Set<string>();
+    for (const row of dataset[entity]) {
+      if (seen.has(row.id)) {
+        violations.push({
+          rule: "structural.entity.uniqueId",
+          entity,
+          id: row.id,
+          detail: `duplicate id '${row.id}' in ${entity}`,
+        });
+      }
+      seen.add(row.id);
+    }
+  }
 
   const organizationIds = new Set(dataset.organizations.map((row) => row.id));
   const candidateIds = new Set(dataset.candidates.map((row) => row.id));

@@ -1,5 +1,13 @@
 import { sha256 } from "../../fixtures/src/canonical.js";
-import { ENTITY_KINDS, type EntityKind, type FixtureDataset } from "../../fixtures/src/types.js";
+import {
+  ENTITY_KINDS,
+  type Application,
+  type Candidate,
+  type EntityKind,
+  type FixtureDataset,
+  type HiringRequest,
+  type Organization,
+} from "../../fixtures/src/types.js";
 import { checkInvariants, type InvariantViolation } from "./invariants.js";
 
 export interface ImportConflict {
@@ -20,7 +28,7 @@ export interface ImportResult {
 
 /** In-memory target. A real target swaps this for PostgreSQL; the contract holds. */
 export class ImportStore {
-  private readonly rows = new Map<string, { hash: string; row: unknown }>();
+  private readonly rows = new Map<string, { entity: EntityKind; hash: string; row: unknown }>();
 
   private key(entity: EntityKind, id: string): string {
     return `${entity}:${id}`;
@@ -35,7 +43,24 @@ export class ImportStore {
   }
 
   put(entity: EntityKind, id: string, row: unknown, hash: string): void {
-    this.rows.set(this.key(entity, id), { hash, row });
+    this.rows.set(this.key(entity, id), { entity, hash, row });
+  }
+
+  /** Materializes imported rows for reconciliation without exposing store internals. */
+  toDataset(seed: string): FixtureDataset {
+    const organizations: Organization[] = [];
+    const candidates: Candidate[] = [];
+    const requests: HiringRequest[] = [];
+    const applications: Application[] = [];
+
+    for (const stored of this.rows.values()) {
+      if (stored.entity === "organizations") organizations.push(stored.row as Organization);
+      if (stored.entity === "candidates") candidates.push(stored.row as Candidate);
+      if (stored.entity === "requests") requests.push(stored.row as HiringRequest);
+      if (stored.entity === "applications") applications.push(stored.row as Application);
+    }
+
+    return { seed, organizations, candidates, requests, applications };
   }
 
   get size(): number {

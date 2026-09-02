@@ -19,6 +19,20 @@ test("identical datasets reconcile clean", () => {
   }
 });
 
+test("row order does not change hashes or cleanliness", () => {
+  const reordered: FixtureDataset = {
+    ...source,
+    candidates: [...source.candidates].reverse(),
+    applications: [...source.applications].reverse(),
+  };
+  const report = reconcile(source, reordered);
+
+  assert.equal(report.clean, true);
+  assert.deepEqual(report.differences, []);
+  assert.equal(report.hashes.candidates.source, report.hashes.candidates.target);
+  assert.equal(report.hashes.applications.source, report.hashes.applications.target);
+});
+
 test("a missing row is reported by id against the right entity", () => {
   const target: FixtureDataset = { ...source, candidates: source.candidates.slice(1) };
 
