@@ -5,3 +5,5 @@ node_modules/
 *.sql.gz
 *.dump
 .DS_Store
+dist/
+coverage/
