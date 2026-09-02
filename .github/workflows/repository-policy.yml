@@ -20,7 +20,28 @@ jobs:
           awk '
             BEGIN { required["*"]; required["/.github/"] }
             /^[[:space:]]*#/ { next }
-            NF >= 2 && $2 == "@BAWES" { delete required[$1] }
-            END { exit length(required) }
+            NF == 0 { next }
+            {
+              has_required_owner = 0
+              for (i = 2; i <= NF; i++) {
+                if ($i == "@BAWES") {
+                  has_required_owner = 1
+                }
+              }
+              if (!has_required_owner) {
+                invalid = 1
+              }
+              if ($1 in required && has_required_owner) {
+                found[$1] = 1
+              }
+            }
+            END {
+              for (pattern in required) {
+                if (!found[pattern]) {
+                  invalid = 1
+                }
+              }
+              exit invalid
+            }
           ' .github/CODEOWNERS
           test -s .github/pull_request_template.md
