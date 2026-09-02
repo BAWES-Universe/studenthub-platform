@@ -17,5 +17,5 @@ jobs:
       - name: Verify repository ownership controls
         run: |
           test -s .github/CODEOWNERS
-          grep -Fq '* @BAWES' .github/CODEOWNERS
+          grep -Eq '^[[:space:]]*\*[[:space:]]+@BAWES([[:space:]]|$)' .github/CODEOWNERS
           test -s .github/pull_request_template.md
