@@ -8,7 +8,13 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts"]
+  "include": [
+    "apps/**/*.ts",
+    "packages/**/*.ts",
+    "tools/**/*.ts"
+  ]
 }
