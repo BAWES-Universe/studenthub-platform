@@ -1,0 +1,21 @@
+name: Repository Policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  repository-policy:
+    name: repository-policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify repository ownership controls
+        run: |
+          test -s .github/CODEOWNERS
+          grep -Fq '* @BAWES' .github/CODEOWNERS
+          test -s .github/pull_request_template.md
