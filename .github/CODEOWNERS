@@ -1,0 +1,5 @@
+# Default owner for every path. More-specific teams can be added as the fleet grows.
+* @BAWES
+
+# Repository controls always require the repository owner.
+/.github/ @BAWES

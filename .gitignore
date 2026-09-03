@@ -10,3 +10,4 @@ coverage/
 *.sql.gz
 *.dump
 .DS_Store
+dist/
