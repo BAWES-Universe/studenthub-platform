@@ -1,6 +1,11 @@
 node_modules/
+dist/
 .next/
-.env*
+.env
+.env.*
+!.env.example
+coverage/
+*.log
 *.sql
 *.sql.gz
 *.dump
