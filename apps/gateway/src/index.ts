@@ -8,6 +8,10 @@ import {
   type McpToolResult,
 } from "@studenthub/contracts";
 
+import { authorizeRequest, type AuthzMiddleware } from "./authz-middleware.js";
+
+export * from "./authz-middleware.js";
+
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
 
@@ -71,6 +75,7 @@ export class UnconfiguredMcpAdapter implements McpAdapter {
 export function createGatewayServer(
   adapter: McpAdapter = new UnconfiguredMcpAdapter(),
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
+  authz: AuthzMiddleware | undefined = undefined,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -84,6 +89,26 @@ export function createGatewayServer(
     }
 
     if (request.method === "POST" && request.url === "/mcp/tools/call") {
+      // SHU-49 authz skeleton: when a middleware is configured, gate the call
+      // BEFORE reading the body. Deny-by-default pipeline — see
+      // authz-middleware.ts. When it allows, the resolved active context has
+      // been derived server-side from grants (the future route layer reads it
+      // off the decision; no client-supplied role is ever trusted).
+      if (authz !== undefined) {
+        const raw = request.headers["x-actor-assertion"];
+        const assertionWire = Array.isArray(raw) ? raw[0] : raw;
+        const decision = await authorizeRequest(assertionWire, authz);
+        if (decision.kind === "deny") {
+          const body =
+            decision.status === 401
+              ? { ok: false, error: "unauthorized", reason: decision.reason }
+              : { ok: false, error: "forbidden", reason: decision.reason };
+          response.writeHead(decision.status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+          return;
+        }
+      }
+
       const bodyRead = await readRequestBody(request, maxRequestBytes);
       if (!bodyRead.ok) {
         if (!response.headersSent && !response.destroyed) {

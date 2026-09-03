@@ -12,7 +12,7 @@
     "build": "npm run build -w @studenthub/contracts && tsc -p tsconfig.build.json",
     "start:gateway": "node dist/apps/gateway/src/index.js",
     "start:worker": "node dist/apps/worker/src/index.js",
-    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/apps/gateway/test/health.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js",
+    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/packages/contracts/test/authz.test.js dist/apps/gateway/test/health.test.js dist/apps/gateway/test/authz-middleware.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js",
     "dry-run:import": "npm run build && node dist/tools/legacy-import/src/dry-run.js",
     "typecheck": "npm run build -w @studenthub/contracts && tsc --noEmit"
   },
