@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
-import { createGatewayServer, type UnconfiguredMcpAdapter } from "../src/index.js";
+import {
+  createGatewayServer,
+  readRequestBody,
+  type UnconfiguredMcpAdapter,
+} from "../src/index.js";
 
 async function listen(server: ReturnType<typeof createGatewayServer>): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -86,4 +90,33 @@ test("POST /mcp/tools/call maps adapter rejection to 502", async (context) => {
 
   assert.equal(response.status, 502);
   assert.equal(body.error, "adapter_failure");
+});
+
+test("request stream errors are contained", async () => {
+  const failingStream = (async function* () {
+    yield Buffer.from("partial");
+    throw new Error("client disconnected");
+  })();
+
+  assert.deepEqual(await readRequestBody(failingStream, 1024), {
+    ok: false,
+    error: "request_stream_error",
+  });
+});
+
+test("configured adapter failures do not return 501", async (context) => {
+  const server = createGatewayServer({
+    async callTool() {
+      return { ok: false, content: [{ type: "text", text: "tool failed" }] };
+    },
+  });
+  const origin = await listen(server);
+  context.after(() => server.close());
+
+  const response = await fetch(`${origin}/mcp/tools/call`, {
+    method: "POST",
+    body: JSON.stringify({ name: "student.search", arguments: {} }),
+  });
+
+  assert.equal(response.status, 502);
 });

@@ -10,6 +10,31 @@ import {
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 
+type RequestBodyReadResult =
+  | { readonly ok: true; readonly body: Buffer }
+  | { readonly ok: false; readonly error: "request_too_large" | "request_stream_error" };
+
+export async function readRequestBody(
+  stream: AsyncIterable<Uint8Array | string>,
+  maxRequestBytes: number,
+): Promise<RequestBodyReadResult> {
+  const chunks: Buffer[] = [];
+  let receivedBytes = 0;
+
+  try {
+    for await (const chunk of stream) {
+      const buffer = Buffer.from(chunk);
+      receivedBytes += buffer.byteLength;
+      if (receivedBytes > maxRequestBytes) return { ok: false, error: "request_too_large" };
+      chunks.push(buffer);
+    }
+  } catch {
+    return { ok: false, error: "request_stream_error" };
+  }
+
+  return { ok: true, body: Buffer.concat(chunks) };
+}
+
 function isMcpToolCall(value: unknown): value is McpToolCall {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 
@@ -48,23 +73,19 @@ export function createGatewayServer(
     }
 
     if (request.method === "POST" && request.url === "/mcp/tools/call") {
-      const chunks: Buffer[] = [];
-      let receivedBytes = 0;
-
-      for await (const chunk of request) {
-        const buffer = Buffer.from(chunk);
-        receivedBytes += buffer.byteLength;
-        if (receivedBytes > maxRequestBytes) {
-          response.writeHead(413, { "content-type": "application/json" });
-          response.end(JSON.stringify({ ok: false, error: "request_too_large" }));
-          return;
+      const bodyRead = await readRequestBody(request, maxRequestBytes);
+      if (!bodyRead.ok) {
+        if (!response.headersSent && !response.destroyed) {
+          const status = bodyRead.error === "request_too_large" ? 413 : 400;
+          response.writeHead(status, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: bodyRead.error }));
         }
-        chunks.push(buffer);
+        return;
       }
 
       let parsed: unknown;
       try {
-        parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+        parsed = JSON.parse(bodyRead.body.toString("utf8")) as unknown;
       } catch {
         response.writeHead(400, { "content-type": "application/json" });
         response.end(JSON.stringify({ ok: false, error: "invalid_request" }));
@@ -80,7 +101,8 @@ export function createGatewayServer(
       try {
         const call = parsed;
         const result = await adapter.callTool(call);
-        response.writeHead(result.ok ? 200 : 501, { "content-type": "application/json" });
+        const status = result.ok ? 200 : adapter instanceof UnconfiguredMcpAdapter ? 501 : 502;
+        response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(result));
       } catch {
         response.writeHead(502, { "content-type": "application/json" });
