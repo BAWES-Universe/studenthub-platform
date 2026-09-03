@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PLATFORM_CONTRACT_VERSION } from "../../../packages/contracts/src/index.js";
+import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import { createGatewayServer, type UnconfiguredMcpAdapter } from "../src/index.js";
 
 async function listen(server: ReturnType<typeof createGatewayServer>): Promise<string> {

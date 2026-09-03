@@ -11,8 +11,8 @@
     "build": "npm run build -w @studenthub/contracts && tsc -p tsconfig.build.json",
     "start:gateway": "node dist/apps/gateway/src/index.js",
     "start:worker": "node dist/apps/worker/src/index.js",
-    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/apps/gateway/test/health.test.js dist/apps/worker/test/heartbeat.test.js",
-    "typecheck": "tsc --noEmit"
+    "test": "npm run build && node --test \"dist/**/test/*.test.js\"",
+    "typecheck": "npm run build -w @studenthub/contracts && tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

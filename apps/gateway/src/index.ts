@@ -6,7 +6,7 @@ import {
   type McpAdapter,
   type McpToolCall,
   type McpToolResult,
-} from "../../../packages/contracts/src/index.js";
+} from "@studenthub/contracts";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 
