@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "mcp__Linear",
+      "mcp__github",
+      "mcp__Sentry",
+      "Read", "Glob", "Grep", "Edit", "Write", "TodoWrite", "Task",
+      "WebFetch", "WebSearch",
+      "Bash(git log:*)", "Bash(git show:*)", "Bash(git grep:*)", "Bash(git status:*)",
+      "Bash(git diff:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git ls-tree:*)",
+      "Bash(git ls-files:*)", "Bash(git rev-parse:*)", "Bash(git branch:*)", "Bash(git checkout:*)",
+      "Bash(git switch:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git stash:*)",
+      "Bash(git blame:*)", "Bash(git remote:*)", "Bash(git config:*)", "Bash(git merge:*)",
+      "Bash(git push:*)",
+      "Bash(grep:*)", "Bash(rg:*)", "Bash(cat:*)", "Bash(sed:*)", "Bash(awk:*)",
+      "Bash(ls:*)", "Bash(wc:*)", "Bash(find:*)", "Bash(head:*)", "Bash(tail:*)",
+      "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(tr:*)", "Bash(comm:*)",
+      "Bash(diff:*)", "Bash(date:*)", "Bash(echo:*)", "Bash(printf:*)",
+      "Bash(mkdir:*)", "Bash(touch:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)",
+      "Bash(test:*)", "Bash(which:*)", "Bash(jq:*)", "Bash(xargs:*)",
+      "Bash(basename:*)", "Bash(dirname:*)", "Bash(node:*)", "Bash(python3:*)",
+      "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)"
+    ],
+    "ask": [
+      "Bash(git reset:*)",
+      "Bash(git rebase:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git clean:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(npx prisma db push:*)"
+    ],
+    "deny": [
+      "Bash(mysql:*)", "Bash(mysqldump:*)", "Bash(psql:*)", "Bash(redis-cli:*)",
+      "Bash(ssh:*)", "Bash(scp:*)", "Bash(curl:*)", "Bash(wget:*)",
+      "Bash(aws:*)", "Bash(docker:*)", "Bash(kubectl:*)", "Bash(railway:*)",
+      "Read(**/.env)", "Read(**/.env.*)", "Read(**/*secret*)",
+      "Read(**/*credential*)", "Read(**/id_rsa*)", "Read(**/*.pem)"
+    ]
+  }
+}
