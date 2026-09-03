@@ -9,6 +9,7 @@ import {
 } from "@studenthub/contracts";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
+const DEFAULT_GATEWAY_PORT = 3000;
 
 type RequestBodyReadResult =
   | { readonly ok: true; readonly body: Buffer }
@@ -46,6 +47,16 @@ function isMcpToolCall(value: unknown): value is McpToolCall {
     candidate.arguments !== null &&
     !Array.isArray(candidate.arguments)
   );
+}
+
+export function parseGatewayPort(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_GATEWAY_PORT;
+
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new RangeError("PORT must be an integer between 1 and 65535");
+  }
+  return port;
 }
 
 export class UnconfiguredMcpAdapter implements McpAdapter {
@@ -118,7 +129,7 @@ export function createGatewayServer(
 
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
 if (entrypoint === import.meta.url) {
-  const port = Number.parseInt(process.env.PORT ?? "3000", 10);
+  const port = parseGatewayPort(process.env.PORT);
   createGatewayServer().listen(port, "127.0.0.1", () => {
     process.stdout.write(`studenthub gateway listening on http://127.0.0.1:${port}\n`);
   });

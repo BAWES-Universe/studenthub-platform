@@ -4,6 +4,7 @@ import test from "node:test";
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import {
   createGatewayServer,
+  parseGatewayPort,
   readRequestBody,
   type UnconfiguredMcpAdapter,
 } from "../src/index.js";
@@ -119,4 +120,13 @@ test("configured adapter failures do not return 501", async (context) => {
   });
 
   assert.equal(response.status, 502);
+});
+
+test("gateway port parsing rejects invalid configuration", () => {
+  assert.equal(parseGatewayPort(undefined), 3000);
+  assert.equal(parseGatewayPort("8080"), 8080);
+
+  for (const value of ["not-a-port", "3000x", "0", "65536", "1.5"]) {
+    assert.throws(() => parseGatewayPort(value), /PORT must be an integer/);
+  }
 });
