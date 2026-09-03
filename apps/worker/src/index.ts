@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-import { createHealthResponse, type HealthResponse } from "../../../packages/contracts/src/index.js";
+import { createHealthResponse, type HealthResponse } from "@studenthub/contracts";
 
 export function createWorkerHeartbeat(now: Date = new Date()): HealthResponse {
   return createHealthResponse("worker", now);
