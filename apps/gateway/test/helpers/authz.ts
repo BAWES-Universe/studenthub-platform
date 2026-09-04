@@ -4,7 +4,7 @@
  * destination-bound assertion for a principal that holds a real grant.
  */
 import {
-  AUTHENTIK_SUBJECT_POLICY,
+  UNIVERSE_SUBJECT_POLICY,
   generateEd25519KeyPair,
   MemoryReplayStore,
   signAssertion,
@@ -22,8 +22,8 @@ import { createAuthzMiddleware, type AuthzMiddleware } from "../../src/authz-mid
 export const TEST_ISSUER = "bawes.universe";
 export const TEST_KID = "k1";
 export const TEST_AUDIENCE = "studenthub/mcp/tools/call";
-/** Authentik-shaped subject (32 hex) so it satisfies the positive-subject rule. */
-export const TEST_SUB = "0123456789abcdef0123456789abcdef";
+/** Universe emits sub_mode=user_email, so a real subject is an email address. */
+export const TEST_SUB = "student@bawes.net";
 export const TEST_ORG = "org-root";
 
 export interface AuthzFixture {
@@ -59,7 +59,7 @@ export async function createAuthzFixture(): Promise<AuthzFixture> {
     store,
     registry,
     replayStore: new MemoryReplayStore(),
-    subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+    subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     expectedAudience: TEST_AUDIENCE,
   });
 

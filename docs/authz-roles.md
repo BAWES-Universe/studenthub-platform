@@ -75,6 +75,30 @@ shape.)*
    This is checked **after** signature verification, so policy never runs on
    unauthenticated input and subject shapes cannot be probed without a valid
    signature.
+
+   **`sub_mode` is per-provider.** Authentik sets it on each provider, not on
+   the instance, so two apps behind the same Authentik emit differently-shaped
+   subjects. Verified live (Khalid, 2026-09-04):
+
+   | Provider | `sub_mode` | Subject | Policy constant |
+   |---|---|---|---|
+   | Universe apps | `user_email` | the email address | `UNIVERSE_SUBJECT_POLICY` (= `USER_EMAIL_SUBJECT_POLICY`) |
+   | Coolify | `hashed_user_id` | opaque hex digest | `HASHED_USER_ID_SUBJECT_POLICY` |
+
+   A relying party picks the policy matching the provider it is registered
+   against. An earlier revision shipped a 32-hex/UUID pattern as "the Authentik
+   reference"; it matched neither live mode and would have denied every real
+   subject on first contact. A regression test now asserts that.
+
+   > **Open decision — email as subject is not a stable identity.**
+   > Under `user_email` the subject IS a mutable, reassignable attribute:
+   > changing a user's email in Authentik changes their `sub`, and reassigning
+   > an address to another person hands them the prior holder's grants. That is
+   > the same failure the legacy system has, where payments resolve by email
+   > lookup. The verifier matches what Universe emits today; moving Universe
+   > providers to `hashed_user_id` (or another opaque, immutable subject) before
+   > grants bind to money or personal records is a platform decision, not a
+   > code change in this PR.
 3. **Issuer-key registry contract** — every issuer has keys with
    `active | retired` status. Unknown `kid` and retired keys are hard denies;
    rotation never falls back to accepting anything. An assertion carries an

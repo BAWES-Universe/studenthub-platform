@@ -6,7 +6,9 @@ import {
   ActorAssertionClaims,
   MemoryReplayStore,
   AssertionErrorCode,
-  AUTHENTIK_SUBJECT_POLICY,
+  UNIVERSE_SUBJECT_POLICY,
+  USER_EMAIL_SUBJECT_POLICY,
+  HASHED_USER_ID_SUBJECT_POLICY,
 } from "../src/index.js";
 
 const ISS = "bawes.universe";
@@ -24,7 +26,7 @@ function claims(over: Partial<ActorAssertionClaims> = {}): ActorAssertionClaims 
     v: 1,
     iss: ISS,
     aud: AUD,
-    sub: "e5f2c9a1-4b7d-4a3e-9c8f-2d1b6a0e4f77",
+    sub: "student@bawes.net",
     iat: now,
     exp: now + 300,
     jti: crypto.randomUUID(),
@@ -42,8 +44,8 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims(), keyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
-      expectedSubject: "e5f2c9a1-4b7d-4a3e-9c8f-2d1b6a0e4f77",
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+      expectedSubject: "student@bawes.net",
     });
     expect(res.ok).toBe(true);
   });
@@ -55,7 +57,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     );
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.EXPIRED);
@@ -64,9 +66,9 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
   it("replayed jti fails closed on second use", async () => {
     const store = new MemoryReplayStore();
     const token = await signAssertion(claims(), keyPair.privateKeyPem);
-    const first = await verifyAssertion(token, resolver, store, { expectedAudience: AUD, subjectPolicy: AUTHENTIK_SUBJECT_POLICY });
+    const first = await verifyAssertion(token, resolver, store, { expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY });
     expect(first.ok).toBe(true);
-    const second = await verifyAssertion(token, resolver, store, { expectedAudience: AUD, subjectPolicy: AUTHENTIK_SUBJECT_POLICY });
+    const second = await verifyAssertion(token, resolver, store, { expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY });
     expect(second.ok).toBe(false);
     expect(second.code).toBe(AssertionErrorCode.REPLAYED);
   });
@@ -78,7 +80,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     );
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.AUD_MISMATCH);
@@ -88,8 +90,8 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims(), keyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
-      expectedSubject: "someone-else-uuid",
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+      expectedSubject: "someone-else@bawes.net",
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.WRONG_SUBJECT);
@@ -99,7 +101,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims({ sub: "guest" }), keyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.SUBJECT_FORMAT);
@@ -109,7 +111,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims({ sub: "anonymous" }), keyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.SUBJECT_FORMAT);
@@ -121,7 +123,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(c as unknown as ActorAssertionClaims, keyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
   });
@@ -129,7 +131,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
   it("malformed token fails closed", async () => {
     const res = await verifyAssertion("not-an-assertion", resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.MALFORMED);
@@ -139,11 +141,11 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims(), keyPair.privateKeyPem);
     const parts = token.split(".");
     const payload = JSON.parse(Buffer.from(parts[2]!, "base64url").toString());
-    payload.sub = "attacker-uuid";
+    payload.sub = "attacker@evil.example";
     const forged = `${parts[0]}.${parts[1]}.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.${parts[3]}`;
     const res = await verifyAssertion(forged, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.BAD_SIGNATURE);
@@ -154,7 +156,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const truncated = token.split(".").slice(0, 3).join(".");
     const res = await verifyAssertion(truncated, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.MALFORMED);
@@ -164,7 +166,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims({ iss: "attacker.issuer" }), otherKeyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.UNKNOWN_ISSUER);
@@ -174,7 +176,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     const token = await signAssertion(claims(), otherKeyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.BAD_SIGNATURE);
@@ -188,7 +190,7 @@ describe("actor assertion v1 — acceptance corpus (SHU-0031)", () => {
     );
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
     expect(res.code).toBe(AssertionErrorCode.FUTURE_IAT);
@@ -209,7 +211,7 @@ describe("standard amendments (SHU-49)", () => {
     );
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.claims.act).toEqual({ org: "org-acme", role: "recruiter" });
@@ -219,7 +221,7 @@ describe("standard amendments (SHU-49)", () => {
     const token = await signAssertion(claims(), keyPair.privateKeyPem);
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.claims.act).toBeUndefined();
@@ -232,17 +234,17 @@ describe("standard amendments (SHU-49)", () => {
     );
     const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
       expectedAudience: AUD,
-      subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     });
     expect(res.ok).toBe(false);
   });
 
   it("rejects machine subjects that no denylist would have enumerated", async () => {
-    for (const sub of ["anon", "system", "service-account-indexer", "svc:indexer"]) {
+    for (const sub of ["anon", "system", "service-account-indexer", "svc:indexer", "guest", "e5f2c9a1-4b7d-4a3e-9c8f-2d1b6a0e4f77"]) {
       const token = await signAssertion(claims({ sub }), keyPair.privateKeyPem);
       const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
         expectedAudience: AUD,
-        subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+        subjectPolicy: UNIVERSE_SUBJECT_POLICY,
       });
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.code).toBe(AssertionErrorCode.SUBJECT_FORMAT);
@@ -254,10 +256,52 @@ describe("standard amendments (SHU-49)", () => {
       iss === ISS && kid === "k1" ? keyPair.publicKeyPem : undefined;
     const good = await signAssertion(claims({ kid: "k1" }), keyPair.privateKeyPem);
     const bad = await signAssertion(claims({ kid: "retired" }), keyPair.privateKeyPem);
-    const opts = { expectedAudience: AUD, subjectPolicy: AUTHENTIK_SUBJECT_POLICY };
+    const opts = { expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY };
     expect((await verifyAssertion(good, byKid, new MemoryReplayStore(), opts)).ok).toBe(true);
     const res = await verifyAssertion(bad, byKid, new MemoryReplayStore(), opts);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.code).toBe(AssertionErrorCode.UNKNOWN_ISSUER);
+  });
+});
+
+describe("subject policy matches what live Authentik emits (SHU-49)", () => {
+  it("accepts a real Universe subject — sub_mode=user_email", async () => {
+    const token = await signAssertion(claims({ sub: "khalid@bawes.net" }), keyPair.privateKeyPem);
+    const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
+      expectedAudience: AUD,
+      subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("the withdrawn 32-hex/UUID reference pattern would have denied every real subject", () => {
+    // Regression guard for the pattern this file shipped before 2026-09-04.
+    const withdrawn =
+      /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+    for (const realSubject of ["khalid@bawes.net", "student@bawes.net", "a.b+c@sub.example.org"]) {
+      expect(withdrawn.test(realSubject)).toBe(false);
+      expect(USER_EMAIL_SUBJECT_POLICY.humanSubjectPattern.test(realSubject)).toBe(true);
+    }
+  });
+
+  it("sub_mode is per-provider: the two live modes do not accept each other", () => {
+    const email = "khalid@bawes.net";
+    const hashed = "9f1c2b7e4a6d8f0b3c5e7a9d1f2b4c6e";
+    expect(USER_EMAIL_SUBJECT_POLICY.humanSubjectPattern.test(email)).toBe(true);
+    expect(USER_EMAIL_SUBJECT_POLICY.humanSubjectPattern.test(hashed)).toBe(false);
+    expect(HASHED_USER_ID_SUBJECT_POLICY.humanSubjectPattern.test(hashed)).toBe(true);
+    expect(HASHED_USER_ID_SUBJECT_POLICY.humanSubjectPattern.test(email)).toBe(false);
+  });
+
+  it("still rejects machine and malformed subjects under the email mode", async () => {
+    for (const sub of ["anonymous", "service-account-indexer", "no-at-sign", "@bawes.net", "a@b"]) {
+      const token = await signAssertion(claims({ sub }), keyPair.privateKeyPem);
+      const res = await verifyAssertion(token, resolver, new MemoryReplayStore(), {
+        expectedAudience: AUD,
+        subjectPolicy: UNIVERSE_SUBJECT_POLICY,
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.code).toBe(AssertionErrorCode.SUBJECT_FORMAT);
+    }
   });
 });

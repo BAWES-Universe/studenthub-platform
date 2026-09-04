@@ -18,14 +18,52 @@ export interface SubjectPolicy {
 }
 
 /**
- * Reference policy for Authentik, whose `sub` is a 32-char hex user id or a
- * UUID. Deployments on another IdP must supply their own — this constant is a
- * starting point, never an implicit default.
+ * Subject policies per Authentik `sub_mode`.
+ *
+ * `sub_mode` is configured PER PROVIDER in Authentik, not per instance, so two
+ * apps behind the same Authentik emit differently-shaped subjects. A relying
+ * party must pick the policy matching the provider it is registered against —
+ * there is no single correct pattern, and no default.
+ *
+ * Verified on live Authentik (Khalid, 2026-09-04):
+ *   Universe apps -> sub_mode = user_email      (sub IS the email address)
+ *   Coolify       -> sub_mode = hashed_user_id  (sub is an opaque hex digest)
+ *
+ * An earlier revision of this file shipped a 32-hex/UUID pattern as the
+ * "Authentik reference". It matched NEITHER live mode and would have denied
+ * every real subject the moment a genuine assertion arrived.
  */
-export const AUTHENTIK_SUBJECT_POLICY: SubjectPolicy = Object.freeze({
-  humanSubjectPattern:
-    /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/,
+
+/**
+ * `sub_mode = user_email`. The subject is an email address.
+ *
+ * SECURITY NOTE — read before adopting this for the identity spine. An email
+ * is a mutable, reassignable attribute, so under this mode `sub` is not a
+ * stable identifier: changing a user's email in Authentik changes their
+ * subject, and reassigning an address to another person hands them the prior
+ * holder's grants. Prefer `hashed_user_id` (or any opaque, immutable subject)
+ * for anything that binds to money, roles or personal records. Tracked as a
+ * platform decision; this constant exists so the verifier matches what
+ * Universe emits TODAY, not because email-as-subject is the right end state.
+ *
+ * Shape check only — deliberately permissive about local-part characters. It
+ * asserts "this is an email-shaped subject", never that the address is valid,
+ * deliverable, or owned by the caller.
+ */
+export const USER_EMAIL_SUBJECT_POLICY: SubjectPolicy = Object.freeze({
+  humanSubjectPattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
 });
+
+/** `sub_mode = hashed_user_id`. Opaque lowercase hex digest (Coolify today). */
+export const HASHED_USER_ID_SUBJECT_POLICY: SubjectPolicy = Object.freeze({
+  humanSubjectPattern: /^[0-9a-f]{32,128}$/,
+});
+
+/**
+ * What the Universe providers emit today. Aliased rather than inlined so a
+ * future `sub_mode` change is a one-line edit with a single place to review.
+ */
+export const UNIVERSE_SUBJECT_POLICY: SubjectPolicy = USER_EMAIL_SUBJECT_POLICY;
 
 export enum AssertionErrorCode {
   MALFORMED = "MALFORMED",

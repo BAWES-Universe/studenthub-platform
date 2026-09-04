@@ -21,7 +21,7 @@
  * Stages 1-3 are authentication failures (401); stage 4 is authorization (403).
  */
 import {
-  AUTHENTIK_SUBJECT_POLICY,
+  UNIVERSE_SUBJECT_POLICY,
   AssertionErrorCode,
   MemoryReplayStore,
   verifyAssertion,
@@ -150,7 +150,7 @@ export function createDenyAllAuthzMiddleware(): AuthzMiddleware {
     store: new InMemoryAuthzStore(),
     registry: new InMemoryIssuerKeyRegistry(),
     replayStore: new MemoryReplayStore(),
-    subjectPolicy: AUTHENTIK_SUBJECT_POLICY,
+    subjectPolicy: UNIVERSE_SUBJECT_POLICY,
     expectedAudience: "unconfigured://deny-all",
   });
 }
