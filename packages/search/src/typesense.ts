@@ -281,7 +281,10 @@ function facetOptions(
     throw new CandidateSearchUnavailableError(`Typesense omitted facet counts for ${expectedField}`);
   }
   const facet = result?.facet_counts?.find((candidate) => candidate.field_name === expectedField);
-  if (!facet || !Array.isArray(facet.counts)) {
+  if (!facet) {
+    return activeValues.map((value) => ({ value, count: 0, active: true }));
+  }
+  if (!Array.isArray(facet.counts)) {
     throw new CandidateSearchUnavailableError(`Typesense returned invalid facet counts for ${expectedField}`);
   }
   const counts = new Map<string, number>();
