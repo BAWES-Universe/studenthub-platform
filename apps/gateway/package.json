@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@studenthub/contracts": "0.1.0"
+    "@studenthub/contracts": "0.1.0",
+    "@bawes/actor-assertion": "*"
   }
 }

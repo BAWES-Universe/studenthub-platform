@@ -8,6 +8,14 @@ import {
   type McpToolResult,
 } from "@studenthub/contracts";
 
+import {
+  authorizeRequest,
+  createDenyAllAuthzMiddleware,
+  type AuthzMiddleware,
+} from "./authz-middleware.js";
+
+export * from "./authz-middleware.js";
+
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
 
@@ -71,6 +79,7 @@ export class UnconfiguredMcpAdapter implements McpAdapter {
 export function createGatewayServer(
   adapter: McpAdapter = new UnconfiguredMcpAdapter(),
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
+  authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -84,6 +93,36 @@ export function createGatewayServer(
     }
 
     if (request.method === "POST" && request.url === "/mcp/tools/call") {
+      // Gate the call BEFORE reading the body. There is no unauthenticated
+      // path: `authz` has no undefined case, and its default denies every
+      // request. When it allows, the active context has been derived
+      // server-side from grants — no client-supplied role is ever trusted.
+      {
+        const raw = request.headers["x-actor-assertion"];
+        const assertionWire = Array.isArray(raw) ? raw[0] : raw;
+        // authorizeRequest is awaited inside an async listener: an escaping
+        // rejection would send no response and can terminate the process under
+        // Node's default unhandled-rejection policy. Dependency failures become
+        // 503 and still never reach the adapter.
+        let decision: Awaited<ReturnType<typeof authorizeRequest>>;
+        try {
+          decision = await authorizeRequest(assertionWire, authz);
+        } catch {
+          response.writeHead(503, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "authz_unavailable" }));
+          return;
+        }
+        if (decision.kind === "deny") {
+          const body =
+            decision.status === 401
+              ? { ok: false, error: "unauthorized", reason: decision.reason }
+              : { ok: false, error: "forbidden", reason: decision.reason };
+          response.writeHead(decision.status, { "content-type": "application/json" });
+          response.end(JSON.stringify(body));
+          return;
+        }
+      }
+
       const bodyRead = await readRequestBody(request, maxRequestBytes);
       if (!bodyRead.ok) {
         if (!response.headersSent && !response.destroyed) {
