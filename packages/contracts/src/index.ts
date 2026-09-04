@@ -1,4 +1,14 @@
-export const PLATFORM_CONTRACT_VERSION = "1.0.0" as const;
+import { CONTRACT_VERSIONS } from "./versions.js";
+
+export * from "./versions.js";
+export * from "./authz/index.js";
+
+/**
+ * Wire-compatible alias kept for existing consumers (gateway/worker health
+ * envelopes and their tests). Per-contract versioning lives in
+ * CONTRACT_VERSIONS — new contracts must read their own slot instead of this.
+ */
+export const PLATFORM_CONTRACT_VERSION = CONTRACT_VERSIONS.health;
 
 export type PlatformComponent = "gateway" | "worker";
 
