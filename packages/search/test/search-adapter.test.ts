@@ -95,6 +95,25 @@ test("an explicitly empty visibility scope fails closed without a request", asyn
   assert.deepEqual(result.facets.country, [{ value: "KW", count: 0, active: true }]);
 });
 
+test("returns empty facet options when Typesense omits a zero-result facet", async () => {
+  const adapter = new TypesenseCandidateSearchAdapter({
+    url: "https://search.example.invalid",
+    apiKey: "test-key",
+    fetch: async () => {
+      const payload = await successfulResponse().json() as { results: Array<Record<string, unknown>> };
+      payload.results[1] = { found: 0, hits: [], facet_counts: [] };
+      return Response.json(payload);
+    },
+  });
+
+  const result = await adapter.search({
+    scope: { kind: "all" },
+    filters: { country: ["KW"] },
+  });
+
+  assert.deepEqual(result.facets.country, [{ value: "KW", count: 0, active: true }]);
+});
+
 test("rejects unsafe configuration and unbounded requests", async () => {
   assert.throws(
     () => new TypesenseCandidateSearchAdapter({ url: "http://search.example.invalid", apiKey: "key" }),
