@@ -6,6 +6,7 @@ on:
       - "packages/search/**"
       - "packages/contracts/src/search.ts"
       - "packages/contracts/src/versions.ts"
+      - "packages/contracts/src/index.ts"
       - ".github/workflows/search-adapter.yml"
       - "package.json"
       - "package-lock.json"
