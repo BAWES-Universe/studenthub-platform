@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
-import { datasetDigest, generateSearchCandidates, matchesFilters, SEARCH_WORKLOAD, type SearchCandidate } from "./dataset.js";
+import { datasetDigest, facetCounts, FACET_FIELDS, generateSearchCandidates, matchesFilters, SEARCH_WORKLOAD, type FacetCounts, type SearchCandidate } from "./dataset.js";
 import { MeilisearchEngine, TypesenseEngine, type SearchEngine } from "./engines.js";
 import { percentile, roundMilliseconds } from "./metrics.js";
 
@@ -12,7 +12,7 @@ interface EngineResult {
   readonly indexingMs: number;
   readonly p50Ms: number;
   readonly p95Ms: number;
-  readonly correctness: { readonly passed: number; readonly total: number };
+  readonly correctness: { readonly passed: number; readonly total: number; readonly facetCasesPassed: number; readonly facetCasesTotal: number };
 }
 
 function valueAfter(flag: string, fallback: string): string {
@@ -34,11 +34,18 @@ async function benchmark(engine: SearchEngine, documents: readonly SearchCandida
   const expectedTotals = new Map(
     SEARCH_WORKLOAD.map((query) => [query.name, documents.filter((candidate) => matchesFilters(candidate, query.filters)).length]),
   );
+  const expectedFacets = new Map(
+    SEARCH_WORKLOAD.filter((query) => query.query === "").map((query) => [
+      query.name,
+      facetCounts(documents.filter((candidate) => matchesFilters(candidate, query.filters))),
+    ]),
+  );
   const started = performance.now();
   await engine.resetAndIndex(documents);
   const indexingMs = performance.now() - started;
   const samples: number[] = [];
   let passed = 0;
+  let facetCasesPassed = 0;
 
   for (const query of SEARCH_WORKLOAD) {
     for (let warmup = 0; warmup < 3; warmup += 1) await engine.search(query);
@@ -51,9 +58,13 @@ async function benchmark(engine: SearchEngine, documents: readonly SearchCandida
       if (returned.length !== result.ids.length) queryCorrect = false;
       if (returned.some((candidate) => !matchesFilters(candidate, query.filters))) queryCorrect = false;
       if (query.expectedId && !result.ids.includes(query.expectedId)) queryCorrect = false;
-      if (!query.expectedId && result.total !== expectedTotals.get(query.name)) queryCorrect = false;
+      if (query.query === "" && result.total !== expectedTotals.get(query.name)) queryCorrect = false;
+      if (query.query === "" && !sameFacetCounts(result.facets, expectedFacets.get(query.name)!)) queryCorrect = false;
     }
-    if (queryCorrect) passed += 1;
+    if (queryCorrect) {
+      passed += 1;
+      if (query.query === "") facetCasesPassed += 1;
+    }
   }
 
   return {
@@ -61,8 +72,16 @@ async function benchmark(engine: SearchEngine, documents: readonly SearchCandida
     indexingMs: roundMilliseconds(indexingMs),
     p50Ms: roundMilliseconds(percentile(samples, 0.5)),
     p95Ms: roundMilliseconds(percentile(samples, 0.95)),
-    correctness: { passed, total: SEARCH_WORKLOAD.length },
+    correctness: { passed, total: SEARCH_WORKLOAD.length, facetCasesPassed, facetCasesTotal: expectedFacets.size },
   };
+}
+
+export function sameFacetCounts(actual: FacetCounts, expected: FacetCounts): boolean {
+  return FACET_FIELDS.every((field) => {
+    const actualEntries = Object.entries(actual[field]).sort(([left], [right]) => left.localeCompare(right));
+    const expectedEntries = Object.entries(expected[field]).sort(([left], [right]) => left.localeCompare(right));
+    return JSON.stringify(actualEntries) === JSON.stringify(expectedEntries);
+  });
 }
 
 export function recommend(results: readonly EngineResult[]): string {
@@ -76,8 +95,8 @@ export function recommend(results: readonly EngineResult[]): string {
 }
 
 function markdown(documents: number, digest: string, iterations: number, results: readonly EngineResult[], recommendation: string): string {
-  const rows = results.map((result) => `| ${result.engine} | ${result.indexingMs} | ${result.p50Ms} | ${result.p95Ms} | ${result.correctness.passed}/${result.correctness.total} |`).join("\n");
-  return `# SHU-47 search bake-off\n\nSynthetic documents: ${documents}  \nDataset SHA-256: \`${digest}\`  \nMeasured queries per workload: ${iterations}\n\n| Engine | Index ms | Warm p50 ms | Warm p95 ms | Correctness |\n|---|---:|---:|---:|---:|\n${rows}\n\n**Recommendation:** ${recommendation}\n\nResults are directional for this CI runner and must not be treated as production capacity figures.\n`;
+  const rows = results.map((result) => `| ${result.engine} | ${result.indexingMs} | ${result.p50Ms} | ${result.p95Ms} | ${result.correctness.passed}/${result.correctness.total} | ${result.correctness.facetCasesPassed}/${result.correctness.facetCasesTotal} |`).join("\n");
+  return `# SHU-47 search bake-off\n\nSynthetic documents: ${documents}  \nDataset SHA-256: \`${digest}\`  \nMeasured queries per workload: ${iterations}\n\n| Engine | Index ms | Warm p50 ms | Warm p95 ms | Correctness | Live facet counts |\n|---|---:|---:|---:|---:|---:|\n${rows}\n\n**Recommendation:** ${recommendation}\n\nFacet parity covers country, university, company, skill, gender, profile, assignment and document buckets after each filter combination. Results are directional for this CI runner and must not be treated as production capacity figures.\n`;
 }
 
 export function markdownOutputPath(jsonOutput: string): string {
