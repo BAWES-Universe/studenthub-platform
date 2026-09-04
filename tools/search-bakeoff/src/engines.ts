@@ -1,8 +1,9 @@
-import type { QueryCase, SearchCandidate } from "./dataset.js";
+import { FACET_FIELDS, type FacetCounts, type FacetField, type QueryCase, type SearchCandidate } from "./dataset.js";
 
 export interface SearchResult {
   readonly ids: readonly string[];
   readonly total: number;
+  readonly facets: FacetCounts;
 }
 
 export interface SearchEngine {
@@ -22,9 +23,14 @@ function meiliFilter(filters: QueryCase["filters"]): readonly string[] {
   const entries: string[] = [];
   if (filters.country) entries.push(`country = ${JSON.stringify(filters.country)}`);
   if (filters.university) entries.push(`university = ${JSON.stringify(filters.university)}`);
+  if (filters.company) entries.push(`company = ${JSON.stringify(filters.company)}`);
+  if (filters.gender) entries.push(`gender = ${JSON.stringify(filters.gender)}`);
+  if (filters.profile) entries.push(`profile = ${JSON.stringify(filters.profile)}`);
+  if (filters.assignment) entries.push(`assignment = ${JSON.stringify(filters.assignment)}`);
   if (filters.status) entries.push(`status = ${JSON.stringify(filters.status)}`);
   if (filters.approved !== undefined) entries.push(`approved = ${String(filters.approved)}`);
   if (filters.skill) entries.push(`skills = ${JSON.stringify(filters.skill)}`);
+  if (filters.document) entries.push(`documents = ${JSON.stringify(filters.document)}`);
   return entries;
 }
 
@@ -33,10 +39,27 @@ function typesenseFilter(filters: QueryCase["filters"]): string {
   const escape = (value: string) => `\`${value.replaceAll("`", "\\`")}\``;
   if (filters.country) entries.push(`country:=${escape(filters.country)}`);
   if (filters.university) entries.push(`university:=${escape(filters.university)}`);
+  if (filters.company) entries.push(`company:=${escape(filters.company)}`);
+  if (filters.gender) entries.push(`gender:=${escape(filters.gender)}`);
+  if (filters.profile) entries.push(`profile:=${escape(filters.profile)}`);
+  if (filters.assignment) entries.push(`assignment:=${escape(filters.assignment)}`);
   if (filters.status) entries.push(`status:=${escape(filters.status)}`);
   if (filters.approved !== undefined) entries.push(`approved:=${String(filters.approved)}`);
   if (filters.skill) entries.push(`skills:=${escape(filters.skill)}`);
+  if (filters.document) entries.push(`documents:=${escape(filters.document)}`);
   return entries.join(" && ");
+}
+
+function emptyFacetCounts(): Record<FacetField, Record<string, number>> {
+  return Object.fromEntries(FACET_FIELDS.map((field) => [field, {}])) as Record<FacetField, Record<string, number>>;
+}
+
+function normalizeFacetCounts(input: Partial<Record<FacetField, Record<string, number>>>): FacetCounts {
+  const normalized = emptyFacetCounts();
+  for (const field of FACET_FIELDS) {
+    for (const [value, count] of Object.entries(input[field] ?? {})) normalized[field][value] = count;
+  }
+  return normalized;
 }
 
 interface MeiliTask { readonly taskUid: number; readonly status?: string; readonly error?: unknown }
@@ -73,7 +96,7 @@ export class MeilisearchEngine implements SearchEngine {
     const settings = await jsonRequest<MeiliTask>(`${this.baseUrl}/indexes/${this.index}/settings`, {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({
         searchableAttributes: ["name", "email", "phone", "skills"],
-        filterableAttributes: ["country", "university", "skills", "status", "approved"],
+        filterableAttributes: [...FACET_FIELDS, "status", "approved"],
         sortableAttributes: ["score"],
         pagination: { maxTotalHits: documents.length },
       }),
@@ -88,12 +111,12 @@ export class MeilisearchEngine implements SearchEngine {
   }
 
   async search(query: QueryCase): Promise<SearchResult> {
-    const result = await jsonRequest<{ hits: Array<{ id: string }>; totalHits: number }>(`${this.baseUrl}/indexes/${this.index}/search`, {
+    const result = await jsonRequest<{ hits: Array<{ id: string }>; totalHits: number; facetDistribution: Partial<Record<FacetField, Record<string, number>>> }>(`${this.baseUrl}/indexes/${this.index}/search`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
-        q: query.query, filter: meiliFilter(query.filters), facets: ["country", "university", "skills"], page: 1, hitsPerPage: 50,
+        q: query.query, filter: meiliFilter(query.filters), facets: FACET_FIELDS, page: 1, hitsPerPage: 50,
       }),
     });
-    return { ids: result.hits.map((hit) => hit.id), total: result.totalHits };
+    return { ids: result.hits.map((hit) => hit.id), total: result.totalHits, facets: normalizeFacetCounts(result.facetDistribution) };
   }
 }
 
@@ -122,7 +145,10 @@ export class TypesenseEngine implements SearchEngine {
       method: "POST", headers: this.headers("application/json"), body: JSON.stringify({ name: this.collection, fields: [
         { name: "id", type: "string" }, { name: "name", type: "string" }, { name: "email", type: "string" },
         { name: "phone", type: "string" }, { name: "country", type: "string", facet: true },
-        { name: "university", type: "string", facet: true }, { name: "skills", type: "string[]", facet: true },
+        { name: "university", type: "string", facet: true }, { name: "company", type: "string", facet: true, optional: true },
+        { name: "skills", type: "string[]", facet: true }, { name: "gender", type: "string", facet: true },
+        { name: "profile", type: "string", facet: true }, { name: "assignment", type: "string", facet: true },
+        { name: "documents", type: "string[]", facet: true },
         { name: "status", type: "string", facet: true }, { name: "approved", type: "bool", facet: true },
         { name: "score", type: "int32", sort: true },
       ] }),
@@ -141,11 +167,16 @@ export class TypesenseEngine implements SearchEngine {
 
   async search(query: QueryCase): Promise<SearchResult> {
     const params = new URLSearchParams({
-      q: query.query || "*", query_by: "name,email,phone,skills", facet_by: "country,university,skills", per_page: "50",
+      q: query.query || "*", query_by: "name,email,phone,skills", facet_by: FACET_FIELDS.join(","), max_facet_values: "100", per_page: "50",
     });
     const filter = typesenseFilter(query.filters);
     if (filter) params.set("filter_by", filter);
-    const result = await jsonRequest<{ found: number; hits: Array<{ document: { id: string } }> }>(`${this.baseUrl}/collections/${this.collection}/documents/search?${params}`, { headers: this.headers() });
-    return { ids: result.hits.map((hit) => hit.document.id), total: result.found };
+    const result = await jsonRequest<{ found: number; hits: Array<{ document: { id: string } }>; facet_counts: Array<{ field_name: FacetField; counts: Array<{ value: string; count: number }> }> }>(`${this.baseUrl}/collections/${this.collection}/documents/search?${params}`, { headers: this.headers() });
+    const facets = emptyFacetCounts();
+    for (const facet of result.facet_counts) {
+      if (!FACET_FIELDS.includes(facet.field_name)) continue;
+      for (const item of facet.counts) facets[facet.field_name][item.value] = item.count;
+    }
+    return { ids: result.hits.map((hit) => hit.document.id), total: result.found, facets };
   }
 }
