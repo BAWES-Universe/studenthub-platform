@@ -1,0 +1,54 @@
+name: Search bake-off
+
+on:
+  pull_request:
+    paths:
+      - "tools/search-bakeoff/**"
+      - ".github/workflows/search-bakeoff.yml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      meilisearch:
+        # Meilisearch v1.53.1
+        image: getmeili/meilisearch@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431
+        ports:
+          - 7700:7700
+      typesense:
+        # Typesense v30.2
+        image: typesense/typesense@sha256:610f2d34b1f93d00762869da2c67736775e5798d19a2c8b91b014b8a0cc1e110
+        env:
+          TYPESENSE_API_KEY: shu47-ci-key
+          TYPESENSE_DATA_DIR: /tmp
+        ports:
+          - 8108:8108
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run reproducible benchmark
+        env:
+          TYPESENSE_API_KEY: shu47-ci-key
+        run: npm run benchmark:search -- --documents 20000 --iterations 40 --output benchmark-results/search-bakeoff.json
+      - name: Publish summary
+        if: always()
+        run: if test -f benchmark-results/search-bakeoff.md; then sed -n '1,200p' benchmark-results/search-bakeoff.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('benchmark-results/*') != ''
+        with:
+          name: shu-47-search-bakeoff
+          path: benchmark-results/
+          if-no-files-found: error
