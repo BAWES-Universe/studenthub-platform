@@ -2,6 +2,7 @@ import { CONTRACT_VERSIONS } from "./versions.js";
 
 export * from "./versions.js";
 export * from "./authz/index.js";
+export * from "./search.js";
 
 /**
  * Wire-compatible alias kept for existing consumers (gateway/worker health
