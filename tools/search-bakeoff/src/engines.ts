@@ -59,9 +59,12 @@ export class MeilisearchEngine implements SearchEngine {
   }
 
   async resetAndIndex(documents: readonly SearchCandidate[]): Promise<void> {
-    const deletion = await fetch(`${this.baseUrl}/indexes/${this.index}`, { method: "DELETE" });
-    if (!deletion.ok && deletion.status !== 404) throw new Error(`Meilisearch delete failed (${deletion.status})`);
-    if (deletion.ok) await this.waitFor(((await deletion.json()) as MeiliTask).taskUid);
+    const existing = await fetch(`${this.baseUrl}/indexes/${this.index}`);
+    if (!existing.ok && existing.status !== 404) throw new Error(`Meilisearch index lookup failed (${existing.status})`);
+    if (existing.ok) {
+      const deletion = await jsonRequest<MeiliTask>(`${this.baseUrl}/indexes/${this.index}`, { method: "DELETE" });
+      await this.waitFor(deletion.taskUid);
+    }
 
     const created = await jsonRequest<MeiliTask>(`${this.baseUrl}/indexes`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ uid: this.index, primaryKey: "id" }),
