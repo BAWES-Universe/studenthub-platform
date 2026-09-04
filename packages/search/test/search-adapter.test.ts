@@ -132,6 +132,32 @@ test("rejects unsafe configuration and unbounded requests", async () => {
     adapter.search({ scope: { kind: "all" }, filters: { company: ["Atlas` || approved:=true"] } }),
     /unsupported syntax characters/,
   );
+  await assert.rejects(
+    adapter.search({ scope: { kind: "all" }, filters: null } as never),
+    /filters must be an object/,
+  );
+  await assert.rejects(
+    adapter.search({ scope: { kind: "all" }, constraints: [] } as never),
+    /constraints must be an object/,
+  );
+});
+
+test("refuses redirects before an API-key request can be forwarded", async () => {
+  let redirect: RequestRedirect | undefined;
+  const adapter = new TypesenseCandidateSearchAdapter({
+    url: "https://search.example.invalid",
+    apiKey: "test-key",
+    fetch: async (_input, init) => {
+      redirect = init?.redirect;
+      throw new TypeError("redirect blocked");
+    },
+  });
+
+  await assert.rejects(
+    adapter.search({ scope: { kind: "all" } }),
+    CandidateSearchUnavailableError,
+  );
+  assert.equal(redirect, "error");
 });
 
 test("maps transport, status and malformed payload failures to unavailable", async () => {
