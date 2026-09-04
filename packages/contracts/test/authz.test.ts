@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ACTOR_ASSERTION_FORMAT_VERSION,
   AUTHZ_CONTRACT_VERSION,
   CONTRACT_VERSIONS,
   PLATFORM_CONTRACT_VERSION,
@@ -12,24 +11,17 @@ import {
   InMemoryIssuerKeyRegistry,
   ISSUER_KEY_ALGORITHMS,
   ancestorOrgIdsIncludingSelf,
-  assertionActToContextSelection,
-  assertionToRequestIdentity,
+  claimsActToContextSelection,
+  claimsToRequestIdentity,
   contractVersion,
   createOrganization,
   createPrincipal,
-  decodeActorAssertion,
   descendantOrgIdsIncludingSelf,
-  encodeActorAssertion,
-  isPositiveAssertionSubject,
   isRole,
   isSameOrDescendantOf,
   listEffectiveContexts,
   normalizeGrantEntry,
-  parseActorAssertion,
   resolveActiveContext,
-  type ActorAssertion,
-  type ActorAssertionAct,
-  type AssertionSubject,
   type AuthzStore,
   type ContextSelection,
   type DenialReason,
@@ -86,25 +78,6 @@ async function expectDenied(
   if (resolution.kind === "denied") assert.equal(resolution.reason, reason);
 }
 
-function assertionFor(
-  subject: AssertionSubject,
-  act?: ActorAssertionAct,
-): ActorAssertion {
-  return {
-    formatVersion: ACTOR_ASSERTION_FORMAT_VERSION,
-    issuer: "authentik",
-    keyId: "k1",
-    subject,
-    issuedAt: "2026-09-03T00:00:00.000Z",
-    ...(act !== undefined ? { act } : {}),
-  };
-}
-
-const principalSubject = (principalId: string): AssertionSubject => ({
-  kind: "principal",
-  principalId,
-});
-const pbuuidSubject = (pbuuid: string): AssertionSubject => ({ kind: "pbuuid", pbuuid });
 
 // ---------------------------------------------------------------------------
 // Roles: the closed, versioned role set
@@ -475,101 +448,58 @@ test("authz: nearest ancestor wins when several subtree grants cover the same or
 // Actor assertions: positive subject (amendment b), optional act (a), wire v1
 // ---------------------------------------------------------------------------
 
-test("assertion: v1 wire format round-trips encode -> decode unchanged", () => {
-  const withoutAct = assertionFor(principalSubject("alice"));
-  assert.deepEqual(decodeActorAssertion(encodeActorAssertion(withoutAct)), withoutAct);
-
-  const withAct = assertionFor(pbuuidSubject("pbuuid-alice-1"), { orgId: ACME, role: "recruiter" });
-  assert.deepEqual(decodeActorAssertion(encodeActorAssertion(withAct)), withAct);
+test("assertion adapter: a verified subject maps onto the resolver identity", () => {
+  assert.deepEqual(claimsToRequestIdentity({ sub: "sub-123" }), {
+    kind: "pbuuid",
+    pbuuid: "sub-123",
+  });
 });
 
-test("assertion: positive subject is REQUIRED — and there is no guest denylist", () => {
-  assert.equal(isPositiveAssertionSubject({ kind: "principal", principalId: "alice" }), true);
-  assert.equal(isPositiveAssertionSubject({ kind: "pbuuid", pbuuid: "p-1" }), true);
-
-  assert.equal(isPositiveAssertionSubject(undefined), false);
-  assert.equal(isPositiveAssertionSubject({}), false);
-  assert.equal(isPositiveAssertionSubject({ kind: "principal", principalId: "" }), false);
-  assert.equal(isPositiveAssertionSubject({ kind: "principal", principalId: "   " }), false);
-  assert.equal(isPositiveAssertionSubject({ kind: "guest" }), false);
-
-  // The positive rule means ANY non-empty opaque id is a candidate subject —
-  // "guest" gets no special casing at parse time, and resolution denies it
-  // like any id without a grant. No denylist string is ever consulted.
-  assert.equal(isPositiveAssertionSubject({ kind: "principal", principalId: "guest" }), true);
-  assert.equal(isPositiveAssertionSubject({ kind: "pbuuid", pbuuid: "anonymous" }), true);
-});
-
-test("assertion: parse rejects malformed, version-mismatched and subject-less claims", () => {
-  assert.throws(() => parseActorAssertion(undefined), TypeError);
-  assert.throws(() => parseActorAssertion("nope"), TypeError);
-  assert.throws(
-    () => parseActorAssertion({ ...assertionFor(principalSubject("alice")), formatVersion: "9.9.9" }),
-    /unsupported actor assertion format version/,
-  );
-  assert.throws(
-    () => parseActorAssertion({ ...assertionFor(principalSubject("alice")), subject: undefined }),
-    /positive subject/,
-  );
-  assert.throws(
-    () => parseActorAssertion({ ...assertionFor(principalSubject("alice")), issuer: "  " }),
-    TypeError,
-  );
-  assert.throws(
-    () => parseActorAssertion(assertionFor(principalSubject("alice"), { orgId: "" })),
-    TypeError,
+test("assertion adapter: act maps to a ContextSelection (a preference, never proof)", () => {
+  assert.equal(claimsActToContextSelection({ sub: "s" }), undefined);
+  assert.equal(claimsActToContextSelection({ sub: "s", act: {} }), undefined);
+  assert.deepEqual(claimsActToContextSelection({ sub: "s", act: { org: "acme" } }), {
+    orgId: "acme",
+  });
+  assert.deepEqual(
+    claimsActToContextSelection({ sub: "s", act: { org: "acme", role: "staff" } }),
+    { orgId: "acme", role: "staff" },
   );
 });
 
-test("assertion: a guest-named subject gets NO special authorization (fails closed like anyone)", async () => {
-  const store = makeStore();
-  await grant(store, "alice", ACME, "candidate");
+test("assertion adapter: contracts defines NO second assertion format", async () => {
+  // SHU-49 originally shipped a parallel envelope here with no aud/exp/jti and
+  // no signature. bawes-aa.v1 is the one format; this package must stay a
+  // crypto-free adapter over verified claims.
+  const contracts: Record<string, unknown> = await import("../src/index.js");
+  for (const forked of [
+    "parseActorAssertion",
+    "encodeActorAssertion",
+    "decodeActorAssertion",
+    "isPositiveAssertionSubject",
+    "ACTOR_ASSERTION_FORMAT_VERSION",
+  ]) {
+    assert.equal(contracts[forked], undefined, `${forked} must not be re-introduced`);
+  }
+});
 
-  // Even when an issuer really did mint an assertion for id "guest", the
-  // resolver treats it as an ordinary id: no principal "guest" -> denied.
+test("assertion adapter: an act role that is not granted is rejected end-to-end", async () => {
+  const store = new InMemoryAuthzStore({
+    organizations: [createOrganization({ id: "acme", name: "Acme" })],
+    principals: [createPrincipal({ id: "p1", pbuuids: ["sub-1"] })],
+  });
+  await store.grantMany("p1", [{ orgId: "acme", role: "candidate" }]);
+
+  const claims = { sub: "sub-1", act: { org: "acme", role: "admin" } };
   const resolution = await resolveActiveContext(
-    { kind: "principal", principalId: "guest" },
-    { orgId: ACME },
+    claimsToRequestIdentity(claims),
+    claimsActToContextSelection(claims),
     store,
   );
   assert.equal(resolution.kind, "denied");
-  if (resolution.kind === "denied") assert.equal(resolution.reason, "unknown_principal");
+  assert.equal(resolution.kind === "denied" && resolution.reason, "role_not_granted");
 });
 
-test("assertion: act maps to a ContextSelection (a preference, never proof)", () => {
-  const withAct = assertionFor(principalSubject("alice"), { orgId: ACME, role: "recruiter" });
-  assert.deepEqual(assertionActToContextSelection(withAct), { orgId: ACME, role: "recruiter" });
-
-  const orgOnly = assertionFor(principalSubject("alice"), { orgId: ACME });
-  assert.deepEqual(assertionActToContextSelection(orgOnly), { orgId: ACME });
-
-  const emptyAct = assertionFor(principalSubject("alice"), {});
-  assert.equal(assertionActToContextSelection(emptyAct), undefined);
-
-  const noAct = assertionFor(principalSubject("alice"));
-  assert.equal(assertionActToContextSelection(noAct), undefined);
-  assert.deepEqual(assertionToRequestIdentity(noAct), { kind: "principal", principalId: "alice" });
-
-  const pbuuidAct = assertionFor(pbuuidSubject("pbuuid-alice-1"));
-  assert.deepEqual(assertionToRequestIdentity(pbuuidAct), { kind: "pbuuid", pbuuid: "pbuuid-alice-1" });
-});
-
-test("assertion: act role that is not granted is rejected end-to-end", async () => {
-  const store = makeStore();
-  await grant(store, "alice", ACME, "candidate");
-
-  const resolution = await resolveActiveContext(
-    { kind: "principal", principalId: "alice" },
-    assertionActToContextSelection(assertionFor(principalSubject("alice"), { orgId: ACME, role: "admin" })),
-    store,
-  );
-  assert.equal(resolution.kind, "denied");
-  if (resolution.kind === "denied") assert.equal(resolution.reason, "role_not_granted");
-});
-
-// ---------------------------------------------------------------------------
-// Issuer-key registry (amendment c): rotation never fails open
-// ---------------------------------------------------------------------------
 
 test("registry: registration is active, idempotent, and algorithm-checked", async () => {
   const registry = new InMemoryIssuerKeyRegistry();
@@ -622,7 +552,6 @@ test("versions: every contract slot is versioned independently", () => {
   });
   assert.equal(CONTRACT_VERSIONS.health, PLATFORM_CONTRACT_VERSION);
   assert.equal(CONTRACT_VERSIONS.authz, AUTHZ_CONTRACT_VERSION);
-  assert.equal(ACTOR_ASSERTION_FORMAT_VERSION, CONTRACT_VERSIONS.identity);
 });
 
 test("versions: the version helper returns the requested contract slot", () => {

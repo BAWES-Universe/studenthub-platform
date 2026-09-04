@@ -8,6 +8,22 @@ import {
   readRequestBody,
   type UnconfiguredMcpAdapter,
 } from "../src/index.js";
+import { createAuthzFixture } from "./helpers/authz.js";
+
+/**
+ * The gateway fails closed, so these body/adapter tests must authenticate. Each
+ * builds its own fixture (fresh replay store) and mints a single-use assertion.
+ */
+async function authed(): Promise<{
+  middleware: Awaited<ReturnType<typeof createAuthzFixture>>["middleware"];
+  headers: () => Promise<Record<string, string>>;
+}> {
+  const fixture = await createAuthzFixture();
+  return {
+    middleware: fixture.middleware,
+    headers: async () => ({ "x-actor-assertion": await fixture.mint() }),
+  };
+}
 
 async function listen(server: ReturnType<typeof createGatewayServer>): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -42,12 +58,14 @@ test("POST /mcp/tools/call rejects oversized bodies before dispatch", async (con
       return { ok: true, content: [] };
     },
   };
-  const server = createGatewayServer(adapter, 32);
+  const auth = await authed();
+  const server = createGatewayServer(adapter, 32, auth.middleware);
   const origin = await listen(server);
   context.after(() => server.close());
 
   const response = await fetch(`${origin}/mcp/tools/call`, {
     method: "POST",
+    headers: await auth.headers(),
     body: JSON.stringify({ name: "oversized", arguments: { value: "x".repeat(64) } }),
   });
 
@@ -63,28 +81,39 @@ test("POST /mcp/tools/call rejects malformed calls before dispatch", async (cont
       return { ok: true, content: [] };
     },
   };
-  const server = createGatewayServer(adapter);
+  const auth = await authed();
+  const server = createGatewayServer(adapter, undefined, auth.middleware);
   const origin = await listen(server);
   context.after(() => server.close());
 
   for (const body of ["not-json", "[]", "{}", JSON.stringify({ name: "missing-arguments" })]) {
-    const response = await fetch(`${origin}/mcp/tools/call`, { method: "POST", body });
+    const response = await fetch(`${origin}/mcp/tools/call`, {
+      method: "POST",
+      headers: await auth.headers(),
+      body,
+    });
     assert.equal(response.status, 400);
   }
   assert.equal(calls, 0);
 });
 
 test("POST /mcp/tools/call maps adapter rejection to 502", async (context) => {
-  const server = createGatewayServer({
-    async callTool() {
-      throw new Error("adapter unavailable");
+  const auth = await authed();
+  const server = createGatewayServer(
+    {
+      async callTool() {
+        throw new Error("adapter unavailable");
+      },
     },
-  });
+    undefined,
+    auth.middleware,
+  );
   const origin = await listen(server);
   context.after(() => server.close());
 
   const response = await fetch(`${origin}/mcp/tools/call`, {
     method: "POST",
+    headers: await auth.headers(),
     body: JSON.stringify({ name: "student.search", arguments: {} }),
   });
   const body = (await response.json()) as Record<string, unknown>;
@@ -106,16 +135,22 @@ test("request stream errors are contained", async () => {
 });
 
 test("configured adapter failures do not return 501", async (context) => {
-  const server = createGatewayServer({
-    async callTool() {
-      return { ok: false, content: [{ type: "text", text: "tool failed" }] };
+  const auth = await authed();
+  const server = createGatewayServer(
+    {
+      async callTool() {
+        return { ok: false, content: [{ type: "text", text: "tool failed" }] };
+      },
     },
-  });
+    undefined,
+    auth.middleware,
+  );
   const origin = await listen(server);
   context.after(() => server.close());
 
   const response = await fetch(`${origin}/mcp/tools/call`, {
     method: "POST",
+    headers: await auth.headers(),
     body: JSON.stringify({ name: "student.search", arguments: {} }),
   });
 

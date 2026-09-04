@@ -7,8 +7,8 @@
  *
  * - `health`   – the /health envelope spoken by gateway & worker (wire v1).
  * - `authz`    – roles, grants, org hierarchy and active-context resolution.
- * - `identity` – actor assertions (format of the `x-actor-assertion` claim
- *                set, incl. the optional `act` delegation claim).
+ * - `identity` – the `bawes-aa.v1` actor assertion: claim set, envelope,
+ *                signing input and subject policy.
  *
  * `PLATFORM_CONTRACT_VERSION` (in index.ts) is kept only as a wire-compatible
  * alias of the health slot for existing consumers; new code should read its
@@ -21,7 +21,15 @@ export const CONTRACT_VERSIONS = {
 } as const;
 
 export type ContractName = keyof typeof CONTRACT_VERSIONS;
-export type ContractVersion = (typeof CONTRACT_VERSIONS)[ContractName];
+
+/**
+ * Deliberately `string`, not the union of today's literals. All three slots
+ * currently read "1.0.0", so a literal type would make
+ * `contractVersion("authz") === "1.1.0"` a compile error for every consumer
+ * until something happened to be bumped. The compatibility policy in
+ * docs/authz-roles.md defines what a bump means.
+ */
+export type ContractVersion = string;
 
 export function contractVersion(name: ContractName): ContractVersion {
   return CONTRACT_VERSIONS[name];

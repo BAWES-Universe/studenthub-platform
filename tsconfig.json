@@ -16,5 +16,8 @@
     "apps/**/*.ts",
     "packages/**/*.ts",
     "tools/**/*.ts"
+  ],
+  "exclude": [
+    "packages/actor-assertion/test"
   ]
 }

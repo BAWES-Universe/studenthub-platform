@@ -49,26 +49,84 @@ This module is the authorization half of that promise.
   ancestor wins** (most specific grant)
 - revocation takes effect on the very next resolution — no caching
 
-## Actor-assertion standard (bawes-aa.v1) — Opus's four amendments, all in
+## Actor-assertion standard (`bawes-aa.v1`) — the four amendments
 
-Verified review by Opus (2026-09-03); all four folded into this contract:
+There is exactly ONE actor-assertion format: `bawes-aa.v1`, defined in
+`packages/actor-assertion`. It carries the destination binding (`aud`), expiry
+(`exp`), one-use replay id (`jti`) and the Ed25519 signature over the raw
+envelope bytes. `packages/contracts/src/authz/assertion.ts` holds no envelope,
+no parser and no crypto — only an adapter from already-verified claims onto the
+resolver's inputs.
 
-1. **Optional `act` claim** — `{ orgId, role }` context on the assertion, so an
-   actor can express "Khalid, acting as owner of Org A, hiring for Org B."
-   Wire-compatible addition to v1 (optional field; consumers that ignore it
-   keep working).
-2. **Positive subject assertion** — no fail-open denylist of guest/anonymous
-   strings. A subject must be a non-empty, positive identity; empty or missing
-   is a hard deny. ("guest" is not special-cased at parse time — it resolves
-   like any id without a grant: denied.)
-3. **Issuer-key registry contract** — every issuer has versioned keys with
-   `active | retired` status. Unknown keyId and retired keys are hard denies;
-   rotation never falls back to accepting anything. Rotation = register new
-   key, migrate, retire old.
-4. **Per-contract versioning** — `packages/contracts/src/versions.ts` carries
-   a version per contract family (authz, assertions, …) instead of one
-   global `PLATFORM_CONTRACT_VERSION`, so a role-field addition doesn't bump
-   the version for consumers that only read health.
+*(SHU-49 first shipped a second, parallel format in `contracts` with none of
+those properties. Opus's R3 review of PR #13 blocked it; this is the corrected
+shape.)*
+
+1. **Optional `act` claim** — `{ org, role }` on the assertion, so an actor can
+   express "Khalid, acting as owner of Org A, hiring for Org B." Genuinely
+   wire-compatible: the field is optional, assertions minted before it existed
+   verify unchanged, and it is covered by the signature like every other claim.
+   It is a **selection preference only** — `resolveActiveContext` re-derives the
+   effective context from grants and honours `act` only when a grant backs it.
+2. **Positive subject assertion** — the guest/anonymous denylist is gone. Each
+   issuer declares the format a *human* principal's `sub` takes
+   (`SubjectPolicy.humanSubjectPattern`), and a subject is usable only if it
+   matches. There is no default: an unconfigured verifier rejects everything.
+   This is checked **after** signature verification, so policy never runs on
+   unauthenticated input and subject shapes cannot be probed without a valid
+   signature.
+3. **Issuer-key registry contract** — every issuer has keys with
+   `active | retired` status. Unknown `kid` and retired keys are hard denies;
+   rotation never falls back to accepting anything. An assertion carries an
+   optional `kid` so the registry can select the exact key; with no `kid`, a key
+   resolves only when the issuer has exactly one active key — ambiguity denies.
+   Rotation = register new key, migrate, retire old.
+4. **Per-contract versioning** — `packages/contracts/src/versions.ts` carries a
+   version per contract family (`health`, `authz`, `identity`) instead of one
+   global `PLATFORM_CONTRACT_VERSION`, so adding a role field never bumps the
+   version an integrator who only consumes `/health` is pinned to.
+
+## Compatibility policy
+
+Each slot in `CONTRACT_VERSIONS` is independently semver'd. This policy is what
+those numbers mean; without it they are three integers nobody can act on.
+
+**PATCH** — no wire change. Documentation, internal refactors, performance,
+error-message text. Integrators never need to read a patch note.
+
+**MINOR** — additive and backward-compatible. A consumer built against the
+previous minor keeps working with no code change:
+
+- adding an **optional** claim or field (this is how `act` and `kid` arrived)
+- adding a new member to an **open** enum an integrator only reads
+- relaxing a constraint (accepting input that was previously rejected)
+- adding a new endpoint, method or error code an old client can ignore
+
+**MAJOR** — anything a consumer must react to:
+
+- removing or renaming any field; making an optional field required
+- narrowing a type or tightening validation (input that used to pass now fails)
+- changing the meaning of an existing field, or a default
+- adding a member to a **closed** union an integrator must exhaustively handle
+  (the `Role` union is closed — new roles are MAJOR for `authz`)
+- any change to the signed envelope's structure or signing input
+
+**Support window** — N-1 is supported for **90 days** after a MAJOR ships. Both
+versions are accepted concurrently during that window; the older one is
+rejected after it. Deprecation is announced when the new major ships, not when
+the window closes.
+
+**Slot boundaries** — a change bumps only the slot it touches:
+
+| Change | Bumps |
+|---|---|
+| assertion claim set, envelope, signing input, subject policy | `identity` |
+| roles, grants, org hierarchy, context resolution, key registry | `authz` |
+| the `/health` envelope | `health` |
+
+`PLATFORM_CONTRACT_VERSION` remains as a wire-compatible alias of the `health`
+slot for existing consumers. New code reads its own slot via
+`contractVersion(name)`.
 
 ## Standard seams for hooked businesses
 

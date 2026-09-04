@@ -8,7 +8,11 @@ import {
   type McpToolResult,
 } from "@studenthub/contracts";
 
-import { authorizeRequest, type AuthzMiddleware } from "./authz-middleware.js";
+import {
+  authorizeRequest,
+  createDenyAllAuthzMiddleware,
+  type AuthzMiddleware,
+} from "./authz-middleware.js";
 
 export * from "./authz-middleware.js";
 
@@ -75,7 +79,7 @@ export class UnconfiguredMcpAdapter implements McpAdapter {
 export function createGatewayServer(
   adapter: McpAdapter = new UnconfiguredMcpAdapter(),
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
-  authz: AuthzMiddleware | undefined = undefined,
+  authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -89,12 +93,11 @@ export function createGatewayServer(
     }
 
     if (request.method === "POST" && request.url === "/mcp/tools/call") {
-      // SHU-49 authz skeleton: when a middleware is configured, gate the call
-      // BEFORE reading the body. Deny-by-default pipeline — see
-      // authz-middleware.ts. When it allows, the resolved active context has
-      // been derived server-side from grants (the future route layer reads it
-      // off the decision; no client-supplied role is ever trusted).
-      if (authz !== undefined) {
+      // Gate the call BEFORE reading the body. There is no unauthenticated
+      // path: `authz` has no undefined case, and its default denies every
+      // request. When it allows, the active context has been derived
+      // server-side from grants — no client-supplied role is ever trusted.
+      {
         const raw = request.headers["x-actor-assertion"];
         const assertionWire = Array.isArray(raw) ? raw[0] : raw;
         const decision = await authorizeRequest(assertionWire, authz);

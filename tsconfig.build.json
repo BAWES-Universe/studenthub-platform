@@ -7,5 +7,9 @@
     "declaration": true,
     "sourceMap": true
   },
-  "exclude": ["dist", "node_modules"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "packages/actor-assertion/test"
+  ]
 }
