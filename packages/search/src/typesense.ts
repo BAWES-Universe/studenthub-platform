@@ -110,8 +110,8 @@ export class TypesenseCandidateSearchAdapter implements CandidateSearchAdapter {
     const query = (request.query ?? "").trim();
     if (query.length > 500) throw new TypeError("search query must not exceed 500 characters");
     if (request.sort !== undefined && !(request.sort in SORT_BY)) throw new TypeError("candidate search sort is invalid");
-    const filters = normalizeFilters(request.filters ?? {});
-    const constraints = normalizeConstraints(request.constraints ?? {});
+    const filters = normalizeFilters(request.filters === undefined ? {} : request.filters);
+    const constraints = normalizeConstraints(request.constraints === undefined ? {} : request.constraints);
     const visibleIds = scopeIds(request.scope);
     if (visibleIds?.length === 0) return emptyResult(page, pageSize, filters);
 
@@ -167,6 +167,7 @@ export class TypesenseCandidateSearchAdapter implements CandidateSearchAdapter {
         method: "POST",
         headers: { "content-type": "application/json", "X-TYPESENSE-API-KEY": this.#apiKey },
         body: JSON.stringify(body),
+        redirect: "error",
         signal,
       });
     } catch (error) {
@@ -340,7 +341,7 @@ function parseDocument(value: unknown): CandidateSearchDocument {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isStringArray(value: unknown): value is string[] {
