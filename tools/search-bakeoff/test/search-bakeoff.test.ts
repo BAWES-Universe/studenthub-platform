@@ -3,7 +3,8 @@ import test from "node:test";
 
 import { datasetDigest, generateSearchCandidates, matchesFilters, SEARCH_WORKLOAD } from "../src/dataset.js";
 import { percentile } from "../src/metrics.js";
-import { recommend } from "../src/run.js";
+import { TypesenseEngine } from "../src/engines.js";
+import { markdownOutputPath, recommend } from "../src/run.js";
 
 test("dataset is deterministic, synthetic and includes the relevance sentinel", () => {
   const first = generateSearchCandidates(500);
@@ -33,4 +34,16 @@ test("recommendation requires correctness and a meaningful performance margin", 
   assert.match(recommend([{ ...base, engine: "Meilisearch", p50Ms: 2, p95Ms: 4 }, { ...base, engine: "Typesense", p50Ms: 3, p95Ms: 8 }]), /^Meilisearch:/);
   assert.match(recommend([{ ...base, engine: "Meilisearch", p50Ms: 2, p95Ms: 4 }, { ...base, engine: "Typesense", p50Ms: 2, p95Ms: 4.2 }]), /^No performance winner/);
   assert.match(recommend([{ ...base, engine: "Meilisearch", p50Ms: 2, p95Ms: 4, correctness: { passed: 6, total: 7 } }, { ...base, engine: "Typesense", p50Ms: 3, p95Ms: 8 }]), /^No selection/);
+});
+
+test("Typesense credentials are only allowed over HTTPS or loopback HTTP", () => {
+  assert.doesNotThrow(() => new TypesenseEngine("https://search.example.invalid", "key"));
+  assert.doesNotThrow(() => new TypesenseEngine("http://127.0.0.1:8108", "key"));
+  assert.doesNotThrow(() => new TypesenseEngine("http://[::1]:8108", "key"));
+  assert.throws(() => new TypesenseEngine("http://search.example.invalid", "key"), /must use HTTPS/);
+});
+
+test("report paths cannot overwrite the JSON artifact", () => {
+  assert.equal(markdownOutputPath("results/search.json"), "results/search.md");
+  assert.throws(() => markdownOutputPath("results/search"), /must end in \.json/);
 });

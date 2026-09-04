@@ -75,6 +75,7 @@ export class MeilisearchEngine implements SearchEngine {
         searchableAttributes: ["name", "email", "phone", "skills"],
         filterableAttributes: ["country", "university", "skills", "status", "approved"],
         sortableAttributes: ["score"],
+        pagination: { maxTotalHits: documents.length },
       }),
     });
     await this.waitFor(settings.taskUid);
@@ -87,12 +88,12 @@ export class MeilisearchEngine implements SearchEngine {
   }
 
   async search(query: QueryCase): Promise<SearchResult> {
-    const result = await jsonRequest<{ hits: Array<{ id: string }>; estimatedTotalHits: number }>(`${this.baseUrl}/indexes/${this.index}/search`, {
+    const result = await jsonRequest<{ hits: Array<{ id: string }>; totalHits: number }>(`${this.baseUrl}/indexes/${this.index}/search`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
-        q: query.query, filter: meiliFilter(query.filters), facets: ["country", "university", "skills"], limit: 50,
+        q: query.query, filter: meiliFilter(query.filters), facets: ["country", "university", "skills"], page: 1, hitsPerPage: 50,
       }),
     });
-    return { ids: result.hits.map((hit) => hit.id), total: result.estimatedTotalHits };
+    return { ids: result.hits.map((hit) => hit.id), total: result.totalHits };
   }
 }
 
@@ -100,7 +101,15 @@ export class TypesenseEngine implements SearchEngine {
   readonly name = "Typesense" as const;
   private readonly collection = "shu47_candidates";
 
-  constructor(private readonly baseUrl: string, private readonly apiKey: string) {}
+  constructor(private readonly baseUrl: string, private readonly apiKey: string) {
+    const endpoint = new URL(baseUrl);
+    const loopback = endpoint.hostname === "localhost"
+      || endpoint.hostname === "[::1]"
+      || /^127(?:\.\d{1,3}){3}$/.test(endpoint.hostname);
+    if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback)) {
+      throw new Error("Typesense endpoint must use HTTPS unless it is loopback");
+    }
+  }
 
   private headers(contentType?: string): HeadersInit {
     return { "X-TYPESENSE-API-KEY": this.apiKey, ...(contentType ? { "content-type": contentType } : {}) };

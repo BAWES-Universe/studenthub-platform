@@ -70,7 +70,7 @@ export function recommend(results: readonly EngineResult[]): string {
   if (correct.length !== results.length) return "No selection: at least one engine failed the required correctness workload.";
   const [first, second] = [...correct].sort((left, right) => left.p95Ms - right.p95Ms);
   if (!first || !second) return "No selection: both engine results are required.";
-  const margin = (second.p95Ms - first.p95Ms) / Math.max(second.p95Ms, 0.01);
+  const margin = (second.p95Ms - first.p95Ms) / Math.max(first.p95Ms, 0.01);
   if (margin < 0.1) return "No performance winner: p95 latency is within 10%; decide from operational fit in the follow-up implementation card.";
   return `${first.engine}: lowest warm-query p95 while passing the full correctness workload.`;
 }
@@ -78,6 +78,11 @@ export function recommend(results: readonly EngineResult[]): string {
 function markdown(documents: number, digest: string, iterations: number, results: readonly EngineResult[], recommendation: string): string {
   const rows = results.map((result) => `| ${result.engine} | ${result.indexingMs} | ${result.p50Ms} | ${result.p95Ms} | ${result.correctness.passed}/${result.correctness.total} |`).join("\n");
   return `# SHU-47 search bake-off\n\nSynthetic documents: ${documents}  \nDataset SHA-256: \`${digest}\`  \nMeasured queries per workload: ${iterations}\n\n| Engine | Index ms | Warm p50 ms | Warm p95 ms | Correctness |\n|---|---:|---:|---:|---:|\n${rows}\n\n**Recommendation:** ${recommendation}\n\nResults are directional for this CI runner and must not be treated as production capacity figures.\n`;
+}
+
+export function markdownOutputPath(jsonOutput: string): string {
+  if (!jsonOutput.endsWith(".json")) throw new Error("benchmark output path must end in .json");
+  return jsonOutput.slice(0, -5) + ".md";
 }
 
 async function main(): Promise<void> {
@@ -99,7 +104,7 @@ async function main(): Promise<void> {
   const report = { benchmark: "SHU-47", generatedAt: new Date().toISOString(), documents: count, datasetSha256: datasetDigest(documents), iterations, workload: SEARCH_WORKLOAD.map((query) => query.name), results, recommendation };
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  await writeFile(output.replace(/\.json$/, ".md"), markdown(count, report.datasetSha256, iterations, results, recommendation), "utf8");
+  await writeFile(markdownOutputPath(output), markdown(count, report.datasetSha256, iterations, results, recommendation), "utf8");
   process.stdout.write(`${markdown(count, report.datasetSha256, iterations, results, recommendation)}\n`);
   if (results.some((result) => result.correctness.passed !== result.correctness.total)) process.exitCode = 1;
 }
