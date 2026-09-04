@@ -1,0 +1,41 @@
+name: Search adapter parity
+
+on:
+  pull_request:
+    paths:
+      - "packages/search/**"
+      - "packages/contracts/src/search.ts"
+      - "packages/contracts/src/versions.ts"
+      - ".github/workflows/search-adapter.yml"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+jobs:
+  typesense-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      typesense:
+        # Typesense v30.2
+        image: typesense/typesense@sha256:610f2d34b1f93d00762869da2c67736775e5798d19a2c8b91b014b8a0cc1e110
+        env:
+          TYPESENSE_API_KEY: shu52-ci-key
+          TYPESENSE_DATA_DIR: /tmp
+        ports:
+          - 8108:8108
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify adapter against Typesense
+        env:
+          TYPESENSE_API_KEY: shu52-ci-key
+        run: npm run test:search-integration
