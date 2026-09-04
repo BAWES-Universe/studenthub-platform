@@ -82,7 +82,15 @@ export async function verifyAssertion(
   const skew = options.maxIatSkewSeconds ?? DEFAULT_MAX_IAT_SKEW_SECONDS;
   if (claims.iat > now + skew) return fail(AssertionErrorCode.FUTURE_IAT, `iat ${claims.iat} in the future`);
 
-  const publicKeyPem = await resolvePublicKey(claims.iss, claims.kid);
+  // A rejecting dependency must become a typed denial, never an exception: this
+  // function is awaited inside an async http listener, where an escaping
+  // rejection sends no response and can terminate the process.
+  let publicKeyPem: string | undefined;
+  try {
+    publicKeyPem = await resolvePublicKey(claims.iss, claims.kid);
+  } catch {
+    return fail(AssertionErrorCode.UNAVAILABLE, "issuer key resolution failed");
+  }
   if (!publicKeyPem) return fail(AssertionErrorCode.UNKNOWN_ISSUER, `no key for issuer ${claims.iss}`);
 
   const signingInput = `${ENVELOPE_PREFIX}.${payloadB64}`;
@@ -118,7 +126,14 @@ export async function verifyAssertion(
       `subject ${claims.sub} does not match expected ${options.expectedSubject}`,
     );
 
-  const replayed = await replayStore.consume(claims.jti, claims.exp, now);
+  // Replay state is scoped by issuer; see ReplayStore. A store failure denies —
+  // accepting an unrecorded jti would silently disable replay protection.
+  let replayed: boolean;
+  try {
+    replayed = await replayStore.consume(claims.iss, claims.jti, claims.exp, now);
+  } catch {
+    return fail(AssertionErrorCode.UNAVAILABLE, "replay store unavailable");
+  }
   if (replayed) return fail(AssertionErrorCode.REPLAYED, `jti ${claims.jti} already used`);
 
   return { ok: true, claims };
@@ -128,12 +143,18 @@ export async function verifyAssertion(
 export class MemoryReplayStore implements ReplayStore {
   private readonly seen = new Map<string, number>();
 
-  consume(jti: string, expiresAt: number, now: number): boolean {
-    for (const [seenJti, seenExp] of this.seen) {
-      if (seenExp <= now) this.seen.delete(seenJti);
+  /** NUL separator: it cannot appear in an issuer name, so keys never collide. */
+  static key(issuer: string, jti: string): string {
+    return `${issuer}\u0000${jti}`;
+  }
+
+  consume(issuer: string, jti: string, expiresAt: number, now: number): boolean {
+    for (const [seenKey, seenExp] of this.seen) {
+      if (seenExp <= now) this.seen.delete(seenKey);
     }
-    if (this.seen.has(jti)) return true;
-    this.seen.set(jti, expiresAt);
+    const key = MemoryReplayStore.key(issuer, jti);
+    if (this.seen.has(key)) return true;
+    this.seen.set(key, expiresAt);
     return false;
   }
 }

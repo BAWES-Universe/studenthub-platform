@@ -100,7 +100,18 @@ export function createGatewayServer(
       {
         const raw = request.headers["x-actor-assertion"];
         const assertionWire = Array.isArray(raw) ? raw[0] : raw;
-        const decision = await authorizeRequest(assertionWire, authz);
+        // authorizeRequest is awaited inside an async listener: an escaping
+        // rejection would send no response and can terminate the process under
+        // Node's default unhandled-rejection policy. Dependency failures become
+        // 503 and still never reach the adapter.
+        let decision: Awaited<ReturnType<typeof authorizeRequest>>;
+        try {
+          decision = await authorizeRequest(assertionWire, authz);
+        } catch {
+          response.writeHead(503, { "content-type": "application/json" });
+          response.end(JSON.stringify({ ok: false, error: "authz_unavailable" }));
+          return;
+        }
         if (decision.kind === "deny") {
           const body =
             decision.status === 401

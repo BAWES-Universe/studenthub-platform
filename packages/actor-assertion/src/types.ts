@@ -75,6 +75,8 @@ export enum AssertionErrorCode {
   SUBJECT_FORMAT = "SUBJECT_FORMAT",
   WRONG_SUBJECT = "WRONG_SUBJECT",
   REPLAYED = "REPLAYED",
+  /** A dependency (key resolution or the replay store) failed. Fails CLOSED. */
+  UNAVAILABLE = "UNAVAILABLE",
 }
 
 /**
@@ -149,9 +151,20 @@ export type VerifyResult =
 
 export interface ReplayStore {
   /**
-   * Records jti with its expiry; returns true if the jti was already seen
-   * (replay), false if it is new and now recorded. Entries past expiry are
+   * Records (issuer, jti) with its expiry; returns true if the pair was already
+   * seen (replay), false if it is new and now recorded. Entries past expiry are
    * treated as absent and may be pruned.
+   *
+   * Replay state is scoped BY ISSUER. `jti` is only unique within the issuer
+   * that minted it, so keying on `jti` alone lets one issuer burn another
+   * issuer's ids — a cross-tenant denial channel, and a false REPLAYED for a
+   * legitimate holder. This matters more, not less, as more startups issue
+   * assertions against the same relying party.
    */
-  consume(jti: string, expiresAt: number, now: number): boolean | Promise<boolean>;
+  consume(
+    issuer: string,
+    jti: string,
+    expiresAt: number,
+    now: number,
+  ): boolean | Promise<boolean>;
 }

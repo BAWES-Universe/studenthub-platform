@@ -74,7 +74,39 @@ export class InMemoryAuthzStore implements AuthzStore {
     }
   }
 
+  /**
+   * Register or replace a principal, keeping the pbuuid index exactly in sync.
+   *
+   * Two authorization bugs this closes (CodeRabbit, PR #13):
+   *
+   * 1. STALE MAPPINGS. Re-registering a principal with a pbuuid removed used to
+   *    leave the old index entry behind, so `findPrincipalByPbuuid` kept
+   *    resolving a revoked identity to a principal that still holds grants.
+   *    Detaching an identity has to actually detach it.
+   * 2. CROSS-PRINCIPAL THEFT. Registering a principal with a pbuuid owned by
+   *    someone else used to silently reassign it. Under `sub_mode=user_email`
+   *    a pbuuid IS an email address, so that is "claim another person's
+   *    account by registering it".
+   *
+   * Validation runs to completion BEFORE any mutation, so a rejected
+   * registration leaves the store untouched rather than half-applied.
+   */
   #registerPrincipal(principal: Principal): void {
+    for (const pbuuid of principal.pbuuids) {
+      const owner = this.#pbuuidIndex.get(pbuuid);
+      if (owner !== undefined && owner !== principal.id) {
+        throw new TypeError(
+          `pbuuid '${pbuuid}' is already owned by principal '${owner}'; ` +
+            `detach it before registering it to '${principal.id}'`,
+        );
+      }
+    }
+
+    // Drop every mapping this principal previously owned, then re-add exactly
+    // the current set — otherwise removed pbuuids keep resolving.
+    for (const [pbuuid, owner] of this.#pbuuidIndex) {
+      if (owner === principal.id) this.#pbuuidIndex.delete(pbuuid);
+    }
     this.#principals.set(principal.id, principal);
     for (const pbuuid of principal.pbuuids) this.#pbuuidIndex.set(pbuuid, principal.id);
   }

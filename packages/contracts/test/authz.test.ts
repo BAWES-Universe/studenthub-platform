@@ -559,3 +559,51 @@ test("versions: the version helper returns the requested contract slot", () => {
   assert.equal(contractVersion("health"), "1.0.0");
   assert.equal(contractVersion("identity"), "1.0.0");
 });
+
+test("store: re-registering a principal drops its removed pbuuid mappings", async () => {
+  const store = new InMemoryAuthzStore({
+    principals: [createPrincipal({ id: "p1", pbuuids: ["a@bawes.net", "b@bawes.net"] })],
+  });
+  assert.equal((await store.findPrincipalByPbuuid("a@bawes.net"))?.id, "p1");
+
+  // Detach a@bawes.net by re-registering without it.
+  await store.registerPrincipal(createPrincipal({ id: "p1", pbuuids: ["b@bawes.net"] }));
+
+  assert.equal(
+    await store.findPrincipalByPbuuid("a@bawes.net"),
+    undefined,
+    "a detached identity must stop resolving — otherwise it still reaches p1's grants",
+  );
+  assert.equal((await store.findPrincipalByPbuuid("b@bawes.net"))?.id, "p1");
+});
+
+test("store: a pbuuid owned by another principal cannot be claimed", async () => {
+  const store = new InMemoryAuthzStore({
+    principals: [createPrincipal({ id: "victim", pbuuids: ["khalid@bawes.net"] })],
+  });
+
+  await assert.rejects(
+    () => store.registerPrincipal(createPrincipal({ id: "attacker", pbuuids: ["khalid@bawes.net"] })),
+    /already owned by principal 'victim'/,
+  );
+
+  assert.equal((await store.findPrincipalByPbuuid("khalid@bawes.net"))?.id, "victim");
+  assert.equal(await store.getPrincipal("attacker"), undefined, "rejected registration must not partially apply");
+});
+
+test("store: a rejected registration leaves earlier mappings intact", async () => {
+  const store = new InMemoryAuthzStore({
+    principals: [createPrincipal({ id: "victim", pbuuids: ["taken@bawes.net"] })],
+  });
+  // First pbuuid is free, second is taken: validation must run fully before any write.
+  await assert.rejects(() =>
+    store.registerPrincipal(
+      createPrincipal({ id: "attacker", pbuuids: ["free@bawes.net", "taken@bawes.net"] }),
+    ),
+  );
+  assert.equal(
+    await store.findPrincipalByPbuuid("free@bawes.net"),
+    undefined,
+    "no pbuuid from a rejected registration may be indexed",
+  );
+});

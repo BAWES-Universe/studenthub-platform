@@ -305,3 +305,51 @@ describe("subject policy matches what live Authentik emits (SHU-49)", () => {
     }
   });
 });
+
+describe("dependency failures and replay scoping (PR #13 review)", () => {
+  const opts = { expectedAudience: AUD, subjectPolicy: UNIVERSE_SUBJECT_POLICY };
+
+  it("a rejecting key resolver becomes a typed denial, not a thrown rejection", async () => {
+    const token = await signAssertion(claims(), keyPair.privateKeyPem);
+    const exploding = async () => {
+      throw new Error("registry down");
+    };
+    const res = await verifyAssertion(token, exploding, new MemoryReplayStore(), opts);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+
+  it("a rejecting replay store denies rather than silently skipping replay protection", async () => {
+    const token = await signAssertion(claims(), keyPair.privateKeyPem);
+    const broken = {
+      consume() {
+        throw new Error("redis down");
+      },
+    };
+    const res = await verifyAssertion(token, resolver, broken, opts);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe(AssertionErrorCode.UNAVAILABLE);
+  });
+
+  it("replay state is scoped by issuer: the same jti from two issuers both verify", async () => {
+    const otherIss = "other.tenant";
+    const multiResolver = async (iss: string) =>
+      iss === ISS || iss === otherIss ? keyPair.publicKeyPem : undefined;
+    const store = new MemoryReplayStore();
+
+    const a = await signAssertion(claims({ jti: "shared-id" }), keyPair.privateKeyPem);
+    const b = await signAssertion(
+      claims({ iss: otherIss, jti: "shared-id" }),
+      keyPair.privateKeyPem,
+    );
+
+    expect((await verifyAssertion(a, multiResolver, store, opts)).ok).toBe(true);
+    const second = await verifyAssertion(b, multiResolver, store, opts);
+    expect(second.ok).toBe(true);
+
+    // ...and a genuine replay within one issuer is still caught.
+    const replay = await verifyAssertion(a, multiResolver, store, opts);
+    expect(replay.ok).toBe(false);
+    if (!replay.ok) expect(replay.code).toBe(AssertionErrorCode.REPLAYED);
+  });
+});

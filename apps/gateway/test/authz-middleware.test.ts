@@ -197,3 +197,49 @@ test("a configured gateway admits a valid assertion and rejects a missing one", 
   // /health stays public.
   assert.equal((await fetch(`${origin}/health`)).status, 200);
 });
+
+test("a failing authz dependency returns 503 and never crashes the listener", async (context) => {
+  const fixture = await createAuthzFixture();
+  const broken = {
+    ...fixture.middleware,
+    resolveKey: async () => {
+      throw new Error("registry unreachable");
+    },
+  };
+
+  // Directly: the verifier turns it into a typed denial rather than rejecting.
+  const decision = await authorizeRequest(await fixture.mint(), broken);
+  assert.equal(decision.kind, "deny");
+
+  // Through the server: a dependency that rejects outside the verifier must
+  // still produce a response instead of an unhandled rejection.
+  let calls = 0;
+  const exploding = {
+    ...fixture.middleware,
+    get store(): never {
+      throw new Error("store unreachable");
+    },
+  } as unknown as typeof fixture.middleware;
+  const server = createGatewayServer(
+    {
+      async callTool() {
+        calls += 1;
+        return { ok: true, content: [] };
+      },
+    },
+    undefined,
+    exploding,
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/mcp/tools/call`, {
+    method: "POST",
+    headers: { "x-actor-assertion": await fixture.mint() },
+    body: JSON.stringify({ name: "student.search", arguments: {} }),
+  });
+  assert.ok([401, 503].includes(response.status), `expected 401/503, got ${response.status}`);
+  assert.equal(calls, 0, "a broken authz dependency must never reach the adapter");
+});
