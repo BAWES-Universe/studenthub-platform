@@ -126,7 +126,7 @@ const ENV = {
   DISPATCH_TARGET_SHA: SHA, // every dispatch is bound to a real head
 };
 
-async function runMain({ configPath, wa, linear, failComments = false }) {
+async function runMain({ configPath, wa, linear, failComments = false, io = {} }) {
   const out = [];
   const code = await main([], ENV, {
     configPath,
@@ -136,9 +136,33 @@ async function runMain({ configPath, wa, linear, failComments = false }) {
       return wa(url, opts);
     },
     fetchDurable: true, // REAL durable-read branch — no injected receipts
+    ...io,
   });
   return { code, out };
 }
+
+test("launch intent is durable before the adapter boundary throws", async () => {
+  const nodes = makeIssueNodes();
+  const store = fakeLinearStore(nodes, []);
+  const configPath = tempConfig();
+  const crashingAdapter = {
+    launchBuilder: async () => { throw new Error("process died after launch intent"); },
+    monitorRun: async () => ({ stage: "UNCHANGED" }),
+  };
+
+  await assert.rejects(
+    runMain({
+      configPath,
+      wa: fakeWorkspaceAgents({ mode: "accept" }),
+      linear: store,
+      io: { adapterModules: { "workspace-agents": crashingAdapter } },
+    }),
+    /process died after launch intent/,
+  );
+  const receipts = parseReceiptsFromComments(store.comments);
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].stage, "LAUNCH_UNKNOWN", "restart can reconcile the same attempt instead of parking RESERVED forever");
+});
 
 test("repeated run over one persistent store NEVER double-reserves or double-dispatches", async () => {
   const nodes = makeIssueNodes();

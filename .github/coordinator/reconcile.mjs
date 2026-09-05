@@ -13,7 +13,7 @@
 //       * launch sent -> LAUNCH_UNKNOWN (outcome unknown, slot held).
 //       * Idempotent retry while LAUNCH_UNKNOWN REUSES the same Idempotency-Key
 //         (attempt_id is minted once at reservation and never re-minted).
-//       * worker ack -> RUNNING; external_run_id (apirun_...) is stored IMMEDIATELY,
+//       * worker ack -> RUNNING; provider run id is stored IMMEDIATELY,
 //         and the granular upstream adapter_status is preserved, never collapsed.
 //       * completed WITHOUT a validated callback -> HOLD, never COMPLETED.
 //       * quota/access failure -> FAILED and pauses the adapter (adapter_pause_map[adapter]=true)
@@ -227,10 +227,35 @@ export function requestedWorkerFor(issue) {
   return "codex-builder";
 }
 
-// Adapter name for a worker family. The pilot has exactly one adapter; verifier /
-// box families still route through it (requested_worker documents the family).
-export function adapterNameFor(_requestedWorker) {
-  return "workspace-agents"; // pilot: single builder adapter
+// Adapter name for a worker family. Claude verification is an explicit lane;
+// builder/box routing remains on the already-proven Workspace Agents adapter.
+export function adapterNameFor(requestedWorker) {
+  return requestedWorker === "claude-verifier" ? "claude-code" : "workspace-agents";
+}
+
+export async function loadAdapterModule(adapter, io = {}) {
+  if (io.adapterModules?.[adapter]) return io.adapterModules[adapter];
+  if (adapter === "workspace-agents") return import("./adapters/workspace-agents.mjs");
+  if (adapter === "claude-code") return import("./adapters/claude-code.mjs");
+  throw new Error(`unknown coordinator adapter: ${adapter}`);
+}
+
+export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
+  if (adapter === "workspace-agents") {
+    return {
+      api_trigger_id: env.WORKSPACE_AGENT_TRIGGER_ID ?? "",
+      token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "",
+    };
+  }
+  if (adapter === "claude-code") {
+    return {
+      oauth_token: env.CLAUDE_CODE_OAUTH_TOKEN ?? "",
+      cwd: env.CLAUDE_WORKTREE_PATH ?? process.cwd(),
+      env,
+      resume,
+    };
+  }
+  throw new Error(`unknown coordinator adapter: ${adapter}`);
 }
 
 // dispatchEnabledFor — dispatch requires BOTH gates in DIFFERENT layers (CodeRabbit):
@@ -331,7 +356,7 @@ export function validateReceipt(receipt) {
     if (!allowed.includes(t)) errors.push(`field "${field}" must be ${allowed.join("|")} (nullable)`);
   }
   if (receipt.external_run_id !== null) {
-    expectPattern("external_run_id", /^apirun_[A-Za-z0-9_-]+$/);
+    expectPattern("external_run_id", /^(?:apirun|clauderun)_[A-Za-z0-9_-]+$/);
   }
   if (receipt.adapter_status !== null) {
     expectEnum("adapter_status", ADAPTER_STATUSES);
@@ -473,7 +498,7 @@ export function createReceipt({
 // is bound to target_sha, and if the live head (ctx.current_head) has advanced
 // past it, the verdict describes a superseded tree and cannot satisfy this
 // receipt. BLOCKED/FAILED callbacks never authorize COMPLETED (GPT BLOCK #2).
-export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
+export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY", "PASS"]);
 
 export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   if (!evidence || typeof evidence !== "object") return false;
@@ -536,7 +561,7 @@ export function nextReceiptState(receipt, event, ctx = {}) {
       }
       const { external_run_id, adapter_status = "in_progress", worker_identity } = event;
       if (typeof external_run_id !== "string" || external_run_id.length === 0) {
-        return unchanged("worker_ack requires external_run_id (apirun_... stored immediately once the API accepts)");
+        return unchanged("worker_ack requires a provider external_run_id stored once the run is acknowledged");
       }
       const next = note(`worker ack — run ${external_run_id} accepted (adapter_status=${adapter_status})`);
       next.stage = "RUNNING";
@@ -690,6 +715,44 @@ export function nextReceiptState(receipt, event, ctx = {}) {
     default:
       return unchanged(`unknown event type "${event.type}"`);
   }
+}
+
+// Fold any adapter's normalized launch result through the same receipt machine.
+// Remote adapters usually return RUNNING. A synchronous adapter such as
+// `claude -p` can return its terminal result in the launch call; it is still
+// acknowledged first so terminal receipts retain a durable run identity.
+export function foldLaunchOutcome(receipt, launch) {
+  let transition = receipt.stage === "LAUNCH_UNKNOWN"
+    ? { receipt, accepted: true, idempotency_key: launchIdempotencyKey(receipt) }
+    : nextReceiptState(receipt, { type: "launch" });
+  if (!transition.accepted || launch.stage === "LAUNCH_UNKNOWN") return transition;
+
+  const hasRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
+  if (hasRun) {
+    transition = nextReceiptState(transition.receipt, {
+      type: "worker_ack",
+      external_run_id: launch.external_run_id,
+      adapter_status: launch.stage === "RUNNING" ? launch.adapter_status : "in_progress",
+      worker_identity: launch.worker_identity,
+    });
+    if (!transition.accepted || launch.stage === "RUNNING") return transition;
+  }
+
+  if (launch.stage === "COMPLETED" || launch.stage === "HOLD") {
+    return nextReceiptState(transition.receipt, {
+      type: "run_status",
+      status: "completed",
+      callback: launch.callback,
+      worker_identity: launch.worker_identity,
+    });
+  }
+  return nextReceiptState(transition.receipt, {
+    type: "run_status",
+    status: "failed",
+    error_code: launch.error_code,
+    error_kind: launch.error_kind,
+    worker_identity: launch.worker_identity,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -951,7 +1014,7 @@ export function parseReceiptsFromComments(comments = []) {
 
 // COORDINATOR_CALLBACK_MARKER_RE + parseEvidenceFromComments — workers publish
 // their structured callback as a Linear comment on the issue (adapter contract:
-// issue/attempt ids, branch, commit SHA, stage BUILD_READY/REVISION_READY/
+// issue/attempt ids, branch, commit SHA, stage BUILD_READY/REVISION_READY/PASS/
 // BLOCKED/FAILED, CI/evidence links). The lifecycle pass loads this evidence so a
 // polled "completed" run can be validated against the SAME attempt + bound head.
 // Selection is deterministic by explicit createdAt (newest wins) — an older
@@ -971,7 +1034,7 @@ export function parseEvidenceFromComments(comments = [], attempt_id) {
         links: Array.isArray(cb.links) ? cb.links : [],
         attempt_id: cb.attempt_id,
         target_sha: typeof cb.target_sha === "string" ? cb.target_sha : null,
-        stage: typeof cb.stage === "string" ? cb.stage : null, // BUILD_READY | REVISION_READY | BLOCKED | FAILED
+        stage: typeof cb.stage === "string" ? cb.stage : null, // BUILD_READY | REVISION_READY | PASS | BLOCKED | FAILED
       };
       const createdAt = typeof comment.createdAt === "string" ? comment.createdAt : null;
       if (!best || (createdAt && (!best.createdAt || createdAt > best.createdAt))) {
@@ -1178,15 +1241,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return uuid;
   };
 
-  const adapterModule = await import("./adapters/workspace-agents.mjs"); // lifecycle poll + dispatch share one import
   let lifecyclePersisted = false; // a lifecycle transition was durably written this run
   // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
   // compute/report only and ZERO writes — never poll upstream or persist receipts
   // while both dispatch gates are false.
   if (dispatchEnabled && linearToken && io.pollRuns !== false) {
-    const waToken = env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "";
-    const waTrigger = env.WORKSPACE_AGENT_TRIGGER_ID ?? "";
-
     // Reconcile uncertain launches before polling acknowledged runs. A transport
     // failure after POST may mean the upstream accepted the run but the response
     // was lost. Retrying the SAME attempt uses the SAME Idempotency-Key, so it can
@@ -1194,10 +1253,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // receipts untouched forever would permanently consume max_dispatch.
     const lifecycleStartReceipts = [...receipts];
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
-      if (!waToken || !waTrigger) {
-        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — Workspace Agents credentials unavailable; slot held`);
-        continue;
-      }
+      const adapter = adapterNameFor(receipt.requested_worker);
+      const adapterModule = await loadAdapterModule(adapter, io);
       const conflicting = receipts.find(
         (other) =>
           other.issue_id === receipt.issue_id &&
@@ -1219,8 +1276,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           attempt_id: receipt.attempt_id,
           target_sha: receipt.target_sha,
           task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
-          api_trigger_id: waTrigger,
-          token: waToken,
+          ...adapterLaunchOptions(adapter, env, { resume: true }),
           fetchImpl,
         });
       } catch (err) {
@@ -1229,21 +1285,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       if (launch.stage === "LAUNCH_UNKNOWN") continue;
 
-      let transition = nextReceiptState(receipt, { type: "launch" });
-      if (launch.stage === "RUNNING") {
-        transition = nextReceiptState(transition.receipt, {
-          type: "worker_ack",
-          external_run_id: launch.external_run_id,
-          adapter_status: launch.adapter_status,
-        });
-      } else {
-        transition = nextReceiptState(transition.receipt, {
-          type: "run_status",
-          status: "failed",
-          error_code: launch.error_code,
-          error_kind: launch.error_kind,
-        });
-      }
+      const transition = foldLaunchOutcome(receipt, launch);
       if (!transition.accepted) continue;
       const nextReceipt = transition.receipt;
       if (launch.conversation_url && typeof launch.conversation_url === "string") {
@@ -1252,7 +1294,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
       if (transition.pause_adapter === true || launch.pause_adapter === true) {
-        const adapter = adapterNameFor(receipt.requested_worker);
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
       }
@@ -1262,6 +1303,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
 
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
+      const adapter = adapterNameFor(receipt.requested_worker);
+      const adapterModule = await loadAdapterModule(adapter, io);
       // Callback evidence from the durable issue thread (same attempt_id bound);
       // selection is deterministic by newest createdAt (GPT BLOCK #2).
       const evidence = parseEvidenceFromComments(commentsByIssue.get(receipt.issue_id) ?? [], receipt.attempt_id) ?? undefined;
@@ -1291,8 +1334,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           target_sha: receipt.target_sha,
           evidence,
           current_head: headVerified ? current_head : undefined,
-          token: waToken,
-          api_trigger_id: waTrigger,
+          ...adapterLaunchOptions(adapter, env),
           fetchImpl,
         });
       } catch (err) {
@@ -1338,7 +1380,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
       if (transition.pause_adapter === true) {
-        const adapter = adapterNameFor(receipt.requested_worker);
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
       }
@@ -1438,38 +1479,33 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 2;
   }
 
-  const dispatchAdapterModule = await import("./adapters/workspace-agents.mjs");
+  // Write-ahead launch intent: persist LAUNCH_UNKNOWN before crossing any
+  // adapter boundary. If this process dies while a remote request or `claude -p`
+  // is running, the next reconcile resumes the same attempt instead of leaving
+  // a RESERVED receipt parked forever or minting a duplicate worker.
+  const launchIntent = nextReceiptState(receipt, { type: "launch" });
+  if (!launchIntent.accepted) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
+    return 2;
+  }
+  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
+
+  const adapter = adapterNameFor(candidate.requested_worker);
+  const dispatchAdapterModule = await loadAdapterModule(adapter, io);
   const launch = await dispatchAdapterModule.launchBuilder({
     issue_id: receipt.issue_id,
     authorization_ref: receipt.authorization_ref,
     attempt_id: receipt.attempt_id,
     target_sha: receipt.target_sha,
     task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
-    api_trigger_id: env.WORKSPACE_AGENT_TRIGGER_ID ?? "",
-    token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "",
+    ...adapterLaunchOptions(adapter, env),
     fetchImpl,
   });
   // Drive the state machine IN ORDER: the launch event first (RESERVED ->
   // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
   // (ack -> RUNNING / stays LAUNCH_UNKNOWN / upstream failure). A worker ack
   // straight from RESERVED is out of order by design — launch always precedes it.
-  let transition = nextReceiptState(receipt, { type: "launch" });
-  if (transition.accepted) {
-    if (launch.stage === "RUNNING") {
-      transition = nextReceiptState(transition.receipt, {
-        type: "worker_ack",
-        external_run_id: launch.external_run_id,
-        adapter_status: launch.adapter_status,
-      });
-    } else if (launch.stage !== "LAUNCH_UNKNOWN") {
-      transition = nextReceiptState(transition.receipt, {
-        type: "run_status",
-        status: "failed",
-        error_code: launch.error_code,
-        error_kind: launch.error_kind,
-      });
-    }
-  }
+  const transition = foldLaunchOutcome(launchIntent.receipt, launch);
   if (!transition.accepted) {
     if (io.stdout) io.stdout(`dispatch: ${candidate.id} transition REJECTED (${transition.reason ?? "unknown reason"}) — state unchanged, slot held`);
     return 2;
@@ -1491,7 +1527,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
   }
   if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})`);
-  return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" ? 0 : 2;
+  return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;
 }
 
 // CLI entry: `node .github/coordinator/reconcile.mjs`

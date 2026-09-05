@@ -126,10 +126,18 @@ test("rejects: worker_identity set while external_run_id null (contradictory pai
   assertInvalid(r, /contradictory/, "identity without run id");
 });
 
-test("rejects: external_run_id not apirun_-prefixed", () => {
+test("rejects: external_run_id without an approved provider prefix", () => {
   const r = validRunning();
   r.external_run_id = "run-12345";
   assertInvalid(r, /fails pattern/, "bad run id prefix");
+});
+
+test("accepts provider-neutral Claude Code run identifiers", () => {
+  const r = validRunning();
+  r.requested_worker = "claude-verifier";
+  r.external_run_id = "clauderun_11111111222243338444555555555555";
+  r.worker_identity = "claude:11111111-2222-4333-8444-555555555555";
+  assert.equal(validateReceipt(r).valid, true);
 });
 
 test("rejects: adapter_status outside granular enum", () => {
