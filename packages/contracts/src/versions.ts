@@ -9,6 +9,7 @@
  * - `authz`    – roles, grants, org hierarchy and active-context resolution.
  * - `identity` – the `bawes-aa.v1` actor assertion: claim set, envelope,
  *                signing input and subject policy.
+ * - `search`   – candidate search requests, results and live facet counts.
  *
  * `PLATFORM_CONTRACT_VERSION` (in index.ts) is kept only as a wire-compatible
  * alias of the health slot for existing consumers; new code should read its
@@ -18,6 +19,7 @@ export const CONTRACT_VERSIONS = {
   health: "1.0.0",
   authz: "1.0.0",
   identity: "1.0.0",
+  search: "1.0.0",
 } as const;
 
 export type ContractName = keyof typeof CONTRACT_VERSIONS;
