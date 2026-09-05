@@ -903,8 +903,22 @@ export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
 // future code change returns nodes in. A stale RESERVED comment can therefore
 // never replace a newer terminal one. Fallbacks: receipt.last_activity, then the
 // array position (query uses orderBy createdAt ascending).
+// Fields that can never legitimately differ between two records of one attempt.
+// Shared by the comment parser and main()'s conflict check so both layers apply
+// the SAME rule — a control that only one layer enforces is unreachable if the
+// other collapses its inputs first.
+export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
+  "issue_id",
+  "authorization_ref",
+  "requested_worker",
+  "repo",
+  "branch",
+  "target_sha",
+]);
+
 export function parseReceiptsFromComments(comments = []) {
   const byAttempt = new Map(); // attempt_id -> { receipt, createdAt }
+  const conflicts = []; // records held back so main()'s conflict check can fire
   for (const comment of comments ?? []) {
     const parsed = parseReceiptCommentBody(comment?.body);
     if (parsed && typeof parsed === "object" && parsed.receipt_version === "1.0.0" && parsed.attempt_id) {
@@ -914,6 +928,17 @@ export function parseReceiptsFromComments(comments = []) {
         byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });
         continue;
       }
+      // IMMUTABLE-FIELD CONFLICT: two records claiming one attempt_id but
+      // disagreeing on a field that can never legitimately change means durable
+      // state is corrupt or forged. Collapsing them here would hide the conflict
+      // from main()'s fail-closed check and silently prefer whichever comment is
+      // NEWEST — i.e. the forged one, since Linear comments are writable by
+      // anyone with issue access. Keep BOTH so main() sees the disagreement and
+      // prevents dispatch. (Opus, exact-head verification of PR #21.)
+      if (RECEIPT_IMMUTABLE_FIELDS.some((field) => prior.receipt[field] !== parsed[field])) {
+        conflicts.push(parsed);
+        continue;
+      }
       // Newest-by-createdAt wins; a comment WITHOUT a timestamp loses to one
       // with one; a tie keeps the LATER array element (query is createdAt ASC).
       const ct = prior.createdAt;
@@ -921,7 +946,7 @@ export function parseReceiptsFromComments(comments = []) {
       if (replace) byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });
     }
   }
-  return [...byAttempt.values()].map((entry) => entry.receipt);
+  return [...byAttempt.values()].map((entry) => entry.receipt).concat(conflicts);
 }
 
 // COORDINATOR_CALLBACK_MARKER_RE + parseEvidenceFromComments — workers publish
@@ -1123,9 +1148,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     const previous = receiptByAttempt.get(receipt.attempt_id);
     if (
       previous &&
-      ["issue_id", "authorization_ref", "requested_worker", "repo", "branch", "target_sha"].some(
-        (field) => previous[field] !== receipt[field],
-      )
+      RECEIPT_IMMUTABLE_FIELDS.some((field) => previous[field] !== receipt[field])
     ) {
       durableReadFailed = true;
       if (io.stdout) io.stdout(`durable receipt conflict for attempt ${receipt.attempt_id} — immutable fields disagree; DISPATCH PREVENTED (fail closed)`);
@@ -1395,6 +1418,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const durable = parseReceiptsFromComments(verifyComments);
   const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
   const otherActive = durable.find((r) => r.attempt_id !== receipt.attempt_id && !TERMINAL_STAGES.includes(r.stage));
+  // Same immutable-field rule as the initial read: a record wearing THIS
+  // attempt_id but disagreeing on repo/branch/target_sha was not written by this
+  // run. A check that only the initial read applies is a TOCTOU hole — the
+  // forgery window is exactly between that read and this one.
+  const impostor = durable.find(
+    (r) => r.attempt_id === receipt.attempt_id && RECEIPT_IMMUTABLE_FIELDS.some((f) => r[f] !== receipt[f]),
+  );
+  if (impostor) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — durable receipt conflict for attempt ${receipt.attempt_id}, immutable fields disagree; slot held`);
+    return 2;
+  }
   if (!ownReservation) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — reservation ${receipt.attempt_id} not durably present after write; slot held`);
     return 2;

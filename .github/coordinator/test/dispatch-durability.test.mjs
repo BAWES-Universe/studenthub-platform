@@ -15,6 +15,8 @@ import {
   selectNextReservation,
   validateReceipt,
   nextReceiptState,
+  receiptCommentBody,
+  createReceipt,
 } from "../reconcile.mjs";
 
 const SHA = "b".repeat(40);
@@ -293,4 +295,75 @@ test("malformed durable records never crash the validator", () => {
   const out = validateReceipt(broken);
   assert.equal(out.valid, false);
   assert.ok(Array.isArray(out.errors) && out.errors.length > 0);
+});
+
+// Two durable records claiming the SAME attempt_id but disagreeing on an
+// IMMUTABLE field means durable state is corrupt or forged. Dispatching on it
+// could launch a worker against the wrong repo/branch/SHA, so the conflict must
+// fail closed exactly like an unreadable store. Added by Opus during exact-head
+// verification of PR #21: mutation-testing showed the conflict branch in main()
+// had no test — flipping its `durableReadFailed = true` to `false` left all 104
+// tests passing.
+test("conflicting immutable fields on one attempt_id PREVENT dispatch (fail closed)", async () => {
+  const nodes = makeIssueNodes();
+  const attempt = "11111111-2222-4333-8444-555555555555";
+  const made = createReceipt({
+    issue_id: "SHU-FIXTURE-001",
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    requested_worker: "codex-builder",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "chore/coordinator-dry-run",
+    target_sha: SHA,
+    attempt_id: attempt,
+    reserved_at: "2026-09-05T12:00:00.000Z",
+  });
+  assert.ok(made.ok, `fixture receipt must be schema-valid: ${JSON.stringify(made.errors)}`);
+  const base = made.receipt;
+  // Same attempt_id, different branch — an IMMUTABLE field disagreeing.
+  const forged = { ...base, branch: "attacker/other-branch", last_activity: "2026-09-05T12:05:00.000Z" };
+  assert.ok(validateReceipt(forged).valid, "forged record must also be schema-valid, or the parser drops it before the conflict check");
+
+  const store = fakeLinearStore(nodes, [
+    { body: receiptCommentBody(base), createdAt: base.last_activity },
+    { body: receiptCommentBody(forged), createdAt: forged.last_activity },
+  ]);
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const r = await runMain({ configPath: tempConfig(), wa, linear: store });
+
+  assert.equal(r.code, 2, "conflicting immutable receipt fields must prevent dispatch");
+  assert.equal(wa.calls(), 0, "no worker may launch while durable state self-contradicts");
+  assert.match(r.out.join("\n"), /DISPATCH PREVENTED/);
+  assert.match(r.out.join("\n"), /immutable fields disagree/);
+});
+
+// TOCTOU sibling of the test above. The initial read is clean, so main()'s
+// conflict check passes and dispatch proceeds — the forged record lands in the
+// window BETWEEN the RESERVED write and the pre-launch re-read. A check that
+// only the initial read applies would launch here.
+test("impostor receipt injected after reservation ABORTS before launch (fail closed)", async () => {
+  const nodes = makeIssueNodes();
+  const store = fakeLinearStore(nodes, []);
+  let injected = false;
+  const injecting = async (url, opts) => {
+    const res = await store(url, opts);
+    const { query } = JSON.parse(opts.body);
+    if (query.includes("commentCreate") && !injected) {
+      injected = true;
+      // Recover the receipt this run just wrote, then forge a sibling record
+      // wearing the SAME attempt_id but pointing at a different branch.
+      const [written] = parseReceiptsFromComments([store.comments[store.comments.length - 1]]);
+      assert.ok(written, "reservation comment must parse back as a receipt");
+      store.comments.push({
+        body: receiptCommentBody({ ...written, branch: "attacker/other-branch" }),
+        createdAt: new Date(Date.now() + 1000).toISOString(),
+      });
+    }
+    return res;
+  };
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const r = await runMain({ configPath: tempConfig(), wa, linear: injecting });
+
+  assert.equal(wa.calls(), 0, "no worker may launch once durable state self-contradicts");
+  assert.match(r.out.join("\n"), /ABORTED before launch/);
+  assert.match(r.out.join("\n"), /immutable fields disagree/);
 });
