@@ -244,13 +244,15 @@ test("max_dispatch=1: an active receipt blocks further reservations", () => {
   const r = selectNextReservation({ ready: eligible, config: { max_dispatch: 1, adapter_pause_map: {} }, receipts: active });
   assert.equal(r.candidate, null);
   assert.match(r.skipped[0].reason, /max_dispatch=1/);
-  // a TERMINAL receipt does not occupy the slot
+  // a TERMINAL receipt does not occupy the slot, but the COMPLETED issue itself
+  // is parked (human/next-step decides) — the NEXT eligible card is selected.
   const terminal = selectNextReservation({
     ready: eligible,
     config: { max_dispatch: 1, adapter_pause_map: {} },
     receipts: [{ issue_id: "SHU-70", stage: "COMPLETED" }],
   });
-  assert.equal(terminal.candidate.id, "SHU-70");
+  assert.equal(terminal.candidate.id, "SHU-71");
+  assert.match(terminal.skipped[0].reason, /parked/);
 });
 
 test("conflicting manual claim -> HOLD", () => {

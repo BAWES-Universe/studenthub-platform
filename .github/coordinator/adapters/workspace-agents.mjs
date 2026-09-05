@@ -23,7 +23,13 @@
 // WORKSPACE_AGENT_TRIGGER_ID) — never logged, never committed, never written to Linear.
 // fetch is injectable so the whole module is testable with a mocked network.
 
-import { launchIdempotencyKey } from "../reconcile.mjs";
+// NOTE: no import from ../reconcile.mjs — reconcile's CLI runs a top-level
+// await, so an adapter→reconcile import creates an ESM cycle that hangs the CLI
+// (reconcile awaits this module while this module awaits reconcile's evaluation).
+// The idempotency key is a pure string contract — inlined here to stay acyclic.
+export function launchIdempotencyKey({ attempt_id, target_sha }) {
+  return `${attempt_id}:LAUNCH_UNKNOWN:${target_sha}`;
+}
 
 export const API_BASE = "https://api.chatgpt.com";
 export const BETA_HEADER = "workspace_agent_runs=v1";

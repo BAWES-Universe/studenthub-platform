@@ -552,6 +552,11 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         }
         const next = note(`adapter status: ${status}`);
         next.adapter_status = status;
+        // The poll response supplies the documented agent_id — the ONLY source of
+        // worker_identity (never fabricated, GPT review #1 / lifecycle BLOCK).
+        if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+          next.worker_identity = event.worker_identity;
+        }
         next.timestamps.heartbeat = at();
         return { receipt: next, accepted: true };
       }
@@ -567,6 +572,9 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
+          if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+            next.worker_identity = event.worker_identity; // poll's agent_id, persisted with the terminal state
+          }
           next.timestamps.terminal = at();
           return { receipt: next, accepted: true };
         }
@@ -577,6 +585,9 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         );
         next.stage = "HOLD";
         next.adapter_status = "completed";
+        if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+          next.worker_identity = event.worker_identity; // agent_id is known even when the callback is not
+        }
         next.timestamps.terminal = at();
         return { receipt: next, accepted: true };
       }
@@ -594,7 +605,12 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           `run failed${preAcceptance ? " (rejected before run acceptance)" : ""}${error_code ? ` (error code ${error_code})` : ""}${quotaOrAccess ? " — QUOTA/ACCESS failure, adapter will be paused" : ""}`,
         );
         next.stage = "FAILED";
-        if (!preAcceptance) next.adapter_status = "failed"; // granular upstream status; stays null when no run existed
+        if (!preAcceptance) {
+          next.adapter_status = "failed"; // granular upstream status; stays null when no run existed
+          if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+            next.worker_identity = event.worker_identity; // poll supplies agent_id on failed runs too
+          }
+        }
         next.timestamps.terminal = at();
         return { receipt: next, accepted: true, pause_adapter: quotaOrAccess };
       }
@@ -677,6 +693,14 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
   const maxDispatch = Number.isInteger(config.max_dispatch) ? config.max_dispatch : 1;
   const active = receipts.filter((r) => r && !TERMINAL_STAGES.includes(r.stage));
   const activeIssueIds = new Set(active.map((r) => r.issue_id));
+  // Terminal COMPLETED/HOLD receipts mean the outcome awaits a human or the next
+  // step — the coordinator never auto-redispatches the SAME issue off a terminal
+  // COMPLETED/HOLD (lifecycle policy: only the agreed terminal result releases the
+  // SLOT; the ISSUE itself stays parked until a human moves it). FAILED is the
+  // retryable terminal (revision loops relaunch after a genuine run failure).
+  const parkedIssueIds = new Set(
+    receipts.filter((r) => r && (r.stage === "COMPLETED" || r.stage === "HOLD")).map((r) => r.issue_id),
+  );
   const pauseMap = config.adapter_pause_map ?? {};
   const skipped = [];
 
@@ -687,6 +711,10 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
   for (const issue of ready) {
     if (activeIssueIds.has(issue.id)) {
       skipped.push({ id: issue.id, reason: "already has an active receipt" });
+      continue;
+    }
+    if (parkedIssueIds.has(issue.id)) {
+      skipped.push({ id: issue.id, reason: "issue has a terminal COMPLETED/HOLD receipt — parked for human/next-step, not auto-redispatched" });
       continue;
     }
     const adapter = adapterNameFor(issue.requested_worker);
@@ -801,11 +829,24 @@ export async function fetchLinearIssues({ token, repo, team = "SHU", fetchImpl =
 }
 
 // fetchIssueComments — read an issue's comment thread (durable receipts + pause
-// markers live there). issueId is the Linear UUID when known, else the identifier
-// (mocked tests / snapshot mode tolerate either).
+// markers + worker callbacks live there). issueId is the Linear UUID when known,
+// else the identifier (mocked tests / snapshot mode tolerate either).
 export async function fetchIssueComments({ issueId, token, fetchImpl = fetch }) {
   const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId }, token, fetchImpl);
   return data?.issue?.comments?.nodes ?? [];
+}
+
+// fetchBranchHead — current commit SHA of a branch (stale-SHA checks in the
+// lifecycle pass). Reads only; contents:read token suffices.
+export async function fetchBranchHead({ repo, branch, token, fetchImpl = fetch }) {
+  if (!token || !repo || !branch) return null;
+  const res = await fetchImpl(`https://api.github.com/repos/${repo}/branches/${encodeURIComponent(branch)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+  });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  return body?.commit?.sha ?? null;
 }
 
 // Receipt comments: the receipt JSON is embedded in a fenced block so it can be
@@ -837,18 +878,58 @@ export function parseReceiptCommentBody(body) {
 export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
 
 // parseReceiptsFromComments — reconstruct durable receipts from Linear comment
-// bodies. Comments arrive newest-first from the API, so iterate oldest->newest
-// and keep the LAST receipt per attempt_id: a RUNNING comment supersedes the
-// RESERVED comment that preceded it.
+// bodies. Resolution is by EXPLICIT createdAt ordering (GPT lifecycle BLOCK #5):
+// the newest comment per attempt_id wins, regardless of the order the API or any
+// future code change returns nodes in. A stale RESERVED comment can therefore
+// never replace a newer terminal one. Fallbacks: receipt.last_activity, then the
+// array position (query uses orderBy createdAt ascending).
 export function parseReceiptsFromComments(comments = []) {
-  const byAttempt = new Map();
+  const byAttempt = new Map(); // attempt_id -> { receipt, createdAt }
   for (const comment of comments ?? []) {
     const parsed = parseReceiptCommentBody(comment?.body);
     if (parsed && typeof parsed === "object" && parsed.receipt_version === "1.0.0" && parsed.attempt_id) {
-      byAttempt.set(parsed.attempt_id, parsed);
+      const prior = byAttempt.get(parsed.attempt_id);
+      const createdAt = typeof comment?.createdAt === "string" ? comment.createdAt : null;
+      if (!prior) {
+        byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });
+        continue;
+      }
+      // Newest-by-createdAt wins; a comment WITHOUT a timestamp loses to one
+      // with one; a tie keeps the LATER array element (query is createdAt ASC).
+      const ct = prior.createdAt;
+      const replace = createdAt === null ? false : ct === null ? true : createdAt >= ct;
+      if (replace) byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });
     }
   }
-  return [...byAttempt.values()];
+  return [...byAttempt.values()].map((entry) => entry.receipt);
+}
+
+// COORDINATOR_CALLBACK_MARKER_RE + parseEvidenceFromComments — workers publish
+// their structured callback as a Linear comment on the issue (adapter contract:
+// issue/attempt ids, branch, commit SHA, stage BUILD_READY/REVISION_READY/
+// BLOCKED/FAILED, CI/evidence links). The lifecycle pass loads this evidence so a
+// polled "completed" run can be validated against the SAME attempt + bound head.
+export const COORDINATOR_CALLBACK_MARKER_RE = /^coordinator-callback v1$/m;
+
+export function parseEvidenceFromComments(comments = [], attempt_id) {
+  for (const comment of comments ?? []) {
+    if (!comment?.body || !COORDINATOR_CALLBACK_MARKER_RE.test(comment.body)) continue;
+    const m = /```json\n([\s\S]*?)\n```/.exec(comment.body);
+    if (!m) continue;
+    try {
+      const cb = JSON.parse(m[1]);
+      if (cb && cb.attempt_id === attempt_id && typeof cb.attempt_id === "string") {
+        return {
+          links: Array.isArray(cb.links) ? cb.links : [],
+          attempt_id: cb.attempt_id,
+          target_sha: typeof cb.target_sha === "string" ? cb.target_sha : null,
+        };
+      }
+    } catch {
+      // malformed callback comment — ignore, the next one may parse
+    }
+  }
+  return null;
 }
 
 export function parsePausedAdapters(comments = []) {
@@ -987,11 +1068,14 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // run (a card whose durable state cannot be read must never be launched at).
   let receipts = [...(io.receipts ?? [])];
   let durableReadFailed = false;
+  const commentsByIssue = new Map(); // issue id/identifier -> raw comment nodes (evidence source)
   if (linearToken && io.fetchDurable !== false) {
     const pausedAdapters = new Set(Object.keys(config.adapter_pause_map).filter((k) => config.adapter_pause_map[k]));
     for (const issue of issues) {
       try {
         const comments = await fetchIssueComments({ issueId: issue.linearId ?? issue.id, token: linearToken, fetchImpl });
+        commentsByIssue.set(issue.id, comments);
+        if (issue.linearId) commentsByIssue.set(issue.linearId, comments);
         receipts = receipts.concat(parseReceiptsFromComments(comments));
         for (const adapter of parsePausedAdapters(comments)) pausedAdapters.add(adapter);
       } catch (err) {
@@ -1000,6 +1084,82 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
     }
     for (const adapter of pausedAdapters) config.adapter_pause_map[adapter] = true;
+  }
+
+  // ---- LIFECYCLE PASS (GPT lifecycle BLOCK @ f03d445) ----
+  // Before selecting new work, poll every active RUNNING receipt through the
+  // adapter's monitorRun() and durably persist terminal transitions. Without
+  // this the first accepted trigger would occupy the only slot forever, and
+  // worker_identity would never be learned (only polling supplies agent_id).
+  const adapterModule = await import("./adapters/workspace-agents.mjs"); // lifecycle poll + dispatch share one import
+  let lifecyclePersisted = false; // a terminal transition was durably written this run
+  if (linearToken && io.pollRuns !== false) {
+    const waToken = env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "";
+    const waTrigger = env.WORKSPACE_AGENT_TRIGGER_ID ?? "";
+    for (const receipt of receipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
+      // Callback evidence from the durable issue thread (same attempt_id bound).
+      const evidence = parseEvidenceFromComments(commentsByIssue.get(receipt.issue_id) ?? [], receipt.attempt_id) ?? undefined;
+      // Current head of the receipt's branch when a GitHub token is available;
+      // otherwise the bound target_sha IS the reference head for this pilot.
+      let current_head = receipt.target_sha;
+      if (githubToken && receipt.repo && receipt.branch) {
+        try {
+          const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
+          if (head) current_head = head;
+        } catch {
+          // branch unreadable — fall back to the bound head (stale-SHA checks still apply)
+        }
+      }
+      let outcome;
+      try {
+        outcome = await adapterModule.monitorRun({
+          run_id: receipt.external_run_id,
+          attempt_id: receipt.attempt_id,
+          target_sha: receipt.target_sha,
+          evidence,
+          current_head,
+          token: waToken,
+          api_trigger_id: waTrigger,
+          fetchImpl,
+        });
+      } catch (err) {
+        if (io.stdout) io.stdout(`lifecycle: poll failed for ${receipt.issue_id} ${receipt.external_run_id}: ${err.message} — state unchanged, slot held`);
+        continue;
+      }
+      let event = null;
+      if (outcome.stage === "RUNNING") {
+        event = { type: "run_status", status: outcome.adapter_status, worker_identity: outcome.worker_identity ?? null };
+      } else if (outcome.stage === "COMPLETED") {
+        event = { type: "run_status", status: "completed", callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha }, worker_identity: outcome.worker_identity ?? null };
+      } else if (outcome.stage === "HOLD") {
+        event = { type: "run_status", status: "completed" }; // completed without validated callback → machine HOLDs
+      } else if (outcome.stage === "FAILED") {
+        event = { type: "run_status", status: "failed", error_code: outcome.error_code, error_kind: outcome.error_kind, worker_identity: outcome.worker_identity ?? null };
+      } else {
+        continue; // UNCHANGED (transient poll failure) — never touch state, never release the slot
+      }
+      const transition = nextReceiptState(receipt, event);
+      if (!transition.accepted) {
+        if (io.stdout) io.stdout(`lifecycle: transition REJECTED for ${receipt.issue_id} (${transition.reason ?? "unknown"}) — slot held`);
+        continue;
+      }
+      const nextReceipt = transition.receipt;
+      const changed =
+        nextReceipt.stage !== receipt.stage ||
+        nextReceipt.adapter_status !== receipt.adapter_status ||
+        nextReceipt.worker_identity !== receipt.worker_identity;
+      if (!changed) continue;
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: receipt.issue_id, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
+      lifecyclePersisted = true;
+      if (transition.pause_adapter === true) {
+        const adapter = adapterNameFor(receipt.requested_worker);
+        config.adapter_pause_map[adapter] = true;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: receipt.issue_id, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+      }
+      const idx = receipts.indexOf(receipt);
+      if (idx >= 0) receipts[idx] = nextReceipt;
+      if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} ${receipt.stage} -> ${nextReceipt.stage} (worker_identity=${nextReceipt.worker_identity ?? "null"}, external_run_id=${nextReceipt.external_run_id ?? "null"})`);
+    }
   }
 
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts });
@@ -1026,6 +1186,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   if (durableReadFailed) {
     if (io.stdout) io.stdout(`dispatch: PREVENTED — durable receipt state could not be fully read (fail closed); reconcile after the read path recovers`);
     return 2;
+  }
+  if (lifecyclePersisted) {
+    // One decision per reconcile tick: this run already advanced active runs to
+    // their terminal states — new dispatch waits for the next tick so a retry
+    // never compounds onto a transition made seconds ago in the same process.
+    if (io.stdout) io.stdout(`dispatch: DEFERRED — lifecycle transitions were persisted this run; selection resumes next reconcile`);
+    return 0;
   }
   const { candidate, skipped } = selection;
   if (!candidate) {
@@ -1074,8 +1241,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 2;
   }
 
-  const adapterModule = await import("./adapters/workspace-agents.mjs");
-  const launch = await adapterModule.launchBuilder({
+  const dispatchAdapterModule = await import("./adapters/workspace-agents.mjs");
+  const launch = await dispatchAdapterModule.launchBuilder({
     issue_id: receipt.issue_id,
     authorization_ref: receipt.authorization_ref,
     attempt_id: receipt.attempt_id,

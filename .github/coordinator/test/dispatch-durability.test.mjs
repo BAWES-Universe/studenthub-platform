@@ -95,16 +95,20 @@ function fakeLinearStore(issueNodes, commentBodies, { failComments = false } = {
 }
 
 function fakeWorkspaceAgents({ mode }) {
-  let calls = 0;
+  let triggers = 0;
   const impl = async (url, opts) => {
-    calls += 1;
+    // Poll GETs (monitorRun) return "still queued" — RUNNING persists unchanged.
+    if (url.includes("/runs/")) {
+      return { status: 200, ok: true, json: async () => ({ object: "workspace_agent.trigger_run", id: "apirun_durable_1", status: "queued", agent_id: null, error: null }) };
+    }
+    triggers += 1; // only POST /trigger counts as a launch
     assert.equal(url, `https://api.chatgpt.com/v1/workspace_agents/${TRIGGER}/trigger`);
     if (mode === "transport-fail") throw new Error("ECONNRESET");
     if (mode === "quota") return { status: 429, ok: false, json: async () => ({}) };
     // Official 202 shape: { conversation_url, agent_trigger_run_id }.
     return { status: 202, ok: true, json: async () => ({ conversation_url: "https://chatgpt.com/c/durable_1", agent_trigger_run_id: "apirun_durable_1" }) };
   };
-  impl.calls = () => calls;
+  impl.calls = () => triggers;
   return impl;
 }
 
