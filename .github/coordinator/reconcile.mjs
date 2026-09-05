@@ -227,10 +227,14 @@ export function requestedWorkerFor(issue) {
   return "codex-builder";
 }
 
-// Adapter name for a worker family. The pilot has exactly one adapter; verifier /
-// box families still route through it (requested_worker documents the family).
-export function adapterNameFor(_requestedWorker) {
-  return "workspace-agents"; // pilot: single builder adapter
+// Adapter name for a worker family (used for pause-map markers and dispatch
+// routing). codex-builder -> Workspace Agents; hermes-box -> the Hermes pool
+// (SHU-62); claude-verifier currently falls back to workspace-agents until the
+// Claude subscription adapter (SHU-61) lands — the fallback is documented, not
+// silently assumed.
+export function adapterNameFor(requestedWorker) {
+  if (requestedWorker === "hermes-box") return "hermes-pool";
+  return "workspace-agents";
 }
 
 // dispatchEnabledFor — dispatch requires BOTH gates in DIFFERENT layers (CodeRabbit):
@@ -492,6 +496,24 @@ const nowIso = (at) => at ?? new Date().toISOString();
 // `accepted:false` means the event was out of order or invalid for the current
 // stage — the receipt is returned UNCHANGED (slot never released, stage never
 // downgraded). Terminal stages (COMPLETED/FAILED/HOLD) accept no further events.
+// adapterFor — dynamic adapter module per requested worker family (SHU-62:
+// provider-independent coordinator). Workspace Agents for codex-builder,
+// hermes-pool for hermes-box; claude-verifier routes to workspace-agents until
+// the Claude adapter (SHU-61) replaces it.
+const ADAPTER_MODULES = {
+  "codex-builder": () => import("./adapters/workspace-agents.mjs"),
+  "claude-verifier": () => import("./adapters/workspace-agents.mjs"), // SHU-61 slot
+  "hermes-box": () => import("./adapters/hermes-pool.mjs"),
+};
+export function adapterFor(requestedWorker) {
+  const loader = ADAPTER_MODULES[requestedWorker] ?? ADAPTER_MODULES["codex-builder"];
+  return loader();
+}
+
+export async function adapterModuleFor(receiptOrCandidate) {
+  return adapterFor(receiptOrCandidate?.requested_worker);
+}
+
 export function nextReceiptState(receipt, event, ctx = {}) {
   const unchanged = (reason) => ({ receipt, accepted: false, reason });
 
@@ -1178,7 +1200,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return uuid;
   };
 
-  const adapterModule = await import("./adapters/workspace-agents.mjs"); // lifecycle poll + dispatch share one import
   let lifecyclePersisted = false; // a lifecycle transition was durably written this run
   // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
   // compute/report only and ZERO writes — never poll upstream or persist receipts
@@ -1213,7 +1234,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 
       let launch;
       try {
-        launch = await adapterModule.launchBuilder({
+        launch = await (await adapterModuleFor(receipt)).launchBuilder({
           issue_id: receipt.issue_id,
           authorization_ref: receipt.authorization_ref,
           attempt_id: receipt.attempt_id,
@@ -1222,6 +1243,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           api_trigger_id: waTrigger,
           token: waToken,
           fetchImpl,
+          io, // hermes-pool lease dir / spawn wiring (SHU-62); ignored by workspace-agents
+          env,
         });
       } catch (err) {
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation failed for ${receipt.issue_id}: ${err.message} — state unchanged, slot held`);
@@ -1235,6 +1258,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           type: "worker_ack",
           external_run_id: launch.external_run_id,
           adapter_status: launch.adapter_status,
+          worker_identity: launch.worker_identity ?? null, // hermes-pool: real spawn identity, not a fabrication
         });
       } else {
         transition = nextReceiptState(transition.receipt, {
@@ -1285,7 +1309,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       let outcome;
       try {
-        outcome = await adapterModule.monitorRun({
+        outcome = await (await adapterModuleFor(receipt)).monitorRun({
           run_id: receipt.external_run_id,
           attempt_id: receipt.attempt_id,
           target_sha: receipt.target_sha,
@@ -1294,6 +1318,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           token: waToken,
           api_trigger_id: waTrigger,
           fetchImpl,
+          io, // hermes-pool lease reads (SHU-62); ignored by workspace-agents
+          env,
         });
       } catch (err) {
         if (io.stdout) io.stdout(`lifecycle: poll failed for ${receipt.issue_id} ${receipt.external_run_id}: ${err.message} — state unchanged, slot held`);
@@ -1438,7 +1464,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 2;
   }
 
-  const dispatchAdapterModule = await import("./adapters/workspace-agents.mjs");
+  const dispatchAdapterModule = await adapterModuleFor(candidate); // per-family adapter (SHU-62)
   const launch = await dispatchAdapterModule.launchBuilder({
     issue_id: receipt.issue_id,
     authorization_ref: receipt.authorization_ref,
@@ -1448,6 +1474,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     api_trigger_id: env.WORKSPACE_AGENT_TRIGGER_ID ?? "",
     token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "",
     fetchImpl,
+    io, // hermes-pool lease dir + spawn wiring (SHU-62); ignored by workspace-agents
+    env,
   });
   // Drive the state machine IN ORDER: the launch event first (RESERVED ->
   // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
@@ -1460,6 +1488,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         type: "worker_ack",
         external_run_id: launch.external_run_id,
         adapter_status: launch.adapter_status,
+        worker_identity: launch.worker_identity ?? null, // hermes-pool: real spawn identity, not a fabrication
       });
     } else if (launch.stage !== "LAUNCH_UNKNOWN") {
       transition = nextReceiptState(transition.receipt, {
