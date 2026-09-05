@@ -457,6 +457,47 @@ test("F2c: a successful spawn with no durable running transition keeps the launc
   assert.equal(spawnCount, 1, "uncertain persistence after a real spawn must never double-launch");
 });
 
+test("F2d: a claim whose same-host owner is definitely dead fails visibly and pauses", async () => {
+  const pool = tempPool();
+  const reserved = await launchBuilder({ ...BASE, io: { poolDir: pool }, env: {} });
+  assert.equal(reserved.stage, "LAUNCH_UNKNOWN");
+  writeFileSync(
+    join(pool, "leases", `${ATTEMPT}.launch-claim`),
+    JSON.stringify({ attempt_id: ATTEMPT, owner_pid: 9911, owner_host: "test-host", phase: "pre_spawn" }),
+  );
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...BASE,
+    io: { ...poolIo(pool, () => { spawns += 1; }), isProcessAlive: (pid) => (pid === 9911 ? false : null) },
+    env: {},
+  });
+  assert.equal(out.stage, "FAILED", "a dead owner must not leave LAUNCH_UNKNOWN occupying the slot forever");
+  assert.equal(out.error_code, "STALE_LAUNCH_CLAIM");
+  assert.equal(out.pause_adapter, true, "ambiguous crash-after-spawn must require explicit reconciliation");
+  assert.equal(spawns, 0, "owner death alone is never authority to launch another worker");
+});
+
+test("F2e: an alive or unprovable claim owner remains LAUNCH_UNKNOWN", async () => {
+  const pool = tempPool();
+  await launchBuilder({ ...BASE, io: { poolDir: pool }, env: {} });
+  writeFileSync(
+    join(pool, "leases", `${ATTEMPT}.launch-claim`),
+    JSON.stringify({ attempt_id: ATTEMPT, owner_pid: 9912, owner_host: "test-host", phase: "pre_spawn" }),
+  );
+  const alive = await launchBuilder({
+    ...BASE,
+    io: { ...poolIo(pool, spawnRecorder([])), isProcessAlive: () => true },
+    env: {},
+  });
+  assert.equal(alive.stage, "LAUNCH_UNKNOWN");
+  const unknown = await launchBuilder({
+    ...BASE,
+    io: { ...poolIo(pool, spawnRecorder([])), isProcessAlive: () => null },
+    env: {},
+  });
+  assert.equal(unknown.stage, "LAUNCH_UNKNOWN");
+});
+
 // F3 (CodeRabbit): child_process.spawn reports a missing binary by EMITTING
 // "error", not by throwing. The adapter attached no error listener, so a missing
 // hermes binary would (a) be reported as RUNNING and (b) surface as an unhandled

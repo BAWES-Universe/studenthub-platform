@@ -92,19 +92,52 @@ function launchClaimPath(poolDir, attemptId) {
   return join(poolDir, "leases", `${attemptId}.launch-claim`);
 }
 
+function processIsAlive(pid, io = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (io.isProcessAlive) return io.isProcessAlive(pid);
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err?.code === "ESRCH") return false;
+    return null; // EPERM or an unknown probe failure is not proof of death
+  }
+}
+
 // A normal lease overwrite is not a claim: two processes can both read queued,
 // both write claiming, and both spawn. The exclusive sidecar is the single-host
 // launch mutex. It is held from immediately before the claiming transition
 // until spawn has either failed durably or reached a confirmed running state.
-function acquireLaunchClaim(poolDir, attemptId) {
+function acquireLaunchClaim(poolDir, attemptId, io = {}) {
   const p = launchClaimPath(poolDir, attemptId);
   if (p === null) return { ok: false, reason: "invalid attempt id — refusing launch claim" };
   mkdirSync(join(poolDir, "leases"), { recursive: true });
   try {
-    writeFileSync(p, JSON.stringify({ attempt_id: attemptId, pid: process.pid }), { flag: "wx" });
+    writeFileSync(
+      p,
+      JSON.stringify({ attempt_id: attemptId, owner_pid: process.pid, owner_host: io.hostname ? io.hostname() : hostname(), phase: "pre_spawn" }),
+      { flag: "wx" },
+    );
     return { ok: true, path: p };
   } catch (err) {
-    if (err?.code === "EEXIST") return { ok: false, reason: "launch already claimed by another coordinator" };
+    if (err?.code === "EEXIST") {
+      try {
+        const prior = JSON.parse(readFileSync(p, "utf8"));
+        const thisHost = io.hostname ? io.hostname() : hostname();
+        const alive = prior.owner_host === thisHost ? processIsAlive(prior.owner_pid, io) : null;
+        if (alive === false) {
+          // A crash may have happened immediately after spawn but before the
+          // running lease was persisted. Therefore a dead owner is NOT license
+          // to steal the claim and retry. Surface a durable pause for operator
+          // reconciliation instead of either double-launching or holding an
+          // invisible LAUNCH_UNKNOWN slot forever.
+          return { ok: false, stale: true, reason: `launch claim owner pid ${prior.owner_pid} is no longer running on ${thisHost}` };
+        }
+      } catch {
+        // Corrupt/foreign claim ownership cannot be disproved. Fail closed.
+      }
+      return { ok: false, reason: "launch already claimed by another coordinator" };
+    }
     return { ok: false, reason: `launch claim failed: ${err.message}` };
   }
 }
@@ -292,8 +325,19 @@ export async function launchBuilder({
     // but UNKNOWN so nothing is fabricated.
     return { stage: "LAUNCH_UNKNOWN", reason: "no spawn impl configured — worker not started (activation wiring)" };
   }
-  const launchClaim = acquireLaunchClaim(poolDir, attempt_id);
-  if (!launchClaim.ok) return { stage: "LAUNCH_UNKNOWN", reason: launchClaim.reason };
+  const launchClaim = acquireLaunchClaim(poolDir, attempt_id, io);
+  if (!launchClaim.ok) {
+    if (launchClaim.stale) {
+      return {
+        stage: "FAILED",
+        error_code: "STALE_LAUNCH_CLAIM",
+        error_kind: "launch_ownership_lost",
+        pause_adapter: true,
+        reason: `${launchClaim.reason}; automatic retry is unsafe because spawn may already have occurred`,
+      };
+    }
+    return { stage: "LAUNCH_UNKNOWN", reason: launchClaim.reason };
+  }
   lease = { ...lease, status: "claiming", granular: "queued", heartbeat: now() };
   try {
     writeLease(poolDir, lease);
