@@ -1204,7 +1204,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
   // compute/report only and ZERO writes — never poll upstream or persist receipts
   // while both dispatch gates are false.
-  if (dispatchEnabled && linearToken && io.pollRuns !== false) {
+  if (dispatchEnabled && !durableReadFailed && linearToken && io.pollRuns !== false) {
     const waToken = env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "";
     const waTrigger = env.WORKSPACE_AGENT_TRIGGER_ID ?? "";
 
@@ -1215,6 +1215,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // receipts untouched forever would permanently consume max_dispatch.
     const lifecycleStartReceipts = [...receipts];
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
+      if (config.adapter_pause_map[adapterNameFor(receipt.requested_worker)]) continue;
       // Credential gate is PER ADAPTER (CodeRabbit, PR #22). Applying the
       // Workspace Agents check before adapter routing meant a hermes-box attempt
       // — whose adapter never touches those credentials — could never be
@@ -1239,6 +1240,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       let launch;
       try {
         launch = await (await adapterModuleFor(receipt)).launchBuilder({
+          recovery: true, // host-local authorization required by Hermes recovery
+          repo: receipt.repo,
+          branch: receipt.branch,
           issue_id: receipt.issue_id,
           authorization_ref: receipt.authorization_ref,
           attempt_id: receipt.attempt_id,
@@ -1470,6 +1474,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 
   const dispatchAdapterModule = await adapterModuleFor(candidate); // per-family adapter (SHU-62)
   const launch = await dispatchAdapterModule.launchBuilder({
+    repo: receipt.repo,
+    branch: receipt.branch,
     issue_id: receipt.issue_id,
     authorization_ref: receipt.authorization_ref,
     attempt_id: receipt.attempt_id,

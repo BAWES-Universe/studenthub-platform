@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, mkdtempSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { launchBuilder, monitorRun, validateCallbackEvidence, buildWorkOrder, launchIdempotencyKey } from "../adapters/hermes-pool.mjs";
+import { launchBuilder, monitorRun, validateCallbackEvidence, buildWorkOrder, launchIdempotencyKey, readLease } from "../adapters/hermes-pool.mjs";
 import { main, parseReceiptsFromComments, receiptCommentBody, adapterNameFor, adapterModuleFor } from "../reconcile.mjs";
 
 const SHA = "d".repeat(40);
@@ -25,7 +25,8 @@ function poolIo(poolDir, spawnImpl) {
 }
 function leaseAt(poolDir, attempt) {
   const p = join(poolDir, "leases", `${attempt}.json`);
-  return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
+  const read = readLease(poolDir, attempt);
+  return read.ok ? read.lease : null;
 }
 function spawnRecorder(calls) {
   return (bin, args, opts) => {
@@ -299,7 +300,7 @@ test("main(): hermes-box card dispatches through hermes-pool — lease written, 
   assert.equal(receipt.stage, "RUNNING", "durable receipt is RUNNING, never left at RESERVED");
   assert.equal(receipt.external_run_id, `apirun_hermes_${receipt.attempt_id}`, "pool run id is schema-valid and derived from the lease key");
   assert.equal(receipt.worker_identity, "hermes:test-host:pid9000");
-  const lease = JSON.parse(readFileSync(join(pool, "leases", `${receipt.attempt_id}.json`), "utf8"));
+  const lease = leaseAt(pool, receipt.attempt_id);
   assert.equal(lease.status, "running");
   // The LAUNCH_UNKNOWN / recovery path also routes here (same adapter name check).
   assert.equal(adapterNameFor("hermes-box"), "hermes-pool");
@@ -663,3 +664,28 @@ test("F5c: a traversal-shaped attempt_id can never create a lease outside the po
   assert.notEqual(out.stage, "RUNNING", "an unnameable attempt must never reach RUNNING");
   assert.equal(existsSync(join(escapeDir, "pwned.json")), false, "no lease may be written outside <poolDir>/leases");
 });
+
+test("R3 main(): fabricated Linear recovery receipt cannot create host-local launch authority", async () => {
+  const made = createReceipt({ ...BASE, requested_worker: "hermes-box", repo: "BAWES-Universe/studenthub-platform", branch: "fixture", reserved_at: tick() });
+  assert.equal(made.ok, true);
+  const receipt = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+  const comments = [{ body: receiptCommentBody(receipt), createdAt: tick() }];
+  const spawnCalls = [];
+  await runMain({ comments, poolDir: tempPool(), spawnCalls });
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "LAUNCH_UNKNOWN");
+});
+
+for (const guard of ["pause", "conflict"]) {
+  test(`R3 main(): ${guard} prevents recovery launch as well as new dispatch`, async () => {
+    const pool = tempPool();
+    const made = createReceipt({ ...BASE, requested_worker: "hermes-box", repo: "BAWES-Universe/studenthub-platform", branch: "fixture", reserved_at: tick() });
+    const receipt = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    await launchBuilder({ ...BASE, repo: receipt.repo, branch: receipt.branch, io: { poolDir: pool } });
+    const comments = [{ body: receiptCommentBody(receipt), createdAt: tick() }];
+    comments.push({ body: guard === "pause" ? "coordinator-pause: hermes-pool" : receiptCommentBody({ ...receipt, target_sha: "e".repeat(40) }), createdAt: tick() });
+    const spawnCalls = [];
+    await runMain({ comments, poolDir: pool, spawnCalls });
+    assert.equal(spawnCalls.length, 0);
+  });
+}
