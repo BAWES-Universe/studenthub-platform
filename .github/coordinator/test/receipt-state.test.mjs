@@ -108,7 +108,12 @@ test("run_status queued/in_progress/suspended keeps RUNNING and updates adapter_
 test("run completed WITH validated callback -> COMPLETED with evidence links", () => {
   const started = launch(reserve()).receipt;
   const acked = nextReceiptState(started, { type: "worker_ack", external_run_id: "apirun_2", adapter_status: "in_progress" }).receipt;
-  const callback = { links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/77"], attempt_id: acked.attempt_id, target_sha: SHA };
+  const callback = {
+    links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/77"],
+    attempt_id: acked.attempt_id,
+    target_sha: SHA,
+    stage: "BUILD_READY",
+  };
   const r = nextReceiptState(acked, { type: "run_status", status: "completed", callback });
   assert.equal(r.accepted, true);
   assert.equal(stageOf(r.receipt), "COMPLETED");
@@ -150,6 +155,7 @@ test("invariant: stale-SHA verdict is rejected — old PASS never satisfies a ch
   assert.equal(callbackEvidenceValid(acked, { links: ["x"], attempt_id: acked.attempt_id, target_sha: SHA }, { current_head: SHA2 }), false);
   assert.equal(callbackEvidenceValid(acked, { links: ["x"], attempt_id: "different-attempt", target_sha: SHA }), false);
   assert.equal(callbackEvidenceValid(acked, { links: [], attempt_id: acked.attempt_id, target_sha: SHA }), false);
+  assert.equal(callbackEvidenceValid(acked, { links: ["x"], attempt_id: acked.attempt_id, target_sha: SHA }), false, "missing stage must fail closed");
 });
 
 test("invariant: timeout alone NEVER changes state and NEVER releases the slot", () => {
@@ -274,7 +280,7 @@ test("manual_claim cannot disturb a validated COMPLETED or a FAILED receipt", ()
   const done = nextReceiptState(acked, {
     type: "run_status",
     status: "completed",
-    callback: { links: ["https://github.com/x/pull/2"], attempt_id: acked.attempt_id, target_sha: SHA },
+    callback: { links: ["https://github.com/x/pull/2"], attempt_id: acked.attempt_id, target_sha: SHA, stage: "BUILD_READY" },
   }).receipt;
   const claim = nextReceiptState(done, { type: "manual_claim", actor: "human-operator" });
   assert.equal(claim.accepted, false);
