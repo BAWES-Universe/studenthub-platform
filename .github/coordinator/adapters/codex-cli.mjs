@@ -127,12 +127,14 @@ function runExecFile(execFileImpl, file, args, options) {
   });
 }
 
-function runSpawn(spawnImpl, file, args, options, onStdoutLine, killGraceMs = 30_000) {
+function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, killGraceMs = 30_000) {
   return new Promise((resolve) => {
     let child;
     try {
       child = spawnImpl(file, args, options);
+      onSpawn?.(child);
     } catch (error) {
+      child?.kill?.("SIGKILL");
       resolve({ error, stdout: "", stderr: "" });
       return;
     }
@@ -288,6 +290,51 @@ function sidecarPath(stateDir, attemptId) {
   return path.join(stateDir, `${attemptId}.json`);
 }
 
+function resumeClaimPath(stateDir, attemptId) {
+  return path.join(stateDir, `${attemptId}.resume-claim.json`);
+}
+
+function resumeOwnerPath(stateDir, attemptId) {
+  return path.join(stateDir, `${attemptId}.resume-owner.json`);
+}
+
+function readBoundResumeRecord(file, { attempt_id, target_sha, thread_id }) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) return { status: "invalid", record: null };
+    const record = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (record?.version !== 1 || record?.attempt_id !== attempt_id || record?.target_sha !== target_sha || record?.thread_id !== thread_id) {
+      return { status: "invalid", record: null };
+    }
+    return { status: "valid", record };
+  } catch (error) {
+    return error?.code === "ENOENT" ? { status: "missing", record: null } : { status: "invalid", record: null };
+  }
+}
+
+function writeExclusiveRecord({ stateDir, finalPath, record }) {
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const tempPath = path.join(stateDir, `.${path.basename(finalPath)}.${process.pid}.${randomUUID()}.tmp`);
+  let fd;
+  try {
+    fd = fs.openSync(tempPath, "wx", 0o600);
+    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.linkSync(tempPath, finalPath);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(tempPath); } catch { /* best effort */ }
+  }
+}
+
+function releaseResumeClaim(stateDir, attemptId) {
+  for (const file of [resumeOwnerPath(stateDir, attemptId), resumeClaimPath(stateDir, attemptId)]) {
+    try { fs.unlinkSync(file); } catch { /* terminal cleanup is best effort */ }
+  }
+}
+
 export function readDurableSession({ stateDir, attempt_id, target_sha }) {
   return readDurableSessionRecord({ stateDir, attempt_id, target_sha })?.thread_id ?? null;
 }
@@ -395,9 +442,10 @@ export async function launchBuilder({
   // Resume path: the exact thread id comes from the durable receipt run id
   // (codexrun_<uuid>) — never --last.
   let sessionId = null;
+  let durableRecord = null;
   if (resume) {
     sessionId = threadIdFromRunId(external_run_id ?? io.resumeRunId ?? "");
-    const durableRecord = readDurableSessionRecord({ stateDir: durableStateDir, attempt_id, target_sha });
+    durableRecord = readDurableSessionRecord({ stateDir: durableStateDir, attempt_id, target_sha });
     if (!sessionId) {
       sessionId = durableRecord?.thread_id ?? null;
       if (sessionId) {
@@ -412,24 +460,38 @@ export async function launchBuilder({
       }
       return { stage: "HOLD", reason: "cannot resume Codex without a durable exact thread id (--last is forbidden)", pause_adapter: true, ok: false };
     }
-    if (durableRecord?.thread_id === sessionId) {
-      const processState = recordedProcessState(durableRecord, {
-        hostnameImpl: io.hostname ?? nodeHostname,
-        processStartImpl: io.processStartToken ?? processStartToken,
-      });
-      if (processState === "alive") {
-        return {
-          stage: "LAUNCH_UNKNOWN",
-          external_run_id: externalRunId(sessionId),
-          worker_identity: workerIdentity(attempt_id),
-          adapter_status: "in_progress",
-          reason: "original Codex process is still alive; refusing concurrent resume",
-          ok: false,
-        };
-      }
-      if (processState === "unknown" && durableRecord.owner_host !== null) {
-        return { stage: "HOLD", reason: "Codex process ownership cannot be verified — refusing concurrent resume", pause_adapter: true, ok: false };
-      }
+    if (!durableRecord || durableRecord.thread_id !== sessionId) {
+      return { stage: "HOLD", reason: "receipt thread id has no matching durable Codex sidecar — refusing resume", pause_adapter: true, ok: false };
+    }
+    const processState = recordedProcessState(durableRecord, {
+      hostnameImpl: io.hostname ?? nodeHostname,
+      processStartImpl: io.processStartToken ?? processStartToken,
+    });
+    if (processState === "alive") {
+      return {
+        stage: "LAUNCH_UNKNOWN",
+        external_run_id: externalRunId(sessionId),
+        worker_identity: workerIdentity(attempt_id),
+        adapter_status: "in_progress",
+        reason: "original Codex process is still alive; refusing concurrent resume",
+        ok: false,
+      };
+    }
+    if (processState !== "dead") {
+      return { stage: "HOLD", reason: "Codex process ownership cannot be verified — refusing concurrent resume", pause_adapter: true, ok: false };
+    }
+
+    const binding = { attempt_id, target_sha, thread_id: sessionId };
+    const existingClaim = readBoundResumeRecord(resumeClaimPath(durableStateDir, attempt_id), binding);
+    const owner = readBoundResumeRecord(resumeOwnerPath(durableStateDir, attempt_id), binding);
+    if (existingClaim.status !== "missing" || owner.status !== "missing") {
+      const ownerState = owner.status === "valid"
+        ? recordedProcessState(owner.record, { hostnameImpl: io.hostname ?? nodeHostname, processStartImpl: io.processStartToken ?? processStartToken })
+        : "unknown";
+      const reason = ownerState === "alive"
+        ? "a resumed Codex process is still alive; refusing concurrent resume"
+        : "Codex resume ownership is already claimed or unverifiable — refusing concurrent resume";
+      return { stage: "HOLD", reason, pause_adapter: true, ok: false };
     }
   }
 
@@ -464,8 +526,51 @@ export async function launchBuilder({
   let streamedThreadId = sessionId;
   let durabilityError = null;
   let launchError = null;
+  let ownsResumeClaim = false;
+  let resumeChildStarted = false;
+  let resumeOwnershipError = null;
+  if (resume) {
+    const binding = { version: 1, kind: "codex-resume-claim", attempt_id, target_sha, thread_id: sessionId };
+    try {
+      writeExclusiveRecord({ stateDir: durableStateDir, finalPath: resumeClaimPath(durableStateDir, attempt_id), record: binding });
+      ownsResumeClaim = true;
+    } catch {
+      return { stage: "HOLD", reason: "Codex resume ownership was claimed concurrently — refusing duplicate resume", pause_adapter: true, ok: false };
+    }
+  }
   try {
-    const options = { cwd, env: buildCodexEnvironment(env), timeout: timeout_ms, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] };
+    const options = {
+      cwd,
+      env: buildCodexEnvironment(env),
+      timeout: timeout_ms,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    const onSpawn = resume ? (child) => {
+      resumeChildStarted = true;
+      try {
+        const childPid = Number.isSafeInteger(child?.pid) ? child.pid : null;
+        const childStart = childPid ? (io.processStartToken?.(childPid) ?? processStartToken(childPid)) : null;
+        if (!childPid || !childStart) throw new Error("resumed Codex child ownership is unavailable");
+        writeExclusiveRecord({
+          stateDir: durableStateDir,
+          finalPath: resumeOwnerPath(durableStateDir, attempt_id),
+          record: {
+            version: 1,
+            kind: "codex-resume-owner",
+            attempt_id,
+            target_sha,
+            thread_id: sessionId,
+            owner_host: io.hostname?.() ?? nodeHostname(),
+            child_pid: childPid,
+            child_start: childStart,
+          },
+        });
+      } catch (error) {
+        resumeOwnershipError = error;
+        throw error;
+      }
+    } : null;
     const onLine = (line, child = null) => {
       const threadId = parseThreadStarted(line);
       if (!threadId || streamedThreadId === threadId) return;
@@ -495,7 +600,7 @@ export async function launchBuilder({
     // tests. Production uses spawn so thread.started is persisted before exit.
     result = execImpl !== nodeExecFile && !io.spawnImpl
       ? await runExecFile(execImpl, "codex", args, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
-      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, timeout_grace_ms);
+      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, onSpawn, timeout_grace_ms);
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {
@@ -532,7 +637,13 @@ export async function launchBuilder({
   if (durabilityError) {
     return { stage: "HOLD", reason: `Codex session could not be durably recorded: ${durabilityError.message}`, pause_adapter: true, ok: false };
   }
-  if (launchError) return failureFrom(launchError, "", "", { threadId: null });
+  if (resumeOwnershipError) {
+    return { stage: "HOLD", reason: `resumed Codex process could not be durably owned: ${resumeOwnershipError.message}`, pause_adapter: true, ok: false };
+  }
+  if (launchError) {
+    if (ownsResumeClaim && !resumeChildStarted) releaseResumeClaim(durableStateDir, attempt_id);
+    return failureFrom(launchError, "", "", { threadId: null });
+  }
   // Parse the durable session identity from ANY stdout we have — including a
   // stream that ends in a kill: a thread.started already on the wire means the
   // session exists and exact-id resume is legal.
@@ -559,6 +670,11 @@ export async function launchBuilder({
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };
   }
+  // Keep resume ownership after any child actually started. The caller has not
+  // durably persisted this terminal outcome yet, so deleting the claim here
+  // would let a coordinator holding a stale receipt launch another resume in
+  // that commit window. Attempt ids are immutable; the retained record is a
+  // safe tombstone once the terminal receipt is stored.
   return { stage: "COMPLETED", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, ok: true };
 }
 

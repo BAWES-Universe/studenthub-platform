@@ -204,12 +204,23 @@ test("killed BEFORE thread.started -> HOLD + pause; killed AFTER thread.started 
 test("resume binds the EXACT thread id from the receipt; --last never appears; missing id -> HOLD", async () => {
   const calls = [];
   const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "fixture-host",
+    child_pid: 111,
+    child_start: "old-start",
+  });
   const out = await launchBuilder({
     ...launchInput(),
     resume: true,
     external_run_id: `codexrun_${THREAD}`,
     execFileImpl: recordingExec(calls),
     schemaFile: join(schemaDir, "schema.json"),
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
   });
   assert.equal(out.stage, "COMPLETED");
   const args = calls[0].args;
@@ -484,6 +495,149 @@ test("resume requires a definitely exited bound process; live, foreign-host, and
   const reusedPid = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "start-2" } });
   assert.equal(reusedPid.stage, "COMPLETED", "a mismatched process start token proves the recorded child exited despite PID reuse");
   assert.equal(spawns, 1);
+});
+
+test("two recoveries can never resume the same exact Codex session concurrently", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-race-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 111,
+    child_start: "old",
+  });
+
+  const children = [];
+  let spawns = 0;
+  const spawnImpl = () => {
+    spawns += 1;
+    const child = new EventEmitter();
+    child.pid = 200 + spawns;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => true;
+    children.push(child);
+    return child;
+  };
+  const input = {
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    spawnImpl,
+    io: {
+      codexStateDir: stateDir,
+      hostname: () => "test-host",
+      processStartToken: (pid) => pid === 111 ? null : `start-${pid}`,
+    },
+  };
+
+  const first = launchBuilder(input);
+  while (spawns === 0) await new Promise((resolve) => setImmediate(resolve));
+  try {
+    assert.equal(spawns, 1, "the first recovery owns and starts one resume");
+    const second = await launchBuilder(input);
+    assert.equal(second.stage, "HOLD");
+    assert.equal(second.pause_adapter, true);
+    assert.match(second.reason, /resumed Codex process is still alive|resume ownership/);
+    assert.equal(spawns, 1, "the exclusive recovery claim blocks a second resume while the first child is open");
+  } finally {
+    children[0].stdout.emit("data", `${jsonl({ finalText: callbackJson("REVISION_READY") })}\n`);
+    children[0].emit("close", 0, null);
+  }
+  assert.equal((await first).stage, "COMPLETED");
+});
+
+test("a completed resume retains its claim until the terminal receipt is durably persisted", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-terminal-window-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 111,
+    child_start: "old",
+  });
+  let spawns = 0;
+  const input = {
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    execFileImpl: (...args) => {
+      spawns += 1;
+      args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), "");
+    },
+    io: { codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
+  };
+
+  assert.equal((await launchBuilder(input)).stage, "COMPLETED");
+  const staleRecovery = await launchBuilder(input);
+  assert.equal(staleRecovery.stage, "HOLD");
+  assert.equal(staleRecovery.pause_adapter, true);
+  assert.equal(spawns, 1, "a stale receipt cannot resume again before the caller persists completion");
+});
+
+test("resume fails closed for missing, conflicting, or unverifiable durable sidecars", async () => {
+  const cases = [
+    ["missing", () => {}],
+    ["conflicting thread", (stateDir) => persistDurableSession({
+      stateDir,
+      attempt_id: ATTEMPT,
+      target_sha: SHA,
+      thread_id: "1199a213-81c0-7800-8aa1-bbab2a035a53",
+      owner_host: "test-host",
+      child_pid: 111,
+      child_start: "old",
+    })],
+    ["unverifiable owner", (stateDir) => persistDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD })],
+  ];
+  for (const [label, seed] of cases) {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-invalid-"));
+    seed(stateDir);
+    let spawns = 0;
+    const out = await launchBuilder({
+      ...launchInput(),
+      resume: true,
+      external_run_id: `codexrun_${THREAD}`,
+      spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+      io: { codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
+    });
+    assert.equal(out.stage, "HOLD", label);
+    assert.equal(out.pause_adapter, true, label);
+    assert.equal(spawns, 0, `${label}: ownership failure must stop before process creation`);
+  }
+});
+
+test("an abandoned or corrupt recovery claim is visible and never authorizes another resume", async () => {
+  for (const [label, claim] of [
+    ["crash before resumed child ownership", { version: 1, kind: "codex-resume-claim", attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD }],
+    ["corrupt claim", "{"],
+  ]) {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-claim-"));
+    persistDurableSession({
+      stateDir,
+      attempt_id: ATTEMPT,
+      target_sha: SHA,
+      thread_id: THREAD,
+      owner_host: "test-host",
+      child_pid: 111,
+      child_start: "old",
+    });
+    writeFileSync(join(stateDir, `${ATTEMPT}.resume-claim.json`), typeof claim === "string" ? claim : JSON.stringify(claim));
+    let spawns = 0;
+    const out = await launchBuilder({
+      ...launchInput(),
+      resume: true,
+      external_run_id: `codexrun_${THREAD}`,
+      spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+      io: { codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
+    });
+    assert.equal(out.stage, "HOLD", label);
+    assert.equal(out.pause_adapter, true, label);
+    assert.equal(spawns, 0, label);
+  }
 });
 
 test("schema file written before launch; CALLBACK_SCHEMA is closed (additionalProperties false)", async () => {
