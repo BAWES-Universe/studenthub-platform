@@ -35,7 +35,7 @@ const QUOTA_RE = /(?:rate|usage|spending|plan|subscription|credit)[-_ ]?limit|qu
 // these map to a visible re-authentication HOLD, never a silent retry.
 const REAUTH_RE = /(?:401|expired|invalid(?: oauth)? token|authentication|re-?auth|sign ?in|login required)/i;
 // Non-auth access shapes (403, forbidden) stay FAILED + access.
-const ACCESS_RE = /(?:forbidden|403)/i;
+const ACCESS_RE = /(?:forbidden|403|unauthori[sz]ed)/i;
 
 export function externalRunId(attemptId) {
   return `clauderun_${attemptId.replaceAll("-", "")}`;
@@ -144,13 +144,13 @@ function failureFrom(error, stdout, stderr) {
   // Do not classify arbitrary model stdout as an account failure: reviewed code
   // can legitimately contain words like "quota" or "capacity".
   const detail = `${stderr}\n${error?.message ?? ""}`;
+  if (QUOTA_RE.test(detail)) {
+    return { stage: "FAILED", error_code: "CLAUDE_QUOTA", error_kind: "quota", pause_adapter: true, ok: false };
+  }
   if (REAUTH_RE.test(detail)) {
     // GPT 2026-09-05: authentication expiry must surface a VISIBLE
     // re-authentication HOLD — never a silent retry or a fabricated failure.
     return { stage: "HOLD", reason: "Claude authentication expired or invalid — re-run `claude setup-token` on the worker host", pause_adapter: true, ok: false };
-  }
-  if (QUOTA_RE.test(detail)) {
-    return { stage: "FAILED", error_code: "CLAUDE_QUOTA", error_kind: "quota", pause_adapter: true, ok: false };
   }
   if (ACCESS_RE.test(detail)) {
     return { stage: "FAILED", error_code: "CLAUDE_ACCESS", error_kind: "access", pause_adapter: true, ok: false };

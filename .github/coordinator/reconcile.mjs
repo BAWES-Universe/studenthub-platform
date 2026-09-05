@@ -411,7 +411,8 @@ export function validateReceipt(receipt) {
   }
 
   // ---- Cross-field stage invariants (mirrors the allOf in the schema file). ----
-  // RESERVED/LAUNCH_UNKNOWN: no run can exist before launch is acknowledged.
+  // RESERVED has no run. LAUNCH_UNKNOWN may carry a discovered durable run id:
+  // the provider session exists, but the launch/terminal outcome is still unknown.
   // RUNNING/COMPLETED: an accepted run exists (external_run_id + granular status).
   // worker_identity is OPTIONAL in every stage until the poll response supplies
   // the documented agent_id — it is NEVER fabricated from the run id (GPT review
@@ -426,10 +427,19 @@ export function validateReceipt(receipt) {
   const runId = receipt.external_run_id;
   const workerIdentity = receipt.worker_identity;
   const adapterStatus = receipt.adapter_status;
-  if (stage === "RESERVED" || stage === "LAUNCH_UNKNOWN") {
-    if (runId !== null) errors.push(`stage ${stage} must have external_run_id null (no run exists yet)`);
-    if (workerIdentity !== null) errors.push(`stage ${stage} must have worker_identity null (no run identity yet)`);
-    if (adapterStatus !== null) errors.push(`stage ${stage} must have adapter_status null`);
+  if (stage === "RESERVED") {
+    if (runId !== null) errors.push("stage RESERVED must have external_run_id null (no run exists yet)");
+    if (workerIdentity !== null) errors.push("stage RESERVED must have worker_identity null (no run identity yet)");
+    if (adapterStatus !== null) errors.push("stage RESERVED must have adapter_status null");
+  } else if (stage === "LAUNCH_UNKNOWN") {
+    const discovered = runId !== null;
+    if (discovered) {
+      if (typeof workerIdentity !== "string" || !workerIdentity.length) errors.push("LAUNCH_UNKNOWN with a discovered run requires worker_identity");
+      if (adapterStatus !== "in_progress") errors.push("LAUNCH_UNKNOWN with a discovered run requires adapter_status \"in_progress\"");
+    } else {
+      if (workerIdentity !== null) errors.push("LAUNCH_UNKNOWN without a run must keep worker_identity null");
+      if (adapterStatus !== null) errors.push("LAUNCH_UNKNOWN without a run must keep adapter_status null");
+    }
   } else if (stage === "FAILED") {
     const postAcceptance = runId !== null;
     if (postAcceptance) {
@@ -606,6 +616,26 @@ export function nextReceiptState(receipt, event, ctx = {}) {
       next.timestamps.heartbeat = at();
       return { receipt: next, accepted: true };
     }
+    case "run_discovered": {
+      // Some local CLIs emit their durable session identity before their process
+      // has a trustworthy terminal outcome. Persist that identity while retaining
+      // LAUNCH_UNKNOWN so recovery resumes it rather than treating it as pollable.
+      if (receipt.stage !== "LAUNCH_UNKNOWN") {
+        return unchanged(`run_discovered requires LAUNCH_UNKNOWN, got ${receipt.stage}`);
+      }
+      const { external_run_id, worker_identity } = event;
+      if (typeof external_run_id !== "string" || !external_run_id.length || typeof worker_identity !== "string" || !worker_identity.length) {
+        return unchanged("run_discovered requires provider run and worker identities");
+      }
+      if (receipt.external_run_id && receipt.external_run_id !== external_run_id) {
+        return unchanged("run_discovered conflicts with the durable run identity");
+      }
+      const next = note(`durable run ${external_run_id} discovered; exact-id recovery required`);
+      next.external_run_id = external_run_id;
+      next.worker_identity = worker_identity;
+      next.adapter_status = "in_progress";
+      return { receipt: next, accepted: true };
+    }
     case "run_status": {
       const { status, error_code, error_kind } = event;
       if (status === "queued" || status === "in_progress" || status === "suspended") {
@@ -772,7 +802,18 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
   let transition = receipt.stage === "LAUNCH_UNKNOWN"
     ? { receipt, accepted: true, idempotency_key: launchIdempotencyKey(receipt) }
     : nextReceiptState(receipt, { type: "launch" });
-  if (!transition.accepted || launch.stage === "LAUNCH_UNKNOWN") return transition;
+  if (!transition.accepted) return transition;
+
+  if (launch.stage === "LAUNCH_UNKNOWN") {
+    const hasDiscoveredRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
+    return hasDiscoveredRun
+      ? nextReceiptState(transition.receipt, {
+          type: "run_discovered",
+          external_run_id: launch.external_run_id,
+          worker_identity: launch.worker_identity,
+        })
+      : transition;
+  }
 
   const hasRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
   if (hasRun) {
@@ -1358,7 +1399,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation failed for ${receipt.issue_id}: ${err.message} — state unchanged, slot held`);
         continue;
       }
-      if (launch.stage === "LAUNCH_UNKNOWN") continue;
+      if (launch.stage === "LAUNCH_UNKNOWN" && !(typeof launch.external_run_id === "string" && launch.external_run_id.length)) continue;
 
       // STALE-HEAD GUARD, same rule as the dispatch path. A synchronous adapter
       // can return a terminal COMPLETED straight from launchBuilder during

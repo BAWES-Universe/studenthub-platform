@@ -190,6 +190,13 @@ test("quota/plan-cap failures -> FAILED + pause; authentication expiry -> visibl
   const forbiddenOut = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: forbidden, stderr: "403 forbidden" }) });
   assert.equal(forbiddenOut.stage, "FAILED");
   assert.equal(forbiddenOut.error_kind, "access");
+  const unauthorized = Object.assign(new Error("Unauthorized"), { code: 1 });
+  const unauthorizedOut = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: unauthorized, stderr: "Unauthorized" }) });
+  assert.equal(unauthorizedOut.stage, "FAILED");
+  assert.equal(unauthorizedOut.error_kind, "access", "plain Unauthorized must not fall into generic retry behavior");
+  const overlapping = Object.assign(new Error("authentication rate limit exceeded"), { code: 1 });
+  const overlappingOut = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: overlapping, stderr: overlapping.message }) });
+  assert.equal(overlappingOut.error_kind, "quota", "quota takes precedence over broad authentication wording");
 });
 
 test("LAUNCH_UNKNOWN recovery resumes the same Claude session UUID", async () => {

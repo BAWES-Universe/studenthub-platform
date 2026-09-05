@@ -120,7 +120,6 @@ function makeRun(store, wa, extraIo = {}) {
   const out = [];
   return main([], ENV, {
     configPath: tempConfig(),
-          adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
     fetchDurable: true,

@@ -1,7 +1,7 @@
 // Codex CLI adapter contract tests (SHU-63 pivot).
 //
 // Pins the REAL wire shapes verified against the installed CLI + official docs:
-//   codex exec --json --sandbox workspace-write --approve-for-me -C <dir> [PROMPT]
+//   codex exec --json --sandbox workspace-write -C <dir> [PROMPT]
 //   codex exec resume <EXACT-THREAD-ID> [PROMPT]   (never --last)
 //   stdout JSONL: first event {"type":"thread.started","thread_id":"<uuid>"}
 // plus the fail-closed rules GPT mandated: uncertain launch without a durable
@@ -9,7 +9,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -25,6 +26,8 @@ import {
   parseFinalMessage,
   parseCodexCallback,
   callbackValid,
+  persistDurableSession,
+  readDurableSession,
   CALLBACK_SCHEMA,
   SUCCESS_CALLBACK_STAGES,
 } from "../adapters/codex-cli.mjs";
@@ -34,6 +37,7 @@ const ATTEMPT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const THREAD = "0199a213-81c0-7800-8aa1-bbab2a035a53"; // real time-ordered codex thread id shape
 const SHA = "5".repeat(40);
 const CWD = "/repo";
+const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "codex-state-"));
 
 function launchInput(over = {}) {
   return {
@@ -45,6 +49,7 @@ function launchInput(over = {}) {
     cwd: CWD,
     env: { PATH: "/usr/bin", HOME: "/root", CODEX_HOME: "/root/.codex", OPENAI_API_KEY: "should-never-leak" },
     readHeadImpl: async () => SHA, // tests never hit real git; checkout is at the bound head
+    io: { codexStateDir: TEST_STATE_DIR },
     ...over,
   };
 }
@@ -91,7 +96,7 @@ test("launch args match the installed CLI contract: exec --json --sandbox worksp
   assert.ok(sandboxIdx !== -1 && args[sandboxIdx + 1] === "workspace-write", "sandbox is workspace-write");
   assert.ok(!args.includes("danger-full-access") && !args.includes("dangerous-full-access"), "never unrestricted host access");
   assert.ok(!args.includes("--full-auto"), "--full-auto is deprecated and forbidden");
-  assert.ok(args.includes("--approve-for-me"), "approvals route through the automatic workspace-write review");
+  assert.ok(!args.includes("--approve-for-me"), "never pass an undocumented approval flag");
   assert.equal(args[args.indexOf("-C") + 1], CWD);
   assert.ok(args.some((a) => a.includes("--output-schema")), "schema-constrained output");
   assert.ok(calls[0].file === "codex", "execFile codex, never a shell");
@@ -191,6 +196,8 @@ test("killed BEFORE thread.started -> HOLD + pause; killed AFTER thread.started 
   const outAfter = await launchBuilder({ ...launchInput(), execFileImpl: execWithThread, schemaFile: join(schemaDir, "schema.json") });
   assert.equal(outAfter.stage, "LAUNCH_UNKNOWN", "thread id was durable; exact-id resume is legal");
   assert.equal(outAfter.external_run_id, `codexrun_${THREAD}`);
+  assert.equal(outAfter.worker_identity, `codex:${ATTEMPT}`);
+  assert.equal(outAfter.adapter_status, "in_progress");
 });
 
 test("resume binds the EXACT thread id from the receipt; --last never appears; missing id -> HOLD", async () => {
@@ -206,15 +213,16 @@ test("resume binds the EXACT thread id from the receipt; --last never appears; m
   assert.equal(out.stage, "COMPLETED");
   const args = calls[0].args;
   assert.equal(args[0], "exec");
-  assert.equal(args[1], "resume");
-  assert.equal(args[2], THREAD, "resume uses the exact durably recorded thread id");
+  const resumeIdx = args.indexOf("resume");
+  assert.ok(resumeIdx > 1, "exec options precede the resume subcommand");
+  assert.equal(args[resumeIdx + 1], THREAD, "resume uses the exact durably recorded thread id");
   assert.ok(!args.includes("--last"), "--last is forbidden for recovery");
   assert.ok(args.some((a) => a.includes("--sandbox")), "resume keeps the sandbox");
   assert.ok(args.some((a) => a.includes("--output-schema")), "resume keeps schema-constrained output");
 
   // No durable id -> visible HOLD, and the execFile must never run.
   const calls2 = [];
-  const outNoId = await launchBuilder({ ...launchInput(), resume: true, external_run_id: null, execFileImpl: recordingExec(calls2), schemaFile: join(schemaDir, "schema.json") });
+  const outNoId = await launchBuilder({ ...launchInput(), resume: true, external_run_id: null, execFileImpl: recordingExec(calls2), schemaFile: join(schemaDir, "schema.json"), io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-empty-")) } });
   assert.equal(outNoId.stage, "HOLD");
   assert.equal(outNoId.pause_adapter, true);
   assert.equal(calls2.length, 0);
@@ -258,6 +266,124 @@ test("authentication expiry -> visible re-auth HOLD + pause; quota stays FAILED;
   const forbidden = await run("403 forbidden");
   assert.equal(forbidden.stage, "FAILED");
   assert.equal(forbidden.error_kind, "access");
+  const overlapping = await run("authentication rate limit exceeded");
+  assert.equal(overlapping.error_kind, "quota", "quota takes precedence over broad authentication wording");
+});
+
+test("thread.started is persisted atomically before process exit, and crash recovery never spawns before receipt persistence", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-stream-"));
+  const worktree = mkdtempSync(join(tmpdir(), "codex-worktree-"));
+  const fakeBin = mkdtempSync(join(tmpdir(), "codex-bin-"));
+  const fakeCodex = join(fakeBin, "codex");
+  const aliveMarker = join(worktree, "codex-child-alive");
+  writeFileSync(fakeCodex, `#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); setTimeout(() => { fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); }, 1000);\n`);
+  chmodSync(fakeCodex, 0o755);
+  const adapterUrl = new URL("../adapters/codex-cli.mjs", import.meta.url).href;
+  const runner = join(worktree, "runner.mjs");
+  writeFileSync(runner, `import { launchBuilder } from ${JSON.stringify(adapterUrl)}; await launchBuilder({ ...${JSON.stringify({
+    issue_id: "SHU-63",
+    authorization_ref: "SHU-63",
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    task_context: "fixture",
+    cwd: worktree,
+    env: { PATH: `${fakeBin}:${process.env.PATH}`, HOME: process.env.HOME, CODEX_HOME: join(worktree, ".codex") },
+  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "fixture-start" }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
+  const coordinator = spawn(process.execPath, [runner], { stdio: "ignore" });
+  const sidecar = join(stateDir, `${ATTEMPT}.json`);
+  const deadline = Date.now() + 5000;
+  while (!existsSync(sidecar) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(existsSync(sidecar), "thread identity is durable while the Codex child is still running");
+  assert.equal(JSON.parse(readFileSync(sidecar, "utf8")).thread_id, THREAD);
+  coordinator.kill("SIGKILL");
+  coordinator.unref();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  let spawns = 0;
+  const recovered = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: null,
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "fixture-start" : null },
+    execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, "", ""); },
+  });
+  assert.equal(recovered.stage, "LAUNCH_UNKNOWN");
+  assert.equal(recovered.external_run_id, `codexrun_${THREAD}`);
+  assert.equal(spawns, 0, "recovery returns the identity for receipt persistence before exact-id resume");
+
+  const stillRunning = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: recovered.external_run_id,
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "fixture-start" : null },
+    execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, "", ""); },
+  });
+  assert.equal(stillRunning.stage, "LAUNCH_UNKNOWN");
+  assert.match(stillRunning.reason, /still alive/);
+  assert.equal(spawns, 0, "the exact session is not resumed concurrently with its orphaned process");
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const afterExit = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: recovered.external_run_id,
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "fixture-start" : null },
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
+  });
+  assert.equal(afterExit.stage, "COMPLETED", "only a definitely exited original process permits exact-id resume");
+});
+
+test("internally generated callback schema is removed; caller-owned schema is preserved", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "codex-schema-cleanup-"));
+  const generated = join(cwd, `.codex-callback-schema-${ATTEMPT}.json`);
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-state-"));
+  await launchBuilder({ ...launchInput(), cwd, execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }), io: { codexStateDir: stateDir } });
+  assert.equal(existsSync(generated), false);
+  assert.equal(readdirSync(stateDir).some((name) => name.startsWith(".callback-schema-")), false, "generated schema is removed from durable state too");
+
+  const owned = join(cwd, "caller-schema.json");
+  await launchBuilder({ ...launchInput(), cwd, schemaFile: owned, execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }), io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-state-")) } });
+  assert.equal(existsSync(owned), true);
+});
+
+test("durable session sidecar is immutable and bound to one attempt plus target SHA", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-binding-"));
+  persistDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD });
+  assert.equal(readDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA }), THREAD);
+  assert.throws(
+    () => persistDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: "1199a213-81c0-7800-8aa1-bbab2a035a53" }),
+    /different Codex thread/,
+  );
+  assert.equal(readDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: "6".repeat(40) }), null, "a sidecar cannot cross a target-SHA boundary");
+});
+
+test("resume requires a definitely exited bound process; live, foreign-host, and ambiguous owners never authorize it", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-owner-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "host-a",
+    child_pid: 4242,
+    child_start: "start-1",
+  });
+  let spawns = 0;
+  const base = {
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), ""); },
+  };
+  const live = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "start-1" } });
+  assert.equal(live.stage, "LAUNCH_UNKNOWN");
+  const foreign = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-b", processStartToken: () => null } });
+  assert.equal(foreign.stage, "HOLD");
+  assert.equal(foreign.pause_adapter, true);
+  assert.equal(spawns, 0);
+  const reusedPid = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "start-2" } });
+  assert.equal(reusedPid.stage, "COMPLETED", "a mismatched process start token proves the recorded child exited despite PID reuse");
+  assert.equal(spawns, 1);
 });
 
 test("schema file written before launch; CALLBACK_SCHEMA is closed (additionalProperties false)", async () => {

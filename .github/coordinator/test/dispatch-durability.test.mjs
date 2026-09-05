@@ -258,6 +258,41 @@ test("LAUNCH_UNKNOWN is reconciled across processes with the same attempt and Id
   assert.equal(recovered[0].external_run_id, "apirun_durable_1");
 });
 
+test("recovery persists a newly discovered Codex thread id before any exact-id resume", async () => {
+  const nodes = makeIssueNodes();
+  const store = fakeLinearStore(nodes, []);
+  const configPath = tempConfig();
+  const noRunYet = {
+    launchBuilder: async () => ({ stage: "LAUNCH_UNKNOWN", reason: "coordinator stopped before callback" }),
+    monitorRun: async () => ({ stage: "UNCHANGED" }),
+  };
+  await runMain({ configPath, wa: fakeWorkspaceAgents({ mode: "accept" }), linear: store, io: { adapterModules: { "codex-cli": noRunYet } } });
+  const first = parseReceiptsFromComments(store.comments)[0];
+  assert.equal(first.stage, "LAUNCH_UNKNOWN");
+  assert.equal(first.external_run_id, null);
+
+  let recoveryCalls = 0;
+  const discoveredRun = {
+    launchBuilder: async ({ external_run_id }) => {
+      recoveryCalls += 1;
+      assert.equal(external_run_id, null, "the durable sidecar is the recovery source on this pass");
+      return {
+        stage: "LAUNCH_UNKNOWN",
+        external_run_id: "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53",
+        worker_identity: `codex:${first.attempt_id}`,
+        adapter_status: "in_progress",
+      };
+    },
+    monitorRun: async () => ({ stage: "UNCHANGED" }),
+  };
+  await runMain({ configPath, wa: fakeWorkspaceAgents({ mode: "accept" }), linear: store, io: { adapterModules: { "codex-cli": discoveredRun } } });
+  assert.equal(recoveryCalls, 1);
+  const recovered = parseReceiptsFromComments(store.comments)[0];
+  assert.equal(recovered.stage, "LAUNCH_UNKNOWN", "a synchronous local session is not misrepresented as pollable RUNNING");
+  assert.equal(recovered.external_run_id, "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53");
+  assert.equal(validateReceipt(recovered).valid, true, validateReceipt(recovered).errors?.join("; "));
+});
+
 test("quota failure persists FAILED + durable pause marker; the pause survives a fresh process", async () => {
   const nodes = makeIssueNodes();
   const store = fakeLinearStore(nodes, []);

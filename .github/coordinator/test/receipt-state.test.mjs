@@ -78,6 +78,25 @@ test("reserve -> launch -> LAUNCH_UNKNOWN holds the slot", () => {
   assert.equal(r.accepted, true);
 });
 
+test("LAUNCH_UNKNOWN can durably bind a discovered local session without becoming pollable RUNNING", () => {
+  const launched = launch(reserve()).receipt;
+  const discovered = nextReceiptState(launched, {
+    type: "run_discovered",
+    external_run_id: "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53",
+    worker_identity: `codex:${launched.attempt_id}`,
+  });
+  assert.equal(discovered.accepted, true);
+  assert.equal(discovered.receipt.stage, "LAUNCH_UNKNOWN");
+  assert.equal(discovered.receipt.adapter_status, "in_progress");
+  assert.equal(validateReceipt(discovered.receipt).valid, true, validateReceipt(discovered.receipt).errors?.join("; "));
+  const conflicting = nextReceiptState(discovered.receipt, {
+    type: "run_discovered",
+    external_run_id: "codexrun_1199a213-81c0-7800-8aa1-bbab2a035a53",
+    worker_identity: `codex:${launched.attempt_id}`,
+  });
+  assert.equal(conflicting.accepted, false, "a second session can never replace the durable identity");
+});
+
 test("worker ack -> RUNNING stores external_run_id IMMEDIATELY and retains granular adapter_status", () => {
   const r = launch(reserve());
   const ack = nextReceiptState(r.receipt, {
