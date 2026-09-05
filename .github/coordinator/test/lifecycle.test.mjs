@@ -93,7 +93,9 @@ function persistentStore(issueNodes, commentBodies) {
 function waAgent() {
   let triggers = 0;
   let pollBody = { object: "workspace_agent.trigger_run", id: "apirun_life_1", status: "queued", agent_id: null, error: null };
+  let calls = 0; // EVERY upstream request, polls included
   const impl = async (url, opts) => {
+    calls += 1;
     if (url.includes("/runs/")) {
       return { status: 200, ok: true, json: async () => ({ ...pollBody }) };
     }
@@ -101,6 +103,7 @@ function waAgent() {
     return { status: 202, ok: true, json: async () => ({ conversation_url: "https://chatgpt.com/c/life", agent_trigger_run_id: "apirun_life_1" }) };
   };
   impl.triggers = () => triggers;
+  impl.calls = () => calls;
   impl.setPoll = (body) => {
     pollBody = { object: "workspace_agent.trigger_run", id: "apirun_life_1", status: "queued", agent_id: null, error: null, ...body };
   };
@@ -301,6 +304,51 @@ test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linea
   assert.equal(code, 0);
   assert.equal(wa.triggers(), triggersBefore, "disabled mode must never call Workspace Agents");
   assert.equal(comments.length, writesBefore, "disabled mode must never write Linear comments");
+});
+
+// The assertions above are necessary but NOT sufficient, and on their own they do
+// not bind the control they describe. Removing `dispatchEnabled &&` from the
+// lifecycle gate leaves them both passing: `triggers()` counts only trigger POSTs
+// so a poll GET is invisible, and the fixture's default poll ("queued") produces
+// no state change, hence no Linear write. This test closes both gaps — it counts
+// EVERY upstream call and drives a poll outcome that WOULD persist. Found by
+// mutation-testing merged `main` at bbbc603 (Opus).
+test("BLOCK #1 (binding): dispatch disabled makes ZERO upstream calls even when a poll would change state", async () => {
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  // Seed the durable store with a RUNNING receipt, as an earlier enabled run would.
+  const enabledCfg = tempConfig();
+  await main([], ENV, {
+    configPath: enabledCfg,
+    stdout: () => {},
+    fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+    fetchDurable: true,
+    pollRuns: true,
+  });
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "RUNNING");
+
+  // A poll outcome that is NOT a no-op: on the enabled path this drives
+  // RUNNING -> FAILED and persists a receipt comment. Disabled, it must not run.
+  wa.setPoll({ status: "failed", error: { code: "worker_error" } });
+  const callsBefore = wa.calls();
+  const writesBefore = comments.length;
+
+  const cfg = JSON.parse(readFileSync(enabledCfg, "utf8"));
+  const disabledCfgPath = join(mkdtempSync(join(tmpdir(), "coordinator-off-bind-")), "config.json");
+  writeFileSync(disabledCfgPath, JSON.stringify({ ...cfg, enable_dispatch: false }));
+  const code = await main([], { ...ENV, ENABLE_DISPATCH: "false" }, {
+    configPath: disabledCfgPath,
+    stdout: () => {},
+    fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+    fetchDurable: true,
+    pollRuns: true,
+  });
+
+  assert.equal(code, 0);
+  assert.equal(wa.calls(), callsBefore, "disabled mode must make NO upstream request of any kind — polls included");
+  assert.equal(comments.length, writesBefore, "disabled mode must write nothing, even when the poll outcome would change state");
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "RUNNING", "durable state must be untouched by a disabled run");
 });
 
 test("BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest callback wins", async () => {
