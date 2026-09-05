@@ -190,7 +190,7 @@ test("monitor: run completed WITH validated callback -> COMPLETED", async () => 
     target_sha: SHA,
     current_head: SHA,
     api_trigger_id: TRIGGER,
-    evidence: { links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/55"], attempt_id: ATTEMPT, target_sha: SHA },
+    evidence: { links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/55"], attempt_id: ATTEMPT, target_sha: SHA, stage: "BUILD_READY" },
     token: TOKEN,
     fetchImpl: mockFetch(200, { id: "apirun_1", status: "completed" }),
   });
@@ -297,12 +297,13 @@ test("monitor: transient poll failures (5xx / network / unparseable) -> UNCHANGE
 });
 
 test("validateCallbackEvidence: strict attempt_id + target_sha + current_head binding", () => {
-  const good = { links: ["https://github.com/x/pull/1"], attempt_id: ATTEMPT, target_sha: SHA };
+  const good = { links: ["https://github.com/x/pull/1"], attempt_id: ATTEMPT, target_sha: SHA, stage: "BUILD_READY" };
   assert.equal(validateCallbackEvidence({ evidence: good, attempt_id: ATTEMPT, target_sha: SHA }), true);
   assert.equal(validateCallbackEvidence({ evidence: good, attempt_id: ATTEMPT, target_sha: SHA, current_head: SHA }), true);
   assert.equal(validateCallbackEvidence({ evidence: good, attempt_id: ATTEMPT, target_sha: SHA, current_head: SHA2 }), false, "old PASS on moved head is stale");
   assert.equal(validateCallbackEvidence({ evidence: { ...good, attempt_id: "other" }, attempt_id: ATTEMPT, target_sha: SHA }), false);
   assert.equal(validateCallbackEvidence({ evidence: { ...good, target_sha: SHA2 }, attempt_id: ATTEMPT, target_sha: SHA }), false);
   assert.equal(validateCallbackEvidence({ evidence: { links: [], attempt_id: ATTEMPT, target_sha: SHA }, attempt_id: ATTEMPT, target_sha: SHA }), false, "no links = no evidence");
+  assert.equal(validateCallbackEvidence({ evidence: { links: ["x"], attempt_id: ATTEMPT, target_sha: SHA }, attempt_id: ATTEMPT, target_sha: SHA }), false, "missing stage must fail closed");
   assert.equal(validateCallbackEvidence({ evidence: null, attempt_id: ATTEMPT, target_sha: SHA }), false);
 });

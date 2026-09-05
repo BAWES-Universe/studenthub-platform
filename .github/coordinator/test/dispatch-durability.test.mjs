@@ -15,6 +15,8 @@ import {
   selectNextReservation,
   validateReceipt,
   nextReceiptState,
+  receiptCommentBody,
+  createReceipt,
 } from "../reconcile.mjs";
 
 const SHA = "b".repeat(40);
@@ -96,12 +98,14 @@ function fakeLinearStore(issueNodes, commentBodies, { failComments = false } = {
 
 function fakeWorkspaceAgents({ mode }) {
   let triggers = 0;
+  const keys = [];
   const impl = async (url, opts) => {
     // Poll GETs (monitorRun) return "still queued" — RUNNING persists unchanged.
     if (url.includes("/runs/")) {
       return { status: 200, ok: true, json: async () => ({ object: "workspace_agent.trigger_run", id: "apirun_durable_1", status: "queued", agent_id: null, error: null }) };
     }
     triggers += 1; // only POST /trigger counts as a launch
+    keys.push(opts.headers["Idempotency-Key"]);
     assert.equal(url, `https://api.chatgpt.com/v1/workspace_agents/${TRIGGER}/trigger`);
     if (mode === "transport-fail") throw new Error("ECONNRESET");
     if (mode === "quota") return { status: 429, ok: false, json: async () => ({}) };
@@ -109,6 +113,7 @@ function fakeWorkspaceAgents({ mode }) {
     return { status: 202, ok: true, json: async () => ({ conversation_url: "https://chatgpt.com/c/durable_1", agent_trigger_run_id: "apirun_durable_1" }) };
   };
   impl.calls = () => triggers;
+  impl.keys = () => [...keys];
   return impl;
 }
 
@@ -184,7 +189,7 @@ test("active receipt on a card that left the pickable set still consumes max_dis
   assert.equal(wa2.calls(), 0, "active receipt on a non-pickable card must still block dispatch");
 });
 
-test("crash after reservation: surviving LAUNCH_UNKNOWN holds the slot across processes", async () => {
+test("LAUNCH_UNKNOWN is reconciled across processes with the same attempt and Idempotency-Key", async () => {
   const nodes = makeIssueNodes();
   const store = fakeLinearStore(nodes, []);
   const wa = fakeWorkspaceAgents({ mode: "transport-fail" });
@@ -195,11 +200,22 @@ test("crash after reservation: surviving LAUNCH_UNKNOWN holds the slot across pr
   assert.equal(unknown.length, 1);
   assert.equal(unknown[0].stage, "LAUNCH_UNKNOWN", "transport failure persists LAUNCH_UNKNOWN, not RESERVED");
 
-  // Fresh process, same store: the durable read finds LAUNCH_UNKNOWN -> slot held.
+  const attempt = unknown[0].attempt_id;
+  const firstKey = wa.keys()[0];
+
+  // Fresh process, same store: retry the uncertain launch with the exact same
+  // attempt/key. Upstream idempotency returns the accepted run; no new receipt
+  // or worker identity is minted.
   const wa2 = fakeWorkspaceAgents({ mode: "accept" });
   const r2 = await runMain({ configPath, wa: wa2, linear: store });
-  assert.equal(wa2.calls(), 0, "LAUNCH_UNKNOWN must never auto-relaunch without reconciliation");
-  assert.equal(parseReceiptsFromComments(store.comments).length, 1);
+  assert.equal(r2.code, 0, r2.out.join("\n"));
+  assert.equal(wa2.calls(), 1, "uncertain launch must be reconciled, not held forever");
+  assert.equal(wa2.keys()[0], firstKey, "reconciliation must reuse the byte-identical Idempotency-Key");
+  const recovered = parseReceiptsFromComments(store.comments);
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].attempt_id, attempt, "reconciliation must not mint a new attempt");
+  assert.equal(recovered[0].stage, "RUNNING");
+  assert.equal(recovered[0].external_run_id, "apirun_durable_1");
 });
 
 test("quota failure persists FAILED + durable pause marker; the pause survives a fresh process", async () => {
@@ -279,4 +295,75 @@ test("malformed durable records never crash the validator", () => {
   const out = validateReceipt(broken);
   assert.equal(out.valid, false);
   assert.ok(Array.isArray(out.errors) && out.errors.length > 0);
+});
+
+// Two durable records claiming the SAME attempt_id but disagreeing on an
+// IMMUTABLE field means durable state is corrupt or forged. Dispatching on it
+// could launch a worker against the wrong repo/branch/SHA, so the conflict must
+// fail closed exactly like an unreadable store. Added by Opus during exact-head
+// verification of PR #21: mutation-testing showed the conflict branch in main()
+// had no test — flipping its `durableReadFailed = true` to `false` left all 104
+// tests passing.
+test("conflicting immutable fields on one attempt_id PREVENT dispatch (fail closed)", async () => {
+  const nodes = makeIssueNodes();
+  const attempt = "11111111-2222-4333-8444-555555555555";
+  const made = createReceipt({
+    issue_id: "SHU-FIXTURE-001",
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    requested_worker: "codex-builder",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "chore/coordinator-dry-run",
+    target_sha: SHA,
+    attempt_id: attempt,
+    reserved_at: "2026-09-05T12:00:00.000Z",
+  });
+  assert.ok(made.ok, `fixture receipt must be schema-valid: ${JSON.stringify(made.errors)}`);
+  const base = made.receipt;
+  // Same attempt_id, different branch — an IMMUTABLE field disagreeing.
+  const forged = { ...base, branch: "attacker/other-branch", last_activity: "2026-09-05T12:05:00.000Z" };
+  assert.ok(validateReceipt(forged).valid, "forged record must also be schema-valid, or the parser drops it before the conflict check");
+
+  const store = fakeLinearStore(nodes, [
+    { body: receiptCommentBody(base), createdAt: base.last_activity },
+    { body: receiptCommentBody(forged), createdAt: forged.last_activity },
+  ]);
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const r = await runMain({ configPath: tempConfig(), wa, linear: store });
+
+  assert.equal(r.code, 2, "conflicting immutable receipt fields must prevent dispatch");
+  assert.equal(wa.calls(), 0, "no worker may launch while durable state self-contradicts");
+  assert.match(r.out.join("\n"), /DISPATCH PREVENTED/);
+  assert.match(r.out.join("\n"), /immutable fields disagree/);
+});
+
+// TOCTOU sibling of the test above. The initial read is clean, so main()'s
+// conflict check passes and dispatch proceeds — the forged record lands in the
+// window BETWEEN the RESERVED write and the pre-launch re-read. A check that
+// only the initial read applies would launch here.
+test("impostor receipt injected after reservation ABORTS before launch (fail closed)", async () => {
+  const nodes = makeIssueNodes();
+  const store = fakeLinearStore(nodes, []);
+  let injected = false;
+  const injecting = async (url, opts) => {
+    const res = await store(url, opts);
+    const { query } = JSON.parse(opts.body);
+    if (query.includes("commentCreate") && !injected) {
+      injected = true;
+      // Recover the receipt this run just wrote, then forge a sibling record
+      // wearing the SAME attempt_id but pointing at a different branch.
+      const [written] = parseReceiptsFromComments([store.comments[store.comments.length - 1]]);
+      assert.ok(written, "reservation comment must parse back as a receipt");
+      store.comments.push({
+        body: receiptCommentBody({ ...written, branch: "attacker/other-branch" }),
+        createdAt: new Date(Date.now() + 1000).toISOString(),
+      });
+    }
+    return res;
+  };
+  const wa = fakeWorkspaceAgents({ mode: "accept" });
+  const r = await runMain({ configPath: tempConfig(), wa, linear: injecting });
+
+  assert.equal(wa.calls(), 0, "no worker may launch once durable state self-contradicts");
+  assert.match(r.out.join("\n"), /ABORTED before launch/);
+  assert.match(r.out.join("\n"), /immutable fields disagree/);
 });

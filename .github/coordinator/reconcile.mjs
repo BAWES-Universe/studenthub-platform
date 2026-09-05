@@ -468,8 +468,8 @@ export function createReceipt({
 }
 
 // callbackEvidenceValid — a callback only counts if it references the SAME attempt
-// and the SAME bound head, and (when the callback declares a stage) an explicitly
-// SUCCESSFUL stage. An old PASS against a moved head is rejected: the receipt
+// and the SAME bound head, and an explicitly SUCCESSFUL stage. An old PASS
+// against a moved head is rejected: the receipt
 // is bound to target_sha, and if the live head (ctx.current_head) has advanced
 // past it, the verdict describes a superseded tree and cannot satisfy this
 // receipt. BLOCKED/FAILED callbacks never authorize COMPLETED (GPT BLOCK #2).
@@ -481,9 +481,7 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   if (evidence.attempt_id !== receipt.attempt_id) return false;
   if (evidence.target_sha !== receipt.target_sha) return false;
   if (ctx.current_head && ctx.current_head !== receipt.target_sha) return false;
-  if (evidence.stage !== undefined && evidence.stage !== null && !SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) {
-    return false; // BLOCKED / FAILED / unknown stages never authorize COMPLETED
-  }
+  if (!SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) return false;
   return true;
 }
 
@@ -630,7 +628,12 @@ export function nextReceiptState(receipt, event, ctx = {}) {
       if (receipt.stage !== "RUNNING" && receipt.stage !== "LAUNCH_UNKNOWN") {
         return unchanged(`callback out of order from stage ${receipt.stage}`);
       }
-      const evidence = { links: event.links ?? [], attempt_id: event.attempt_id, target_sha: event.target_sha };
+      const evidence = {
+        links: event.links ?? [],
+        attempt_id: event.attempt_id,
+        target_sha: event.target_sha,
+        stage: event.stage,
+      };
       // COMPLETED requires an ACKNOWLEDGED run (external_run_id present). Evidence
       // for a run whose ack was lost (LAUNCH_UNKNOWN) holds for reconciliation —
       // never mint COMPLETED without a run identity (CodeRabbit).
@@ -900,8 +903,22 @@ export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
 // future code change returns nodes in. A stale RESERVED comment can therefore
 // never replace a newer terminal one. Fallbacks: receipt.last_activity, then the
 // array position (query uses orderBy createdAt ascending).
+// Fields that can never legitimately differ between two records of one attempt.
+// Shared by the comment parser and main()'s conflict check so both layers apply
+// the SAME rule — a control that only one layer enforces is unreachable if the
+// other collapses its inputs first.
+export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
+  "issue_id",
+  "authorization_ref",
+  "requested_worker",
+  "repo",
+  "branch",
+  "target_sha",
+]);
+
 export function parseReceiptsFromComments(comments = []) {
   const byAttempt = new Map(); // attempt_id -> { receipt, createdAt }
+  const conflicts = []; // records held back so main()'s conflict check can fire
   for (const comment of comments ?? []) {
     const parsed = parseReceiptCommentBody(comment?.body);
     if (parsed && typeof parsed === "object" && parsed.receipt_version === "1.0.0" && parsed.attempt_id) {
@@ -911,6 +928,17 @@ export function parseReceiptsFromComments(comments = []) {
         byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });
         continue;
       }
+      // IMMUTABLE-FIELD CONFLICT: two records claiming one attempt_id but
+      // disagreeing on a field that can never legitimately change means durable
+      // state is corrupt or forged. Collapsing them here would hide the conflict
+      // from main()'s fail-closed check and silently prefer whichever comment is
+      // NEWEST — i.e. the forged one, since Linear comments are writable by
+      // anyone with issue access. Keep BOTH so main() sees the disagreement and
+      // prevents dispatch. (Opus, exact-head verification of PR #21.)
+      if (RECEIPT_IMMUTABLE_FIELDS.some((field) => prior.receipt[field] !== parsed[field])) {
+        conflicts.push(parsed);
+        continue;
+      }
       // Newest-by-createdAt wins; a comment WITHOUT a timestamp loses to one
       // with one; a tie keeps the LATER array element (query is createdAt ASC).
       const ct = prior.createdAt;
@@ -918,7 +946,7 @@ export function parseReceiptsFromComments(comments = []) {
       if (replace) byAttempt.set(parsed.attempt_id, { receipt: parsed, createdAt });
     }
   }
-  return [...byAttempt.values()].map((entry) => entry.receipt);
+  return [...byAttempt.values()].map((entry) => entry.receipt).concat(conflicts);
 }
 
 // COORDINATOR_CALLBACK_MARKER_RE + parseEvidenceFromComments — workers publish
@@ -1110,6 +1138,28 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     for (const adapter of pausedAdapters) config.adapter_pause_map[adapter] = true;
   }
 
+  // A receipt may arrive through more than one input seam (or be copied into a
+  // second comment thread). Resolve globally by immutable attempt_id before any
+  // lifecycle action so one reconcile can never poll or retry the same attempt
+  // twice. Newest last_activity wins; ties keep the first observed record.
+  const receiptByAttempt = new Map();
+  for (const receipt of receipts) {
+    if (!receipt || typeof receipt.attempt_id !== "string") continue;
+    const previous = receiptByAttempt.get(receipt.attempt_id);
+    if (
+      previous &&
+      RECEIPT_IMMUTABLE_FIELDS.some((field) => previous[field] !== receipt[field])
+    ) {
+      durableReadFailed = true;
+      if (io.stdout) io.stdout(`durable receipt conflict for attempt ${receipt.attempt_id} — immutable fields disagree; DISPATCH PREVENTED (fail closed)`);
+      continue;
+    }
+    if (!previous || String(receipt.last_activity ?? "") > String(previous.last_activity ?? "")) {
+      receiptByAttempt.set(receipt.attempt_id, receipt);
+    }
+  }
+  receipts = [...receiptByAttempt.values()];
+
   // ---- LIFECYCLE PASS (GPT lifecycle BLOCK @ f03d445) ----
   // Before selecting new work, poll every active RUNNING receipt through the
   // adapter's monitorRun() and durably persist terminal transitions. Without
@@ -1129,14 +1179,89 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   };
 
   const adapterModule = await import("./adapters/workspace-agents.mjs"); // lifecycle poll + dispatch share one import
-  let lifecyclePersisted = false; // a terminal transition was durably written this run
+  let lifecyclePersisted = false; // a lifecycle transition was durably written this run
   // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
   // compute/report only and ZERO writes — never poll upstream or persist receipts
   // while both dispatch gates are false.
   if (dispatchEnabled && linearToken && io.pollRuns !== false) {
     const waToken = env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "";
     const waTrigger = env.WORKSPACE_AGENT_TRIGGER_ID ?? "";
-    for (const receipt of receipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
+
+    // Reconcile uncertain launches before polling acknowledged runs. A transport
+    // failure after POST may mean the upstream accepted the run but the response
+    // was lost. Retrying the SAME attempt uses the SAME Idempotency-Key, so it can
+    // recover the documented run id without double-launching. Leaving these
+    // receipts untouched forever would permanently consume max_dispatch.
+    const lifecycleStartReceipts = [...receipts];
+    for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
+      if (!waToken || !waTrigger) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — Workspace Agents credentials unavailable; slot held`);
+        continue;
+      }
+      const conflicting = receipts.find(
+        (other) =>
+          other.issue_id === receipt.issue_id &&
+          other.attempt_id !== receipt.attempt_id &&
+          !TERMINAL_STAGES.includes(other.stage),
+      );
+      if (conflicting) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — conflicting active attempt ${conflicting.attempt_id}; slot held`);
+        continue;
+      }
+      const linearIssueId = resolveLinearIssueId(receipt, "launch reconciliation");
+      if (!linearIssueId) continue;
+
+      let launch;
+      try {
+        launch = await adapterModule.launchBuilder({
+          issue_id: receipt.issue_id,
+          authorization_ref: receipt.authorization_ref,
+          attempt_id: receipt.attempt_id,
+          target_sha: receipt.target_sha,
+          task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
+          api_trigger_id: waTrigger,
+          token: waToken,
+          fetchImpl,
+        });
+      } catch (err) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation failed for ${receipt.issue_id}: ${err.message} — state unchanged, slot held`);
+        continue;
+      }
+      if (launch.stage === "LAUNCH_UNKNOWN") continue;
+
+      let transition = nextReceiptState(receipt, { type: "launch" });
+      if (launch.stage === "RUNNING") {
+        transition = nextReceiptState(transition.receipt, {
+          type: "worker_ack",
+          external_run_id: launch.external_run_id,
+          adapter_status: launch.adapter_status,
+        });
+      } else {
+        transition = nextReceiptState(transition.receipt, {
+          type: "run_status",
+          status: "failed",
+          error_code: launch.error_code,
+          error_kind: launch.error_kind,
+        });
+      }
+      if (!transition.accepted) continue;
+      const nextReceipt = transition.receipt;
+      if (launch.conversation_url && typeof launch.conversation_url === "string") {
+        nextReceipt.notes = [...nextReceipt.notes, `conversation_url: ${launch.conversation_url}`];
+      }
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
+      lifecyclePersisted = true;
+      if (transition.pause_adapter === true || launch.pause_adapter === true) {
+        const adapter = adapterNameFor(receipt.requested_worker);
+        config.adapter_pause_map[adapter] = true;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+      }
+      const idx = receipts.indexOf(receipt);
+      if (idx >= 0) receipts[idx] = nextReceipt;
+      if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> ${nextReceipt.stage} using the same attempt/idempotency key`);
+    }
+
+    for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
       // Callback evidence from the durable issue thread (same attempt_id bound);
       // selection is deterministic by newest createdAt (GPT BLOCK #2).
       const evidence = parseEvidenceFromComments(commentsByIssue.get(receipt.issue_id) ?? [], receipt.attempt_id) ?? undefined;
@@ -1293,6 +1418,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const durable = parseReceiptsFromComments(verifyComments);
   const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
   const otherActive = durable.find((r) => r.attempt_id !== receipt.attempt_id && !TERMINAL_STAGES.includes(r.stage));
+  // Same immutable-field rule as the initial read: a record wearing THIS
+  // attempt_id but disagreeing on repo/branch/target_sha was not written by this
+  // run. A check that only the initial read applies is a TOCTOU hole — the
+  // forgery window is exactly between that read and this one.
+  const impostor = durable.find(
+    (r) => r.attempt_id === receipt.attempt_id && RECEIPT_IMMUTABLE_FIELDS.some((f) => r[f] !== receipt[f]),
+  );
+  if (impostor) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — durable receipt conflict for attempt ${receipt.attempt_id}, immutable fields disagree; slot held`);
+    return 2;
+  }
   if (!ownReservation) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — reservation ${receipt.attempt_id} not durably present after write; slot held`);
     return 2;

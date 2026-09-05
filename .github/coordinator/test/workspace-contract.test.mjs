@@ -162,7 +162,7 @@ test("poll response maps the documented statuses and surfaces agent_id as worker
     attempt_id: ATTEMPT,
     target_sha: SHA,
     current_head: SHA,
-    evidence: { links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/55"], attempt_id: ATTEMPT, target_sha: SHA },
+    evidence: { links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/55"], attempt_id: ATTEMPT, target_sha: SHA, stage: "BUILD_READY" },
     token: TOKEN,
     api_trigger_id: TRIGGER,
     fetchImpl: async () => ({ status: 200, ok: true, json: async () => ({ object: "workspace_agent.trigger_run", id: "apirun_poll_2", status: "completed", agent_id: "agt_poll_2", conversation_url: "https://chatgpt.com/c/poll_2", error: null }) }),

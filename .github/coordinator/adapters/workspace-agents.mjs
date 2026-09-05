@@ -50,8 +50,8 @@ export function buildTriggerHeaders({ token, attempt_id, target_sha }) {
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
 
 // validateCallbackEvidence — a callback counts ONLY if it carries links, the
-// SAME attempt_id and target_sha this run was launched under, and (when the
-// callback declares a stage) an explicitly SUCCESSFUL stage. current_head, when
+// SAME attempt_id and target_sha this run was launched under, and an explicitly
+// SUCCESSFUL stage. current_head, when
 // provided, must still equal target_sha: an old PASS against a moved head is
 // stale and never satisfies the receipt (target_sha bound invariant).
 export function validateCallbackEvidence({ evidence, attempt_id, target_sha, current_head }) {
@@ -60,9 +60,7 @@ export function validateCallbackEvidence({ evidence, attempt_id, target_sha, cur
   if (evidence.attempt_id !== attempt_id) return false;
   if (evidence.target_sha !== target_sha) return false;
   if (current_head && current_head !== target_sha) return false;
-  if (evidence.stage !== undefined && evidence.stage !== null && !SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) {
-    return false; // BLOCKED / FAILED / unknown stages never authorize COMPLETED
-  }
+  if (!SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) return false;
   return true;
 }
 
