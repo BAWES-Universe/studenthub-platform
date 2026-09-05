@@ -33,6 +33,14 @@ concurrency:
   group: coordinator-dispatch
   cancel-in-progress: false
 
+# FAIL-CLOSED CREDENTIAL: "zero writes" must not rest on application logic alone
+# (PR #20 review, same shape as the PR #13 finding — resolver fails closed,
+# credential unconstrained). The repo default GITHUB_TOKEN may be read-write;
+# pin it to contents: read so the token physically cannot write, matching every
+# other workflow in this repo.
+permissions:
+  contents: read
+
 jobs:
   reconcile:
     runs-on: ubuntu-latest
