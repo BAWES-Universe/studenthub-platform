@@ -41,7 +41,7 @@
 // io.now, env.HERMES_BIN) — the module is fully testable with a mocked worker
 // and temp dir; NO live spawn happens in tests or while dispatch is disabled.
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync, linkSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname } from "node:os";
 
@@ -104,41 +104,179 @@ function processIsAlive(pid, io = {}) {
   }
 }
 
+// CLAIM PHASES. The phase is what makes an abandoned claim recoverable OR
+// permanently unsafe, so it is advanced BEFORE each irreversible step, never
+// after:
+//   pre_spawn      — the claim exists; io.spawn has NOT been called. No worker
+//                    can exist, so another coordinator may safely take over.
+//   spawn_attempted— io.spawn is about to be / is being called. A worker MAY
+//                    exist; taking over could double-launch.
+//   spawned        — spawn confirmed. A worker definitely existed.
+export const CLAIM_PHASES = Object.freeze(["pre_spawn", "spawn_attempted", "spawned"]);
+const RETRY_SAFE_PHASE = "pre_spawn";
+
+// The claim is held only across io.spawn plus two small writes, so a claim
+// older than this was left by a process that is not coming back.
+const DEFAULT_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+const nowMs = (io) => {
+  const t = Date.parse(io.now ? io.now() : new Date().toISOString());
+  return Number.isFinite(t) ? t : Date.now();
+};
+
+function claimBody(attemptId, io, phase) {
+  return JSON.stringify({
+    attempt_id: attemptId,
+    owner_pid: process.pid,
+    owner_host: io.hostname ? io.hostname() : hostname(),
+    phase,
+    claimed_at: io.now ? io.now() : new Date().toISOString(),
+  });
+}
+
+// Exclusive create that is also ATOMIC IN CONTENT. writeFileSync(...,"wx")
+// creates the file and then writes it, so a crash in between leaves a
+// zero-length claim — precisely the window this mutex exists to survive.
+// Writing a complete temp file and hard-linking it into place means the claim
+// is never observable half-written, and link() still fails EEXIST atomically.
+function createClaimExclusive(p, body) {
+  const tmp = `${p}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, body);
+    linkSync(tmp, p);
+    return { ok: true };
+  } catch (err) {
+    if (err?.code === "EEXIST") return { ok: false, exists: true };
+    if (err?.code === "EPERM" || err?.code === "ENOSYS" || err?.code === "EXDEV") {
+      // Filesystem without usable hard links: fall back to the exclusive write.
+      try {
+        writeFileSync(p, body, { flag: "wx" });
+        return { ok: true };
+      } catch (err2) {
+        if (err2?.code === "EEXIST") return { ok: false, exists: true };
+        return { ok: false, err: err2 };
+      }
+    }
+    return { ok: false, err };
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // temp cleanup is best-effort and never changes the claim outcome
+    }
+  }
+}
+
+// Is an existing claim still held by a live owner? Tri-state, and only the
+// definite answers are acted on.
+//   "live"      — a running owner; wait, never take over.
+//   "abandoned" — provably or near-certainly not coming back.
+//   "unknown"   — cannot tell; treat as live (wait) rather than guess.
+function claimLiveness(prior, io) {
+  const thisHost = io.hostname ? io.hostname() : hostname();
+  if (prior && prior.owner_host === thisHost) {
+    const alive = processIsAlive(prior.owner_pid, io);
+    if (alive === true) return "live"; // a running owner outranks any heuristic
+    if (alive === false) return "abandoned";
+  }
+  // Different host, or liveness unprovable: fall back to age. The hold window
+  // is a spawn plus two writes, so an old claim is an abandoned one. This is
+  // the ONLY signal available when the hostname is not stable across runs —
+  // containers and per-job CI runners, i.e. the actual deployment target.
+  const ttl = Number.isFinite(io.claimTtlMs) ? io.claimTtlMs : DEFAULT_CLAIM_TTL_MS;
+  const claimedAt = Date.parse(prior?.claimed_at ?? "");
+  if (!Number.isFinite(claimedAt)) return "unknown";
+  return nowMs(io) - claimedAt >= ttl ? "abandoned" : "live";
+}
+
 // A normal lease overwrite is not a claim: two processes can both read queued,
-// both write claiming, and both spawn. The exclusive sidecar is the single-host
-// launch mutex. It is held from immediately before the claiming transition
-// until spawn has either failed durably or reached a confirmed running state.
+// both write claiming, and both spawn. The exclusive sidecar is the launch
+// mutex. It is held from immediately before the claiming transition until spawn
+// has either failed durably or reached a confirmed running state.
 function acquireLaunchClaim(poolDir, attemptId, io = {}) {
   const p = launchClaimPath(poolDir, attemptId);
   if (p === null) return { ok: false, reason: "invalid attempt id — refusing launch claim" };
   mkdirSync(join(poolDir, "leases"), { recursive: true });
+  const created = createClaimExclusive(p, claimBody(attemptId, io, "pre_spawn"));
+  if (created.ok) return { ok: true, path: p, phase: "pre_spawn" };
+  if (!created.exists) return { ok: false, reason: `launch claim failed: ${created.err?.message ?? "unknown"}` };
+
+  // A claim already exists. Decide between waiting, taking over, and faulting.
+  let prior = null;
+  let readable = true;
   try {
-    writeFileSync(
-      p,
-      JSON.stringify({ attempt_id: attemptId, owner_pid: process.pid, owner_host: io.hostname ? io.hostname() : hostname(), phase: "pre_spawn" }),
-      { flag: "wx" },
-    );
-    return { ok: true, path: p };
-  } catch (err) {
-    if (err?.code === "EEXIST") {
-      try {
-        const prior = JSON.parse(readFileSync(p, "utf8"));
-        const thisHost = io.hostname ? io.hostname() : hostname();
-        const alive = prior.owner_host === thisHost ? processIsAlive(prior.owner_pid, io) : null;
-        if (alive === false) {
-          // A crash may have happened immediately after spawn but before the
-          // running lease was persisted. Therefore a dead owner is NOT license
-          // to steal the claim and retry. Surface a durable pause for operator
-          // reconciliation instead of either double-launching or holding an
-          // invisible LAUNCH_UNKNOWN slot forever.
-          return { ok: false, stale: true, reason: `launch claim owner pid ${prior.owner_pid} is no longer running on ${thisHost}` };
-        }
-      } catch {
-        // Corrupt/foreign claim ownership cannot be disproved. Fail closed.
-      }
-      return { ok: false, reason: "launch already claimed by another coordinator" };
+    prior = JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    readable = false; // zero-length or corrupt — a crash mid-write
+  }
+  const liveness = readable ? claimLiveness(prior, io) : unreadableClaimLiveness(p, io);
+  if (liveness !== "abandoned") {
+    // Someone may still be working. Waiting is correct and recoverable.
+    return { ok: false, reason: "launch already claimed by another coordinator" };
+  }
+  if (readable && prior?.phase === RETRY_SAFE_PHASE) {
+    // The owner is gone and never reached io.spawn, so NO worker exists. Taking
+    // the claim over is the only way this reservation is ever recoverable, and
+    // it cannot double-launch. Stamp it as ours before proceeding.
+    try {
+      writeFileSync(p, claimBody(attemptId, io, "pre_spawn"));
+      return { ok: true, path: p, phase: "pre_spawn", took_over: true };
+    } catch (err) {
+      return { ok: false, reason: `could not take over abandoned launch claim: ${err.message}` };
     }
-    return { ok: false, reason: `launch claim failed: ${err.message}` };
+  }
+  // Abandoned past the point of no return, or unreadable so the phase cannot be
+  // established. A worker may exist: never retry, and never sit silently on a
+  // held slot either — surface it.
+  return {
+    ok: false,
+    stale: true,
+    reason: readable
+      ? `abandoned launch claim at phase ${prior?.phase ?? "unknown"} (owner pid ${prior?.owner_pid ?? "?"} on ${prior?.owner_host ?? "?"})`
+      : "abandoned launch claim is unreadable — the spawn phase cannot be established",
+  };
+}
+
+// An unreadable claim has no claimed_at to age out, so use the file's own mtime.
+function unreadableClaimLiveness(p, io) {
+  const ttl = Number.isFinite(io.claimTtlMs) ? io.claimTtlMs : DEFAULT_CLAIM_TTL_MS;
+  try {
+    // mtime comes from the filesystem, so it is compared against the REAL
+    // clock — mixing it with an injected io.now would compare two different
+    // time bases and silently misjudge staleness.
+    return Date.now() - statSync(p).mtimeMs >= ttl ? "abandoned" : "live";
+  } catch {
+    return "unknown";
+  }
+}
+
+// Advance the phase of a claim WE hold. Ordering is the whole contract: this
+// must land before the step it describes, never after.
+function advanceClaimPhase(claim, attemptId, io, phase) {
+  if (!claim?.ok || !claim.path) return false;
+  try {
+    // io.writeFileImpl is the injection seam for this write specifically: the
+    // "refuse to spawn when the phase is not durable" branch is otherwise
+    // unreachable from a test, and an untested fail-closed branch is exactly
+    // the defect this module keeps finding elsewhere.
+    (io.writeFileImpl ?? writeFileSync)(claim.path, claimBody(attemptId, io, phase));
+    claim.phase = phase;
+    return true;
+  } catch {
+    // The caller decides. Advancing to spawn_attempted MUST succeed before the
+    // spawn: if it does not and we spawned anyway, a later crash would read
+    // "pre_spawn", conclude no worker exists, and launch a second one.
+    return false;
+  }
+}
+
+function readLaunchClaim(poolDir, attemptId) {
+  const p = launchClaimPath(poolDir, attemptId);
+  if (p === null || !existsSync(p)) return { ok: false };
+  try {
+    return { ok: true, claim: JSON.parse(readFileSync(p, "utf8")) };
+  } catch {
+    return { ok: false, corrupt: true };
   }
 }
 
@@ -358,6 +496,15 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "SPAWN_FAILED", error_kind: "run_failed", reason: `worker spawn failed: ${message}` };
   };
 
+  // BEFORE the irreversible step: from here on a worker may exist, so an
+  // abandoned claim must never be retried. Advancing after io.spawn would leave
+  // a crash inside spawn looking retry-safe.
+  if (!advanceClaimPhase(launchClaim, attempt_id, io, "spawn_attempted")) {
+    // Refusing to spawn is the only safe option: a claim still reading
+    // "pre_spawn" would license a takeover that double-launches this worker.
+    releaseLaunchClaim(launchClaim);
+    return { stage: "LAUNCH_UNKNOWN", reason: "could not record the spawn attempt durably — refusing to start a worker" };
+  }
   let child;
   try {
     child = io.spawn(bin, args, { cwd: io.repoDir ?? process.cwd() });
@@ -370,6 +517,7 @@ export async function launchBuilder({
   // coordinator process. Wait for whichever of spawn/error settles first.
   const started = await awaitSpawn(child);
   if (!started.ok) return failClosed(started.err?.message ?? "spawn error");
+  advanceClaimPhase(launchClaim, attempt_id, io, "spawned");
 
   const workerId = `hermes:${io.hostname ? io.hostname() : hostname()}:pid${child.pid ?? "unknown"}`;
   const spawnFields = {
@@ -465,8 +613,25 @@ export async function monitorRun({
   }
   const base = { external_run_id: hermesRunId(lease.attempt_id), worker_identity: lease.worker_id ?? null };
   if (PRE_SPAWN_STATUSES.includes(lease.status)) {
-    // Pre-spawn: no worker exists. Never RUNNING — that manufactured a phantom
-    // worker. UNCHANGED holds the slot and leaves the receipt recoverable.
+    // Pre-spawn: no worker exists *according to the lease*. Never RUNNING — that
+    // manufactured a phantom worker.
+    //
+    // But the lease is not the only record. If the launch claim shows the spawn
+    // was attempted and its owner is gone, then a worker DID start and the
+    // running-lease write was lost. This receipt is already RUNNING, so
+    // launchBuilder never runs for it again and only this poll can ever speak:
+    // returning UNCHANGED would hide a real worker forever behind a held slot.
+    // HOLD is terminal and operator-visible, which is what an untracked worker
+    // warrants.
+    const claim = readLaunchClaim(poolDir, attempt_id);
+    if (claim.ok && claim.claim?.phase && claim.claim.phase !== "pre_spawn" && claimLiveness(claim.claim, io) === "abandoned") {
+      return {
+        ...base,
+        stage: "HOLD",
+        adapter_status: "completed",
+        reason: `worker was spawned (claim phase ${claim.claim.phase}) but the running lease was never persisted and its owner is gone — manual reconciliation`,
+      };
+    }
     return { stage: "UNCHANGED", reason: `lease is pre-spawn (${lease.status}) — no worker started` };
   }
   if (lease.status === "running") {

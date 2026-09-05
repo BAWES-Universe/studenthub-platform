@@ -457,13 +457,19 @@ test("F2c: a successful spawn with no durable running transition keeps the launc
   assert.equal(spawnCount, 1, "uncertain persistence after a real spawn must never double-launch");
 });
 
-test("F2d: a claim whose same-host owner is definitely dead fails visibly and pauses", async () => {
+// Originally this asserted FAILED + pause for ANY dead same-host owner, because
+// the phase was recorded and then never advanced or read, so "pre_spawn" could
+// not be trusted to mean anything and every crash had to be assumed unsafe. The
+// phase is now advanced BEFORE io.spawn, so it is a real proof: a dead owner
+// still at pre_spawn provably never started a worker and is safe to retry. The
+// unsafe half of the original assertion is pinned in the sibling test below.
+test("F2d: a dead same-host owner PAST the spawn attempt fails visibly and pauses", async () => {
   const pool = tempPool();
   const reserved = await launchBuilder({ ...BASE, io: { poolDir: pool }, env: {} });
   assert.equal(reserved.stage, "LAUNCH_UNKNOWN");
   writeFileSync(
     join(pool, "leases", `${ATTEMPT}.launch-claim`),
-    JSON.stringify({ attempt_id: ATTEMPT, owner_pid: 9911, owner_host: "test-host", phase: "pre_spawn" }),
+    JSON.stringify({ attempt_id: ATTEMPT, owner_pid: 9911, owner_host: "test-host", phase: "spawn_attempted", claimed_at: "2026-09-05T00:00:00.000Z" }),
   );
   let spawns = 0;
   const out = await launchBuilder({
@@ -475,6 +481,25 @@ test("F2d: a claim whose same-host owner is definitely dead fails visibly and pa
   assert.equal(out.error_code, "STALE_LAUNCH_CLAIM");
   assert.equal(out.pause_adapter, true, "ambiguous crash-after-spawn must require explicit reconciliation");
   assert.equal(spawns, 0, "owner death alone is never authority to launch another worker");
+});
+
+// A claim written by an older coordinator carries no phase at all. It cannot be
+// proved retry-safe, so it must take the conservative path.
+test("F2d': a dead owner whose claim has NO phase is treated as unsafe", async () => {
+  const pool = tempPool();
+  await launchBuilder({ ...BASE, io: { poolDir: pool }, env: {} });
+  writeFileSync(
+    join(pool, "leases", `${ATTEMPT}.launch-claim`),
+    JSON.stringify({ attempt_id: ATTEMPT, owner_pid: 9911, owner_host: "test-host" }),
+  );
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...BASE,
+    io: { ...poolIo(pool, () => { spawns += 1; }), isProcessAlive: (pid) => (pid === 9911 ? false : null) },
+    env: {},
+  });
+  assert.equal(out.stage, "FAILED", "an unprovable phase can never authorize a retry");
+  assert.equal(spawns, 0);
 });
 
 test("F2e: an alive or unprovable claim owner remains LAUNCH_UNKNOWN", async () => {
@@ -662,4 +687,197 @@ test("F5c: a traversal-shaped attempt_id can never create a lease outside the po
   });
   assert.notEqual(out.stage, "RUNNING", "an unnameable attempt must never reach RUNNING");
   assert.equal(existsSync(join(escapeDir, "pwned.json")), false, "no lease may be written outside <poolDir>/leases");
+});
+
+// ---------------------------------------------------------------------------
+// Abandoned-claim liveness (Opus, adversarial review of ed262fb).
+//
+// ed262fb made the launch mutex genuinely atomic — that property holds and is
+// re-pinned below. What it did not fix is LIVENESS: an abandoned claim could
+// leave the attempt permanently unrecoverable and, in the most likely
+// deployment, silently. These tests pin the recovery rules.
+// ---------------------------------------------------------------------------
+import { utimesSync } from "node:fs";
+
+const CLAIM = (pool) => join(pool, "leases", `${ATTEMPT}.launch-claim`);
+const OLD = "2026-09-05T00:00:00.000Z"; // far older than the claim TTL
+const NOW = "2026-09-05T12:00:00.000Z";
+function writeClaimFile(pool, body) {
+  mkdirSync(join(pool, "leases"), { recursive: true });
+  writeFileSync(CLAIM(pool), typeof body === "string" ? body : JSON.stringify(body));
+}
+// Leaves a queued, pre-spawn lease behind exactly as a launch with no spawn
+// wiring does, then plants the claim a crashed coordinator would have left.
+async function abandonedAttempt(pool, claimBody) {
+  await launchBuilder({ ...BASE, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW }, env: {} });
+  writeClaimFile(pool, claimBody);
+}
+
+// A claim whose owner never reached io.spawn proves NO worker exists, so the
+// attempt is safe to retry. Before this, the host gate meant any coordinator
+// with a different hostname — a container or a fresh Actions runner, i.e. the
+// deployment target — could never reach the abandonment branch at all, and the
+// attempt sat at LAUNCH_UNKNOWN forever holding the only dispatch slot.
+test("abandoned pre-spawn claim from a FOREIGN host is recovered, not deadlocked", async () => {
+  const pool = tempPool();
+  const calls = [];
+  await abandonedAttempt(pool, { attempt_id: ATTEMPT, owner_pid: 999999, owner_host: "hostA", phase: "pre_spawn", claimed_at: OLD });
+  const out = await launchBuilder({
+    ...BASE,
+    io: { poolDir: pool, hostname: () => "hostB", now: () => NOW, spawn: spawnRecorder(calls) },
+    env: {},
+  });
+  assert.equal(out.stage, "RUNNING", "a claim that provably never spawned must be recoverable from any host");
+  assert.equal(calls.length, 1, "exactly one worker for the recovered attempt");
+});
+
+test("abandoned pre-spawn claim on the SAME host retries without pausing the adapter", async () => {
+  const pool = tempPool();
+  const calls = [];
+  await abandonedAttempt(pool, { attempt_id: ATTEMPT, owner_pid: 4242, owner_host: "hostA", phase: "pre_spawn", claimed_at: OLD });
+  const out = await launchBuilder({
+    ...BASE,
+    io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls), isProcessAlive: () => false },
+    env: {},
+  });
+  assert.equal(out.stage, "RUNNING");
+  assert.equal(calls.length, 1);
+  assert.notEqual(out.pause_adapter, true, "a crash that never reached spawn must not halt the whole hermes lane");
+});
+
+// The mirror image: once io.spawn has been ATTEMPTED, a worker may exist, so
+// retrying is unsafe and the attempt must become an operator-visible fault.
+test("abandoned claim past the spawn attempt is a visible fault, never a silent retry", async () => {
+  for (const phase of ["spawn_attempted", "spawned"]) {
+    const pool = tempPool();
+    const calls = [];
+    await abandonedAttempt(pool, { attempt_id: ATTEMPT, owner_pid: 4242, owner_host: "hostA", phase, claimed_at: OLD });
+    const out = await launchBuilder({
+      ...BASE,
+      io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls), isProcessAlive: () => false },
+      env: {},
+    });
+    assert.equal(out.stage, "FAILED", `${phase}: a worker may exist, so this can never silently retry`);
+    assert.equal(out.error_code, "STALE_LAUNCH_CLAIM");
+    assert.equal(calls.length, 0, `${phase}: never spawn a second worker`);
+  }
+});
+
+// A crash between the exclusive create and the body write leaves a zero-length
+// file — the exact window the mutex exists to survive. It must not fall through
+// to the silent "already claimed" path.
+test("a corrupt or empty abandoned claim is surfaced, not silently held forever", async () => {
+  for (const body of ["", "{ not json"]) {
+    const pool = tempPool();
+    const calls = [];
+    await abandonedAttempt(pool, body);
+    // An unreadable claim has no claimed_at to age out, so the code falls back
+    // to the file's own mtime — a REAL clock value. Backdate it rather than
+    // racing "now" against a zero TTL.
+    const hourAgo = new Date(Date.now() - 3600_000);
+    utimesSync(CLAIM(pool), hourAgo, hourAgo);
+    const out = await launchBuilder({
+      ...BASE,
+      io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls) },
+      env: {},
+    });
+    assert.equal(out.stage, "FAILED", "an unreadable claim must become an operator-visible fault");
+    assert.equal(out.error_code, "STALE_LAUNCH_CLAIM");
+    assert.equal(calls.length, 0);
+  }
+});
+
+// Safety guards: a claim that is still LIVE must never be taken over.
+test("a fresh claim is never stolen, whatever its phase or host", async () => {
+  for (const phase of ["pre_spawn", "spawn_attempted", "spawned"]) {
+    const pool = tempPool();
+    const calls = [];
+    await abandonedAttempt(pool, { attempt_id: ATTEMPT, owner_pid: 4242, owner_host: "hostB", phase, claimed_at: NOW });
+    const out = await launchBuilder({
+      ...BASE,
+      io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls) },
+      env: {},
+    });
+    assert.equal(out.stage, "LAUNCH_UNKNOWN", `${phase}: a live claim is held by someone else — wait, never take over`);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("a live same-host owner is never displaced even with an old timestamp", async () => {
+  const pool = tempPool();
+  const calls = [];
+  await abandonedAttempt(pool, { attempt_id: ATTEMPT, owner_pid: 4242, owner_host: "hostA", phase: "pre_spawn", claimed_at: OLD });
+  const out = await launchBuilder({
+    ...BASE,
+    io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls), isProcessAlive: () => true },
+    env: {},
+  });
+  assert.equal(out.stage, "LAUNCH_UNKNOWN", "a provably running owner outranks any staleness heuristic");
+  assert.equal(calls.length, 0);
+});
+
+// Re-pin the property ed262fb established, so a liveness fix cannot regress it.
+test("concurrent launches on one attempt still produce exactly one worker", async () => {
+  const pool = tempPool();
+  const calls = [];
+  await launchBuilder({ ...BASE, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW }, env: {} });
+  const io = { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls) };
+  const [a, b] = await Promise.all([launchBuilder({ ...BASE, io, env: {} }), launchBuilder({ ...BASE, io, env: {} })]);
+  assert.equal(calls.length, 1, "the launch mutex must stay atomic");
+  assert.equal([a.stage, b.stage].filter((s) => s === "RUNNING").length, 1);
+});
+
+// The claim must record that it reached the spawn attempt BEFORE io.spawn runs,
+// or a crash inside spawn would look retry-safe and double-launch.
+test("the claim records the spawn attempt BEFORE the worker is started", async () => {
+  const pool = tempPool();
+  let phaseAtSpawnTime = null;
+  const spawn = () => {
+    phaseAtSpawnTime = JSON.parse(readFileSync(CLAIM(pool), "utf8")).phase;
+    return { pid: 7, on: () => {} };
+  };
+  await launchBuilder({ ...BASE, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn }, env: {} });
+  assert.notEqual(phaseAtSpawnTime, "pre_spawn", "a crash inside io.spawn must not look like it never spawned");
+});
+
+// P4 from the review: the worker started but the running-lease write was lost.
+// The receipt is RUNNING, so launchBuilder never runs again — only monitorRun,
+// which saw a pre-spawn lease and returned UNCHANGED forever.
+test("a spawned worker whose lease write was lost becomes visible, not invisible", async () => {
+  const pool = tempPool();
+  await launchBuilder({ ...BASE, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW }, env: {} });
+  const lease = leaseAt(pool, ATTEMPT);
+  writeFileSync(join(pool, "leases", `${ATTEMPT}.json`), JSON.stringify({ ...lease, status: "claiming" }));
+  writeClaimFile(pool, { attempt_id: ATTEMPT, owner_pid: 4242, owner_host: "hostA", phase: "spawned", claimed_at: OLD });
+  const out = await monitorRun({
+    run_id: `apirun_hermes_${ATTEMPT}`,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, isProcessAlive: () => false },
+  });
+  assert.equal(out.stage, "HOLD", "a worker that really started must never be held UNCHANGED forever");
+});
+
+// If the spawn_attempted phase cannot be made durable, spawning anyway would
+// leave a claim reading "pre_spawn" while a worker exists — which is precisely
+// the licence another coordinator uses to take over and double-launch.
+test("a phase advance that will not persist refuses to start the worker", async () => {
+  const pool = tempPool();
+  const calls = [];
+  const out = await launchBuilder({
+    ...BASE,
+    io: {
+      poolDir: pool,
+      hostname: () => "hostA",
+      now: () => NOW,
+      spawn: spawnRecorder(calls),
+      writeFileImpl: () => {
+        throw new Error("ENOSPC");
+      },
+    },
+    env: {},
+  });
+  assert.equal(calls.length, 0, "never start a worker the claim cannot account for");
+  assert.equal(out.stage, "LAUNCH_UNKNOWN", "the slot is held and the attempt stays recoverable");
+  assert.match(out.reason, /could not record the spawn attempt/);
 });
