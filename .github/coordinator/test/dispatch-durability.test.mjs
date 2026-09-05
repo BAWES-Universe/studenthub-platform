@@ -96,12 +96,14 @@ function fakeLinearStore(issueNodes, commentBodies, { failComments = false } = {
 
 function fakeWorkspaceAgents({ mode }) {
   let triggers = 0;
+  const keys = [];
   const impl = async (url, opts) => {
     // Poll GETs (monitorRun) return "still queued" — RUNNING persists unchanged.
     if (url.includes("/runs/")) {
       return { status: 200, ok: true, json: async () => ({ object: "workspace_agent.trigger_run", id: "apirun_durable_1", status: "queued", agent_id: null, error: null }) };
     }
     triggers += 1; // only POST /trigger counts as a launch
+    keys.push(opts.headers["Idempotency-Key"]);
     assert.equal(url, `https://api.chatgpt.com/v1/workspace_agents/${TRIGGER}/trigger`);
     if (mode === "transport-fail") throw new Error("ECONNRESET");
     if (mode === "quota") return { status: 429, ok: false, json: async () => ({}) };
@@ -109,6 +111,7 @@ function fakeWorkspaceAgents({ mode }) {
     return { status: 202, ok: true, json: async () => ({ conversation_url: "https://chatgpt.com/c/durable_1", agent_trigger_run_id: "apirun_durable_1" }) };
   };
   impl.calls = () => triggers;
+  impl.keys = () => [...keys];
   return impl;
 }
 
@@ -184,7 +187,7 @@ test("active receipt on a card that left the pickable set still consumes max_dis
   assert.equal(wa2.calls(), 0, "active receipt on a non-pickable card must still block dispatch");
 });
 
-test("crash after reservation: surviving LAUNCH_UNKNOWN holds the slot across processes", async () => {
+test("LAUNCH_UNKNOWN is reconciled across processes with the same attempt and Idempotency-Key", async () => {
   const nodes = makeIssueNodes();
   const store = fakeLinearStore(nodes, []);
   const wa = fakeWorkspaceAgents({ mode: "transport-fail" });
@@ -195,11 +198,22 @@ test("crash after reservation: surviving LAUNCH_UNKNOWN holds the slot across pr
   assert.equal(unknown.length, 1);
   assert.equal(unknown[0].stage, "LAUNCH_UNKNOWN", "transport failure persists LAUNCH_UNKNOWN, not RESERVED");
 
-  // Fresh process, same store: the durable read finds LAUNCH_UNKNOWN -> slot held.
+  const attempt = unknown[0].attempt_id;
+  const firstKey = wa.keys()[0];
+
+  // Fresh process, same store: retry the uncertain launch with the exact same
+  // attempt/key. Upstream idempotency returns the accepted run; no new receipt
+  // or worker identity is minted.
   const wa2 = fakeWorkspaceAgents({ mode: "accept" });
   const r2 = await runMain({ configPath, wa: wa2, linear: store });
-  assert.equal(wa2.calls(), 0, "LAUNCH_UNKNOWN must never auto-relaunch without reconciliation");
-  assert.equal(parseReceiptsFromComments(store.comments).length, 1);
+  assert.equal(r2.code, 0, r2.out.join("\n"));
+  assert.equal(wa2.calls(), 1, "uncertain launch must be reconciled, not held forever");
+  assert.equal(wa2.keys()[0], firstKey, "reconciliation must reuse the byte-identical Idempotency-Key");
+  const recovered = parseReceiptsFromComments(store.comments);
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].attempt_id, attempt, "reconciliation must not mint a new attempt");
+  assert.equal(recovered[0].stage, "RUNNING");
+  assert.equal(recovered[0].external_run_id, "apirun_durable_1");
 });
 
 test("quota failure persists FAILED + durable pause marker; the pause survives a fresh process", async () => {
