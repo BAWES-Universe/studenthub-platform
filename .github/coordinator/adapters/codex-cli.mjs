@@ -158,7 +158,6 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, killGraceMs = 30
         finish(spawnError);
       }, killGraceMs);
     }, options.timeout);
-    timer.unref?.();
     child.stdout?.on("data", (chunk) => {
       const text = String(chunk);
       stdout += text;
