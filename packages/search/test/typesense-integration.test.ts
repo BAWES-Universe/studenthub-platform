@@ -3,11 +3,11 @@ import test from "node:test";
 
 import type { CandidateSearchDocument } from "@studenthub/contracts";
 
-import { TypesenseCandidateSearchAdapter } from "../src/index.js";
+import { TypesenseCandidateIndexer, TypesenseCandidateSearchAdapter } from "../src/index.js";
 
 const url = process.env.TYPESENSE_URL ?? "http://127.0.0.1:8108";
 const apiKey = process.env.TYPESENSE_API_KEY ?? "shu52-ci-key";
-const collection = "shu52_candidate_parity";
+const collection = "shu57_candidate_parity";
 
 const documents: CandidateSearchDocument[] = [
   candidate("1", "KW", "Gulf Tech", "Atlas Retail", ["typescript"], "female", "complete", "assigned", ["resume"], 90),
@@ -19,28 +19,15 @@ const documents: CandidateSearchDocument[] = [
 test.before(async () => {
   await waitForTypesense();
   const headers = { "X-TYPESENSE-API-KEY": apiKey, "content-type": "application/json" };
-  await fetch(`${url}/collections/${collection}`, { method: "DELETE", headers });
-  const created = await fetch(`${url}/collections`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ name: collection, fields: [
-      { name: "id", type: "string" }, { name: "name", type: "string" }, { name: "email", type: "string" },
-      { name: "phone", type: "string" }, { name: "country", type: "string", facet: true },
-      { name: "university", type: "string", facet: true }, { name: "company", type: "string", facet: true, optional: true },
-      { name: "skills", type: "string[]", facet: true }, { name: "gender", type: "string", facet: true },
-      { name: "profile", type: "string", facet: true }, { name: "assignment", type: "string", facet: true },
-      { name: "documents", type: "string[]", facet: true }, { name: "status", type: "string", facet: true },
-      { name: "approved", type: "bool", facet: true }, { name: "score", type: "int32", sort: true },
-      { name: "updatedAtEpoch", type: "int64", sort: true },
-    ] }),
-  });
-  assert.equal(created.ok, true, await created.text());
-  const imported = await fetch(`${url}/collections/${collection}/documents/import?action=upsert`, {
-    method: "POST",
-    headers: { "X-TYPESENSE-API-KEY": apiKey, "content-type": "text/plain" },
-    body: documents.map((document) => JSON.stringify(document)).join("\n"),
-  });
-  assert.equal(imported.ok, true, await imported.text());
+  await fetch(`${url}/aliases/${collection}`, { method: "DELETE", headers });
+
+  const indexer = new TypesenseCandidateIndexer({ url, apiKey, alias: collection });
+  const first = await indexer.publish(documents);
+  const repeated = await indexer.publish([...documents].reverse());
+
+  assert.equal(first.collection, repeated.collection);
+  assert.equal(first.documents, documents.length);
+  assert.equal(repeated.documents, documents.length);
 });
 
 test("real Typesense preserves combined filters, multi-select and live alternative counts", async () => {
