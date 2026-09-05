@@ -721,7 +721,7 @@ export function nextReceiptState(receipt, event, ctx = {}) {
 // Remote adapters usually return RUNNING. A synchronous adapter such as
 // `claude -p` can return its terminal result in the launch call; it is still
 // acknowledged first so terminal receipts retain a durable run identity.
-export function foldLaunchOutcome(receipt, launch) {
+export function foldLaunchOutcome(receipt, launch, ctx = {}) {
   let transition = receipt.stage === "LAUNCH_UNKNOWN"
     ? { receipt, accepted: true, idempotency_key: launchIdempotencyKey(receipt) }
     : nextReceiptState(receipt, { type: "launch" });
@@ -739,12 +739,20 @@ export function foldLaunchOutcome(receipt, launch) {
   }
 
   if (launch.stage === "COMPLETED" || launch.stage === "HOLD") {
-    return nextReceiptState(transition.receipt, {
-      type: "run_status",
-      status: "completed",
-      callback: launch.callback,
-      worker_identity: launch.worker_identity,
-    });
+    // ctx carries current_head. A synchronous adapter reaches COMPLETED here
+    // WITHOUT passing through the lifecycle poll, so the stale-head guard in
+    // callbackEvidenceValid only runs if the caller resolves the live head and
+    // forwards it — see the dispatch path.
+    return nextReceiptState(
+      transition.receipt,
+      {
+        type: "run_status",
+        status: "completed",
+        callback: launch.callback,
+        worker_identity: launch.worker_identity,
+      },
+      ctx,
+    );
   }
   return nextReceiptState(transition.receipt, {
     type: "run_status",
@@ -1492,7 +1500,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 
   const adapter = adapterNameFor(candidate.requested_worker);
   const dispatchAdapterModule = await loadAdapterModule(adapter, io);
-  const launch = await dispatchAdapterModule.launchBuilder({
+  let launch = await dispatchAdapterModule.launchBuilder({
     issue_id: receipt.issue_id,
     authorization_ref: receipt.authorization_ref,
     attempt_id: receipt.attempt_id,
@@ -1505,7 +1513,31 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
   // (ack -> RUNNING / stays LAUNCH_UNKNOWN / upstream failure). A worker ack
   // straight from RESERVED is out of order by design — launch always precedes it.
-  const transition = foldLaunchOutcome(launchIntent.receipt, launch);
+  // STALE-HEAD GUARD on the synchronous path. A `claude -p` verification can run
+  // for half an hour and returns its terminal result straight from launchBuilder,
+  // bypassing the lifecycle poll where the live head is normally resolved. Apply
+  // the SAME tri-state rule here, or a verdict describing a superseded tree would
+  // satisfy a receipt bound to target_sha.
+  let launchCtx = {};
+  if (launch.stage === "COMPLETED") {
+    let headVerified = true;
+    let liveHead = receipt.target_sha; // no token -> the bound head IS the reference
+    if (githubToken && receipt.repo && receipt.branch) {
+      try {
+        const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
+        if (head) liveHead = head;
+        else headVerified = false;
+      } catch {
+        headVerified = false; // unreadable head is never "head matches"
+      }
+    }
+    if (!headVerified) {
+      launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
+    } else {
+      launchCtx = { current_head: liveHead };
+    }
+  }
+  const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);
   if (!transition.accepted) {
     if (io.stdout) io.stdout(`dispatch: ${candidate.id} transition REJECTED (${transition.reason ?? "unknown reason"}) — state unchanged, slot held`);
     return 2;
