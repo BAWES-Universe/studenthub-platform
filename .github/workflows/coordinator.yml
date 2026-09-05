@@ -46,14 +46,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Empty/absent token is tolerated: reconcile falls back to local-snapshot
-      # dry-run mode and makes no writes. Dispatch additionally requires
-      # ENABLE_DISPATCH=true — belt and braces.
-      LINEAR_API_TOKEN: ${{ secrets.LINEAR_API_TOKEN }}
-      ENABLE_DISPATCH: ${{ vars.ENABLE_DISPATCH }}
+      # Secrets NEVER reach untrusted pull_request runs: reconcile then falls
+      # back to local-snapshot dry-run with zero secrets (CodeRabbit). Trusted
+      # refs (push to main / schedule / workflow_dispatch) get the full env.
+      LINEAR_API_TOKEN: ${{ github.event_name != 'pull_request' && secrets.LINEAR_API_TOKEN || '' }}
+      ENABLE_DISPATCH: ${{ github.event_name != 'pull_request' && vars.ENABLE_DISPATCH || '' }}
       # Pass the (contents:read-scoped) Actions token so the reconcile script can
       # discover open PRs for eligibility — reads only, never writes (GPT review #5).
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Workspace Agents credentials are DANGEROUS in untrusted contexts and only
+      # meaningful with dispatch enabled — never present on pull_request runs.
+      WORKSPACE_AGENT_ACCESS_TOKEN: ${{ github.event_name != 'pull_request' && secrets.WORKSPACE_AGENT_ACCESS_TOKEN || '' }}
+      WORKSPACE_AGENT_TRIGGER_ID: ${{ github.event_name != 'pull_request' && vars.WORKSPACE_AGENT_TRIGGER_ID || '' }}
     steps:
       - uses: actions/checkout@v4
         with:

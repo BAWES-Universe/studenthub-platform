@@ -5,7 +5,7 @@
 // fake Linear store; the durable-read branch feeds the lifecycle pass.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, parseReceiptsFromComments, receiptCommentBody, parseEvidenceFromComments } from "../reconcile.mjs";
@@ -46,6 +46,7 @@ function tempConfig() {
     enable_dispatch: true,
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
+    max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   };
   const dir = mkdtempSync(join(tmpdir(), "coordinator-life-"));
@@ -59,7 +60,10 @@ const tick = () => new Date((clockMs += 1000)).toISOString();
 
 // persistentStore — one Linear fake across process-runs: issues served from a
 // mutable list, comments stored per issue, callback/evidence comments accepted.
+// commentCreate REJECTS non-UUID issue ids (GPT BLOCK #3: real Linear comment
+// mutations require the issue UUID, never the human identifier).
 function persistentStore(issueNodes, commentBodies) {
+  const uuidByIdentifier = new Map(issueNodes.map((n) => [n.identifier, n.id]));
   const impl = async (url, opts) => {
     assert.equal(url, "https://api.linear.app/graphql");
     const { query } = JSON.parse(opts.body);
@@ -71,8 +75,11 @@ function persistentStore(issueNodes, commentBodies) {
       return respond({ issue: { comments: { nodes } } });
     }
     if (query.includes("commentCreate")) {
-      const vars = JSON.parse(opts.body).variables;
-      commentBodies.push({ body: vars.body, createdAt: tick() });
+      const { issueId, body } = JSON.parse(opts.body).variables;
+      if (issueId !== issueNodes[0].id && !issueNodes.some((n) => n.id === issueId)) {
+        throw new Error(`NON-UUID comment write attempted (${issueId}) — real Linear mutations require the issue UUID`);
+      }
+      commentBodies.push({ body, createdAt: tick() });
       return respond({ commentCreate: { success: true, comment: { id: `c${commentBodies.length}` } } });
     }
     return respond({});
@@ -255,4 +262,157 @@ test("parseEvidenceFromComments extracts the callback for the matching attempt o
   assert.equal(ev.target_sha, SHA);
   assert.ok(ev.links.length === 1);
   assert.equal(parseEvidenceFromComments([other], "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), null);
+});
+
+test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linear writes", async () => {
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  // Seed the durable store with an existing RUNNING receipt (as a previous
+  // enabled run would leave behind), then run with dispatch DISABLED.
+  const enabledCfg = tempConfig();
+  await main(
+    [],
+    ENV,
+    {
+      configPath: enabledCfg,
+      stdout: () => {},
+      fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+      fetchDurable: true,
+      pollRuns: true,
+    },
+  );
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "RUNNING");
+  const writesBefore = comments.length;
+  const triggersBefore = wa.triggers();
+
+  const disabledEnv = { ...ENV, ENABLE_DISPATCH: "false" };
+  const out = [];
+  const cfg = JSON.parse(readFileSync(enabledCfg, "utf8"));
+  const disabledCfgPath = join(mkdtempSync(join(tmpdir(), "coordinator-off-")), "config.json");
+  writeFileSync(disabledCfgPath, JSON.stringify({ ...cfg, enable_dispatch: false }));
+  const code = await main([], disabledEnv, {
+    configPath: disabledCfgPath,
+    stdout: (s) => out.push(s),
+    fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+    fetchDurable: true,
+    pollRuns: true,
+  });
+  assert.equal(code, 0);
+  assert.equal(wa.triggers(), triggersBefore, "disabled mode must never call Workspace Agents");
+  assert.equal(comments.length, writesBefore, "disabled mode must never write Linear comments");
+});
+
+test("BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest callback wins", async () => {
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  await makeRun(store, wa);
+  const [running] = parseReceiptsFromComments(comments);
+
+  const cb = (stage, createdAt) => ({
+    body: [
+      "<!-- coordinator-callback v1 -->",
+      "coordinator-callback v1",
+      "```json",
+      JSON.stringify({ attempt_id: running.attempt_id, target_sha: SHA, stage, links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"] }),
+      "```",
+    ].join("\n"),
+    createdAt,
+  });
+  // Newer BLOCKED callback must win over an older BUILD_READY one — and BLOCKED
+  // must never produce COMPLETED even when the upstream run status says completed.
+  comments.push(cb("BUILD_READY", tick()));
+  comments.push(cb("BLOCKED", tick()));
+  wa.setPoll({ status: "completed", agent_id: "agt_life_blocked" });
+  const r2 = await makeRun(store, wa);
+  assert.equal(r2.code, 0, r2.out.join("\n"));
+  const after = parseReceiptsFromComments(comments);
+  assert.equal(after.length, 1);
+  assert.equal(after[0].stage, "HOLD", "BLOCKED callback must yield HOLD, never COMPLETED");
+  assert.match(after[0].notes.join(" "), /callback REJECTED|without validated callback|completed/i);
+});
+
+test("BLOCK #3: lifecycle terminal writes use the issue UUID (store rejects identifiers)", async () => {
+  // The UUID-enforcing store throws on identifier writes; a lifecycle terminal
+  // transition therefore only succeeds when the coordinator resolves UUIDs.
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  const r1 = await makeRun(store, wa);
+  assert.equal(r1.code, 0, r1.out.join("\n"));
+  wa.setPoll({ status: "failed", agent_id: "agt_life_uuid", error: { code: "run_failed" } });
+  const r2 = await makeRun(store, wa);
+  assert.equal(r2.code, 0, r2.out.join("\n"));
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "FAILED", "terminal write succeeded via the issue UUID");
+});
+
+test("BLOCK #4: an unreadable live GitHub head prevents COMPLETED (HOLD, never assume equality)", async () => {
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  const env = { ...ENV, GITHUB_TOKEN: "gh-tok", DISPATCH_TARGET_SHA: SHA };
+  const runOnce = async () => {
+    const out = [];
+    return main([], env, {
+      configPath: tempConfig(),
+      stdout: (s) => out.push(s),
+      fetchImpl: async (url, opts) => {
+        if (url.includes("api.linear.app")) return store(url, opts);
+        if (url.includes("api.github.com")) return { status: 404, ok: false, json: async () => ({}) }; // branch unreadable
+        return wa(url, opts);
+      },
+      fetchDurable: true,
+      pollRuns: true,
+    }).then((code) => ({ code, out }));
+  };
+  const r1 = await runOnce();
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "RUNNING");
+  // Worker posts a VALID callback, upstream completed — but the branch head
+  // cannot be verified (404) → HOLD, never COMPLETED.
+  const [running] = parseReceiptsFromComments(comments);
+  comments.push(callbackComment(running.attempt_id));
+  wa.setPoll({ status: "completed", agent_id: "agt_life_head" });
+  const r2 = await runOnce();
+  assert.equal(r2.code, 0, r2.out.join("\n"));
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "HOLD", "unverifiable live head must HOLD a completed run");
+  assert.ok(r2.out.some((l) => l.includes("RUNNING -> HOLD")), r2.out.join("\n"));
+});
+
+test("BLOCK #5: retries are capped — after max_failed_attempts the issue parks and never relaunches", async () => {
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  const runOnce = async () => {
+    const out = [];
+    const code = await main([], ENV, {
+      configPath: tempConfig(),
+      stdout: (s) => out.push(s),
+      fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+      fetchDurable: true,
+      pollRuns: true,
+    });
+    return { code, out };
+  };
+  const failCount = () => parseReceiptsFromComments(comments).filter((r) => r.stage === "FAILED").length;
+
+  // Ticks: launch1 (RUNNING) -> poll FAILED#1 -> relaunch2 -> FAILED#2 ->
+  // relaunch3 -> FAILED#3 -> next tick must PARK (no 4th launch).
+  const r1 = await runOnce(); // launch attempt 1
+  assert.equal(r1.code, 0, r1.out.join("\n"));
+  assert.equal(wa.triggers(), 1);
+  for (let k = 1; k <= 3; k++) {
+    wa.setPoll({ status: "failed", agent_id: `agt_life_r${k}`, error: { code: "run_failed" } });
+    const pollRun = await runOnce(); // poll -> durable FAILED #k (dispatch deferred)
+    assert.equal(pollRun.code, 0, pollRun.out.join("\n"));
+    assert.equal(failCount(), k, `FAILED #${k} persisted`);
+    await runOnce(); // next tick: relaunch (k<3) or park (k==3)
+  }
+  assert.equal(wa.triggers(), 3, "retries are capped at max_failed_attempts=3 — never a 4th launch");
+
+  // The parked state is durable across processes: another full tick, still 3.
+  const finalRun = await runOnce();
+  assert.equal(finalRun.code, 0, finalRun.out.join("\n"));
+  assert.equal(wa.triggers(), 3, "a parked issue never relaunches");
+  assert.ok(finalRun.out.some((l) => l.includes("max failed attempts")), finalRun.out.join("\n"));
 });

@@ -189,6 +189,7 @@ test("monitor: run completed WITH validated callback -> COMPLETED", async () => 
     attempt_id: ATTEMPT,
     target_sha: SHA,
     current_head: SHA,
+    api_trigger_id: TRIGGER,
     evidence: { links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/55"], attempt_id: ATTEMPT, target_sha: SHA },
     token: TOKEN,
     fetchImpl: mockFetch(200, { id: "apirun_1", status: "completed" }),
@@ -203,6 +204,7 @@ test("monitor: run completed WITHOUT callback (or stale callback) -> HOLD, never
     run_id: "apirun_2",
     attempt_id: ATTEMPT,
     target_sha: SHA,
+    api_trigger_id: TRIGGER,
     evidence: null,
     token: TOKEN,
     fetchImpl: mockFetch(200, { id: "apirun_2", status: "completed" }),
@@ -214,6 +216,7 @@ test("monitor: run completed WITHOUT callback (or stale callback) -> HOLD, never
     run_id: "apirun_3",
     attempt_id: ATTEMPT,
     target_sha: SHA,
+    api_trigger_id: TRIGGER,
     current_head: SHA2,
     evidence: { links: ["https://github.com/x/pull/1"], attempt_id: ATTEMPT, target_sha: SHA },
     token: TOKEN,
@@ -225,6 +228,7 @@ test("monitor: run completed WITHOUT callback (or stale callback) -> HOLD, never
     run_id: "apirun_4",
     attempt_id: ATTEMPT,
     target_sha: SHA,
+    api_trigger_id: TRIGGER,
     evidence: { links: ["https://github.com/x/pull/1"], attempt_id: "22222222-3333-4444-8555-666666666666", target_sha: SHA },
     token: TOKEN,
     fetchImpl: mockFetch(200, { id: "apirun_4", status: "completed" }),
@@ -238,6 +242,7 @@ test("monitor: run status queued/in_progress/suspended -> RUNNING with granular 
       run_id: "apirun_5",
       attempt_id: ATTEMPT,
       target_sha: SHA,
+      api_trigger_id: TRIGGER,
       token: TOKEN,
       fetchImpl: mockFetch(200, { id: "apirun_5", status }),
     });
@@ -251,6 +256,7 @@ test("monitor: run failed -> FAILED with upstream error code", async () => {
     run_id: "apirun_6",
     attempt_id: ATTEMPT,
     target_sha: SHA,
+    api_trigger_id: TRIGGER,
     token: TOKEN,
     fetchImpl: mockFetch(200, { id: "apirun_6", status: "failed", last_error: { code: "EXEC_TIMEOUT" } }),
   });
@@ -263,6 +269,7 @@ test("monitor: 429/quota -> FAILED + pause_adapter=true", async () => {
     run_id: "apirun_7",
     attempt_id: ATTEMPT,
     target_sha: SHA,
+    api_trigger_id: TRIGGER,
     token: TOKEN,
     fetchImpl: mockFetch(429, {}),
   });
@@ -280,6 +287,7 @@ test("monitor: transient poll failures (5xx / network / unparseable) -> UNCHANGE
       run_id: "apirun_8",
       attempt_id: ATTEMPT,
       target_sha: SHA,
+      api_trigger_id: TRIGGER,
       token: TOKEN,
       fetchImpl,
     });

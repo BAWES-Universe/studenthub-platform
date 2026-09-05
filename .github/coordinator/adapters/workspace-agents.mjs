@@ -43,16 +43,26 @@ export function buildTriggerHeaders({ token, attempt_id, target_sha }) {
   };
 }
 
-// validateCallbackEvidence — a callback counts ONLY if it carries links and the
-// SAME attempt_id and target_sha this run was launched under. current_head, when
-// provided, must still equal target_sha: an old PASS against a moved head is stale
-// and never satisfies the receipt (target_sha bound invariant).
+// SUCCESS_CALLBACK_STAGES — the only worker callback stages that may authorize
+// COMPLETED. The documented callback carries BUILD_READY | REVISION_READY |
+// BLOCKED | FAILED; BLOCKED/FAILED describe work that did NOT succeed and must
+// never become COMPLETED just because the upstream run status said "completed".
+export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
+
+// validateCallbackEvidence — a callback counts ONLY if it carries links, the
+// SAME attempt_id and target_sha this run was launched under, and (when the
+// callback declares a stage) an explicitly SUCCESSFUL stage. current_head, when
+// provided, must still equal target_sha: an old PASS against a moved head is
+// stale and never satisfies the receipt (target_sha bound invariant).
 export function validateCallbackEvidence({ evidence, attempt_id, target_sha, current_head }) {
   if (!evidence || typeof evidence !== "object") return false;
   if (!Array.isArray(evidence.links) || evidence.links.length === 0) return false;
   if (evidence.attempt_id !== attempt_id) return false;
   if (evidence.target_sha !== target_sha) return false;
   if (current_head && current_head !== target_sha) return false;
+  if (evidence.stage !== undefined && evidence.stage !== null && !SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) {
+    return false; // BLOCKED / FAILED / unknown stages never authorize COMPLETED
+  }
   return true;
 }
 
@@ -86,9 +96,17 @@ export async function launchBuilder({
   const headers = buildTriggerHeaders({ token, attempt_id, target_sha });
   // input (documented) carries the authorized work order. The adapter NEVER
   // accepts free-text work orders — authorization_ref is regex-bound upstream.
+  // The attempt_id and callback contract are part of the order: a valid callback
+  // must echo THIS attempt id and declare an explicit stage (GPT BLOCK #5).
   const body = {
     conversation_key: `studenthub:${issue_id}:builder`,
-    input: `${task_context}\nAuthorized contract ref: ${authorization_ref}\nBound head: ${target_sha}`,
+    input: [
+      task_context,
+      `Authorized contract ref: ${authorization_ref}`,
+      `Bound head: ${target_sha}`,
+      `Attempt: ${attempt_id}`,
+      'On completion, post a "coordinator-callback v1" comment on this Linear issue with a JSON block: { attempt_id, target_sha, stage: BUILD_READY | REVISION_READY | BLOCKED | FAILED, links: [CI/PR evidence URLs] }. Echo the exact attempt_id and target_sha above.',
+    ].join("\n"),
   };
   let res;
   try {
@@ -159,6 +177,15 @@ export async function monitorRun({
     api_trigger_id != null
       ? `${base}/v1/workspace_agents/${api_trigger_id}/runs` // official contract shape
       : runsBase ?? `${base}/v1/workspace_agents/runs`;
+  // Fail closed on MISSING credentials: an empty bearer token or trigger id must
+  // never manufacture an upstream 401/403 (which would map to FAILED + pause and
+  // could be written during a nominal dry-run). No credentials => state unchanged.
+  if (!token || token.length === 0) {
+    return { stage: "UNCHANGED", reason: "no WORKSPACE_AGENT_ACCESS_TOKEN — poll skipped, state unchanged (fail closed)" };
+  }
+  if (!api_trigger_id || api_trigger_id.length === 0) {
+    return { stage: "UNCHANGED", reason: "no WORKSPACE_AGENT_TRIGGER_ID — poll skipped, state unchanged (fail closed)" };
+  }
   let res;
   try {
     res = await fetchImpl(`${runsEndpoint}/${run_id}`, {

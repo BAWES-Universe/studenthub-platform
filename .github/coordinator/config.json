@@ -4,6 +4,7 @@
   "enable_dispatch": false,
   "adapter_pause_map": {},
   "wake_actor_allowlist": ["BAWES"],
+  "max_failed_attempts": 3,
   "fixture_lane": {
     "id": "SHU-FIXTURE-001",
     "authorization_ref": "FIXTURE-OPUS-CONTRACT-20260905",

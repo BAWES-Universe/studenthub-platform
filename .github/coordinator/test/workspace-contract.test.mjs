@@ -66,6 +66,8 @@ test("trigger request matches the official wire contract exactly", async () => {
   assert.ok(!("prompt" in body), "prompt is NOT part of the trigger contract");
   assert.ok(body.input.includes("Authorized contract ref: SHU-77"));
   assert.ok(body.input.includes(SHA), "task context always carries the bound head");
+  assert.ok(body.input.includes(`Attempt: ${ATTEMPT}`), "the work order carries the attempt id (valid callbacks must echo it)");
+  assert.ok(body.input.includes("coordinator-callback v1"), "the work order carries the callback contract");
 });
 
 test("buildTriggerHeaders produces the documented header set", () => {
@@ -199,4 +201,23 @@ test("quota/access walls FAIL and demand an adapter pause", async () => {
     assert.equal(out.pause_adapter, true, `${status} must pause the adapter`);
     assert.equal(out.error_code, `HTTP_${status}`);
   }
+});
+
+test("monitorRun with MISSING credentials fails closed (UNCHANGED — never a manufactured upstream failure)", async () => {
+  const args = {
+    run_id: "apirun_1",
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    token: "",
+    api_trigger_id: TRIGGER,
+    fetchImpl: async () => {
+      throw new Error("fetch must never be called without credentials");
+    },
+  };
+  const noToken = await monitorRun({ ...args });
+  assert.equal(noToken.stage, "UNCHANGED");
+  assert.match(noToken.reason, /no WORKSPACE_AGENT_ACCESS_TOKEN/);
+  const noTrigger = await monitorRun({ ...args, token: TOKEN, api_trigger_id: "" });
+  assert.equal(noTrigger.stage, "UNCHANGED");
+  assert.match(noTrigger.reason, /no WORKSPACE_AGENT_TRIGGER_ID/);
 });

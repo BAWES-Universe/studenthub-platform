@@ -196,6 +196,7 @@ export function computeEligibility({ issues, openPRs = [], config = {} }) {
 
     ready.push({
       id,
+      linearId: issue.linearId ?? null, // kept through selection: Linear comment writes need the UUID
       title: issue.title ?? "",
       state: issue.state,
       priority: issue.priority ?? "No priority",
@@ -467,15 +468,22 @@ export function createReceipt({
 }
 
 // callbackEvidenceValid — a callback only counts if it references the SAME attempt
-// and the SAME bound head. An old PASS against a moved head is rejected: the receipt
-// is bound to target_sha, and if the live head (ctx.current_head) has advanced past
-// it, the verdict describes a superseded tree and cannot satisfy this receipt.
+// and the SAME bound head, and (when the callback declares a stage) an explicitly
+// SUCCESSFUL stage. An old PASS against a moved head is rejected: the receipt
+// is bound to target_sha, and if the live head (ctx.current_head) has advanced
+// past it, the verdict describes a superseded tree and cannot satisfy this
+// receipt. BLOCKED/FAILED callbacks never authorize COMPLETED (GPT BLOCK #2).
+export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
+
 export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   if (!evidence || typeof evidence !== "object") return false;
   if (!Array.isArray(evidence.links) || evidence.links.length === 0) return false;
   if (evidence.attempt_id !== receipt.attempt_id) return false;
   if (evidence.target_sha !== receipt.target_sha) return false;
   if (ctx.current_head && ctx.current_head !== receipt.target_sha) return false;
+  if (evidence.stage !== undefined && evidence.stage !== null && !SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) {
+    return false; // BLOCKED / FAILED / unknown stages never authorize COMPLETED
+  }
   return true;
 }
 
@@ -717,6 +725,15 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
       skipped.push({ id: issue.id, reason: "issue has a terminal COMPLETED/HOLD receipt — parked for human/next-step, not auto-redispatched" });
       continue;
     }
+    // Retry cap (GPT BLOCK #5 / CodeRabbit): FAILED is retryable, but NOT
+    // unboundedly — after max_failed_attempts FAILED receipts the issue parks
+    // for a human instead of minting a new attempt every tick forever.
+    const maxFailed = Number.isInteger(config.max_failed_attempts) ? config.max_failed_attempts : 3;
+    const failedCount = receipts.filter((r) => r && r.issue_id === issue.id && r.stage === "FAILED").length;
+    if (failedCount >= maxFailed) {
+      skipped.push({ id: issue.id, reason: `max failed attempts reached (${failedCount} >= ${maxFailed}) — parked for human review` });
+      continue;
+    }
     const adapter = adapterNameFor(issue.requested_worker);
     if (pauseMap[adapter] === true) {
       skipped.push({ id: issue.id, reason: `adapter ${adapter} is paused (adapter_pause_map) — no auto-launch of doomed attempts` });
@@ -909,27 +926,34 @@ export function parseReceiptsFromComments(comments = []) {
 // issue/attempt ids, branch, commit SHA, stage BUILD_READY/REVISION_READY/
 // BLOCKED/FAILED, CI/evidence links). The lifecycle pass loads this evidence so a
 // polled "completed" run can be validated against the SAME attempt + bound head.
+// Selection is deterministic by explicit createdAt (newest wins) — an older
+// successful callback can never mask a newer BLOCKED/FAILED one (GPT BLOCK #2).
 export const COORDINATOR_CALLBACK_MARKER_RE = /^coordinator-callback v1$/m;
 
 export function parseEvidenceFromComments(comments = [], attempt_id) {
+  let best = null;
   for (const comment of comments ?? []) {
     if (!comment?.body || !COORDINATOR_CALLBACK_MARKER_RE.test(comment.body)) continue;
     const m = /```json\n([\s\S]*?)\n```/.exec(comment.body);
     if (!m) continue;
     try {
       const cb = JSON.parse(m[1]);
-      if (cb && cb.attempt_id === attempt_id && typeof cb.attempt_id === "string") {
-        return {
-          links: Array.isArray(cb.links) ? cb.links : [],
-          attempt_id: cb.attempt_id,
-          target_sha: typeof cb.target_sha === "string" ? cb.target_sha : null,
-        };
+      if (!cb || cb.attempt_id !== attempt_id) continue;
+      const candidate = {
+        links: Array.isArray(cb.links) ? cb.links : [],
+        attempt_id: cb.attempt_id,
+        target_sha: typeof cb.target_sha === "string" ? cb.target_sha : null,
+        stage: typeof cb.stage === "string" ? cb.stage : null, // BUILD_READY | REVISION_READY | BLOCKED | FAILED
+      };
+      const createdAt = typeof comment.createdAt === "string" ? comment.createdAt : null;
+      if (!best || (createdAt && (!best.createdAt || createdAt > best.createdAt))) {
+        best = { ...candidate, createdAt };
       }
     } catch {
       // malformed callback comment — ignore, the next one may parse
     }
   }
-  return null;
+  return best ? { links: best.links, attempt_id: best.attempt_id, target_sha: best.target_sha, stage: best.stage } : null;
 }
 
 export function parsePausedAdapters(comments = []) {
@@ -1091,23 +1115,47 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // adapter's monitorRun() and durably persist terminal transitions. Without
   // this the first accepted trigger would occupy the only slot forever, and
   // worker_identity would never be learned (only polling supplies agent_id).
+  // GPT BLOCK #3: Linear comment mutations require the issue UUID, not the
+  // identifier. Resolve identifier -> linearId from the fetched issue set;
+  // a receipt whose issue is not in the map FAILS CLOSED (no write, state kept).
+  const linearIdFor = new Map(issues.filter((i) => i.linearId).map((i) => [i.id, i.linearId]));
+  const resolveLinearIssueId = (receipt, what) => {
+    const uuid = linearIdFor.get(receipt.issue_id);
+    if (!uuid) {
+      if (io.stdout) io.stdout(`lifecycle: ${what} for ${receipt.issue_id} SKIPPED — no issue UUID mapping (fail closed, state unchanged)`);
+      return null;
+    }
+    return uuid;
+  };
+
   const adapterModule = await import("./adapters/workspace-agents.mjs"); // lifecycle poll + dispatch share one import
   let lifecyclePersisted = false; // a terminal transition was durably written this run
-  if (linearToken && io.pollRuns !== false) {
+  // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
+  // compute/report only and ZERO writes — never poll upstream or persist receipts
+  // while both dispatch gates are false.
+  if (dispatchEnabled && linearToken && io.pollRuns !== false) {
     const waToken = env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "";
     const waTrigger = env.WORKSPACE_AGENT_TRIGGER_ID ?? "";
     for (const receipt of receipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
-      // Callback evidence from the durable issue thread (same attempt_id bound).
+      // Callback evidence from the durable issue thread (same attempt_id bound);
+      // selection is deterministic by newest createdAt (GPT BLOCK #2).
       const evidence = parseEvidenceFromComments(commentsByIssue.get(receipt.issue_id) ?? [], receipt.attempt_id) ?? undefined;
-      // Current head of the receipt's branch when a GitHub token is available;
-      // otherwise the bound target_sha IS the reference head for this pilot.
+      // Head verification is TRI-STATE (GPT BLOCK #4): no GitHub token -> the
+      // bound target_sha IS the reference head; token present -> the live branch
+      // head must resolve, and an unreadable/missing head must prevent COMPLETED
+      // (HOLD), never silently become "head matches".
+      let headVerified = true;
       let current_head = receipt.target_sha;
       if (githubToken && receipt.repo && receipt.branch) {
         try {
           const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
-          if (head) current_head = head;
+          if (head) {
+            current_head = head;
+          } else {
+            headVerified = false;
+          }
         } catch {
-          // branch unreadable — fall back to the bound head (stale-SHA checks still apply)
+          headVerified = false; // head could not be verified — never assume equality
         }
       }
       let outcome;
@@ -1117,7 +1165,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           attempt_id: receipt.attempt_id,
           target_sha: receipt.target_sha,
           evidence,
-          current_head,
+          current_head: headVerified ? current_head : undefined,
           token: waToken,
           api_trigger_id: waTrigger,
           fetchImpl,
@@ -1130,13 +1178,24 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       if (outcome.stage === "RUNNING") {
         event = { type: "run_status", status: outcome.adapter_status, worker_identity: outcome.worker_identity ?? null };
       } else if (outcome.stage === "COMPLETED") {
-        event = { type: "run_status", status: "completed", callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha }, worker_identity: outcome.worker_identity ?? null };
+        if (!headVerified) {
+          // Completed upstream but the live head could not be verified — HOLD,
+          // never COMPLETED (GPT BLOCK #4: fail closed on unverifiable head).
+          event = { type: "run_status", status: "completed", reason: "head could not be verified" };
+        } else {
+          event = {
+            type: "run_status",
+            status: "completed",
+            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null },
+            worker_identity: outcome.worker_identity ?? null,
+          };
+        }
       } else if (outcome.stage === "HOLD") {
         event = { type: "run_status", status: "completed" }; // completed without validated callback → machine HOLDs
       } else if (outcome.stage === "FAILED") {
         event = { type: "run_status", status: "failed", error_code: outcome.error_code, error_kind: outcome.error_kind, worker_identity: outcome.worker_identity ?? null };
       } else {
-        continue; // UNCHANGED (transient poll failure) — never touch state, never release the slot
+        continue; // UNCHANGED (transient poll failure or missing credentials) — never touch state, never release the slot
       }
       const transition = nextReceiptState(receipt, event);
       if (!transition.accepted) {
@@ -1149,12 +1208,14 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         nextReceipt.adapter_status !== receipt.adapter_status ||
         nextReceipt.worker_identity !== receipt.worker_identity;
       if (!changed) continue;
-      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: receipt.issue_id, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
+      const linearIssueId = resolveLinearIssueId(receipt, "receipt persistence");
+      if (!linearIssueId) continue; // fail closed: never write to a wrong/unresolved issue
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(nextReceipt) }, linearToken, fetchImpl);
       lifecyclePersisted = true;
       if (transition.pause_adapter === true) {
         const adapter = adapterNameFor(receipt.requested_worker);
         config.adapter_pause_map[adapter] = true;
-        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: receipt.issue_id, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
       }
       const idx = receipts.indexOf(receipt);
       if (idx >= 0) receipts[idx] = nextReceipt;
