@@ -196,7 +196,7 @@ test("monitor fails closed because print-mode has no remote polling endpoint", a
 test("claude-verifier routes to claude-code while other worker families keep their adapter", () => {
   assert.equal(adapterNameFor("claude-verifier"), "claude-code");
   assert.equal(adapterNameFor("codex-builder"), "workspace-agents");
-  assert.equal(adapterNameFor("hermes-box"), "workspace-agents");
+  assert.equal(adapterNameFor("hermes-box"), "hermes-pool", "SHU-62 landed: the box family has its own adapter");
   const options = adapterLaunchOptions("claude-code", { CLAUDE_CODE_OAUTH_TOKEN: TOKEN, CLAUDE_WORKTREE_PATH: "/repo" });
   assert.equal(options.oauth_token, TOKEN);
   assert.equal(options.cwd, "/repo");

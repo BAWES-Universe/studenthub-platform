@@ -227,17 +227,29 @@ export function requestedWorkerFor(issue) {
   return "codex-builder";
 }
 
-// Adapter name for a worker family. Claude verification is an explicit lane;
-// builder/box routing remains on the already-proven Workspace Agents adapter.
+// Adapter name for a worker family (pause-map markers and dispatch routing).
+// The union of the two lanes that landed in parallel: codex-builder stays on
+// Workspace Agents, hermes-box routes to the Hermes pool (SHU-62), and
+// claude-verifier routes to the Claude Code subscription adapter (SHU-61).
 export function adapterNameFor(requestedWorker) {
-  return requestedWorker === "claude-verifier" ? "claude-code" : "workspace-agents";
+  if (requestedWorker === "hermes-box") return "hermes-pool";
+  if (requestedWorker === "claude-verifier") return "claude-code";
+  return "workspace-agents";
 }
 
+// ONE loader for every lane. io.adapterModules is the injection seam the
+// main()-level tests use to drive an adapter without touching the real one.
 export async function loadAdapterModule(adapter, io = {}) {
   if (io.adapterModules?.[adapter]) return io.adapterModules[adapter];
   if (adapter === "workspace-agents") return import("./adapters/workspace-agents.mjs");
   if (adapter === "claude-code") return import("./adapters/claude-code.mjs");
+  if (adapter === "hermes-pool") return import("./adapters/hermes-pool.mjs");
   throw new Error(`unknown coordinator adapter: ${adapter}`);
+}
+
+// Resolve the adapter for a receipt or a selection candidate.
+export async function adapterModuleFor(receiptOrCandidate, io = {}) {
+  return loadAdapterModule(adapterNameFor(receiptOrCandidate?.requested_worker), io);
 }
 
 export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
@@ -254,6 +266,11 @@ export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
       env,
       resume,
     };
+  }
+  if (adapter === "hermes-pool") {
+    // Host-local lane: its wiring is io (pool dir, spawn, hostname, clock),
+    // which the caller passes alongside these options rather than through env.
+    return {};
   }
   throw new Error(`unknown coordinator adapter: ${adapter}`);
 }
@@ -517,6 +534,11 @@ const nowIso = (at) => at ?? new Date().toISOString();
 // `accepted:false` means the event was out of order or invalid for the current
 // stage — the receipt is returned UNCHANGED (slot never released, stage never
 // downgraded). Terminal stages (COMPLETED/FAILED/HOLD) accept no further events.
+// adapterFor — kept as the by-family alias over the single loader above.
+export function adapterFor(requestedWorker, io = {}) {
+  return loadAdapterModule(adapterNameFor(requestedWorker), io);
+}
+
 export function nextReceiptState(receipt, event, ctx = {}) {
   const unchanged = (reason) => ({ receipt, accepted: false, reason });
 
@@ -714,6 +736,22 @@ export function nextReceiptState(receipt, event, ctx = {}) {
     }
     default:
       return unchanged(`unknown event type "${event.type}"`);
+  }
+}
+
+// resolveLiveHead — the tri-state rule both terminal-launch paths must apply.
+// No GitHub token means the bound head IS the reference; a token present but an
+// unreadable head is NEVER "head matches". Shared so dispatch and recovery
+// cannot drift apart, which is exactly how recovery lost this guard.
+export async function resolveLiveHead(receipt, { githubToken, fetchImpl }) {
+  if (!githubToken || !receipt.repo || !receipt.branch) {
+    return { verified: true, head: receipt.target_sha };
+  }
+  try {
+    const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
+    return head ? { verified: true, head } : { verified: false, head: null };
+  } catch {
+    return { verified: false, head: null };
   }
 }
 
@@ -1253,7 +1291,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // GPT BLOCK #1: lifecycle polling/mutation is part of DISPATCH. Disabled means
   // compute/report only and ZERO writes — never poll upstream or persist receipts
   // while both dispatch gates are false.
-  if (dispatchEnabled && linearToken && io.pollRuns !== false) {
+  // durableReadFailed also gates the LIFECYCLE block, not just dispatch: a
+  // corrupt or self-contradicting durable read must never drive a transition
+  // either (PR #24).
+  if (dispatchEnabled && !durableReadFailed && linearToken && io.pollRuns !== false) {
     // Reconcile uncertain launches before polling acknowledged runs. A transport
     // failure after POST may mean the upstream accepted the run but the response
     // was lost. Retrying the SAME attempt uses the SAME Idempotency-Key, so it can
@@ -1262,6 +1303,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     const lifecycleStartReceipts = [...receipts];
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
       const adapter = adapterNameFor(receipt.requested_worker);
+      // A paused adapter must not be re-entered through RECOVERY either — the
+      // pause exists so the next slot does not auto-launch a doomed attempt
+      // (PR #24).
+      if (config.adapter_pause_map[adapter]) continue;
+      // Credential gate is PER ADAPTER (CodeRabbit, PR #22). Applied before
+      // adapter routing it meant a hermes-box attempt — whose adapter never
+      // touches these credentials — could never be recovered.
+      if (adapter === "workspace-agents" && (!(env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "") || !(env.WORKSPACE_AGENT_TRIGGER_ID ?? ""))) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — Workspace Agents credentials unavailable; slot held`);
+        continue;
+      }
       const adapterModule = await loadAdapterModule(adapter, io);
       const conflicting = receipts.find(
         (other) =>
@@ -1279,6 +1331,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       let launch;
       try {
         launch = await adapterModule.launchBuilder({
+          recovery: true, // host-local authorization required by Hermes recovery
+          repo: receipt.repo,
+          branch: receipt.branch,
           issue_id: receipt.issue_id,
           authorization_ref: receipt.authorization_ref,
           attempt_id: receipt.attempt_id,
@@ -1286,6 +1341,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
           ...adapterLaunchOptions(adapter, env, { resume: true }),
           fetchImpl,
+          io, // hermes-pool lease dir / spawn wiring (SHU-62); ignored by workspace-agents
+          env,
         });
       } catch (err) {
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation failed for ${receipt.issue_id}: ${err.message} — state unchanged, slot held`);
@@ -1293,7 +1350,21 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       if (launch.stage === "LAUNCH_UNKNOWN") continue;
 
-      const transition = foldLaunchOutcome(receipt, launch);
+      // STALE-HEAD GUARD, same rule as the dispatch path. A synchronous adapter
+      // can return a terminal COMPLETED straight from launchBuilder during
+      // recovery too, which never passes through the poll where the live head is
+      // normally resolved. Leaving it out here let a stale verdict complete a
+      // superseded SHA (CodeRabbit, 8b73ebe).
+      let recoveryCtx = {};
+      if (launch.stage === "COMPLETED") {
+        const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
+        if (!resolved.verified) {
+          launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
+        } else {
+          recoveryCtx = { current_head: resolved.head };
+        }
+      }
+      const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
       if (!transition.accepted) continue;
       const nextReceipt = transition.receipt;
       if (launch.conversation_url && typeof launch.conversation_url === "string") {
@@ -1336,6 +1407,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       let outcome;
       try {
+        // ONE resolution per receipt. Resolving again here dropped `io`, so the
+        // injection seam was bypassed and monitoring could run a different
+        // implementation than the launch did (CodeRabbit, 8b73ebe).
         outcome = await adapterModule.monitorRun({
           run_id: receipt.external_run_id,
           attempt_id: receipt.attempt_id,
@@ -1344,6 +1418,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           current_head: headVerified ? current_head : undefined,
           ...adapterLaunchOptions(adapter, env),
           fetchImpl,
+          io, // hermes-pool lease reads (SHU-62); ignored by workspace-agents
+          env,
         });
       } catch (err) {
         if (io.stdout) io.stdout(`lifecycle: poll failed for ${receipt.issue_id} ${receipt.external_run_id}: ${err.message} — state unchanged, slot held`);
@@ -1501,6 +1577,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const adapter = adapterNameFor(candidate.requested_worker);
   const dispatchAdapterModule = await loadAdapterModule(adapter, io);
   let launch = await dispatchAdapterModule.launchBuilder({
+    // Reservation binding (PR #24): the host-local lease records repo/branch so
+    // recovery can prove a Linear receipt matches a reservation this coordinator
+    // actually made. Without these the lease is created unbound and strict
+    // binding can never be satisfied afterwards.
+    repo: receipt.repo,
+    branch: receipt.branch,
     issue_id: receipt.issue_id,
     authorization_ref: receipt.authorization_ref,
     attempt_id: receipt.attempt_id,
@@ -1508,6 +1590,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
     ...adapterLaunchOptions(adapter, env),
     fetchImpl,
+    io, // hermes-pool lease dir + spawn wiring (SHU-62); ignored by workspace-agents
+    env,
   });
   // Drive the state machine IN ORDER: the launch event first (RESERVED ->
   // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
@@ -1520,21 +1604,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // satisfy a receipt bound to target_sha.
   let launchCtx = {};
   if (launch.stage === "COMPLETED") {
-    let headVerified = true;
-    let liveHead = receipt.target_sha; // no token -> the bound head IS the reference
-    if (githubToken && receipt.repo && receipt.branch) {
-      try {
-        const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
-        if (head) liveHead = head;
-        else headVerified = false;
-      } catch {
-        headVerified = false; // unreadable head is never "head matches"
-      }
-    }
-    if (!headVerified) {
+    const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
+    if (!resolved.verified) {
       launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
     } else {
-      launchCtx = { current_head: liveHead };
+      launchCtx = { current_head: resolved.head };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);
