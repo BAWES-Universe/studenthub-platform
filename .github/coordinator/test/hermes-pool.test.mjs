@@ -193,7 +193,7 @@ test("validateCallbackEvidence: missing stage fails closed; only success stages 
 test("adapterNameFor + adapterModuleFor route hermes-box to hermes-pool", async () => {
   assert.equal(adapterNameFor("hermes-box"), "hermes-pool");
   assert.equal(adapterNameFor("codex-builder"), "workspace-agents");
-  assert.equal(adapterNameFor("claude-verifier"), "workspace-agents", "documented fallback until SHU-61");
+  assert.equal(adapterNameFor("claude-verifier"), "claude-code", "SHU-61 landed: the fallback is gone");
   const pool = await adapterModuleFor({ requested_worker: "hermes-box" });
   assert.ok(pool.launchBuilder && pool.monitorRun, "hermes-pool exposes the adapter interface");
   const wa = await adapterModuleFor({ requested_worker: "codex-builder" });
@@ -910,3 +910,81 @@ for (const guard of ["pause", "conflict"]) {
     assert.equal(spawnCalls.length, 0);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Sentry HIGH on bindingMatches (PR #24 review): "leases created by previous
+// versions will not have repo/branch, so recovery fails silently", with a
+// suggested fix of making the checks conditional.
+//
+// The premise does not hold in this repository, and the suggested fix would
+// weaken authorization, so it is NOT applied. Proof that no legitimate legacy
+// lease can exist, all checkable from the repo itself:
+//   1. hermes-pool.mjs has never existed on main, so the adapter has never run;
+//   2. config.enable_dispatch has been false in every commit that ever touched
+//      config.json, and no workflow sets ENABLE_DISPATCH=true;
+//   3. dispatchEnabledFor requires BOTH gates, in different layers;
+//   4. every writeLease call lives inside launchBuilder, and both of its call
+//      sites sit inside main()'s dispatch-enabled region — the lifecycle block
+//      and the code after the dry-run early return.
+// A lease therefore cannot have been written by any released code path. An
+// unbound lease means the pool store was hand-edited or corrupted, so strict
+// binding is retained and the case is QUARANTINED where an operator sees it,
+// rather than silently refused (which is the half of the finding that was fair).
+// ---------------------------------------------------------------------------
+const BOUND = { repo: "BAWES-Universe/studenthub-platform", branch: "feat/shu-62-hermes-pool" };
+
+test("Sentry: recovery NEVER accepts a lease missing repo/branch, and never fails silently", async () => {
+  for (const drop of [["repo"], ["branch"], ["repo", "branch"]]) {
+    const pool = tempPool();
+    const calls = [];
+    // A lease as a pre-binding-contract version would have left it.
+    await launchBuilder({ ...BASE, ...BOUND, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW }, env: {} });
+    const lease = leaseAt(pool, ATTEMPT);
+    for (const f of drop) delete lease[f];
+    writeFileSync(join(pool, "leases", `${ATTEMPT}.json`), JSON.stringify(lease));
+
+    const out = await launchBuilder({
+      ...BASE,
+      ...BOUND,
+      recovery: true,
+      io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls) },
+      env: {},
+    });
+    assert.equal(calls.length, 0, `${drop}: an unbound reservation can never authorize a worker`);
+    assert.equal(out.stage, "FAILED", `${drop}: the refusal must be visible, not a silent LAUNCH_UNKNOWN`);
+    assert.equal(out.error_code, "UNBOUND_LEASE");
+    assert.equal(out.pause_adapter, true, `${drop}: quarantine the lane for operator reconciliation`);
+    for (const f of drop) assert.match(out.reason, new RegExp(f));
+  }
+});
+
+test("Sentry: a fully bound lease still recovers normally", async () => {
+  const pool = tempPool();
+  const calls = [];
+  await launchBuilder({ ...BASE, ...BOUND, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW }, env: {} });
+  const out = await launchBuilder({
+    ...BASE,
+    ...BOUND,
+    recovery: true,
+    io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls) },
+    env: {},
+  });
+  assert.equal(out.stage, "RUNNING", "the quarantine must not swallow legitimate recoveries");
+  assert.equal(calls.length, 1);
+});
+
+test("Sentry: a bound lease whose repo/branch DISAGREE is refused, not quarantined", async () => {
+  const pool = tempPool();
+  const calls = [];
+  await launchBuilder({ ...BASE, ...BOUND, io: { poolDir: pool, hostname: () => "hostA", now: () => NOW }, env: {} });
+  const out = await launchBuilder({
+    ...BASE,
+    ...BOUND,
+    branch: "attacker/other-branch",
+    recovery: true,
+    io: { poolDir: pool, hostname: () => "hostA", now: () => NOW, spawn: spawnRecorder(calls) },
+    env: {},
+  });
+  assert.equal(out.stage, "LAUNCH_UNKNOWN", "a receipt naming a different reservation is refused, and stays retryable");
+  assert.equal(calls.length, 0);
+});

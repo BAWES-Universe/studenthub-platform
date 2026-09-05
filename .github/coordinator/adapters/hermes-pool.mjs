@@ -354,6 +354,38 @@ function writeLease(poolDir, lease, { exclusive = false } = {}) {
   writeFileSync(p, JSON.stringify(lease, null, 2), exclusive ? { flag: "wx" } : undefined);
 }
 
+// The fields that bind a host-local reservation to the durable Linear receipt.
+// Recovery is authorized by the LEASE, never by the comment: a receipt that does
+// not match a reservation this coordinator actually made is not launch authority.
+export const LEASE_BINDING_FIELDS = Object.freeze([
+  "attempt_id",
+  "issue_id",
+  "authorization_ref",
+  "target_sha",
+  "repo",
+  "branch",
+]);
+
+// Tri-state so the two failure modes stay distinguishable. "mismatch" is a
+// receipt describing a different reservation — refuse and wait. "incomplete" is
+// a lease that predates the binding contract, which NO code path in this
+// repository can produce (the adapter has never been on main, and dispatch has
+// never been enabled), so it means the pool store was hand-edited or corrupted.
+// Sentry flagged the incomplete case as a silent recovery failure; it stays
+// strict, but it is surfaced rather than swallowed.
+export function leaseBindingStatus(lease, expected) {
+  if (!lease || typeof lease !== "object") return { status: "incomplete", fields: LEASE_BINDING_FIELDS };
+  // "incomplete" means the lease CANNOT carry a binding the caller is offering —
+  // a field the receipt supplies that the reservation simply does not have. A
+  // caller that supplies nothing for a field is not owed a binding for it, so an
+  // unbound call against an unbound lease is a mismatch question, not a fault.
+  const absent = (v) => v === undefined || v === null;
+  const missing = LEASE_BINDING_FIELDS.filter((f) => !absent(expected[f]) && absent(lease[f]));
+  if (missing.length) return { status: "incomplete", fields: missing };
+  const mismatched = LEASE_BINDING_FIELDS.filter((f) => lease[f] !== expected[f]);
+  return mismatched.length ? { status: "mismatch", fields: mismatched } : { status: "match", fields: [] };
+}
+
 // Pre-spawn lease states: the reservation is durable but NO worker exists yet.
 // These are recoverable, and must never be reported as a running worker.
 const PRE_SPAWN_STATUSES = Object.freeze(["queued", "claiming"]);
@@ -423,11 +455,29 @@ export async function launchBuilder({
   const now = () => (io.now ? io.now() : new Date().toISOString());
   const existing = readLease(poolDir, attempt_id);
   let lease;
-  const bindingMatches = (value) => value.attempt_id === attempt_id &&
-    value.issue_id === issue_id && value.authorization_ref === authorization_ref &&
-    value.target_sha === target_sha && value.repo === repo && value.branch === branch;
+  const expectedBinding = { attempt_id, issue_id, authorization_ref, target_sha, repo, branch };
+  // Field-for-field equality, unchanged from PR #24: an unbound CALL against an
+  // unbound lease is self-consistent and stays legal. Only RECOVERY — where the
+  // caller always carries a receipt's repo/branch — treats a lease missing them
+  // as a fault, and that is handled separately below.
+  const bindingMatches = (value) => LEASE_BINDING_FIELDS.every((f) => value[f] === expectedBinding[f]);
   // A Linear comment is not launch authority. Recovery must find the matching
   // reservation in the host-local store written by the initial dispatch path.
+  if (recovery && existing.ok) {
+    const binding = leaseBindingStatus(existing.lease, expectedBinding);
+    if (binding.status === "incomplete") {
+      // Never relaxed to keep an unbound lease usable: an unbound reservation
+      // cannot be authorized, and quietly returning LAUNCH_UNKNOWN would hold
+      // the slot with nothing to look at. Quarantine it where an operator sees it.
+      return {
+        stage: "FAILED",
+        error_code: "UNBOUND_LEASE",
+        error_kind: "launch_ownership_lost",
+        pause_adapter: true,
+        reason: `host-local reservation is missing binding field(s) ${binding.fields.join(", ")} — quarantined for operator reconciliation, never recovered unbound`,
+      };
+    }
+  }
   if ((recovery && !existing.ok) || (existing.ok && !bindingMatches(existing.lease))) {
     return { stage: "LAUNCH_UNKNOWN", reason: "no matching host-local reservation — recovery refused" };
   }

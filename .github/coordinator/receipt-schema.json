@@ -59,8 +59,8 @@
     },
     "external_run_id": {
       "type": ["string", "null"],
-      "description": "Adapter run id (apirun_...) stored IMMEDIATELY once the API accepts the run. null at RESERVED/LAUNCH_UNKNOWN and when the trigger was refused before acceptance (quota/access).",
-      "pattern": "^apirun_[A-Za-z0-9_-]+$"
+      "description": "Provider run id (apirun_... or clauderun_...) stored once a run is acknowledged. null at RESERVED/LAUNCH_UNKNOWN and when launch was refused before acceptance (quota/access).",
+      "pattern": "^(apirun|clauderun)_[A-Za-z0-9_-]+$"
     },
     "adapter_status": {
       "type": ["string", "null"],
