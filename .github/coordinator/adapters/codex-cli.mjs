@@ -455,6 +455,7 @@ export async function launchBuilder({
   let result;
   let streamedThreadId = sessionId;
   let durabilityError = null;
+  let launchError = null;
   try {
     const options = { cwd, env: buildCodexEnvironment(env), timeout: timeout_ms, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] };
     const onLine = (line, child = null) => {
@@ -490,20 +491,38 @@ export async function launchBuilder({
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {
-        persistDurableSession({ stateDir: durableStateDir, attempt_id, target_sha, thread_id: bufferedThreadId });
-        streamedThreadId = bufferedThreadId;
+        // A failure HERE must reach the durability rule below, not escape to the
+        // outer catch. Escaping turned a session that demonstrably EXISTS
+        // (thread.started was on the wire) but was never durably recorded into a
+        // terminal FAILED with no pause — releasing the slot, letting a fresh
+        // attempt be minted, and starting a SECOND codex exec against work that
+        // can never be resumed.
+        try {
+          persistDurableSession({ stateDir: durableStateDir, attempt_id, target_sha, thread_id: bufferedThreadId });
+          streamedThreadId = bufferedThreadId;
+        } catch (error) {
+          durabilityError ??= error;
+        }
       }
     }
   } catch (error) {
-    return failureFrom(error, "", "", { threadId: null });
+    // RECORD, never return. Returning here is how the durability rule below was
+    // bypassed. One decision point after this block keeps that rule
+    // unbypassable instead of restating it in every catch.
+    launchError = error;
   } finally {
     if (ownsSchemaFile) {
       try { fs.unlinkSync(schemaPath); } catch (error) { if (error?.code !== "ENOENT") durabilityError ??= error; }
     }
   }
+  // A session that demonstrably exists but was never durably recorded outranks
+  // every other outcome: it must HOLD and pause, never terminate. FAILED would
+  // release the slot, let a fresh attempt be minted, and start a SECOND codex
+  // exec against work that can never be resumed.
   if (durabilityError) {
     return { stage: "HOLD", reason: `Codex session could not be durably recorded: ${durabilityError.message}`, pause_adapter: true, ok: false };
   }
+  if (launchError) return failureFrom(launchError, "", "", { threadId: null });
   // Parse the durable session identity from ANY stdout we have — including a
   // stream that ends in a kill: a thread.started already on the wire means the
   // session exists and exact-id resume is legal.

@@ -10,7 +10,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -418,4 +419,81 @@ test("prompt carries the bound head, the attempt echo, and the schema contract; 
   assert.ok(prompt.includes(`Attempt: ${ATTEMPT}`));
   assert.ok(prompt.includes("coordinator-callback") === false && prompt.includes("BUILD_READY|REVISION_READY|BLOCKED|FAILED"));
   assert.ok(!prompt.includes("sk-") && !prompt.includes("token"));
+});
+
+// ---------------------------------------------------------------------------
+// Opus, exact-head verification of 2510f6d.
+//
+// Stated contract: "An uncertain launch WITHOUT a durably recorded thread id
+// produces a visible HOLD + adapter pause — never another spawn." The
+// durabilityError -> HOLD branch implements it, and mutation-testing showed that
+// branch breaking ZERO tests. It was UNREACHABLE whenever a persist threw after
+// thread.started: the throw escaped to launchBuilder's outer catch, which
+// returned failureFrom(..., { threadId: null }) — a terminal FAILED, no pause,
+// no run id — before the durability check ran.
+//
+// FAILED is terminal: the slot is released, a fresh attempt can be minted, and a
+// SECOND codex exec starts while the first session exists upstream and can never
+// be resumed. Reachable without an exotic setup: a corrupt or foreign sidecar
+// left by an earlier crash makes persistDurableSession throw while the schema
+// file writes fine.
+// ---------------------------------------------------------------------------
+function streamingSpawn(lines, { exitCode = 0 } = {}) {
+  return () => {
+    const child = new EventEmitter();
+    child.pid = 4242;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    setImmediate(() => {
+      for (const line of lines) child.stdout.emit("data", `${line}\n`);
+      child.emit("close", exitCode, null);
+    });
+    return child;
+  };
+}
+
+function unrecordableStateDir() {
+  const dir = mkdtempSync(join(tmpdir(), "codex-durability-"));
+  const stateDir = join(dir, "runs");
+  mkdirSync(stateDir, { recursive: true });
+  // A sidecar for this attempt bound to a DIFFERENT sha — what an earlier crash
+  // or a hand-edit leaves behind. persistDurableSession refuses it, while the
+  // schema file still writes fine.
+  writeFileSync(join(stateDir, `${ATTEMPT}.json`), JSON.stringify({ version: 1, attempt_id: ATTEMPT, target_sha: "9".repeat(40), thread_id: THREAD }));
+  return { dir, stateDir };
+}
+
+for (const [label, exitCode] of [["clean exit", 0], ["killed after thread.started", 137]]) {
+  test(`durable session failure after thread.started HOLDs and pauses (${label})`, async () => {
+    const { dir, stateDir } = unrecordableStateDir();
+    const out = await launchBuilder({
+      ...launchInput(),
+      schemaFile: join(dir, "schema.json"),
+      io: {
+        codexStateDir: stateDir,
+        spawnImpl: streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })], { exitCode }),
+        processStartToken: () => "fixture-start",
+        hostname: () => "fixture-host",
+      },
+    });
+    assert.equal(out.stage, "HOLD", `${label}: a session that exists but was not durably recorded must HOLD, never terminate`);
+    assert.equal(out.pause_adapter, true, `${label}: and must pause so no further attempt spawns`);
+  });
+}
+
+// The BUFFERED path reaches the same rule. Injecting execFileImpl selects the
+// non-streaming branch, so nothing sets durabilityError while the process runs
+// and the only persist attempt is the buffered one after exit.
+test("durable session failure on the BUFFERED path also HOLDs and pauses", async () => {
+  const { dir, stateDir } = unrecordableStateDir();
+  const out = await launchBuilder({
+    ...launchInput(),
+    schemaFile: join(dir, "schema.json"),
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
+    io: { codexStateDir: stateDir },
+  });
+  assert.equal(out.stage, "HOLD", "an unrecordable session must never terminate the attempt");
+  assert.equal(out.pause_adapter, true);
+  assert.match(out.reason, /could not be durably recorded/);
 });
