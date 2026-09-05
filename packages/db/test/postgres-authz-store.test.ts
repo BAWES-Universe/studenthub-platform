@@ -592,6 +592,18 @@ test("bootstrap: re-running with the exact same admin is a no-op; a different id
 // Migrations: concurrent first-run runners are serialized (GPT R3, round 2 #2)
 // ---------------------------------------------------------------------------
 
+/**
+ * Point a DATABASE_URL at a different database while preserving its user,
+ * host, port and query options (e.g. ?sslmode=...). A naive string replace
+ * of the last path segment would leave the query attached to the old
+ * database name (GPT R3, round 3 #2).
+ */
+function withDatabaseName(url: string, dbName: string): string {
+  const parsed = new URL(url);
+  parsed.pathname = `/${dbName}`;
+  return parsed.toString();
+}
+
 test("migrations: concurrent first-run migrations serialize via the advisory lock", async () => {
   // Two processes bootstrapping a FRESH database both read the same pending
   // set. Without serialization one loses the ledger insert race with a raw
@@ -602,7 +614,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
   const admin = new pg.Pool({ connectionString: DB_URL });
   try {
     await admin.query(`CREATE DATABASE ${dbName}`);
-    const raceUrl = DB_URL.replace(/\/[^/]+$/, `/${dbName}`);
+    const raceUrl = withDatabaseName(DB_URL, dbName);
     const poolA = new pg.Pool({ connectionString: raceUrl });
     const poolB = new pg.Pool({ connectionString: raceUrl });
     try {
@@ -639,3 +651,39 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
     await admin.end();
   }
 });
+
+test(
+  "migrations: runner works against a pg.Pool({ max: 1 }) single connection",
+  { timeout: 30_000 },
+  async () => {
+    // Regression (GPT R3, round 3 #1): runMigrations used to hold one
+    // connection for the advisory lock and then check out more from the
+    // pool — with max:1 the extra checkouts waited forever (deadlock). All
+    // work must run on the locked client. The timeout makes a regression
+    // fail fast instead of hanging the suite.
+    const dbName = `shu55_migrate_max1_${Date.now()}`;
+    const admin = new pg.Pool({ connectionString: DB_URL });
+    try {
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      const pool = new pg.Pool({
+        connectionString: withDatabaseName(DB_URL, dbName),
+        max: 1,
+      });
+      try {
+        await runMigrations(pool); // must resolve, not hang
+        const { rows } = await pool.query<{ version: string }>(
+          "SELECT version FROM schema_migrations ORDER BY version",
+        );
+        assert.deepEqual(
+          rows.map((r) => r.version),
+          ["0001_create_authz_tables", "0002_enforce_single_root_admin"],
+        );
+      } finally {
+        await pool.end();
+      }
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => undefined);
+      await admin.end();
+    }
+  },
+);

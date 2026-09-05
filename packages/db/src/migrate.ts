@@ -30,25 +30,29 @@ const MIGRATION_LOCK_KEY = 7_275_526;
 
 /** Apply every pending migration on the given pool; safe to call repeatedly. */
 export async function runMigrations(pool: pg.Pool): Promise<void> {
-  const lockClient = await pool.connect();
+  // ALL work runs on this single client (GPT R3, round 3 #1): with a valid
+  // pg.Pool({ max: 1 }) the advisory-lock connection IS the only connection,
+  // so any pool.query/pool.connect while it is held would wait forever.
+  const client = await pool.connect();
   try {
-    // Serialize concurrent runners (GPT R3 #2): two processes bootstrapping a
-    // fresh database can both read the same pending set and race the ledger
-    // insert (schema_migrations.version PK) — one would fail with a raw 23505
-    // instead of a clean "already applied". pg_advisory_lock is global per
-    // database and held by this session, so the second caller blocks here
-    // until the first finishes, then re-reads the ledger and finds nothing
-    // pending. The lock is released automatically if this session dies.
-    await lockClient.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
+    // Serialize concurrent runners (GPT R3, round 2 #2): two processes
+    // bootstrapping a fresh database can both read the same pending set and
+    // race the ledger insert (schema_migrations.version PK) — one would fail
+    // with a raw 23505 instead of a clean "already applied". pg_advisory_lock
+    // is global per database and held by this session, so the second caller
+    // blocks here until the first finishes, then re-reads the ledger and
+    // finds nothing pending. The lock is released automatically if this
+    // session dies.
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
 
-    await pool.query(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version    TEXT PRIMARY KEY,
         applied_at timestamptz NOT NULL DEFAULT now()
       )
     `);
 
-    const { rows } = await pool.query<{ version: string }>(
+    const { rows } = await client.query<{ version: string }>(
       "SELECT version FROM schema_migrations",
     );
     const applied = new Set(rows.map((row) => row.version));
@@ -62,8 +66,10 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     for (const file of pending) {
       const version = file.replace(/\.sql$/, "");
       const sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
-      const client = await pool.connect();
       try {
+        // Each migration file runs as one multi-statement query inside its
+        // own transaction on the SAME client; any failure aborts the whole
+        // file and nothing is recorded.
         await client.query("BEGIN");
         await client.query(sql);
         await client.query(
@@ -73,25 +79,22 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
         await client.query("COMMIT");
         console.log(`db: applied migration ${file}`);
       } catch (error) {
-        // The migration file runs as one multi-statement query inside the
-        // transaction; any failure aborts the whole file, nothing is recorded.
         // A failing ROLLBACK (e.g. connection dropped) must not mask the
-        // original error (Sentry finding, valid).
+        // original error — the server aborts the transaction on disconnect
+        // anyway (Sentry finding, valid).
         try {
           await client.query("ROLLBACK");
         } catch {
           // Swallow: the original error below is the one the caller needs.
         }
         throw error;
-      } finally {
-        client.release();
       }
     }
   } finally {
-    await lockClient
+    await client
       .query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY])
       .catch(() => undefined);
-    lockClient.release();
+    client.release();
   }
 }
 
