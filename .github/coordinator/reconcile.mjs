@@ -234,14 +234,16 @@ export function requestedWorkerFor(issue) {
 export function adapterNameFor(requestedWorker) {
   if (requestedWorker === "hermes-box") return "hermes-pool";
   if (requestedWorker === "claude-verifier") return "claude-code";
-  return "workspace-agents";
+  if (requestedWorker === "codex-builder") return "codex-cli"; // SHU-63 pivot: local Codex CLI (personal ChatGPT), WA inert
+  return "codex-cli";
 }
 
 // ONE loader for every lane. io.adapterModules is the injection seam the
 // main()-level tests use to drive an adapter without touching the real one.
 export async function loadAdapterModule(adapter, io = {}) {
   if (io.adapterModules?.[adapter]) return io.adapterModules[adapter];
-  if (adapter === "workspace-agents") return import("./adapters/workspace-agents.mjs");
+  if (adapter === "workspace-agents") return import("./adapters/workspace-agents.mjs"); // inert post-pivot: kept for a future managed workspace
+  if (adapter === "codex-cli") return import("./adapters/codex-cli.mjs");
   if (adapter === "claude-code") return import("./adapters/claude-code.mjs");
   if (adapter === "hermes-pool") return import("./adapters/hermes-pool.mjs");
   throw new Error(`unknown coordinator adapter: ${adapter}`);
@@ -257,6 +259,13 @@ export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
     return {
       api_trigger_id: env.WORKSPACE_AGENT_TRIGGER_ID ?? "",
       token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "",
+    };
+  }
+  if (adapter === "codex-cli") {
+    return {
+      cwd: env.CODEX_WORKTREE_PATH ?? process.cwd(),
+      env,
+      resume,
     };
   }
   if (adapter === "claude-code") {
@@ -373,7 +382,7 @@ export function validateReceipt(receipt) {
     if (!allowed.includes(t)) errors.push(`field "${field}" must be ${allowed.join("|")} (nullable)`);
   }
   if (receipt.external_run_id !== null) {
-    expectPattern("external_run_id", /^(?:apirun|clauderun)_[A-Za-z0-9_-]+$/);
+    expectPattern("external_run_id", /^(?:apirun|clauderun|codexrun)_[A-Za-z0-9_-]+$/);
   }
   if (receipt.adapter_status !== null) {
     expectEnum("adapter_status", ADAPTER_STATUSES);
@@ -1332,6 +1341,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       try {
         launch = await adapterModule.launchBuilder({
           recovery: true, // host-local authorization required by Hermes recovery
+          external_run_id: receipt.external_run_id ?? null, // codex-cli exact-id resume target (codexrun_<uuid>)
           repo: receipt.repo,
           branch: receipt.branch,
           issue_id: receipt.issue_id,

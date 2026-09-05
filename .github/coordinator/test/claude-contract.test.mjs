@@ -172,14 +172,24 @@ test("BLOCKED and FAILED verifier callbacks park on HOLD with evidence", async (
   }
 });
 
-test("quota/plan-cap and access failures -> FAILED + durable adapter pause signal", async () => {
-  for (const [message, kind] of [["Usage limit reached for your plan", "quota"], ["Invalid OAuth token", "access"]]) {
-    const error = Object.assign(new Error(message), { code: 1 });
-    const out = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error, stderr: message }) });
-    assert.equal(out.stage, "FAILED");
-    assert.equal(out.error_kind, kind);
-    assert.equal(out.pause_adapter, true);
-  }
+test("quota/plan-cap failures -> FAILED + pause; authentication expiry -> visible re-auth HOLD", async () => {
+  // Quota stays a FAILED + pause (retryable after plan resets).
+  const quota = Object.assign(new Error("Usage limit reached for your plan"), { code: 1 });
+  const quotaOut = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: quota, stderr: "Usage limit reached for your plan" }) });
+  assert.equal(quotaOut.stage, "FAILED");
+  assert.equal(quotaOut.error_kind, "quota");
+  assert.equal(quotaOut.pause_adapter, true);
+  // GPT 2026-09-05: auth expiry must surface a VISIBLE re-authentication HOLD.
+  const expired = Object.assign(new Error("Invalid OAuth token"), { code: 1 });
+  const expiredOut = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: expired, stderr: "Invalid OAuth token" }) });
+  assert.equal(expiredOut.stage, "HOLD");
+  assert.match(expiredOut.reason, /authentication|setup-token/i);
+  assert.equal(expiredOut.pause_adapter, true, "the lane pauses until re-authentication");
+  // Plain 403 access errors stay FAILED + access.
+  const forbidden = Object.assign(new Error("forbidden"), { code: 1 });
+  const forbiddenOut = await launchBuilder({ ...launchInput, execFileImpl: execResult({ error: forbidden, stderr: "403 forbidden" }) });
+  assert.equal(forbiddenOut.stage, "FAILED");
+  assert.equal(forbiddenOut.error_kind, "access");
 });
 
 test("LAUNCH_UNKNOWN recovery resumes the same Claude session UUID", async () => {
@@ -195,7 +205,7 @@ test("monitor fails closed because print-mode has no remote polling endpoint", a
 
 test("claude-verifier routes to claude-code while other worker families keep their adapter", () => {
   assert.equal(adapterNameFor("claude-verifier"), "claude-code");
-  assert.equal(adapterNameFor("codex-builder"), "workspace-agents");
+  assert.equal(adapterNameFor("codex-builder"), "codex-cli", "SHU-63 pivot: the builder family routes to the local Codex CLI");
   assert.equal(adapterNameFor("hermes-box"), "hermes-pool", "SHU-62 landed: the box family has its own adapter");
   const options = adapterLaunchOptions("claude-code", { CLAUDE_CODE_OAUTH_TOKEN: TOKEN, CLAUDE_WORKTREE_PATH: "/repo" });
   assert.equal(options.oauth_token, TOKEN);

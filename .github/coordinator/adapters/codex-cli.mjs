@@ -1,0 +1,330 @@
+// Codex CLI adapter — subscription-authenticated BUILDER lane (SHU-63 pivot).
+//
+// Replaces the hosted Workspace Agents lane: Khalid has a PERSONAL ChatGPT
+// account, and Workspace Agents (API triggers / access tokens / agtch_...)
+// exist only for Enterprise/Business workspaces (verified 2026-09-05 against
+// OpenAI help + auth docs). Codex CLI logs in with a personal ChatGPT account
+// (`codex login`, device code — headless-safe) and runs non-interactively.
+//
+// Official contract (verified against the installed CLI + developers.openai.com/codex/noninteractive):
+//   codex exec --json --sandbox workspace-write [--approve-for-me] -C <dir> [PROMPT]
+//   codex exec resume <SESSION_ID> [PROMPT]      <- resume by EXACT id, NEVER --last
+//   --json  -> stdout is JSONL; the FIRST event is {"type":"thread.started","thread_id":"<uuid>"}
+//   --output-schema <FILE> -> model's final response constrained to the schema
+//   sandbox modes: read-only | workspace-write | danger-full-access
+//
+// The thread_id IS the durable session identity: it is bound to the attempt via
+// external_run_id (`codexrun_<uuid>`) the moment the CLI reports it. Recovery
+// resumes with `codex exec resume <exact-thread-id>` only. An uncertain launch
+// WITHOUT a durably recorded thread id produces a visible HOLD + adapter pause —
+// never another spawn (GPT requirement).
+
+import { execFile as nodeExecFile } from "node:child_process";
+import fs from "node:fs";
+
+export const ADAPTER_NAME = "codex-cli";
+export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
+export const CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY", "BLOCKED", "FAILED"]);
+const ATTEMPT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SHA_RE = /^[0-9a-f]{40}$/;
+const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export const CALLBACK_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  required: ["attempt_id", "target_sha", "stage", "links"],
+  properties: {
+    attempt_id: { type: "string" },
+    target_sha: { type: "string" },
+    stage: { type: "string", enum: CALLBACK_STAGES },
+    links: { type: "array", items: { type: "string" }, minItems: 1 },
+    summary: { type: "string" },
+  },
+});
+
+const QUOTA_RE = /(?:rate|usage|spending|plan|subscription|credit)[-_ ]?limit|quota|capacity/i;
+// Authentication-expiry shapes: 401, expired, invalid token, "please sign in".
+// These surface a VISIBLE re-authentication HOLD (GPT requirement), never a
+// silent retry loop and never a fabricated upstream failure.
+const REAUTH_RE = /(?:401|expired|invalid(?: oauth)? token|authentication|re-?auth|sign ?in|login required)/i;
+// Everything else access-shaped (403, forbidden, scope/permission) stays a
+// FAILED access error.
+const ACCESS_RE = /(?:forbidden|403|unauthori[sz]ed)/i;
+
+// The thread id is stored IN external_run_id (codexrun_<uuid>) so the durable
+// receipt alone carries the exact resume target.
+export function externalRunId(threadId) {
+  return `codexrun_${threadId}`;
+}
+export function threadIdFromRunId(runId) {
+  if (typeof runId === "string" && runId.startsWith("codexrun_")) {
+    const id = runId.slice("codexrun_".length);
+    return THREAD_ID_RE.test(id) ? id : null;
+  }
+  return null;
+}
+export function workerIdentity(attemptId) {
+  return `codex:${attemptId}`;
+}
+
+// Explicit child environment: allowlist only. OPENAI_API_KEY / OPENAI_BASE_URL
+// are deliberately ABSENT so subscription auth (~/.codex/auth.json, created by
+// `codex login`) can never be silently replaced by metered credentials.
+export function buildCodexEnvironment(parentEnv = {}) {
+  const childEnv = {};
+  for (const key of ["PATH", "HOME", "CODEX_HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "SHELL", "CI"]) {
+    if (typeof parentEnv[key] === "string") childEnv[key] = parentEnv[key];
+  }
+  return childEnv;
+}
+
+export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context }) {
+  return [
+    "You are the authorized BUILDER for one StudentHub change in an isolated git worktree.",
+    `Issue: ${issue_id}`,
+    `Authorized contract ref: ${authorization_ref}`,
+    `Bound head: ${target_sha}`,
+    `Attempt: ${attempt_id}`,
+    task_context,
+    "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
+    "Implement the change, run the relevant tests, and push the work to the SAME branch as a normal PR.",
+    "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<PR url or evidence urls>"],"summary":"<short note>"}`,
+    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure.",
+  ].filter(Boolean).join("\n");
+}
+
+function buildBaseArgs(input, { schemaFile, cwd }) {
+  return [
+    "--json",
+    "--sandbox", "workspace-write", // GPT: never danger-full-access, never --full-auto
+    "--approve-for-me", // automatic review bound to the workspace-write sandbox
+    "-C", cwd,
+    "--output-schema", schemaFile,
+  ];
+}
+
+export function buildCodexArgs(input, { resume = false, sessionId = null, schemaFile, cwd } = {}) {
+  const prompt = buildCodexPrompt(input);
+  if (resume) {
+    // Resume by EXACT thread id only — --last is forbidden (GPT requirement).
+    if (!sessionId || !THREAD_ID_RE.test(sessionId)) {
+      throw new Error(`codex resume requires an exact thread id, got: ${String(sessionId)}`);
+    }
+    return ["exec", "resume", sessionId, prompt, ...buildBaseArgs(input, { schemaFile, cwd })];
+  }
+  return ["exec", prompt, ...buildBaseArgs(input, { schemaFile, cwd })];
+}
+
+function runExecFile(execFileImpl, file, args, options) {
+  return new Promise((resolve) => {
+    execFileImpl(file, args, options, (error, stdout = "", stderr = "") => {
+      resolve({ error, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
+async function readHead({ cwd, execFileImpl, env }) {
+  const result = await runExecFile(execFileImpl, "git", ["rev-parse", "HEAD"], {
+    cwd,
+    env: buildCodexEnvironment(env),
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result.stdout.trim();
+}
+
+export function parseThreadStarted(stdout) {
+  if (typeof stdout !== "string") return null;
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event?.type === "thread.started" && THREAD_ID_RE.test(String(event.thread_id ?? ""))) {
+        return String(event.thread_id);
+      }
+    } catch {
+      // non-JSONL line — ignore
+    }
+  }
+  return null;
+}
+
+export function parseFinalMessage(stdout) {
+  // The model's FINAL agent message carries the schema-constrained callback.
+  // JSONL events: item.completed with item.type "agent_message" — take the LAST.
+  let last = null;
+  if (typeof stdout !== "string") return null;
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event?.type === "item.completed" && event.item?.type === "agent_message") {
+        if (typeof event.item.text === "string" && event.item.text.trim().length) last = event.item.text;
+      }
+    } catch {
+      // ignore non-JSONL
+    }
+  }
+  return last;
+}
+
+export function parseCodexCallback(stdout) {
+  const text = parseFinalMessage(stdout);
+  if (!text) return null;
+  try {
+    const callback = JSON.parse(text);
+    return callback && typeof callback === "object" ? callback : null;
+  } catch {
+    return null;
+  }
+}
+
+export function callbackValid(callback, { attempt_id, target_sha }) {
+  if (!callback || typeof callback !== "object") return false;
+  if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
+  if (!CALLBACK_STAGES.includes(callback.stage)) return false;
+  if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
+  return callback.links.every((link) => {
+    if (typeof link !== "string") return false;
+    try {
+      return ["http:", "https:"].includes(new URL(link).protocol);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function failureFrom(error, stdout, stderr, { threadId }) {
+  // Only stderr + process metadata classify failures — model stdout (reviewed
+  // code can contain "quota"/"capacity") never manufactures an account failure.
+  const detail = `${stderr}\n${error?.message ?? ""}`;
+  if (REAUTH_RE.test(detail)) {
+    // GPT: authentication expiry must surface a VISIBLE re-authentication HOLD.
+    return { stage: "HOLD", reason: "Codex authentication expired — re-run `codex login` on the worker host", pause_adapter: true, ok: false };
+  }
+  if (QUOTA_RE.test(detail)) {
+    return { stage: "FAILED", error_code: "CODEX_QUOTA", error_kind: "quota", pause_adapter: true, ok: false };
+  }
+  if (ACCESS_RE.test(detail)) {
+    return { stage: "FAILED", error_code: "CODEX_ACCESS", error_kind: "access", pause_adapter: true, ok: false };
+  }
+  if (error?.killed || error?.signal) {
+    // Killed AFTER the thread id was durably recorded -> LAUNCH_UNKNOWN:
+    // recovery resumes the exact session. Killed BEFORE any thread id ->
+    // visible HOLD + pause (an uncertain launch must NEVER spawn again).
+    if (threadId) {
+      return { stage: "LAUNCH_UNKNOWN", external_run_id: externalRunId(threadId), reason: "codex killed after thread.started; session held for exact-id resume", ok: false };
+    }
+    return { stage: "HOLD", reason: "codex died before any thread id was recorded — refusing to re-spawn", pause_adapter: true, ok: false };
+  }
+  return { stage: "FAILED", error_code: error?.code ? `CODEX_${error.code}` : "CODEX_PROCESS_FAILED", ok: false };
+}
+
+function writeSchemaFile(schemaFile, schema) {
+  fs.writeFileSync(schemaFile, JSON.stringify(schema));
+}
+
+// `codex exec` is synchronous: launchBuilder returns the terminal CLI result.
+// The coordinator still records an acknowledged run using the durable thread id
+// before folding the terminal result through the receipt machine.
+export async function launchBuilder({
+  issue_id,
+  authorization_ref,
+  attempt_id,
+  target_sha,
+  task_context,
+  cwd = process.cwd(),
+  env = process.env,
+  resume = false,
+  external_run_id = null, // durable receipt run id (codexrun_<uuid>) — exact resume target
+  execFileImpl = nodeExecFile,
+  readHeadImpl = readHead,
+  schemaFile = null,
+  io = {},
+  timeout_ms = 45 * 60 * 1000,
+}) {
+  if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
+    return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
+  }
+  const execImpl = io.execFileImpl ?? execFileImpl;
+
+  // Resume path: the exact thread id comes from the durable receipt run id
+  // (codexrun_<uuid>) — never --last.
+  let sessionId = null;
+  if (resume) {
+    sessionId = threadIdFromRunId(external_run_id ?? io.resumeRunId ?? "");
+    if (!sessionId) {
+      return { stage: "HOLD", reason: "cannot resume Codex without a durable exact thread id (--last is forbidden)", pause_adapter: true, ok: false };
+    }
+  }
+
+  let checkoutHead;
+  try {
+    checkoutHead = await readHeadImpl({ cwd, execFileImpl: execImpl, env });
+  } catch {
+    return { stage: "FAILED", error_code: "CHECKOUT_HEAD_UNREADABLE", ok: false };
+  }
+  if (checkoutHead !== target_sha) {
+    return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
+  }
+
+  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context };
+  const schemaPath = schemaFile ?? `${cwd}/.codex-callback-schema-${attempt_id}.json`;
+  try {
+    writeSchemaFile(schemaPath, CALLBACK_SCHEMA);
+  } catch {
+    return { stage: "FAILED", error_code: "SCHEMA_FILE_UNWRITABLE", ok: false };
+  }
+
+  let args;
+  try {
+    args = buildCodexArgs(input, { resume, sessionId, schemaFile: schemaPath, cwd });
+  } catch (error) {
+    return { stage: "HOLD", reason: error.message, pause_adapter: true, ok: false };
+  }
+
+  let result;
+  try {
+    result = await runExecFile(execImpl, "codex", args, {
+      cwd,
+      env: buildCodexEnvironment(env),
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: timeout_ms,
+      windowsHide: true,
+    });
+  } catch (error) {
+    return failureFrom(error, "", "", { threadId: null });
+  }
+  // Parse the durable session identity from ANY stdout we have — including a
+  // stream that ends in a kill: a thread.started already on the wire means the
+  // session exists and exact-id resume is legal.
+  const threadId = parseThreadStarted(result.stdout);
+  if (result.error) return failureFrom(result.error, result.stdout, result.stderr, { threadId });
+
+  const runId = threadId ? externalRunId(threadId) : null;
+  const identity = workerIdentity(attempt_id);
+  if (!threadId) {
+    // Exited cleanly but the durable session identity is missing: the work may
+    // exist in an unknown session we cannot resume — visible HOLD + pause.
+    return { stage: "HOLD", reason: "codex exited without a thread.started event — no durable session id; refusing to re-spawn", pause_adapter: true, ok: false };
+  }
+
+  const callback = parseCodexCallback(result.stdout);
+  if (!callbackValid(callback, { attempt_id, target_sha })) {
+    return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", reason: "completed without a valid attempt/SHA-bound schema callback", ok: false };
+  }
+  if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
+    return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };
+  }
+  return { stage: "COMPLETED", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, ok: true };
+}
+
+// A synchronous `codex exec` has no remote polling endpoint. RUNNING/held
+// receipts are resolved by the synchronous result or explicit exact-id resume.
+export async function monitorRun() {
+  return { stage: "UNCHANGED", reason: "Codex print-mode runs have no remote poll endpoint; state held for explicit exact-id recovery" };
+}

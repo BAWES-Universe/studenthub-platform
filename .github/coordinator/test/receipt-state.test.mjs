@@ -229,7 +229,7 @@ test("pause invariant: next reservation for the SAME paused adapter is skipped",
   // adapter paused (e.g. after a 429) -> no candidate, and the skip reason says why
   const paused = selectNextReservation({
     ready: eligible,
-    config: { max_dispatch: 1, adapter_pause_map: { "workspace-agents": true } },
+    config: { max_dispatch: 1, adapter_pause_map: { "codex-cli": true } }, // SHU-63: builder lane adapter is codex-cli
     receipts: [],
   });
   assert.equal(paused.candidate, null);

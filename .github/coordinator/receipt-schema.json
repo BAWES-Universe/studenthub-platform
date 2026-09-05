@@ -59,8 +59,8 @@
     },
     "external_run_id": {
       "type": ["string", "null"],
-      "description": "Provider run id (apirun_... or clauderun_...) stored once a run is acknowledged. null at RESERVED/LAUNCH_UNKNOWN and when launch was refused before acceptance (quota/access).",
-      "pattern": "^(apirun|clauderun)_[A-Za-z0-9_-]+$"
+      "description": "Provider run id (apirun_..., clauderun_... or codexrun_<thread-uuid>) stored once a run is acknowledged. null at RESERVED/LAUNCH_UNKNOWN and when launch was refused before acceptance (quota/access).",
+      "pattern": "^(apirun|clauderun|codexrun)_[A-Za-z0-9_-]+$"
     },
     "adapter_status": {
       "type": ["string", "null"],
