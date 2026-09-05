@@ -25,53 +25,73 @@ const MIGRATIONS_DIR = path.join(
   "migrations",
 );
 
+/** Arbitrary fixed key; only runMigrations uses it (session-scoped, per-database). */
+const MIGRATION_LOCK_KEY = 7_275_526;
+
 /** Apply every pending migration on the given pool; safe to call repeatedly. */
 export async function runMigrations(pool: pg.Pool): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version    TEXT PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    )
-  `);
+  const lockClient = await pool.connect();
+  try {
+    // Serialize concurrent runners (GPT R3 #2): two processes bootstrapping a
+    // fresh database can both read the same pending set and race the ledger
+    // insert (schema_migrations.version PK) — one would fail with a raw 23505
+    // instead of a clean "already applied". pg_advisory_lock is global per
+    // database and held by this session, so the second caller blocks here
+    // until the first finishes, then re-reads the ledger and finds nothing
+    // pending. The lock is released automatically if this session dies.
+    await lockClient.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
 
-  const { rows } = await pool.query<{ version: string }>(
-    "SELECT version FROM schema_migrations",
-  );
-  const applied = new Set(rows.map((row) => row.version));
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version    TEXT PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
 
-  // Zero-padded numeric prefixes make plain lexicographic order = apply order.
-  const pending = (await readdir(MIGRATIONS_DIR))
-    .filter((file) => file.endsWith(".sql"))
-    .sort()
-    .filter((file) => !applied.has(file.replace(/\.sql$/, "")));
+    const { rows } = await pool.query<{ version: string }>(
+      "SELECT version FROM schema_migrations",
+    );
+    const applied = new Set(rows.map((row) => row.version));
 
-  for (const file of pending) {
-    const version = file.replace(/\.sql$/, "");
-    const sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(sql);
-      await client.query(
-        "INSERT INTO schema_migrations (version) VALUES ($1)",
-        [version],
-      );
-      await client.query("COMMIT");
-      console.log(`db: applied migration ${file}`);
-    } catch (error) {
-      // The migration file runs as one multi-statement query inside the
-      // transaction; any failure aborts the whole file, nothing is recorded.
-      // A failing ROLLBACK (e.g. connection dropped) must not mask the
-      // original error (Sentry finding, valid).
+    // Zero-padded numeric prefixes make plain lexicographic order = apply order.
+    const pending = (await readdir(MIGRATIONS_DIR))
+      .filter((file) => file.endsWith(".sql"))
+      .sort()
+      .filter((file) => !applied.has(file.replace(/\.sql$/, "")));
+
+    for (const file of pending) {
+      const version = file.replace(/\.sql$/, "");
+      const sql = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
+      const client = await pool.connect();
       try {
-        await client.query("ROLLBACK");
-      } catch {
-        // Swallow: the original error below is the one the caller needs.
+        await client.query("BEGIN");
+        await client.query(sql);
+        await client.query(
+          "INSERT INTO schema_migrations (version) VALUES ($1)",
+          [version],
+        );
+        await client.query("COMMIT");
+        console.log(`db: applied migration ${file}`);
+      } catch (error) {
+        // The migration file runs as one multi-statement query inside the
+        // transaction; any failure aborts the whole file, nothing is recorded.
+        // A failing ROLLBACK (e.g. connection dropped) must not mask the
+        // original error (Sentry finding, valid).
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          // Swallow: the original error below is the one the caller needs.
+        }
+        throw error;
+      } finally {
+        client.release();
       }
-      throw error;
-    } finally {
-      client.release();
     }
+  } finally {
+    await lockClient
+      .query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY])
+      .catch(() => undefined);
+    lockClient.release();
   }
 }
 

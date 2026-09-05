@@ -196,6 +196,25 @@ test("parity: grantMany rejects an invalid entry without touching existing grant
   assert.equal(grants.length, 1, "a rejected grantMany must not partially apply");
 });
 
+test("parity: grantMany with duplicate (orgId, role) entries in ONE call merges widest-scope-wins", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+
+  // self + subtree for the SAME (org, role) in one call: InMemoryAuthzStore
+  // collapses to one row with the widest scope. A single INSERT ... ON
+  // CONFLICT cannot resolve two conflicting rows from its own VALUES list,
+  // so the store must dedupe before building the statement (GPT R3 #3).
+  await store.grantMany("alice", [
+    { orgId: ACME, role: "candidate", scope: "self" },
+    { orgId: ACME, role: "candidate", scope: "subtree" },
+  ]);
+
+  const grants = await store.listGrantsForPrincipal("alice");
+  assert.equal(grants.length, 1, "duplicate keys in one call collapse to one row");
+  assert.equal(grants[0]?.role, "candidate");
+  assert.equal(grants[0]?.scope, "subtree", "widest scope wins within the call");
+});
+
 test("parity: revokeMany removes exactly the targeted (org, role) rows; unknown ignored", async () => {
   const store = makeStore();
   await seedOrgAndPrincipal(store);
@@ -497,6 +516,41 @@ test("bootstrap concurrency: two simultaneous bootstraps cannot create two root 
       "SELECT principal_id FROM grants WHERE org_id = 'root' AND role = 'admin'",
     );
     assert.equal(rows.length, 1, "the database holds exactly one root admin grant");
+
+    // Zero-trace atomicity (GPT R3, round 2 #1): the LOSER's principal and
+    // pbuuid must not exist — the whole bootstrap transaction rolled back,
+    // not just the grant. The winner's principal must exist (positive control).
+    const winnerPbuuid =
+      resultA.status === "fulfilled"
+        ? "admin-a@example.invalid"
+        : "admin-b@example.invalid";
+    const loserPbuuid =
+      resultA.status === "fulfilled"
+        ? "admin-b@example.invalid"
+        : "admin-a@example.invalid";
+    const winnerRows = await adminPool.query(
+      "SELECT 1 FROM principals WHERE id = $1",
+      [`principal-${winnerPbuuid}`],
+    );
+    assert.equal(winnerRows.rowCount, 1, "the winning bootstrap's principal exists");
+    const loserPrincipal = await adminPool.query(
+      "SELECT 1 FROM principals WHERE id = $1",
+      [`principal-${loserPbuuid}`],
+    );
+    assert.equal(
+      loserPrincipal.rowCount,
+      0,
+      "a rejected bootstrap must leave NO principal behind (atomic rollback)",
+    );
+    const loserPbuuidRow = await adminPool.query(
+      "SELECT 1 FROM principal_pbuuids WHERE pbuuid = $1",
+      [loserPbuuid],
+    );
+    assert.equal(
+      loserPbuuidRow.rowCount,
+      0,
+      "a rejected bootstrap must leave NO pbuuid mapping behind (atomic rollback)",
+    );
   } finally {
     await poolA.end();
     await poolB.end();
@@ -531,5 +585,57 @@ test("bootstrap: re-running with the exact same admin is a no-op; a different id
     assert.equal(rows[0]?.principal_id, "principal-admin@example.invalid");
   } finally {
     await pool.end();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Migrations: concurrent first-run runners are serialized (GPT R3, round 2 #2)
+// ---------------------------------------------------------------------------
+
+test("migrations: concurrent first-run migrations serialize via the advisory lock", async () => {
+  // Two processes bootstrapping a FRESH database both read the same pending
+  // set. Without serialization one loses the ledger insert race with a raw
+  // 23505; with pg_advisory_lock the loser blocks, re-reads, and no-ops.
+  // Runs against a throwaway scratch database so the shared test database's
+  // schema is untouched.
+  const dbName = `shu55_migrate_race_${Date.now()}`;
+  const admin = new pg.Pool({ connectionString: DB_URL });
+  try {
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const raceUrl = DB_URL.replace(/\/[^/]+$/, `/${dbName}`);
+    const poolA = new pg.Pool({ connectionString: raceUrl });
+    const poolB = new pg.Pool({ connectionString: raceUrl });
+    try {
+      const results = await Promise.allSettled([
+        runMigrations(poolA),
+        runMigrations(poolB),
+      ]);
+      assert.equal(
+        results.filter((r) => r.status === "fulfilled").length,
+        2,
+        "both concurrent first-run migrations must succeed — the loser no-ops " +
+          "after the winner instead of failing on the ledger PK",
+      );
+
+      const { rows } = await poolA.query<{ version: string }>(
+        "SELECT version FROM schema_migrations ORDER BY version",
+      );
+      assert.deepEqual(
+        rows.map((r) => r.version),
+        ["0001_create_authz_tables", "0002_enforce_single_root_admin"],
+        "each migration is recorded exactly once",
+      );
+      const idx = await poolA.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'one_root_admin_grant'",
+      );
+      assert.equal(idx.rows[0]?.n, 1, "0002 applied exactly once");
+    } finally {
+      await poolA.end();
+      await poolB.end();
+    }
+  } finally {
+    // No connections may be open to the scratch DB before dropping it.
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => undefined);
+    await admin.end();
   }
 });

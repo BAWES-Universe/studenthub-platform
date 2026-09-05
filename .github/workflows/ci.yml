@@ -42,5 +42,9 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
+      # npm test is the no-external-dependencies suite; the db suite needs the
+      # postgres service above, so it runs as its own explicit step (test:db).
+      # Both are required for the PR to be green.
       - run: npm test
+      - run: npm run test:db
       - run: npm run build

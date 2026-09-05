@@ -315,14 +315,22 @@ export class PostgresAuthzStore implements AuthzStore {
         // current owner for the error message. The lookup runs AFTER the
         // rollback (the transaction is aborted) and is best-effort
         // diagnostics only — enforcement already happened in the constraint.
-        const ownerRows = await client.query<{ pbuuid: string; owner_id: string }>(
-          `SELECT pb.pbuuid, p.id AS owner_id
-           FROM principal_pbuuids pb
-           JOIN principals p ON p.id = pb.principal_id
-           WHERE pb.pbuuid = ANY($1)`,
-          [claimed],
-        );
-        const conflict = ownerRows.rows.find((row) => row.owner_id !== principal.id);
+        let conflict: { pbuuid: string; owner_id: string } | undefined;
+        try {
+          const ownerRows = await client.query<{ pbuuid: string; owner_id: string }>(
+            `SELECT pb.pbuuid, p.id AS owner_id
+             FROM principal_pbuuids pb
+             JOIN principals p ON p.id = pb.principal_id
+             WHERE pb.pbuuid = ANY($1)`,
+            [claimed],
+          );
+          conflict = ownerRows.rows.find((row) => row.owner_id !== principal.id);
+        } catch {
+          // Diagnostics are best-effort (GPT R3 #4): a failed owner lookup —
+          // e.g. the connection is unusable after a failed rollback — must
+          // NOT mask the original unique-conflict error, which is re-thrown
+          // below.
+        }
         if (conflict !== undefined) {
           throw new TypeError(
             `pbuuid '${conflict.pbuuid}' is already owned by principal '${conflict.owner_id}'; ` +
@@ -364,10 +372,28 @@ export class PostgresAuthzStore implements AuthzStore {
     if (entries.length === 0) return;
     const normalized = entries.map(normalizeGrantEntry);
 
+    // Merge duplicate (orgId, role) keys WITHIN this call, widest scope wins —
+    // parity with InMemoryAuthzStore, which collapses to one row per key
+    // (GPT R3 #3). A single INSERT ... ON CONFLICT cannot resolve two
+    // conflicting rows from its own VALUES list ("cannot affect row a second
+    // time"), so the merge happens here before the SQL is built.
+    const byKey = new Map<string, GrantEntry>();
+    for (const entry of normalized) {
+      const key = `${entry.orgId}\u0000${entry.role}`;
+      const existing = byKey.get(key);
+      if (
+        existing === undefined ||
+        (entry.scope === "subtree" && existing.scope !== "subtree")
+      ) {
+        byKey.set(key, entry);
+      }
+    }
+    const merged = [...byKey.values()];
+
     const params: unknown[] = [principalId];
     const tuples: string[] = [];
     let next = 1; // $1 is principal_id, repeated in every tuple
-    for (const entry of normalized) {
+    for (const entry of merged) {
       tuples.push(`($1, $${next + 1}, $${next + 2}, $${next + 3})`);
       params.push(entry.orgId, entry.role, entry.scope);
       next += 3;
@@ -377,10 +403,10 @@ export class PostgresAuthzStore implements AuthzStore {
       `INSERT INTO grants (principal_id, org_id, role, scope)
        VALUES ${tuples.join(", ")}
        ON CONFLICT (principal_id, org_id, role) DO UPDATE SET
-         scope = CASE
-           WHEN grants.scope = 'subtree' OR EXCLUDED.scope = 'subtree' THEN 'subtree'
-           ELSE grants.scope
-         END`,
+        scope = CASE
+          WHEN grants.scope = 'subtree' OR EXCLUDED.scope = 'subtree' THEN 'subtree'
+          ELSE grants.scope
+        END`,
       params,
     );
   }
