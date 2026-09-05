@@ -89,6 +89,13 @@ function leasePath(poolDir, attemptId) {
   return join(poolDir, "leases", `${attemptId}.json`);
 }
 
+// Serializes the read-and-replace window of an abandoned-claim takeover. It is
+// held for microseconds and removed as soon as the claim is replaced.
+function takeoverPath(poolDir, attemptId) {
+  if (typeof attemptId !== "string" || !ATTEMPT_ID_RE.test(attemptId)) return null;
+  return join(poolDir, "leases", `${attemptId}.launch-takeover`);
+}
+
 function launchClaimPath(poolDir, attemptId) {
   if (typeof attemptId !== "string" || !ATTEMPT_ID_RE.test(attemptId)) return null;
   return join(poolDir, "leases", `${attemptId}.launch-claim`);
@@ -236,14 +243,43 @@ function acquireLaunchClaim(poolDir, attemptId, io = {}) {
     return { ok: false, reason: "launch already claimed by another coordinator" };
   }
   if (readable && prior?.phase === RETRY_SAFE_PHASE) {
-    // The owner is gone and never reached io.spawn, so NO worker exists. Taking
-    // the claim over is the only way this reservation is ever recoverable, and
-    // it cannot double-launch. Stamp it as ours before proceeding.
+    // The owner is gone and never reached io.spawn, so NO worker exists and the
+    // reservation is recoverable. But a plain overwrite is not a takeover: two
+    // coordinators reading this same abandoned claim would both write and both
+    // proceed. Serialize on an exclusive marker so exactly one can reclaim, then
+    // re-verify that the claim is still the one we judged abandoned — the loser
+    // of the marker may already have replaced it.
+    const t = takeoverPath(poolDir, attemptId);
+    const marker = createClaimExclusive(t, claimBody(attemptId, io, "pre_spawn"));
+    if (!marker.ok) {
+      if (!marker.exists) return { ok: false, reason: `could not open a takeover marker: ${marker.err?.message ?? "unknown"}` };
+      // Someone else is mid-takeover. Waiting is correct and retryable; a marker
+      // older than the TTL means that coordinator died between claiming the
+      // marker and replacing the claim, which is surfaced rather than stolen —
+      // unlinking it would race a fresh marker and re-open this very hole.
+      return unreadableClaimLiveness(t, io) === "abandoned"
+        ? { ok: false, stale: true, reason: "a launch takeover was abandoned mid-flight — operator reconciliation required" }
+        : { ok: false, reason: "launch takeover already in progress on another coordinator" };
+    }
     try {
+      const now = readLaunchClaim(poolDir, attemptId);
+      if (!now.ok || JSON.stringify(now.claim) !== JSON.stringify(prior)) {
+        // The claim changed under us: another coordinator reclaimed it first.
+        return { ok: false, reason: "abandoned claim was reclaimed by another coordinator" };
+      }
       writeFileSync(p, claimBody(attemptId, io, "pre_spawn"));
-      return { ok: true, path: p, phase: "pre_spawn", took_over: true };
+      return { ok: true, path: p, phase: "pre_spawn", took_over: true, takeover_marker: t };
     } catch (err) {
       return { ok: false, reason: `could not take over abandoned launch claim: ${err.message}` };
+    } finally {
+      // The claim itself is the mutex again from here on, so the marker's job is
+      // done. Its only purpose was to serialize the read-and-replace window.
+      try {
+        unlinkSync(t);
+      } catch {
+        // best-effort: a leftover marker only delays the NEXT takeover, and it
+        // ages out through the branch above.
+      }
     }
   }
   // Abandoned past the point of no return, or unreadable so the phase cannot be

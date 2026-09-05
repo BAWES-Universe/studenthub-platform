@@ -1008,3 +1008,118 @@ test("a spawn record that does not bind to its lease is refused, never merged", 
     assert.match(out.reason, /invalid spawn record binding/);
   }
 });
+
+// ---------------------------------------------------------------------------
+// CodeRabbit review of 8b73ebe. Three Major findings, all confirmed.
+// ---------------------------------------------------------------------------
+
+// CR-2: the lifecycle POLL resolved the adapter twice — once as `adapterModule`
+// (with io, honouring the io.adapterModules injection seam) and again inline as
+// `adapterModuleFor(receipt)` WITHOUT io for the actual monitorRun call. The
+// second resolution ignores the injection, so launch and monitoring could run
+// different implementations of the same lane.
+test("CR-2: the lifecycle poll monitors through the SAME adapter instance it resolved", async () => {
+  const comments = [];
+  const pool = tempPool();
+  const store = fakeLinearStore(comments);
+  let monitored = 0;
+  let launched = 0;
+  const injected = {
+    launchBuilder: async ({ attempt_id }) => {
+      launched += 1;
+      return {
+        stage: "RUNNING",
+        adapter_status: "in_progress",
+        external_run_id: `apirun_hermes_${attempt_id}`,
+        worker_identity: "hermes:injected:pid1",
+      };
+    },
+    monitorRun: async () => {
+      monitored += 1;
+      return { stage: "UNCHANGED", reason: "injected" };
+    },
+  };
+  const run = () =>
+    main([], ENV, {
+      configPath: tempConfig(),
+      stdout: () => {},
+      fetchImpl: async (url, opts) => store(url, opts),
+      fetchDurable: true,
+      pollRuns: true,
+      poolDir: pool,
+      hostname: () => "test-host",
+      now: tick,
+      adapterModules: { "hermes-pool": injected },
+    });
+
+  await run(); // dispatch through the injected adapter -> durable RUNNING
+  assert.equal(launched, 1, "the injected adapter must own the launch");
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "RUNNING");
+
+  await run(); // second process: the RUNNING receipt must be polled
+  assert.equal(monitored, 1, "monitorRun must reach the injected adapter, not a second resolution of the real one");
+});
+
+// CR-3: the recovery path folded a launch outcome with NO ctx, so a synchronous
+// adapter returning COMPLETED during LAUNCH_UNKNOWN recovery never met the
+// live-head guard. The same defect was fixed on the dispatch path and left here.
+test("CR-3: a COMPLETED recovery against a MOVED head must HOLD, never complete", async () => {
+  for (const [label, liveHead, expected, headStatus] of [
+    ["moved head", "e".repeat(40), "HOLD", 200],
+    ["unmoved head", SHA, "COMPLETED", 200],
+    // A head that cannot be read is never "head matches" — the same tri-state
+    // the dispatch path applies. Without this the recovery path would complete
+    // on an unverifiable head.
+    ["unreadable head", SHA, "HOLD", 500],
+  ]) {
+    const comments = [];
+    const store = fakeLinearStore(comments);
+    let phase = "unknown";
+    const injected = {
+      launchBuilder: async ({ attempt_id, target_sha }) =>
+        phase === "unknown"
+          ? { stage: "LAUNCH_UNKNOWN", reason: "no wiring yet" }
+          : {
+              stage: "COMPLETED",
+              external_run_id: `apirun_hermes_${attempt_id}`,
+              worker_identity: `claude:${attempt_id}`,
+              adapter_status: "completed",
+              callback: {
+                attempt_id,
+                target_sha,
+                stage: "PASS",
+                links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"],
+              },
+            },
+      monitorRun: async () => ({ stage: "UNCHANGED" }),
+    };
+    const run = () =>
+      main([], { ...ENV, GITHUB_TOKEN: "gh-tok" }, {
+        configPath: tempConfig(),
+        stdout: () => {},
+        fetchImpl: async (url, opts) => {
+          if (url.includes("api.linear.app")) return store(url, opts);
+          if (url.includes("/branches/")) {
+            return headStatus === 200
+              ? { status: 200, ok: true, json: async () => ({ commit: { sha: liveHead } }) }
+              : { status: headStatus, ok: false, json: async () => ({}) };
+          }
+          return { status: 200, ok: true, json: async () => [] };
+        },
+        fetchDurable: true,
+        pollRuns: true,
+        poolDir: tempPool(),
+        hostname: () => "test-host",
+        now: tick,
+        adapterModules: { "hermes-pool": injected },
+      });
+
+    await run(); // leaves a LAUNCH_UNKNOWN receipt
+    assert.equal(parseReceiptsFromComments(comments)[0].stage, "LAUNCH_UNKNOWN", `${label}: setup`);
+    phase = "completed";
+    await run(); // recovery returns a terminal COMPLETED straight from launchBuilder
+
+    const terminal = parseReceiptsFromComments(comments)[0];
+    assert.equal(terminal.stage, expected, `${label}: recovery must apply the same stale-head rule as dispatch`);
+  }
+});

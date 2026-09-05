@@ -739,6 +739,22 @@ export function nextReceiptState(receipt, event, ctx = {}) {
   }
 }
 
+// resolveLiveHead — the tri-state rule both terminal-launch paths must apply.
+// No GitHub token means the bound head IS the reference; a token present but an
+// unreadable head is NEVER "head matches". Shared so dispatch and recovery
+// cannot drift apart, which is exactly how recovery lost this guard.
+export async function resolveLiveHead(receipt, { githubToken, fetchImpl }) {
+  if (!githubToken || !receipt.repo || !receipt.branch) {
+    return { verified: true, head: receipt.target_sha };
+  }
+  try {
+    const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
+    return head ? { verified: true, head } : { verified: false, head: null };
+  } catch {
+    return { verified: false, head: null };
+  }
+}
+
 // Fold any adapter's normalized launch result through the same receipt machine.
 // Remote adapters usually return RUNNING. A synchronous adapter such as
 // `claude -p` can return its terminal result in the launch call; it is still
@@ -1334,7 +1350,21 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       if (launch.stage === "LAUNCH_UNKNOWN") continue;
 
-      const transition = foldLaunchOutcome(receipt, launch);
+      // STALE-HEAD GUARD, same rule as the dispatch path. A synchronous adapter
+      // can return a terminal COMPLETED straight from launchBuilder during
+      // recovery too, which never passes through the poll where the live head is
+      // normally resolved. Leaving it out here let a stale verdict complete a
+      // superseded SHA (CodeRabbit, 8b73ebe).
+      let recoveryCtx = {};
+      if (launch.stage === "COMPLETED") {
+        const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
+        if (!resolved.verified) {
+          launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
+        } else {
+          recoveryCtx = { current_head: resolved.head };
+        }
+      }
+      const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
       if (!transition.accepted) continue;
       const nextReceipt = transition.receipt;
       if (launch.conversation_url && typeof launch.conversation_url === "string") {
@@ -1377,7 +1407,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       let outcome;
       try {
-        outcome = await (await adapterModuleFor(receipt)).monitorRun({
+        // ONE resolution per receipt. Resolving again here dropped `io`, so the
+        // injection seam was bypassed and monitoring could run a different
+        // implementation than the launch did (CodeRabbit, 8b73ebe).
+        outcome = await adapterModule.monitorRun({
           run_id: receipt.external_run_id,
           attempt_id: receipt.attempt_id,
           target_sha: receipt.target_sha,
@@ -1571,21 +1604,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // satisfy a receipt bound to target_sha.
   let launchCtx = {};
   if (launch.stage === "COMPLETED") {
-    let headVerified = true;
-    let liveHead = receipt.target_sha; // no token -> the bound head IS the reference
-    if (githubToken && receipt.repo && receipt.branch) {
-      try {
-        const head = await fetchBranchHead({ repo: receipt.repo, branch: receipt.branch, token: githubToken, fetchImpl });
-        if (head) liveHead = head;
-        else headVerified = false;
-      } catch {
-        headVerified = false; // unreadable head is never "head matches"
-      }
-    }
-    if (!headVerified) {
+    const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
+    if (!resolved.verified) {
       launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
     } else {
-      launchCtx = { current_head: liveHead };
+      launchCtx = { current_head: resolved.head };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);
