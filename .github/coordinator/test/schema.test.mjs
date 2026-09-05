@@ -140,12 +140,15 @@ test("rejects: adapter_status outside granular enum", () => {
   assertInvalid(r, /granular adapter_status/, "null adapter_status at RUNNING");
 });
 
-test("rejects: RUNNING without external_run_id / worker_identity", () => {
-  for (const field of ["external_run_id", "worker_identity"]) {
-    const r = validRunning();
-    r[field] = null;
-    assertInvalid(r, /requires/, `null ${field} at RUNNING`);
-  }
+test("rejects: RUNNING without external_run_id (worker_identity may stay null until the poll supplies agent_id)", () => {
+  const r = validRunning();
+  r.external_run_id = null;
+  assertInvalid(r, /requires external_run_id/, "null external_run_id at RUNNING");
+
+  // worker_identity is OPTIONAL at RUNNING — never fabricated (GPT review #1).
+  const noIdentity = validRunning();
+  noIdentity.worker_identity = null;
+  assert.equal(validateReceipt(noIdentity).valid, true, "RUNNING without worker_identity is valid (agent_id unknown until poll)");
 });
 
 test("rejects: COMPLETED without evidence_links (no callback, no COMPLETED)", () => {
@@ -174,13 +177,15 @@ test("accepts: FAILED with a run (post-acceptance) and FAILED pre-acceptance (no
   pre.notes = [...pre.notes, "run failed (rejected before run acceptance) (error code HTTP_429)"];
   assert.equal(validateReceipt(pre).valid, true);
 
-  // ...but FAILED with a run id and no identity is contradictory
-  const mixed = validRunning();
-  mixed.stage = "FAILED";
-  mixed.worker_identity = null;
-  mixed.adapter_status = "failed";
-  mixed.timestamps.terminal = "2026-09-05T00:10:00.000Z";
-  assertInvalid(mixed, /FAILED with a run requires worker_identity/, "failed w/ run but no identity");
+  // worker_identity is OPTIONAL even post-acceptance (only the poll's agent_id
+  // sets it — GPT review #1); FAILED-with-run without identity is valid as long
+  // as the granular adapter_status is "failed".
+  const noIdentity = validRunning();
+  noIdentity.stage = "FAILED";
+  noIdentity.worker_identity = null;
+  noIdentity.adapter_status = "failed";
+  noIdentity.timestamps.terminal = "2026-09-05T00:10:00.000Z";
+  assert.equal(validateReceipt(noIdentity).valid, true, "FAILED with a run may have worker_identity null (agent_id unknown)");
 });
 
 test("rejects: RESERVED carrying a launch timestamp (reserve precedes launch)", () => {

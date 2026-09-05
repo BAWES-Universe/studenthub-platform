@@ -360,9 +360,13 @@ export function validateReceipt(receipt) {
 
   // ---- Cross-field stage invariants (mirrors the allOf in the schema file). ----
   // RESERVED/LAUNCH_UNKNOWN: no run can exist before launch is acknowledged.
-  // RUNNING/COMPLETED: an accepted run exists (id + identity + granular status).
+  // RUNNING/COMPLETED: an accepted run exists (external_run_id + granular status).
+  // worker_identity is OPTIONAL in every stage until the poll response supplies
+  // the documented agent_id — it is NEVER fabricated from the run id (GPT review
+  // #1); the only hard rule is the contradiction check below (identity without a
+  // run id is impossible).
   // FAILED: either a post-acceptance run failure (fields set) or a trigger refused
-  // before acceptance (quota/access wall) — in which case all three stay null.
+  // before acceptance (quota/access wall) — in which case run fields stay null.
   // HOLD: reachable BOTH pre-acceptance (manual_claim from RESERVED/LAUNCH_UNKNOWN)
   // and post-acceptance (completed-without-callback) — each shape validates against
   // the run fields it actually carries (CodeRabbit).
@@ -377,7 +381,6 @@ export function validateReceipt(receipt) {
   } else if (stage === "FAILED") {
     const postAcceptance = runId !== null;
     if (postAcceptance) {
-      if (workerIdentity === null) errors.push("FAILED with a run requires worker_identity");
       if (adapterStatus !== "failed") errors.push("FAILED with a run requires adapter_status \"failed\"");
     } else {
       // Pre-acceptance rejection (trigger refused: quota/access/4xx) — no run ever existed.
@@ -392,7 +395,6 @@ export function validateReceipt(receipt) {
       if (adapterStatus !== null) errors.push("HOLD without a run must keep adapter_status null");
     } else {
       // Post-acceptance HOLD (completed-without-callback): the run was acknowledged.
-      if (workerIdentity === null) errors.push("HOLD with a run requires worker_identity");
       if (!ADAPTER_STATUSES.includes(adapterStatus)) {
         errors.push(`HOLD with a run requires a granular adapter_status (${ADAPTER_STATUSES.join("|")})`);
       }
@@ -400,7 +402,6 @@ export function validateReceipt(receipt) {
   } else {
     // RUNNING / COMPLETED imply an accepted run.
     if (runId === null) errors.push(`stage ${stage} requires external_run_id (run accepted by the API)`);
-    if (workerIdentity === null) errors.push(`stage ${stage} requires worker_identity (actual run/session id)`);
     if (!ADAPTER_STATUSES.includes(adapterStatus)) {
       errors.push(`stage ${stage} requires a granular adapter_status (${ADAPTER_STATUSES.join("|")})`);
     }
@@ -535,7 +536,11 @@ export function nextReceiptState(receipt, event, ctx = {}) {
       next.stage = "RUNNING";
       next.external_run_id = external_run_id; // stored IMMEDIATELY — never deferred
       next.adapter_status = ADAPTER_STATUSES.includes(adapter_status) ? adapter_status : "in_progress";
-      next.worker_identity = worker_identity ?? `run:${external_run_id}`;
+      // worker_identity stays null until the poll response supplies the
+      // documented agent_id — NEVER fabricated from the run id (GPT review #1).
+      if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+        next.worker_identity = event.worker_identity;
+      }
       next.timestamps.heartbeat = at();
       return { receipt: next, accepted: true };
     }
@@ -734,8 +739,14 @@ export const LINEAR_ISSUES_QUERY = `
         priorityLabel
         labels { nodes { name } }
         assignee { displayName }
+        delegate { displayName }
         parent { identifier state { name } }
-        children { nodes { state { name } } }
+        relations {
+          nodes {
+            type
+            relatedIssue { identifier state { name } }
+          }
+        }
       }
     }
   }`;
@@ -760,7 +771,14 @@ export const LINEAR_ISSUE_COMMENTS_QUERY = `
 // normalizeLinearIssue — best-effort normalization of a Linear issue node into the
 // resolver's shape. Fields the API does not expose map to neutral values; the
 // resolver never invents backlog for a state it cannot see.
+// NOTE (GPT review #4): children are NOT Linear's blocking relation. Blocking is
+// read from `relations` of type "blockedBy"; delegation from the `delegate` field.
 export function normalizeLinearIssue(node, repo) {
+  const blockers = (node.relations?.nodes ?? [])
+    .filter((r) => r?.type === "blockedBy")
+    .map((r) => r.relatedIssue)
+    .filter((i) => i?.identifier && i?.state?.name && i.state.name !== "Done" && i.state.name !== "Canceled")
+    .map((i) => ({ id: i.identifier, state: i.state.name }));
   return {
     id: node.identifier,
     linearId: node.id ?? null, // Linear API calls need the UUID, not the identifier
@@ -769,12 +787,10 @@ export function normalizeLinearIssue(node, repo) {
     priority: node.priorityLabel ?? "No priority",
     labels: (node.labels?.nodes ?? []).map((l) => l.name),
     assignee: node.assignee?.displayName ? { name: node.assignee.displayName } : null,
-    delegate: null, // Linear has no delegation field — snapshot cards may set it
+    delegate: node.delegate?.displayName ? { name: node.delegate.displayName } : null,
     linkedPRs: [],
     parent: node.parent ? { id: node.parent.identifier, state: node.parent.state?.name ?? null } : null,
-    blockers: (node.children?.nodes ?? [])
-      .filter((c) => c.state?.name && c.state.name !== "Done" && c.state.name !== "Canceled")
-      .map((c) => ({ id: null, state: c.state.name })),
+    blockers,
     repo,
   };
 }
@@ -852,10 +868,12 @@ export function parsePausedAdapters(comments = []) {
 // ALWAYS reconstructed from durable Linear/GitHub state — never from comment text.
 // Bot authors (GitHub apps end with [bot]) are skipped so agent chatter cannot
 // spam the reconcile slot.
-export function isWakeHintAllowed(actor) {
-  if (!actor) return false;
-  if (typeof actor === "string" && /\[bot\]$/i.test(actor)) return false;
-  return true;
+export function isWakeHintAllowed(actor, allowlist = ["BAWES"]) {
+  // Wake hints are honored ONLY from known actors on an explicit allowlist
+  // (GPT review #5): bots are never hints, and an unknown actor fails closed.
+  if (typeof actor !== "string" || actor.length === 0) return false;
+  if (/\[bot\]$/i.test(actor)) return false;
+  return allowlist.includes(actor);
 }
 
 // ---------------------------------------------------------------------------
@@ -932,10 +950,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const githubToken = env.GITHUB_TOKEN ?? "";
   const fetchImpl = io.fetchImpl ?? fetch;
 
-  // Wake-hint filter: an issue_comment from a bot is not a human wake hint.
+  // Wake-hint filter: an issue_comment from a non-allowlisted actor is not a
+  // wake hint (GPT review #5 — explicit allowlist, not just 'not a bot').
   if ((env.GITHUB_EVENT_NAME ?? "") === "issue_comment") {
-    if (!isWakeHintAllowed(env.GITHUB_ACTOR)) {
-      const out = `issue_comment wake hint from bot actor ${env.GITHUB_ACTOR ?? "<unknown>"} ignored — no reconcile`;
+    if (!isWakeHintAllowed(env.GITHUB_ACTOR, config.wake_actor_allowlist)) {
+      const out = `issue_comment wake hint from actor ${env.GITHUB_ACTOR ?? "<unknown>"} ignored — no reconcile`;
       if (io.stdout) io.stdout(out);
       return 0;
     }
@@ -960,18 +979,24 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // bodies BEFORE deciding anything. A surviving RESERVED/RUNNING receipt consumes
   // the slot (no duplicate reservation); a pause marker keeps a quota-walled
   // adapter from auto-launching on the next issue (CodeRabbit persistence fix).
+  //
+  // GPT review #2: comments are fetched for EVERY non-canceled issue — not just
+  // cards currently eligible. A launched card that moved to In Progress is then
+  // still represented by its active receipt and still consumes max_dispatch.
+  // Any receipt-read failure FAILS CLOSED: dispatch is prevented for the whole
+  // run (a card whose durable state cannot be read must never be launched at).
   let receipts = [...(io.receipts ?? [])];
+  let durableReadFailed = false;
   if (linearToken && io.fetchDurable !== false) {
-    const preEligibility = computeEligibility({ issues, openPRs, config });
     const pausedAdapters = new Set(Object.keys(config.adapter_pause_map).filter((k) => config.adapter_pause_map[k]));
-    for (const candidate of preEligibility.ready) {
+    for (const issue of issues) {
       try {
-        const comments = await fetchIssueComments({ issueId: candidate.linearId ?? candidate.id, token: linearToken, fetchImpl });
+        const comments = await fetchIssueComments({ issueId: issue.linearId ?? issue.id, token: linearToken, fetchImpl });
         receipts = receipts.concat(parseReceiptsFromComments(comments));
         for (const adapter of parsePausedAdapters(comments)) pausedAdapters.add(adapter);
       } catch (err) {
-        // Inaccessible state => conservative: treat the issue as held, never launch.
-        if (io.stdout) io.stdout(`durable read failed for ${candidate.id}: ${err.message} — candidate held`);
+        durableReadFailed = true;
+        if (io.stdout) io.stdout(`durable read failed for ${issue.id}: ${err.message} — DISPATCH PREVENTED (fail closed)`);
       }
     }
     for (const adapter of pausedAdapters) config.adapter_pause_map[adapter] = true;
@@ -991,11 +1016,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // ---- DISPATCH PATH (unreachable unless ENABLE_DISPATCH=true). ----
   // Reviewable, injectable glue exercised only via unit tests with mocked
   // sendLinear/fetch. Ordering invariants:
+  //   (0) a durable-read failure ANYWHERE above prevents all dispatch (fail closed);
   //   (1) authorization_ref must be contract-bound (free text REFUSED);
   //   (2) the RESERVED receipt is persisted (Linear comment) BEFORE any launch;
-  //   (3) the adapter trigger carries the launch Idempotency-Key so retries after
+  //   (3) the persisted reservation is RE-READ and validated before launching;
+  //   (4) the adapter trigger carries the launch Idempotency-Key so retries after
   //       LAUNCH_UNKNOWN reuse the exact same upstream key.
   if (io.stdout) io.stdout(report);
+  if (durableReadFailed) {
+    if (io.stdout) io.stdout(`dispatch: PREVENTED — durable receipt state could not be fully read (fail closed); reconcile after the read path recovers`);
+    return 2;
+  }
   const { candidate, skipped } = selection;
   if (!candidate) {
     if (io.stdout) io.stdout(`dispatch: no reservation — ${skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}`);
@@ -1025,6 +1056,24 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // Persist RESERVED *before* anything reaches the adapter (reserve precedes launch).
   const linearIssueId = candidate.linearId ?? receipt.issue_id; // UUID for the real API, identifier tolerated by mocks
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
+
+  // GPT review #3: RE-READ and validate the authoritative reservation before
+  // launching. A missing, failed, or colliding reservation must never authorize
+  // a worker — launch only when this attempt's RESERVED receipt is durably
+  // present AND no other active receipt owns the issue.
+  const verifyComments = await fetchIssueComments({ issueId: linearIssueId, token: linearToken, fetchImpl });
+  const durable = parseReceiptsFromComments(verifyComments);
+  const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
+  const otherActive = durable.find((r) => r.attempt_id !== receipt.attempt_id && !TERMINAL_STAGES.includes(r.stage));
+  if (!ownReservation) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — reservation ${receipt.attempt_id} not durably present after write; slot held`);
+    return 2;
+  }
+  if (otherActive) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — conflicting active receipt ${otherActive.attempt_id} (${otherActive.stage}) owns ${candidate.id}; slot held`);
+    return 2;
+  }
+
   const adapterModule = await import("./adapters/workspace-agents.mjs");
   const launch = await adapterModule.launchBuilder({
     issue_id: receipt.issue_id,
@@ -1062,6 +1111,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 2;
   }
   const next = transition.receipt;
+  if (launch.conversation_url && typeof launch.conversation_url === "string") {
+    next.notes = [...next.notes, `conversation_url: ${launch.conversation_url}`]; // documented 202 field — evidence link for the run
+  }
   // DURABLE RECEIPT: the transitioned state (RUNNING/LAUNCH_UNKNOWN/FAILED) is
   // persisted to Linear IMMEDIATELY — the durable receipt must never sit at
   // RESERVED after the API accepted the run (CodeRabbit).

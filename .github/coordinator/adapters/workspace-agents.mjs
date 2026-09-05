@@ -50,8 +50,14 @@ export function validateCallbackEvidence({ evidence, attempt_id, target_sha, cur
   return true;
 }
 
-// launchBuilder — fire the trigger. Returns a normalized outcome object:
-//   { stage: "RUNNING",        external_run_id, adapter_status, ok:true }
+// launchBuilder — fire the trigger per the OFFICIAL beta contract
+// (https://learn.chatgpt.com/workspace-agents/trigger-runs):
+//   POST /v1/workspace_agents/{api_trigger_id}/trigger
+//   body: { conversation_key, input }            <-- input, NOT prompt
+//   202  -> { conversation_url, agent_trigger_run_id }   <-- no id/status here
+// The run's status/agent_id are obtained ONLY by polling the runs endpoint.
+// Returns a normalized outcome object:
+//   { stage: "RUNNING",        external_run_id, adapter_status:"queued", conversation_url, ok:true }
 //   { stage: "LAUNCH_UNKNOWN", reason, ok:false }
 //   { stage: "FAILED",         error_code, error_kind:"quota"|"access", pause_adapter:true, ok:false }
 export async function launchBuilder({
@@ -72,11 +78,11 @@ export async function launchBuilder({
     return { stage: "LAUNCH_UNKNOWN", reason: "no WORKSPACE_AGENT_TRIGGER_ID", ok: false };
   }
   const headers = buildTriggerHeaders({ token, attempt_id, target_sha });
+  // input (documented) carries the authorized work order. The adapter NEVER
+  // accepts free-text work orders — authorization_ref is regex-bound upstream.
   const body = {
     conversation_key: `studenthub:${issue_id}:builder`,
-    // Task context ALWAYS references the authorized contract — the adapter never
-    // accepts free-text work orders (authorization_ref is regex-bound upstream).
-    prompt: `${task_context}\nAuthorized contract ref: ${authorization_ref}\nBound head: ${target_sha}`,
+    input: `${task_context}\nAuthorized contract ref: ${authorization_ref}\nBound head: ${target_sha}`,
   };
   let res;
   try {
@@ -91,31 +97,32 @@ export async function launchBuilder({
     return { stage: "LAUNCH_UNKNOWN", reason: `transport failure: ${err.message}`, ok: false };
   }
 
+  // 401/403 = access wall, 429 = quota wall: retrying is doomed — FAILED and
+  // pause this adapter so the next slot does not auto-launch another attempt.
   if (res.status === 429 || res.status === 401 || res.status === 403) {
-    // Quota/access: retrying is doomed — FAILED and pause this adapter so the next
-    // slot does not auto-launch another attempt against the same wall.
     const kind = res.status === 429 ? "quota" : "access";
     return { stage: "FAILED", error_code: `HTTP_${res.status}`, error_kind: kind, pause_adapter: true, ok: false };
   }
+  // 409 = channel/agent not in a runnable state; 404 = trigger unknown. Neither
+  // is a quota wall — the slot stays held (LAUNCH_UNKNOWN) for reconciliation.
   if (res.status !== 202) {
     return { stage: "LAUNCH_UNKNOWN", reason: `unexpected HTTP ${res.status} from trigger`, ok: false };
   }
-  let run;
+  let accepted;
   try {
-    run = await res.json();
+    accepted = await res.json();
   } catch {
     return { stage: "LAUNCH_UNKNOWN", reason: "202 without parseable body — run id unknown", ok: false };
   }
-  if (!run?.id) {
-    return { stage: "LAUNCH_UNKNOWN", reason: "202 without run id in body", ok: false };
+  // Documented 202 shape: { conversation_url, agent_trigger_run_id }.
+  if (typeof accepted?.agent_trigger_run_id !== "string" || accepted.agent_trigger_run_id.length === 0) {
+    return { stage: "LAUNCH_UNKNOWN", reason: "202 without agent_trigger_run_id in body", ok: false };
   }
-  // 202 + run id: accepted. external_run_id (apirun_...) and the granular upstream
-  // status are surfaced IMMEDIATELY — the orchestrator stores them on the receipt
-  // without collapsing "queued"/"in_progress"/... into a generic RUNNING.
   return {
     stage: "RUNNING",
-    external_run_id: run.id,
-    adapter_status: typeof run.status === "string" && run.status.length ? run.status : "queued",
+    external_run_id: accepted.agent_trigger_run_id, // apirun_... stored IMMEDIATELY
+    adapter_status: "queued", // accepted and waiting to start; poll refines this
+    conversation_url: typeof accepted.conversation_url === "string" ? accepted.conversation_url : null,
     ok: true,
   };
 }
@@ -176,19 +183,37 @@ export async function monitorRun({
     case "queued":
     case "in_progress":
     case "suspended":
-      // Granular upstream status preserved verbatim.
-      return { stage: "RUNNING", adapter_status: run.status };
+      // Granular upstream status preserved verbatim. worker_identity is ONLY
+      // set when the poll response actually carries the documented agent_id —
+      // never fabricated from the run id.
+      return {
+        stage: "RUNNING",
+        adapter_status: run.status,
+        worker_identity: typeof run.agent_id === "string" && run.agent_id.length ? run.agent_id : null,
+      };
     case "completed": {
+      const outcome = {
+        stage: "COMPLETED",
+        adapter_status: "completed",
+        evidence_links: evidence?.links ?? [],
+        worker_identity: typeof run.agent_id === "string" && run.agent_id.length ? run.agent_id : null,
+        conversation_url: typeof run.conversation_url === "string" ? run.conversation_url : null,
+      };
       if (validateCallbackEvidence({ evidence, attempt_id, target_sha, current_head })) {
-        return { stage: "COMPLETED", adapter_status: "completed", evidence_links: evidence?.links ?? [] };
+        return outcome;
       }
       // Completed without a validated callback can be a false positive (or stale
       // head) — HOLD for a human, never auto-COMPLETED.
-      return { stage: "HOLD", adapter_status: "completed", reason: "completed without validated callback (attempt_id/target_sha must match)" };
+      return { ...outcome, stage: "HOLD", reason: "completed without validated callback (attempt_id/target_sha must match)" };
     }
     case "failed": {
-      const error_code = run.last_error?.code ?? run.error?.code ?? "RUN_FAILED";
-      return { stage: "FAILED", error_code, adapter_status: "failed" };
+      const error_code = run.error?.code ?? run.last_error?.code ?? "RUN_FAILED";
+      return {
+        stage: "FAILED",
+        error_code,
+        adapter_status: "failed",
+        worker_identity: typeof run.agent_id === "string" && run.agent_id.length ? run.agent_id : null,
+      };
     }
     default:
       return { stage: "UNCHANGED", reason: `unknown upstream status "${run.status}" — preserving state` };

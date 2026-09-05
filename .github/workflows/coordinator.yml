@@ -51,6 +51,9 @@ jobs:
       # ENABLE_DISPATCH=true — belt and braces.
       LINEAR_API_TOKEN: ${{ secrets.LINEAR_API_TOKEN }}
       ENABLE_DISPATCH: ${{ vars.ENABLE_DISPATCH }}
+      # Pass the (contents:read-scoped) Actions token so the reconcile script can
+      # discover open PRs for eligibility — reads only, never writes (GPT review #5).
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:

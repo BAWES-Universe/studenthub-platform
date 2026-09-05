@@ -40,7 +40,7 @@ function capturedFetch() {
   return impl;
 }
 
-test("launch 202 + run id -> RUNNING, external_run_id + granular adapter_status retained", async () => {
+test("launch 202 + agent_trigger_run_id -> RUNNING, external_run_id stored immediately", async () => {
   const out = await launchBuilder({
     issue_id: "SHU-50",
     authorization_ref: "SHU-50",
@@ -49,11 +49,12 @@ test("launch 202 + run id -> RUNNING, external_run_id + granular adapter_status 
     task_context: "ctx",
     api_trigger_id: TRIGGER,
     token: TOKEN,
-    fetchImpl: mockFetch(202, { id: "apirun_xyz", status: "in_progress" }),
+    fetchImpl: mockFetch(202, { conversation_url: "https://chatgpt.com/c/xyz", agent_trigger_run_id: "apirun_xyz" }),
   });
   assert.equal(out.stage, "RUNNING");
   assert.equal(out.external_run_id, "apirun_xyz"); // stored IMMEDIATELY
-  assert.equal(out.adapter_status, "in_progress"); // granular status, not collapsed
+  assert.equal(out.adapter_status, "queued"); // accepted and waiting to start
+  assert.equal(out.worker_identity, undefined, "identity only comes from the poll's agent_id");
   assert.equal(out.ok, true);
 });
 
@@ -171,8 +172,10 @@ test("trigger request shape: endpoint, headers (beta + Idempotency-Key), body re
   assert.equal(opts.headers["Idempotency-Key"], launchIdempotencyKey({ attempt_id: ATTEMPT, target_sha: SHA }));
   const body = JSON.parse(opts.body);
   assert.equal(body.conversation_key, "studenthub:SHU-50:builder");
-  assert.match(body.prompt, /Authorized contract ref: SHU-50/);
-  assert.match(body.prompt, /Bound head: d{40}/);
+  assert.equal(typeof body.input, "string", "the documented field is input, not prompt");
+  assert.ok(!("prompt" in body), "prompt is NOT part of the trigger contract");
+  assert.match(body.input, /Authorized contract ref: SHU-50/);
+  assert.match(body.input, /Bound head: d{40}/);
 });
 
 test("buildTriggerHeaders carries the launch Idempotency-Key (LAUNCH_UNKNOWN stage embedded)", () => {
