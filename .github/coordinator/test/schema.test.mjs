@@ -249,7 +249,7 @@ test("machine never emits an invalid receipt across the happy path", () => {
     [{ type: "launch" }, "LAUNCH_UNKNOWN"],
     [{ type: "worker_ack", external_run_id: "apirun_full", adapter_status: "queued" }, "RUNNING"],
     [{ type: "run_status", status: "in_progress" }, "RUNNING"],
-    [{ type: "run_status", status: "completed", callback: { links: ["https://github.com/x/pull/9"], attempt_id: current.attempt_id, target_sha: SHA } }, "COMPLETED"],
+    [{ type: "run_status", status: "completed", callback: { links: ["https://github.com/x/pull/9"], attempt_id: current.attempt_id, target_sha: SHA, stage: "BUILD_READY" } }, "COMPLETED"],
   ]) {
     const r = nextReceiptState(current, ev);
     assert.equal(r.accepted, true, `step ${label}`);
