@@ -157,7 +157,6 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, killGraceMs = 30
         child.kill?.("SIGKILL");
         finish(spawnError);
       }, killGraceMs);
-      hardTimer.unref?.();
     }, options.timeout);
     timer.unref?.();
     child.stdout?.on("data", (chunk) => {
