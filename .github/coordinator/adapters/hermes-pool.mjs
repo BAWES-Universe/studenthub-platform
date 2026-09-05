@@ -41,7 +41,7 @@
 // io.now, env.HERMES_BIN) — the module is fully testable with a mocked worker
 // and temp dir; NO live spawn happens in tests or while dispatch is disabled.
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, hostname } from "node:os";
 
@@ -85,6 +85,39 @@ export function runIdMatchesAttempt(runId, attemptId) {
 function leasePath(poolDir, attemptId) {
   if (typeof attemptId !== "string" || !ATTEMPT_ID_RE.test(attemptId)) return null;
   return join(poolDir, "leases", `${attemptId}.json`);
+}
+
+function launchClaimPath(poolDir, attemptId) {
+  if (typeof attemptId !== "string" || !ATTEMPT_ID_RE.test(attemptId)) return null;
+  return join(poolDir, "leases", `${attemptId}.launch-claim`);
+}
+
+// A normal lease overwrite is not a claim: two processes can both read queued,
+// both write claiming, and both spawn. The exclusive sidecar is the single-host
+// launch mutex. It is held from immediately before the claiming transition
+// until spawn has either failed durably or reached a confirmed running state.
+function acquireLaunchClaim(poolDir, attemptId) {
+  const p = launchClaimPath(poolDir, attemptId);
+  if (p === null) return { ok: false, reason: "invalid attempt id — refusing launch claim" };
+  mkdirSync(join(poolDir, "leases"), { recursive: true });
+  try {
+    writeFileSync(p, JSON.stringify({ attempt_id: attemptId, pid: process.pid }), { flag: "wx" });
+    return { ok: true, path: p };
+  } catch (err) {
+    if (err?.code === "EEXIST") return { ok: false, reason: "launch already claimed by another coordinator" };
+    return { ok: false, reason: `launch claim failed: ${err.message}` };
+  }
+}
+
+function releaseLaunchClaim(claim) {
+  if (!claim?.ok || !claim.path) return;
+  try {
+    unlinkSync(claim.path);
+  } catch {
+    // A stale claim cannot cause a duplicate launch: running/terminal leases
+    // return before claim acquisition. Cleanup failure must not hide the real
+    // spawn outcome or crash coordination.
+  }
 }
 
 function readLease(poolDir, attemptId) {
@@ -211,12 +244,7 @@ export async function launchBuilder({
     // Resuming it is not a double-launch — no worker exists — and it is the only
     // way the reservation can ever be recovered. Claim it first so a concurrent
     // coordinator cannot resume the same lease.
-    lease = { ...existing.lease, status: "claiming", granular: "queued", heartbeat: now() };
-    try {
-      writeLease(poolDir, lease);
-    } catch (err) {
-      return { stage: "LAUNCH_UNKNOWN", reason: `lease claim failed: ${err.message}` };
-    }
+    lease = { ...existing.lease };
   } else if (existing.reason !== "no lease") {
     // Corrupt or unnameable lease: never overwrite durable state we cannot read.
     return { stage: "LAUNCH_UNKNOWN", reason: existing.reason };
@@ -264,6 +292,15 @@ export async function launchBuilder({
     // but UNKNOWN so nothing is fabricated.
     return { stage: "LAUNCH_UNKNOWN", reason: "no spawn impl configured — worker not started (activation wiring)" };
   }
+  const launchClaim = acquireLaunchClaim(poolDir, attempt_id);
+  if (!launchClaim.ok) return { stage: "LAUNCH_UNKNOWN", reason: launchClaim.reason };
+  lease = { ...lease, status: "claiming", granular: "queued", heartbeat: now() };
+  try {
+    writeLease(poolDir, lease);
+  } catch (err) {
+    releaseLaunchClaim(launchClaim);
+    return { stage: "LAUNCH_UNKNOWN", reason: `lease claim persistence failed: ${err.message}` };
+  }
   const failClosed = (message) => {
     lease.status = "failed";
     lease.granular = "failed";
@@ -273,6 +310,7 @@ export async function launchBuilder({
     } catch {
       // lease dir unwritable after spawn failure — nothing durable; report FAILED regardless
     }
+    releaseLaunchClaim(launchClaim);
     return { stage: "FAILED", error_code: "SPAWN_FAILED", error_kind: "run_failed", reason: `worker spawn failed: ${message}` };
   };
 
@@ -297,16 +335,24 @@ export async function launchBuilder({
     heartbeat: now(),
     spawn: { bin, args, pid: child.pid ?? null },
   };
+  let spawnStatePersisted = false;
   try {
     // The worker may already have advanced (or finished) the lease between
     // io.spawn returning and this write. Merge parent-owned spawn fields onto
     // the CURRENT lease instead of overwriting it with a stale in-memory copy.
     const merged = mergeParentSpawnFields(poolDir, attempt_id, spawnFields);
-    if (merged) lease = merged;
+    if (merged) {
+      lease = merged;
+      spawnStatePersisted = !PRE_SPAWN_STATUSES.includes(merged.status);
+    }
   } catch {
     // Lease update failed AFTER spawn: the worker IS running — report RUNNING;
     // the coordinator's durable receipt already holds the slot.
   }
+  // If the post-spawn lease transition was not durable, retain the exclusive
+  // claim. A later recovery may see LAUNCH_UNKNOWN, and releasing here would
+  // let it start a second worker even though this spawn succeeded.
+  if (spawnStatePersisted) releaseLaunchClaim(launchClaim);
   return { stage: "RUNNING", adapter_status: "in_progress", external_run_id: hermesRunId(attempt_id), worker_identity: workerId };
 }
 

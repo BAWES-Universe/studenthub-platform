@@ -4,7 +4,7 @@
 // mocked: temp lease dir + injected spawn; no live process is ever spawned.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdtempSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdtempSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launchBuilder, monitorRun, validateCallbackEvidence, buildWorkOrder, launchIdempotencyKey } from "../adapters/hermes-pool.mjs";
@@ -52,7 +52,7 @@ test("launch: lease is written QUEUED before the spawn, then RUNNING with a real
   assert.equal(out.adapter_status, "in_progress");
   assert.equal(out.external_run_id, `apirun_hermes_${ATTEMPT}`);
   assert.equal(out.worker_identity, "hermes:test-host:pid7");
-  assert.equal(leaseAtSpawnTime.status, "queued", "lease must be durable BEFORE the worker spawns");
+  assert.equal(leaseAtSpawnTime.status, "claiming", "the durable queued lease must be atomically claimed BEFORE the worker spawns");
   const lease = leaseAt(pool, ATTEMPT);
   assert.equal(lease.status, "running");
   assert.equal(lease.worker_id, "hermes:test-host:pid7");
@@ -406,6 +406,55 @@ test("F2: a pre-spawn queued lease NEVER reports RUNNING (no phantom worker)", a
   assert.equal(third.stage, "RUNNING", "recovery with real wiring must start the worker");
   assert.equal(calls.length, 1, "exactly one spawn for the recovered attempt");
   assert.equal(leaseAt(pool, ATTEMPT).status, "running");
+});
+
+test("F2b: concurrent recovery processes atomically claim one launch", async () => {
+  const pool = tempPool();
+  const reserved = await launchBuilder({ ...BASE, io: { poolDir: pool }, env: {} });
+  assert.equal(reserved.stage, "LAUNCH_UNKNOWN");
+
+  const children = [];
+  const spawn = () => {
+    const child = new EventEmitter();
+    // Keep pid absent until the explicit spawn event so awaitSpawn cannot
+    // settle process A before process B enters the recovery path.
+    child.pid = undefined;
+    children.push(child);
+    return child;
+  };
+
+  // Keep process A suspended after it has claimed the lease and invoked spawn.
+  // Process B then races the same durable queued attempt from a separate
+  // launchBuilder invocation. Exactly one process may reach io.spawn.
+  const first = launchBuilder({ ...BASE, io: poolIo(pool, spawn), env: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = launchBuilder({ ...BASE, io: poolIo(pool, spawn), env: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(children.length, 1, "one durable attempt must never launch two workers concurrently");
+  children[0].emit("spawn");
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.stage, "RUNNING");
+  assert.equal(b.stage, "LAUNCH_UNKNOWN");
+});
+
+test("F2c: a successful spawn with no durable running transition keeps the launch claim", async () => {
+  const pool = tempPool();
+  let spawnCount = 0;
+  const spawn = () => {
+    spawnCount += 1;
+    // Simulate loss of the lease between spawn confirmation and the parent's
+    // running-state merge. The first worker exists, so recovery must not spawn
+    // another merely because durable state is uncertain.
+    unlinkSync(join(pool, "leases", `${ATTEMPT}.json`));
+    return { pid: 9300, on: () => {} };
+  };
+  const first = await launchBuilder({ ...BASE, io: poolIo(pool, spawn), env: {} });
+  assert.equal(first.stage, "RUNNING");
+
+  const second = await launchBuilder({ ...BASE, io: poolIo(pool, spawn), env: {} });
+  assert.equal(second.stage, "LAUNCH_UNKNOWN");
+  assert.equal(spawnCount, 1, "uncertain persistence after a real spawn must never double-launch");
 });
 
 // F3 (CodeRabbit): child_process.spawn reports a missing binary by EMITTING
