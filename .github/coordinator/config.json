@@ -1,0 +1,10 @@
+{
+  "pilot_repo": "BAWES-Universe/studenthub-platform",
+  "max_dispatch": 1,
+  "enable_dispatch": false,
+  "adapter_pause_map": {},
+  "fixture_lane": {
+    "id": "SHU-FIXTURE",
+    "note": "seeded-defect fixture defined by Opus acceptance contract"
+  }
+}

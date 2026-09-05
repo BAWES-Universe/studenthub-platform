@@ -1,0 +1,83 @@
+{
+  "meta": {
+    "repo": "BAWES-Universe/studenthub-platform",
+    "team": "SHU",
+    "purpose": "Deterministic local-snapshot board for coordinator dry-run mode (LINEAR_API_TOKEN absent) and tests. Mirrors the normalized Linear card shape used by reconcile.mjs.",
+    "generated_at": "2026-09-05T00:00:00.000Z"
+  },
+  "openPRs": [],
+  "issues": [
+    {
+      "id": "SHU-FIXTURE-001",
+      "title": "Fixture: seeded-defect probe card (Opus acceptance contract pending — fixture_lane placeholder)",
+      "state": "Todo",
+      "priority": "High",
+      "labels": ["fixture-safe", "coordinator:pilot"],
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": null,
+      "blockers": []
+    },
+    {
+      "id": "SHU-201",
+      "title": "Card already in progress (state exclusion)",
+      "state": "In Progress",
+      "priority": "Urgent",
+      "labels": [],
+      "assignee": { "name": "alice" },
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": null,
+      "blockers": []
+    },
+    {
+      "id": "SHU-202",
+      "title": "Assigned card waiting in backlog (active assignee claim)",
+      "state": "Backlog",
+      "priority": "High",
+      "labels": [],
+      "assignee": { "name": "bob" },
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": null,
+      "blockers": []
+    },
+    {
+      "id": "SHU-203",
+      "title": "Card awaiting a decision (needs:decision)",
+      "state": "Todo",
+      "priority": "High",
+      "labels": ["needs:decision"],
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": null,
+      "blockers": []
+    },
+    {
+      "id": "SHU-204",
+      "title": "Card with an open PR in flight",
+      "state": "Todo",
+      "priority": "Medium",
+      "labels": [],
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [{ "number": 123, "state": "OPEN" }],
+      "parent": null,
+      "blockers": []
+    },
+    {
+      "id": "SHU-205",
+      "title": "R3 card without a named verifier (needs verifier:<name> label)",
+      "state": "Backlog",
+      "priority": "R3",
+      "labels": [],
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": null,
+      "blockers": []
+    }
+  ]
+}

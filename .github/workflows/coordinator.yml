@@ -1,0 +1,54 @@
+name: coordinator
+
+# Deterministic dispatch coordinator — DRY-RUN by default.
+# This workflow never merges anything and holds no authority. With
+# ENABLE_DISPATCH != "true" (repo variable, default false) it only computes and
+# reports the ready/excluded set from durable Linear/GitHub state.
+#
+# Events: native GitHub events act as reconcile triggers; the hourly schedule is
+# the reconciliation backstop. NOTE: scheduled runs may be delayed or dropped by
+# GitHub under load — this is an OBSERVED TARGET (~1h), not a guarantee. No Linear
+# webhook receiver in the pilot (receiver-gap accepted; add only if measured
+# latency demands it).
+#
+# issue_comment events are WAKE HINTS ONLY: the coordinator reconstructs all
+# authorization from durable state and ignores comments from bot actors.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, closed]
+  push:
+    branches: [main]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+# One repo-wide group shared by ALL coordinator entry points serializes runs.
+# Workers (Codex builder, Claude verifier) run in SEPARATE workflows and are
+# deliberately NOT in this group, so implementation/review never serialize behind
+# a long coordinator job. cancel-in-progress: false — a surviving run always
+# re-reads durable state, so coalescing redundant wakes is safe.
+concurrency:
+  group: coordinator-dispatch
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Empty/absent token is tolerated: reconcile falls back to local-snapshot
+      # dry-run mode and makes no writes. Dispatch additionally requires
+      # ENABLE_DISPATCH=true — belt and braces.
+      LINEAR_API_TOKEN: ${{ secrets.LINEAR_API_TOKEN }}
+      ENABLE_DISPATCH: ${{ vars.ENABLE_DISPATCH }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reconcile (dry-run unless ENABLE_DISPATCH=true)
+        run: node .github/coordinator/reconcile.mjs
