@@ -61,7 +61,13 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     } catch (error) {
       // The migration file runs as one multi-statement query inside the
       // transaction; any failure aborts the whole file, nothing is recorded.
-      await client.query("ROLLBACK");
+      // A failing ROLLBACK (e.g. connection dropped) must not mask the
+      // original error (Sentry finding, valid).
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Swallow: the original error below is the one the caller needs.
+      }
       throw error;
     } finally {
       client.release();

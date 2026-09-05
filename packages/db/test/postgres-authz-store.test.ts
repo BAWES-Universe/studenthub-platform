@@ -19,9 +19,13 @@ import {
   resolveActiveContext,
   type RoleGrant,
 } from "@studenthub/contracts";
-import { PostgresAuthzStore, runMigrations } from "@studenthub/db";
+import { PostgresAuthzStore, runMigrations, bootstrapAdmin } from "@studenthub/db";
 
-const DB_URL = process.env.DATABASE_URL ?? "postgres://postgres:shu55labpw@127.0.0.1:55432/studenthub_authz";
+// DATABASE_URL is REQUIRED: the suite runs against a scratch Postgres that
+// must never be a default in the repo. CI injects it (postgres service in
+// .github/workflows/ci.yml); local runs export it (e.g. the SHU-55 lab
+// database at 127.0.0.1:55432/studenthub_authz).
+const DB_URL = process.env.DATABASE_URL ?? "";
 
 const ACME = "acme";
 const ACME_INDIA = "acme-india";
@@ -39,6 +43,12 @@ function makeStore(): PostgresAuthzStore {
 }
 
 before(async () => {
+  if (DB_URL.length === 0) {
+    throw new Error(
+      "DATABASE_URL is required to run the db suite: point it at a scratch " +
+        "Postgres (CI injects it via the postgres service container).",
+    );
+  }
   adminPool = new pg.Pool({ connectionString: DB_URL });
   await runMigrations(adminPool);
 });
@@ -101,30 +111,30 @@ test("parity: principals register, list, and resolve by pbuuid", async () => {
   await store.registerPrincipal(
     createPrincipal({
       id: "alice",
-      pbuuids: ["alice-1@bawes.net", "alice-2@bawes.net"],
+      pbuuids: ["alice-1@example.invalid", "alice-2@example.invalid"],
       displayName: "Alice",
-      email: "alice-1@bawes.net",
+      email: "alice-1@example.invalid",
     }),
   );
 
-  const byPbuuid = await store.findPrincipalByPbuuid("alice-1@bawes.net");
+  const byPbuuid = await store.findPrincipalByPbuuid("alice-1@example.invalid");
   assert.equal(byPbuuid?.id, "alice");
   assert.equal(byPbuuid?.displayName, "Alice");
-  assert.deepEqual([...(byPbuuid?.pbuuids ?? [])].sort(), ["alice-1@bawes.net", "alice-2@bawes.net"]);
+  assert.deepEqual([...(byPbuuid?.pbuuids ?? [])].sort(), ["alice-1@example.invalid", "alice-2@example.invalid"]);
 
   const direct = await store.getPrincipal("alice");
   assert.equal(direct?.id, "alice");
-  assert.equal(direct?.email, "alice-1@bawes.net");
+  assert.equal(direct?.email, "alice-1@example.invalid");
 
-  assert.equal((await store.findPrincipalByPbuuid("alice-2@bawes.net"))?.id, "alice");
-  assert.equal(await store.findPrincipalByPbuuid("ghost@bawes.net"), undefined);
+  assert.equal((await store.findPrincipalByPbuuid("alice-2@example.invalid"))?.id, "alice");
+  assert.equal(await store.findPrincipalByPbuuid("ghost@example.invalid"), undefined);
   assert.equal(await store.getPrincipal("ghost"), undefined);
 
   const listed = await store.listPrincipals();
   assert.deepEqual(listed.map((p) => p.id), ["alice"]);
 
   // Optional fields omitted on the input stay undefined on the output.
-  await store.registerPrincipal(createPrincipal({ id: "minimal", pbuuids: ["m@bawes.net"] }));
+  await store.registerPrincipal(createPrincipal({ id: "minimal", pbuuids: ["m@example.invalid"] }));
   const minimal = await store.getPrincipal("minimal");
   assert.equal(minimal?.displayName, undefined);
   assert.equal(minimal?.email, undefined);
@@ -136,7 +146,7 @@ test("parity: principals register, list, and resolve by pbuuid", async () => {
 
 async function seedOrgAndPrincipal(store: PostgresAuthzStore): Promise<void> {
   await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
-  await store.registerPrincipal(createPrincipal({ id: "alice", pbuuids: ["alice@bawes.net"] }));
+  await store.registerPrincipal(createPrincipal({ id: "alice", pbuuids: ["alice@example.invalid"] }));
 }
 
 test("parity: grantMany is many-at-once; re-granting upgrades self -> subtree in place", async () => {
@@ -226,43 +236,43 @@ test("parity: clearGrantsForPrincipal empties the grant set but keeps the princi
 test("integrity: re-registering a principal detaches its removed pbuuids", async () => {
   const store = makeStore();
   await store.registerPrincipal(
-    createPrincipal({ id: "p1", pbuuids: ["a@bawes.net", "b@bawes.net"] }),
+    createPrincipal({ id: "p1", pbuuids: ["a@example.invalid", "b@example.invalid"] }),
   );
-  assert.equal((await store.findPrincipalByPbuuid("a@bawes.net"))?.id, "p1");
+  assert.equal((await store.findPrincipalByPbuuid("a@example.invalid"))?.id, "p1");
 
-  // Detach a@bawes.net by re-registering without it.
-  await store.registerPrincipal(createPrincipal({ id: "p1", pbuuids: ["b@bawes.net"] }));
+  // Detach a@example.invalid by re-registering without it.
+  await store.registerPrincipal(createPrincipal({ id: "p1", pbuuids: ["b@example.invalid"] }));
 
   assert.equal(
-    await store.findPrincipalByPbuuid("a@bawes.net"),
+    await store.findPrincipalByPbuuid("a@example.invalid"),
     undefined,
     "a detached identity must stop resolving — otherwise it still reaches p1's grants",
   );
-  assert.equal((await store.findPrincipalByPbuuid("b@bawes.net"))?.id, "p1");
+  assert.equal((await store.findPrincipalByPbuuid("b@example.invalid"))?.id, "p1");
 
   // Detaching the LAST pbuuid leaves a principal with no identities at all.
   await store.registerPrincipal(createPrincipal({ id: "p1", pbuuids: [] }));
-  assert.equal(await store.findPrincipalByPbuuid("b@bawes.net"), undefined);
+  assert.equal(await store.findPrincipalByPbuuid("b@example.invalid"), undefined);
   assert.equal((await store.getPrincipal("p1"))?.id, "p1");
 });
 
 test("integrity: a pbuuid owned by another principal cannot be claimed", async () => {
   const store = makeStore();
   await store.registerPrincipal(
-    createPrincipal({ id: "victim", pbuuids: ["khalid@bawes.net"] }),
+    createPrincipal({ id: "victim", pbuuids: ["victim@example.invalid"] }),
   );
 
   await assert.rejects(
     () =>
       store.registerPrincipal(
-        createPrincipal({ id: "attacker", pbuuids: ["khalid@bawes.net"] }),
+        createPrincipal({ id: "attacker", pbuuids: ["victim@example.invalid"] }),
       ),
     (error: unknown) =>
       error instanceof TypeError &&
       /already owned by principal 'victim'/.test(error.message),
   );
 
-  assert.equal((await store.findPrincipalByPbuuid("khalid@bawes.net"))?.id, "victim");
+  assert.equal((await store.findPrincipalByPbuuid("victim@example.invalid"))?.id, "victim");
   assert.equal(
     await store.getPrincipal("attacker"),
     undefined,
@@ -273,20 +283,20 @@ test("integrity: a pbuuid owned by another principal cannot be claimed", async (
 test("integrity: a rejected registration leaves NO trace of any of its pbuuids", async () => {
   const store = makeStore();
   await store.registerPrincipal(
-    createPrincipal({ id: "victim", pbuuids: ["taken@bawes.net"] }),
+    createPrincipal({ id: "victim", pbuuids: ["taken@example.invalid"] }),
   );
   // First pbuuid is free, second is taken: the whole transaction must roll
   // back, so even the free one is not indexed (matches the in-memory
   // validation-before-mutation behavior).
   await assert.rejects(() =>
     store.registerPrincipal(
-      createPrincipal({ id: "attacker", pbuuids: ["free@bawes.net", "taken@bawes.net"] }),
+      createPrincipal({ id: "attacker", pbuuids: ["free@example.invalid", "taken@example.invalid"] }),
     ),
     TypeError,
   );
-  assert.equal(await store.findPrincipalByPbuuid("free@bawes.net"), undefined);
+  assert.equal(await store.findPrincipalByPbuuid("free@example.invalid"), undefined);
   assert.equal(
-    (await store.findPrincipalByPbuuid("taken@bawes.net"))?.id,
+    (await store.findPrincipalByPbuuid("taken@example.invalid"))?.id,
     "victim",
     "the victim's mapping survives the failed claim",
   );
@@ -298,7 +308,7 @@ test("integrity: a rejected registration leaves NO trace of any of its pbuuids",
 
 test("concurrency: parallel claims of one pbuuid — exactly one principal wins", async () => {
   const store = makeStore();
-  const shared = "shared@bawes.net";
+  const shared = "shared@example.invalid";
   const principalA = createPrincipal({ id: "principal-a", pbuuids: [shared] });
   const principalB = createPrincipal({ id: "principal-b", pbuuids: [shared] });
 
@@ -344,9 +354,15 @@ test("persistence: contexts resolve identically after close + fresh store on the
     createOrganization({ id: ACME_INDIA, name: "Acme India Pvt", parentOrgId: ACME }),
   );
   await storeA.registerPrincipal(
-    createPrincipal({ id: "khalid", pbuuids: ["khalid@bawes.net"], displayName: "Khalid" }),
+    createPrincipal({
+      id: "root-admin",
+      pbuuids: ["root-admin@example.invalid"],
+      displayName: "Root Admin",
+    }),
   );
-  await storeA.grantMany("khalid", [{ orgId: ACME, role: "admin", scope: "subtree" }]);
+  await storeA.grantMany("root-admin", [
+    { orgId: ACME, role: "admin", scope: "subtree" },
+  ]);
   await storeA.close();
 
   // A NEW store over the same database — nothing in memory, everything from
@@ -354,13 +370,13 @@ test("persistence: contexts resolve identically after close + fresh store on the
   // would have: the subtree grant at acme reaches acme-india.
   const storeB = makeStore();
   const resolution = await resolveActiveContext(
-    { kind: "pbuuid", pbuuid: "khalid@bawes.net" },
+    { kind: "pbuuid", pbuuid: "root-admin@example.invalid" },
     { orgId: ACME_INDIA, role: "admin" },
     storeB,
   );
   assert.equal(resolution.kind, "authorized");
   if (resolution.kind === "authorized") {
-    assert.equal(resolution.context.principalId, "khalid");
+    assert.equal(resolution.context.principalId, "root-admin");
     assert.equal(resolution.context.orgId, ACME_INDIA);
     assert.equal(resolution.context.role, "admin");
     assert.equal(resolution.context.scope, "subtree");
@@ -368,7 +384,7 @@ test("persistence: contexts resolve identically after close + fresh store on the
     assert.equal(resolution.context.direct, false);
   }
 
-  const grants = await storeB.listGrantsForPrincipal("khalid");
+  const grants = await storeB.listGrantsForPrincipal("root-admin");
   assert.equal(grants.length, 1);
   assert.equal(grants[0]?.orgId, ACME);
   assert.equal(grants[0]?.role, "admin");
@@ -376,4 +392,144 @@ test("persistence: contexts resolve identically after close + fresh store on the
 
   const orgs = await storeB.listOrganizations();
   assert.equal(orgs.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Integrity: organization tree cycles (parity with InMemoryAuthzStore)
+// ---------------------------------------------------------------------------
+
+test("integrity: reparenting into a cycle (A->B->A) is rejected atomically", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "a", name: "A" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "b", name: "B", parentOrgId: "a" }),
+  );
+
+  // Reparent A under B would close the cycle A->B->A. The self-referencing
+  // FK alone permits it (both rows exist); the store must reject it like
+  // InMemoryAuthzStore does.
+  await assert.rejects(
+    () =>
+      store.upsertOrganization(
+        createOrganization({ id: "a", name: "A", parentOrgId: "b" }),
+      ),
+    (error: unknown) =>
+      error instanceof TypeError && /cycle detected/.test(error.message),
+  );
+
+  // The rejected reparent must leave the tree exactly as it was.
+  assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+  assert.equal((await store.getOrganization("b"))?.parentOrgId, "a");
+});
+
+test("integrity: an organization cannot become its own parent at the store boundary", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "a", name: "A" }));
+
+  // Hand-built object bypassing createOrganization: the store itself must
+  // reject self-parenting (a raw UPDATE would satisfy the FK).
+  await assert.rejects(
+    () => store.upsertOrganization({ id: "a", name: "A", parentOrgId: "a" }),
+    (error: unknown) =>
+      error instanceof TypeError && /own parent/.test(error.message),
+  );
+
+  assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+});
+
+test("integrity: a cycle spanning three organizations is rejected (A<-B->A closed via C)", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "a", name: "A" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "b", name: "B", parentOrgId: "a" }),
+  );
+  await store.upsertOrganization(
+    createOrganization({ id: "c", name: "C", parentOrgId: "b" }),
+  );
+
+  // Reparent A under C: A -> C -> B -> A.
+  await assert.rejects(
+    () =>
+      store.upsertOrganization(
+        createOrganization({ id: "a", name: "A", parentOrgId: "c" }),
+      ),
+    TypeError,
+  );
+  assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Bootstrap: the one-root-admin rule is a DATABASE property (SHU-55, GPT R3)
+// ---------------------------------------------------------------------------
+
+test("bootstrap concurrency: two simultaneous bootstraps cannot create two root admins", async () => {
+  // Two independent processes (separate pools) race a fresh database. Both
+  // can pass the pre-write SELECT guard; migration 0002's partial unique
+  // index is what actually enforces one root admin — exactly one run must
+  // succeed and exactly one admin grant row may exist afterwards.
+  const poolA = new pg.Pool({ connectionString: DB_URL });
+  const poolB = new pg.Pool({ connectionString: DB_URL });
+  try {
+    const [resultA, resultB] = await Promise.allSettled([
+      bootstrapAdmin(poolA, { pbuuid: "admin-a@example.invalid" }),
+      bootstrapAdmin(poolB, { pbuuid: "admin-b@example.invalid" }),
+    ]);
+
+    const settled = [resultA, resultB];
+    const fulfilledCount = settled.filter((r) => r.status === "fulfilled").length;
+    assert.equal(
+      fulfilledCount,
+      1,
+      `exactly one bootstrap may create the root admin, got ${fulfilledCount} ` +
+        `(both succeeding would be the TOCTOU two-root-admins bug)`,
+    );
+    const loser = settled.find((r) => r.status === "rejected");
+    assert.ok(loser, "the losing bootstrap must be rejected");
+    if (loser?.status === "rejected") {
+      assert.match(
+        String(loser.reason),
+        /second platform admin/i,
+        `loser must fail with the second-admin refusal, got: ${String(loser.reason)}`,
+      );
+    }
+
+    const { rows } = await adminPool.query<{ principal_id: string }>(
+      "SELECT principal_id FROM grants WHERE org_id = 'root' AND role = 'admin'",
+    );
+    assert.equal(rows.length, 1, "the database holds exactly one root admin grant");
+  } finally {
+    await poolA.end();
+    await poolB.end();
+  }
+});
+
+test("bootstrap: re-running with the exact same admin is a no-op; a different identity is refused", async () => {
+  const pool = new pg.Pool({ connectionString: DB_URL });
+  try {
+    const first = await bootstrapAdmin(pool, {
+      pbuuid: "admin@example.invalid",
+      displayName: "Admin",
+    });
+    assert.equal(first, "created");
+
+    const second = await bootstrapAdmin(pool, {
+      pbuuid: "admin@example.invalid",
+      displayName: "Admin",
+    });
+    assert.equal(second, "noop", "identical principal + grant is idempotent");
+
+    await assert.rejects(
+      () => bootstrapAdmin(pool, { pbuuid: "intruder@example.invalid" }),
+      (error: unknown) =>
+        error instanceof Error && /second platform admin/i.test(error.message),
+    );
+
+    const { rows } = await adminPool.query<{ principal_id: string }>(
+      "SELECT principal_id FROM grants WHERE org_id = 'root' AND role = 'admin'",
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.principal_id, "principal-admin@example.invalid");
+  } finally {
+    await pool.end();
+  }
 });

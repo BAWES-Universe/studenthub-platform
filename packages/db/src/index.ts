@@ -7,4 +7,5 @@
  */
 export { PostgresAuthzStore } from "./postgres-authz-store.js";
 export { runMigrations } from "./migrate.js";
+export { bootstrapAdmin, type BootstrapResult } from "./bootstrap-admin.js";
 export { DEFAULT_DATABASE_URL, databaseUrl } from "./connection.js";

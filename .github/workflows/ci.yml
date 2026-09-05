@@ -11,7 +11,27 @@ permissions:
 jobs:
   fast-checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    # The db suite (packages/db) runs against a real Postgres on every PR:
+    # migrations apply to a scratch database and the store's integrity +
+    # concurrency tests execute there — the same reason Opus asked for CI to
+    # apply migrations to a scratch DB per PR.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: shu55labpw
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:shu55labpw@localhost:55432/studenthub_authz
     steps:
       - uses: actions/checkout@v4
         with:

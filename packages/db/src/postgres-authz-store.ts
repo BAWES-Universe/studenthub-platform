@@ -30,6 +30,11 @@
  * grantMany requires the principal and org rows to exist. The in-memory
  * store tolerated orphans; the schema intentionally does not — callers seed
  * parents before children (bootstrap-admin does).
+ *
+ * Organization-cycle rejection IS enforced here, in parity with the
+ * in-memory store (see upsertOrganization): self-parenting and transitive
+ * A→B→A cycles are rejected transactionally, because the self-referencing
+ * FK alone permits both once the parent row exists.
  */
 import pg from "pg";
 import type { PoolConfig, Pool as PgPool } from "pg";
@@ -169,15 +174,68 @@ export class PostgresAuthzStore implements AuthzStore {
   }
 
   async upsertOrganization(org: Organization): Promise<void> {
-    // ON CONFLICT (id) makes this both an insert and a rename/reparent update.
-    // NULL parent_org_id (root) is written as SQL NULL; a parent that does not
-    // exist yet is rejected by the FK — seed parents before children.
-    await this.#pool.query(
-      `INSERT INTO organizations (id, name, parent_org_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_org_id = EXCLUDED.parent_org_id`,
-      [org.id, org.name, org.parentOrgId ?? null],
-    );
+    // Self-parenting and transitive cycles are rejected in ONE transaction,
+    // mirroring InMemoryAuthzStore.#assertNoCycles. The self-referencing FK
+    // alone cannot enforce this: once both rows exist, UPDATE parent_org_id
+    // is FK-valid for a self-parent and for A→B→A.
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Lock the org row and its prospective parent so concurrent
+      // reparenting serializes: two writers building a cycle in opposite
+      // directions (A→B and B→A) both take both row locks, so the second
+      // sees the first's committed parent and is rejected below instead of
+      // both committing a cycle.
+      const lockTargets =
+        org.parentOrgId === undefined ? [org.id] : [org.id, org.parentOrgId];
+      await client.query(
+        "SELECT id FROM organizations WHERE id = ANY($1::text[]) FOR UPDATE",
+        [lockTargets],
+      );
+      if (org.parentOrgId === org.id) {
+        throw new TypeError(`organization '${org.id}' cannot be its own parent`);
+      }
+      if (org.parentOrgId !== undefined) {
+        // Walk UP the parent chain from the NEW parent: reaching the org
+        // itself means the reparent closes a cycle.
+        const { rows } = await client.query<{ hit: boolean }>(
+          `WITH RECURSIVE walk(id) AS (
+             SELECT parent_org_id FROM organizations WHERE id = $1
+             UNION
+             SELECT o.parent_org_id
+             FROM organizations o
+             JOIN walk w ON o.id = w.id
+           )
+           SELECT EXISTS (SELECT 1 FROM walk WHERE id = $2) AS hit`,
+          [org.parentOrgId, org.id],
+        );
+        if (rows[0]?.hit === true) {
+          throw new TypeError(`organization cycle detected at '${org.id}'`);
+        }
+      }
+      // ON CONFLICT (id) makes this both an insert and a rename/reparent
+      // update. NULL parent_org_id (root) is written as SQL NULL; a parent
+      // that does not exist yet is rejected by the FK — seed parents first.
+      await client.query(
+        `INSERT INTO organizations (id, name, parent_org_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_org_id = EXCLUDED.parent_org_id`,
+        [org.id, org.name, org.parentOrgId ?? null],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      // A failing ROLLBACK (e.g. the connection dropped mid-transaction)
+      // must not mask the original error — the server aborts the
+      // transaction on disconnect anyway (Sentry finding, valid).
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Swallow: the original error below is the one the caller needs.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // --- PrincipalStore ------------------------------------------------------------
@@ -243,7 +301,14 @@ export class PostgresAuthzStore implements AuthzStore {
       }
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      // A failing ROLLBACK (e.g. the connection dropped mid-transaction)
+      // must not mask the original error — the server aborts the
+      // transaction on disconnect anyway (Sentry finding, valid).
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Swallow: the original error below is the one the caller needs.
+      }
       if (isUniqueViolation(error)) {
         // The only unique constraint this transaction can hit while inserting
         // is the pbuuid primary key. Identify the conflicting pbuuid and its
