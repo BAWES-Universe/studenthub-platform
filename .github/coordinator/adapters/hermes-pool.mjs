@@ -12,6 +12,8 @@
 //   - the lease is written {status:"queued"} BEFORE the worker spawns
 //     (reserve precedes launch — the host-local analogue of the durable
 //     RESERVED receipt in Linear);
+//   - parent spawn metadata lives in <attempt_id>.json.spawn; readLease
+//     combines it with worker state, without ever overwriting worker updates;
 //   - the worker updates the lease to running/done/failed with heartbeat
 //     timestamps as it progresses;
 //   - a second launch of the SAME attempt_id never re-spawns: the existing
@@ -115,6 +117,20 @@ function processIsAlive(pid, io = {}) {
 export const CLAIM_PHASES = Object.freeze(["pre_spawn", "spawn_attempted", "spawned"]);
 const RETRY_SAFE_PHASE = "pre_spawn";
 
+// A claim record must name THIS attempt and carry a plausible owner. Anything
+// else cannot be reasoned about and is handled as an unreadable claim.
+function claimShapeValid(prior, attemptId) {
+  return Boolean(
+    prior &&
+      typeof prior === "object" &&
+      prior.attempt_id === attemptId &&
+      Number.isInteger(prior.owner_pid) &&
+      prior.owner_pid > 0 &&
+      typeof prior.owner_host === "string" &&
+      CLAIM_PHASES.includes(prior.phase),
+  );
+}
+
 // The claim is held only across io.spawn plus two small writes, so a claim
 // older than this was left by a process that is not coming back.
 const DEFAULT_CLAIM_TTL_MS = 10 * 60 * 1000;
@@ -206,6 +222,11 @@ function acquireLaunchClaim(poolDir, attemptId, io = {}) {
   let readable = true;
   try {
     prior = JSON.parse(readFileSync(p, "utf8"));
+    // Ownership shape validation (GPT-6, PR #24): a record that does not name
+    // THIS attempt with a plausible owner is not a claim we can reason about.
+    // It is treated exactly like an unreadable one — never silently, because a
+    // silent refusal is the deadlock this whole mechanism exists to avoid.
+    if (!claimShapeValid(prior, attemptId)) readable = false;
   } catch {
     readable = false; // zero-length or corrupt — a crash mid-write
   }
@@ -291,12 +312,33 @@ function releaseLaunchClaim(claim) {
   }
 }
 
-function readLease(poolDir, attemptId) {
+export function readLease(poolDir, attemptId) {
   const p = leasePath(poolDir, attemptId);
   if (p === null) return { ok: false, reason: "invalid attempt id — refusing to derive a lease path" };
   if (!existsSync(p)) return { ok: false, reason: "no lease" };
   try {
     const lease = JSON.parse(readFileSync(p, "utf8"));
+    if (!lease || typeof lease !== "object" || lease.attempt_id !== attemptId ||
+        !["queued", "claiming", "running", "done", "failed"].includes(lease.status)) {
+      return { ok: false, reason: "invalid lease ownership or status" };
+    }
+    // Parent spawn bookkeeping has its own immutable record. The parent NEVER
+    // overwrites a lease after spawn; concurrent worker updates cannot be lost.
+    const spawnPath = `${p}.spawn`;
+    if (existsSync(spawnPath)) {
+      const fields = JSON.parse(readFileSync(spawnPath, "utf8"));
+      if (fields.attempt_id !== attemptId || fields.target_sha !== lease.target_sha) {
+        return { ok: false, reason: "invalid spawn record binding" };
+      }
+      return { ok: true, lease: {
+        ...lease,
+        ...(PRE_SPAWN_STATUSES.includes(lease.status) ? {
+          status: "running", granular: "in_progress", heartbeat: fields.heartbeat,
+        } : {}),
+        worker_id: lease.worker_id ?? fields.worker_id,
+        spawn: fields.spawn,
+      } };
+    }
     return { ok: true, lease };
   } catch {
     return { ok: false, reason: "corrupt lease" };
@@ -310,29 +352,6 @@ function writeLease(poolDir, lease, { exclusive = false } = {}) {
   // "wx" makes first creation atomic: two coordinators cannot both believe they
   // reserved the same attempt.
   writeFileSync(p, JSON.stringify(lease, null, 2), exclusive ? { flag: "wx" } : undefined);
-}
-
-// The parent owns spawn bookkeeping; the WORKER owns run status. The parent's
-// post-spawn write must therefore never clobber a status the worker has already
-// advanced — re-read and merge instead of writing a stale in-memory object.
-const WORKER_OWNED_TERMINAL = Object.freeze(["done", "failed"]);
-function mergeParentSpawnFields(poolDir, attemptId, fields) {
-  const cur = readLease(poolDir, attemptId);
-  const base = cur.ok ? cur.lease : null;
-  if (!base) return null;
-  const workerMovedOn = WORKER_OWNED_TERMINAL.includes(base.status);
-  const merged = {
-    ...base,
-    worker_id: base.worker_id ?? fields.worker_id ?? null,
-    spawn: fields.spawn,
-    // Only the parent's own pre-spawn state may be advanced to "running"; a
-    // worker-owned terminal state stands.
-    status: workerMovedOn ? base.status : fields.status,
-    granular: workerMovedOn ? base.granular : fields.granular,
-    heartbeat: workerMovedOn ? base.heartbeat : fields.heartbeat,
-  };
-  writeLease(poolDir, merged);
-  return merged;
 }
 
 // Pre-spawn lease states: the reservation is durable but NO worker exists yet.
@@ -393,6 +412,9 @@ export async function launchBuilder({
   attempt_id,
   target_sha,
   task_context,
+  repo,
+  branch,
+  recovery = false,
   fetchImpl = fetch, // unused by the pool lane (callback channel is Linear/GitHub via the worker), kept for interface parity
   io = {},
   env = {},
@@ -401,6 +423,14 @@ export async function launchBuilder({
   const now = () => (io.now ? io.now() : new Date().toISOString());
   const existing = readLease(poolDir, attempt_id);
   let lease;
+  const bindingMatches = (value) => value.attempt_id === attempt_id &&
+    value.issue_id === issue_id && value.authorization_ref === authorization_ref &&
+    value.target_sha === target_sha && value.repo === repo && value.branch === branch;
+  // A Linear comment is not launch authority. Recovery must find the matching
+  // reservation in the host-local store written by the initial dispatch path.
+  if ((recovery && !existing.ok) || (existing.ok && !bindingMatches(existing.lease))) {
+    return { stage: "LAUNCH_UNKNOWN", reason: "no matching host-local reservation — recovery refused" };
+  }
   const mapped = existing.ok ? leaseOutcome(existing.lease) : null;
   if (mapped && mapped.stage === "DONE") {
     return { stage: "FAILED", error_code: "ATTEMPT_ALREADY_TERMINAL", error_kind: "duplicate_launch", reason: `attempt ${attempt_id} already reached a terminal lease state (${existing.lease.status})` };
@@ -426,6 +456,8 @@ export async function launchBuilder({
       authorization_ref,
       target_sha,
       requested_worker: "hermes-box",
+      repo,
+      branch,
       status: "queued",
       granular: "queued",
       worker_id: null,
@@ -476,7 +508,21 @@ export async function launchBuilder({
     }
     return { stage: "LAUNCH_UNKNOWN", reason: launchClaim.reason };
   }
-  lease = { ...lease, status: "claiming", granular: "queued", heartbeat: now() };
+  // The snapshot taken before acquiring the claim may be arbitrarily stale:
+  // another process may have completed spawn and released its claim meanwhile.
+  const claimed = readLease(poolDir, attempt_id);
+  if (!claimed.ok || !bindingMatches(claimed.lease)) {
+    releaseLaunchClaim(launchClaim);
+    return { stage: "LAUNCH_UNKNOWN", reason: "reservation changed before claim acquisition" };
+  }
+  const claimedOutcome = leaseOutcome(claimed.lease);
+  if (claimedOutcome.stage !== "LAUNCH_UNKNOWN") {
+    releaseLaunchClaim(launchClaim);
+    return claimedOutcome.stage === "DONE"
+      ? { stage: "FAILED", error_code: "ATTEMPT_ALREADY_TERMINAL", error_kind: "duplicate_launch" }
+      : claimedOutcome;
+  }
+  lease = { ...claimed.lease, status: "claiming", granular: "queued", heartbeat: now() };
   try {
     writeLease(poolDir, lease);
   } catch (err) {
@@ -529,14 +575,13 @@ export async function launchBuilder({
   };
   let spawnStatePersisted = false;
   try {
-    // The worker may already have advanced (or finished) the lease between
-    // io.spawn returning and this write. Merge parent-owned spawn fields onto
-    // the CURRENT lease instead of overwriting it with a stale in-memory copy.
-    const merged = mergeParentSpawnFields(poolDir, attempt_id, spawnFields);
-    if (merged) {
-      lease = merged;
-      spawnStatePersisted = !PRE_SPAWN_STATUSES.includes(merged.status);
-    }
+    // Write a separate immutable parent record. Worker status/heartbeat are
+    // never read-modify-written by the parent after io.spawn.
+    writeFileSync(`${leasePath(poolDir, attempt_id)}.spawn`, JSON.stringify({
+      ...spawnFields, attempt_id, target_sha,
+    }), { flag: "wx" });
+    const confirmed = readLease(poolDir, attempt_id);
+    spawnStatePersisted = confirmed.ok && !PRE_SPAWN_STATUSES.includes(confirmed.lease.status);
   } catch {
     // Lease update failed AFTER spawn: the worker IS running — report RUNNING;
     // the coordinator's durable receipt already holds the slot.
