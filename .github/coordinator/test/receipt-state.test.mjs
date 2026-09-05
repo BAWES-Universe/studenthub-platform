@@ -97,6 +97,32 @@ test("LAUNCH_UNKNOWN can durably bind a discovered local session without becomin
   assert.equal(conflicting.accepted, false, "a second session can never replace the durable identity");
 });
 
+test("run_discovered is accepted only from LAUNCH_UNKNOWN and requires both identities", () => {
+  const reserved = reserve();
+  const validEvent = {
+    type: "run_discovered",
+    external_run_id: "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53",
+    worker_identity: `codex:${reserved.attempt_id}`,
+  };
+  const wrongStage = nextReceiptState(reserved, validEvent);
+  assert.equal(wrongStage.accepted, false);
+  assert.match(wrongStage.reason, /requires LAUNCH_UNKNOWN/);
+
+  const launched = launch(reserved).receipt;
+  for (const event of [
+    { ...validEvent, external_run_id: "" },
+    { ...validEvent, worker_identity: "" },
+    { ...validEvent, external_run_id: null },
+    { ...validEvent, worker_identity: null },
+  ]) {
+    const missing = nextReceiptState(launched, event);
+    assert.equal(missing.accepted, false);
+    assert.match(missing.reason, /requires provider run and worker identities/);
+    assert.equal(missing.receipt.stage, "LAUNCH_UNKNOWN");
+    assert.equal(missing.receipt.external_run_id, null);
+  }
+});
+
 test("worker ack -> RUNNING stores external_run_id IMMEDIATELY and retains granular adapter_status", () => {
   const r = launch(reserve());
   const ack = nextReceiptState(r.receipt, {

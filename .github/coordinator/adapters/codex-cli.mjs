@@ -6,7 +6,7 @@
 // OpenAI help + auth docs). Codex CLI logs in with a personal ChatGPT account
 // (`codex login`, device code — headless-safe) and runs non-interactively.
 //
-// Official contract (verified against the installed CLI + developers.openai.com/codex/noninteractive):
+// Official contract (verified against the Codex CLI reference and non-interactive docs):
 //   codex exec --json --sandbox workspace-write -C <dir> [PROMPT]
 //   codex exec resume <SESSION_ID> [PROMPT]      <- resume by EXACT id, NEVER --last
 //   --json  -> stdout is JSONL; the FIRST event is {"type":"thread.started","thread_id":"<uuid>"}
@@ -127,7 +127,7 @@ function runExecFile(execFileImpl, file, args, options) {
   });
 }
 
-function runSpawn(spawnImpl, file, args, options, onStdoutLine) {
+function runSpawn(spawnImpl, file, args, options, onStdoutLine, killGraceMs = 30_000) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -141,16 +141,23 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine) {
     let pending = "";
     let spawnError = null;
     let settled = false;
+    let hardTimer = null;
     const finish = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (hardTimer) clearTimeout(hardTimer);
       if (pending.length) onStdoutLine(pending);
       resolve({ error, stdout, stderr });
     };
     const timer = setTimeout(() => {
       spawnError = Object.assign(new Error("codex process timed out"), { killed: true, signal: "SIGTERM" });
       child.kill?.("SIGTERM");
+      hardTimer = setTimeout(() => {
+        child.kill?.("SIGKILL");
+        finish(spawnError);
+      }, killGraceMs);
+      hardTimer.unref?.();
     }, options.timeout);
     timer.unref?.();
     child.stdout?.on("data", (chunk) => {
@@ -323,7 +330,7 @@ function recordedProcessState(record, { hostnameImpl = nodeHostname, processStar
   return currentStart === record.child_start ? "alive" : "dead";
 }
 
-export function persistDurableSession({ stateDir, attempt_id, target_sha, thread_id, owner_host = null, child_pid = null, child_start = null }) {
+export function persistDurableSession({ stateDir, attempt_id, target_sha, thread_id, owner_host = null, child_pid = null, child_start = null, cleanupTempImpl = fs.unlinkSync }) {
   if (!stateDir || !THREAD_ID_RE.test(thread_id)) throw new Error("durable Codex session path or thread id unavailable");
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const finalPath = sidecarPath(stateDir, attempt_id);
@@ -350,7 +357,9 @@ export function persistDurableSession({ stateDir, attempt_id, target_sha, thread
     throw error;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
-    try { fs.unlinkSync(tempPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+    // The hard-link above is the durability boundary. Temp cleanup is best
+    // effort and must never replace either a successful persist or its cause.
+    try { cleanupTempImpl(tempPath); } catch { /* best effort */ }
   }
   return finalPath;
 }
@@ -374,6 +383,7 @@ export async function launchBuilder({
   schemaFile = null,
   io = {},
   timeout_ms = 45 * 60 * 1000,
+  timeout_grace_ms = 30_000,
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
@@ -487,7 +497,7 @@ export async function launchBuilder({
     // tests. Production uses spawn so thread.started is persisted before exit.
     result = execImpl !== nodeExecFile && !io.spawnImpl
       ? await runExecFile(execImpl, "codex", args, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
-      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine);
+      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, timeout_grace_ms);
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {
@@ -512,7 +522,9 @@ export async function launchBuilder({
     launchError = error;
   } finally {
     if (ownsSchemaFile) {
-      try { fs.unlinkSync(schemaPath); } catch (error) { if (error?.code !== "ENOENT") durabilityError ??= error; }
+      // A leftover schema in the private state directory is not an unrecorded
+      // session. Cleanup failure must not erase a valid terminal result.
+      try { (io.unlinkSync ?? fs.unlinkSync)(schemaPath); } catch { /* best effort */ }
     }
   }
   // A session that demonstrably exists but was never durably recorded outranks

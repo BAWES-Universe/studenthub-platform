@@ -1,6 +1,6 @@
 // Codex CLI adapter contract tests (SHU-63 pivot).
 //
-// Pins the REAL wire shapes verified against the installed CLI + official docs:
+// Pins the documented wire shapes from the official CLI reference:
 //   codex exec --json --sandbox workspace-write -C <dir> [PROMPT]
 //   codex exec resume <EXACT-THREAD-ID> [PROMPT]   (never --last)
 //   stdout JSONL: first event {"type":"thread.started","thread_id":"<uuid>"}
@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -84,7 +84,7 @@ function recordingExec(calls) {
   };
 }
 
-test("launch args match the installed CLI contract: exec --json --sandbox workspace-write, never danger-full-access", async () => {
+test("launch args match the documented CLI contract: exec --json --sandbox workspace-write, never danger-full-access", async () => {
   const calls = [];
   const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
   const out = await launchBuilder({ ...launchInput(), execFileImpl: recordingExec(calls), schemaFile: join(schemaDir, "schema.json") });
@@ -229,6 +229,45 @@ test("resume binds the EXACT thread id from the receipt; --last never appears; m
   assert.equal(calls2.length, 0);
 });
 
+test("buildCodexArgs refuses every non-exact resume identity, including --last and traversal", () => {
+  const opts = { resume: true, schemaFile: "/tmp/schema.json", cwd: CWD };
+  for (const sessionId of [null, "", "--last", "../session", THREAD.toUpperCase(), `${THREAD}/child`]) {
+    assert.throws(() => buildCodexArgs(launchInput(), { ...opts, sessionId }), /exact thread id/);
+  }
+  const args = buildCodexArgs(launchInput(), { ...opts, sessionId: THREAD });
+  assert.equal(args[args.indexOf("resume") + 1], THREAD);
+  assert.equal(args.includes("--last"), false);
+});
+
+test("model stdout cannot manufacture quota, authentication, or access failures", async () => {
+  const modelText = JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "quota exhausted; authentication expired; 403 forbidden" } });
+  const error = Object.assign(new Error("process exited"), { code: 7 });
+  const out = await launchBuilder({
+    ...launchInput(),
+    execFileImpl: execResult({ error, stdout: `${modelText}\n`, stderr: "ordinary worker failure" }),
+    schemaFile: join(mkdtempSync(join(tmpdir(), "codex-stdout-")), "schema.json"),
+  });
+  assert.equal(out.stage, "FAILED");
+  assert.equal(out.error_code, "CODEX_7");
+  assert.equal(out.error_kind, undefined);
+  assert.equal(out.pause_adapter, undefined);
+});
+
+test("missing durable state directory HOLDs before checkout or spawn", async () => {
+  let starts = 0;
+  const out = await launchBuilder({
+    ...launchInput(),
+    env: { PATH: "/usr/bin" },
+    io: {},
+    readHeadImpl: async () => { starts += 1; return SHA; },
+    execFileImpl: (...args) => { starts += 1; args.at(-1)(null, "", ""); },
+  });
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+  assert.match(out.reason, /durable state directory is unavailable/);
+  assert.equal(starts, 0);
+});
+
 test("credential isolation: child env is an allowlist; OPENAI_API_KEY/BASE_URL never leak", async () => {
   const env = buildCodexEnvironment({
     PATH: "/usr/bin",
@@ -356,6 +395,66 @@ test("durable session sidecar is immutable and bound to one attempt plus target 
     /different Codex thread/,
   );
   assert.equal(readDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: "6".repeat(40) }), null, "a sidecar cannot cross a target-SHA boundary");
+});
+
+test("durable session reader rejects symlinks and non-files", () => {
+  const target = mkdtempSync(join(tmpdir(), "codex-sidecar-target-"));
+  const record = JSON.stringify({ version: 1, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD });
+  const targetFile = join(target, "record.json");
+  writeFileSync(targetFile, record);
+
+  const linkedState = mkdtempSync(join(tmpdir(), "codex-sidecar-link-"));
+  symlinkSync(targetFile, join(linkedState, `${ATTEMPT}.json`));
+  assert.equal(readDurableSession({ stateDir: linkedState, attempt_id: ATTEMPT, target_sha: SHA }), null);
+
+  const directoryState = mkdtempSync(join(tmpdir(), "codex-sidecar-dir-"));
+  mkdirSync(join(directoryState, `${ATTEMPT}.json`));
+  assert.equal(readDurableSession({ stateDir: directoryState, attempt_id: ATTEMPT, target_sha: SHA }), null);
+});
+
+test("temp cleanup failure cannot override a successfully linked durable session", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-temp-cleanup-"));
+  assert.doesNotThrow(() => persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    cleanupTempImpl: () => { throw Object.assign(new Error("cleanup denied"), { code: "EACCES" }); },
+  }));
+  assert.equal(readDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA }), THREAD);
+});
+
+test("timeout escalates to SIGKILL and settles even when the child never closes", async () => {
+  const signals = [];
+  const neverClosingSpawn = () => {
+    const child = new EventEmitter();
+    child.pid = 4242;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = (signal) => { signals.push(signal); return true; };
+    return child;
+  };
+  const out = await launchBuilder({
+    ...launchInput(),
+    spawnImpl: neverClosingSpawn,
+    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-timeout-")), processStartToken: () => "fixture-start", hostname: () => "fixture-host" },
+    timeout_ms: 5,
+    timeout_grace_ms: 5,
+  });
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+});
+
+test("generated-schema cleanup failure cannot replace a valid completion", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-schema-cleanup-error-"));
+  const out = await launchBuilder({
+    ...launchInput(),
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
+    io: { codexStateDir: stateDir, unlinkSync: () => { throw Object.assign(new Error("cleanup denied"), { code: "EACCES" }); } },
+  });
+  assert.equal(out.stage, "COMPLETED");
+  assert.equal(out.pause_adapter, undefined);
 });
 
 test("resume requires a definitely exited bound process; live, foreign-host, and ambiguous owners never authorize it", async () => {
