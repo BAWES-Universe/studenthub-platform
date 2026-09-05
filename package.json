@@ -9,15 +9,19 @@
     "tools/*"
   ],
   "scripts": {
-    "build": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && tsc -p tsconfig.build.json",
+    "build": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && npm run build -w @studenthub/db && tsc -p tsconfig.build.json",
     "start:gateway": "node dist/apps/gateway/src/index.js",
     "start:worker": "node dist/apps/worker/src/index.js",
     "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/packages/contracts/test/authz.test.js dist/packages/search/test/search-adapter.test.js dist/apps/gateway/test/health.test.js dist/apps/gateway/test/authz-middleware.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js dist/tools/search-bakeoff/test/search-bakeoff.test.js && npm run test:assertion",
+    "test:db": "npm run build && node --test dist/packages/db/test/postgres-authz-store.test.js",
     "benchmark:search": "npm run build && node dist/tools/search-bakeoff/src/run.js",
     "dry-run:import": "npm run build && node dist/tools/legacy-import/src/dry-run.js",
-    "typecheck": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && tsc --noEmit",
+    "typecheck": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && npm run build -w @studenthub/db && tsc --noEmit",
     "test:assertion": "vitest run packages/actor-assertion/test",
-    "test:search-integration": "npm run build && node --test dist/packages/search/test/typesense-integration.test.js"
+    "test:search-integration": "npm run build && node --test dist/packages/search/test/typesense-integration.test.js",
+    "migrate": "npm run migrate -w @studenthub/db",
+    "db:migrate": "npm run migrate -w @studenthub/db",
+    "db:bootstrap:admin": "npm run bootstrap:admin -w @studenthub/db"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
