@@ -988,3 +988,23 @@ test("Sentry: a bound lease whose repo/branch DISAGREE is refused, not quarantin
   assert.equal(out.stage, "LAUNCH_UNKNOWN", "a receipt naming a different reservation is refused, and stays retryable");
   assert.equal(calls.length, 0);
 });
+
+// The parent's spawn sidecar is combined into the lease by readLease, and it
+// carries its own attempt_id/target_sha so a record belonging to a different
+// attempt can never be folded in. Mutation-testing the integrated head showed
+// that check breaking no test, so it is pinned here: an unbound control is the
+// defect this branch keeps rediscovering.
+test("a spawn record that does not bind to its lease is refused, never merged", async () => {
+  for (const [field, value] of [["attempt_id", "bbbbbbbb-2222-4333-8444-555555555555"], ["target_sha", "e".repeat(40)]]) {
+    const pool = tempPool();
+    await launchBuilder({ ...BASE, io: poolIo(pool, spawnRecorder([])), env: {} });
+    const spawnPath = join(pool, "leases", `${ATTEMPT}.json.spawn`);
+    assert.equal(existsSync(spawnPath), true, "the parent writes its spawn record beside the lease");
+    const record = JSON.parse(readFileSync(spawnPath, "utf8"));
+    writeFileSync(spawnPath, JSON.stringify({ ...record, [field]: value }));
+
+    const out = await monitorRun({ run_id: RUN_ID, attempt_id: ATTEMPT, target_sha: SHA, io: poolIo(pool, null), env: {} });
+    assert.equal(out.stage, "UNCHANGED", `${field}: a foreign spawn record must never be trusted`);
+    assert.match(out.reason, /invalid spawn record binding/);
+  }
+});
