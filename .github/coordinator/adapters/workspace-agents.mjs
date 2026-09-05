@@ -138,10 +138,14 @@ export async function monitorRun({
   current_head,
   token,
   fetchImpl = fetch,
+  api_trigger_id,
   base = API_BASE,
   runsBase,
 }) {
-  const runsEndpoint = runsBase ?? `${base}/v1/workspace_agents/runs`;
+  const runsEndpoint =
+    api_trigger_id != null
+      ? `${base}/v1/workspace_agents/${api_trigger_id}/runs` // official contract shape
+      : runsBase ?? `${base}/v1/workspace_agents/runs`;
   let res;
   try {
     res = await fetchImpl(`${runsEndpoint}/${run_id}`, {

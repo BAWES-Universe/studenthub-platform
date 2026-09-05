@@ -229,7 +229,31 @@ export function requestedWorkerFor(issue) {
 // Adapter name for a worker family. The pilot has exactly one adapter; verifier /
 // box families still route through it (requested_worker documents the family).
 export function adapterNameFor(_requestedWorker) {
-  return "workspace-agents";
+  return "workspace-agents"; // pilot: single builder adapter
+}
+
+// dispatchEnabledFor — dispatch requires BOTH gates in DIFFERENT layers (CodeRabbit):
+// the in-repo config flag (enable_dispatch: false committed by default) AND the
+// workflow environment variable. One gate alone never enables dispatch.
+export function dispatchEnabledFor(env = {}, config = {}) {
+  return config.enable_dispatch === true && (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
+}
+
+// resolveAuthorizationRef — a dispatch is only legal against an APPROVED contract:
+//   1. an explicit candidate.authorization_ref that passes the regex;
+//   2. a canonical card id (SHU-<n>) — the ratified card IS the contract ref;
+//   3. the fixture lane's configured authorization_ref for fixture probes
+//      (SHU-FIXTURE-001 itself never matches ^SHU-[0-9]+$ — Sentry HIGH fix).
+// Anything else resolves to null and the dispatch is REFUSED loudly.
+export function resolveAuthorizationRef(candidate, config = {}) {
+  if (candidate.authorization_ref && authorizationRefValid(candidate.authorization_ref)) return candidate.authorization_ref;
+  if (typeof candidate.id === "string" && /^SHU-[0-9]+$/.test(candidate.id)) return candidate.id;
+  const fixtureLane = config.fixture_lane ?? {};
+  if (fixtureLane.id && candidate.id === fixtureLane.id) {
+    if (fixtureLane.authorization_ref && authorizationRefValid(fixtureLane.authorization_ref)) return fixtureLane.authorization_ref;
+    return null; // fixture lane misconfigured — refuse loudly, never guess
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,14 +264,25 @@ export function receiptSchemaPath() {
   return path.join(__dirname, "receipt-schema.json");
 }
 
+// Receipt schema is static — parse once, reuse (CodeRabbit: don't re-read the
+// file on every validation call).
+let _receiptSchema = null;
+function receiptSchema() {
+  if (_receiptSchema === null) _receiptSchema = JSON.parse(fs.readFileSync(receiptSchemaPath(), "utf8"));
+  return _receiptSchema;
+}
+
 // validateReceipt — hand-rolled validator over the canonical receipt-schema.json.
 // Enforces: presence of all schema-declared fields, primitive types, enums,
 // patterns (attempt_id uuid, authorization_ref contract-bound, target_sha 40-hex,
 // apirun_ prefix for external_run_id) plus the stage invariants the schema's
 // allOf expresses in JSON Schema form. Returns {valid, errors:[...]}.
+// NEVER throws on malformed input: receipts are read back from Linear comment
+// bodies (parseReceiptCommentBody), so a corrupt persisted record must yield a
+// validation result, not a TypeError (CodeRabbit).
 export function validateReceipt(receipt) {
   const errors = [];
-  const schema = JSON.parse(fs.readFileSync(receiptSchemaPath(), "utf8"));
+  const schema = receiptSchema();
 
   if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) {
     return { valid: false, errors: ["receipt must be an object"] };
@@ -325,9 +360,12 @@ export function validateReceipt(receipt) {
 
   // ---- Cross-field stage invariants (mirrors the allOf in the schema file). ----
   // RESERVED/LAUNCH_UNKNOWN: no run can exist before launch is acknowledged.
-  // RUNNING/COMPLETED/HOLD: an accepted run exists (id + identity + granular status).
+  // RUNNING/COMPLETED: an accepted run exists (id + identity + granular status).
   // FAILED: either a post-acceptance run failure (fields set) or a trigger refused
   // before acceptance (quota/access wall) — in which case all three stay null.
+  // HOLD: reachable BOTH pre-acceptance (manual_claim from RESERVED/LAUNCH_UNKNOWN)
+  // and post-acceptance (completed-without-callback) — each shape validates against
+  // the run fields it actually carries (CodeRabbit).
   const stage = receipt.stage;
   const runId = receipt.external_run_id;
   const workerIdentity = receipt.worker_identity;
@@ -346,8 +384,21 @@ export function validateReceipt(receipt) {
       if (workerIdentity !== null) errors.push("FAILED without a run must keep worker_identity null");
       if (adapterStatus !== null) errors.push("FAILED without a run must keep adapter_status null (no upstream run status exists)");
     }
+  } else if (stage === "HOLD") {
+    if (runId === null) {
+      // Pre-acceptance HOLD (manual_claim / refused run before any ack): no run
+      // identity exists — nulls are CORRECT here, not a validation failure.
+      if (workerIdentity !== null) errors.push("HOLD without a run must keep worker_identity null");
+      if (adapterStatus !== null) errors.push("HOLD without a run must keep adapter_status null");
+    } else {
+      // Post-acceptance HOLD (completed-without-callback): the run was acknowledged.
+      if (workerIdentity === null) errors.push("HOLD with a run requires worker_identity");
+      if (!ADAPTER_STATUSES.includes(adapterStatus)) {
+        errors.push(`HOLD with a run requires a granular adapter_status (${ADAPTER_STATUSES.join("|")})`);
+      }
+    }
   } else {
-    // RUNNING / COMPLETED / HOLD imply an accepted run.
+    // RUNNING / COMPLETED imply an accepted run.
     if (runId === null) errors.push(`stage ${stage} requires external_run_id (run accepted by the API)`);
     if (workerIdentity === null) errors.push(`stage ${stage} requires worker_identity (actual run/session id)`);
     if (!ADAPTER_STATUSES.includes(adapterStatus)) {
@@ -360,14 +411,17 @@ export function validateReceipt(receipt) {
   if (workerIdentity !== null && runId === null) {
     errors.push("worker_identity set while external_run_id null is contradictory");
   }
-  if (stage === "COMPLETED" || stage === "FAILED" || stage === "HOLD") {
-    if (receipt.timestamps.terminal === null) errors.push(`stage ${stage} requires timestamps.terminal`);
+  // Guarded derefs: structural errors above already recorded malformed
+  // timestamps/evidence_links — never let a corrupt record crash the validator.
+  const timestamps = receipt.timestamps && typeof receipt.timestamps === "object" && !Array.isArray(receipt.timestamps) ? receipt.timestamps : null;
+  if (timestamps && (stage === "COMPLETED" || stage === "FAILED" || stage === "HOLD")) {
+    if (timestamps.terminal === null) errors.push(`stage ${stage} requires timestamps.terminal`);
   }
-  if (stage === "RESERVED") {
-    if (receipt.timestamps.launch !== null) errors.push("RESERVED must not carry a launch timestamp (reserve precedes launch)");
+  if (timestamps && stage === "RESERVED") {
+    if (timestamps.launch !== null) errors.push("RESERVED must not carry a launch timestamp (reserve precedes launch)");
   }
   if (stage === "COMPLETED") {
-    if (receipt.evidence_links.length === 0) {
+    if (!Array.isArray(receipt.evidence_links) || receipt.evidence_links.length === 0) {
       errors.push("COMPLETED requires validated evidence_links (no callback, no COMPLETED)");
     }
   }
@@ -548,6 +602,15 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         return unchanged(`callback out of order from stage ${receipt.stage}`);
       }
       const evidence = { links: event.links ?? [], attempt_id: event.attempt_id, target_sha: event.target_sha };
+      // COMPLETED requires an ACKNOWLEDGED run (external_run_id present). Evidence
+      // for a run whose ack was lost (LAUNCH_UNKNOWN) holds for reconciliation —
+      // never mint COMPLETED without a run identity (CodeRabbit).
+      if (receipt.external_run_id === null) {
+        const next = note("callback received but the run was never acknowledged (LAUNCH_UNKNOWN) — HOLD for reconciliation");
+        next.stage = "HOLD";
+        next.timestamps.terminal = at();
+        return { receipt: next, accepted: true };
+      }
       if (callbackEvidenceValid(receipt, evidence, ctx)) {
         const next = note("validated callback received (attempt + target_sha match)");
         next.stage = "COMPLETED";
@@ -664,6 +727,7 @@ export const LINEAR_ISSUES_QUERY = `
   query CoordinatorIssues($team: String!) {
     issues(team: { key: $team }, filter: { state: { type: { neq: "canceled" } } }) {
       nodes {
+        id
         identifier
         title
         state { name }
@@ -684,12 +748,22 @@ export const LINEAR_COMMENT_CREATE_MUTATION = `
     }
   }`;
 
+export const LINEAR_ISSUE_COMMENTS_QUERY = `
+  query CoordinatorIssueComments($issueId: String!) {
+    issue(id: $issueId) {
+      comments(first: 100, orderBy: createdAt) {
+        nodes { body createdAt }
+      }
+    }
+  }`;
+
 // normalizeLinearIssue — best-effort normalization of a Linear issue node into the
 // resolver's shape. Fields the API does not expose map to neutral values; the
 // resolver never invents backlog for a state it cannot see.
 export function normalizeLinearIssue(node, repo) {
   return {
     id: node.identifier,
+    linearId: node.id ?? null, // Linear API calls need the UUID, not the identifier
     title: node.title ?? "",
     state: node.state?.name ?? null,
     priority: node.priorityLabel ?? "No priority",
@@ -708,6 +782,14 @@ export function normalizeLinearIssue(node, repo) {
 export async function fetchLinearIssues({ token, repo, team = "SHU", fetchImpl = fetch }) {
   const data = await sendLinear(LINEAR_ISSUES_QUERY, { team }, token, fetchImpl);
   return (data?.issues?.nodes ?? []).map((n) => normalizeLinearIssue(n, repo));
+}
+
+// fetchIssueComments — read an issue's comment thread (durable receipts + pause
+// markers live there). issueId is the Linear UUID when known, else the identifier
+// (mocked tests / snapshot mode tolerate either).
+export async function fetchIssueComments({ issueId, token, fetchImpl = fetch }) {
+  const data = await sendLinear(LINEAR_ISSUE_COMMENTS_QUERY, { issueId }, token, fetchImpl);
+  return data?.issue?.comments?.nodes ?? [];
 }
 
 // Receipt comments: the receipt JSON is embedded in a fenced block so it can be
@@ -730,6 +812,36 @@ export function parseReceiptCommentBody(body) {
   } catch {
     return null;
   }
+}
+
+// PAUSE_MARKER_RE — durable adapter-pause notice written as a Linear comment on the
+// issue whose dispatch hit the wall (quota/access). Read back on every reconcile so
+// a paused adapter never auto-launches a doomed attempt after a workflow restart
+// (CodeRabbit: the in-memory pause died with the process).
+export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
+
+// parseReceiptsFromComments — reconstruct durable receipts from Linear comment
+// bodies. Comments arrive newest-first from the API, so iterate oldest->newest
+// and keep the LAST receipt per attempt_id: a RUNNING comment supersedes the
+// RESERVED comment that preceded it.
+export function parseReceiptsFromComments(comments = []) {
+  const byAttempt = new Map();
+  for (const comment of comments ?? []) {
+    const parsed = parseReceiptCommentBody(comment?.body);
+    if (parsed && typeof parsed === "object" && parsed.receipt_version === "1.0.0" && parsed.attempt_id) {
+      byAttempt.set(parsed.attempt_id, parsed);
+    }
+  }
+  return [...byAttempt.values()];
+}
+
+export function parsePausedAdapters(comments = []) {
+  const paused = new Set();
+  for (const comment of comments ?? []) {
+    const m = PAUSE_MARKER_RE.exec(comment?.body ?? "");
+    if (m) paused.add(m[1]);
+  }
+  return [...paused];
 }
 
 // ---------------------------------------------------------------------------
@@ -813,8 +925,9 @@ async function liveIssues({ config, linearToken, githubToken, fetchImpl = fetch 
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, io = {}) {
-  const config = loadConfig(io.configPath);
-  const dispatchEnabled = (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
+  const config0 = loadConfig(io.configPath);
+  const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
+  const dispatchEnabled = dispatchEnabledFor(env, config);
   const linearToken = env.LINEAR_API_TOKEN ?? "";
   const githubToken = env.GITHUB_TOKEN ?? "";
   const fetchImpl = io.fetchImpl ?? fetch;
@@ -843,7 +956,28 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     source = `local snapshot (${path.basename(io.snapshotPath ?? "snapshot.json")})`;
   }
 
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts: io.receipts ?? [] });
+  // Durable state: read receipts + adapter-pause markers back from Linear comment
+  // bodies BEFORE deciding anything. A surviving RESERVED/RUNNING receipt consumes
+  // the slot (no duplicate reservation); a pause marker keeps a quota-walled
+  // adapter from auto-launching on the next issue (CodeRabbit persistence fix).
+  let receipts = [...(io.receipts ?? [])];
+  if (linearToken && io.fetchDurable !== false) {
+    const preEligibility = computeEligibility({ issues, openPRs, config });
+    const pausedAdapters = new Set(Object.keys(config.adapter_pause_map).filter((k) => config.adapter_pause_map[k]));
+    for (const candidate of preEligibility.ready) {
+      try {
+        const comments = await fetchIssueComments({ issueId: candidate.linearId ?? candidate.id, token: linearToken, fetchImpl });
+        receipts = receipts.concat(parseReceiptsFromComments(comments));
+        for (const adapter of parsePausedAdapters(comments)) pausedAdapters.add(adapter);
+      } catch (err) {
+        // Inaccessible state => conservative: treat the issue as held, never launch.
+        if (io.stdout) io.stdout(`durable read failed for ${candidate.id}: ${err.message} — candidate held`);
+      }
+    }
+    for (const adapter of pausedAdapters) config.adapter_pause_map[adapter] = true;
+  }
+
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled });
 
   if (!dispatchEnabled) {
@@ -867,9 +1001,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (io.stdout) io.stdout(`dispatch: no reservation — ${skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}`);
     return 0;
   }
-  const authorization_ref = candidate.authorization_ref ?? candidate.id;
-  if (!authorizationRefValid(authorization_ref)) {
-    throw new Error(`dispatch refused: authorization_ref "${authorization_ref}" is not contract-bound (^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$) — free text rejected`);
+  const authorization_ref = resolveAuthorizationRef(candidate, config);
+  if (!authorization_ref) {
+    throw new Error(`dispatch refused: no contract-bound authorization_ref for ${candidate.id} (free text and unapproved fixture ids are rejected)`);
   }
   const repo = candidate.repo ?? config.pilot_repo;
   const branch = candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
@@ -889,7 +1023,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);
   }
   // Persist RESERVED *before* anything reaches the adapter (reserve precedes launch).
-  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: receipt.issue_id, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
+  const linearIssueId = candidate.linearId ?? receipt.issue_id; // UUID for the real API, identifier tolerated by mocks
+  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
   const adapterModule = await import("./adapters/workspace-agents.mjs");
   const launch = await adapterModule.launchBuilder({
     issue_id: receipt.issue_id,
@@ -901,15 +1036,44 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "",
     fetchImpl,
   });
-  // Fold the adapter outcome into the receipt state machine.
-  const transition =
-    launch.stage === "RUNNING"
-      ? nextReceiptState(receipt, { type: "worker_ack", external_run_id: launch.external_run_id, adapter_status: launch.adapter_status })
-      : launch.stage === "LAUNCH_UNKNOWN"
-        ? nextReceiptState(receipt, { type: "launch" })
-        : nextReceiptState(receipt, { type: "run_status", status: "failed", error_code: launch.error_code, error_kind: launch.error_kind });
+  // Drive the state machine IN ORDER: the launch event first (RESERVED ->
+  // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
+  // (ack -> RUNNING / stays LAUNCH_UNKNOWN / upstream failure). A worker ack
+  // straight from RESERVED is out of order by design — launch always precedes it.
+  let transition = nextReceiptState(receipt, { type: "launch" });
+  if (transition.accepted) {
+    if (launch.stage === "RUNNING") {
+      transition = nextReceiptState(transition.receipt, {
+        type: "worker_ack",
+        external_run_id: launch.external_run_id,
+        adapter_status: launch.adapter_status,
+      });
+    } else if (launch.stage !== "LAUNCH_UNKNOWN") {
+      transition = nextReceiptState(transition.receipt, {
+        type: "run_status",
+        status: "failed",
+        error_code: launch.error_code,
+        error_kind: launch.error_kind,
+      });
+    }
+  }
+  if (!transition.accepted) {
+    if (io.stdout) io.stdout(`dispatch: ${candidate.id} transition REJECTED (${transition.reason ?? "unknown reason"}) — state unchanged, slot held`);
+    return 2;
+  }
   const next = transition.receipt;
-  if (launch.pause_adapter) config.adapter_pause_map[adapterNameFor(candidate.requested_worker)] = true;
+  // DURABLE RECEIPT: the transitioned state (RUNNING/LAUNCH_UNKNOWN/FAILED) is
+  // persisted to Linear IMMEDIATELY — the durable receipt must never sit at
+  // RESERVED after the API accepted the run (CodeRabbit).
+  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(next) }, linearToken, fetchImpl);
+  // DURABLE PAUSE: quota/access failures persist an adapter-pause marker so a
+  // workflow restart cannot auto-launch a doomed attempt (in-memory pause dies
+  // with the process — CodeRabbit). Safe default when the map key is absent.
+  if (launch.pause_adapter) {
+    const adapter = adapterNameFor(candidate.requested_worker);
+    config.adapter_pause_map[adapter] = true;
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+  }
   if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})`);
   return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" ? 0 : 2;
 }

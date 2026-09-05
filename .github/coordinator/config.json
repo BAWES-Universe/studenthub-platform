@@ -4,7 +4,8 @@
   "enable_dispatch": false,
   "adapter_pause_map": {},
   "fixture_lane": {
-    "id": "SHU-FIXTURE",
+    "id": "SHU-FIXTURE-001",
+    "authorization_ref": "FIXTURE-OPUS-CONTRACT-20260905",
     "note": "seeded-defect fixture defined by Opus acceptance contract"
   }
 }
