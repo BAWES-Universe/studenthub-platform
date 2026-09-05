@@ -1215,7 +1215,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // receipts untouched forever would permanently consume max_dispatch.
     const lifecycleStartReceipts = [...receipts];
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
-      if (!waToken || !waTrigger) {
+      // Credential gate is PER ADAPTER (CodeRabbit, PR #22). Applying the
+      // Workspace Agents check before adapter routing meant a hermes-box attempt
+      // — whose adapter never touches those credentials — could never be
+      // recovered, and its slot was held forever.
+      if (adapterNameFor(receipt.requested_worker) === "workspace-agents" && (!waToken || !waTrigger)) {
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — Workspace Agents credentials unavailable; slot held`);
         continue;
       }

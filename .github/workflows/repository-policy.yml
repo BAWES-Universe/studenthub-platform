@@ -45,3 +45,28 @@ jobs:
             }
           ' .github/CODEOWNERS
           test -s .github/pull_request_template.md
+      - name: Reject tracked dependency trees and host-absolute symlinks
+        run: |
+          # A committed node_modules entry (PR #22 shipped one as a symlink to
+          # /home/bawes/...) leaks a host path and can resolve dependencies from
+          # an unintended location on any checkout that happens to have it.
+          if git ls-files --error-unmatch node_modules >/dev/null 2>&1; then
+            echo "::error::node_modules is tracked in git — remove it (git rm --cached node_modules)"
+            exit 1
+          fi
+          if git ls-files | grep -qxE '(.*/)?node_modules(/.*)?'; then
+            echo "::error::a node_modules path is tracked in git"
+            exit 1
+          fi
+          # Any tracked symlink (mode 120000) whose target is an absolute path is
+          # machine-specific and must never be committed.
+          bad=$(git ls-files -s | awk '$1 == "120000" { $1=$2=$3=""; sub(/^[ \t]+/, ""); print }' |
+            while IFS= read -r link; do
+              target=$(git cat-file -p "$(git rev-parse "HEAD:$link")")
+              case "$target" in /*) printf '%s -> %s\n' "$link" "$target" ;; esac
+            done)
+          if [ -n "$bad" ]; then
+            echo "::error::tracked symlink(s) point at absolute host paths:"
+            echo "$bad"
+            exit 1
+          fi
