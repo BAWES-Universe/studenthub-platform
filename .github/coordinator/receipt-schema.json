@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/BAWES-Universe/studenthub-platform/.github/coordinator/receipt-schema.json",
+  "title": "Coordinator dispatch receipt",
+  "description": "Durable audit record of one dispatch attempt. Canonical doc for the receipt shape; reconcile.mjs implements the checked subset (types/enums/patterns) plus cross-field stage invariants in code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "issue_id",
+    "attempt_id",
+    "authorization_ref",
+    "stage",
+    "requested_worker",
+    "worker_identity",
+    "repo",
+    "branch",
+    "target_sha",
+    "external_run_id",
+    "adapter_status",
+    "timestamps",
+    "evidence_links",
+    "last_activity",
+    "notes"
+  ],
+  "properties": {
+    "receipt_version": { "type": "string", "const": "1.0.0" },
+    "issue_id": { "type": "string", "minLength": 1 },
+    "attempt_id": {
+      "type": "string",
+      "description": "Minted ONCE at reservation. Never re-minted after a LAUNCH_UNKNOWN retry — retries reuse it via the Idempotency-Key.",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "authorization_ref": {
+      "type": "string",
+      "description": "Approved contract reference the dispatch is authorized against. Free text is REJECTED — only real Linear issue refs (SHU-NNNN) or seeded FIXTURE refs.",
+      "pattern": "^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$"
+    },
+    "stage": {
+      "type": "string",
+      "description": "RESERVED is persisted BEFORE any launch is sent. Timeout alone never changes stage and never releases the slot.",
+      "enum": ["RESERVED", "LAUNCH_UNKNOWN", "RUNNING", "COMPLETED", "FAILED", "HOLD"]
+    },
+    "requested_worker": {
+      "type": "string",
+      "description": "Worker FAMILY requested (distinct from worker_identity, which is the actual session/run identity once one exists).",
+      "enum": ["codex-builder", "claude-verifier", "hermes-box"]
+    },
+    "worker_identity": {
+      "type": ["string", "null"],
+      "description": "Actual worker session/run identity. MUST be null at RESERVED and LAUNCH_UNKNOWN (and at a pre-acceptance FAILED); MUST be set together with external_run_id once a run exists."
+    },
+    "repo": { "type": "string" },
+    "branch": { "type": "string", "minLength": 1 },
+    "target_sha": {
+      "type": "string",
+      "description": "Head SHA the dispatch is bound to. A PASS against any other SHA is stale and never satisfies this receipt.",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "external_run_id": {
+      "type": ["string", "null"],
+      "description": "Adapter run id (apirun_...) stored IMMEDIATELY once the API accepts the run. null at RESERVED/LAUNCH_UNKNOWN and when the trigger was refused before acceptance (quota/access).",
+      "pattern": "^apirun_[A-Za-z0-9_-]+$"
+    },
+    "adapter_status": {
+      "type": ["string", "null"],
+      "description": "Granular upstream adapter status preserved verbatim (queued|in_progress|suspended|completed|failed). null before a run exists.",
+      "enum": [null, "queued", "in_progress", "suspended", "completed", "failed"]
+    },
+    "timestamps": {
+      "type": "object",
+      "required": ["reserved", "launch", "heartbeat", "terminal"],
+      "properties": {
+        "reserved": { "type": "string" },
+        "launch": { "type": ["string", "null"] },
+        "heartbeat": { "type": ["string", "null"] },
+        "terminal": { "type": ["string", "null"] }
+      }
+    },
+    "evidence_links": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Validated callback evidence links (GitHub PR / Linear comment) whose attempt_id and target_sha were checked before COMPLETED."
+    },
+    "last_activity": { "type": "string" },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Append-only audit trail: error codes, pause events, retry notes, hold reasons."
+    }
+  },
+  "allOf": [
+    {
+      "description": "Per-stage run-identity invariants. RUNNING/COMPLETED/HOLD imply an accepted run (run id + worker identity + granular adapter status). FAILED may describe either a post-acceptance run failure (run fields set) or a trigger refused before acceptance — quota/access wall — in which case all three stay null.",
+      "allOf": [
+        {
+          "if": {
+            "properties": { "stage": { "enum": ["RESERVED", "LAUNCH_UNKNOWN"] } },
+            "required": ["stage"]
+          },
+          "then": {
+            "properties": {
+              "external_run_id": { "type": "null" },
+              "worker_identity": { "type": "null" },
+              "adapter_status": { "type": "null" }
+            }
+          },
+          "else": {
+            "if": { "properties": { "stage": { "enum": ["FAILED"] } }, "required": ["stage"] },
+            "then": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "external_run_id": { "type": "string" },
+                    "worker_identity": { "type": "string" },
+                    "adapter_status": { "const": "failed" }
+                  }
+                },
+                {
+                  "description": "Pre-acceptance rejection (trigger refused: quota/access/4xx) — no run ever existed.",
+                  "properties": {
+                    "external_run_id": { "type": "null" },
+                    "worker_identity": { "type": "null" },
+                    "adapter_status": { "type": "null" }
+                  }
+                }
+              ]
+            },
+            "else": {
+              "properties": {
+                "external_run_id": { "type": "string" },
+                "worker_identity": { "type": "string" },
+                "adapter_status": { "enum": ["queued", "in_progress", "suspended", "completed", "failed"] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "description": "RESERVED must not carry launch/heartbeat/terminal timestamps; LAUNCH_UNKNOWN carries the launch timestamp only.",
+      "if": { "properties": { "stage": { "const": "RESERVED" } }, "required": ["stage"] },
+      "then": {
+        "properties": {
+          "timestamps": {
+            "properties": { "launch": { "type": "null" }, "heartbeat": { "type": "null" }, "terminal": { "type": "null" } }
+          }
+        }
+      },
+      "else": {
+        "if": { "properties": { "stage": { "const": "LAUNCH_UNKNOWN" } }, "required": ["stage"] },
+        "then": {
+          "properties": {
+            "timestamps": {
+              "properties": { "launch": { "type": "string" }, "heartbeat": { "type": "null" }, "terminal": { "type": "null" } }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

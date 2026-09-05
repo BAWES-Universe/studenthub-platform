@@ -17,6 +17,7 @@
     "dry-run:import": "npm run build && node dist/tools/legacy-import/src/dry-run.js",
     "typecheck": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && tsc --noEmit",
     "test:assertion": "vitest run packages/actor-assertion/test",
+    "test:coordinator": "node --test .github/coordinator/test/*.test.mjs",
     "test:search-integration": "npm run build && node --test dist/packages/search/test/typesense-integration.test.js"
   },
   "devDependencies": {

@@ -22,5 +22,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
+      # Deterministic coordinator dry-run package (dispatch disabled): pure JS,
+      # no build step — runs directly via node --test.
+      - run: npm run test:coordinator
       - run: npm test
       - run: npm run build
