@@ -281,8 +281,10 @@ export async function bootstrapAdmin(
   } catch (error) {
     // A failing ROLLBACK (e.g. connection dropped) must not mask the original
     // error — the server aborts the transaction on disconnect anyway.
+    let rollbackSucceeded = false;
     try {
       await client.query("ROLLBACK");
+      rollbackSucceeded = true;
     } catch {
       // Swallow: the original error below is the one the caller needs.
     }
@@ -307,14 +309,16 @@ export async function bootstrapAdmin(
         // Identify the owner best-effort for the message — enforcement
         // already happened in the constraint.
         let ownerId: string | undefined;
-        try {
-          const ownerRows = await client.query<{ principal_id: string }>(
-            "SELECT principal_id FROM principal_pbuuids WHERE pbuuid = $1",
-            [pbuuid],
-          );
-          ownerId = ownerRows.rows[0]?.principal_id;
-        } catch {
-          // Diagnostics are best-effort; fall through to the generic message.
+        if (rollbackSucceeded) {
+          try {
+            const ownerRows = await client.query<{ principal_id: string }>(
+              "SELECT principal_id FROM principal_pbuuids WHERE pbuuid = $1",
+              [pbuuid],
+            );
+            ownerId = ownerRows.rows[0]?.principal_id;
+          } catch {
+            // Diagnostics are best-effort; fall through to the generic message.
+          }
         }
         throw new TypeError(
           ownerId === undefined
