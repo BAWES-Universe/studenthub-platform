@@ -14,16 +14,57 @@ CREATE TABLE IF NOT EXISTS authorization_mutation_audit (
   operation            TEXT NOT NULL CHECK (
     operation IN ('principal.register', 'grants.grant', 'grants.revoke', 'grants.clear')
   ),
-  target_principal_ref TEXT CHECK (
-    target_principal_ref IS NULL OR target_principal_ref ~ '^[0-9a-f]{64}$'
+  target_principal_ref TEXT NOT NULL CHECK (
+    target_principal_ref ~ '^[0-9a-f]{64}$'
   ),
-  target_org_refs      TEXT[] NOT NULL DEFAULT '{}' CHECK (
+  target_org_refs      TEXT[] NOT NULL DEFAULT '{}' CONSTRAINT auth_audit_target_org_refs_shape CHECK (
     target_org_refs::text ~ '^\{([0-9a-f]{64}(,[0-9a-f]{64})*)?\}$'
   ),
   occurred_at          TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   before_summary       JSONB NOT NULL,
-  after_summary        JSONB NOT NULL
+  after_summary        JSONB NOT NULL,
+  CONSTRAINT auth_audit_target_org_cardinality CHECK (
+    (operation IN ('principal.register', 'grants.clear') AND cardinality(target_org_refs) = 0)
+    OR
+    (operation IN ('grants.grant', 'grants.revoke') AND cardinality(target_org_refs) > 0)
+  )
 );
+
+CREATE OR REPLACE FUNCTION authorization_audit_summary_valid(
+  audit_operation TEXT,
+  summary JSONB
+) RETURNS BOOLEAN
+LANGUAGE SQL IMMUTABLE PARALLEL SAFE
+AS $$
+  SELECT CASE
+    WHEN audit_operation = 'principal.register' THEN
+      jsonb_typeof(summary) = 'object'
+      AND summary ?& ARRAY['existed', 'identityCount', 'displayNamePresent', 'emailPresent']
+      AND summary - ARRAY['existed', 'identityCount', 'displayNamePresent', 'emailPresent'] = '{}'::jsonb
+      AND jsonb_typeof(summary -> 'existed') = 'boolean'
+      AND jsonb_typeof(summary -> 'displayNamePresent') = 'boolean'
+      AND jsonb_typeof(summary -> 'emailPresent') = 'boolean'
+      AND jsonb_typeof(summary -> 'identityCount') = 'number'
+      AND summary ->> 'identityCount' ~ '^(0|[1-9][0-9]{0,17})$'
+    WHEN audit_operation IN ('grants.grant', 'grants.revoke', 'grants.clear') THEN
+      jsonb_typeof(summary) = 'object'
+      AND summary ?& ARRAY['grantCount', 'selfCount', 'subtreeCount']
+      AND summary - ARRAY['grantCount', 'selfCount', 'subtreeCount'] = '{}'::jsonb
+      AND jsonb_typeof(summary -> 'grantCount') = 'number'
+      AND jsonb_typeof(summary -> 'selfCount') = 'number'
+      AND jsonb_typeof(summary -> 'subtreeCount') = 'number'
+      AND summary ->> 'grantCount' ~ '^(0|[1-9][0-9]{0,17})$'
+      AND summary ->> 'selfCount' ~ '^(0|[1-9][0-9]{0,17})$'
+      AND summary ->> 'subtreeCount' ~ '^(0|[1-9][0-9]{0,17})$'
+    ELSE FALSE
+  END
+$$;
+
+ALTER TABLE authorization_mutation_audit
+  ADD CONSTRAINT auth_audit_before_summary_shape
+    CHECK (authorization_audit_summary_valid(operation, before_summary)),
+  ADD CONSTRAINT auth_audit_after_summary_shape
+    CHECK (authorization_audit_summary_valid(operation, after_summary));
 
 CREATE INDEX IF NOT EXISTS authorization_mutation_audit_request_idx
   ON authorization_mutation_audit (request_ref, id);

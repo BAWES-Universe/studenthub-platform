@@ -519,19 +519,56 @@ test("audit: application audit rows reject update and delete", async () => {
 });
 
 test("audit: database constraints reject raw organization identifiers", async () => {
+  const summary = { grantCount: 0, selfCount: 0, subtreeCount: 0 };
   await assert.rejects(
     () =>
       adminPool.query(
         `INSERT INTO authorization_mutation_audit
-           (request_ref, operation, target_org_refs, before_summary, after_summary)
-         VALUES ($1, 'grants.grant', $2::text[], '{}'::jsonb, '{}'::jsonb)`,
-        [requestAuditRef("req.raw-org"), ["org-owner@example.invalid"]],
+           (request_ref, operation, target_principal_ref, target_org_refs,
+            before_summary, after_summary)
+         VALUES ($1, 'grants.grant', $2, $3::text[], $4::jsonb, $4::jsonb)`,
+        [
+          requestAuditRef("req.raw-org"),
+          principalAuditRef("target"),
+          ["org-owner@example.invalid"],
+          JSON.stringify(summary),
+        ],
       ),
-    /authorization_mutation_audit_target_org_refs_check/,
+    /auth_audit_target_org_refs_shape/,
   );
   const leaked = await adminPool.query(
     "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
     [requestAuditRef("req.raw-org")],
+  );
+  assert.equal(leaked.rowCount, 0);
+});
+
+test("audit: database constraints reject secrets in summary JSON", async () => {
+  const unsafe = {
+    grantCount: 0,
+    selfCount: 0,
+    subtreeCount: 0,
+    token: "raw-secret-token",
+  };
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        `INSERT INTO authorization_mutation_audit
+           (request_ref, operation, target_principal_ref, target_org_refs,
+            before_summary, after_summary)
+         VALUES ($1, 'grants.grant', $2, $3::text[], $4::jsonb, $4::jsonb)`,
+        [
+          requestAuditRef("req.raw-summary"),
+          principalAuditRef("target"),
+          [organizationAuditRef(ACME)],
+          JSON.stringify(unsafe),
+        ],
+      ),
+    /auth_audit_before_summary_shape/,
+  );
+  const leaked = await adminPool.query(
+    "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+    [requestAuditRef("req.raw-summary")],
   );
   assert.equal(leaked.rowCount, 0);
 });

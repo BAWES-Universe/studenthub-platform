@@ -35,7 +35,7 @@ export type AuditSummary = Readonly<Record<string, unknown>>;
 export interface AuditInsert {
   readonly context: ResolvedAuthorizationMutationContext;
   readonly operation: AuthorizationMutationOperation;
-  readonly targetPrincipalId?: string;
+  readonly targetPrincipalId: string;
   readonly targetOrgIds?: readonly string[];
   readonly before: AuditSummary;
   readonly after: AuditSummary;
@@ -98,9 +98,7 @@ export async function insertAuthorizationMutationAudit(
       requestRef,
       actorPrincipalRef,
       input.operation,
-      input.targetPrincipalId === undefined
-        ? null
-        : principalAuditRef(input.targetPrincipalId),
+      principalAuditRef(input.targetPrincipalId),
       [...new Set(input.targetOrgIds ?? [])].map(organizationAuditRef).sort(),
       JSON.stringify(input.before),
       JSON.stringify(input.after),
