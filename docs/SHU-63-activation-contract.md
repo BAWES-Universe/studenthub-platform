@@ -13,16 +13,17 @@ adapter, because activation is a coordinator-level property.
 |---|---|---|---|
 | 1 | `codex_sandbox_network` | **Declared**: `CODEX_SANDBOX_NETWORK=enabled` | `codex exec` runs under `--sandbox workspace-write`; without network it cannot fetch or push, so the builder finishes with nothing to show |
 | 2 | `github_head_credentials` | **Checked**: `GITHUB_TOKEN` non-empty | the live branch head can never be resolved, so the stale-head guard degrades to "the bound head is the reference" and a superseded tree can satisfy a receipt |
-| 3 | `git_push_authentication` | **Checked** when `io.gitPushRemote` is available, otherwise **declared** via `CODEX_GIT_PUSH_READY=true` | finished work never leaves the box |
-| 4 | `durable_state_persistence` | **Checked**: the state directory exists, is a directory, is writable, and is not under `/tmp`, `/var/tmp`, `/dev/shm` or `/run` | the Codex thread id is lost on reboot and the session becomes unresumable — exactly when recovery is needed |
+| 3 | `git_push_authentication` | **Declared** via `CODEX_GIT_PUSH_READY=true`; a configured push remote is also checked when available | finished work never leaves the box |
+| 4 | `durable_state_persistence` | **Checked**: the state directory can be created, resolves to a private directory, is writable, and neither its configured nor real path is under `/tmp`, `/var/tmp`, `/dev/shm` or `/run` | the Codex thread id is lost on reboot and the session becomes unresumable — exactly when recovery is needed; shared write access also lets another local account forge recovery authority |
 | 5 | `coordinator_on_brick_box` | **Checked**: `COORDINATOR_HOST` matches the running hostname | the sidecars are host-local; written on an ephemeral runner they describe a machine that no longer exists, and every ownership check silently degrades to "unknown" |
 
 Requirement 1 cannot be probed from inside the coordinator process — the sandbox
 network posture is a property of the CLI's configuration on the box — so it is
 declared rather than observed. The declaration is recorded so the assumption is
-visible instead of implied. Where a real observation is possible it **outranks**
-the declaration: a worktree with no push remote fails requirement 3 even when
-`CODEX_GIT_PUSH_READY=true`.
+visible instead of implied. A remote URL is not evidence of authentication, so
+requirement 3 always needs the explicit post-verification declaration. Where a
+real observation is possible it is an additional requirement: a worktree with no
+push remote fails even when `CODEX_GIT_PUSH_READY=true`.
 
 ## Behaviour when unmet
 

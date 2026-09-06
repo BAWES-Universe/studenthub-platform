@@ -127,7 +127,7 @@ function runExecFile(execFileImpl, file, args, options) {
   });
 }
 
-function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, killGraceMs = 30_000) {
+function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, killGraceMs = 30_000, maxOutputBytes = 32 * 1024 * 1024) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -144,6 +144,7 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, 
     let spawnError = null;
     let settled = false;
     let hardTimer = null;
+    let outputBytes = 0;
     const finish = (error) => {
       if (settled) return;
       settled = true;
@@ -160,7 +161,24 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, 
         finish(spawnError);
       }, killGraceMs);
     }, options.timeout);
+    const accountOutput = (chunk) => {
+      if (spawnError?.code === "CODEX_OUTPUT_LIMIT") return false;
+      outputBytes += Buffer.isBuffer(chunk) ? chunk.byteLength : Buffer.byteLength(String(chunk));
+      if (outputBytes <= maxOutputBytes) return true;
+      spawnError = Object.assign(new Error(`codex output exceeded ${maxOutputBytes} bytes`), {
+        code: "CODEX_OUTPUT_LIMIT",
+        killed: true,
+        signal: "SIGTERM",
+      });
+      child.kill?.("SIGTERM");
+      hardTimer ??= setTimeout(() => {
+        child.kill?.("SIGKILL");
+        finish(spawnError);
+      }, killGraceMs);
+      return false;
+    };
     child.stdout?.on("data", (chunk) => {
+      if (!accountOutput(chunk)) return;
       const text = String(chunk);
       stdout += text;
       pending += text;
@@ -168,7 +186,9 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, 
       pending = lines.pop() ?? "";
       for (const line of lines) onStdoutLine(line, child);
     });
-    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+    child.stderr?.on("data", (chunk) => {
+      if (accountOutput(chunk)) stderr += String(chunk);
+    });
     child.once("error", (error) => { spawnError = error; });
     child.once("close", (code, signal) => {
       if (code === 0 && !signal && !spawnError) finish(null);
@@ -264,6 +284,12 @@ function failureFrom(error, stdout, stderr, { threadId }) {
   if (ACCESS_RE.test(detail)) {
     return { stage: "FAILED", error_code: "CODEX_ACCESS", error_kind: "access", pause_adapter: true, ok: false };
   }
+  if (error?.code === "CODEX_OUTPUT_LIMIT") {
+    if (threadId) {
+      return { stage: "LAUNCH_UNKNOWN", external_run_id: externalRunId(threadId), reason: "Codex output exceeded the bounded capture limit after thread.started — session held for exact-id recovery", pause_adapter: true, ok: false };
+    }
+    return { stage: "HOLD", reason: "Codex output exceeded the bounded capture limit — worker stopped to protect the coordinator", pause_adapter: true, ok: false };
+  }
   if (error?.killed || error?.signal) {
     // Killed AFTER the thread id was durably recorded -> LAUNCH_UNKNOWN:
     // recovery resumes the exact session. Killed BEFORE any thread id ->
@@ -312,7 +338,16 @@ function readBoundResumeRecord(file, { attempt_id, target_sha, thread_id }) {
   }
 }
 
-function writeExclusiveRecord({ stateDir, finalPath, record }) {
+function fsyncDirectory(dir) {
+  const fd = fs.openSync(dir, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeExclusiveRecord({ stateDir, finalPath, record, fsyncDirectoryImpl = fsyncDirectory }) {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const tempPath = path.join(stateDir, `.${path.basename(finalPath)}.${process.pid}.${randomUUID()}.tmp`);
   let fd;
@@ -323,6 +358,9 @@ function writeExclusiveRecord({ stateDir, finalPath, record }) {
     fs.closeSync(fd);
     fd = undefined;
     fs.linkSync(tempPath, finalPath);
+    // fsyncing the file does not make its new directory entry reboot-durable.
+    // The claim is authoritative only after the parent directory is synced.
+    fsyncDirectoryImpl(stateDir);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     try { fs.unlinkSync(tempPath); } catch { /* best effort */ }
@@ -356,6 +394,30 @@ function readDurableSessionRecord({ stateDir, attempt_id, target_sha }) {
   return { ...record, thread_id: String(record.thread_id) };
 }
 
+function parseProcessStatToken(stat, expectedPid = null) {
+  if (typeof stat !== "string") throw new Error("process metadata is not text");
+  if (expectedPid === null) {
+    if (!/^[1-9]\d* \(/.test(stat)) throw new Error("malformed process metadata PID");
+  } else if (!stat.startsWith(`${expectedPid} (`)) {
+    throw new Error("process metadata PID mismatch");
+  }
+  const openPrefixLength = expectedPid === null ? stat.indexOf("(") + 1 : `${expectedPid} (`.length;
+  const closeParen = stat.lastIndexOf(")");
+  if (closeParen < openPrefixLength || stat.slice(closeParen, closeParen + 2) !== ") ") {
+    throw new Error("malformed process metadata header");
+  }
+  const afterName = stat.slice(closeParen + 2).trim().split(/\s+/);
+  if (afterName.length < 20 || !/^[RSDZTtXxKWPI]$/.test(afterName[0])) {
+    throw new Error("malformed process metadata fields");
+  }
+  if (!afterName.slice(1, 19).every((value) => /^-?\d+$/.test(value))) {
+    throw new Error("malformed process metadata fields");
+  }
+  const token = afterName[19];
+  if (!validProcessStartToken(token)) throw new Error("malformed process start token");
+  return token;
+}
+
 function processStartToken(pid, readFileImpl = fs.readFileSync, platformImpl = nodePlatform) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("invalid process id");
   // /proc/<pid>/stat is a Linux identity primitive. On an unsupported host,
@@ -380,31 +442,11 @@ function processStartToken(pid, readFileImpl = fs.readFileSync, platformImpl = n
     } catch (probeError) {
       throw new Error(`procfs is unavailable, so a missing /proc/${pid} is not proof of death: ${probeError?.code ?? probeError?.message ?? "unknown"}`);
     }
-    if (typeof selfStat !== "string" || !/^\d+ \(/.test(selfStat)) {
-      throw new Error("procfs did not return a usable record, so a missing PID path is not proof of death");
-    }
+    try { parseProcessStatToken(selfStat); }
+    catch { throw new Error("procfs did not return a usable record, so a missing PID path is not proof of death"); }
     return null;
   }
-  if (typeof stat !== "string" || !stat.startsWith(`${pid} (`)) throw new Error("process metadata PID mismatch");
-  // comm may contain spaces and ')' characters, so proc(5) parsing must use
-  // the final ')' while still proving the exact queried-PID prefix.
-  const closeParen = stat.lastIndexOf(")");
-  if (closeParen < `${pid} (`.length || stat.slice(closeParen, closeParen + 2) !== ") ") {
-    throw new Error("malformed process metadata header");
-  }
-  const afterName = stat.slice(closeParen + 2).trim().split(/\s+/);
-  // Fields 3..21 are state followed by 18 integer fields; field 22 is
-  // starttime. A digit in the right array slot is not enough unless the record
-  // leading up to it has the proc(5) shape.
-  if (afterName.length < 20 || !/^[RSDZTtXxKWPI]$/.test(afterName[0])) {
-    throw new Error("malformed process metadata fields");
-  }
-  if (!afterName.slice(1, 19).every((value) => /^-?\d+$/.test(value))) {
-    throw new Error("malformed process metadata fields");
-  }
-  const token = afterName[19]; // proc(5): field 22 (starttime), after pid/comm
-  if (!validProcessStartToken(token)) throw new Error("malformed process start token");
-  return token;
+  return parseProcessStatToken(stat, pid);
 }
 
 function validProcessStartToken(value) {
@@ -431,7 +473,7 @@ function recordedProcessState(record, { hostnameImpl = nodeHostname, processStar
   return currentStart === record.child_start ? "alive" : "dead";
 }
 
-export function persistDurableSession({ stateDir, attempt_id, target_sha, thread_id, owner_host = null, child_pid = null, child_start = null, cleanupTempImpl = fs.unlinkSync }) {
+export function persistDurableSession({ stateDir, attempt_id, target_sha, thread_id, owner_host = null, child_pid = null, child_start = null, cleanupTempImpl = fs.unlinkSync, fsyncDirectoryImpl = fsyncDirectory }) {
   if (!stateDir || !THREAD_ID_RE.test(thread_id)) throw new Error("durable Codex session path or thread id unavailable");
   const hasOwnership = owner_host !== null || child_pid !== null || child_start !== null;
   if (hasOwnership && (
@@ -456,6 +498,10 @@ export function persistDurableSession({ stateDir, attempt_id, target_sha, thread
     fs.closeSync(fd);
     fd = undefined;
     fs.linkSync(tempPath, finalPath);
+    // The hard link is atomic but not durable across power loss until the
+    // containing directory is synced. Without this, the thread can exist
+    // upstream while its only exact-id recovery binding disappears on reboot.
+    fsyncDirectoryImpl(stateDir);
   } catch (error) {
     if (error?.code === "EEXIST") {
       const winner = readDurableSession({ stateDir, attempt_id, target_sha });
@@ -464,7 +510,7 @@ export function persistDurableSession({ stateDir, attempt_id, target_sha, thread
     throw error;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
-    // The hard-link above is the durability boundary. Temp cleanup is best
+    // The hard-link plus directory fsync above is the durability boundary. Temp cleanup is best
     // effort and must never replace either a successful persist or its cause.
     try { cleanupTempImpl(tempPath); } catch { /* best effort */ }
   }
@@ -491,6 +537,7 @@ export async function launchBuilder({
   io = {},
   timeout_ms = 45 * 60 * 1000,
   timeout_grace_ms = 30_000,
+  max_output_bytes = 32 * 1024 * 1024,
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
@@ -597,7 +644,7 @@ export async function launchBuilder({
   if (resume) {
     const binding = { version: 1, kind: "codex-resume-claim", attempt_id, target_sha, thread_id: sessionId };
     try {
-      writeExclusiveRecord({ stateDir: durableStateDir, finalPath: resumeClaimPath(durableStateDir, attempt_id), record: binding });
+      writeExclusiveRecord({ stateDir: durableStateDir, finalPath: resumeClaimPath(durableStateDir, attempt_id), record: binding, fsyncDirectoryImpl: io.fsyncDirectory });
       ownsResumeClaim = true;
     } catch {
       return { stage: "HOLD", reason: "Codex resume ownership was claimed concurrently — refusing duplicate resume", pause_adapter: true, ok: false };
@@ -630,6 +677,7 @@ export async function launchBuilder({
             child_pid: childPid,
             child_start: childStart,
           },
+          fsyncDirectoryImpl: io.fsyncDirectory,
         });
       } catch (error) {
         resumeOwnershipError = error;
@@ -655,6 +703,7 @@ export async function launchBuilder({
           owner_host: childPid ? (io.hostname?.() ?? nodeHostname()) : null,
           child_pid: childPid,
           child_start: childStart,
+          fsyncDirectoryImpl: io.fsyncDirectory,
         });
         streamedThreadId = threadId;
       } catch (error) {
@@ -665,7 +714,7 @@ export async function launchBuilder({
     // tests. Production uses spawn so thread.started is persisted before exit.
     result = execImpl !== nodeExecFile && !io.spawnImpl
       ? await runExecFile(execImpl, "codex", args, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
-      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, onSpawn, timeout_grace_ms);
+      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {
@@ -676,7 +725,7 @@ export async function launchBuilder({
         // attempt be minted, and starting a SECOND codex exec against work that
         // can never be resumed.
         try {
-          persistDurableSession({ stateDir: durableStateDir, attempt_id, target_sha, thread_id: bufferedThreadId });
+          persistDurableSession({ stateDir: durableStateDir, attempt_id, target_sha, thread_id: bufferedThreadId, fsyncDirectoryImpl: io.fsyncDirectory });
           streamedThreadId = bufferedThreadId;
         } catch (error) {
           durabilityError ??= error;

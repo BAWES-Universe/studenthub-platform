@@ -439,6 +439,62 @@ test("temp cleanup failure cannot override a successfully linked durable session
   assert.equal(readDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA }), THREAD);
 });
 
+test("a session binding is not declared durable when the directory entry cannot be fsynced", () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-dir-fsync-"));
+  assert.throws(() => persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    fsyncDirectoryImpl: () => { throw Object.assign(new Error("directory fsync denied"), { code: "EIO" }); },
+  }), /directory fsync denied/);
+});
+
+test("directory-fsync failure after thread.started HOLDs and pauses", async () => {
+  const out = await launchBuilder({
+    ...launchInput(),
+    spawnImpl: streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })]),
+    io: {
+      codexStateDir: mkdtempSync(join(tmpdir(), "codex-dir-fsync-launch-")),
+      processStartToken: () => "100",
+      hostname: () => "fixture-host",
+      fsyncDirectory: () => { throw Object.assign(new Error("directory fsync denied"), { code: "EIO" }); },
+    },
+  });
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+  assert.match(out.reason, /directory fsync denied/);
+});
+
+test("resume ownership is not accepted when its directory entry cannot be fsynced", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-dir-fsync-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "fixture-host",
+    child_pid: 4242,
+    child_start: "100",
+  });
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    io: {
+      codexStateDir: stateDir,
+      hostname: () => "fixture-host",
+      processStartToken: () => null,
+      fsyncDirectory: () => { throw Object.assign(new Error("directory fsync denied"), { code: "EIO" }); },
+    },
+  });
+  assert.equal(spawns, 0);
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+});
+
 test("timeout escalates to SIGKILL and settles even when the child never closes", async () => {
   const signals = [];
   const neverClosingSpawn = () => {
@@ -458,6 +514,60 @@ test("timeout escalates to SIGKILL and settles even when the child never closes"
   });
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
   assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+});
+
+test("production spawn bounds combined output and pauses instead of exhausting coordinator memory", async () => {
+  const signals = [];
+  const noisySpawn = () => {
+    const child = new EventEmitter();
+    child.pid = 4242;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = (signal) => {
+      signals.push(signal);
+      if (signal === "SIGTERM") queueMicrotask(() => child.emit("close", null, "SIGTERM"));
+      return true;
+    };
+    queueMicrotask(() => child.stdout.emit("data", Buffer.alloc(65, "x")));
+    return child;
+  };
+  const out = await launchBuilder({
+    ...launchInput(),
+    spawnImpl: noisySpawn,
+    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-output-limit-")) },
+    max_output_bytes: 64,
+  });
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+  assert.match(out.reason, /bounded capture limit/);
+});
+
+test("output overflow after thread.started preserves the exact resumable identity", async () => {
+  const spawnWithKnownThreadThenNoise = () => {
+    const child = new EventEmitter();
+    child.pid = 4242;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = (signal) => {
+      if (signal === "SIGTERM") queueMicrotask(() => child.emit("close", null, "SIGTERM"));
+      return true;
+    };
+    queueMicrotask(() => {
+      child.stdout.emit("data", `${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`);
+      child.stderr.emit("data", Buffer.alloc(257, "x"));
+    });
+    return child;
+  };
+  const out = await launchBuilder({
+    ...launchInput(),
+    spawnImpl: spawnWithKnownThreadThenNoise,
+    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-known-output-limit-")), processStartToken: () => "100", hostname: () => "fixture-host" },
+    max_output_bytes: 256,
+  });
+  assert.equal(out.stage, "LAUNCH_UNKNOWN");
+  assert.equal(out.external_run_id, `codexrun_${THREAD}`);
   assert.equal(out.pause_adapter, true);
 });
 
@@ -1028,6 +1138,30 @@ for (const [label, selfStat] of [["empty", ""], ["not a proc record", "hello"], 
     assert.equal(readFileSync(join(stateDir, `${ATTEMPT}.json`), "utf8"), before, `${label}: zero claims`);
   });
 }
+
+test("a truncated procfs self record cannot authorize resume", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-procfs-truncated-"));
+  persistDurableSession({
+    stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD,
+    owner_host: "test-host", child_pid: 111, child_start: "123",
+  });
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...launchInput(), resume: true, external_run_id: `codexrun_${THREAD}`,
+    spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    execFileImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    io: {
+      codexStateDir: stateDir, hostname: () => "test-host", platform: () => "linux",
+      readProcessStat: (p) => {
+        if (p.includes("/proc/self/")) return "1 (";
+        throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+      },
+    },
+  });
+  assert.equal(spawns, 0);
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+});
 
 test("Linux WITH a readable procfs still treats a missing pid path as dead", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "codex-procfs-ok-"));

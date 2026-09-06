@@ -26,7 +26,7 @@
 // Nothing here enables dispatch. It only refuses to start a builder when the
 // wiring that makes a builder useful is absent.
 
-import { statSync, accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync, realpathSync, statSync } from "node:fs";
 import { hostname as nodeHostname } from "node:os";
 import path from "node:path";
 
@@ -47,14 +47,49 @@ function unmet(requirement, detail, remedy) {
 }
 
 // Is `dir` a usable, writable directory that is not on ephemeral storage?
-function durableStateProblem(dir, { statImpl, accessImpl }) {
+function durableStateProblem(dir, { statImpl, accessImpl, mkdirImpl, realpathImpl }) {
   if (typeof dir !== "string" || dir.length === 0) return "no durable state directory is configured";
-  const resolved = path.resolve(dir);
-  if (EPHEMERAL_PREFIXES.some((p) => resolved === p || resolved.startsWith(`${p}/`))) {
-    return `state directory ${resolved} is on ephemeral storage and will not survive a reboot`;
+  if (!path.isAbsolute(dir)) return `state directory ${dir} is not an absolute host path`;
+  const configured = path.resolve(dir);
+  if (EPHEMERAL_PREFIXES.some((p) => configured === p || configured.startsWith(`${p}/`))) {
+    return `state directory ${configured} is on ephemeral storage and will not survive a reboot`;
   }
   try {
-    if (!statImpl(resolved).isDirectory()) return `state path ${resolved} is not a directory`;
+    statImpl(configured);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      return `state directory ${configured} is unusable: ${error?.code ?? error?.message ?? "unknown"}`;
+    }
+    try {
+      // The adapter creates this directory on first use. The preflight runs first,
+      // so it must perform the same safe setup instead of requiring an undocumented
+      // manual mkdir on a clean host.
+      mkdirImpl(configured, { recursive: true, mode: 0o700 });
+    } catch (mkdirError) {
+      return `state directory ${configured} could not be created: ${mkdirError?.code ?? mkdirError?.message ?? "unknown"}`;
+    }
+  }
+  let resolved;
+  try {
+    resolved = realpathImpl(configured);
+  } catch (error) {
+    return `state directory ${configured} could not be resolved: ${error?.code ?? error?.message ?? "unknown"}`;
+  }
+  if (typeof resolved !== "string" || !path.isAbsolute(resolved)) {
+    return `state directory ${configured} resolved to an invalid host path`;
+  }
+  if (EPHEMERAL_PREFIXES.some((p) => resolved === p || resolved.startsWith(`${p}/`))) {
+    return `state directory ${configured} resolves to ephemeral storage at ${resolved} and will not survive a reboot`;
+  }
+  try {
+    const stat = statImpl(resolved);
+    if (!stat.isDirectory()) return `state path ${resolved} is not a directory`;
+    // Session and ownership sidecars authorize exact-id recovery. A
+    // group/world-writable directory lets another local account forge or
+    // replace that authority even though each individual file is mode 0600.
+    if (typeof stat.mode === "number" && (stat.mode & 0o077) !== 0) {
+      return `state directory ${resolved} permissions are too broad; expected no group/world access`;
+    }
   } catch (error) {
     return `state directory ${resolved} is unusable: ${error?.code ?? error?.message ?? "unknown"}`;
   }
@@ -72,6 +107,8 @@ function durableStateProblem(dir, { statImpl, accessImpl }) {
 export function preflightActivation({ env = {}, stateDir = null, cwd = null, io = {} } = {}) {
   const statImpl = io.statImpl ?? statSync;
   const accessImpl = io.accessImpl ?? accessSync;
+  const mkdirImpl = io.mkdirImpl ?? mkdirSync;
+  const realpathImpl = io.realpathImpl ?? realpathSync;
   const hostnameImpl = io.hostname ?? nodeHostname;
   const gitRemoteImpl = io.gitPushRemote ?? null;
   const problems = [];
@@ -91,7 +128,7 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
   // 2. GitHub head-verification credentials. Without a token the live head can
   //    never be resolved, so the stale-head guard degrades to "the bound head is
   //    the reference" and a superseded tree can satisfy a receipt.
-  if (typeof env.GITHUB_TOKEN !== "string" || env.GITHUB_TOKEN.length === 0) {
+  if (typeof env.GITHUB_TOKEN !== "string" || env.GITHUB_TOKEN.trim().length === 0) {
     problems.push(unmet(
       "github_head_credentials",
       "GITHUB_TOKEN is empty",
@@ -101,7 +138,13 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
 
   // 3. git push authentication. The builder's whole output is a pushed branch;
   //    without a push remote the work is finished and stranded on the box.
-  if (gitRemoteImpl) {
+  if (env.CODEX_GIT_PUSH_READY !== "true") {
+    problems.push(unmet(
+      "git_push_authentication",
+      `CODEX_GIT_PUSH_READY is ${env.CODEX_GIT_PUSH_READY ? `"${env.CODEX_GIT_PUSH_READY}"` : "unset"}`,
+      "wire and verify push credentials for the builder worktree (deploy key or gh auth), then set CODEX_GIT_PUSH_READY=true",
+    ));
+  } else if (gitRemoteImpl) {
     let pushRemote = null;
     try {
       pushRemote = gitRemoteImpl(cwd);
@@ -114,16 +157,10 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
       problems.push(unmet("git_push_authentication", "the builder worktree has no push remote",
         "configure an authenticated push remote for the worktree the builder runs in"));
     }
-  } else if (env.CODEX_GIT_PUSH_READY !== "true") {
-    problems.push(unmet(
-      "git_push_authentication",
-      `CODEX_GIT_PUSH_READY is ${env.CODEX_GIT_PUSH_READY ? `"${env.CODEX_GIT_PUSH_READY}"` : "unset"}`,
-      "wire push credentials for the builder worktree (deploy key or gh auth), then set CODEX_GIT_PUSH_READY=true",
-    ));
   }
 
   // 4. Durable state persistence.
-  const stateProblem = durableStateProblem(stateDir, { statImpl, accessImpl });
+  const stateProblem = durableStateProblem(stateDir, { statImpl, accessImpl, mkdirImpl, realpathImpl });
   if (stateProblem) {
     problems.push(unmet("durable_state_persistence", stateProblem,
       "point CODEX_HOME (or io.codexStateDir) at persistent storage on the brick box"));

@@ -1399,6 +1399,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const linearIssueId = resolveLinearIssueId(receipt, "launch reconciliation");
       if (!linearIssueId) continue;
 
+      // Recovery is a worker launch too. Rechecking only first dispatch lets a
+      // later coordinator with missing credentials, wrong host, or ephemeral
+      // state resume an existing Codex session around the activation contract.
+      const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+      if (activation && !activation.ok) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
+        config.adapter_pause_map[adapter] = true;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+        continue;
+      }
+
       let launch;
       try {
         launch = await adapterModule.launchBuilder({
@@ -1592,6 +1603,21 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   if (!target_sha || !TARGET_SHA_RE.test(target_sha)) {
     throw new Error(`dispatch refused: no bound head for ${candidate.id} — target_sha is required (old PASS must never satisfy a changed head)`);
   }
+  const adapter = adapterNameFor(candidate.requested_worker);
+  const linearIssueId = candidate.linearId ?? candidate.id; // UUID for the real API, identifier tolerated by mocks
+
+  // Activation is checked before minting and persisting a reservation. A
+  // refused preflight sent no launch, and RESERVED receipts are not processed
+  // by launch recovery; writing one here would consume the slot permanently
+  // even after the operator repaired the missing wiring.
+  const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+  if (activation && !activation.ok) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
+    config.adapter_pause_map[adapter] = true;
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    return 2;
+  }
+
   const { ok: reservedOk, receipt, errors } = createReceipt({
     issue_id: candidate.id,
     authorization_ref,
@@ -1604,7 +1630,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);
   }
   // Persist RESERVED *before* anything reaches the adapter (reserve precedes launch).
-  const linearIssueId = candidate.linearId ?? receipt.issue_id; // UUID for the real API, identifier tolerated by mocks
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
 
   // GPT review #3: RE-READ and validate the authoritative reservation before
@@ -1635,37 +1660,15 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 2;
   }
 
-  // Write-ahead launch intent: persist LAUNCH_UNKNOWN before crossing any
-  // adapter boundary. If this process dies while a remote request or `claude -p`
-  // is running, the next reconcile resumes the same attempt instead of leaving
-  // a RESERVED receipt parked forever or minting a duplicate worker.
+  // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
+  // known-good and before crossing the adapter boundary. A refused preflight did
+  // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
   const launchIntent = nextReceiptState(receipt, { type: "launch" });
   if (!launchIntent.accepted) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
     return 2;
   }
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
-
-  const adapter = adapterNameFor(candidate.requested_worker);
-
-  // SHU-63 ACTIVATION CONTRACT — checked HERE, at the dispatch decision, not
-  // inside the adapter: activation is a coordinator-level property and belongs
-  // where the decision to start work is made.
-  //
-  // "Two login steps" is the AUTH surface. A Codex builder that logs in fine
-  // still cannot fetch or push without sandbox network, cannot have a COMPLETED
-  // head-checked without GitHub credentials, strands finished work without push
-  // auth, loses its resume identity if the state directory is ephemeral, and
-  // writes host-local sidecars describing a machine that no longer exists if the
-  // coordinator is not the brick box. Every one of those fails later and more
-  // expensively than a refusal here.
-  const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
-  if (activation && !activation.ok) {
-    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
-    config.adapter_pause_map[adapter] = true;
-    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
-    return 2;
-  }
 
   const dispatchAdapterModule = await loadAdapterModule(adapter, io);
   let launch = await dispatchAdapterModule.launchBuilder({
