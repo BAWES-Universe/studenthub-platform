@@ -261,7 +261,10 @@ test("parity: clearGrantsForPrincipal empties the grant set but keeps the princi
 
 test("audit: every persisted principal/grant mutation records bounded before/after facts", async () => {
   const store = makeStore();
-  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+  const sensitiveOrg = "org-owner@example.invalid";
+  await store.upsertOrganization(
+    createOrganization({ id: sensitiveOrg, name: "Synthetic audit org" }),
+  );
 
   const rawIdentity = "audit-person@example.invalid";
   const actor = "principal-reviewer@example.invalid";
@@ -276,17 +279,17 @@ test("audit: every persisted principal/grant mutation records bounded before/aft
   );
   await store.grantMany(
     "audit-person",
-    [{ orgId: ACME, role: "candidate", scope: "self" }],
+    [{ orgId: sensitiveOrg, role: "candidate", scope: "self" }],
     { requestId: "req.grant-1", actorPrincipalId: actor },
   );
   await store.revokeMany(
     "audit-person",
-    [{ orgId: ACME, role: "candidate" }],
+    [{ orgId: sensitiveOrg, role: "candidate" }],
     { requestId: "req.revoke-1", actorPrincipalId: actor },
   );
   await store.grantMany(
     "audit-person",
-    [{ orgId: ACME, role: "finance", scope: "subtree" }],
+    [{ orgId: sensitiveOrg, role: "finance", scope: "subtree" }],
     { requestId: "req.seed-clear" },
   );
   await store.clearGrantsForPrincipal("audit-person", {
@@ -317,7 +320,7 @@ test("audit: every persisted principal/grant mutation records bounded before/aft
   const grant = (await store.listAuthorizationMutationAuditRecords({
     requestId: "req.grant-1",
   }))[0];
-  assert.deepEqual(grant?.targetOrgRefs, [organizationAuditRef(ACME)]);
+  assert.deepEqual(grant?.targetOrgRefs, [organizationAuditRef(sensitiveOrg)]);
   assert.deepEqual(grant?.before, { grantCount: 0, selfCount: 0, subtreeCount: 0 });
   assert.deepEqual(grant?.after, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
 
@@ -328,8 +331,74 @@ test("audit: every persisted principal/grant mutation records bounded before/aft
     "Bearer secret-value",
     "secret-value",
     "req.principal-1",
+    sensitiveOrg,
   ]) {
     assert.equal(serialized.includes(forbidden), false, `audit leaked forbidden value: ${forbidden}`);
+  }
+});
+
+test("audit: concurrent grant summaries serialize per principal", async () => {
+  const storeA = makeStore();
+  const storeB = makeStore();
+  await seedOrgAndPrincipal(storeA);
+
+  // Hold the referenced org row so writer A stops at its FK check after it
+  // has taken the audit lock and read the before summary. Writer B must then
+  // wait on the same advisory lock instead of reading the same stale summary.
+  const blocker = await adminPool.connect();
+  let blockerOpen = true;
+  let writerA: Promise<void> | undefined;
+  let writerB: Promise<void> | undefined;
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [ACME]);
+    writerA = storeA.grantMany(
+      "alice",
+      [{ orgId: ACME, role: "candidate" }],
+      { requestId: "req.concurrent-a" },
+    );
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const held = await adminPool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted",
+      );
+      if ((held.rows[0]?.n ?? 0) > 0) break;
+      if (attempt === 99) assert.fail("writer A never acquired the per-principal audit lock");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    writerB = storeB.grantMany(
+      "alice",
+      [{ orgId: ACME, role: "finance", scope: "subtree" }],
+      { requestId: "req.concurrent-b" },
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const waiting = await adminPool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted",
+      );
+      if ((waiting.rows[0]?.n ?? 0) > 0) break;
+      if (attempt === 99) assert.fail("writer B bypassed the per-principal audit lock");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    await blocker.query("COMMIT");
+    blockerOpen = false;
+    await Promise.all([writerA, writerB]);
+
+    const first = (await storeA.listAuthorizationMutationAuditRecords({
+      requestId: "req.concurrent-a",
+    }))[0];
+    const second = (await storeA.listAuthorizationMutationAuditRecords({
+      requestId: "req.concurrent-b",
+    }))[0];
+    assert.deepEqual(first?.before, { grantCount: 0, selfCount: 0, subtreeCount: 0 });
+    assert.deepEqual(first?.after, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
+    assert.deepEqual(second?.before, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
+    assert.deepEqual(second?.after, { grantCount: 2, selfCount: 1, subtreeCount: 1 });
+  } finally {
+    if (blockerOpen) await blocker.query("ROLLBACK").catch(() => undefined);
+    blocker.release();
+    await Promise.allSettled([writerA, writerB].filter((value) => value !== undefined));
   }
 });
 
