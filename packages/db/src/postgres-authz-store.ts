@@ -307,9 +307,7 @@ export class PostgresAuthzStore implements AuthzStore {
     // mirroring InMemoryAuthzStore.#assertNoCycles. The self-referencing FK
     // alone cannot enforce this: once both rows exist, UPDATE parent_org_id
     // is FK-valid for a self-parent and for A→B→A.
-    const client = await this.#pool.connect();
-    try {
-      await client.query("BEGIN");
+    await this.#transaction(async (client) => {
       // Lock the org row and its prospective parent so concurrent
       // reparenting serializes: two writers building a cycle in opposite
       // directions (A→B and B→A) both take both row locks, so the second
@@ -351,20 +349,7 @@ export class PostgresAuthzStore implements AuthzStore {
          ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_org_id = EXCLUDED.parent_org_id`,
         [org.id, org.name, org.parentOrgId ?? null],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      // A failing ROLLBACK (e.g. the connection dropped mid-transaction)
-      // must not mask the original error — the server aborts the
-      // transaction on disconnect anyway (Sentry finding, valid).
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        // Swallow: the original error below is the one the caller needs.
-      }
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   // --- PrincipalStore ------------------------------------------------------------

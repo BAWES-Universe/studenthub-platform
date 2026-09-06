@@ -607,6 +607,66 @@ test("audit: a client whose rollback fails is destroyed, never returned to the p
   assert.deepEqual(await seed.listGrantsForPrincipal("alice"), []);
 });
 
+test("organizations: a client whose rollback fails is destroyed, never returned to the pool", async () => {
+  const pool = new pg.Pool({ connectionString: DB_URL });
+  const store = new PostgresAuthzStore(pool);
+  const originalConnect = pool.connect.bind(pool);
+  let releasedWith: boolean | Error | undefined;
+
+  await adminPool.query(`
+    CREATE OR REPLACE FUNCTION fail_shu59_org_upsert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.id = 'rollback-org' THEN
+        RAISE EXCEPTION 'injected organization mutation failure before rollback';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_shu59_org_upsert
+      BEFORE INSERT OR UPDATE ON organizations
+      FOR EACH ROW EXECUTE FUNCTION fail_shu59_org_upsert();
+  `);
+
+  const client = await originalConnect();
+  const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+  const originalRelease = client.release.bind(client);
+  client.query = ((...args: unknown[]) => {
+    const statement =
+      typeof args[0] === "string"
+        ? args[0]
+        : (args[0] as { readonly text?: string } | undefined)?.text;
+    if (statement === "ROLLBACK") return Promise.reject(new Error("injected rollback failure"));
+    return originalQuery(...args);
+  }) as typeof client.query;
+  client.release = ((destroy?: boolean | Error) => {
+    releasedWith = destroy;
+    originalRelease(destroy);
+  }) as typeof client.release;
+  pool.connect = (async () => client) as typeof pool.connect;
+
+  try {
+    await assert.rejects(
+      () =>
+        store.upsertOrganization(
+          createOrganization({ id: "rollback-org", name: "Rollback Org" }),
+        ),
+      /injected organization mutation failure before rollback/,
+    );
+    assert.equal(releasedWith, true, "unknown transaction state must destroy the client");
+  } finally {
+    pool.connect = originalConnect as typeof pool.connect;
+    await pool.end();
+    await adminPool.query("DROP TRIGGER IF EXISTS fail_shu59_org_upsert ON organizations");
+    await adminPool.query("DROP FUNCTION IF EXISTS fail_shu59_org_upsert()");
+  }
+
+  const { rows } = await adminPool.query<{ id: string }>(
+    "SELECT id FROM organizations WHERE id = 'rollback-org'",
+  );
+  assert.deepEqual(rows, [], "failed organization upsert must not persist");
+});
+
 test("audit: application audit rows reject update and delete", async () => {
   const store = makeStore();
   await store.registerPrincipal(
