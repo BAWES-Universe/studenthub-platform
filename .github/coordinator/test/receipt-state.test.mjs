@@ -78,6 +78,51 @@ test("reserve -> launch -> LAUNCH_UNKNOWN holds the slot", () => {
   assert.equal(r.accepted, true);
 });
 
+test("LAUNCH_UNKNOWN can durably bind a discovered local session without becoming pollable RUNNING", () => {
+  const launched = launch(reserve()).receipt;
+  const discovered = nextReceiptState(launched, {
+    type: "run_discovered",
+    external_run_id: "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53",
+    worker_identity: `codex:${launched.attempt_id}`,
+  });
+  assert.equal(discovered.accepted, true);
+  assert.equal(discovered.receipt.stage, "LAUNCH_UNKNOWN");
+  assert.equal(discovered.receipt.adapter_status, "in_progress");
+  assert.equal(validateReceipt(discovered.receipt).valid, true, validateReceipt(discovered.receipt).errors?.join("; "));
+  const conflicting = nextReceiptState(discovered.receipt, {
+    type: "run_discovered",
+    external_run_id: "codexrun_1199a213-81c0-7800-8aa1-bbab2a035a53",
+    worker_identity: `codex:${launched.attempt_id}`,
+  });
+  assert.equal(conflicting.accepted, false, "a second session can never replace the durable identity");
+});
+
+test("run_discovered is accepted only from LAUNCH_UNKNOWN and requires both identities", () => {
+  const reserved = reserve();
+  const validEvent = {
+    type: "run_discovered",
+    external_run_id: "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53",
+    worker_identity: `codex:${reserved.attempt_id}`,
+  };
+  const wrongStage = nextReceiptState(reserved, validEvent);
+  assert.equal(wrongStage.accepted, false);
+  assert.match(wrongStage.reason, /requires LAUNCH_UNKNOWN/);
+
+  const launched = launch(reserved).receipt;
+  for (const event of [
+    { ...validEvent, external_run_id: "" },
+    { ...validEvent, worker_identity: "" },
+    { ...validEvent, external_run_id: null },
+    { ...validEvent, worker_identity: null },
+  ]) {
+    const missing = nextReceiptState(launched, event);
+    assert.equal(missing.accepted, false);
+    assert.match(missing.reason, /requires provider run and worker identities/);
+    assert.equal(missing.receipt.stage, "LAUNCH_UNKNOWN");
+    assert.equal(missing.receipt.external_run_id, null);
+  }
+});
+
 test("worker ack -> RUNNING stores external_run_id IMMEDIATELY and retains granular adapter_status", () => {
   const r = launch(reserve());
   const ack = nextReceiptState(r.receipt, {
@@ -229,7 +274,7 @@ test("pause invariant: next reservation for the SAME paused adapter is skipped",
   // adapter paused (e.g. after a 429) -> no candidate, and the skip reason says why
   const paused = selectNextReservation({
     ready: eligible,
-    config: { max_dispatch: 1, adapter_pause_map: { "workspace-agents": true } },
+    config: { max_dispatch: 1, adapter_pause_map: { "codex-cli": true } }, // SHU-63: builder lane adapter is codex-cli
     receipts: [],
   });
   assert.equal(paused.candidate, null);

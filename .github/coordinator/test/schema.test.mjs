@@ -120,6 +120,34 @@ test("rejects: worker_identity present while stage=RESERVED with no external_run
   assert.equal(validateReceipt(receipt).valid, true); // null allowed
 });
 
+test("rejects: RESERVED carrying any provider run identity", () => {
+  const r = validRunning();
+  r.stage = "RESERVED";
+  r.timestamps.launch = null;
+  r.timestamps.heartbeat = null;
+  r.external_run_id = "apirun_12345";
+  r.worker_identity = null;
+  r.adapter_status = null;
+  assertInvalid(r, /RESERVED must have external_run_id null/, "run id at RESERVED");
+});
+
+test("LAUNCH_UNKNOWN discovered and undiscovered identity shapes are mutually exclusive", () => {
+  const discovered = validRunning();
+  discovered.stage = "LAUNCH_UNKNOWN";
+  discovered.adapter_status = "queued";
+  assertInvalid(discovered, /requires adapter_status \"in_progress\"/, "discovered run must remain in progress");
+
+  const withoutRun = validRunning();
+  withoutRun.stage = "LAUNCH_UNKNOWN";
+  withoutRun.external_run_id = null;
+  withoutRun.worker_identity = "codex:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  withoutRun.adapter_status = "in_progress";
+  assertInvalid(withoutRun, /without a run must keep worker_identity null/, "undiscovered run cannot carry identity");
+
+  withoutRun.worker_identity = null;
+  assertInvalid(withoutRun, /without a run must keep adapter_status null/, "undiscovered run cannot carry status");
+});
+
 test("rejects: worker_identity set while external_run_id null (contradictory pair)", () => {
   const r = validRunning();
   r.external_run_id = null;

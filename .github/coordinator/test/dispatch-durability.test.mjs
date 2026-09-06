@@ -128,7 +128,15 @@ const ENV = {
 
 async function runMain({ configPath, wa, linear, failComments = false, io = {} }) {
   const out = [];
+  io = {
+    ...io,
+    // SHU-63 pivot: codex-builder cards route to codex-cli; machine-level tests
+    // inject the real workspace-agents module (inert for routing) under the
+    // codex-cli adapter key with token/trigger restored.
+    adapterModules: { "codex-cli": waCompat, ...(io.adapterModules ?? {}) },
+  };
   const code = await main([], ENV, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
     configPath,
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => {
@@ -140,6 +148,15 @@ async function runMain({ configPath, wa, linear, failComments = false, io = {} }
   });
   return { code, out };
 }
+
+const waCompat = (() => {
+  let mod = null;
+  const load = () => (mod ??= import("../adapters/workspace-agents.mjs"));
+  return {
+    launchBuilder: async (o) => (await load()).launchBuilder({ ...o, token: ENV.WORKSPACE_AGENT_ACCESS_TOKEN, api_trigger_id: TRIGGER }),
+    monitorRun: async (o) => (await load()).monitorRun({ ...o, token: ENV.WORKSPACE_AGENT_ACCESS_TOKEN, api_trigger_id: TRIGGER }),
+  };
+})();
 
 test("launch intent is durable before the adapter boundary throws", async () => {
   const nodes = makeIssueNodes();
@@ -155,7 +172,7 @@ test("launch intent is durable before the adapter boundary throws", async () => 
       configPath,
       wa: fakeWorkspaceAgents({ mode: "accept" }),
       linear: store,
-      io: { adapterModules: { "workspace-agents": crashingAdapter } },
+      io: { adapterModules: { "codex-cli": crashingAdapter } },
     }),
     /process died after launch intent/,
   );
@@ -242,6 +259,41 @@ test("LAUNCH_UNKNOWN is reconciled across processes with the same attempt and Id
   assert.equal(recovered[0].external_run_id, "apirun_durable_1");
 });
 
+test("recovery persists a newly discovered Codex thread id before any exact-id resume", async () => {
+  const nodes = makeIssueNodes();
+  const store = fakeLinearStore(nodes, []);
+  const configPath = tempConfig();
+  const noRunYet = {
+    launchBuilder: async () => ({ stage: "LAUNCH_UNKNOWN", reason: "coordinator stopped before callback" }),
+    monitorRun: async () => ({ stage: "UNCHANGED" }),
+  };
+  await runMain({ configPath, wa: fakeWorkspaceAgents({ mode: "accept" }), linear: store, io: { adapterModules: { "codex-cli": noRunYet } } });
+  const first = parseReceiptsFromComments(store.comments)[0];
+  assert.equal(first.stage, "LAUNCH_UNKNOWN");
+  assert.equal(first.external_run_id, null);
+
+  let recoveryCalls = 0;
+  const discoveredRun = {
+    launchBuilder: async ({ external_run_id }) => {
+      recoveryCalls += 1;
+      assert.equal(external_run_id, null, "the durable sidecar is the recovery source on this pass");
+      return {
+        stage: "LAUNCH_UNKNOWN",
+        external_run_id: "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53",
+        worker_identity: `codex:${first.attempt_id}`,
+        adapter_status: "in_progress",
+      };
+    },
+    monitorRun: async () => ({ stage: "UNCHANGED" }),
+  };
+  await runMain({ configPath, wa: fakeWorkspaceAgents({ mode: "accept" }), linear: store, io: { adapterModules: { "codex-cli": discoveredRun } } });
+  assert.equal(recoveryCalls, 1);
+  const recovered = parseReceiptsFromComments(store.comments)[0];
+  assert.equal(recovered.stage, "LAUNCH_UNKNOWN", "a synchronous local session is not misrepresented as pollable RUNNING");
+  assert.equal(recovered.external_run_id, "codexrun_0199a213-81c0-7800-8aa1-bbab2a035a53");
+  assert.equal(validateReceipt(recovered).valid, true, validateReceipt(recovered).errors?.join("; "));
+});
+
 test("quota failure persists FAILED + durable pause marker; the pause survives a fresh process", async () => {
   const nodes = makeIssueNodes();
   const store = fakeLinearStore(nodes, []);
@@ -253,7 +305,7 @@ test("quota failure persists FAILED + durable pause marker; the pause survives a
   assert.equal(failed[0].stage, "FAILED");
   assert.equal(failed[0].external_run_id, null, "refused trigger invents no phantom run id");
   const paused = parsePausedAdapters(store.comments);
-  assert.ok(paused.includes("workspace-agents"), "pause marker persisted alongside the FAILED receipt");
+  assert.ok(paused.includes("codex-cli"), "pause marker persisted alongside the FAILED receipt (SHU-63: builder adapter is codex-cli)");
 
   // Fresh process: durable pause marker read back -> even a free slot will not
   // auto-launch a doomed attempt.
@@ -265,7 +317,7 @@ test("quota failure persists FAILED + durable pause marker; the pause survives a
   // Unit-level: paused adapter blocks the next reservation even when slot is free.
   const blocked = selectNextReservation({
     ready: [{ id: "SHU-FIXTURE-001", priority: "High", state: "Todo", requested_worker: "codex-builder" }],
-    config: { max_dispatch: 1, adapter_pause_map: { "workspace-agents": true } },
+    config: { max_dispatch: 1, adapter_pause_map: { "codex-cli": true } },
     receipts: [],
   });
   assert.equal(blocked.candidate, null);

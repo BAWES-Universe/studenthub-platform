@@ -24,6 +24,7 @@
 //
 // Linear API token names only — no secrets live in this repository.
 
+import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -234,14 +235,16 @@ export function requestedWorkerFor(issue) {
 export function adapterNameFor(requestedWorker) {
   if (requestedWorker === "hermes-box") return "hermes-pool";
   if (requestedWorker === "claude-verifier") return "claude-code";
-  return "workspace-agents";
+  if (requestedWorker === "codex-builder") return "codex-cli"; // SHU-63 pivot: local Codex CLI (personal ChatGPT), WA inert
+  return "codex-cli";
 }
 
 // ONE loader for every lane. io.adapterModules is the injection seam the
 // main()-level tests use to drive an adapter without touching the real one.
 export async function loadAdapterModule(adapter, io = {}) {
   if (io.adapterModules?.[adapter]) return io.adapterModules[adapter];
-  if (adapter === "workspace-agents") return import("./adapters/workspace-agents.mjs");
+  if (adapter === "workspace-agents") return import("./adapters/workspace-agents.mjs"); // inert post-pivot: kept for a future managed workspace
+  if (adapter === "codex-cli") return import("./adapters/codex-cli.mjs");
   if (adapter === "claude-code") return import("./adapters/claude-code.mjs");
   if (adapter === "hermes-pool") return import("./adapters/hermes-pool.mjs");
   throw new Error(`unknown coordinator adapter: ${adapter}`);
@@ -257,6 +260,13 @@ export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
     return {
       api_trigger_id: env.WORKSPACE_AGENT_TRIGGER_ID ?? "",
       token: env.WORKSPACE_AGENT_ACCESS_TOKEN ?? "",
+    };
+  }
+  if (adapter === "codex-cli") {
+    return {
+      cwd: env.CODEX_WORKTREE_PATH ?? process.cwd(),
+      env,
+      resume,
     };
   }
   if (adapter === "claude-code") {
@@ -373,7 +383,7 @@ export function validateReceipt(receipt) {
     if (!allowed.includes(t)) errors.push(`field "${field}" must be ${allowed.join("|")} (nullable)`);
   }
   if (receipt.external_run_id !== null) {
-    expectPattern("external_run_id", /^(?:apirun|clauderun)_[A-Za-z0-9_-]+$/);
+    expectPattern("external_run_id", /^(?:apirun|clauderun|codexrun)_[A-Za-z0-9_-]+$/);
   }
   if (receipt.adapter_status !== null) {
     expectEnum("adapter_status", ADAPTER_STATUSES);
@@ -402,7 +412,8 @@ export function validateReceipt(receipt) {
   }
 
   // ---- Cross-field stage invariants (mirrors the allOf in the schema file). ----
-  // RESERVED/LAUNCH_UNKNOWN: no run can exist before launch is acknowledged.
+  // RESERVED has no run. LAUNCH_UNKNOWN may carry a discovered durable run id:
+  // the provider session exists, but the launch/terminal outcome is still unknown.
   // RUNNING/COMPLETED: an accepted run exists (external_run_id + granular status).
   // worker_identity is OPTIONAL in every stage until the poll response supplies
   // the documented agent_id — it is NEVER fabricated from the run id (GPT review
@@ -417,10 +428,19 @@ export function validateReceipt(receipt) {
   const runId = receipt.external_run_id;
   const workerIdentity = receipt.worker_identity;
   const adapterStatus = receipt.adapter_status;
-  if (stage === "RESERVED" || stage === "LAUNCH_UNKNOWN") {
-    if (runId !== null) errors.push(`stage ${stage} must have external_run_id null (no run exists yet)`);
-    if (workerIdentity !== null) errors.push(`stage ${stage} must have worker_identity null (no run identity yet)`);
-    if (adapterStatus !== null) errors.push(`stage ${stage} must have adapter_status null`);
+  if (stage === "RESERVED") {
+    if (runId !== null) errors.push("stage RESERVED must have external_run_id null (no run exists yet)");
+    if (workerIdentity !== null) errors.push("stage RESERVED must have worker_identity null (no run identity yet)");
+    if (adapterStatus !== null) errors.push("stage RESERVED must have adapter_status null");
+  } else if (stage === "LAUNCH_UNKNOWN") {
+    const discovered = runId !== null;
+    if (discovered) {
+      if (typeof workerIdentity !== "string" || !workerIdentity.length) errors.push("LAUNCH_UNKNOWN with a discovered run requires worker_identity");
+      if (adapterStatus !== "in_progress") errors.push("LAUNCH_UNKNOWN with a discovered run requires adapter_status \"in_progress\"");
+    } else {
+      if (workerIdentity !== null) errors.push("LAUNCH_UNKNOWN without a run must keep worker_identity null");
+      if (adapterStatus !== null) errors.push("LAUNCH_UNKNOWN without a run must keep adapter_status null");
+    }
   } else if (stage === "FAILED") {
     const postAcceptance = runId !== null;
     if (postAcceptance) {
@@ -522,7 +542,9 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   if (!Array.isArray(evidence.links) || evidence.links.length === 0) return false;
   if (evidence.attempt_id !== receipt.attempt_id) return false;
   if (evidence.target_sha !== receipt.target_sha) return false;
-  if (ctx.current_head && ctx.current_head !== receipt.target_sha) return false;
+  const expectedHead = Object.hasOwn(ctx, "expected_head") ? ctx.expected_head : receipt.target_sha;
+  if (!TARGET_SHA_RE.test(expectedHead ?? "")) return false;
+  if (ctx.current_head && ctx.current_head !== expectedHead) return false;
   if (!SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) return false;
   return true;
 }
@@ -595,6 +617,26 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         next.worker_identity = event.worker_identity;
       }
       next.timestamps.heartbeat = at();
+      return { receipt: next, accepted: true };
+    }
+    case "run_discovered": {
+      // Some local CLIs emit their durable session identity before their process
+      // has a trustworthy terminal outcome. Persist that identity while retaining
+      // LAUNCH_UNKNOWN so recovery resumes it rather than treating it as pollable.
+      if (receipt.stage !== "LAUNCH_UNKNOWN") {
+        return unchanged(`run_discovered requires LAUNCH_UNKNOWN, got ${receipt.stage}`);
+      }
+      const { external_run_id, worker_identity } = event;
+      if (typeof external_run_id !== "string" || !external_run_id.length || typeof worker_identity !== "string" || !worker_identity.length) {
+        return unchanged("run_discovered requires provider run and worker identities");
+      }
+      if (receipt.external_run_id && receipt.external_run_id !== external_run_id) {
+        return unchanged("run_discovered conflicts with the durable run identity");
+      }
+      const next = note(`durable run ${external_run_id} discovered; exact-id recovery required`);
+      next.external_run_id = external_run_id;
+      next.worker_identity = worker_identity;
+      next.adapter_status = "in_progress";
       return { receipt: next, accepted: true };
     }
     case "run_status": {
@@ -739,6 +781,26 @@ export function nextReceiptState(receipt, event, ctx = {}) {
   }
 }
 
+// Lanes whose activation contract must hold before any worker starts. Only the
+// local-CLI builder lane carries it today; a hosted lane has no brick box and no
+// host-local session state, so the requirements would not apply to it.
+export const ACTIVATION_GATED_ADAPTERS = Object.freeze(["codex-cli"]);
+
+// activationPreflightFor — null when the lane carries no contract, otherwise the
+// preflight result. Kept beside the dispatch path so the gate and the lane list
+// cannot drift apart.
+export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undefined } = {}) {
+  // Named opt-out for tests whose subject is some OTHER dispatch property, in
+  // the same style as io.pollRuns / io.fetchDurable / io.adapterModules. It is
+  // greppable, it is never set by the workflow, and production therefore always
+  // runs the contract.
+  if (io.skipActivationPreflight === true) return null;
+  if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return null;
+  const stateDir = io.codexStateDir
+    ?? (env.CODEX_HOME ? `${env.CODEX_HOME}/coordinator-runs` : (env.HOME ? `${env.HOME}/.codex/coordinator-runs` : null));
+  return preflightActivation({ env, stateDir, cwd, io });
+}
+
 // resolveLiveHead — the tri-state rule both terminal-launch paths must apply.
 // No GitHub token means the bound head IS the reference; a token present but an
 // unreadable head is NEVER "head matches". Shared so dispatch and recovery
@@ -755,6 +817,27 @@ export async function resolveLiveHead(receipt, { githubToken, fetchImpl }) {
   }
 }
 
+// Activation proves that the configured GitHub credential can read the exact
+// repository commit before a local worker is started. Probing the commit (not
+// the destination branch) also supports a first-time builder branch that does
+// not exist until Codex pushes it.
+export async function verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl }) {
+  if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return { ok: true };
+  if (!githubToken || !repo || !target_sha) return { ok: false, reason: "GitHub target verification is not configured" };
+  try {
+    const res = await fetchImpl(`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(target_sha)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    });
+    if (!res.ok) return { ok: false, reason: `GitHub target probe returned HTTP ${res.status}` };
+    const body = await res.json().catch(() => null);
+    if (body?.sha !== target_sha) return { ok: false, reason: "GitHub target probe returned an unexpected commit" };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: `GitHub target probe failed: ${error?.message ?? "unknown"}` };
+  }
+}
+
 // Fold any adapter's normalized launch result through the same receipt machine.
 // Remote adapters usually return RUNNING. A synchronous adapter such as
 // `claude -p` can return its terminal result in the launch call; it is still
@@ -763,7 +846,18 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
   let transition = receipt.stage === "LAUNCH_UNKNOWN"
     ? { receipt, accepted: true, idempotency_key: launchIdempotencyKey(receipt) }
     : nextReceiptState(receipt, { type: "launch" });
-  if (!transition.accepted || launch.stage === "LAUNCH_UNKNOWN") return transition;
+  if (!transition.accepted) return transition;
+
+  if (launch.stage === "LAUNCH_UNKNOWN") {
+    const hasDiscoveredRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
+    return hasDiscoveredRun
+      ? nextReceiptState(transition.receipt, {
+          type: "run_discovered",
+          external_run_id: launch.external_run_id,
+          worker_identity: launch.worker_identity,
+        })
+      : transition;
+  }
 
   const hasRun = typeof launch.external_run_id === "string" && launch.external_run_id.length > 0;
   if (hasRun) {
@@ -1328,10 +1422,34 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const linearIssueId = resolveLinearIssueId(receipt, "launch reconciliation");
       if (!linearIssueId) continue;
 
+      // Recovery is a worker launch too. Rechecking only first dispatch lets a
+      // later coordinator with missing credentials, wrong host, or ephemeral
+      // state resume an existing Codex session around the activation contract.
+      const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+      if (activation && !activation.ok) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
+        config.adapter_pause_map[adapter] = true;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+        continue;
+      }
+      const activationTarget = activation ? await verifyActivationTarget(adapter, {
+        repo: receipt.repo,
+        target_sha: receipt.target_sha,
+        githubToken,
+        fetchImpl,
+      }) : { ok: true };
+      if (!activationTarget.ok) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
+        config.adapter_pause_map[adapter] = true;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+        continue;
+      }
+
       let launch;
       try {
         launch = await adapterModule.launchBuilder({
           recovery: true, // host-local authorization required by Hermes recovery
+          external_run_id: receipt.external_run_id ?? null, // codex-cli exact-id resume target (codexrun_<uuid>)
           repo: receipt.repo,
           branch: receipt.branch,
           issue_id: receipt.issue_id,
@@ -1348,7 +1466,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation failed for ${receipt.issue_id}: ${err.message} — state unchanged, slot held`);
         continue;
       }
-      if (launch.stage === "LAUNCH_UNKNOWN") continue;
+      if (launch.stage === "LAUNCH_UNKNOWN" && !(typeof launch.external_run_id === "string" && launch.external_run_id.length)) continue;
 
       // STALE-HEAD GUARD, same rule as the dispatch path. A synchronous adapter
       // can return a terminal COMPLETED straight from launchBuilder during
@@ -1361,7 +1479,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (!resolved.verified) {
           launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
         } else {
-          recoveryCtx = { current_head: resolved.head };
+          // A builder starts at target_sha and is expected to move its work
+          // branch. Its callback binds the resulting commit separately; using
+          // target_sha here would reject every successful builder as stale.
+          const expectedHead = receipt.requested_worker === "codex-builder"
+            ? launch.callback?.result_sha
+            : receipt.target_sha;
+          recoveryCtx = { current_head: resolved.head, expected_head: expectedHead };
         }
       }
       const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
@@ -1520,6 +1644,30 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   if (!target_sha || !TARGET_SHA_RE.test(target_sha)) {
     throw new Error(`dispatch refused: no bound head for ${candidate.id} — target_sha is required (old PASS must never satisfy a changed head)`);
   }
+  const adapter = adapterNameFor(candidate.requested_worker);
+  const linearIssueId = candidate.linearId ?? candidate.id; // UUID for the real API, identifier tolerated by mocks
+
+  // Activation is checked before minting and persisting a reservation. A
+  // refused preflight sent no launch, and RESERVED receipts are not processed
+  // by launch recovery; writing one here would consume the slot permanently
+  // even after the operator repaired the missing wiring.
+  const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+  if (activation && !activation.ok) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
+    config.adapter_pause_map[adapter] = true;
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    return 2;
+  }
+  const activationTarget = activation
+    ? await verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl })
+    : { ok: true };
+  if (!activationTarget.ok) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
+    config.adapter_pause_map[adapter] = true;
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    return 2;
+  }
+
   const { ok: reservedOk, receipt, errors } = createReceipt({
     issue_id: candidate.id,
     authorization_ref,
@@ -1532,7 +1680,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);
   }
   // Persist RESERVED *before* anything reaches the adapter (reserve precedes launch).
-  const linearIssueId = candidate.linearId ?? receipt.issue_id; // UUID for the real API, identifier tolerated by mocks
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
 
   // GPT review #3: RE-READ and validate the authoritative reservation before
@@ -1563,10 +1710,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     return 2;
   }
 
-  // Write-ahead launch intent: persist LAUNCH_UNKNOWN before crossing any
-  // adapter boundary. If this process dies while a remote request or `claude -p`
-  // is running, the next reconcile resumes the same attempt instead of leaving
-  // a RESERVED receipt parked forever or minting a duplicate worker.
+  // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
+  // known-good and before crossing the adapter boundary. A refused preflight did
+  // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
   const launchIntent = nextReceiptState(receipt, { type: "launch" });
   if (!launchIntent.accepted) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
@@ -1574,7 +1720,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
 
-  const adapter = adapterNameFor(candidate.requested_worker);
   const dispatchAdapterModule = await loadAdapterModule(adapter, io);
   let launch = await dispatchAdapterModule.launchBuilder({
     // Reservation binding (PR #24): the host-local lease records repo/branch so
@@ -1608,7 +1753,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (!resolved.verified) {
       launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
     } else {
-      launchCtx = { current_head: resolved.head };
+      const expectedHead = receipt.requested_worker === "codex-builder"
+        ? launch.callback?.result_sha
+        : receipt.target_sha;
+      launchCtx = { current_head: resolved.head, expected_head: expectedHead };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);

@@ -48,7 +48,7 @@
     },
     "worker_identity": {
       "type": ["string", "null"],
-      "description": "Actual worker session/run identity. MUST be null at RESERVED and LAUNCH_UNKNOWN (and at a pre-acceptance FAILED); MUST be set together with external_run_id once a run exists."
+      "description": "Actual worker session/run identity. Null before a run exists; may be present at LAUNCH_UNKNOWN when a durable local session was discovered but its outcome remains unknown."
     },
     "repo": { "type": "string" },
     "branch": { "type": "string", "minLength": 1 },
@@ -59,8 +59,8 @@
     },
     "external_run_id": {
       "type": ["string", "null"],
-      "description": "Provider run id (apirun_... or clauderun_...) stored once a run is acknowledged. null at RESERVED/LAUNCH_UNKNOWN and when launch was refused before acceptance (quota/access).",
-      "pattern": "^(apirun|clauderun)_[A-Za-z0-9_-]+$"
+      "description": "Provider run id (apirun_..., clauderun_... or codexrun_<thread-uuid>) stored once known. May be present at LAUNCH_UNKNOWN for an exact-id recoverable local session.",
+      "pattern": "^(apirun|clauderun|codexrun)_[A-Za-z0-9_-]+$"
     },
     "adapter_status": {
       "type": ["string", "null"],
@@ -95,7 +95,7 @@
       "allOf": [
         {
           "if": {
-            "properties": { "stage": { "enum": ["RESERVED", "LAUNCH_UNKNOWN"] } },
+            "properties": { "stage": { "enum": ["RESERVED"] } },
             "required": ["stage"]
           },
           "then": {
@@ -106,6 +106,26 @@
             }
           },
           "else": {
+            "if": { "properties": { "stage": { "enum": ["LAUNCH_UNKNOWN"] } }, "required": ["stage"] },
+            "then": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "external_run_id": { "type": "null" },
+                    "worker_identity": { "type": "null" },
+                    "adapter_status": { "type": "null" }
+                  }
+                },
+                {
+                  "properties": {
+                    "external_run_id": { "type": "string" },
+                    "worker_identity": { "type": "string" },
+                    "adapter_status": { "const": "in_progress" }
+                  }
+                }
+              ]
+            },
+            "else": {
             "if": { "properties": { "stage": { "enum": ["FAILED"] } }, "required": ["stage"] },
             "then": {
               "anyOf": [
@@ -132,6 +152,7 @@
                 "worker_identity": { "type": "string" },
                 "adapter_status": { "enum": ["queued", "in_progress", "suspended", "completed", "failed"] }
               }
+            }
             }
           }
         }

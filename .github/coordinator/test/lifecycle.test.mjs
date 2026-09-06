@@ -116,16 +116,32 @@ const ENV = {
   DISPATCH_TARGET_SHA: SHA,
 };
 
-function makeRun(store, wa) {
+function makeRun(store, wa, extraIo = {}) {
   const out = [];
   return main([], ENV, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
     configPath: tempConfig(),
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
     fetchDurable: true,
     pollRuns: true,
+    // SHU-63 pivot: codex-builder cards route to codex-cli; these main()-level
+    // tests exercise the MACHINE over the builder transport, so the real
+    // workspace-agents module (retained inert for routing) is injected under
+    // the codex-cli adapter key with its token/trigger restored.
+    adapterModules: { "codex-cli": waCompat, ...(extraIo.adapterModules ?? {}) },
+    ...extraIo,
   }).then((code) => ({ code, out }));
 }
+
+const waCompat = (() => {
+  let mod = null;
+  const load = () => (mod ??= import("../adapters/workspace-agents.mjs"));
+  return {
+    launchBuilder: async (o) => (await load()).launchBuilder({ ...o, token: ENV.WORKSPACE_AGENT_ACCESS_TOKEN, api_trigger_id: TRIGGER }),
+    monitorRun: async (o) => (await load()).monitorRun({ ...o, token: ENV.WORKSPACE_AGENT_ACCESS_TOKEN, api_trigger_id: TRIGGER }),
+  };
+})();
 
 function callbackComment(attempt_id) {
   return {
@@ -275,7 +291,9 @@ test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linea
     [],
     ENV,
     {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
       configPath: enabledCfg,
+            adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
       stdout: () => {},
       fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
       fetchDurable: true,
@@ -292,7 +310,9 @@ test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linea
   const disabledCfgPath = join(mkdtempSync(join(tmpdir(), "coordinator-off-")), "config.json");
   writeFileSync(disabledCfgPath, JSON.stringify({ ...cfg, enable_dispatch: false }));
   const code = await main([], disabledEnv, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
     configPath: disabledCfgPath,
+          adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
     fetchDurable: true,
@@ -355,7 +375,9 @@ test("BLOCK #4: an unreadable live GitHub head prevents COMPLETED (HOLD, never a
   const runOnce = async () => {
     const out = [];
     return main([], env, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
       configPath: tempConfig(),
+            adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
       stdout: (s) => out.push(s),
       fetchImpl: async (url, opts) => {
         if (url.includes("api.linear.app")) return store(url, opts);
@@ -386,7 +408,9 @@ test("BLOCK #5: retries are capped — after max_failed_attempts the issue parks
   const runOnce = async () => {
     const out = [];
     const code = await main([], ENV, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
       configPath: tempConfig(),
+            adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
       stdout: (s) => out.push(s),
       fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
       fetchDurable: true,

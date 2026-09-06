@@ -192,7 +192,7 @@ test("validateCallbackEvidence: missing stage fails closed; only success stages 
 
 test("adapterNameFor + adapterModuleFor route hermes-box to hermes-pool", async () => {
   assert.equal(adapterNameFor("hermes-box"), "hermes-pool");
-  assert.equal(adapterNameFor("codex-builder"), "workspace-agents");
+  assert.equal(adapterNameFor("codex-builder"), "codex-cli", "SHU-63 pivot: builder family routes to the local Codex CLI");
   assert.equal(adapterNameFor("claude-verifier"), "claude-code", "SHU-61 landed: the fallback is gone");
   const pool = await adapterModuleFor({ requested_worker: "hermes-box" });
   assert.ok(pool.launchBuilder && pool.monitorRun, "hermes-pool exposes the adapter interface");
