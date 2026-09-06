@@ -1230,3 +1230,47 @@ test(
     }
   },
 );
+
+test("migrations: a client whose rollback fails is destroyed and preserves the migration error", async () => {
+  const dbName = `shu59_migrate_rollback_${Date.now()}`;
+  const admin = new pg.Pool({ connectionString: DB_URL });
+  try {
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const pool = new pg.Pool({
+      connectionString: withDatabaseName(DB_URL, dbName),
+      max: 1,
+    });
+    const originalConnect = pool.connect.bind(pool);
+    let releasedWith: boolean | Error | undefined;
+    const client = await originalConnect();
+    const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+    const originalRelease = client.release.bind(client);
+    client.query = ((...args: unknown[]) => {
+      const statement =
+        typeof args[0] === "string"
+          ? args[0]
+          : (args[0] as { readonly text?: string } | undefined)?.text;
+      if (statement === "ROLLBACK") return Promise.reject(new Error("injected rollback failure"));
+      if (statement?.includes("CREATE TABLE IF NOT EXISTS organizations")) {
+        return Promise.reject(new Error("injected migration body failure"));
+      }
+      return originalQuery(...args);
+    }) as typeof client.query;
+    client.release = ((destroy?: boolean | Error) => {
+      releasedWith = destroy;
+      originalRelease(destroy);
+    }) as typeof client.release;
+    pool.connect = (async () => client) as typeof pool.connect;
+
+    try {
+      await assert.rejects(() => runMigrations(pool), /injected migration body failure/);
+      assert.equal(releasedWith, true, "unknown migration state must destroy the client");
+    } finally {
+      pool.connect = originalConnect as typeof pool.connect;
+      await pool.end();
+    }
+  } finally {
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => undefined);
+    await admin.end();
+  }
+});
