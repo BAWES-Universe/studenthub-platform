@@ -36,11 +36,25 @@ import {
   claimsToRequestIdentity,
   resolveActiveContext,
   type AuthzStore,
-  type DenialReason,
   type IssuerKeyRegistry,
 } from "@studenthub/contracts";
+import { randomUUID } from "node:crypto";
 
-export type AuthzDenialReason = AssertionErrorCode | "missing_assertion" | DenialReason;
+import {
+  createStdoutAuditSink,
+  emitAuthorizationAuditEvent,
+  type AuthorizationAuditEvent,
+  type AuthorizationAuditFailureHandler,
+  type AuthorizationAuditSink,
+  type AuthorizationDecisionReason,
+} from "./authz-audit.js";
+
+/**
+ * Aliased to the audit module's union so a reason can never exist in a decision
+ * without being expressible in an audit event. Adding a denial reason there is
+ * the only way to add one here.
+ */
+export type AuthzDenialReason = AuthorizationDecisionReason;
 
 export interface AuthzMiddleware {
   readonly store: AuthzStore;
@@ -51,6 +65,14 @@ export interface AuthzMiddleware {
   /** Exact destination this gateway accepts assertions for. */
   readonly expectedAudience: string;
   readonly resolveKey: KeyResolver;
+  /** Where decision events go. Defaults to one JSON object per line on stdout. */
+  readonly auditSink: AuthorizationAuditSink;
+  /** Raised when the sink refuses an event. Carries a request id and nothing else. */
+  readonly onAuditFailure: AuthorizationAuditFailureHandler;
+  /** Injectable clock, so tests assert an exact timestamp rather than a shape. */
+  readonly now: () => Date;
+  /** Server-generated correlation id. Never sourced from a request header. */
+  readonly newRequestId: () => string;
 }
 
 /**
@@ -79,32 +101,70 @@ export function createAuthzMiddleware(deps: {
   readonly replayStore: ReplayStore;
   readonly subjectPolicy: SubjectPolicy;
   readonly expectedAudience: string;
+  readonly auditSink?: AuthorizationAuditSink;
+  readonly onAuditFailure?: AuthorizationAuditFailureHandler;
+  readonly now?: () => Date;
+  readonly newRequestId?: () => string;
 }): AuthzMiddleware {
   if (deps.expectedAudience.trim().length === 0) {
     throw new TypeError("expectedAudience must be a non-empty destination string");
   }
-  return { ...deps, resolveKey: registryKeyResolver(deps.registry) };
+  return {
+    ...deps,
+    resolveKey: registryKeyResolver(deps.registry),
+    // Auditing is ON by default. An unconfigured gateway that silently stopped
+    // recording decisions would be the observability equivalent of the
+    // fail-OPEN default this middleware exists to prevent.
+    auditSink: deps.auditSink ?? createStdoutAuditSink(),
+    onAuditFailure: deps.onAuditFailure ?? (() => undefined),
+    now: deps.now ?? (() => new Date()),
+    newRequestId: deps.newRequestId ?? (() => randomUUID()),
+  };
 }
 
 export type AuthzRequestDecision =
   | { readonly kind: "allow"; readonly subject: string; readonly orgId: string; readonly role: string }
   | { readonly kind: "deny"; readonly status: 401 | 403; readonly reason: AuthzDenialReason };
 
-function deny(status: 401 | 403, reason: AuthzDenialReason): AuthzRequestDecision {
+type AuthzAllowDecision = Extract<AuthzRequestDecision, { kind: "allow" }>;
+type AuthzDenyDecision = Extract<AuthzRequestDecision, { kind: "deny" }>;
+
+function deny(status: 401 | 403, reason: AuthzDenialReason): AuthzDenyDecision {
   return { kind: "deny", status, reason };
 }
 
 /**
- * Gate one request. `assertionWire` is the raw `x-actor-assertion` header — the
- * exact bytes the signature covers. It is passed to the verifier untouched;
- * nothing here re-serializes claims, so signatures stay deterministic.
+ * The decision plus what the audit event needs that callers do not get.
+ *
+ * `principalId` is the PLATFORM's id from the grants store. It is carried here
+ * rather than on `AuthzRequestDecision` so the audit event can correlate by it
+ * without widening the public decision type.
  */
-export async function authorizeRequest(
+type AuditableDecision =
+  | {
+      readonly kind: "allow";
+      readonly decision: AuthzAllowDecision;
+      /** Always present on an allow — the type, not a runtime fallback, guarantees it. */
+      readonly principalId: string;
+    }
+  | {
+      readonly kind: "deny";
+      readonly decision: AuthzDenyDecision;
+      readonly stage: "authentication" | "authorization";
+    };
+
+/**
+ * The decision itself. Unchanged from SHU-49 apart from reporting which stage
+ * produced the verdict — this function records nothing and must stay that way,
+ * so that `authorizeRequest` below remains the single place an event is
+ * emitted.
+ */
+async function decideRequest(
   assertionWire: string | undefined,
   middleware: AuthzMiddleware,
-): Promise<AuthzRequestDecision> {
+): Promise<AuditableDecision> {
   if (assertionWire === undefined || assertionWire.trim() === "") {
-    return deny(401, "missing_assertion");
+    return { kind: "deny", decision: deny(401, "missing_assertion"), stage: "authentication" };
   }
 
   const verified = await verifyAssertion(
@@ -116,7 +176,9 @@ export async function authorizeRequest(
       subjectPolicy: middleware.subjectPolicy,
     },
   );
-  if (!verified.ok) return deny(401, verified.code);
+  if (!verified.ok) {
+    return { kind: "deny", decision: deny(401, verified.code), stage: "authentication" };
+  }
 
   // Server-side re-derivation: grants in the store decide, never claims.
   const resolution = await resolveActiveContext(
@@ -124,14 +186,101 @@ export async function authorizeRequest(
     claimsActToContextSelection(verified.claims),
     middleware.store,
   );
-  if (resolution.kind === "denied") return deny(403, resolution.reason);
+  if (resolution.kind === "denied") {
+    return { kind: "deny", decision: deny(403, resolution.reason), stage: "authorization" };
+  }
 
   return {
     kind: "allow",
-    subject: verified.claims.sub,
-    orgId: resolution.context.orgId,
-    role: resolution.context.role,
+    decision: {
+      kind: "allow",
+      subject: verified.claims.sub,
+      orgId: resolution.context.orgId,
+      role: resolution.context.role,
+    },
+    principalId: resolution.context.principalId,
   };
+}
+
+/** Build the event for a settled decision. Never sees the wire or the claims. */
+function auditEventFor(
+  outcome: AuditableDecision,
+  requestId: string,
+  timestamp: string,
+): AuthorizationAuditEvent {
+  if (outcome.kind === "allow") {
+    return {
+      type: "authorization_decision",
+      timestamp,
+      requestId,
+      stage: "authorization",
+      decision: "allow",
+      // Never `decision.subject`: that is the issuer's email-shaped `sub`.
+      principalId: outcome.principalId,
+      orgId: outcome.decision.orgId,
+      role: outcome.decision.role,
+    };
+  }
+  return {
+    type: "authorization_decision",
+    timestamp,
+    requestId,
+    stage: outcome.stage,
+    decision: "deny",
+    reason: outcome.decision.reason,
+    status: outcome.decision.status,
+  };
+}
+
+/**
+ * Gate one request. `assertionWire` is the raw `x-actor-assertion` header — the
+ * exact bytes the signature covers. It is passed to the verifier untouched;
+ * nothing here re-serializes claims, so signatures stay deterministic.
+ *
+ * EXACTLY ONE audit event is emitted per call, from the single emission point
+ * below. The decision logic lives in `decideRequest` and records nothing, so a
+ * denial path added later cannot forget to audit itself — the structure emits
+ * for it. Scattering `record()` calls through each branch is how a control
+ * silently stops covering the branch someone adds next.
+ *
+ * Emission happens AFTER the decision exists and never awaits the sink, so no
+ * sink can change or delay the verdict.
+ */
+export async function authorizeRequest(
+  assertionWire: string | undefined,
+  middleware: AuthzMiddleware,
+): Promise<AuthzRequestDecision> {
+  const requestId = middleware.newRequestId();
+
+  let outcome: AuditableDecision;
+  try {
+    outcome = await decideRequest(assertionWire, middleware);
+  } catch (error) {
+    // A dependency threw instead of returning a verdict. Audit the refusal and
+    // rethrow unchanged: the gateway's existing 503 path stays exactly as it
+    // was, because auditing must not alter behaviour it observes.
+    emitAuthorizationAuditEvent(
+      middleware.auditSink,
+      {
+        type: "authorization_decision",
+        timestamp: middleware.now().toISOString(),
+        requestId,
+        stage: "dependency",
+        decision: "deny",
+        reason: "dependency_unavailable",
+        status: 503,
+      },
+      middleware.onAuditFailure,
+    );
+    throw error;
+  }
+
+  emitAuthorizationAuditEvent(
+    middleware.auditSink,
+    auditEventFor(outcome, requestId, middleware.now().toISOString()),
+    middleware.onAuditFailure,
+  );
+  return outcome.decision;
 }
 
 /**
