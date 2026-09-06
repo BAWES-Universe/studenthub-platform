@@ -1,0 +1,69 @@
+name: coordinator
+
+# Deterministic dispatch coordinator — DRY-RUN by default.
+# This workflow never merges anything and holds no authority. With
+# ENABLE_DISPATCH != "true" (repo variable, default false) it only computes and
+# reports the ready/excluded set from durable Linear/GitHub state.
+#
+# Events: native GitHub events act as reconcile triggers; the hourly schedule is
+# the reconciliation backstop. NOTE: scheduled runs may be delayed or dropped by
+# GitHub under load — this is an OBSERVED TARGET (~1h), not a guarantee. No Linear
+# webhook receiver in the pilot (receiver-gap accepted; add only if measured
+# latency demands it).
+#
+# issue_comment events are WAKE HINTS ONLY: the coordinator reconstructs all
+# authorization from durable state and ignores comments from bot actors.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, closed]
+  push:
+    branches: [main]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+# One repo-wide group shared by ALL coordinator entry points serializes runs.
+# Workers (Codex builder, Claude verifier) run in SEPARATE workflows and are
+# deliberately NOT in this group, so implementation/review never serialize behind
+# a long coordinator job. cancel-in-progress: false — a surviving run always
+# re-reads durable state, so coalescing redundant wakes is safe.
+concurrency:
+  group: coordinator-dispatch
+  cancel-in-progress: false
+
+# FAIL-CLOSED CREDENTIAL: "zero writes" must not rest on application logic alone
+# (PR #20 review, same shape as the PR #13 finding — resolver fails closed,
+# credential unconstrained). The repo default GITHUB_TOKEN may be read-write;
+# pin it to contents: read so the token physically cannot write, matching every
+# other workflow in this repo.
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Secrets NEVER reach untrusted pull_request runs: reconcile then falls
+      # back to local-snapshot dry-run with zero secrets (CodeRabbit). Trusted
+      # refs (push to main / schedule / workflow_dispatch) get the full env.
+      LINEAR_API_TOKEN: ${{ github.event_name != 'pull_request' && secrets.LINEAR_API_TOKEN || '' }}
+      ENABLE_DISPATCH: ${{ github.event_name != 'pull_request' && vars.ENABLE_DISPATCH || '' }}
+      # Pass the (contents:read-scoped) Actions token so the reconcile script can
+      # discover open PRs for eligibility — reads only, never writes (GPT review #5).
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Workspace Agents credentials are DANGEROUS in untrusted contexts and only
+      # meaningful with dispatch enabled — never present on pull_request runs.
+      WORKSPACE_AGENT_ACCESS_TOKEN: ${{ github.event_name != 'pull_request' && secrets.WORKSPACE_AGENT_ACCESS_TOKEN || '' }}
+      WORKSPACE_AGENT_TRIGGER_ID: ${{ github.event_name != 'pull_request' && vars.WORKSPACE_AGENT_TRIGGER_ID || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reconcile (dry-run unless ENABLE_DISPATCH=true)
+        run: node .github/coordinator/reconcile.mjs

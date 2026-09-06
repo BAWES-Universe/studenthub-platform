@@ -74,7 +74,9 @@ export class TypesenseCandidateIndexer {
   async publish(documents: readonly CandidateSearchDocument[]): Promise<CandidateIndexPublication> {
     const canonical = canonicalDocuments(documents);
     if (canonical.length === 0) throw new TypeError("candidate index requires at least one document");
-    const digest = createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+    const digest = createHash("sha256")
+      .update(JSON.stringify({ fields: SEARCH_FIELDS, documents: canonical }))
+      .digest("hex");
     const collection = `${this.#alias}_${CANDIDATE_SEARCH_SCHEMA_VERSION}_${digest.slice(0, 16)}`;
     const created = await this.#ensureCollection(collection);
 
