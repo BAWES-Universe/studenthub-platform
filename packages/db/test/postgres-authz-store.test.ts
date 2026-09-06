@@ -463,6 +463,49 @@ test("audit: record reads are bounded", async () => {
   );
 });
 
+test("audit: logical no-ops emit no mutation facts", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+  const principal = createPrincipal({
+    id: "no-op-person",
+    pbuuids: ["no-op@example.invalid"],
+    displayName: "No Op",
+  });
+  await store.registerPrincipal(principal, { requestId: "req.noop-principal-seed" });
+  await store.registerPrincipal(principal, { requestId: "req.noop-principal" });
+
+  await store.grantMany(
+    principal.id,
+    [{ orgId: ACME, role: "candidate", scope: "self" }],
+    { requestId: "req.noop-grant-seed" },
+  );
+  await store.grantMany(
+    principal.id,
+    [{ orgId: ACME, role: "candidate", scope: "self" }],
+    { requestId: "req.noop-grant" },
+  );
+  await store.revokeMany(
+    principal.id,
+    [{ orgId: ACME, role: "finance" }],
+    { requestId: "req.noop-revoke" },
+  );
+  await store.clearGrantsForPrincipal(principal.id, { requestId: "req.clear-once" });
+  await store.clearGrantsForPrincipal(principal.id, { requestId: "req.noop-clear" });
+
+  for (const requestId of [
+    "req.noop-principal",
+    "req.noop-grant",
+    "req.noop-revoke",
+    "req.noop-clear",
+  ]) {
+    assert.deepEqual(
+      await store.listAuthorizationMutationAuditRecords({ requestId }),
+      [],
+      `${requestId} must not manufacture a mutation fact`,
+    );
+  }
+});
+
 test("audit: an insert failure rolls back its paired mutation and emits no success fact", async () => {
   const store = makeStore();
   await seedOrgAndPrincipal(store);

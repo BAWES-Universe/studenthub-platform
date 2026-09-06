@@ -4,6 +4,10 @@
 append-only audit fact in the same transaction as every principal registration,
 grant, revocation, and grant clear.
 
+Logical no-ops do not create audit facts: unchanged principal registration,
+idempotent grants, unmatched revocations, empty clears, and identical bootstrap
+runs return without rewriting authorization state.
+
 Mutation methods accept an optional final audit context:
 
 ```ts

@@ -79,6 +79,12 @@ interface PrincipalRow {
   pbuuids: string[];
 }
 
+interface PrincipalAuditStateRow {
+  display_name: string | null;
+  email: string | null;
+  pbuuids: string[];
+}
+
 interface GrantRow {
   id: string;
   principal_id: string;
@@ -411,24 +417,26 @@ export class PostgresAuthzStore implements AuthzStore {
     try {
       await this.#transaction(async (client) => {
         await this.#lockPrincipalAudit(client, principal.id);
-        const beforeRows = await client.query<{
-          exists: boolean;
-          identity_count: number;
-          display_name_present: boolean;
-          email_present: boolean;
-        }>(
-          `SELECT EXISTS (SELECT 1 FROM principals WHERE id = $1) AS exists,
-                  (SELECT count(*)::int FROM principal_pbuuids WHERE principal_id = $1) AS identity_count,
-                  COALESCE((SELECT display_name IS NOT NULL FROM principals WHERE id = $1), false) AS display_name_present,
-                  COALESCE((SELECT email IS NOT NULL FROM principals WHERE id = $1), false) AS email_present`,
+        const beforeRows = await client.query<PrincipalAuditStateRow>(
+          `SELECT p.display_name, p.email,
+                  COALESCE(array_agg(pb.pbuuid) FILTER (WHERE pb.pbuuid IS NOT NULL), '{}') AS pbuuids
+           FROM principals p
+           LEFT JOIN principal_pbuuids pb ON pb.principal_id = p.id
+           WHERE p.id = $1
+           GROUP BY p.id`,
           [principal.id],
         );
-        const before = beforeRows.rows[0] ?? {
-          exists: false,
-          identity_count: 0,
-          display_name_present: false,
-          email_present: false,
-        };
+        const before = beforeRows.rows[0];
+        const sameIdentities =
+          before !== undefined &&
+          JSON.stringify([...before.pbuuids].sort()) === JSON.stringify([...claimed].sort());
+        if (
+          sameIdentities &&
+          before.display_name === (principal.displayName ?? null) &&
+          before.email === (principal.email ?? null)
+        ) {
+          return;
+        }
         await client.query(
           `INSERT INTO principals (id, display_name, email)
            VALUES ($1, $2, $3)
@@ -449,10 +457,10 @@ export class PostgresAuthzStore implements AuthzStore {
           operation: "principal.register",
           targetPrincipalId: principal.id,
           before: {
-            existed: before.exists,
-            identityCount: before.identity_count,
-            displayNamePresent: before.display_name_present,
-            emailPresent: before.email_present,
+            existed: before !== undefined,
+            identityCount: before?.pbuuids.length ?? 0,
+            displayNamePresent: before !== undefined && before.display_name !== null,
+            emailPresent: before !== undefined && before.email !== null,
           },
           after: {
             existed: true,
@@ -559,16 +567,23 @@ export class PostgresAuthzStore implements AuthzStore {
     await this.#transaction(async (client) => {
       await this.#lockPrincipalAudit(client, principalId);
       const before = await this.#grantSummary(client, principalId);
-      await client.query(
+      const changed = await client.query(
         `INSERT INTO grants (principal_id, org_id, role, scope)
          VALUES ${tuples.join(", ")}
          ON CONFLICT (principal_id, org_id, role) DO UPDATE SET
           scope = CASE
             WHEN grants.scope = 'subtree' OR EXCLUDED.scope = 'subtree' THEN 'subtree'
             ELSE grants.scope
-          END`,
+          END
+         WHERE grants.scope IS DISTINCT FROM
+           CASE
+             WHEN grants.scope = 'subtree' OR EXCLUDED.scope = 'subtree' THEN 'subtree'
+             ELSE grants.scope
+           END
+         RETURNING id`,
         params,
       );
+      if (changed.rowCount === 0) return;
       await insertAuthorizationMutationAudit(client, {
         context: auditContext,
         operation: "grants.grant",
@@ -600,11 +615,12 @@ export class PostgresAuthzStore implements AuthzStore {
     await this.#transaction(async (client) => {
       await this.#lockPrincipalAudit(client, principalId);
       const before = await this.#grantSummary(client, principalId);
-      await client.query(
+      const changed = await client.query(
         `DELETE FROM grants
          WHERE principal_id = $1 AND (org_id, role) IN (${tuples.join(", ")})`,
         params,
       );
+      if (changed.rowCount === 0) return;
       await insertAuthorizationMutationAudit(client, {
         context: auditContext,
         operation: "grants.revoke",
@@ -624,7 +640,11 @@ export class PostgresAuthzStore implements AuthzStore {
     await this.#transaction(async (client) => {
       await this.#lockPrincipalAudit(client, principalId);
       const before = await this.#grantSummary(client, principalId);
-      await client.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+      const changed = await client.query(
+        "DELETE FROM grants WHERE principal_id = $1",
+        [principalId],
+      );
+      if (changed.rowCount === 0) return;
       await insertAuthorizationMutationAudit(client, {
         context: auditContext,
         operation: "grants.clear",
