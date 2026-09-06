@@ -119,6 +119,7 @@ const ENV = {
 function makeRun(store, wa, extraIo = {}) {
   const out = [];
   return main([], ENV, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
     configPath: tempConfig(),
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
@@ -290,6 +291,7 @@ test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linea
     [],
     ENV,
     {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
       configPath: enabledCfg,
             adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
       stdout: () => {},
@@ -308,6 +310,7 @@ test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linea
   const disabledCfgPath = join(mkdtempSync(join(tmpdir(), "coordinator-off-")), "config.json");
   writeFileSync(disabledCfgPath, JSON.stringify({ ...cfg, enable_dispatch: false }));
   const code = await main([], disabledEnv, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
     configPath: disabledCfgPath,
           adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
     stdout: (s) => out.push(s),
@@ -372,6 +375,7 @@ test("BLOCK #4: an unreadable live GitHub head prevents COMPLETED (HOLD, never a
   const runOnce = async () => {
     const out = [];
     return main([], env, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
       configPath: tempConfig(),
             adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
       stdout: (s) => out.push(s),
@@ -404,6 +408,7 @@ test("BLOCK #5: retries are capped — after max_failed_attempts the issue parks
   const runOnce = async () => {
     const out = [];
     const code = await main([], ENV, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
       configPath: tempConfig(),
             adapterModules: { "codex-cli": waCompat }, // SHU-63 pivot: builder lane routes to codex-cli
       stdout: (s) => out.push(s),

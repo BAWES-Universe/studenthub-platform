@@ -24,6 +24,7 @@
 //
 // Linear API token names only — no secrets live in this repository.
 
+import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -776,6 +777,26 @@ export function nextReceiptState(receipt, event, ctx = {}) {
     default:
       return unchanged(`unknown event type "${event.type}"`);
   }
+}
+
+// Lanes whose activation contract must hold before any worker starts. Only the
+// local-CLI builder lane carries it today; a hosted lane has no brick box and no
+// host-local session state, so the requirements would not apply to it.
+export const ACTIVATION_GATED_ADAPTERS = Object.freeze(["codex-cli"]);
+
+// activationPreflightFor — null when the lane carries no contract, otherwise the
+// preflight result. Kept beside the dispatch path so the gate and the lane list
+// cannot drift apart.
+export function activationPreflightFor(adapter, { env = {}, io = {}, cwd = undefined } = {}) {
+  // Named opt-out for tests whose subject is some OTHER dispatch property, in
+  // the same style as io.pollRuns / io.fetchDurable / io.adapterModules. It is
+  // greppable, it is never set by the workflow, and production therefore always
+  // runs the contract.
+  if (io.skipActivationPreflight === true) return null;
+  if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return null;
+  const stateDir = io.codexStateDir
+    ?? (env.CODEX_HOME ? `${env.CODEX_HOME}/coordinator-runs` : (env.HOME ? `${env.HOME}/.codex/coordinator-runs` : null));
+  return preflightActivation({ env, stateDir, cwd, io });
 }
 
 // resolveLiveHead — the tri-state rule both terminal-launch paths must apply.
@@ -1626,6 +1647,26 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
 
   const adapter = adapterNameFor(candidate.requested_worker);
+
+  // SHU-63 ACTIVATION CONTRACT — checked HERE, at the dispatch decision, not
+  // inside the adapter: activation is a coordinator-level property and belongs
+  // where the decision to start work is made.
+  //
+  // "Two login steps" is the AUTH surface. A Codex builder that logs in fine
+  // still cannot fetch or push without sandbox network, cannot have a COMPLETED
+  // head-checked without GitHub credentials, strands finished work without push
+  // auth, loses its resume identity if the state directory is ephemeral, and
+  // writes host-local sidecars describing a machine that no longer exists if the
+  // coordinator is not the brick box. Every one of those fails later and more
+  // expensively than a refusal here.
+  const activation = activationPreflightFor(adapter, { env, io, cwd: env.CODEX_WORKTREE_PATH ?? undefined });
+  if (activation && !activation.ok) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before launch — SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
+    config.adapter_pause_map[adapter] = true;
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    return 2;
+  }
+
   const dispatchAdapterModule = await loadAdapterModule(adapter, io);
   let launch = await dispatchAdapterModule.launchBuilder({
     // Reservation binding (PR #24): the host-local lease records repo/branch so

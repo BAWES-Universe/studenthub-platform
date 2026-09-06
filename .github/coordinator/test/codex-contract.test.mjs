@@ -943,3 +943,120 @@ test("durable session failure on the BUFFERED path also HOLDs and pauses", async
   assert.equal(out.pause_adapter, true);
   assert.match(out.reason, /could not be durably recorded/);
 });
+
+// ---------------------------------------------------------------------------
+// Linux WITH a missing or unreadable procfs. ENOENT on /proc/<pid>/stat only
+// proves a PID is gone when procfs itself is present: in a container with no
+// /proc mounted, a restricted mount namespace, or a chroot, EVERY per-pid read
+// returns ENOENT, so every recorded child reads as dead and a LIVE Codex child
+// can be resumed concurrently. The platform gate does not cover this — the
+// platform IS linux.
+// ---------------------------------------------------------------------------
+test("Linux without a readable procfs must not treat ENOENT as proof of death", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-no-procfs-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 111,
+    child_start: "123",
+  });
+  const before = readFileSync(join(stateDir, `${ATTEMPT}.json`), "utf8");
+  let spawns = 0;
+  const paths = [];
+
+  const out = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    execFileImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    io: {
+      codexStateDir: stateDir,
+      hostname: () => "test-host",
+      platform: () => "linux",
+      // No procfs at all: every read fails the same way, including the probe
+      // that would prove procfs is mounted.
+      readProcessStat: (p) => { paths.push(p); throw Object.assign(new Error("no such file"), { code: "ENOENT" }); },
+    },
+  });
+
+  assert.equal(spawns, 0, "a child that cannot be proved dead must never be resumed concurrently");
+  assert.equal(out.stage, "HOLD", "unverifiable process ownership must fail closed, not read as dead");
+  assert.equal(out.pause_adapter, true, "and must pause the adapter for operator reconciliation");
+  assert.equal(
+    readFileSync(join(stateDir, `${ATTEMPT}.json`), "utf8"),
+    before,
+    "zero claims: the durable session record must be left exactly as it was",
+  );
+  assert.ok(paths.length > 0, "the adapter must actually probe procfs rather than assume it");
+});
+
+// A probe that "succeeds" but returns something that is not a proc record is
+// not evidence of a working procfs either — an overlay, a stub mount, or a
+// truncated read must not license the same death inference.
+for (const [label, selfStat] of [["empty", ""], ["not a proc record", "hello"], ["non-string", 42]]) {
+  test(`Linux whose procfs probe returns ${label} must not treat ENOENT as proof of death`, async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-procfs-junk-"));
+    persistDurableSession({
+      stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD,
+      owner_host: "test-host", child_pid: 111, child_start: "123",
+    });
+    const before = readFileSync(join(stateDir, `${ATTEMPT}.json`), "utf8");
+    let spawns = 0;
+    const out = await launchBuilder({
+      ...launchInput(),
+      resume: true,
+      external_run_id: `codexrun_${THREAD}`,
+      spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+      execFileImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+      io: {
+        codexStateDir: stateDir,
+        hostname: () => "test-host",
+        platform: () => "linux",
+        readProcessStat: (p) => {
+          if (p.includes("/proc/self/")) return selfStat;
+          throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+        },
+      },
+    });
+    assert.equal(spawns, 0, `${label}: zero spawns`);
+    assert.equal(out.stage, "HOLD", `${label}: must fail closed`);
+    assert.equal(out.pause_adapter, true);
+    assert.equal(readFileSync(join(stateDir, `${ATTEMPT}.json`), "utf8"), before, `${label}: zero claims`);
+  });
+}
+
+test("Linux WITH a readable procfs still treats a missing pid path as dead", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-procfs-ok-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 111,
+    child_start: "123",
+  });
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
+    io: {
+      codexStateDir: stateDir,
+      hostname: () => "test-host",
+      platform: () => "linux",
+      // procfs IS mounted: the self probe succeeds, only the dead pid is absent.
+      readProcessStat: (p) => {
+        if (p.includes("/proc/self/")) return `1 (node) S ${Array.from({ length: 18 }, (_, i) => i).join(" ")} 900`;
+        throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+      },
+      spawnImpl: () => { spawns += 1; throw new Error("unused"); },
+    },
+  });
+  assert.notEqual(out.stage, "HOLD", "a genuinely dead pid on a working procfs must still allow recovery");
+});

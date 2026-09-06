@@ -365,10 +365,25 @@ function processStartToken(pid, readFileImpl = fs.readFileSync, platformImpl = n
   try {
     stat = readFileImpl(`/proc/${pid}/stat`, "utf8");
   } catch (error) {
-    // ENOENT proves this PID no longer exists. Permission, I/O, and all other
-    // failures are uncertainty, not evidence that a process is dead.
-    if (error?.code === "ENOENT") return null;
-    throw error;
+    // ENOENT on a per-PID path proves that PID is gone ONLY when procfs itself
+    // is present and readable. With no /proc mounted, a restricted mount
+    // namespace, or a chroot, EVERY per-pid read returns ENOENT — so without
+    // this probe every recorded child reads as dead and a LIVE Codex child can
+    // be resumed concurrently. The platform gate does not cover it: the
+    // platform IS linux. /proc/self/stat is the right probe because it must
+    // exist on any working procfs and stays readable under hidepid, which
+    // hides other processes but never your own.
+    if (error?.code !== "ENOENT") throw error;
+    let selfStat;
+    try {
+      selfStat = readFileImpl("/proc/self/stat", "utf8");
+    } catch (probeError) {
+      throw new Error(`procfs is unavailable, so a missing /proc/${pid} is not proof of death: ${probeError?.code ?? probeError?.message ?? "unknown"}`);
+    }
+    if (typeof selfStat !== "string" || !/^\d+ \(/.test(selfStat)) {
+      throw new Error("procfs did not return a usable record, so a missing PID path is not proof of death");
+    }
+    return null;
   }
   if (typeof stat !== "string" || !stat.startsWith(`${pid} (`)) throw new Error("process metadata PID mismatch");
   // comm may contain spaces and ')' characters, so proc(5) parsing must use
@@ -487,6 +502,7 @@ export async function launchBuilder({
   if (!durableStateDir) {
     return { stage: "HOLD", reason: "Codex durable state directory is unavailable — refusing to launch", pause_adapter: true, ok: false };
   }
+
 
   // Resume path: the exact thread id comes from the durable receipt run id
   // (codexrun_<uuid>) — never --last.

@@ -136,6 +136,7 @@ async function runMain({ configPath, wa, linear, failComments = false, io = {} }
     adapterModules: { "codex-cli": waCompat, ...(io.adapterModules ?? {}) },
   };
   const code = await main([], ENV, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
     configPath,
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => {
