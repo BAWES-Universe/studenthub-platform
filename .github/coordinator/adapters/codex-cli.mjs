@@ -22,7 +22,7 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { hostname as nodeHostname } from "node:os";
+import { hostname as nodeHostname, platform as nodePlatform } from "node:os";
 import path from "node:path";
 
 export const ADAPTER_NAME = "codex-cli";
@@ -356,8 +356,11 @@ function readDurableSessionRecord({ stateDir, attempt_id, target_sha }) {
   return { ...record, thread_id: String(record.thread_id) };
 }
 
-function processStartToken(pid, readFileImpl = fs.readFileSync) {
+function processStartToken(pid, readFileImpl = fs.readFileSync, platformImpl = nodePlatform) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("invalid process id");
+  // /proc/<pid>/stat is a Linux identity primitive. On an unsupported host,
+  // ENOENT means “there is no procfs path,” not “this PID definitely exited.”
+  if (platformImpl() !== "linux") throw new Error("process identity is unavailable on this platform");
   let stat;
   try {
     stat = readFileImpl(`/proc/${pid}/stat`, "utf8");
@@ -480,7 +483,7 @@ export async function launchBuilder({
   const execImpl = io.execFileImpl ?? execFileImpl;
   const durableStateDir = stateDirectory(env, io);
   const processStartImpl = io.processStartToken
-    ?? ((pid) => processStartToken(pid, io.readProcessStat ?? fs.readFileSync));
+    ?? ((pid) => processStartToken(pid, io.readProcessStat ?? fs.readFileSync, io.platform ?? nodePlatform));
   if (!durableStateDir) {
     return { stage: "HOLD", reason: "Codex durable state directory is unavailable — refusing to launch", pause_adapter: true, ok: false };
   }

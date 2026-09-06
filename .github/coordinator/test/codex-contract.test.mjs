@@ -538,7 +538,17 @@ test("two recoveries can never resume the same exact Codex session concurrently"
   };
 
   const first = launchBuilder(input);
-  while (spawns === 0) await new Promise((resolve) => setImmediate(resolve));
+  let stopSpawnWait = false;
+  const spawnObserved = (async () => {
+    while (!stopSpawnWait && spawns === 0) await new Promise((resolve) => setImmediate(resolve));
+    return spawns > 0;
+  })();
+  const startedBeforeSettlement = await Promise.race([
+    spawnObserved,
+    first.then(() => false),
+  ]);
+  stopSpawnWait = true;
+  assert.equal(startedBeforeSettlement, true, "the first recovery must spawn before it settles");
   try {
     assert.equal(spawns, 1, "the first recovery owns and starts one resume");
     assert.deepEqual(
@@ -691,6 +701,37 @@ test("malformed or wrong-PID proc records cannot manufacture PID-reuse authority
     assert.equal(out.pause_adapter, true, label);
     assert.equal(spawns, 0, `${label}: invalid proc structure must not prove PID reuse`);
   }
+});
+
+test("a host without Linux procfs cannot treat its missing proc path as a dead PID", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-no-procfs-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 111,
+    child_start: "123",
+  });
+  let procReads = 0;
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    io: {
+      codexStateDir: stateDir,
+      hostname: () => "test-host",
+      platform: () => "darwin",
+      readProcessStat: () => { procReads += 1; throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
+    },
+  });
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+  assert.equal(procReads, 0, "unsupported hosts are rejected before attempting a Linux procfs read");
+  assert.equal(spawns, 0);
 });
 
 test("a structurally valid matching or reused PID proc record is classified correctly", async () => {
