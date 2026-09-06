@@ -35,7 +35,7 @@ const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export const CALLBACK_SCHEMA = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["attempt_id", "target_sha", "result_sha", "stage", "links"],
+  required: ["attempt_id", "target_sha", "result_sha", "stage", "links", "summary"],
   properties: {
     attempt_id: { type: "string" },
     target_sha: { type: "string" },
