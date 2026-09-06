@@ -129,6 +129,87 @@ test("does not delete a pre-existing collection after a later import failure", a
   assert.equal(requests.some((request) => request.method === "DELETE"), false);
 });
 
+test("releases unused response bodies when publishing to a pre-existing collection", async () => {
+  const responses: Response[] = [];
+  let collectionGets = 0;
+  const reply = (response: Response): Response => {
+    responses.push(response);
+    return response;
+  };
+  const indexer = new TypesenseCandidateIndexer({
+    url: "https://search.example.invalid",
+    apiKey: "test-key",
+    fetch: async (input, init = {}) => {
+      const url = String(input);
+      const method = init.method ?? "GET";
+      if (method === "GET") {
+        collectionGets += 1;
+        return reply(Response.json({ num_documents: DOCUMENTS.length }));
+      }
+      if (url.includes("/documents/import")) {
+        return reply(new Response('{"success":true}\n{"success":true}'));
+      }
+      if (url.includes("/aliases/") && method === "PUT") return reply(Response.json({}));
+      throw new Error(`unexpected request ${method} ${url}`);
+    },
+  });
+
+  await indexer.publish(DOCUMENTS);
+  assert.equal(collectionGets, 2);
+  assert.ok(responses.every((response) => response.bodyUsed), "every response body must be consumed or cancelled");
+});
+
+test("releases response bodies before propagating every HTTP-stage failure", async () => {
+  for (const failingStage of ["ensure", "create", "import", "verify", "alias"] as const) {
+    const responses: Response[] = [];
+    let collectionGets = 0;
+    const reply = (response: Response): Response => {
+      responses.push(response);
+      return response;
+    };
+    const indexer = new TypesenseCandidateIndexer({
+      url: "https://search.example.invalid",
+      apiKey: "test-key",
+      fetch: async (input, init = {}) => {
+        const url = String(input);
+        const method = init.method ?? "GET";
+        if (method === "GET") {
+          collectionGets += 1;
+          if (failingStage === "ensure" || (failingStage === "verify" && collectionGets === 2)) {
+            return reply(new Response("unavailable", { status: 503 }));
+          }
+          return collectionGets === 1
+            ? reply(new Response("missing", { status: 404 }))
+            : reply(Response.json({ num_documents: DOCUMENTS.length }));
+        }
+        if (url.endsWith("/collections") && method === "POST") {
+          return failingStage === "create"
+            ? reply(new Response("unavailable", { status: 503 }))
+            : reply(new Response("{}", { status: 201 }));
+        }
+        if (url.includes("/documents/import")) {
+          return failingStage === "import"
+            ? reply(new Response("unavailable", { status: 503 }))
+            : reply(new Response('{"success":true}\n{"success":true}'));
+        }
+        if (url.includes("/aliases/") && method === "PUT") {
+          return failingStage === "alias"
+            ? reply(new Response("unavailable", { status: 503 }))
+            : reply(Response.json({}));
+        }
+        if (method === "DELETE") return reply(Response.json({}));
+        throw new Error(`unexpected request ${method} ${url}`);
+      },
+    });
+
+    await assert.rejects(indexer.publish(DOCUMENTS), /status 503/, failingStage);
+    assert.ok(
+      responses.every((response) => response.bodyUsed),
+      `${failingStage} left an HTTP response body open`,
+    );
+  }
+});
+
 test("rejects duplicate ids and unsafe endpoints before sending credentials", async () => {
   assert.throws(
     () => new TypesenseCandidateIndexer({ url: "http://search.example.invalid", apiKey: "key" }),

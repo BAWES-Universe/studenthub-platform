@@ -83,10 +83,14 @@ export class TypesenseCandidateIndexer {
     try {
       await this.#import(collection, canonical);
       await this.#verifyCount(collection, canonical.length);
-      await this.#json(`/aliases/${encodeURIComponent(this.#alias)}`, {
+      const aliasResponse = await this.#json(`/aliases/${encodeURIComponent(this.#alias)}`, {
         method: "PUT",
         body: JSON.stringify({ collection_name: collection }),
       });
+      const aliasStatus = aliasResponse.status;
+      const aliasOk = aliasResponse.ok;
+      await this.#discard(aliasResponse);
+      if (!aliasOk) throw unavailable(aliasStatus);
     } catch (error) {
       if (created) await this.#bestEffortDelete(collection);
       throw error;
@@ -97,15 +101,20 @@ export class TypesenseCandidateIndexer {
 
   async #ensureCollection(collection: string): Promise<boolean> {
     const existing = await this.#request(`/collections/${encodeURIComponent(collection)}`, { method: "GET" });
-    if (existing.status === 200) return false;
-    if (existing.status !== 404) throw unavailable(existing.status);
+    const existingStatus = existing.status;
+    await this.#discard(existing);
+    if (existingStatus === 200) return false;
+    if (existingStatus !== 404) throw unavailable(existingStatus);
 
     const created = await this.#json("/collections", {
       method: "POST",
       body: JSON.stringify({ name: collection, fields: SEARCH_FIELDS }),
     });
-    if (!created.ok && created.status !== 409) throw unavailable(created.status);
-    return created.status !== 409;
+    const createdStatus = created.status;
+    const createdOk = created.ok;
+    await this.#discard(created);
+    if (!createdOk && createdStatus !== 409) throw unavailable(createdStatus);
+    return createdStatus !== 409;
   }
 
   async #import(collection: string, documents: readonly CandidateSearchDocument[]): Promise<void> {
@@ -117,7 +126,11 @@ export class TypesenseCandidateIndexer {
         body: documents.map((document) => JSON.stringify(document)).join("\n"),
       },
     );
-    if (!response.ok) throw unavailable(response.status);
+    if (!response.ok) {
+      const status = response.status;
+      await this.#discard(response);
+      throw unavailable(status);
+    }
     const lines = (await response.text()).split("\n").filter(Boolean);
     if (lines.length !== documents.length) throw new CandidateIndexPublishError("Typesense returned an incomplete import receipt");
     for (const line of lines) {
@@ -135,7 +148,11 @@ export class TypesenseCandidateIndexer {
 
   async #verifyCount(collection: string, expected: number): Promise<void> {
     const response = await this.#json(`/collections/${encodeURIComponent(collection)}`, { method: "GET" });
-    if (!response.ok) throw unavailable(response.status);
+    if (!response.ok) {
+      const status = response.status;
+      await this.#discard(response);
+      throw unavailable(status);
+    }
     let value: unknown;
     try {
       value = await response.json();
@@ -149,9 +166,18 @@ export class TypesenseCandidateIndexer {
 
   async #bestEffortDelete(collection: string): Promise<void> {
     try {
-      await this.#request(`/collections/${encodeURIComponent(collection)}`, { method: "DELETE" });
+      const response = await this.#request(`/collections/${encodeURIComponent(collection)}`, { method: "DELETE" });
+      await this.#discard(response);
     } catch {
       // Publication still fails closed because the alias was not switched.
+    }
+  }
+
+  async #discard(response: Response): Promise<void> {
+    try {
+      await response.body?.cancel();
+    } catch {
+      // Releasing the body is best-effort and must not mask the publication result.
     }
   }
 
