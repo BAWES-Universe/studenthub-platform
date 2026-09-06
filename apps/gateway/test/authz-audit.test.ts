@@ -224,6 +224,24 @@ test("a rejecting async sink raises the failure signal without an unhandled reje
   }
 });
 
+test("a sink with a throwing then accessor cannot change the authorization decision", async () => {
+  const fixture = await auditFixture({
+    auditSink: {
+      record: () =>
+        Object.defineProperty({}, "then", {
+          get: () => {
+            throw new Error("hostile then accessor");
+          },
+        }) as Promise<void>,
+    },
+  });
+
+  const decision = await authorizeRequest(await fixture.mint(), fixture.middleware);
+  assert.equal(decision.kind, "allow");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fixture.failures, [{ kind: "audit_sink_failure", requestId: "req-1" }]);
+});
+
 test("a sink that never settles does not delay the decision", async () => {
   // Awaiting the sink would turn a slow log destination into a request-latency
   // denial-of-service. A never-settling promise makes that regression hang.

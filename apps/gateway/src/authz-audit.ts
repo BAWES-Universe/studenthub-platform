@@ -188,7 +188,11 @@ export function emitAuthorizationAuditEvent(
     return;
   }
 
-  if (result !== undefined && typeof (result as Promise<void>).then === "function") {
-    void (result as Promise<void>).then(undefined, fail);
+  if (result !== undefined) {
+    // Promise assimilation contains more than an ordinary rejection: it also
+    // converts a throwing `then` accessor (or a thenable whose `then` throws)
+    // into a rejection. Reading `.then` directly would let a hostile or broken
+    // sink throw after the authorization decision exists and change it.
+    void Promise.resolve(result).then(undefined, fail);
   }
 }
