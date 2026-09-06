@@ -87,3 +87,9 @@ DROP TRIGGER IF EXISTS authorization_mutation_audit_append_only
 CREATE TRIGGER authorization_mutation_audit_append_only
   BEFORE UPDATE OR DELETE ON authorization_mutation_audit
   FOR EACH ROW EXECUTE FUNCTION reject_authorization_audit_mutation();
+
+DROP TRIGGER IF EXISTS authorization_mutation_audit_no_truncate
+  ON authorization_mutation_audit;
+CREATE TRIGGER authorization_mutation_audit_no_truncate
+  BEFORE TRUNCATE ON authorization_mutation_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_authorization_audit_mutation();

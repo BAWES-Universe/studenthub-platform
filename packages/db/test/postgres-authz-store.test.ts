@@ -62,9 +62,20 @@ before(async () => {
 
 beforeEach(async () => {
   activeStores = [];
+  // Test isolation is deliberate owner administration. Production app paths
+  // cannot TRUNCATE because migration 0003's statement trigger rejects it.
   await adminPool.query(
-    "TRUNCATE authorization_mutation_audit, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
+    "ALTER TABLE authorization_mutation_audit DISABLE TRIGGER authorization_mutation_audit_no_truncate",
   );
+  try {
+    await adminPool.query(
+      "TRUNCATE authorization_mutation_audit, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
+    );
+  } finally {
+    await adminPool.query(
+      "ALTER TABLE authorization_mutation_audit ENABLE TRIGGER authorization_mutation_audit_no_truncate",
+    );
+  }
 });
 
 afterEach(async () => {
@@ -490,6 +501,69 @@ test("audit: an insert failure rolls back its paired mutation and emits no succe
   }
 });
 
+test("audit: a client whose rollback fails is destroyed, never returned to the pool", async () => {
+  const seed = makeStore();
+  await seedOrgAndPrincipal(seed);
+  const pool = new pg.Pool({ connectionString: DB_URL });
+  const store = new PostgresAuthzStore(pool);
+  const originalConnect = pool.connect.bind(pool);
+  let releasedWith: boolean | Error | undefined;
+
+  await adminPool.query(`
+    CREATE OR REPLACE FUNCTION fail_shu59_rollback_audit()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.request_ref = '${requestAuditRef("req.rollback-fails")}' THEN
+        RAISE EXCEPTION 'injected mutation failure before rollback';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_shu59_rollback_audit
+      BEFORE INSERT ON authorization_mutation_audit
+      FOR EACH ROW EXECUTE FUNCTION fail_shu59_rollback_audit();
+  `);
+
+  const client = await originalConnect();
+  const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+  const originalRelease = client.release.bind(client);
+  client.query = ((...args: unknown[]) => {
+    const statement =
+      typeof args[0] === "string"
+        ? args[0]
+        : (args[0] as { readonly text?: string } | undefined)?.text;
+    if (statement === "ROLLBACK") return Promise.reject(new Error("injected rollback failure"));
+    return originalQuery(...args);
+  }) as typeof client.query;
+  client.release = ((destroy?: boolean | Error) => {
+    releasedWith = destroy;
+    originalRelease(destroy);
+  }) as typeof client.release;
+  pool.connect = (async () => client) as typeof pool.connect;
+
+  try {
+    await assert.rejects(
+      () =>
+        store.grantMany(
+          "alice",
+          [{ orgId: ACME, role: "finance" }],
+          { requestId: "req.rollback-fails" },
+        ),
+      /injected mutation failure before rollback/,
+    );
+    assert.equal(releasedWith, true, "unknown transaction state must destroy the client");
+  } finally {
+    pool.connect = originalConnect as typeof pool.connect;
+    await pool.end();
+    await adminPool.query(
+      "DROP TRIGGER IF EXISTS fail_shu59_rollback_audit ON authorization_mutation_audit",
+    );
+    await adminPool.query("DROP FUNCTION IF EXISTS fail_shu59_rollback_audit()");
+  }
+
+  assert.deepEqual(await seed.listGrantsForPrincipal("alice"), []);
+});
+
 test("audit: application audit rows reject update and delete", async () => {
   const store = makeStore();
   await store.registerPrincipal(
@@ -502,6 +576,10 @@ test("audit: application audit rows reject update and delete", async () => {
         "UPDATE authorization_mutation_audit SET request_ref = repeat('0', 64) WHERE request_ref = $1",
         [requestAuditRef("req.append-only")],
       ),
+    /append-only/,
+  );
+  await assert.rejects(
+    () => adminPool.query("TRUNCATE authorization_mutation_audit"),
     /append-only/,
   );
   await assert.rejects(
@@ -556,12 +634,13 @@ test("audit: database constraints reject secrets in summary JSON", async () => {
         `INSERT INTO authorization_mutation_audit
            (request_ref, operation, target_principal_ref, target_org_refs,
             before_summary, after_summary)
-         VALUES ($1, 'grants.grant', $2, $3::text[], $4::jsonb, $4::jsonb)`,
+         VALUES ($1, 'grants.grant', $2, $3::text[], $4::jsonb, $5::jsonb)`,
         [
           requestAuditRef("req.raw-summary"),
           principalAuditRef("target"),
           [organizationAuditRef(ACME)],
           JSON.stringify(unsafe),
+          JSON.stringify({ grantCount: 0, selfCount: 0, subtreeCount: 0 }),
         ],
       ),
     /auth_audit_before_summary_shape/,

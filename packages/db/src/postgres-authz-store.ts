@@ -184,6 +184,7 @@ export class PostgresAuthzStore implements AuthzStore {
 
   async #transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.#pool.connect();
+    let destroyClient = false;
     try {
       await client.query("BEGIN");
       const result = await run(client);
@@ -193,11 +194,12 @@ export class PostgresAuthzStore implements AuthzStore {
       try {
         await client.query("ROLLBACK");
       } catch {
+        destroyClient = true;
         // Preserve the mutation/audit failure that caused the rollback.
       }
       throw error;
     } finally {
-      client.release();
+      client.release(destroyClient);
     }
   }
 

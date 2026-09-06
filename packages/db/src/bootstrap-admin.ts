@@ -154,6 +154,7 @@ export async function bootstrapAdmin(
 
   // --- One transaction: org + principal + pbuuid + grant -------------------
   const client = await pool.connect();
+  let destroyClient = false;
   try {
     await client.query("BEGIN");
     await client.query(
@@ -286,6 +287,7 @@ export async function bootstrapAdmin(
       await client.query("ROLLBACK");
       rollbackSucceeded = true;
     } catch {
+      destroyClient = true;
       // Swallow: the original error below is the one the caller needs.
     }
 
@@ -332,7 +334,7 @@ export async function bootstrapAdmin(
     }
     throw error;
   } finally {
-    client.release();
+    client.release(destroyClient);
   }
 
   return "created";
