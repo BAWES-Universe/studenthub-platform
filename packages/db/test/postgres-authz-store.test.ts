@@ -518,6 +518,24 @@ test("audit: application audit rows reject update and delete", async () => {
   );
 });
 
+test("audit: database constraints reject raw organization identifiers", async () => {
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        `INSERT INTO authorization_mutation_audit
+           (request_ref, operation, target_org_refs, before_summary, after_summary)
+         VALUES ($1, 'grants.grant', $2::text[], '{}'::jsonb, '{}'::jsonb)`,
+        [requestAuditRef("req.raw-org"), ["org-owner@example.invalid"]],
+      ),
+    /authorization_mutation_audit_target_org_refs_check/,
+  );
+  const leaked = await adminPool.query(
+    "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+    [requestAuditRef("req.raw-org")],
+  );
+  assert.equal(leaked.rowCount, 0);
+});
+
 // ---------------------------------------------------------------------------
 // Integrity: pbuuid ownership (stale mapping removal + cross-principal theft)
 // ---------------------------------------------------------------------------

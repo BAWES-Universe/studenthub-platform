@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS authorization_mutation_audit (
   target_principal_ref TEXT CHECK (
     target_principal_ref IS NULL OR target_principal_ref ~ '^[0-9a-f]{64}$'
   ),
-  target_org_refs      TEXT[] NOT NULL DEFAULT '{}',
+  target_org_refs      TEXT[] NOT NULL DEFAULT '{}' CHECK (
+    target_org_refs::text ~ '^\{([0-9a-f]{64}(,[0-9a-f]{64})*)?\}$'
+  ),
   occurred_at          TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   before_summary       JSONB NOT NULL,
   after_summary        JSONB NOT NULL
