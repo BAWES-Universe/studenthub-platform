@@ -32,11 +32,12 @@ import {
   CALLBACK_SCHEMA,
   SUCCESS_CALLBACK_STAGES,
 } from "../adapters/codex-cli.mjs";
-import { adapterNameFor, adapterLaunchOptions } from "../reconcile.mjs";
+import { adapterNameFor, adapterLaunchOptions, createReceipt, foldLaunchOutcome, nextReceiptState } from "../reconcile.mjs";
 
 const ATTEMPT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const THREAD = "0199a213-81c0-7800-8aa1-bbab2a035a53"; // real time-ordered codex thread id shape
 const SHA = "5".repeat(40);
+const RESULT_SHA = "6".repeat(40);
 const CWD = "/repo";
 const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "codex-state-"));
 
@@ -68,7 +69,7 @@ function jsonl({ threadId = THREAD, finalText = null } = {}) {
 }
 
 function callbackJson(stage, over = {}) {
-  return JSON.stringify({ attempt_id: ATTEMPT, target_sha: SHA, stage, links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"], ...over });
+  return JSON.stringify({ attempt_id: ATTEMPT, target_sha: SHA, result_sha: RESULT_SHA, stage, links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"], ...over });
 }
 
 function execResult({ stdout = "", stderr = "", error = null }) {
@@ -137,9 +138,34 @@ test("callback validation: wrong attempt, wrong sha, missing stage, missing link
   assert.ok(callbackValid(valid, { attempt_id: ATTEMPT, target_sha: SHA }));
   assert.ok(!callbackValid({ ...valid, attempt_id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee" }, { attempt_id: ATTEMPT, target_sha: SHA }));
   assert.ok(!callbackValid({ ...valid, target_sha: "6".repeat(40) }, { attempt_id: ATTEMPT, target_sha: SHA }));
+  assert.ok(!callbackValid({ ...valid, result_sha: "not-a-sha" }, { attempt_id: ATTEMPT, target_sha: SHA }), "result head must be bound");
   assert.ok(!callbackValid({ ...valid, stage: "COMPLETED" }, { attempt_id: ATTEMPT, target_sha: SHA }), "stage enum enforced");
   assert.ok(!callbackValid({ ...valid, links: [] }, { attempt_id: ATTEMPT, target_sha: SHA }), "links min 1");
   assert.ok(!callbackValid({ ...valid, links: ["file:///etc/passwd"] }, { attempt_id: ATTEMPT, target_sha: SHA }), "http(s) links only");
+});
+
+test("builder completion validates the resulting branch head, not the input checkout head", () => {
+  const made = createReceipt({
+    issue_id: "SHU-63",
+    authorization_ref: "SHU-63",
+    requested_worker: "codex-builder",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "coordinator/SHU-63",
+    target_sha: SHA,
+  });
+  assert.equal(made.ok, true);
+  const launched = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+  const callback = JSON.parse(callbackJson("BUILD_READY", { attempt_id: launched.attempt_id }));
+  const outcome = {
+    stage: "COMPLETED",
+    external_run_id: `codexrun_${THREAD}`,
+    worker_identity: `codex:${launched.attempt_id}`,
+    callback,
+  };
+  const movedByBuilder = foldLaunchOutcome(launched, outcome, { current_head: RESULT_SHA, expected_head: RESULT_SHA });
+  assert.equal(movedByBuilder.receipt.stage, "COMPLETED", "the builder's own pushed result is not mistaken for stale input");
+  const movedBySomeoneElse = foldLaunchOutcome(launched, outcome, { current_head: "7".repeat(40), expected_head: RESULT_SHA });
+  assert.equal(movedBySomeoneElse.receipt.stage, "HOLD", "a branch head different from the builder callback is rejected");
 });
 
 test("BLOCKED/FAILED callbacks never complete; they surface HOLD with the builder evidence", async () => {
@@ -177,6 +203,30 @@ test("stale-head guard: checkout mismatch refuses the launch before codex starts
   assert.equal(out.stage, "FAILED");
   assert.equal(out.error_code, "CHECKOUT_HEAD_MISMATCH");
   assert.equal(calls.length, 0, "codex never started off the bound head");
+});
+
+test("resume accepts builder commits descended from the bound input and rejects a diverged worktree", async () => {
+  const run = async (descends) => {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-descendant-resume-"));
+    persistDurableSession({
+      stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD,
+      owner_host: "fixture-host", child_pid: 111, child_start: "100",
+    });
+    let checks = 0;
+    const out = await launchBuilder({
+      ...launchInput(), resume: true, external_run_id: `codexrun_${THREAD}`,
+      readHeadImpl: async () => RESULT_SHA,
+      verifyDescendantImpl: async ({ target_sha }) => { checks += 1; assert.equal(target_sha, SHA); return descends; },
+      execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
+      io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
+    });
+    assert.equal(checks, 1);
+    return out;
+  };
+  assert.equal((await run(true)).stage, "COMPLETED", "the builder's own descendant commit remains resumable");
+  const diverged = await run(false);
+  assert.equal(diverged.stage, "FAILED");
+  assert.equal(diverged.error_code, "CHECKOUT_HEAD_MISMATCH");
 });
 
 test("uncertain launch WITHOUT a durable thread id -> visible HOLD + pause, never another spawn", async () => {
@@ -945,7 +995,7 @@ test("a resumed-owner record without its claim still blocks before spawn", async
 
 test("schema file written before launch; CALLBACK_SCHEMA is closed (additionalProperties false)", async () => {
   assert.equal(CALLBACK_SCHEMA.additionalProperties, false);
-  assert.deepEqual([...CALLBACK_SCHEMA.required].sort(), ["attempt_id", "links", "stage", "target_sha"]);
+  assert.deepEqual([...CALLBACK_SCHEMA.required].sort(), ["attempt_id", "links", "result_sha", "stage", "target_sha"]);
   const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
   const schemaFile = join(schemaDir, "cb.json");
   const calls = [];
@@ -1180,6 +1230,7 @@ test("Linux WITH a readable procfs still treats a missing pid path as dead", asy
     resume: true,
     external_run_id: `codexrun_${THREAD}`,
     execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
+    spawnImpl: () => { spawns += 1; throw new Error("unused"); },
     io: {
       codexStateDir: stateDir,
       hostname: () => "test-host",
@@ -1189,8 +1240,8 @@ test("Linux WITH a readable procfs still treats a missing pid path as dead", asy
         if (p.includes("/proc/self/")) return `1 (node) S ${Array.from({ length: 18 }, (_, i) => i).join(" ")} 900`;
         throw Object.assign(new Error("no such file"), { code: "ENOENT" });
       },
-      spawnImpl: () => { spawns += 1; throw new Error("unused"); },
     },
   });
-  assert.notEqual(out.stage, "HOLD", "a genuinely dead pid on a working procfs must still allow recovery");
+  assert.equal(out.stage, "COMPLETED", "a genuinely dead pid on a working procfs must allow exact-ID recovery");
+  assert.equal(spawns, 0, "the deterministic exec seam completes; the production spawn seam is unused");
 });

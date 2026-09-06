@@ -542,7 +542,9 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   if (!Array.isArray(evidence.links) || evidence.links.length === 0) return false;
   if (evidence.attempt_id !== receipt.attempt_id) return false;
   if (evidence.target_sha !== receipt.target_sha) return false;
-  if (ctx.current_head && ctx.current_head !== receipt.target_sha) return false;
+  const expectedHead = Object.hasOwn(ctx, "expected_head") ? ctx.expected_head : receipt.target_sha;
+  if (!TARGET_SHA_RE.test(expectedHead ?? "")) return false;
+  if (ctx.current_head && ctx.current_head !== expectedHead) return false;
   if (!SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) return false;
   return true;
 }
@@ -812,6 +814,27 @@ export async function resolveLiveHead(receipt, { githubToken, fetchImpl }) {
     return head ? { verified: true, head } : { verified: false, head: null };
   } catch {
     return { verified: false, head: null };
+  }
+}
+
+// Activation proves that the configured GitHub credential can read the exact
+// repository commit before a local worker is started. Probing the commit (not
+// the destination branch) also supports a first-time builder branch that does
+// not exist until Codex pushes it.
+export async function verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl }) {
+  if (!ACTIVATION_GATED_ADAPTERS.includes(adapter)) return { ok: true };
+  if (!githubToken || !repo || !target_sha) return { ok: false, reason: "GitHub target verification is not configured" };
+  try {
+    const res = await fetchImpl(`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(target_sha)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    });
+    if (!res.ok) return { ok: false, reason: `GitHub target probe returned HTTP ${res.status}` };
+    const body = await res.json().catch(() => null);
+    if (body?.sha !== target_sha) return { ok: false, reason: "GitHub target probe returned an unexpected commit" };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: `GitHub target probe failed: ${error?.message ?? "unknown"}` };
   }
 }
 
@@ -1409,6 +1432,18 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
         continue;
       }
+      const activationTarget = activation ? await verifyActivationTarget(adapter, {
+        repo: receipt.repo,
+        target_sha: receipt.target_sha,
+        githubToken,
+        fetchImpl,
+      }) : { ok: true };
+      if (!activationTarget.ok) {
+        if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
+        config.adapter_pause_map[adapter] = true;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+        continue;
+      }
 
       let launch;
       try {
@@ -1444,7 +1479,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (!resolved.verified) {
           launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
         } else {
-          recoveryCtx = { current_head: resolved.head };
+          // A builder starts at target_sha and is expected to move its work
+          // branch. Its callback binds the resulting commit separately; using
+          // target_sha here would reject every successful builder as stale.
+          const expectedHead = receipt.requested_worker === "codex-builder"
+            ? launch.callback?.result_sha
+            : receipt.target_sha;
+          recoveryCtx = { current_head: resolved.head, expected_head: expectedHead };
         }
       }
       const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
@@ -1617,6 +1658,15 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
     return 2;
   }
+  const activationTarget = activation
+    ? await verifyActivationTarget(adapter, { repo, target_sha, githubToken, fetchImpl })
+    : { ok: true };
+  if (!activationTarget.ok) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
+    config.adapter_pause_map[adapter] = true;
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    return 2;
+  }
 
   const { ok: reservedOk, receipt, errors } = createReceipt({
     issue_id: candidate.id,
@@ -1703,7 +1753,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (!resolved.verified) {
       launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
     } else {
-      launchCtx = { current_head: resolved.head };
+      const expectedHead = receipt.requested_worker === "codex-builder"
+        ? launch.callback?.result_sha
+        : receipt.target_sha;
+      launchCtx = { current_head: resolved.head, expected_head: expectedHead };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);

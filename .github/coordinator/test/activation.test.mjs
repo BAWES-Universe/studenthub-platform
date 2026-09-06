@@ -18,7 +18,7 @@ import {
   describeUnmetActivation,
   ACTIVATION_REQUIREMENTS,
 } from "../activation.mjs";
-import { activationPreflightFor, ACTIVATION_GATED_ADAPTERS } from "../reconcile.mjs";
+import { activationPreflightFor, ACTIVATION_GATED_ADAPTERS, verifyActivationTarget } from "../reconcile.mjs";
 
 const HOST = "brick-box";
 
@@ -210,6 +210,33 @@ test("only the local-CLI builder lane carries the contract", () => {
   assert.ok(gated && gated.ok === false, "the codex lane is gated and unwired fails closed");
 });
 
+test("activation GitHub probe validates the exact bound commit with the configured token", async () => {
+  const calls = [];
+  const ok = await verifyActivationTarget("codex-cli", {
+    repo: "BAWES-Universe/studenthub-platform",
+    target_sha: "d".repeat(40),
+    githubToken: "gh-token",
+    fetchImpl: async (url, opts) => {
+      calls.push({ url, opts });
+      return { ok: true, status: 200, json: async () => ({ sha: "d".repeat(40) }) };
+    },
+  });
+  assert.equal(ok.ok, true);
+  assert.match(calls[0].url, /\/commits\/d{40}$/);
+  assert.equal(calls[0].opts.headers.Authorization, "Bearer gh-token");
+
+  for (const response of [
+    { ok: false, status: 401, json: async () => ({}) },
+    { ok: true, status: 200, json: async () => ({ sha: "e".repeat(40) }) },
+  ]) {
+    const failed = await verifyActivationTarget("codex-cli", {
+      repo: "BAWES-Universe/studenthub-platform", target_sha: "d".repeat(40), githubToken: "bad-token",
+      fetchImpl: async () => response,
+    });
+    assert.equal(failed.ok, false, "invalid credentials or an unexpected target must fail closed");
+  }
+});
+
 // End to end through main(): an unwired activation must ABORT before the adapter
 // boundary, pause the lane, and start no worker. This is the property that
 // matters — the preflight unit tests above only prove the verdict, not that the
@@ -264,6 +291,53 @@ test("main(): an unwired activation aborts dispatch, pauses the lane, and spawns
   assert.match(out.join("\n"), /activation contract unmet/, "and must say what is missing");
   assert.ok(comments.some((c) => c.body.includes("coordinator-pause: codex-cli")), "the lane must be paused durably");
   assert.equal(parseReceiptsFromComments(comments).length, 0, "a refused preflight must not strand an unrecoverable RESERVED receipt");
+});
+
+test("main(): an unreadable GitHub target aborts before reservation and adapter launch", async () => {
+  const { main, parseReceiptsFromComments } = await import("../reconcile.mjs");
+  const { mkdtempSync: mkd, writeFileSync } = await import("node:fs");
+  const linearId = "11111111-aaaa-4bbb-8ccc-000000000001";
+  const node = {
+    id: linearId, identifier: "SHU-FIXTURE-001", title: "Fixture", state: { name: "Todo" },
+    priorityLabel: "High", labels: { nodes: [{ name: "fixture-safe" }] },
+    assignee: null, delegate: null, parent: null, relations: { nodes: [] },
+  };
+  const cfgPath = join(mkd(join(tmpdir(), "activation-github-cfg-")), "config.json");
+  writeFileSync(cfgPath, JSON.stringify({
+    pilot_repo: "BAWES-Universe/studenthub-platform", team: "SHU", max_dispatch: 1,
+    enable_dispatch: true, adapter_pause_map: {}, wake_actor_allowlist: ["BAWES"], max_failed_attempts: 3,
+    fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
+  }));
+  const comments = [];
+  let launches = 0;
+  const output = [];
+  const code = await main([], {
+    ENABLE_DISPATCH: "true", LINEAR_API_TOKEN: "tok", DISPATCH_TARGET_SHA: "d".repeat(40),
+    ...activatedEnv(),
+  }, {
+    configPath: cfgPath, stdout: (s) => output.push(s), fetchDurable: true, pollRuns: false,
+    codexStateDir: "/srv/codex/state",
+    statImpl: () => ({ isDirectory: () => true, mode: 0o40700 }),
+    accessImpl: () => {}, realpathImpl: (p) => p, hostname: () => HOST,
+    adapterModules: { "codex-cli": { launchBuilder: async () => { launches += 1; return { stage: "RUNNING" }; } } },
+    fetchImpl: async (url, opts) => {
+      if (url.startsWith("https://api.github.com/")) return { ok: false, status: 401, json: async () => ({}) };
+      const { query, variables } = JSON.parse(opts.body);
+      const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
+      if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: [node] } });
+      if (query.includes("CoordinatorIssueComments")) return respond({ issue: { comments: { nodes: [...comments] } } });
+      if (query.includes("commentCreate")) {
+        comments.push({ body: variables.body, createdAt: new Date().toISOString() });
+        return respond({ commentCreate: { success: true, comment: { id: `c${comments.length}` } } });
+      }
+      return respond({});
+    },
+  });
+  assert.equal(code, 2);
+  assert.equal(launches, 0);
+  assert.match(output.join("\n"), /activation GitHub probe failed/);
+  assert.equal(parseReceiptsFromComments(comments).length, 0);
+  assert.ok(comments.some((c) => c.body.includes("coordinator-pause: codex-cli")));
 });
 
 test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the adapter", async () => {

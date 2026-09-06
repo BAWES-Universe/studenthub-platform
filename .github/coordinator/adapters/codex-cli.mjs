@@ -35,10 +35,11 @@ const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export const CALLBACK_SCHEMA = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["attempt_id", "target_sha", "stage", "links"],
+  required: ["attempt_id", "target_sha", "result_sha", "stage", "links"],
   properties: {
     attempt_id: { type: "string" },
     target_sha: { type: "string" },
+    result_sha: { type: "string" },
     stage: { type: "string", enum: CALLBACK_STAGES },
     links: { type: "array", items: { type: "string" }, minItems: 1 },
     summary: { type: "string" },
@@ -92,7 +93,7 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
     "Implement the change, run the relevant tests, and push the work to the SAME branch as a normal PR.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<PR url or evidence urls>"],"summary":"<short note>"}`,
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your work>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<PR url or evidence urls>"],"summary":"<short note>"}`,
     "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure.",
   ].filter(Boolean).join("\n");
 }
@@ -209,6 +210,17 @@ async function readHead({ cwd, execFileImpl, env }) {
   return result.stdout.trim();
 }
 
+async function headDescendsFromTarget({ cwd, execFileImpl, env, target_sha }) {
+  const result = await runExecFile(execFileImpl, "git", ["merge-base", "--is-ancestor", target_sha, "HEAD"], {
+    cwd,
+    env: buildCodexEnvironment(env),
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  return !result.error;
+}
+
 export function parseThreadStarted(stdout) {
   if (typeof stdout !== "string") return null;
   for (const line of stdout.split("\n")) {
@@ -258,6 +270,7 @@ export function parseCodexCallback(stdout) {
 export function callbackValid(callback, { attempt_id, target_sha }) {
   if (!callback || typeof callback !== "object") return false;
   if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
+  if (!SHA_RE.test(callback.result_sha ?? "")) return false;
   if (!CALLBACK_STAGES.includes(callback.stage)) return false;
   if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
   return callback.links.every((link) => {
@@ -533,6 +546,7 @@ export async function launchBuilder({
   execFileImpl = nodeExecFile,
   spawnImpl = nodeSpawn,
   readHeadImpl = readHead,
+  verifyDescendantImpl = headDescendsFromTarget,
   schemaFile = null,
   io = {},
   timeout_ms = 45 * 60 * 1000,
@@ -613,7 +627,15 @@ export async function launchBuilder({
   } catch {
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_UNREADABLE", ok: false };
   }
-  if (checkoutHead !== target_sha) {
+  let checkoutIsBound = checkoutHead === target_sha;
+  if (!checkoutIsBound && resume) {
+    try {
+      checkoutIsBound = await verifyDescendantImpl({ cwd, execFileImpl: execImpl, env, target_sha });
+    } catch {
+      checkoutIsBound = false;
+    }
+  }
+  if (!checkoutIsBound) {
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
