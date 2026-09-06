@@ -174,7 +174,13 @@ export function emitAuthorizationAuditEvent(
     // The failure handler is itself untrusted code. If it throws, there is
     // nowhere left to report to, and the decision still must not be affected.
     try {
-      onFailure({ kind: "audit_sink_failure", requestId: event.requestId });
+      const result = onFailure({ kind: "audit_sink_failure", requestId: event.requestId });
+      // The public type returns void, but runtime callbacks can still be async
+      // (TypeScript deliberately permits a value-returning function in a void
+      // callback position). Contain that rejection without awaiting it.
+      if (result !== undefined) {
+        void Promise.resolve(result).then(undefined, () => undefined);
+      }
     } catch {
       /* contained: auditing cannot break authorization */
     }

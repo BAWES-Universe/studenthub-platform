@@ -265,6 +265,30 @@ test("a throwing failure handler is contained and still does not change the deci
   assert.equal(decision.kind, "allow");
 });
 
+test("a rejecting async failure handler cannot create an unhandled rejection", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const fixture = await auditFixture({
+      auditSink: {
+        record: () => {
+          throw new Error("sink exploded");
+        },
+      },
+      onAuditFailure: async () => Promise.reject(new Error("failure handler rejected")),
+    });
+    const decision = await authorizeRequest(await fixture.mint(), fixture.middleware);
+    assert.equal(decision.kind, "allow");
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Nothing attacker-controlled is ever recorded.
 // ---------------------------------------------------------------------------
