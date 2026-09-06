@@ -350,33 +350,63 @@ function readDurableSessionRecord({ stateDir, attempt_id, target_sha }) {
   } catch {
     return null;
   }
-  if (record?.attempt_id !== attempt_id || record?.target_sha !== target_sha || !THREAD_ID_RE.test(String(record?.thread_id ?? ""))) {
+  if (record?.version !== 1 || record?.attempt_id !== attempt_id || record?.target_sha !== target_sha || !THREAD_ID_RE.test(String(record?.thread_id ?? ""))) {
     return null;
   }
   return { ...record, thread_id: String(record.thread_id) };
 }
 
-function processStartToken(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+function processStartToken(pid, readFileImpl = fs.readFileSync) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("invalid process id");
+  let stat;
   try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const afterName = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
-    return afterName[19] || null; // proc(5): field 22 (starttime), after pid/comm
-  } catch {
-    return null;
+    stat = readFileImpl(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    // ENOENT proves this PID no longer exists. Permission, I/O, and all other
+    // failures are uncertainty, not evidence that a process is dead.
+    if (error?.code === "ENOENT") return null;
+    throw error;
   }
+  const closeParen = stat.lastIndexOf(")");
+  if (closeParen < 0) throw new Error("malformed process metadata");
+  const afterName = stat.slice(closeParen + 2).trim().split(/\s+/);
+  const token = afterName[19]; // proc(5): field 22 (starttime), after pid/comm
+  if (typeof token !== "string" || !/^\d+$/.test(token)) throw new Error("malformed process start token");
+  return token;
+}
+
+function validProcessStartToken(value) {
+  return typeof value === "string" && /^\d+$/.test(value);
 }
 
 function recordedProcessState(record, { hostnameImpl = nodeHostname, processStartImpl = processStartToken } = {}) {
-  if (!record?.owner_host || !Number.isSafeInteger(record?.child_pid) || !record?.child_start) return "unknown";
-  if (record.owner_host !== hostnameImpl()) return "unknown";
-  const currentStart = processStartImpl(record.child_pid);
+  if (
+    typeof record?.owner_host !== "string" || record.owner_host.length === 0
+    || !Number.isSafeInteger(record?.child_pid) || record.child_pid <= 0
+    || !validProcessStartToken(record?.child_start)
+  ) return "unknown";
+  let currentHost;
+  let currentStart;
+  try {
+    currentHost = hostnameImpl();
+    if (record.owner_host !== currentHost) return "unknown";
+    currentStart = processStartImpl(record.child_pid);
+  } catch {
+    return "unknown";
+  }
   if (currentStart === null) return "dead";
+  if (!validProcessStartToken(currentStart)) return "unknown";
   return currentStart === record.child_start ? "alive" : "dead";
 }
 
 export function persistDurableSession({ stateDir, attempt_id, target_sha, thread_id, owner_host = null, child_pid = null, child_start = null, cleanupTempImpl = fs.unlinkSync }) {
   if (!stateDir || !THREAD_ID_RE.test(thread_id)) throw new Error("durable Codex session path or thread id unavailable");
+  const hasOwnership = owner_host !== null || child_pid !== null || child_start !== null;
+  if (hasOwnership && (
+    typeof owner_host !== "string" || owner_host.length === 0
+    || !Number.isSafeInteger(child_pid) || child_pid <= 0
+    || !validProcessStartToken(child_start)
+  )) throw new Error("durable Codex process ownership is malformed");
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const finalPath = sidecarPath(stateDir, attempt_id);
   const existing = readDurableSession({ stateDir, attempt_id, target_sha });
@@ -435,6 +465,8 @@ export async function launchBuilder({
   }
   const execImpl = io.execFileImpl ?? execFileImpl;
   const durableStateDir = stateDirectory(env, io);
+  const processStartImpl = io.processStartToken
+    ?? ((pid) => processStartToken(pid, io.readProcessStat ?? fs.readFileSync));
   if (!durableStateDir) {
     return { stage: "HOLD", reason: "Codex durable state directory is unavailable — refusing to launch", pause_adapter: true, ok: false };
   }
@@ -465,7 +497,7 @@ export async function launchBuilder({
     }
     const processState = recordedProcessState(durableRecord, {
       hostnameImpl: io.hostname ?? nodeHostname,
-      processStartImpl: io.processStartToken ?? processStartToken,
+      processStartImpl,
     });
     if (processState === "alive") {
       return {
@@ -486,7 +518,7 @@ export async function launchBuilder({
     const owner = readBoundResumeRecord(resumeOwnerPath(durableStateDir, attempt_id), binding);
     if (existingClaim.status !== "missing" || owner.status !== "missing") {
       const ownerState = owner.status === "valid"
-        ? recordedProcessState(owner.record, { hostnameImpl: io.hostname ?? nodeHostname, processStartImpl: io.processStartToken ?? processStartToken })
+        ? recordedProcessState(owner.record, { hostnameImpl: io.hostname ?? nodeHostname, processStartImpl })
         : "unknown";
       const reason = ownerState === "alive"
         ? "a resumed Codex process is still alive; refusing concurrent resume"
@@ -550,8 +582,8 @@ export async function launchBuilder({
       resumeChildStarted = true;
       try {
         const childPid = Number.isSafeInteger(child?.pid) ? child.pid : null;
-        const childStart = childPid ? (io.processStartToken?.(childPid) ?? processStartToken(childPid)) : null;
-        if (!childPid || !childStart) throw new Error("resumed Codex child ownership is unavailable");
+        const childStart = childPid ? processStartImpl(childPid) : null;
+        if (!childPid || !validProcessStartToken(childStart)) throw new Error("resumed Codex child ownership is unavailable");
         writeExclusiveRecord({
           stateDir: durableStateDir,
           finalPath: resumeOwnerPath(durableStateDir, attempt_id),
@@ -580,8 +612,8 @@ export async function launchBuilder({
       }
       try {
         const childPid = Number.isSafeInteger(child?.pid) ? child.pid : null;
-        const childStart = childPid ? (io.processStartToken?.(childPid) ?? processStartToken(childPid)) : null;
-        if (childPid && !childStart) throw new Error("Codex child process start token is unavailable");
+        const childStart = childPid ? processStartImpl(childPid) : null;
+        if (childPid && !validProcessStartToken(childStart)) throw new Error("Codex child process start token is unavailable");
         persistDurableSession({
           stateDir: durableStateDir,
           attempt_id,

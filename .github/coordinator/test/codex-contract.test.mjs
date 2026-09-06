@@ -212,7 +212,7 @@ test("resume binds the EXACT thread id from the receipt; --last never appears; m
     thread_id: THREAD,
     owner_host: "fixture-host",
     child_pid: 111,
-    child_start: "old-start",
+    child_start: "100",
   });
   const out = await launchBuilder({
     ...launchInput(),
@@ -339,7 +339,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     task_context: "fixture",
     cwd: worktree,
     env: { PATH: `${fakeBin}:${process.env.PATH}`, HOME: process.env.HOME, CODEX_HOME: join(worktree, ".codex") },
-  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "fixture-start" }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
+  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100" }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
   const coordinator = spawn(process.execPath, [runner], { stdio: "ignore" });
   const sidecar = join(stateDir, `${ATTEMPT}.json`);
   const deadline = Date.now() + 5000;
@@ -355,7 +355,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     ...launchInput(),
     resume: true,
     external_run_id: null,
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "fixture-start" : null },
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
     execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, "", ""); },
   });
   assert.equal(recovered.stage, "LAUNCH_UNKNOWN");
@@ -366,7 +366,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     ...launchInput(),
     resume: true,
     external_run_id: recovered.external_run_id,
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "fixture-start" : null },
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
     execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, "", ""); },
   });
   assert.equal(stillRunning.stage, "LAUNCH_UNKNOWN");
@@ -378,7 +378,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     ...launchInput(),
     resume: true,
     external_run_id: recovered.external_run_id,
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "fixture-start" : null },
+    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
     execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
   });
   assert.equal(afterExit.stage, "COMPLETED", "only a definitely exited original process permits exact-id resume");
@@ -448,7 +448,7 @@ test("timeout escalates to SIGKILL and settles even when the child never closes"
   const out = await launchBuilder({
     ...launchInput(),
     spawnImpl: neverClosingSpawn,
-    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-timeout-")), processStartToken: () => "fixture-start", hostname: () => "fixture-host" },
+    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-timeout-")), processStartToken: () => "100", hostname: () => "fixture-host" },
     timeout_ms: 5,
     timeout_grace_ms: 5,
   });
@@ -477,7 +477,7 @@ test("resume requires a definitely exited bound process; live, foreign-host, and
     thread_id: THREAD,
     owner_host: "host-a",
     child_pid: 4242,
-    child_start: "start-1",
+    child_start: "100",
   });
   let spawns = 0;
   const base = {
@@ -486,13 +486,13 @@ test("resume requires a definitely exited bound process; live, foreign-host, and
     external_run_id: `codexrun_${THREAD}`,
     execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), ""); },
   };
-  const live = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "start-1" } });
+  const live = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "100" } });
   assert.equal(live.stage, "LAUNCH_UNKNOWN");
   const foreign = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-b", processStartToken: () => null } });
   assert.equal(foreign.stage, "HOLD");
   assert.equal(foreign.pause_adapter, true);
   assert.equal(spawns, 0);
-  const reusedPid = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "start-2" } });
+  const reusedPid = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "200" } });
   assert.equal(reusedPid.stage, "COMPLETED", "a mismatched process start token proves the recorded child exited despite PID reuse");
   assert.equal(spawns, 1);
 });
@@ -506,7 +506,7 @@ test("two recoveries can never resume the same exact Codex session concurrently"
     thread_id: THREAD,
     owner_host: "test-host",
     child_pid: 111,
-    child_start: "old",
+    child_start: "100",
   });
 
   const children = [];
@@ -529,7 +529,7 @@ test("two recoveries can never resume the same exact Codex session concurrently"
     io: {
       codexStateDir: stateDir,
       hostname: () => "test-host",
-      processStartToken: (pid) => pid === 111 ? null : `start-${pid}`,
+      processStartToken: (pid) => pid === 111 ? null : String(pid * 10),
     },
   };
 
@@ -537,6 +537,20 @@ test("two recoveries can never resume the same exact Codex session concurrently"
   while (spawns === 0) await new Promise((resolve) => setImmediate(resolve));
   try {
     assert.equal(spawns, 1, "the first recovery owns and starts one resume");
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(stateDir, `${ATTEMPT}.resume-owner.json`), "utf8")),
+      {
+        version: 1,
+        kind: "codex-resume-owner",
+        attempt_id: ATTEMPT,
+        target_sha: SHA,
+        thread_id: THREAD,
+        owner_host: "test-host",
+        child_pid: 201,
+        child_start: "2010",
+      },
+      "the resumed child is durably bound before launchBuilder can settle",
+    );
     const second = await launchBuilder(input);
     assert.equal(second.stage, "HOLD");
     assert.equal(second.pause_adapter, true);
@@ -558,7 +572,7 @@ test("a completed resume retains its claim until the terminal receipt is durably
     thread_id: THREAD,
     owner_host: "test-host",
     child_pid: 111,
-    child_start: "old",
+    child_start: "100",
   });
   let spawns = 0;
   const input = {
@@ -589,7 +603,7 @@ test("resume fails closed for missing, conflicting, or unverifiable durable side
       thread_id: "1199a213-81c0-7800-8aa1-bbab2a035a53",
       owner_host: "test-host",
       child_pid: 111,
-      child_start: "old",
+      child_start: "100",
     })],
     ["unverifiable owner", (stateDir) => persistDurableSession({ stateDir, attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD })],
   ];
@@ -610,6 +624,39 @@ test("resume fails closed for missing, conflicting, or unverifiable durable side
   }
 });
 
+test("unreadable process metadata and malformed ownership never authorize resume", async () => {
+  const cases = [
+    ["process metadata EACCES", { owner_host: "test-host", child_pid: 987654321, child_start: "123" }, {
+      readProcessStat: () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); },
+    }],
+    ["negative pid", { owner_host: "test-host", child_pid: -1, child_start: "123" }, {}],
+    ["numeric start token", { owner_host: "test-host", child_pid: 111, child_start: 123 }, {
+      processStartToken: () => "123",
+    }],
+  ];
+  for (const [label, ownership, extraIo] of cases) {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-process-state-"));
+    writeFileSync(join(stateDir, `${ATTEMPT}.json`), JSON.stringify({
+      version: 1,
+      attempt_id: ATTEMPT,
+      target_sha: SHA,
+      thread_id: THREAD,
+      ...ownership,
+    }));
+    let spawns = 0;
+    const out = await launchBuilder({
+      ...launchInput(),
+      resume: true,
+      external_run_id: `codexrun_${THREAD}`,
+      spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+      io: { codexStateDir: stateDir, hostname: () => "test-host", ...extraIo },
+    });
+    assert.equal(out.stage, "HOLD", label);
+    assert.equal(out.pause_adapter, true, label);
+    assert.equal(spawns, 0, `${label}: unknown ownership must stop before process creation`);
+  }
+});
+
 test("an abandoned or corrupt recovery claim is visible and never authorizes another resume", async () => {
   for (const [label, claim] of [
     ["crash before resumed child ownership", { version: 1, kind: "codex-resume-claim", attempt_id: ATTEMPT, target_sha: SHA, thread_id: THREAD }],
@@ -623,7 +670,7 @@ test("an abandoned or corrupt recovery claim is visible and never authorizes ano
       thread_id: THREAD,
       owner_host: "test-host",
       child_pid: 111,
-      child_start: "old",
+      child_start: "100",
     });
     writeFileSync(join(stateDir, `${ATTEMPT}.resume-claim.json`), typeof claim === "string" ? claim : JSON.stringify(claim));
     let spawns = 0;
@@ -638,6 +685,44 @@ test("an abandoned or corrupt recovery claim is visible and never authorizes ano
     assert.equal(out.pause_adapter, true, label);
     assert.equal(spawns, 0, label);
   }
+});
+
+test("a resumed-owner record without its claim still blocks before spawn", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-owner-only-"));
+  persistDurableSession({
+    stateDir,
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 111,
+    child_start: "100",
+  });
+  writeFileSync(join(stateDir, `${ATTEMPT}.resume-owner.json`), JSON.stringify({
+    version: 1,
+    kind: "codex-resume-owner",
+    attempt_id: ATTEMPT,
+    target_sha: SHA,
+    thread_id: THREAD,
+    owner_host: "test-host",
+    child_pid: 222,
+    child_start: "222",
+  }));
+  let spawns = 0;
+  const out = await launchBuilder({
+    ...launchInput(),
+    resume: true,
+    external_run_id: `codexrun_${THREAD}`,
+    spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+    io: {
+      codexStateDir: stateDir,
+      hostname: () => "test-host",
+      processStartToken: (pid) => pid === 111 ? null : "222",
+    },
+  });
+  assert.equal(out.stage, "HOLD");
+  assert.equal(out.pause_adapter, true);
+  assert.equal(spawns, 0, "the pre-spawn owner check is load-bearing even without a claim file");
 });
 
 test("schema file written before launch; CALLBACK_SCHEMA is closed (additionalProperties false)", async () => {
@@ -726,7 +811,7 @@ for (const [label, exitCode] of [["clean exit", 0], ["killed after thread.starte
       io: {
         codexStateDir: stateDir,
         spawnImpl: streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })], { exitCode }),
-        processStartToken: () => "fixture-start",
+        processStartToken: () => "100",
         hostname: () => "fixture-host",
       },
     });
