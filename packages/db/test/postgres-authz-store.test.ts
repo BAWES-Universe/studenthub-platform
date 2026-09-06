@@ -19,7 +19,14 @@ import {
   resolveActiveContext,
   type RoleGrant,
 } from "@studenthub/contracts";
-import { PostgresAuthzStore, runMigrations, bootstrapAdmin } from "@studenthub/db";
+import {
+  PostgresAuthzStore,
+  runMigrations,
+  bootstrapAdmin,
+  organizationAuditRef,
+  principalAuditRef,
+  requestAuditRef,
+} from "@studenthub/db";
 
 // DATABASE_URL is REQUIRED: the suite runs against a scratch Postgres that
 // must never be a default in the repo. CI injects it (postgres service in
@@ -56,7 +63,7 @@ before(async () => {
 beforeEach(async () => {
   activeStores = [];
   await adminPool.query(
-    "TRUNCATE organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
+    "TRUNCATE authorization_mutation_audit, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
   );
 });
 
@@ -246,6 +253,188 @@ test("parity: clearGrantsForPrincipal empties the grant set but keeps the princi
 
   await store.clearGrantsForPrincipal("never-granted"); // no-op on unknowns
   assert.equal((await store.getPrincipal("alice"))?.id, "alice");
+});
+
+// ---------------------------------------------------------------------------
+// SHU-59: authorization mutation audit is transaction-coupled and secret-free
+// ---------------------------------------------------------------------------
+
+test("audit: every persisted principal/grant mutation records bounded before/after facts", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+
+  const rawIdentity = "audit-person@example.invalid";
+  const actor = "principal-reviewer@example.invalid";
+  await store.registerPrincipal(
+    createPrincipal({
+      id: "audit-person",
+      pbuuids: [rawIdentity],
+      displayName: "Bearer secret-value",
+      email: rawIdentity,
+    }),
+    { requestId: "req.principal-1", actorPrincipalId: actor },
+  );
+  await store.grantMany(
+    "audit-person",
+    [{ orgId: ACME, role: "candidate", scope: "self" }],
+    { requestId: "req.grant-1", actorPrincipalId: actor },
+  );
+  await store.revokeMany(
+    "audit-person",
+    [{ orgId: ACME, role: "candidate" }],
+    { requestId: "req.revoke-1", actorPrincipalId: actor },
+  );
+  await store.grantMany(
+    "audit-person",
+    [{ orgId: ACME, role: "finance", scope: "subtree" }],
+    { requestId: "req.seed-clear" },
+  );
+  await store.clearGrantsForPrincipal("audit-person", {
+    requestId: "req.clear-1",
+    actorPrincipalId: actor,
+  });
+
+  const expected = [
+    ["req.principal-1", "principal.register"],
+    ["req.grant-1", "grants.grant"],
+    ["req.revoke-1", "grants.revoke"],
+    ["req.clear-1", "grants.clear"],
+  ] as const;
+  for (const [requestId, operation] of expected) {
+    const records = await store.listAuthorizationMutationAuditRecords({ requestId });
+    assert.equal(records.length, 1);
+    const record = records[0];
+    assert.equal(record?.operation, operation);
+    assert.equal(record?.requestRef, requestAuditRef(requestId));
+    assert.equal(record?.actorPrincipalRef, principalAuditRef(actor));
+    assert.equal(record?.targetPrincipalRef, principalAuditRef("audit-person"));
+    assert.ok(record?.occurredAt.endsWith("Z"));
+    assert.equal(Object.isFrozen(record), true);
+    assert.equal(Object.isFrozen(record?.before), true);
+    assert.equal(Object.isFrozen(record?.after), true);
+  }
+
+  const grant = (await store.listAuthorizationMutationAuditRecords({
+    requestId: "req.grant-1",
+  }))[0];
+  assert.deepEqual(grant?.targetOrgRefs, [organizationAuditRef(ACME)]);
+  assert.deepEqual(grant?.before, { grantCount: 0, selfCount: 0, subtreeCount: 0 });
+  assert.deepEqual(grant?.after, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
+
+  const serialized = JSON.stringify(await store.listAuthorizationMutationAuditRecords());
+  for (const forbidden of [
+    rawIdentity,
+    actor,
+    "Bearer secret-value",
+    "secret-value",
+    "req.principal-1",
+  ]) {
+    assert.equal(serialized.includes(forbidden), false, `audit leaked forbidden value: ${forbidden}`);
+  }
+});
+
+test("audit: a rejected cross-principal identity claim leaves no success record", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "victim", pbuuids: ["taken@example.invalid"] }),
+    { requestId: "req.victim-seed" },
+  );
+  await assert.rejects(
+    () =>
+      store.registerPrincipal(
+        createPrincipal({ id: "attacker", pbuuids: ["taken@example.invalid"] }),
+        { requestId: "req.rejected-identity" },
+      ),
+    /already owned/,
+  );
+  assert.deepEqual(
+    await store.listAuthorizationMutationAuditRecords({
+      requestId: "req.rejected-identity",
+    }),
+    [],
+  );
+  assert.equal(await store.getPrincipal("attacker"), undefined);
+});
+
+test("audit: an invalid correlation id rolls back the authorization mutation", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await assert.rejects(
+    () =>
+      store.grantMany(
+        "alice",
+        [{ orgId: ACME, role: "finance" }],
+        { requestId: "" },
+      ),
+    /audit requestId/,
+  );
+  assert.deepEqual(await store.listGrantsForPrincipal("alice"), []);
+});
+
+test("audit: an insert failure rolls back its paired mutation and emits no success fact", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await adminPool.query(`
+    CREATE OR REPLACE FUNCTION fail_shu59_audit_insert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.request_ref = '${requestAuditRef("req.fail-audit")}' THEN
+        RAISE EXCEPTION 'injected audit failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_shu59_audit_insert
+      BEFORE INSERT ON authorization_mutation_audit
+      FOR EACH ROW EXECUTE FUNCTION fail_shu59_audit_insert();
+  `);
+  try {
+    await assert.rejects(
+      () =>
+        store.grantMany(
+          "alice",
+          [{ orgId: ACME, role: "recruiter" }],
+          { requestId: "req.fail-audit" },
+        ),
+      /injected audit failure/,
+    );
+    assert.deepEqual(await store.listGrantsForPrincipal("alice"), []);
+    assert.deepEqual(
+      await store.listAuthorizationMutationAuditRecords({ requestId: "req.fail-audit" }),
+      [],
+    );
+  } finally {
+    await adminPool.query("DROP TRIGGER IF EXISTS fail_shu59_audit_insert ON authorization_mutation_audit");
+    await adminPool.query("DROP FUNCTION IF EXISTS fail_shu59_audit_insert()");
+  }
+});
+
+test("audit: application audit rows reject update and delete", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "append-only", pbuuids: [] }),
+    { requestId: "req.append-only" },
+  );
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        "UPDATE authorization_mutation_audit SET request_ref = repeat('0', 64) WHERE request_ref = $1",
+        [requestAuditRef("req.append-only")],
+      ),
+    /append-only/,
+  );
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        "DELETE FROM authorization_mutation_audit WHERE request_ref = $1",
+        [requestAuditRef("req.append-only")],
+      ),
+    /append-only/,
+  );
+  assert.equal(
+    (await store.listAuthorizationMutationAuditRecords({ requestId: "req.append-only" })).length,
+    1,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -490,8 +679,14 @@ test("bootstrap concurrency: two simultaneous bootstraps cannot create two root 
   const poolB = new pg.Pool({ connectionString: DB_URL });
   try {
     const [resultA, resultB] = await Promise.allSettled([
-      bootstrapAdmin(poolA, { pbuuid: "admin-a@example.invalid" }),
-      bootstrapAdmin(poolB, { pbuuid: "admin-b@example.invalid" }),
+      bootstrapAdmin(poolA, {
+        pbuuid: "admin-a@example.invalid",
+        requestId: "bootstrap-a",
+      }),
+      bootstrapAdmin(poolB, {
+        pbuuid: "admin-b@example.invalid",
+        requestId: "bootstrap-b",
+      }),
     ]);
 
     const settled = [resultA, resultB];
@@ -551,6 +746,21 @@ test("bootstrap concurrency: two simultaneous bootstraps cannot create two root 
       0,
       "a rejected bootstrap must leave NO pbuuid mapping behind (atomic rollback)",
     );
+    const winnerRequest = resultA.status === "fulfilled" ? "bootstrap-a" : "bootstrap-b";
+    const loserRequest = resultA.status === "fulfilled" ? "bootstrap-b" : "bootstrap-a";
+    const winnerAudit = await adminPool.query(
+      "SELECT operation FROM authorization_mutation_audit WHERE request_ref = $1 ORDER BY id",
+      [requestAuditRef(winnerRequest)],
+    );
+    assert.deepEqual(
+      winnerAudit.rows.map((row: { operation: string }) => row.operation),
+      ["principal.register", "grants.grant"],
+    );
+    const loserAudit = await adminPool.query(
+      "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+      [requestAuditRef(loserRequest)],
+    );
+    assert.equal(loserAudit.rowCount, 0, "a rejected bootstrap emits no success audit fact");
   } finally {
     await poolA.end();
     await poolB.end();
@@ -634,7 +844,11 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
       );
       assert.deepEqual(
         rows.map((r) => r.version),
-        ["0001_create_authz_tables", "0002_enforce_single_root_admin"],
+        [
+          "0001_create_authz_tables",
+          "0002_enforce_single_root_admin",
+          "0003_create_authorization_mutation_audit",
+        ],
         "each migration is recorded exactly once",
       );
       const idx = await poolA.query<{ n: number }>(
@@ -676,7 +890,11 @@ test(
         );
         assert.deepEqual(
           rows.map((r) => r.version),
-          ["0001_create_authz_tables", "0002_enforce_single_root_admin"],
+          [
+            "0001_create_authz_tables",
+            "0002_enforce_single_root_admin",
+            "0003_create_authorization_mutation_audit",
+          ],
         );
       } finally {
         await pool.end();

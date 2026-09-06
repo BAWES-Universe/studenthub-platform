@@ -40,8 +40,10 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 
+import { insertAuthorizationMutationAudit } from "./authorization-audit.js";
 import { runMigrations } from "./migrate.js";
 import { databaseUrl } from "./connection.js";
 
@@ -93,10 +95,21 @@ function requireEnv(name: string): string {
  */
 export async function bootstrapAdmin(
   pool: pg.Pool,
-  options: { readonly pbuuid: string; readonly displayName?: string },
+  options: {
+    readonly pbuuid: string;
+    readonly displayName?: string;
+    readonly requestId?: string;
+    readonly actorPrincipalId?: string;
+  },
 ): Promise<BootstrapResult> {
   const { pbuuid, displayName } = options;
   const adminId = `principal-${pbuuid}`;
+  const auditContext = {
+    requestId: options.requestId ?? `bootstrap_${randomUUID()}`,
+    ...(options.actorPrincipalId === undefined
+      ? {}
+      : { actorPrincipalId: options.actorPrincipalId }),
+  };
 
   // Schema first: bootstrap must be runnable against a brand-new database.
   await runMigrations(pool);
@@ -139,6 +152,32 @@ export async function bootstrapAdmin(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))",
+      [adminId],
+    );
+
+    const principalBefore = await client.query<{
+      exists: boolean;
+      identity_count: number;
+      display_name_present: boolean;
+    }>(
+      `SELECT EXISTS (SELECT 1 FROM principals WHERE id = $1) AS exists,
+              (SELECT count(*)::int FROM principal_pbuuids WHERE principal_id = $1) AS identity_count,
+              COALESCE((SELECT display_name IS NOT NULL FROM principals WHERE id = $1), false) AS display_name_present`,
+      [adminId],
+    );
+    const grantsBefore = await client.query<{
+      total: number;
+      self_count: number;
+      subtree_count: number;
+    }>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE scope = 'self')::int AS self_count,
+              count(*) FILTER (WHERE scope = 'subtree')::int AS subtree_count
+       FROM grants WHERE principal_id = $1`,
+      [adminId],
+    );
 
     await client.query(
       `INSERT INTO organizations (id, name, parent_org_id)
@@ -173,6 +212,66 @@ export async function bootstrapAdmin(
          END`,
       [adminId, ROOT_ORG_ID],
     );
+
+    const principalRow = principalBefore.rows[0] ?? {
+      exists: false,
+      identity_count: 0,
+      display_name_present: false,
+    };
+    await insertAuthorizationMutationAudit(client, {
+      context: auditContext,
+      operation: "principal.register",
+      targetPrincipalId: adminId,
+      before: {
+        existed: principalRow.exists,
+        identityCount: principalRow.identity_count,
+        displayNamePresent: principalRow.display_name_present,
+        emailPresent: false,
+      },
+      after: {
+        existed: true,
+        identityCount: 1,
+        displayNamePresent: displayName !== undefined,
+        emailPresent: false,
+      },
+    });
+    const grantRow = grantsBefore.rows[0] ?? {
+      total: 0,
+      self_count: 0,
+      subtree_count: 0,
+    };
+    const grantsAfter = await client.query<{
+      total: number;
+      self_count: number;
+      subtree_count: number;
+    }>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE scope = 'self')::int AS self_count,
+              count(*) FILTER (WHERE scope = 'subtree')::int AS subtree_count
+       FROM grants WHERE principal_id = $1`,
+      [adminId],
+    );
+    const grantAfterRow = grantsAfter.rows[0] ?? {
+      total: 0,
+      self_count: 0,
+      subtree_count: 0,
+    };
+    await insertAuthorizationMutationAudit(client, {
+      context: auditContext,
+      operation: "grants.grant",
+      targetPrincipalId: adminId,
+      targetOrgIds: [ROOT_ORG_ID],
+      before: {
+        grantCount: grantRow.total,
+        selfCount: grantRow.self_count,
+        subtreeCount: grantRow.subtree_count,
+      },
+      after: {
+        grantCount: grantAfterRow.total,
+        selfCount: grantAfterRow.self_count,
+        subtreeCount: grantAfterRow.subtree_count,
+      },
+    });
 
     await client.query("COMMIT");
   } catch (error) {
@@ -234,10 +333,11 @@ export async function bootstrapAdmin(
 async function main(): Promise<void> {
   const pbuuid = requireEnv("BOOTSTRAP_ADMIN_PBUUID");
   const displayName = process.env.BOOTSTRAP_ADMIN_NAME?.trim() || undefined;
+  const requestId = process.env.BOOTSTRAP_AUDIT_REQUEST_ID?.trim() || undefined;
 
   const pool = new pg.Pool({ connectionString: databaseUrl() });
   try {
-    const result = await bootstrapAdmin(pool, { pbuuid, displayName });
+    const result = await bootstrapAdmin(pool, { pbuuid, displayName, requestId });
     const done = result === "noop" ? "already present (no-op)" : "created";
     // Masked pbuuid only — the raw identity never reaches the logs.
     console.log(

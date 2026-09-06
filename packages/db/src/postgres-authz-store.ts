@@ -37,7 +37,7 @@
  * FK alone permits both once the parent row exists.
  */
 import pg from "pg";
-import type { PoolConfig, Pool as PgPool } from "pg";
+import type { PoolConfig, Pool as PgPool, PoolClient } from "pg";
 
 import {
   GRANT_SCOPES,
@@ -54,6 +54,13 @@ import {
   isRole,
   normalizeGrantEntry,
 } from "@studenthub/contracts";
+
+import {
+  insertAuthorizationMutationAudit,
+  requestAuditRef,
+  type AuthorizationMutationAuditRecord,
+  type AuthorizationMutationContext,
+} from "./authorization-audit.js";
 
 // --- Row shapes -----------------------------------------------------------------
 
@@ -77,6 +84,24 @@ interface GrantRow {
   org_id: string;
   role: string;
   scope: string;
+}
+
+interface AuditRow {
+  id: string;
+  request_ref: string;
+  actor_principal_ref: string | null;
+  operation: AuthorizationMutationAuditRecord["operation"];
+  target_principal_ref: string | null;
+  target_org_refs: string[];
+  occurred_at: Date;
+  before_summary: Record<string, unknown>;
+  after_summary: Record<string, unknown>;
+}
+
+interface GrantSummaryRow {
+  total: number;
+  self_count: number;
+  subtree_count: number;
 }
 
 // --- Row mappers ----------------------------------------------------------------
@@ -154,6 +179,91 @@ export class PostgresAuthzStore implements AuthzStore {
   /** Tear down the pool. No-op for pools the caller injected. */
   async close(): Promise<void> {
     if (this.#ownsPool) await this.#pool.end();
+  }
+
+  async #transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await run(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Preserve the mutation/audit failure that caused the rollback.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async #grantSummary(
+    client: PoolClient,
+    principalId: string,
+  ): Promise<Readonly<Record<string, number>>> {
+    const { rows } = await client.query<GrantSummaryRow>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE scope = 'self')::int AS self_count,
+              count(*) FILTER (WHERE scope = 'subtree')::int AS subtree_count
+       FROM grants WHERE principal_id = $1`,
+      [principalId],
+    );
+    const row = rows[0] ?? { total: 0, self_count: 0, subtree_count: 0 };
+    return Object.freeze({
+      grantCount: row.total,
+      selfCount: row.self_count,
+      subtreeCount: row.subtree_count,
+    });
+  }
+
+  async #lockPrincipalAudit(client: PoolClient, principalId: string): Promise<void> {
+    // Audit before/after summaries must describe the serialized mutation, not
+    // two concurrent writers' shared stale snapshot. An xact-scoped advisory
+    // lock also covers a principal row that does not exist yet.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 5959))",
+      [principalId],
+    );
+  }
+
+  /** Read-only application API; no update/delete method exists. */
+  async listAuthorizationMutationAuditRecords(input: {
+    readonly requestId?: string;
+  } = {}): Promise<readonly AuthorizationMutationAuditRecord[]> {
+    const params: unknown[] = [];
+    const where = input.requestId === undefined ? "" : "WHERE request_ref = $1";
+    if (input.requestId !== undefined) {
+      params.push(requestAuditRef(input.requestId));
+    }
+    const { rows } = await this.#pool.query<AuditRow>(
+      `SELECT id, request_ref, actor_principal_ref, operation,
+              target_principal_ref, target_org_refs, occurred_at,
+              before_summary, after_summary
+       FROM authorization_mutation_audit ${where} ORDER BY id`,
+      params,
+    );
+    return Object.freeze(
+      rows.map((row) =>
+        Object.freeze({
+          id: String(row.id),
+          requestRef: row.request_ref,
+          ...(row.actor_principal_ref === null
+            ? {}
+            : { actorPrincipalRef: row.actor_principal_ref }),
+          operation: row.operation,
+          ...(row.target_principal_ref === null
+            ? {}
+            : { targetPrincipalRef: row.target_principal_ref }),
+          targetOrgRefs: Object.freeze([...row.target_org_refs]),
+          occurredAt: row.occurred_at.toISOString(),
+          before: Object.freeze({ ...row.before_summary }),
+          after: Object.freeze({ ...row.after_summary }),
+        }),
+      ),
+    );
   }
 
   // --- OrganizationStore ---------------------------------------------------------
@@ -279,36 +389,66 @@ export class PostgresAuthzStore implements AuthzStore {
    * registration leaves zero trace, matching the in-memory validation-first
    * behavior) and re-raise as a TypeError naming the current owner.
    */
-  async registerPrincipal(principal: Principal): Promise<void> {
+  async registerPrincipal(
+    principal: Principal,
+    audit?: AuthorizationMutationContext,
+  ): Promise<void> {
     const claimed = [...new Set(principal.pbuuids)];
-    const client = await this.#pool.connect();
     try {
-      await client.query("BEGIN");
-      await client.query(
-        `INSERT INTO principals (id, display_name, email)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, email = EXCLUDED.email`,
-        [principal.id, principal.displayName ?? null, principal.email ?? null],
-      );
-      await client.query("DELETE FROM principal_pbuuids WHERE principal_id = $1", [
-        principal.id,
-      ]);
-      for (const pbuuid of claimed) {
-        await client.query(
-          "INSERT INTO principal_pbuuids (principal_id, pbuuid) VALUES ($1, $2)",
-          [principal.id, pbuuid],
+      await this.#transaction(async (client) => {
+        await this.#lockPrincipalAudit(client, principal.id);
+        const beforeRows = await client.query<{
+          exists: boolean;
+          identity_count: number;
+          display_name_present: boolean;
+          email_present: boolean;
+        }>(
+          `SELECT EXISTS (SELECT 1 FROM principals WHERE id = $1) AS exists,
+                  (SELECT count(*)::int FROM principal_pbuuids WHERE principal_id = $1) AS identity_count,
+                  COALESCE((SELECT display_name IS NOT NULL FROM principals WHERE id = $1), false) AS display_name_present,
+                  COALESCE((SELECT email IS NOT NULL FROM principals WHERE id = $1), false) AS email_present`,
+          [principal.id],
         );
-      }
-      await client.query("COMMIT");
+        const before = beforeRows.rows[0] ?? {
+          exists: false,
+          identity_count: 0,
+          display_name_present: false,
+          email_present: false,
+        };
+        await client.query(
+          `INSERT INTO principals (id, display_name, email)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, email = EXCLUDED.email`,
+          [principal.id, principal.displayName ?? null, principal.email ?? null],
+        );
+        await client.query("DELETE FROM principal_pbuuids WHERE principal_id = $1", [
+          principal.id,
+        ]);
+        for (const pbuuid of claimed) {
+          await client.query(
+            "INSERT INTO principal_pbuuids (principal_id, pbuuid) VALUES ($1, $2)",
+            [principal.id, pbuuid],
+          );
+        }
+        await insertAuthorizationMutationAudit(client, {
+          context: audit,
+          operation: "principal.register",
+          targetPrincipalId: principal.id,
+          before: {
+            existed: before.exists,
+            identityCount: before.identity_count,
+            displayNamePresent: before.display_name_present,
+            emailPresent: before.email_present,
+          },
+          after: {
+            existed: true,
+            identityCount: claimed.length,
+            displayNamePresent: principal.displayName !== undefined,
+            emailPresent: principal.email !== undefined,
+          },
+        });
+      });
     } catch (error) {
-      // A failing ROLLBACK (e.g. the connection dropped mid-transaction)
-      // must not mask the original error — the server aborts the
-      // transaction on disconnect anyway (Sentry finding, valid).
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        // Swallow: the original error below is the one the caller needs.
-      }
       if (isUniqueViolation(error)) {
         // The only unique constraint this transaction can hit while inserting
         // is the pbuuid primary key. Identify the conflicting pbuuid and its
@@ -317,7 +457,7 @@ export class PostgresAuthzStore implements AuthzStore {
         // diagnostics only — enforcement already happened in the constraint.
         let conflict: { pbuuid: string; owner_id: string } | undefined;
         try {
-          const ownerRows = await client.query<{ pbuuid: string; owner_id: string }>(
+          const ownerRows = await this.#pool.query<{ pbuuid: string; owner_id: string }>(
             `SELECT pb.pbuuid, p.id AS owner_id
              FROM principal_pbuuids pb
              JOIN principals p ON p.id = pb.principal_id
@@ -343,8 +483,6 @@ export class PostgresAuthzStore implements AuthzStore {
         );
       }
       throw error;
-    } finally {
-      client.release();
     }
   }
 
@@ -368,7 +506,11 @@ export class PostgresAuthzStore implements AuthzStore {
    * existing row into a scope upgrade in place: the row id is preserved and
    * 'subtree' (the wider scope) is never narrowed back to 'self'.
    */
-  async grantMany(principalId: string, entries: readonly GrantEntry[]): Promise<void> {
+  async grantMany(
+    principalId: string,
+    entries: readonly GrantEntry[],
+    audit?: AuthorizationMutationContext,
+  ): Promise<void> {
     if (entries.length === 0) return;
     const normalized = entries.map(normalizeGrantEntry);
 
@@ -399,19 +541,35 @@ export class PostgresAuthzStore implements AuthzStore {
       next += 3;
     }
 
-    await this.#pool.query(
-      `INSERT INTO grants (principal_id, org_id, role, scope)
-       VALUES ${tuples.join(", ")}
-       ON CONFLICT (principal_id, org_id, role) DO UPDATE SET
-        scope = CASE
-          WHEN grants.scope = 'subtree' OR EXCLUDED.scope = 'subtree' THEN 'subtree'
-          ELSE grants.scope
-        END`,
-      params,
-    );
+    await this.#transaction(async (client) => {
+      await this.#lockPrincipalAudit(client, principalId);
+      const before = await this.#grantSummary(client, principalId);
+      await client.query(
+        `INSERT INTO grants (principal_id, org_id, role, scope)
+         VALUES ${tuples.join(", ")}
+         ON CONFLICT (principal_id, org_id, role) DO UPDATE SET
+          scope = CASE
+            WHEN grants.scope = 'subtree' OR EXCLUDED.scope = 'subtree' THEN 'subtree'
+            ELSE grants.scope
+          END`,
+        params,
+      );
+      await insertAuthorizationMutationAudit(client, {
+        context: audit,
+        operation: "grants.grant",
+        targetPrincipalId: principalId,
+        targetOrgIds: merged.map((entry) => entry.orgId),
+        before,
+        after: await this.#grantSummary(client, principalId),
+      });
+    });
   }
 
-  async revokeMany(principalId: string, entries: readonly RevokeEntry[]): Promise<void> {
+  async revokeMany(
+    principalId: string,
+    entries: readonly RevokeEntry[],
+    audit?: AuthorizationMutationContext,
+  ): Promise<void> {
     if (entries.length === 0) return;
     const params: unknown[] = [principalId];
     const tuples: string[] = [];
@@ -423,14 +581,40 @@ export class PostgresAuthzStore implements AuthzStore {
     }
     // Row matches on (org_id, role); scope is deliberately ignored, exactly
     // like the in-memory revokeMany. Unknown targets simply delete nothing.
-    await this.#pool.query(
-      `DELETE FROM grants
-       WHERE principal_id = $1 AND (org_id, role) IN (${tuples.join(", ")})`,
-      params,
-    );
+    await this.#transaction(async (client) => {
+      await this.#lockPrincipalAudit(client, principalId);
+      const before = await this.#grantSummary(client, principalId);
+      await client.query(
+        `DELETE FROM grants
+         WHERE principal_id = $1 AND (org_id, role) IN (${tuples.join(", ")})`,
+        params,
+      );
+      await insertAuthorizationMutationAudit(client, {
+        context: audit,
+        operation: "grants.revoke",
+        targetPrincipalId: principalId,
+        targetOrgIds: entries.map((entry) => entry.orgId),
+        before,
+        after: await this.#grantSummary(client, principalId),
+      });
+    });
   }
 
-  async clearGrantsForPrincipal(principalId: string): Promise<void> {
-    await this.#pool.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+  async clearGrantsForPrincipal(
+    principalId: string,
+    audit?: AuthorizationMutationContext,
+  ): Promise<void> {
+    await this.#transaction(async (client) => {
+      await this.#lockPrincipalAudit(client, principalId);
+      const before = await this.#grantSummary(client, principalId);
+      await client.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
+      await insertAuthorizationMutationAudit(client, {
+        context: audit,
+        operation: "grants.clear",
+        targetPrincipalId: principalId,
+        before,
+        after: await this.#grantSummary(client, principalId),
+      });
+    });
   }
 }
