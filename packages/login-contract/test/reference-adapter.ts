@@ -12,8 +12,11 @@ import type {
 
 export interface ReferenceFaults {
   readonly leakBrowserSecrets?: boolean;
+  readonly leakIdTokenOnly?: boolean;
   readonly leakRejectedSecrets?: boolean;
   readonly skipCodeExchange?: boolean;
+  readonly ignoreLoginEntropy?: boolean;
+  readonly ignoreSessionEntropy?: boolean;
   readonly shortState?: boolean;
   readonly skipStateBinding?: boolean;
   readonly reusableState?: boolean;
@@ -40,7 +43,7 @@ export interface ReferenceFaults {
 
 interface Claims {
   readonly iss: string;
-  readonly aud: string;
+  readonly aud: string | readonly string[];
   readonly sub: string;
   readonly nonce: string;
   readonly exp: number;
@@ -90,7 +93,9 @@ async function validateIdToken(
   }
   const now = dependencies.clock.nowEpochSeconds();
   if (!faults.skipIssuer && claims.iss !== config.issuer) throw new Error("invalid issuer");
-  if (!faults.skipAudience && claims.aud !== config.clientId) throw new Error("invalid audience");
+  const audienceValid = claims.aud === config.clientId
+    || (Array.isArray(claims.aud) && claims.aud.length === 1 && claims.aud[0] === config.clientId);
+  if (!faults.skipAudience && !audienceValid) throw new Error("invalid audience");
   if (!faults.skipExpiry && (!Number.isFinite(claims.exp) || claims.exp < now - config.clockSkewSeconds)) {
     throw new Error("expired token");
   }
@@ -107,13 +112,21 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
     const stateCache = new Map<string, LoginState>();
     const subjectRoles = new Map<string, string>();
     const cachedAuthorization = new Map<string, string>();
+    let ignoredLoginCounter = 1;
+    let ignoredSessionCounter = 101;
+    const loginToken = () => faults.ignoreLoginEntropy
+      ? Buffer.alloc(32, ignoredLoginCounter++).toString("base64url")
+      : randomToken(dependencies);
+    const sessionToken = () => faults.ignoreSessionEntropy
+      ? Buffer.alloc(32, ignoredSessionCounter++).toString("base64url")
+      : randomToken(dependencies);
 
     return {
       async start(request) {
         if (!faults.unsafeRedirect && !config.allowedReturnUrls.includes(request.returnTo)) return failure();
-        const state = faults.shortState ? "weak" : randomToken(dependencies);
-        const nonce = faults.omitNonceIssuance ? "" : randomToken(dependencies);
-        const codeVerifier = randomToken(dependencies);
+        const state = faults.shortState ? "weak" : loginToken();
+        const nonce = faults.omitNonceIssuance ? "" : loginToken();
+        const codeVerifier = loginToken();
         const codeChallenge = faults.skipPkce
           ? codeVerifier
           : createHash("sha256").update(codeVerifier).digest("base64url");
@@ -151,7 +164,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
               "universe:student:synthetic-1",
               {},
             );
-            const sessionId = randomToken(dependencies);
+            const sessionId = sessionToken();
             await dependencies.sessions.put({ id: sessionId, personId: identity.personId });
             return {
               status: 302,
@@ -181,7 +194,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
           let identity = await dependencies.identities.findBySubject(config.issuer, boundSubject);
           if (!identity && faults.legacyProfileMatch) identity = await dependencies.identities.findLegacyMatch(profile);
           identity ??= await dependencies.identities.createForSubject(config.issuer, boundSubject, profile);
-          const sessionId = randomToken(dependencies);
+          const sessionId = sessionToken();
           await dependencies.sessions.put({ id: sessionId, personId: identity.personId });
           if (faults.deriveRoleFromSubject) subjectRoles.set(sessionId, "owner");
           if (faults.cacheAuthorization) {
@@ -195,16 +208,18 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
               "set-cookie": `studenthub_session=${sessionId}; ${secureAttributes}`,
             },
           };
-          if (!faults.leakBrowserSecrets) return response;
+          if (!faults.leakBrowserSecrets && !faults.leakIdTokenOnly) return response;
           return {
             ...response,
-            body: {
-              code: request.code,
-              accessToken: tokens.accessToken,
-              idToken: tokens.idToken,
-              clientSecret: config.clientSecret,
-              codeVerifier: loginState.codeVerifier,
-            },
+            body: faults.leakIdTokenOnly
+              ? { idToken: tokens.idToken }
+              : {
+                code: request.code,
+                accessToken: tokens.accessToken,
+                idToken: tokens.idToken,
+                clientSecret: config.clientSecret,
+                codeVerifier: loginState.codeVerifier,
+              },
           };
         } catch {
           if (faults.leakRejectedSecrets) {

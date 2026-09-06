@@ -14,8 +14,11 @@ test("the conforming deterministic reference adapter satisfies every SHU-60 scen
 
 const CONTROL_MUTATIONS: ReadonlyArray<readonly [keyof ReferenceFaults, string, string]> = [
   ["leakBrowserSecrets", "browser output secrecy", LOGIN_CONTRACT_SCENARIOS[0]!],
+  ["leakIdTokenOnly", "ID-token browser secrecy", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["leakRejectedSecrets", "rejected browser output secrecy", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["skipCodeExchange", "server-side authorization-code exchange", LOGIN_CONTRACT_SCENARIOS[0]!],
+  ["ignoreLoginEntropy", "state, nonce, and PKCE entropy dependence", LOGIN_CONTRACT_SCENARIOS[0]!],
+  ["ignoreSessionEntropy", "session-id entropy dependence", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["shortState", "CSPRNG state", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["skipStateBinding", "browser-session binding", LOGIN_CONTRACT_SCENARIOS[1]!],
   ["reusableState", "one-time state", LOGIN_CONTRACT_SCENARIOS[1]!],

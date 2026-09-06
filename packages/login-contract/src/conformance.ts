@@ -45,7 +45,7 @@ export interface ConformanceReport {
 
 interface TokenOverrides {
   readonly issuer?: string;
-  readonly audience?: string;
+  readonly audience?: string | readonly string[];
   readonly subject?: string;
   readonly nonce?: string;
   readonly expiresAt?: number;
@@ -78,7 +78,11 @@ class FakeClock implements Clock {
 
 class DeterministicEntropy implements EntropySource {
   readonly requests: number[] = [];
-  #counter = 1;
+  #counter: number;
+
+  constructor(seed = 1) {
+    this.#counter = seed;
+  }
 
   bytes(length: number): Uint8Array {
     this.requests.push(length);
@@ -146,6 +150,7 @@ class MemoryAuthorization implements AuthorizationStore {
 class FakeProvider implements OidcTransport, JwksResolver {
   readonly authorizationRequests: AuthorizationRequest[] = [];
   readonly tokenRequests: TokenRequest[] = [];
+  readonly tokenResponses: TokenResponse[] = [];
   readonly #codes = new Map<string, { request: AuthorizationRequest; overrides: TokenOverrides }>();
   readonly #privateKey;
   readonly #publicJwk: TestJsonWebKey;
@@ -212,7 +217,9 @@ class FakeProvider implements OidcTransport, JwksResolver {
     const signingInput = `${header}.${payload}`;
     const key = issued.overrides.signatureValid === false ? this.#wrongPrivateKey : this.#privateKey;
     const signature = sign(null, Buffer.from(signingInput), key).toString("base64url");
-    return { accessToken: "synthetic-access-token", idToken: `${signingInput}.${signature}` };
+    const response = { accessToken: "synthetic-access-token", idToken: `${signingInput}.${signature}` };
+    this.tokenResponses.push(response);
+    return response;
   }
 
   async resolve(issuer: string, kid: string): Promise<TestJsonWebKey | undefined> {
@@ -232,10 +239,13 @@ export interface SyntheticLoginRig {
   readonly authorization: MemoryAuthorization;
 }
 
-export function createSyntheticLoginRig(factory: LoginApplicationFactory): SyntheticLoginRig {
+export function createSyntheticLoginRig(
+  factory: LoginApplicationFactory,
+  options: { readonly entropySeed?: number } = {},
+): SyntheticLoginRig {
   const provider = new FakeProvider();
   const clock = new FakeClock();
-  const entropy = new DeterministicEntropy();
+  const entropy = new DeterministicEntropy(options.entropySeed);
   const states = new MemoryStates();
   const sessions = new MemorySessions();
   const identities = new MemoryIdentities();
@@ -304,11 +314,31 @@ const SCENARIOS: readonly Scenario[] = [
       assert.equal(callback.status, 302);
       assert.equal(callback.headers?.location, RETURN_URL);
       const exposed = `${browserText(start)} ${browserText(callback)}`;
-      for (const secret of [code, CLIENT_SECRET, "synthetic-access-token", rig.provider.tokenRequests[0]?.codeVerifier]) {
+      for (const secret of [
+        code,
+        CLIENT_SECRET,
+        "synthetic-access-token",
+        rig.provider.tokenResponses[0]?.idToken,
+        rig.provider.tokenRequests[0]?.codeVerifier,
+      ]) {
         assert.ok(secret);
-        assert.doesNotMatch(exposed, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.equal(exposed.includes(secret), false);
       }
       assert.equal(rig.provider.tokenRequests.length, 1);
+
+      await begin(rig);
+      const secondCallback = await complete(rig);
+      const firstSession = cookieSession(callback);
+      const secondSession = cookieSession(secondCallback.response);
+      assert.notEqual(firstSession, secondSession, "each callback must mint a new session id");
+
+      const differentEntropy = createSyntheticLoginRig(factory, { entropySeed: 77 });
+      const differentStart = await begin(differentEntropy);
+      const differentCallback = await complete(differentEntropy);
+      assert.notEqual(request.state, differentStart.request.state, "state must depend on entropy output");
+      assert.notEqual(request.nonce, differentStart.request.nonce, "nonce must depend on entropy output");
+      assert.notEqual(request.codeChallenge, differentStart.request.codeChallenge, "PKCE must depend on entropy output");
+      assert.notEqual(firstSession, cookieSession(differentCallback.response), "session id must depend on entropy output");
 
       const rejected = createSyntheticLoginRig(factory);
       await begin(rejected);
@@ -374,6 +404,16 @@ const SCENARIOS: readonly Scenario[] = [
         await expectRejected(complete(rig, overrides).then(({ response }) => response), label);
         assert.equal(rig.sessions.records.size, 0, `${label} must not create a session`);
       }
+      const arrayAudience = createSyntheticLoginRig(factory);
+      await begin(arrayAudience);
+      assert.equal((await complete(arrayAudience, { audience: [CLIENT_ID] })).response.status, 302);
+
+      const extraAudience = createSyntheticLoginRig(factory);
+      await begin(extraAudience);
+      await expectRejected(
+        complete(extraAudience, { audience: [CLIENT_ID, "other-client"] }).then(({ response }) => response),
+        "additional audience without an explicit policy",
+      );
     },
   },
   {
