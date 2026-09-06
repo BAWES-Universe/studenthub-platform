@@ -367,16 +367,30 @@ function processStartToken(pid, readFileImpl = fs.readFileSync) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
+  if (typeof stat !== "string" || !stat.startsWith(`${pid} (`)) throw new Error("process metadata PID mismatch");
+  // comm may contain spaces and ')' characters, so proc(5) parsing must use
+  // the final ')' while still proving the exact queried-PID prefix.
   const closeParen = stat.lastIndexOf(")");
-  if (closeParen < 0) throw new Error("malformed process metadata");
+  if (closeParen < `${pid} (`.length || stat.slice(closeParen, closeParen + 2) !== ") ") {
+    throw new Error("malformed process metadata header");
+  }
   const afterName = stat.slice(closeParen + 2).trim().split(/\s+/);
+  // Fields 3..21 are state followed by 18 integer fields; field 22 is
+  // starttime. A digit in the right array slot is not enough unless the record
+  // leading up to it has the proc(5) shape.
+  if (afterName.length < 20 || !/^[RSDZTtXxKWPI]$/.test(afterName[0])) {
+    throw new Error("malformed process metadata fields");
+  }
+  if (!afterName.slice(1, 19).every((value) => /^-?\d+$/.test(value))) {
+    throw new Error("malformed process metadata fields");
+  }
   const token = afterName[19]; // proc(5): field 22 (starttime), after pid/comm
-  if (typeof token !== "string" || !/^\d+$/.test(token)) throw new Error("malformed process start token");
+  if (!validProcessStartToken(token)) throw new Error("malformed process start token");
   return token;
 }
 
 function validProcessStartToken(value) {
-  return typeof value === "string" && /^\d+$/.test(value);
+  return typeof value === "string" && /^[1-9]\d*$/.test(value);
 }
 
 function recordedProcessState(record, { hostnameImpl = nodeHostname, processStartImpl = processStartToken } = {}) {

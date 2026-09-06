@@ -77,6 +77,10 @@ function execResult({ stdout = "", stderr = "", error = null }) {
   };
 }
 
+function procStat(pid, startToken) {
+  return `${pid} (codex worker) S ${Array(18).fill("0").join(" ")} ${startToken} 0 0`;
+}
+
 function recordingExec(calls) {
   return (file, args, opts, callback) => {
     calls.push({ file, args, opts });
@@ -654,6 +658,69 @@ test("unreadable process metadata and malformed ownership never authorize resume
     assert.equal(out.stage, "HOLD", label);
     assert.equal(out.pause_adapter, true, label);
     assert.equal(spawns, 0, `${label}: unknown ownership must stop before process creation`);
+  }
+});
+
+test("malformed or wrong-PID proc records cannot manufacture PID-reuse authority", async () => {
+  const cases = [
+    ["numeric token in garbage", ") " + Array(19).fill("garbage").join(" ") + " 456"],
+    ["stat-shaped record for another PID", procStat(999, "456")],
+    ["correct PID with invalid state", procStat(111, "456").replace(") S ", ") ? ")],
+    ["correct PID with malformed intermediate field", procStat(111, "456").replace(") S 0", ") S nope")],
+  ];
+  for (const [label, statText] of cases) {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-proc-shape-"));
+    persistDurableSession({
+      stateDir,
+      attempt_id: ATTEMPT,
+      target_sha: SHA,
+      thread_id: THREAD,
+      owner_host: "test-host",
+      child_pid: 111,
+      child_start: "123",
+    });
+    let spawns = 0;
+    const out = await launchBuilder({
+      ...launchInput(),
+      resume: true,
+      external_run_id: `codexrun_${THREAD}`,
+      spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
+      io: { codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => statText },
+    });
+    assert.equal(out.stage, "HOLD", label);
+    assert.equal(out.pause_adapter, true, label);
+    assert.equal(spawns, 0, `${label}: invalid proc structure must not prove PID reuse`);
+  }
+});
+
+test("a structurally valid matching or reused PID proc record is classified correctly", async () => {
+  for (const [label, currentStart, expectedStage, expectedSpawns] of [
+    ["matching process", "123", "LAUNCH_UNKNOWN", 0],
+    ["reused PID", "456", "COMPLETED", 1],
+  ]) {
+    const stateDir = mkdtempSync(join(tmpdir(), "codex-resume-valid-proc-"));
+    persistDurableSession({
+      stateDir,
+      attempt_id: ATTEMPT,
+      target_sha: SHA,
+      thread_id: THREAD,
+      owner_host: "test-host",
+      child_pid: 111,
+      child_start: "123",
+    });
+    let spawns = 0;
+    const out = await launchBuilder({
+      ...launchInput(),
+      resume: true,
+      external_run_id: `codexrun_${THREAD}`,
+      execFileImpl: (...args) => {
+        spawns += 1;
+        args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), "");
+      },
+      io: { codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => procStat(111, currentStart) },
+    });
+    assert.equal(out.stage, expectedStage, label);
+    assert.equal(spawns, expectedSpawns, label);
   }
 });
 
