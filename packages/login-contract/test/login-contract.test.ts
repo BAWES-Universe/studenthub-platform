@@ -14,6 +14,8 @@ test("the conforming deterministic reference adapter satisfies every SHU-60 scen
 
 const CONTROL_MUTATIONS: ReadonlyArray<readonly [keyof ReferenceFaults, string, string]> = [
   ["leakBrowserSecrets", "browser output secrecy", LOGIN_CONTRACT_SCENARIOS[0]!],
+  ["leakRejectedSecrets", "rejected browser output secrecy", LOGIN_CONTRACT_SCENARIOS[0]!],
+  ["skipCodeExchange", "server-side authorization-code exchange", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["shortState", "CSPRNG state", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["skipStateBinding", "browser-session binding", LOGIN_CONTRACT_SCENARIOS[1]!],
   ["reusableState", "one-time state", LOGIN_CONTRACT_SCENARIOS[1]!],
@@ -30,6 +32,8 @@ const CONTROL_MUTATIONS: ReadonlyArray<readonly [keyof ReferenceFaults, string, 
   ["legacyProfileMatch", "no legacy profile matching", LOGIN_CONTRACT_SCENARIOS[4]!],
   ["bindSubjectToEmail", "stable issuer/subject binding", LOGIN_CONTRACT_SCENARIOS[4]!],
   ["trustClientRole", "server-side authorization", LOGIN_CONTRACT_SCENARIOS[5]!],
+  ["deriveRoleFromSubject", "no role derivation from subject", LOGIN_CONTRACT_SCENARIOS[5]!],
+  ["cacheAuthorization", "per-request authorization derivation", LOGIN_CONTRACT_SCENARIOS[5]!],
   ["exposeOtherProfile", "profile isolation", LOGIN_CONTRACT_SCENARIOS[5]!],
   ["insecureCookie", "secure cookie attributes", LOGIN_CONTRACT_SCENARIOS[5]!],
   ["skipLogoutInvalidation", "server-side logout", LOGIN_CONTRACT_SCENARIOS[5]!],

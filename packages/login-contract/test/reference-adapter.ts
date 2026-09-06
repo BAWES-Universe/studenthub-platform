@@ -12,6 +12,8 @@ import type {
 
 export interface ReferenceFaults {
   readonly leakBrowserSecrets?: boolean;
+  readonly leakRejectedSecrets?: boolean;
+  readonly skipCodeExchange?: boolean;
   readonly shortState?: boolean;
   readonly skipStateBinding?: boolean;
   readonly reusableState?: boolean;
@@ -28,6 +30,8 @@ export interface ReferenceFaults {
   readonly legacyProfileMatch?: boolean;
   readonly bindSubjectToEmail?: boolean;
   readonly trustClientRole?: boolean;
+  readonly deriveRoleFromSubject?: boolean;
+  readonly cacheAuthorization?: boolean;
   readonly exposeOtherProfile?: boolean;
   readonly insecureCookie?: boolean;
   readonly skipLogoutInvalidation?: boolean;
@@ -100,6 +104,8 @@ async function validateIdToken(
 export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplicationFactory {
   return (dependencies, config): LoginApplication => {
     const stateCache = new Map<string, LoginState>();
+    const subjectRoles = new Map<string, string>();
+    const cachedAuthorization = new Map<string, string>();
 
     return {
       async start(request) {
@@ -138,6 +144,22 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
             : await dependencies.states.consume(request.state);
           if (!loginState) return failure();
           if (!faults.skipStateBinding && loginState.browserSessionId !== request.browserSessionId) return failure();
+          if (faults.skipCodeExchange) {
+            const identity = await dependencies.identities.createForSubject(
+              config.issuer,
+              "universe:student:synthetic-1",
+              {},
+            );
+            const sessionId = randomToken(dependencies);
+            await dependencies.sessions.put({ id: sessionId, personId: identity.personId });
+            return {
+              status: 302,
+              headers: {
+                location: loginState.returnTo,
+                "set-cookie": `studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+              },
+            };
+          }
           const tokens = await dependencies.oidc.exchange({
             code: request.code,
             clientId: config.clientId,
@@ -160,6 +182,10 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
           identity ??= await dependencies.identities.createForSubject(config.issuer, boundSubject, profile);
           const sessionId = randomToken(dependencies);
           await dependencies.sessions.put({ id: sessionId, personId: identity.personId });
+          if (faults.deriveRoleFromSubject) subjectRoles.set(sessionId, "owner");
+          if (faults.cacheAuthorization) {
+            cachedAuthorization.set(sessionId, await dependencies.authorization.roleFor(identity.personId));
+          }
           const secureAttributes = faults.insecureCookie ? "Path=/" : "Path=/; HttpOnly; Secure; SameSite=Lax";
           const response: BrowserResponse = {
             status: 302,
@@ -180,6 +206,9 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
             },
           };
         } catch {
+          if (faults.leakRejectedSecrets) {
+            return failureWithDetails(request.code, config.clientSecret);
+          }
           return failure();
         }
       },
@@ -191,7 +220,9 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
         if (request.personId && request.personId !== session.personId && !faults.exposeOtherProfile) return failure(404);
         const role = faults.trustClientRole && request.requestedRole
           ? request.requestedRole
-          : await dependencies.authorization.roleFor(session.personId);
+          : subjectRoles.get(request.sessionId)
+            ?? cachedAuthorization.get(request.sessionId)
+            ?? await dependencies.authorization.roleFor(session.personId);
         return { status: 200, body: { personId: request.personId ?? session.personId, role } };
       },
 
@@ -204,4 +235,8 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
       },
     };
   };
+}
+
+function failureWithDetails(code: string, clientSecret: string): BrowserResponse {
+  return { status: 400, body: { error: "login_rejected", code, clientSecret, accessToken: "synthetic-access-token" } };
 }

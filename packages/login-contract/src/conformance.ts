@@ -134,8 +134,12 @@ class MemoryIdentities implements IdentityStore {
 }
 
 class MemoryAuthorization implements AuthorizationStore {
+  readonly roles = new Map<string, string>();
+  calls = 0;
+
   async roleFor(personId: string): Promise<string> {
-    return personId === "person-1" ? "candidate" : "member";
+    this.calls += 1;
+    return this.roles.get(personId) ?? (personId === "person-1" ? "candidate" : "member");
   }
 }
 
@@ -225,6 +229,7 @@ export interface SyntheticLoginRig {
   readonly states: MemoryStates;
   readonly sessions: MemorySessions;
   readonly identities: MemoryIdentities;
+  readonly authorization: MemoryAuthorization;
 }
 
 export function createSyntheticLoginRig(factory: LoginApplicationFactory): SyntheticLoginRig {
@@ -234,6 +239,7 @@ export function createSyntheticLoginRig(factory: LoginApplicationFactory): Synth
   const states = new MemoryStates();
   const sessions = new MemorySessions();
   const identities = new MemoryIdentities();
+  const authorization = new MemoryAuthorization();
   const config: LoginConfig = Object.freeze({
     issuer: ISSUER,
     clientId: CLIENT_ID,
@@ -251,9 +257,9 @@ export function createSyntheticLoginRig(factory: LoginApplicationFactory): Synth
     states,
     sessions,
     identities,
-    authorization: new MemoryAuthorization(),
+    authorization,
   };
-  return { app: factory(dependencies, config), config, provider, clock, entropy, states, sessions, identities };
+  return { app: factory(dependencies, config), config, provider, clock, entropy, states, sessions, identities, authorization };
 }
 
 async function begin(rig: SyntheticLoginRig, returnTo = RETURN_URL, browserSessionId = "browser-a") {
@@ -303,6 +309,12 @@ const SCENARIOS: readonly Scenario[] = [
         assert.doesNotMatch(exposed, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       }
       assert.equal(rig.provider.tokenRequests.length, 1);
+
+      const rejected = createSyntheticLoginRig(factory);
+      await begin(rejected);
+      const invalid = await complete(rejected, { signatureValid: false });
+      assert.ok(invalid.response.status >= 400);
+      assert.doesNotMatch(browserText(invalid.response), /synthetic-code|synthetic-secret|synthetic-access-token/);
     },
   },
   {
@@ -409,6 +421,10 @@ const SCENARIOS: readonly Scenario[] = [
       const own = await rig.app.profile({ sessionId, requestedRole: "owner" });
       assert.equal(own.status, 200);
       assert.equal(own.body?.role, "candidate");
+      rig.authorization.roles.set("person-1", "reviewer");
+      const rederived = await rig.app.profile({ sessionId });
+      assert.equal(rederived.body?.role, "reviewer");
+      assert.ok(rig.authorization.calls >= 2, "authorization must be re-derived for every request");
       const other = await rig.app.profile({ sessionId, personId: "person-999", requestedRole: "owner" });
       assert.ok(other.status === 403 || other.status === 404);
       const logout = await rig.app.logout(sessionId);
