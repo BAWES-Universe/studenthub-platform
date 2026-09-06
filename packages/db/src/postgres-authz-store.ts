@@ -232,17 +232,27 @@ export class PostgresAuthzStore implements AuthzStore {
   /** Read-only application API; no update/delete method exists. */
   async listAuthorizationMutationAuditRecords(input: {
     readonly requestId?: string;
+    readonly limit?: number;
   } = {}): Promise<readonly AuthorizationMutationAuditRecord[]> {
+    const limit = input.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new TypeError("audit record limit must be an integer from 1 to 1000");
+    }
     const params: unknown[] = [];
     const where = input.requestId === undefined ? "" : "WHERE request_ref = $1";
     if (input.requestId !== undefined) {
       params.push(requestAuditRef(input.requestId));
     }
+    params.push(limit);
+    const limitParameter = `$${params.length}`;
     const { rows } = await this.#pool.query<AuditRow>(
-      `SELECT id, request_ref, actor_principal_ref, operation,
-              target_principal_ref, target_org_refs, occurred_at,
-              before_summary, after_summary
-       FROM authorization_mutation_audit ${where} ORDER BY id`,
+      `SELECT * FROM (
+         SELECT id, request_ref, actor_principal_ref, operation,
+                target_principal_ref, target_org_refs, occurred_at,
+                before_summary, after_summary
+         FROM authorization_mutation_audit ${where}
+         ORDER BY id DESC LIMIT ${limitParameter}
+       ) AS recent ORDER BY id`,
       params,
     );
     return Object.freeze(

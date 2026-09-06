@@ -435,9 +435,21 @@ test("audit: an invalid correlation id rolls back the authorization mutation", a
         [{ orgId: ACME, role: "finance" }],
         { requestId: "" },
       ),
-    /audit requestId/,
+    /request audit reference input/,
   );
   assert.deepEqual(await store.listGrantsForPrincipal("alice"), []);
+});
+
+test("audit: record reads are bounded", async () => {
+  const store = makeStore();
+  await assert.rejects(
+    () => store.listAuthorizationMutationAuditRecords({ limit: 0 }),
+    /limit must be an integer from 1 to 1000/,
+  );
+  await assert.rejects(
+    () => store.listAuthorizationMutationAuditRecords({ limit: 1_001 }),
+    /limit must be an integer from 1 to 1000/,
+  );
 });
 
 test("audit: an insert failure rolls back its paired mutation and emits no success fact", async () => {

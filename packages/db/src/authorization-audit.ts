@@ -42,6 +42,10 @@ export interface AuditInsert {
 }
 
 function auditRef(domain: "principal" | "organization" | "request", value: string): string {
+  const maximum = domain === "request" ? 512 : 4_096;
+  if (value.trim().length === 0 || value.length > maximum) {
+    throw new TypeError(`${domain} audit reference input must be 1-${maximum} characters`);
+  }
   return createHash("sha256")
     .update(`studenthub:${domain}-audit-ref:v1\0`, "utf8")
     .update(value, "utf8")
@@ -64,9 +68,6 @@ export function normalizeAuditContext(
   context: AuthorizationMutationContext | undefined,
 ): { readonly requestRef: string; readonly actorPrincipalRef: string | null } {
   const requestId = context?.requestId ?? `audit_${randomUUID()}`;
-  if (requestId.trim().length === 0 || requestId.length > 512) {
-    throw new TypeError("audit requestId must be 1-512 characters");
-  }
   const actor = context?.actorPrincipalId;
   if (actor !== undefined && actor.trim().length === 0) {
     throw new TypeError("audit actorPrincipalId must be non-empty when provided");

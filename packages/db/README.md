@@ -20,9 +20,10 @@ target principal id, or organization id; domain-separated SHA-256 references
 make records correlatable without copying identity or request material into the
 ledger. Before/after summaries contain counts and presence flags only.
 
-`listAuthorizationMutationAuditRecords({ requestId })` hashes the supplied raw
-request id and returns matching immutable records. The application API exposes
-no update or delete operation, and the database rejects row updates/deletes.
+`listAuthorizationMutationAuditRecords({ requestId, limit })` hashes the supplied
+raw request id and returns matching immutable records. Reads default to the 100
+most recent rows and are capped at 1,000. The application API exposes no update
+or delete operation, and the database rejects row updates/deletes.
 
 The bootstrap command accepts `BOOTSTRAP_AUDIT_REQUEST_ID`; if absent it creates
 a new request id. Its principal and root-admin grant audit rows commit in the
