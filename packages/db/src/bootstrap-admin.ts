@@ -43,7 +43,10 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 
-import { insertAuthorizationMutationAudit } from "./authorization-audit.js";
+import {
+  insertAuthorizationMutationAudit,
+  resolveAuthorizationMutationContext,
+} from "./authorization-audit.js";
 import { runMigrations } from "./migrate.js";
 import { databaseUrl } from "./connection.js";
 
@@ -104,12 +107,12 @@ export async function bootstrapAdmin(
 ): Promise<BootstrapResult> {
   const { pbuuid, displayName } = options;
   const adminId = `principal-${pbuuid}`;
-  const auditContext = {
+  const auditContext = resolveAuthorizationMutationContext({
     requestId: options.requestId ?? `bootstrap_${randomUUID()}`,
     ...(options.actorPrincipalId === undefined
       ? {}
       : { actorPrincipalId: options.actorPrincipalId }),
-  };
+  });
 
   // Schema first: bootstrap must be runnable against a brand-new database.
   await runMigrations(pool);
@@ -147,6 +150,7 @@ export async function bootstrapAdmin(
         `another one.`,
     );
   }
+  if (identical) return "noop";
 
   // --- One transaction: org + principal + pbuuid + grant -------------------
   const client = await pool.connect();
@@ -327,7 +331,7 @@ export async function bootstrapAdmin(
     client.release();
   }
 
-  return identical ? "noop" : "created";
+  return "created";
 }
 
 async function main(): Promise<void> {

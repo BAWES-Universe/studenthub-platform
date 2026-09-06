@@ -33,12 +33,17 @@ export interface AuthorizationMutationAuditRecord {
 export type AuditSummary = Readonly<Record<string, unknown>>;
 
 export interface AuditInsert {
-  readonly context?: AuthorizationMutationContext;
+  readonly context: ResolvedAuthorizationMutationContext;
   readonly operation: AuthorizationMutationOperation;
   readonly targetPrincipalId?: string;
   readonly targetOrgIds?: readonly string[];
   readonly before: AuditSummary;
   readonly after: AuditSummary;
+}
+
+export interface ResolvedAuthorizationMutationContext {
+  readonly requestRef: string;
+  readonly actorPrincipalRef: string | null;
 }
 
 function auditRef(domain: "principal" | "organization" | "request", value: string): string {
@@ -64,9 +69,9 @@ export function requestAuditRef(requestId: string): string {
   return auditRef("request", requestId);
 }
 
-export function normalizeAuditContext(
+export function resolveAuthorizationMutationContext(
   context: AuthorizationMutationContext | undefined,
-): { readonly requestRef: string; readonly actorPrincipalRef: string | null } {
+): ResolvedAuthorizationMutationContext {
   const requestId = context?.requestId ?? `audit_${randomUUID()}`;
   const actor = context?.actorPrincipalId;
   if (actor !== undefined && actor.trim().length === 0) {
@@ -83,7 +88,7 @@ export async function insertAuthorizationMutationAudit(
   client: PoolClient,
   input: AuditInsert,
 ): Promise<void> {
-  const { requestRef, actorPrincipalRef } = normalizeAuditContext(input.context);
+  const { requestRef, actorPrincipalRef } = input.context;
   await client.query(
     `INSERT INTO authorization_mutation_audit
        (request_ref, actor_principal_ref, operation, target_principal_ref,

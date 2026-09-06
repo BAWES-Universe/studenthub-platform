@@ -57,6 +57,7 @@ import {
 
 import {
   insertAuthorizationMutationAudit,
+  resolveAuthorizationMutationContext,
   requestAuditRef,
   type AuthorizationMutationAuditRecord,
   type AuthorizationMutationContext,
@@ -404,6 +405,7 @@ export class PostgresAuthzStore implements AuthzStore {
     audit?: AuthorizationMutationContext,
   ): Promise<void> {
     const claimed = [...new Set(principal.pbuuids)];
+    const auditContext = resolveAuthorizationMutationContext(audit);
     try {
       await this.#transaction(async (client) => {
         await this.#lockPrincipalAudit(client, principal.id);
@@ -441,7 +443,7 @@ export class PostgresAuthzStore implements AuthzStore {
           );
         }
         await insertAuthorizationMutationAudit(client, {
-          context: audit,
+          context: auditContext,
           operation: "principal.register",
           targetPrincipalId: principal.id,
           before: {
@@ -523,6 +525,7 @@ export class PostgresAuthzStore implements AuthzStore {
   ): Promise<void> {
     if (entries.length === 0) return;
     const normalized = entries.map(normalizeGrantEntry);
+    const auditContext = resolveAuthorizationMutationContext(audit);
 
     // Merge duplicate (orgId, role) keys WITHIN this call, widest scope wins —
     // parity with InMemoryAuthzStore, which collapses to one row per key
@@ -565,7 +568,7 @@ export class PostgresAuthzStore implements AuthzStore {
         params,
       );
       await insertAuthorizationMutationAudit(client, {
-        context: audit,
+        context: auditContext,
         operation: "grants.grant",
         targetPrincipalId: principalId,
         targetOrgIds: merged.map((entry) => entry.orgId),
@@ -581,6 +584,7 @@ export class PostgresAuthzStore implements AuthzStore {
     audit?: AuthorizationMutationContext,
   ): Promise<void> {
     if (entries.length === 0) return;
+    const auditContext = resolveAuthorizationMutationContext(audit);
     const params: unknown[] = [principalId];
     const tuples: string[] = [];
     let next = 1;
@@ -600,7 +604,7 @@ export class PostgresAuthzStore implements AuthzStore {
         params,
       );
       await insertAuthorizationMutationAudit(client, {
-        context: audit,
+        context: auditContext,
         operation: "grants.revoke",
         targetPrincipalId: principalId,
         targetOrgIds: entries.map((entry) => entry.orgId),
@@ -614,12 +618,13 @@ export class PostgresAuthzStore implements AuthzStore {
     principalId: string,
     audit?: AuthorizationMutationContext,
   ): Promise<void> {
+    const auditContext = resolveAuthorizationMutationContext(audit);
     await this.#transaction(async (client) => {
       await this.#lockPrincipalAudit(client, principalId);
       const before = await this.#grantSummary(client, principalId);
       await client.query("DELETE FROM grants WHERE principal_id = $1", [principalId]);
       await insertAuthorizationMutationAudit(client, {
-        context: audit,
+        context: auditContext,
         operation: "grants.clear",
         targetPrincipalId: principalId,
         before,

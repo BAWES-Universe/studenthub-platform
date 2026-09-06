@@ -854,12 +854,14 @@ test("bootstrap: re-running with the exact same admin is a no-op; a different id
     const first = await bootstrapAdmin(pool, {
       pbuuid: "admin@example.invalid",
       displayName: "Admin",
+      requestId: "bootstrap-first",
     });
     assert.equal(first, "created");
 
     const second = await bootstrapAdmin(pool, {
       pbuuid: "admin@example.invalid",
       displayName: "Admin",
+      requestId: "bootstrap-noop",
     });
     assert.equal(second, "noop", "identical principal + grant is idempotent");
 
@@ -874,6 +876,11 @@ test("bootstrap: re-running with the exact same admin is a no-op; a different id
     );
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.principal_id, "principal-admin@example.invalid");
+    const noopAudit = await adminPool.query(
+      "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+      [requestAuditRef("bootstrap-noop")],
+    );
+    assert.equal(noopAudit.rowCount, 0, "a bootstrap no-op emits no mutation audit fact");
   } finally {
     await pool.end();
   }
