@@ -10,7 +10,7 @@ const apiKey = process.env.TYPESENSE_API_KEY ?? "shu52-ci-key";
 const collection = "shu57_candidate_parity";
 
 const documents: CandidateSearchDocument[] = [
-  candidate("1", "KW", "Gulf Tech", "Atlas Retail", ["typescript"], "female", "complete", "assigned", ["resume"], 90),
+  candidate("1", "KW", "Gulf Tech", "Atlas Retail", ["typescript"], "female", "complete", "assigned", ["resume"], 90.5),
   candidate("2", "KW", "Orbit University", undefined, ["design"], "male", "incomplete", "unassigned", ["no-resume"], 70),
   candidate("3", "AE", "Gulf Tech", "Beacon Hospitality", ["typescript", "operations"], "female", "complete", "assigned", ["resume", "civil-id"], 80),
   candidate("4", "SA", "Coast College", "Atlas Retail", ["finance"], "other", "complete", "assigned", ["no-resume"], 60),
@@ -39,6 +39,7 @@ test("real Typesense preserves combined filters, multi-select and live alternati
     sort: "score-descending",
   });
   assert.deepEqual(result.hits.map((hit) => hit.id), ["1", "3"]);
+  assert.equal(result.hits[0]?.score, 90.5);
   assert.equal(result.total, 2);
   assert.deepEqual(pickCounts(result.facets.country), { AE: 1, KW: 1 });
   assert.deepEqual(pickCounts(result.facets.university), { "Gulf Tech": 2 });

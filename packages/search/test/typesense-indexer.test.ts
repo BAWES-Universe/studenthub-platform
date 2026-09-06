@@ -46,6 +46,40 @@ test("publishes a content-addressed collection before atomically switching the a
   assert.equal(publication.documents, 2);
   assert.equal(requests.at(-1)?.url, "https://search.example.invalid/aliases/candidates");
   assert.ok(requests.every((request) => request.init.redirect === "error"));
+  assert.deepEqual(
+    (createdFields as Array<{ name: string }>).find((field) => field.name === "score"),
+    { name: "score", type: "float", sort: true },
+  );
+});
+
+test("canonicalizes document key order while preserving fractional scores", async () => {
+  const original = { ...candidate("1"), score: 80.5 };
+  const reordered = Object.fromEntries(Object.entries(original).reverse()) as unknown as CandidateSearchDocument;
+  const imports: string[] = [];
+  const indexer = new TypesenseCandidateIndexer({
+    url: "https://search.example.invalid",
+    apiKey: "test-key",
+    alias: "candidates",
+    fetch: async (input, init = {}) => {
+      const url = String(input);
+      const method = init.method ?? "GET";
+      if (method === "GET") return Response.json({ num_documents: 1 });
+      if (url.includes("/documents/import")) {
+        imports.push(String(init.body));
+        return new Response('{"success":true}');
+      }
+      if (url.endsWith("/aliases/candidates") && method === "PUT") return Response.json({});
+      throw new Error(`unexpected request ${method} ${url}`);
+    },
+  });
+
+  const first = await indexer.publish([original]);
+  const repeated = await indexer.publish([reordered]);
+
+  assert.equal(first.collection, repeated.collection);
+  assert.equal(first.digest, repeated.digest);
+  assert.equal(imports[0], imports[1]);
+  assert.equal((JSON.parse(imports[0] ?? "{}") as { score?: number }).score, 80.5);
 });
 
 test("rejects a failed import receipt even when count verification would pass", async () => {

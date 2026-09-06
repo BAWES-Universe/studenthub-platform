@@ -38,7 +38,7 @@ const SEARCH_FIELDS = [
   { name: "documents", type: "string[]", facet: true },
   { name: "status", type: "string", facet: true },
   { name: "approved", type: "bool", facet: true },
-  { name: "score", type: "int32", sort: true },
+  { name: "score", type: "float", sort: true },
   { name: "updatedAtEpoch", type: "int64", sort: true },
 ] as const;
 
@@ -210,7 +210,24 @@ function canonicalDocuments(documents: readonly CandidateSearchDocument[]): Cand
     }
     if (ids.has(document.id)) throw new TypeError(`duplicate candidate index id '${document.id}'`);
     ids.add(document.id);
-    return structuredClone(document);
+    return {
+      id: document.id,
+      name: document.name,
+      email: document.email,
+      phone: document.phone,
+      country: document.country,
+      university: document.university,
+      ...(document.company === undefined ? {} : { company: document.company }),
+      skills: [...document.skills],
+      gender: document.gender,
+      profile: document.profile,
+      assignment: document.assignment,
+      documents: [...document.documents],
+      status: document.status,
+      approved: document.approved,
+      score: document.score,
+      updatedAtEpoch: document.updatedAtEpoch,
+    };
   });
   return result.sort((left, right) => left.id.localeCompare(right.id));
 }
