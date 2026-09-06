@@ -45,3 +45,26 @@ jobs:
             }
           ' .github/CODEOWNERS
           test -s .github/pull_request_template.md
+      - name: Reject tracked dependency trees and host-absolute symlinks
+        run: |
+          # Preserve arbitrary Git path bytes and read symlinks by index blob
+          # ID. Command failures propagate; quoting cannot hide unsafe paths.
+          index=$(mktemp)
+          trap 'rm -f "$index"' EXIT
+          git ls-files --stage -z > "$index"
+          while IFS= read -r -d '' entry; do
+            metadata=${entry%%$'\t'*}
+            file=${entry#*$'\t'}
+            read -r mode oid stage <<< "$metadata"
+            case "/$file/" in
+              */node_modules/*)
+                echo "::error::a node_modules path is tracked in git"
+                exit 1 ;;
+            esac
+            if [ "$mode" = 120000 ]; then
+              target=$(git cat-file blob "$oid")
+              case "$target" in
+                /*) echo "::error::tracked symlink points at an absolute host path"; exit 1 ;;
+              esac
+            fi
+          done < "$index"
