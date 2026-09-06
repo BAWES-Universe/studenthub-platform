@@ -995,7 +995,7 @@ test("a resumed-owner record without its claim still blocks before spawn", async
 
 test("schema file written before launch; CALLBACK_SCHEMA is closed (additionalProperties false)", async () => {
   assert.equal(CALLBACK_SCHEMA.additionalProperties, false);
-  assert.deepEqual([...CALLBACK_SCHEMA.required].sort(), ["attempt_id", "links", "result_sha", "stage", "target_sha"]);
+  assert.deepEqual([...CALLBACK_SCHEMA.required].sort(), ["attempt_id", "links", "result_sha", "stage", "summary", "target_sha"]);
   const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
   const schemaFile = join(schemaDir, "cb.json");
   const calls = [];
