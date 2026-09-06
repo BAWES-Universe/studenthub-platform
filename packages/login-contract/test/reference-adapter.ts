@@ -18,7 +18,8 @@ export interface ReferenceFaults {
   readonly skipStateBinding?: boolean;
   readonly reusableState?: boolean;
   readonly skipPkce?: boolean;
-  readonly skipNonce?: boolean;
+  readonly omitNonceIssuance?: boolean;
+  readonly skipNonceValidation?: boolean;
   readonly unsafeRedirect?: boolean;
   readonly skipSignature?: boolean;
   readonly skipIssuer?: boolean;
@@ -96,7 +97,7 @@ async function validateIdToken(
   if (!faults.skipIssuedAt && (!Number.isFinite(claims.iat) || claims.iat > now + config.clockSkewSeconds)) {
     throw new Error("future token");
   }
-  if (!faults.skipNonce && claims.nonce !== expectedNonce) throw new Error("invalid nonce");
+  if (!faults.skipNonceValidation && claims.nonce !== expectedNonce) throw new Error("invalid nonce");
   if (typeof claims.sub !== "string" || claims.sub.length === 0) throw new Error("missing subject");
   return claims;
 }
@@ -111,7 +112,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
       async start(request) {
         if (!faults.unsafeRedirect && !config.allowedReturnUrls.includes(request.returnTo)) return failure();
         const state = faults.shortState ? "weak" : randomToken(dependencies);
-        const nonce = faults.skipNonce ? "" : randomToken(dependencies);
+        const nonce = faults.omitNonceIssuance ? "" : randomToken(dependencies);
         const codeVerifier = randomToken(dependencies);
         const codeChallenge = faults.skipPkce
           ? codeVerifier
