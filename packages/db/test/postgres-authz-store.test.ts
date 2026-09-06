@@ -542,7 +542,7 @@ test("integrity: disjoint concurrent reparents cannot commit a four-organization
       $$ LANGUAGE plpgsql
     `);
     await adminPool.query(`
-      CREATE TRIGGER shu72_block_b_reparent
+      CREATE OR REPLACE TRIGGER shu72_block_b_reparent
       BEFORE UPDATE ON organizations
       FOR EACH ROW EXECUTE FUNCTION shu72_block_b_reparent()
     `);
