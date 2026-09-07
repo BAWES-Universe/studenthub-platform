@@ -183,6 +183,11 @@ class FakeProvider implements OidcTransport, JwksResolver {
   authorize(overrides: TokenOverrides = {}): string {
     const request = this.authorizationRequests.at(-1);
     assert.ok(request, "login start must precede authorization");
+    return this.authorizeFor(request, overrides);
+  }
+
+  authorizeFor(request: AuthorizationRequest, overrides: TokenOverrides = {}): string {
+    assert.ok(this.authorizationRequests.includes(request), "authorization request must come from the fake provider");
     const code = `synthetic-code-${this.#nextCode}`;
     this.#nextCode += 1;
     this.#codes.set(code, { request, overrides });
@@ -502,16 +507,19 @@ const SCENARIOS: readonly Scenario[] = [
 
       const rejectsOtherNonce = createSyntheticLoginRig(factory);
       const otherLoginA = await begin(rejectsOtherNonce, RETURN_URL, "browser-a");
-      await begin(rejectsOtherNonce, "https://studenthub.test.invalid/profile", "browser-b");
-      const codeForB = rejectsOtherNonce.provider.authorize();
+      const otherLoginB = await begin(rejectsOtherNonce, "https://studenthub.test.invalid/profile", "browser-b");
+      const codeForAWithBNonce = rejectsOtherNonce.provider.authorizeFor(otherLoginA.request, {
+        nonce: otherLoginB.request.nonce,
+      });
       await expectRejected(
         rejectsOtherNonce.app.callback({
           browserSessionId: "browser-a",
           state: otherLoginA.request.state,
-          code: codeForB,
+          code: codeForAWithBNonce,
         }),
         "ID token carrying login B's nonce in login A's callback",
       );
+      assert.equal(rejectsOtherNonce.provider.tokenRequests.length, 1, "negative nonce probe must complete code exchange");
       assert.equal(rejectsOtherNonce.sessions.records.size, 0, "cross-session nonce must not create a session");
     },
   },
