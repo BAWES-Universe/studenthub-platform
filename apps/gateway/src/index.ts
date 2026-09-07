@@ -1,4 +1,5 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -13,8 +14,12 @@ import {
   createDenyAllAuthzMiddleware,
   type AuthzMiddleware,
 } from "./authz-middleware.js";
+import type { LoginApplication } from "@studenthub/login-contract";
+import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 
 export * from "./authz-middleware.js";
+export { createLoginApplication } from "./login-application.js";
+export { createRuntimeLoginFromEnv } from "./login-runtime.js";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
@@ -80,6 +85,7 @@ export function createGatewayServer(
   adapter: McpAdapter = new UnconfiguredMcpAdapter(),
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
   authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
+  login?: LoginApplication,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -89,6 +95,53 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway")));
+      return;
+    }
+
+    if (login && request.method === "GET" && request.url && requestPath(request.url) === "/login/universe") {
+      const url = new URL(request.url, "http://gateway.invalid");
+      const returnTo = url.searchParams.get("return_to") ?? "";
+      const browserSessionId = cookieValue(request.headers.cookie, "studenthub_browser")
+        ?? randomBytes(32).toString("base64url");
+      let result: import("@studenthub/login-contract").BrowserResponse;
+      try {
+        result = await login.start({ browserSessionId, returnTo });
+      } catch {
+        result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      writeBrowserResponse(response, result, result.status === 302
+        ? `studenthub_browser=${browserSessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`
+        : undefined);
+      return;
+    }
+
+    if (login && request.method === "GET" && request.url && requestPath(request.url) === "/login/callback") {
+      const url = new URL(request.url, "http://gateway.invalid");
+      const browserSessionId = cookieValue(request.headers.cookie, "studenthub_browser");
+      const state = url.searchParams.get("state");
+      const code = url.searchParams.get("code");
+      if (!browserSessionId || !state || !code) {
+        writeBrowserResponse(response, { status: 400, body: { error: "login_rejected" } });
+        return;
+      }
+      writeBrowserResponse(response, await login.callback({ browserSessionId, state, code }));
+      return;
+    }
+
+    if (login && request.method === "GET" && request.url && requestPath(request.url) === "/profile") {
+      const url = new URL(request.url, "http://gateway.invalid");
+      writeBrowserResponse(response, await login.profile({
+        sessionId: cookieValue(request.headers.cookie, "studenthub_session"),
+        personId: url.searchParams.get("person_id") ?? undefined,
+      }));
+      return;
+    }
+
+    if (login && request.method === "POST" && request.url === "/logout") {
+      writeBrowserResponse(
+        response,
+        await login.logout(cookieValue(request.headers.cookie, "studenthub_session")),
+      );
       return;
     }
 
@@ -166,10 +219,48 @@ export function createGatewayServer(
   });
 }
 
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  for (const item of header?.split(";") ?? []) {
+    const [key, ...value] = item.trim().split("=");
+    const candidate = value.join("=");
+    if (key === name && /^[A-Za-z0-9_-]{43}$/.test(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function requestPath(raw: string): string {
+  return new URL(raw, "http://gateway.invalid").pathname;
+}
+
+function writeBrowserResponse(
+  response: import("node:http").ServerResponse,
+  result: import("@studenthub/login-contract").BrowserResponse,
+  additionalCookie?: string,
+): void {
+  const headers: OutgoingHttpHeaders = {
+    "content-type": "application/json",
+    ...result.headers,
+  };
+  if (additionalCookie) {
+    const existing = result.headers?.["set-cookie"];
+    headers["set-cookie"] = existing ? [existing, additionalCookie] : additionalCookie;
+  }
+  response.writeHead(result.status, headers);
+  response.end(result.body === undefined ? undefined : JSON.stringify(result.body));
+}
+
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
 if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
-  createGatewayServer().listen(port, "127.0.0.1", () => {
+  const runtimeLogin = createRuntimeLoginFromEnv();
+  const server = createGatewayServer(
+    new UnconfiguredMcpAdapter(),
+    DEFAULT_MCP_REQUEST_LIMIT_BYTES,
+    createDenyAllAuthzMiddleware(),
+    runtimeLogin?.application,
+  );
+  server.once("close", () => { void runtimeLogin?.close(); });
+  server.listen(port, "127.0.0.1", () => {
     process.stdout.write(`studenthub gateway listening on http://127.0.0.1:${port}\n`);
   });
 }

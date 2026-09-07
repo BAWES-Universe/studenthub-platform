@@ -5,6 +5,8 @@
   "type": "module",
   "dependencies": {
     "@studenthub/contracts": "0.1.0",
+    "@studenthub/db": "0.1.0",
+    "@studenthub/login-contract": "1.0.0",
     "@bawes/actor-assertion": "*"
   }
 }

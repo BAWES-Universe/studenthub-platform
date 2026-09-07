@@ -1,5 +1,19 @@
 # StudentHub × Universe — Platform
 
+## Universe login runtime (SHU-29)
+
+The gateway exposes `GET /login/universe`, `GET /login/callback`, `GET /profile`,
+and `POST /logout` only when the complete login configuration is present. Run
+the database migrations first; login state, sessions, and immutable
+issuer/subject bindings are PostgreSQL-backed and shared across processes.
+
+Required variables are `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+`OIDC_CLIENT_SECRET`, `OIDC_CALLBACK_URL`, `OIDC_AUTHORIZATION_URL`,
+`OIDC_TOKEN_URL`, `OIDC_JWKS_URL`, and comma-separated exact
+`LOGIN_ALLOWED_RETURN_URLS`. All OIDC/browser URLs must be HTTPS. Partial
+configuration fails startup; absent configuration leaves every login route
+disabled. Tokens and client secrets never enter browser responses.
+
 The StudentHub platform is a **planned** modular monolith: web/iframe panels, HTTP API, MCP gateway, worker, domain packages, and a PostgreSQL schema. This README separates what **exists** at the current commit from what is **planned** — every row in the table below is checkable against the tree.
 
 **Program:** ratified execution plan v1.2. See the delivery board (Linear, team `StudentHub Universe`) for task contracts.
@@ -8,7 +22,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 
 | Claim | Where | Status |
 | -- | -- | -- |
-| HTTP gateway | `apps/gateway` | ✅ two routes: `GET /health`, `POST /mcp/tools/call` |
+| HTTP gateway | `apps/gateway` | ✅ health, MCP, and optional PostgreSQL-backed Universe login/profile/logout routes |
 | Worker | `apps/worker` (heartbeat) | ✅ |
 | Shared contracts incl. authz | `packages/contracts` | ✅ authz store **interfaces** + `InMemoryAuthzStore` test implementation |
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
