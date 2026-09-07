@@ -95,7 +95,7 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
     "Implement the change and commit it locally (git add + git commit) so the worktree HEAD holds your exact result. Run the relevant tests. Do NOT push, do NOT open a PR, do NOT touch the network — a separate host-side broker pushes your exact result commit after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your commit>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence urls>"],"summary":"<short note>"}`,
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your commit>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
     "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. result_sha must be the exact commit you created — a host broker pushes precisely that SHA, never your branch tip or any uncommitted state.",
   ].filter(Boolean).join("\n");
 }
@@ -275,12 +275,23 @@ export function callbackValid(callback, { attempt_id, target_sha }) {
   if (!SHA_RE.test(callback.result_sha ?? "")) return false;
   if (!CALLBACK_STAGES.includes(callback.stage)) return false;
   if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
+  // Option A removed the worker's ability to produce an http(s) URL: it never
+  // pushes, never opens a PR, and has no network. Requiring one made the
+  // callback unsatisfiable for a COMPLIANT worker, so validation always failed
+  // and the broker could never run (Sentry 16535525/1 — real, and it would have
+  // surfaced on the first live fixture rather than in any mocked test).
+  //
+  // Evidence is still required, and anything that IS a URL must still be
+  // http(s): these strings are rendered into Linear and GitHub comments, so a
+  // file:, data: or javascript: link must never be accepted.
   return callback.links.every((link) => {
     if (typeof link !== "string") return false;
+    const trimmed = link.trim();
+    if (trimmed.length === 0 || trimmed.length > 512) return false;
     try {
-      return ["http:", "https:"].includes(new URL(link).protocol);
+      return ["http:", "https:"].includes(new URL(trimmed).protocol);
     } catch {
-      return false;
+      return true; // a plain evidence reference, e.g. a test name or path
     }
   });
 }
@@ -855,7 +866,12 @@ export async function launchBuilder({
         allowedRoot,
         branchPrefix,
         remoteUrl,
-        gitImpl: io.brokerGitImpl ?? gitImpl,
+        // `gitImpl` was undefined here: a ReferenceError crashed the configured
+        // success path instead of returning a controlled result (Codex R3).
+        // It must be the REAL git executor — NOT execFileImpl, which tests
+        // substitute with the codex CLI double, and which would hand the broker
+        // codex JSONL where it expects git output.
+        gitImpl: io.brokerGitImpl ?? nodeExecFile,
         env,
         io,
       });

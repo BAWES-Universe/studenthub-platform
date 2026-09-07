@@ -142,6 +142,71 @@ test("a success callback with the broker neither disabled nor configured HOLDs â
   assert.equal(out.callback.stage, "BUILD_READY", "the callback is still reported for evidence");
 });
 
+test("a network-isolated worker's local evidence is accepted, but a non-http URL never is", async () => {
+  // Sentry 16535525/1: Option A forbids network/PR, so requiring an http(s)
+  // link made the callback unsatisfiable for a compliant worker and the broker
+  // could never run. Local evidence is now valid; a file:/javascript:/data:
+  // link is still refused because these strings are rendered into comments.
+  const base = { attempt_id: ATTEMPT, target_sha: SHA, result_sha: SHA, stage: "BUILD_READY" };
+  const ok = (links) => callbackValid({ ...base, links }, { attempt_id: ATTEMPT, target_sha: SHA });
+
+  assert.equal(ok(["packages/db/test/postgres-authz-store.test.ts"]), true, "a file path is valid evidence");
+  assert.equal(ok(["coordinator suite 303/303"]), true, "a test result is valid evidence");
+  assert.equal(ok(["https://github.com/BAWES-Universe/studenthub-platform/pull/32"]), true);
+
+  assert.equal(ok([]), false, "evidence is still required");
+  assert.equal(ok([""]), false, "empty evidence is not evidence");
+  assert.equal(ok(["   "]), false);
+  assert.equal(ok(["file:///etc/passwd"]), false, "a file: URL must never be rendered as evidence");
+  assert.equal(ok(["javascript:alert(1)"]), false);
+  assert.equal(ok(["data:text/html,<script>"]), false);
+  assert.equal(ok(["x".repeat(513)]), false, "unbounded evidence is refused");
+  assert.equal(ok([42]), false);
+});
+
+test("a CONFIGURED success path reaches the real broker seam and returns a controlled result, never a crash", async () => {
+  // Codex R3 BLOCK #1: `io.brokerGitImpl ?? gitImpl` referenced an undefined
+  // `gitImpl`, so the configured success path threw ReferenceError instead of
+  // returning HOLD. The forgotten-config test exits BEFORE that line and the
+  // opt-out tests never reach it, so neither covered this seam.
+  //
+  // This test therefore supplies a full broker configuration and deliberately
+  // does NOT inject io.brokerGitImpl, so the adapter must bind a real git
+  // executor itself and the broker must actually run.
+  const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
+  const brokerRoot = mkdtempSync(join(tmpdir(), "codex-broker-root-"));
+  const notARepo = join(brokerRoot, "worktree");
+  mkdirSync(notARepo, { recursive: true });
+
+  const out = await launchBuilder({
+    ...launchInput({
+      cwd: notARepo,
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/root",
+        CODEX_HOME: "/root/.codex",
+        SHU_WORKTREE_ROOT: brokerRoot,
+        SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+      },
+    }),
+    // Set AFTER the spread so launchInput's suite-wide opt-out is genuinely
+    // absent: no pushBrokerEnabled and no brokerGitImpl, exactly the production
+    // shape. Keep it a distinct object so a future blanket edit cannot reach it.
+    io: { codexStateDir: TEST_STATE_DIR },
+    branch: "coordinator/SHU-63",
+    repo: "BAWES-Universe/studenthub-platform",
+    execFileImpl: recordingExec([]),
+    schemaFile: join(schemaDir, "schema.json"),
+  });
+
+  // The contract is a CONTROLLED result. Before the fix this line was never
+  // reached â€” the call threw.
+  assert.equal(out.stage, "HOLD", `expected a controlled HOLD, got ${out.stage}`);
+  assert.equal(out.pause_adapter, true);
+  assert.match(String(out.reason ?? ""), /push broker did not confirm result commit/);
+  assert.equal(out.callback.stage, "BUILD_READY", "the builder callback is still reported");
+});
+
 test("an explicit opt-out is the only way to skip the broker, and it still COMPLETEs", async () => {
   const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
   const out = await launchBuilder({

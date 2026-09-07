@@ -44,7 +44,12 @@ function makeGit(script = {}) {
   const calls = [];
   const fn = (binary, args, opts, cb) => {
     calls.push([...args]);
-    const a = args.join(" ");
+    // Every broker call now carries BROKER_GIT_CONFIG_ARGS. Strip the leading
+    // `-c key=value` pairs so scripts key off the subcommand, and keep the raw
+    // argv in `calls` so tests can still assert the hardening is present.
+    const bare = [...args];
+    while (bare.length >= 2 && bare[0] === "-c") bare.splice(0, 2);
+    const a = bare.join(" ");
     // Match by exact key first, then by prefix (argv carries remote URL / SHAs).
     let hit = script[a];
     if (!hit) {
@@ -89,6 +94,11 @@ function baseOpts(over = {}) {
     allowedRoot: ROOT,
     branchPrefix: "coordinator/",
     remoteUrl: REMOTE,
+    // The broker-owned repository is exercised for real in
+    // push-broker-gitconfig.test.mjs; here it is stubbed so these tests stay
+    // about broker decision logic.
+    createBrokerRepoImpl: async () => ({ ok: true, dir: mkdtempSync(join(tmpdir(), "shu-broker-stub-")), objectsDir: "/dev/null" }),
+    hasCommitImpl: async () => true,
     ...over,
   };
 }

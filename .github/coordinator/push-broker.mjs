@@ -29,7 +29,8 @@
 //     push is already done and must not run again).
 
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 
 export const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -45,6 +46,91 @@ function runGit(gitImpl, args, { cwd, env } = {}) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// TRUSTED GIT BOUNDARY (Codex R3 BLOCK, 2026-09-07)
+//
+// The worker owns its worktree, therefore it owns `<worktree>/.git/config`.
+// Git configuration is executable and destination-bearing, so a worker-authored
+// config subverted the broker in two demonstrated ways:
+//
+//   * `url.<foreign>.insteadOf <allowlisted-url>` silently REDIRECTED the push.
+//     validateRepoUrl still passed — it validates the string we pass, not the
+//     destination git resolves — and both remote checks followed the rewrite, so
+//     post-push confirmation happily confirmed the attacker's repository.
+//   * `core.sshCommand` EXECUTED as the broker process user during the very
+//     first `ls-remote`, i.e. before any HOLD could help. A HOLD after arbitrary
+//     execution has already lost.
+//
+// Two rules close this, and both are structural rather than a denylist:
+//
+//   1. Every broker git call runs with a sanitized environment and explicit
+//      `-c` overrides for the config keys that can execute a command. `-c`
+//      outranks every config FILE, so a worker key cannot win.
+//   2. Every REMOTE-facing call (both `ls-remote`s and the push) runs inside a
+//      BROKER-OWNED repository whose config the broker created, never inside
+//      the worker's. There is no `url.*.insteadOf` there to follow. Worker
+//      objects reach it through `objects/info/alternates`, which is a plain
+//      path read — no config, no hooks, no `upload-pack` in the worker's repo.
+//
+// A denylist of dangerous keys would be the wrong shape: `url.<anything>.insteadOf`
+// is unbounded in key space, so it cannot be enumerated and overridden.
+// ---------------------------------------------------------------------------
+
+// Config keys that can run a command. `-c` beats system/global/local/included
+// config, so naming them here is sufficient for the non-remote worktree reads.
+export const BROKER_GIT_CONFIG_ARGS = Object.freeze([
+  "-c", "core.hooksPath=/dev/null",
+  "-c", "credential.helper=",
+  "-c", "core.fsmonitor=false",      // runs a command during `status`
+  "-c", "core.gitProxy=",
+  "-c", "uploadpack.packObjectsHook=",
+  "-c", "diff.external=",
+  "-c", "core.pager=cat",
+  "-c", "core.askPass=",
+  "-c", "protocol.ext.allow=never",  // ext:: URLs execute a shell command
+  "-c", "protocol.file.allow=always",// alternates/local paths stay usable
+]);
+
+// Environment variables that inject config or name a command to execute.
+const GIT_EXEC_ENV_KEYS = Object.freeze([
+  "GIT_SSH", "GIT_PROXY_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS",
+  "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_OBJECT_DIRECTORY",
+  "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_COMMON_DIR",
+]);
+
+// brokerGitEnv — the only environment any broker git call may see.
+//
+// `GIT_SSH_COMMAND` is ALWAYS set, deliberately: the environment variable
+// outranks `core.sshCommand`, so setting it here neutralizes a worker-authored
+// `core.sshCommand` by precedence while preserving the operator's real
+// deploy-key route when one is configured.
+export function brokerGitEnv(env = {}, { sshCommand = null } = {}) {
+  const out = { ...env };
+  for (const key of Object.keys(out)) {
+    if (/^GIT_CONFIG(_|$)/.test(key)) delete out[key]; // GIT_CONFIG, _GLOBAL, _SYSTEM, _COUNT, _KEY_n, _VALUE_n
+  }
+  for (const key of GIT_EXEC_ENV_KEYS) delete out[key];
+  const ssh = sshCommand ?? env.SHU_PUSH_SSH_COMMAND ?? env.GIT_SSH_COMMAND ?? "ssh";
+  out.GIT_CONFIG_GLOBAL = "/dev/null";
+  out.GIT_CONFIG_SYSTEM = "/dev/null";
+  out.GIT_CONFIG_NOSYSTEM = "1";
+  out.GIT_ATTR_NOSYSTEM = "1";
+  out.GIT_TERMINAL_PROMPT = "0";
+  out.GIT_SSH_COMMAND = ssh;
+  return out;
+}
+
+// Every broker git invocation goes through here — no exceptions, so a new call
+// site cannot forget the boundary.
+function brokerGit(gitImpl, args, { cwd, env, sshCommand = null } = {}) {
+  return runGit(gitImpl, [...BROKER_GIT_CONFIG_ARGS, ...args], {
+    cwd,
+    env: brokerGitEnv(env, { sshCommand }),
+  });
+}
+
 
 // resolveRealRoot — resolve a worktree path under an approved root.
 // Returns { ok:true, path } or { ok:false, reason }.
@@ -104,10 +190,20 @@ export function validateRepoUrl(remoteUrl, { allowedRepo = "BAWES-Universe/stude
   // Normalize: accept https://host/owner/repo[.git] and git@host:owner/repo[.git]
   let m = remoteUrl.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (!m) m = remoteUrl.match(/^git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) {
-    return { ok: false, reason: `unrecognized remote URL ${remoteUrl}` };
+  let host, owner, repo;
+  if (m) {
+    [host, owner, repo] = [m[1], m[2], m[3].replace(/\.git$/, "")];
+  } else {
+    // Local transport. Deliberately only recognized when the deployment has
+    // EXPLICITLY allowlisted host "file"; under the default github.com policy a
+    // file: URL is an unrecognized remote and is refused, which is what keeps a
+    // worker from redirecting the push at a local path.
+    const f = remoteUrl.match(/^file:\/\/(\/.*\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+    if (!f || allowedHost !== "file") {
+      return { ok: false, reason: `unrecognized remote URL ${remoteUrl}` };
+    }
+    [host, owner, repo] = ["file", f[2], f[3].replace(/\.git$/, "")];
   }
-  const [host, owner, repo] = [m[1], m[2], m[3].replace(/\.git$/, "")];
   // Enforce the fixed repository host too — a wrong host is a malicious/supply-chain
   // remote even when owner/repo match (the builder must never push anywhere else).
   if (host !== allowedHost) {
@@ -118,6 +214,55 @@ export function validateRepoUrl(remoteUrl, { allowedRepo = "BAWES-Universe/stude
     return { ok: false, reason: `remote ${owner}/${repo} is not the allowed repo ${allowedRepo}` };
   }
   return { ok: true, owner, repo };
+}
+
+// createBrokerRepo — a broker-owned bare repository used for EVERY remote
+// operation. Its config is one the broker just created, so no worker-authored
+// `url.*.insteadOf` exists to rewrite the destination.
+//
+// Worker objects are reached through `objects/info/alternates`: a plain path
+// read. Nothing runs `upload-pack` inside the worker's repository, so
+// `uploadpack.packObjectsHook` is not reachable either.
+export async function createBrokerRepo({
+  worktree,
+  gitImpl,
+  env = {},
+  mkdtempImpl = mkdtempSync,
+  writeImpl = writeFileSync,
+  mkdirImpl = mkdirSync,
+  tmpRoot = null,
+}) {
+  // --git-common-dir resolves a linked worktree to the repository that actually
+  // owns the objects. It reads paths only — no command execution — and still
+  // goes through the hardened boundary.
+  const cd = await brokerGit(gitImpl, ["rev-parse", "--git-common-dir"], { cwd: worktree, env });
+  if (cd.error) {
+    return { ok: false, reason: `could not resolve the worker git directory: ${cd.stderr.trim() || cd.error.message}` };
+  }
+  const commonDir = cd.stdout.trim();
+  if (!commonDir) return { ok: false, reason: "worker git directory resolved to an empty path" };
+  const absCommon = commonDir.startsWith("/") ? commonDir : `${worktree}/${commonDir}`;
+  const objectsDir = `${absCommon.replace(/\/+$/, "")}/objects`;
+
+  const dir = mkdtempImpl(`${tmpRoot ?? tmpdir()}/shu-broker-repo-`);
+  const init = await brokerGit(gitImpl, ["init", "--bare", "-q", dir], { cwd: dir, env });
+  if (init.error) {
+    return { ok: false, reason: `could not create the broker repository: ${init.stderr.trim() || init.error.message}` };
+  }
+  try {
+    mkdirImpl(`${dir}/objects/info`, { recursive: true, mode: 0o700 });
+    writeImpl(`${dir}/objects/info/alternates`, `${objectsDir}\n`, { mode: 0o600 });
+  } catch (e) {
+    return { ok: false, reason: `could not link worker objects into the broker repository: ${e?.message ?? "unknown"}` };
+  }
+  return { ok: true, dir, objectsDir };
+}
+
+// The result commit must be readable from the broker repository before we push
+// it — otherwise the push would either fail late or push something unintended.
+export async function brokerRepoHasCommit({ dir, sha, gitImpl, env = {} }) {
+  const r = await brokerGit(gitImpl, ["cat-file", "-e", `${sha}^{commit}`], { cwd: dir, env });
+  return !r.error;
 }
 
 // loadPrePushRecord — durable record distinguishing crash-after-start from
@@ -163,8 +308,11 @@ export function readPrePushRecord(stateDir, attempt_id, readImpl = readFileSync,
 
 // remoteHasResult — check whether the remote branch already carries result_sha.
 // Recovery uses this to make the push idempotent.
-export async function remoteBranchHead({ repo, branch, gitImpl = execFile, remoteUrl, cwd }) {
-  const res = await runGit(gitImpl, ["ls-remote", remoteUrl, `refs/heads/${branch}`], { cwd });
+export async function remoteBranchHead({ repo, branch, gitImpl = execFile, remoteUrl, cwd, env = {} }) {
+  // `cwd` MUST be the broker-owned repository, never the worker's worktree:
+  // this is the call Codex showed executing `core.sshCommand` and following
+  // `url.*.insteadOf` before any validation could help.
+  const res = await brokerGit(gitImpl, ["ls-remote", remoteUrl, `refs/heads/${branch}`], { cwd, env });
   if (res.error) return { ok: false, reason: res.stderr.trim() || res.error.message };
   const line = res.stdout.trim().split("\n").find((l) => l.endsWith(`refs/heads/${branch}`));
   if (!line) return { ok: null, head: null };
@@ -189,6 +337,7 @@ export async function pushExactSha({
   allowedRoot,
   branchPrefix = "coordinator/",
   remoteUrl,
+  allowedHost = "github.com",
   gitImpl = execFile,
   readHeadImpl = null,
   isAncestorImpl = null,
@@ -197,6 +346,8 @@ export async function pushExactSha({
   persistImpl = persistPrePush,
   readPreImpl = readPrePushRecord,
   remoteHeadImpl = remoteBranchHead,
+  createBrokerRepoImpl = createBrokerRepo,
+  hasCommitImpl = brokerRepoHasCommit,
   fsyncDirImpl = null,
 }) {
   // --- identity / shape -----------------------------------------------------
@@ -228,19 +379,36 @@ export async function pushExactSha({
   const cwd = confined.path;
 
   // --- fixed repository URL ---------------------------------------------------
-  const rv = validateRepoUrl(remoteUrl, { allowedRepo: repo });
+  const rv = validateRepoUrl(remoteUrl, { allowedRepo: repo, allowedHost });
   if (!rv.ok) {
     return { stage: "HOLD", reason: rv.reason, pause_adapter: true, ok: false };
   }
+
+  // --- broker-owned repository, created BEFORE any remote call ---------------
+  // Every remote operation from here on runs in `brokerRepo.dir`, never in the
+  // worker's worktree, so no worker-authored config can rewrite the destination
+  // or execute a command during the very first ls-remote.
+  const brokerRepo = await createBrokerRepoImpl({ worktree: cwd, gitImpl, env });
+  if (!brokerRepo.ok) {
+    return { stage: "HOLD", reason: brokerRepo.reason, pause_adapter: true, ok: false };
+  }
+  const remoteCwd = brokerRepo.dir;
+  const cleanupBrokerRepo = () => {
+    try { rmSync(remoteCwd, { recursive: true, force: true }); } catch { /* best effort */ }
+  };
+  const held = (reason) => {
+    cleanupBrokerRepo();
+    return { stage: "HOLD", reason, pause_adapter: true, ok: false };
+  };
 
   // --- recovery + idempotency FIRST, before any git write --------------------
   // A durable pre-push record distinguishes "crash-before-push" from
   // "crash-after-push-before-record". Recovery checks the REMOTE first and only
   // then decides. Never clobber, never re-push blindly.
   const existingRecord = readPreImpl(stateDir, attempt_id);
-  const remote = await remoteHeadImpl({ repo, branch, gitImpl, remoteUrl, cwd, env });
+  const remote = await remoteHeadImpl({ repo, branch, gitImpl, remoteUrl, cwd: remoteCwd, env });
   if (remote.ok === false) {
-    return { stage: "HOLD", reason: `remote check failed: ${remote.reason}`, pause_adapter: true, ok: false };
+    return held(`remote check failed: ${remote.reason}`);
   }
 
   if (existingRecord) {
@@ -248,34 +416,36 @@ export async function pushExactSha({
     // authoritative for whether the push landed.
     if (remote.ok === true && remote.head === result_sha) {
       // Crash-after-push: the remote already carries the result. Idempotent.
+      cleanupBrokerRepo();
       return { stage: "ALREADY_PUSHED", ok: true, remote_head: result_sha, recovered: true };
     }
     if (remote.ok === true && remote.head && remote.head !== result_sha) {
-      return { stage: "HOLD", reason: `recovery: remote branch ${branch} is at ${remote.head} (a different sha than ${result_sha}); never clobber`, pause_adapter: true, ok: false };
+      return held(`recovery: remote branch ${branch} is at ${remote.head} (a different sha than ${result_sha}); never clobber`);
     }
     // Record exists but the remote does not show the result — ambiguous
     // (crash-before-push of unknown extent). Recovery must resolve, never guess.
-    return { stage: "HOLD", reason: `pre-push record exists (${existingRecord.stage ?? "unknown"}) but remote does not confirm ${result_sha} — recovery required`, pause_adapter: true, ok: false };
+    return held(`pre-push record exists (${existingRecord.stage ?? "unknown"}) but remote does not confirm ${result_sha} — recovery required`);
   }
 
   // No record (fresh push): idempotency check against the remote.
   if (remote.ok === true && remote.head === result_sha) {
+    cleanupBrokerRepo();
     return { stage: "ALREADY_PUSHED", ok: true, remote_head: result_sha };
   }
   if (remote.ok === true && remote.head) {
-    return { stage: "HOLD", reason: `remote branch ${branch} already at ${remote.head}, not ${result_sha}; refusing to clobber`, pause_adapter: true, ok: false };
+    return held(`remote branch ${branch} already at ${remote.head}, not ${result_sha}; refusing to clobber`);
   }
 
   // --- ancestry: result_sha must descend from target_sha ----------------------
   if (isAncestorImpl) {
     const anc = await isAncestorImpl({ cwd, result_sha, target_sha, gitImpl, env });
     if (anc !== true) {
-      return { stage: "HOLD", reason: `result_sha ${result_sha} does not descend from target_sha ${target_sha}`, pause_adapter: true, ok: false };
+      return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha}`);
     }
   } else {
-    const a = await runGit(gitImpl, ["merge-base", "--is-ancestor", target_sha, result_sha], { cwd, env });
+    const a = await brokerGit(gitImpl, ["merge-base", "--is-ancestor", target_sha, result_sha], { cwd, env });
     if (a.error) {
-      return { stage: "HOLD", reason: `result_sha ${result_sha} does not descend from target_sha ${target_sha} (${a.stderr.trim() || a.error.message})`, pause_adapter: true, ok: false };
+      return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha} (${a.stderr.trim() || a.error.message})`);
     }
   }
 
@@ -284,14 +454,14 @@ export async function pushExactSha({
   if (readHeadImpl) {
     head = await readHeadImpl({ cwd, gitImpl, env });
   } else {
-    const h = await runGit(gitImpl, ["rev-parse", "HEAD"], { cwd, env });
+    const h = await brokerGit(gitImpl, ["rev-parse", "HEAD"], { cwd, env });
     if (h.error) {
-      return { stage: "HOLD", reason: `could not resolve worktree HEAD: ${h.stderr.trim() || h.error.message}`, pause_adapter: true, ok: false };
+      return held(`could not resolve worktree HEAD: ${h.stderr.trim() || h.error.message}`);
     }
     head = h.stdout.trim();
   }
   if (head !== result_sha) {
-    return { stage: "HOLD", reason: `worktree HEAD ${head} != result_sha ${result_sha}; worktree moved after build`, pause_adapter: true, ok: false };
+    return held(`worktree HEAD ${head} != result_sha ${result_sha}; worktree moved after build`);
   }
 
   // --- clean tree (no uncommitted / untracked changes) -------------------------
@@ -302,51 +472,55 @@ export async function pushExactSha({
     cleanOk = c.ok;
     cleanDetail = c.reason ?? "";
   } else {
-    const s = await runGit(gitImpl, ["status", "--porcelain"], { cwd, env });
+    const s = await brokerGit(gitImpl, ["status", "--porcelain"], { cwd, env });
     if (s.error) {
-      return { stage: "HOLD", reason: `could not check worktree cleanliness: ${s.stderr.trim() || s.error.message}`, pause_adapter: true, ok: false };
+      return held(`could not check worktree cleanliness: ${s.stderr.trim() || s.error.message}`);
     }
     cleanOk = s.stdout.trim().length === 0;
     cleanDetail = cleanOk ? "" : `worktree is dirty: ${s.stdout.trim().split("\n")[0]}`;
   }
   if (!cleanOk) {
-    return { stage: "HOLD", reason: cleanDetail || "worktree is not clean", pause_adapter: true, ok: false };
+    return held(cleanDetail || "worktree is not clean");
   }
 
   // --- durable pre-push record (BEFORE the push, distinguished from after) ----
   const pre = persistImpl({ stateDir, attempt_id, result_sha, branch, repo, worktree: cwd });
   if (!pre.ok) {
     // A concurrent broker won the reservation (EEXIST) — HOLD, the winner pushes.
-    return { stage: "HOLD", reason: pre.reason, pause_adapter: true, ok: false };
+    return held(pre.reason);
   }
 
   // --- the push: hooks off, credential helpers off, force prohibited, explicit refspec ----
   // `-c` config flags must precede the subcommand (git push -c ... is invalid).
+  // Hooks, credential helpers and every other executable knob are supplied by
+  // BROKER_GIT_CONFIG_ARGS to EVERY call, not just this one — the original
+  // per-push flags left the remote checks unprotected.
   const pushArgs = [
-    "-c", "core.hooksPath=/dev/null",
-    "-c", "credential.helper=",
     "push",
     remoteUrl,
     `${result_sha}:refs/heads/${branch}`,
   ];
-  const safeEnv = { ...env };
-  delete safeEnv.GIT_ASKPASS;
-  delete safeEnv.GIT_TERMINAL_PROMPT;
-  const pu = await runGit(gitImpl, pushArgs, { cwd, env: safeEnv });
+  // The commit must be readable from the BROKER repository (via alternates)
+  // before it can be pushed from there.
+  const reachable = await hasCommitImpl({ dir: remoteCwd, sha: result_sha, gitImpl, env });
+  if (!reachable) {
+    return held(`result_sha ${result_sha} is not reachable from the broker repository`);
+  }
+  const pu = await brokerGit(gitImpl, pushArgs, { cwd: remoteCwd, env });
   if (pu.error) {
     // Ambiguous: the remote outcome is unknown. Never FAILED-terminal; HOLD so
     // recovery re-checks the remote before any re-push.
-    return { stage: "HOLD", reason: `push failed (ambiguous) — recovery re-checks remote: ${pu.stderr.trim() || pu.error.message}`, pause_adapter: true, ok: false };
+    return held(`push failed (ambiguous) — recovery re-checks remote: ${pu.stderr.trim() || pu.error.message}`);
   }
 
   // --- confirm the remote SHA afterward ----------------------------------------
-  const after = await remoteHeadImpl({ repo, branch, gitImpl, remoteUrl, cwd, env });
+  const after = await remoteHeadImpl({ repo, branch, gitImpl, remoteUrl, cwd: remoteCwd, env });
   const remote_head = after.ok === true ? after.head : null;
   if (after.ok !== true || remote_head !== result_sha) {
     // We attempted; if the remote doesn't now show result_sha, the outcome is
     // ambiguous (crash window, divergence). Never claim success — HOLD + pause
     // so recovery re-checks the remote before any re-push.
-    return { stage: "HOLD", reason: `post-push remote confirmation failed (remote=${remote_head}, want=${result_sha})`, pause_adapter: true, ok: false };
+    return held(`post-push remote confirmation failed (remote=${remote_head}, want=${result_sha})`);
   }
 
   // --- mark pushed in the durable record ----------------------------------------
@@ -359,5 +533,6 @@ export async function pushExactSha({
     // not ambiguity about whether the push happened (remote is authoritative).
   }
 
+  cleanupBrokerRepo();
   return { stage: "PUSHED", ok: true, remote_head };
 }
