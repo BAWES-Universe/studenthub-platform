@@ -353,7 +353,7 @@ export async function pushExactSha({
   try {
     const rec = readPreImpl(stateDir, attempt_id);
     const mark = { ...(rec ?? {}), stage: PUSH_STAGES[1], result_sha, branch, remote_head, pushed_at: new Date().toISOString() };
-    writeFileSync(pre.pushPath ?? prePushRecordPath(stateDir, attempt_id), `${JSON.stringify(mark)}\n`, { mode: 0o600 });
+    writeFileSync(pre.path ?? prePushRecordPath(stateDir, attempt_id), `${JSON.stringify(mark)}\n`, { mode: 0o600 });
   } catch (e) {
     // Best-effort: the push succeeded and remote is confirmed; a mark failure is
     // not ambiguity about whether the push happened (remote is authoritative).

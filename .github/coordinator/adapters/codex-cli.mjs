@@ -824,10 +824,16 @@ export async function launchBuilder({
   // the broker is MANDATORY and fails closed: a builder result that was never
   // pushed is not a usable COMPLETED, and the sandbox cannot push by itself.
   if (callback.result_sha && SHA_RE.test(String(callback.result_sha))) {
-    const brokerEnabled =
-      io.pushBrokerEnabled === true
-      || env.SHU_PUSH_BROKER_ENABLED === "true";
-    if (brokerEnabled) {
+    // FAIL CLOSED (Opus R3). The broker is the ONLY authorized pusher, so it
+    // runs unless a caller EXPLICITLY opts out. Deriving "enabled" from a flag
+    // that had to be PRESENT meant an omission produced a COMPLETED with nothing
+    // pushed — the exact outcome this broker exists to prevent — and no test
+    // bound it: forcing the flag off left 288/288 green. An opt-out cannot be
+    // reached by forgetting something.
+    const brokerDisabled =
+      io.pushBrokerEnabled === false
+      || env.SHU_PUSH_BROKER_ENABLED === "false";
+    if (!brokerDisabled) {
       const runBroker = pushBrokerImpl ?? io.pushBrokerImpl ?? pushExactSha;
       const allowedRoot = io.worktreeRoot ?? env.SHU_WORKTREE_ROOT ?? null;
       const remoteUrl = io.pushRemoteUrl ?? env.SHU_PUSH_REMOTE_URL ?? null;

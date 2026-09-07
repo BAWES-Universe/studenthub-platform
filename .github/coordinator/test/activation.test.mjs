@@ -196,6 +196,29 @@ test("an apparently durable path resolving onto ephemeral storage fails closed",
   assert.ok(out.unmet.some((u) => u.requirement === "durable_state_persistence"));
 });
 
+// The flag being PRESENT but the broker unconfigured is a distinct failure from
+// the flag being absent, and only the absent case was covered — deleting this
+// arm of the gate left the whole suite green (Opus R3).
+test("host_push_broker: enabled but unconfigured is unmet, not silently accepted", () => {
+  for (const missing of [
+    { SHU_WORKTREE_ROOT: undefined },
+    { SHU_PUSH_REMOTE_URL: undefined },
+    { SHU_WORKTREE_ROOT: undefined, SHU_PUSH_REMOTE_URL: undefined },
+  ]) {
+    const { io } = durableDir();
+    const out = preflightActivation({
+      env: activatedEnv({ SHU_PUSH_BROKER_ENABLED: "true", ...missing }),
+      stateDir: "/srv/codex/state",
+      cwd: "/repo",
+      io,
+    });
+    assert.equal(out.ok, false, JSON.stringify(missing));
+    const entry = out.unmet.find((u) => u.requirement === "host_push_broker");
+    assert.ok(entry, `enabled-but-unconfigured must be reported: ${JSON.stringify(missing)}`);
+    assert.match(entry.detail, /SHU_WORKTREE_ROOT|SHU_PUSH_REMOTE_URL/);
+  }
+});
+
 test("every declared requirement is actually enforced by the preflight", () => {
   // Guards against a requirement being listed in the contract but never checked.
   const out = preflightActivation({ env: {}, stateDir: null, cwd: null, io: { hostname: () => HOST } });

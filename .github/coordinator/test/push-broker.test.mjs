@@ -93,9 +93,20 @@ function baseOpts(over = {}) {
   };
 }
 
-function expectHold(res) {
+// A HOLD is not enough: it must come from the control under test. Asserting
+// only {ok:false, pause_adapter:true} let a neutered validator pass, because
+// some LATER check produced a HOLD for an unrelated reason and the assertion
+// could not tell the difference. `reasonRe` pins WHICH control fired (Opus R3).
+function expectHold(res, reasonRe) {
   assert.equal(res.ok, false, JSON.stringify(res));
   assert.equal(res.pause_adapter, true, "ambiguity must pause the adapter: " + res.reason);
+  if (reasonRe) {
+    assert.match(
+      String(res.reason ?? ""),
+      reasonRe,
+      `HOLD came from the wrong control — expected ${reasonRe}, got: ${res.reason}`,
+    );
+  }
 }
 
 test("pushes the exact validated result SHA to the lane branch and confirms remote", async () => {
@@ -116,22 +127,33 @@ test("pushes the exact validated result SHA to the lane branch and confirms remo
 });
 
 test("malicious / wrong remote URLs -> HOLD + pause, never pushed", async () => {
-  for (const bad of [
-    "git@github.com:OtherOrg/somewhere.git",
-    "https://github.com/BAWES-Universe/not-our-repo.git",
-    "https://evil.co/BAWES-Universe/x.git",
-    "not-a-url",
-    "git@host.com:BAWES-Universe/studenthub-platform.git",
+  // Each case pins the reason so the repo/host allowlist is what rejects it.
+  // Without that, deleting the allowlist entirely still passed this test.
+  for (const [bad, reasonRe] of [
+    ["git@github.com:OtherOrg/somewhere.git", /is not the allowed repo/],
+    ["https://github.com/BAWES-Universe/not-our-repo.git", /is not the allowed repo/],
+    ["https://evil.co/BAWES-Universe/x.git", /is not the allowed host/],
+    ["not-a-url", /unrecognized remote URL/],
+    ["git@host.com:BAWES-Universe/studenthub-platform.git", /is not the allowed host/],
   ]) {
     const res = await pushExactSha(baseOpts({ remoteUrl: bad }));
-    expectHold(res);
+    expectHold(res, reasonRe);
   }
 });
 
 test("branch that is bare-SHA / protected / wrong prefix -> HOLD + pause", async () => {
-  for (const branch of ["main", "master", "develop", RESULT, "feat/elsewhere", "refs/heads/x"]) {
+  // Same pinning: the protected-branch and lane-prefix checks must be what
+  // rejects these, not an incidental downstream HOLD.
+  for (const [branch, reasonRe] of [
+    ["main", /is a protected target/],
+    ["master", /is a protected target/],
+    ["develop", /is a protected target/],
+    [RESULT, /bare SHA as branch name/],
+    ["feat/elsewhere", /required lane prefix/],
+    ["refs/heads/x", /must be a bare ref name/],
+  ]) {
     const res = await pushExactSha(baseOpts({ branch }));
-    expectHold(res);
+    expectHold(res, reasonRe);
   }
 });
 
