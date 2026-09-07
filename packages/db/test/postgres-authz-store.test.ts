@@ -792,6 +792,34 @@ test("mutable profile attributes never match or merge external identities", asyn
   assert.equal(await store.identities.findLegacyMatch({ email: "same@login.invalid" }), undefined);
 });
 
+test("login bearer values are hashed at rest and expiration fails closed", async () => {
+  const store = makeLoginStore();
+  const identity = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    {},
+  );
+  const state = {
+    browserSessionId: "browser-synthetic-a",
+    state: "raw-state-synthetic-a",
+    nonce: "nonce-synthetic-a",
+    codeVerifier: "verifier-synthetic-a",
+    returnTo: "https://studenthub.test.invalid/home",
+  };
+  await store.states.put(state);
+  await store.sessions.put({ id: "raw-session-synthetic-a", personId: identity.personId });
+  const stored = await adminPool.query<{ state: string; id: string }>(
+    "SELECT s.state, l.id FROM login_states s CROSS JOIN login_sessions l",
+  );
+  assert.notEqual(stored.rows[0]?.state, state.state);
+  assert.notEqual(stored.rows[0]?.id, "raw-session-synthetic-a");
+
+  await adminPool.query("UPDATE login_states SET expires_at = now() - interval '1 second'");
+  await adminPool.query("UPDATE login_sessions SET expires_at = now() - interval '1 second'");
+  assert.equal(await store.states.consume(state.state), undefined);
+  assert.equal(await store.sessions.get("raw-session-synthetic-a"), undefined);
+});
+
 // ---------------------------------------------------------------------------
 // Migrations: concurrent first-run runners are serialized (GPT R3, round 2 #2)
 // ---------------------------------------------------------------------------

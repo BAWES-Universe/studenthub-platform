@@ -75,7 +75,8 @@ export class PostgresLoginStore {
 
   async #putState(record: LoginState): Promise<void> {
     await this.#pool.query(
-      `INSERT INTO login_states
+      `WITH expired AS (DELETE FROM login_states WHERE expires_at <= now())
+       INSERT INTO login_states
          (state, browser_session_id, nonce, code_verifier, return_to, expires_at)
        VALUES ($1, $2, $3, $4, $5, now() + ($6 * interval '1 second'))`,
       [storedToken(record.state), record.browserSessionId, record.nonce, record.codeVerifier, record.returnTo, this.#stateTtlSeconds],
@@ -104,7 +105,8 @@ export class PostgresLoginStore {
 
   async #putSession(record: LoginSession): Promise<void> {
     await this.#pool.query(
-      `INSERT INTO login_sessions (id, person_id, expires_at)
+      `WITH expired AS (DELETE FROM login_sessions WHERE expires_at <= now())
+       INSERT INTO login_sessions (id, person_id, expires_at)
        VALUES ($1, $2, now() + ($3 * interval '1 second'))`,
       [storedToken(record.id), record.personId, this.#sessionTtlSeconds],
     );
@@ -112,7 +114,10 @@ export class PostgresLoginStore {
 
   async #getSession(id: string): Promise<LoginSession | undefined> {
     const { rows } = await this.#pool.query<SessionRow>(
-      "SELECT id, person_id FROM login_sessions WHERE id = $1 AND expires_at > now()",
+      `WITH expired AS (
+         DELETE FROM login_sessions WHERE id = $1 AND expires_at <= now()
+       )
+       SELECT id, person_id FROM login_sessions WHERE id = $1 AND expires_at > now()`,
       [storedToken(id)],
     );
     const row = rows[0];

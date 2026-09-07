@@ -143,8 +143,14 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
   }
 
   const value = (name: typeof names[number]): string => env[name]!;
+  for (const name of ["DATABASE_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"] as const) {
+    if (value(name).trim().length === 0) throw new Error(`${name} must be non-empty`);
+  }
   const issuer = exactHttpsUrl(value("OIDC_ISSUER"), "OIDC_ISSUER");
   const callbackUrl = exactHttpsUrl(value("OIDC_CALLBACK_URL"), "OIDC_CALLBACK_URL");
+  if (new URL(callbackUrl).pathname !== "/login/callback") {
+    throw new Error("OIDC_CALLBACK_URL must target the gateway /login/callback route");
+  }
   const authorizationUrl = exactHttpsUrl(value("OIDC_AUTHORIZATION_URL"), "OIDC_AUTHORIZATION_URL");
   const tokenUrl = exactHttpsUrl(value("OIDC_TOKEN_URL"), "OIDC_TOKEN_URL");
   const jwksUrl = exactHttpsUrl(value("OIDC_JWKS_URL"), "OIDC_JWKS_URL");
