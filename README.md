@@ -26,6 +26,9 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | Worker | `apps/worker` (heartbeat) | ✅ |
 | Shared contracts incl. authz | `packages/contracts` | ✅ authz store **interfaces** + `InMemoryAuthzStore` test implementation |
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
+| PostgreSQL data layer | `packages/db`, `packages/db/migrations` | ✅ persistent authz, OIDC state, sessions, and issuer/subject bindings |
+| Login contract | `packages/login-contract` | ✅ executable OIDC conformance and mutation harness |
+| Search adapter | `packages/search` | ✅ Typesense adapter and indexer |
 | Migration tools | `tools/legacy-import`, `tools/fixtures`, `tools/reconciliation` | ✅ |
 | Search benchmark | `tools/search-bakeoff` | ✅ Meilisearch vs Typesense evidence (SHU-47) |
 | ADRs + design docs | `docs/adr` (`ADR-0001-actor-assertion-v1`), `docs/authz-roles.md` | ✅ |
@@ -37,8 +40,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | -- | -- |
 | Web/iframe panels | zero `.tsx` files today; platform web is unbuilt |
 | 7 domain packages (`domain-*`) | none exist |
-| PostgreSQL schema + migrations | no SQL, no schema, no migrations — **no persistence yet**; authz grants live in `InMemoryAuthzStore` and are lost on restart → [SHU-55](https://linear.app/bawes/issue/SHU-55/platform-has-no-persistence-authz-grants-live-in-memory-and-are-lost) |
-| `packages/`: capabilities, authorization, audit, db, observability, ui | only `contracts` and `actor-assertion` exist today |
+| Remaining `packages/` capabilities | domain packages, observability, and UI are not built yet |
 
 Planned layout (target, for orientation):
 
