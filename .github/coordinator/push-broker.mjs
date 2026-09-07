@@ -255,6 +255,23 @@ export function validateRepoUrl(remoteUrl, { allowedRepo = "BAWES-Universe/stude
 // Worker objects are reached through `objects/info/alternates`: a plain path
 // read. Nothing runs `upload-pack` inside the worker's repository, so
 // `uploadpack.packObjectsHook` is not reachable either.
+//
+// TRUST BOUNDARY — stated because it was previously implicit, which is how it
+// went unexamined. This repository is created under `mkdtemp`, mode 0700, so a
+// worker running as a DIFFERENT OS user cannot read or write it and the
+// isolation above holds. A worker running as the SAME OS user as the
+// coordinator defeats it: it can leave a detached process watching the temp
+// root and edit `<dir>/config` after this function returns — restoring a
+// `url.*.insteadOf` redirect before the remote calls, exactly the attack the
+// broker repo exists to prevent — or read coordinator-owned credentials
+// directly. (Codex, PR #32.)
+//
+// No in-process check closes that. Any verification this code performs can be
+// raced by a same-UID process, so adding one would be theatre rather than
+// defence. The control is the OS identity split (`shu-worker` must not be
+// `shu-coordinator`), which is a host-provisioning property this module cannot
+// assert. It is tracked as a hard SHU-69 fixture-readiness gate: the live
+// unattended fixture must not run until the split is in place and verified.
 export async function createBrokerRepo({
   worktree,
   gitImpl,
