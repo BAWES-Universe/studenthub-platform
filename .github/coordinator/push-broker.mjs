@@ -97,17 +97,22 @@ export function validateBranchPrefix(branch, { prefix = "coordinator/", protecte
 // validateRepoUrl — the remote the broker will push to must be the configured
 // pilot repo; reject any remote that points elsewhere (supply-chain / malicious
 // remote defense).
-export function validateRepoUrl(remoteUrl, { allowedRepo = "BAWES-Universe/studenthub-platform" } = {}) {
+export function validateRepoUrl(remoteUrl, { allowedRepo = "BAWES-Universe/studenthub-platform", allowedHost = "github.com" } = {}) {
   if (typeof remoteUrl !== "string" || !remoteUrl.length) {
     return { ok: false, reason: "no remote URL" };
   }
   // Normalize: accept https://host/owner/repo[.git] and git@host:owner/repo[.git]
-  let m = remoteUrl.match(/^https?:\/\/[^/]+\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  if (!m) m = remoteUrl.match(/^git@[^:]+:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  let m = remoteUrl.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (!m) m = remoteUrl.match(/^git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/);
   if (!m) {
     return { ok: false, reason: `unrecognized remote URL ${remoteUrl}` };
   }
-  const [owner, repo] = [m[1], m[2].replace(/\.git$/, "")];
+  const [host, owner, repo] = [m[1], m[2], m[3].replace(/\.git$/, "")];
+  // Enforce the fixed repository host too — a wrong host is a malicious/supply-chain
+  // remote even when owner/repo match (the builder must never push anywhere else).
+  if (host !== allowedHost) {
+    return { ok: false, reason: `remote host ${host} is not the allowed host ${allowedHost}` };
+  }
   const [wantOwner, wantRepo] = allowedRepo.split("/");
   if (owner !== wantOwner || repo !== wantRepo) {
     return { ok: false, reason: `remote ${owner}/${repo} is not the allowed repo ${allowedRepo}` };
