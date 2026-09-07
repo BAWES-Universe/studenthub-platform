@@ -214,7 +214,13 @@ export function validateRepoUrl(remoteUrl, { allowedRepo = "BAWES-Universe/stude
     return { ok: false, reason: "no remote URL" };
   }
   // Normalize: accept https://host/owner/repo[.git] and git@host:owner/repo[.git]
-  let m = remoteUrl.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  //
+  // HTTPS only, never plaintext `http:`. The host check below would still have
+  // matched `http://github.com/...`, so a misconfigured SHU_PUSH_REMOTE_URL
+  // could have carried the coordinator's credential and the commit itself in
+  // cleartext to an allowlisted host. An allowlist that constrains WHERE the
+  // push goes but not HOW it travels is only doing half its job.
+  let m = remoteUrl.match(/^https:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (!m) m = remoteUrl.match(/^git@([^:]+):([^/]+)\/([^/]+?)(?:\.git)?$/);
   let host, owner, repo;
   if (m) {

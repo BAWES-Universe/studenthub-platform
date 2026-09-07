@@ -148,6 +148,9 @@ test("malicious / wrong remote URLs -> HOLD + pause, never pushed", async () => 
     ["https://evil.co/BAWES-Universe/x.git", /is not the allowed host/],
     ["not-a-url", /unrecognized remote URL/],
     ["git@host.com:BAWES-Universe/studenthub-platform.git", /is not the allowed host/],
+    // Plaintext transport to the RIGHT repo on the RIGHT host: the allowlist
+    // constrains where the push goes, and must also constrain how it travels.
+    ["http://github.com/BAWES-Universe/studenthub-platform.git", /unrecognized remote URL/],
   ]) {
     const res = await pushExactSha(baseOpts({ remoteUrl: bad }));
     expectHold(res, reasonRe);
