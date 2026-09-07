@@ -136,16 +136,54 @@ export interface AuthorizationAuditFailure {
 export type AuthorizationAuditFailureHandler = (failure: AuthorizationAuditFailure) => void;
 
 /**
+ * A stream error is the one audit failure `emitAuthorizationAuditEvent` cannot
+ * contain. Its try/catch takes a synchronous throw and its `.then` takes a
+ * rejection; a broken pipe is neither. Node emits `'error'` on the stream
+ * asynchronously, and an unhandled `'error'` event terminates the process.
+ *
+ * That is property 1 violated in its worst form: auditing does not merely change
+ * a decision, it ends the process that was making them. Reproduced rather than
+ * reasoned about — writing to a piped stdout whose reader exits gives
+ * `UNCAUGHT: EPIPE` without this listener and survives with it.
+ *
+ * The listener is attached ONCE per stream. `createStdoutAuditSink` is called
+ * per middleware construction, and a listener added on each call would leak and
+ * trip Node's max-listeners warning in any process that builds several.
+ */
+const guardedStreams = new WeakSet<NodeJS.WritableStream>();
+
+function guardStream(stream: NodeJS.WritableStream): void {
+  if (guardedStreams.has(stream)) return;
+  guardedStreams.add(stream);
+  // Swallowed deliberately: there is nowhere left to report a logging failure
+  // TO, and the audit stream must never be able to take the gateway down.
+  stream.on("error", () => undefined);
+}
+
+/**
  * The production default: one JSON object per line on stdout, for the platform
  * log pipeline to collect. Line-delimited so a partially written line can never
  * merge two events into one parseable record.
+ *
+ * `write` is injectable for tests. When it is omitted the real stdout stream is
+ * used AND guarded — the guard belongs with the code that owns the writes, not
+ * as a startup incantation a future caller can forget.
  */
 export function createStdoutAuditSink(
-  write: (line: string) => void = (line) => void process.stdout.write(line),
+  write?: (line: string) => void,
+  stream: NodeJS.WritableStream = process.stdout,
 ): AuthorizationAuditSink {
+  let emit = write;
+  if (!emit) {
+    // Guarded at construction, not per write: one WeakSet probe here beats one
+    // on every authorization decision, and an unused sink costs a listener that
+    // was harmless anyway.
+    guardStream(stream);
+    emit = (line: string) => void stream.write(line);
+  }
   return {
     record(event: AuthorizationAuditEvent): void {
-      write(`${JSON.stringify(event)}\n`);
+      emit(`${JSON.stringify(event)}\n`);
     },
   };
 }

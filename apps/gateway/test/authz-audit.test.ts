@@ -386,3 +386,82 @@ test("emitAuthorizationAuditEvent reports failure for a throwing sink and return
   );
   assert.deepEqual(failures, [{ kind: "audit_sink_failure", requestId: "req-9" }]);
 });
+
+/**
+ * MUTATION: delete the `guardStream(stream)` call in `createStdoutAuditSink`.
+ *
+ * Sentry rated this CRITICAL and the thread was marked "Resolved in 6c07fd1",
+ * but that commit only contained the async failure handler — the stream was
+ * never guarded. Auditing is on by default (`authz-middleware.ts`), so every
+ * authorization decision writes to stdout; under a log pipeline that closes the
+ * read end, an unhandled `'error'` event terminates the gateway.
+ *
+ * This asserts the guard is installed on the stream the sink actually writes
+ * to. A broken pipe is asynchronous, so no try/catch inside `record` can stand
+ * in for it — the listener is the only thing that prevents the crash.
+ */
+test("the default stdout sink guards its stream against asynchronous write errors", () => {
+  const listeners: Array<(...args: unknown[]) => void> = [];
+  let written = "";
+  const fake = {
+    write: (line: string) => { written += line; return true; },
+    on(eventName: string, handler: (...args: unknown[]) => void) {
+      if (eventName === "error") listeners.push(handler);
+      return this;
+    },
+  } as unknown as NodeJS.WritableStream;
+
+  const sink = createStdoutAuditSink(undefined, fake);
+  assert.equal(listeners.length, 1, "an unguarded audit stream can terminate the gateway on EPIPE");
+
+  sink.record({
+    type: "authorization_decision",
+    timestamp: FIXED_TIME.toISOString(),
+    requestId: "req-epipe",
+    stage: "authorization",
+    decision: "allow",
+    principalId: "principal-1",
+    orgId: TEST_ORG,
+    role: "inspector",
+  });
+  assert.match(written, /"requestId":"req-epipe"/, "the guard must not stop the sink writing");
+
+  // The handler must swallow rather than rethrow: there is nowhere to report a
+  // logging failure to, and re-raising here reintroduces the crash.
+  assert.doesNotThrow(() => listeners[0]!(new Error("EPIPE")));
+});
+
+/**
+ * The same stream is guarded once however many sinks are built over it, so a
+ * process constructing several middlewares does not leak listeners or trip
+ * Node's max-listeners warning.
+ */
+test("the stream guard is installed once per stream, not once per sink", () => {
+  let errorListeners = 0;
+  const fake = {
+    write: () => true,
+    on(eventName: string) { if (eventName === "error") errorListeners += 1; return this; },
+  } as unknown as NodeJS.WritableStream;
+
+  createStdoutAuditSink(undefined, fake);
+  createStdoutAuditSink(undefined, fake);
+  createStdoutAuditSink(undefined, fake);
+  assert.equal(errorListeners, 1);
+});
+
+/** An injected write is the test seam and must not touch the real stdout. */
+test("an injected write is used verbatim and leaves the default stream alone", () => {
+  const lines: string[] = [];
+  const sink = createStdoutAuditSink((line) => void lines.push(line));
+  sink.record({
+    type: "authorization_decision",
+    timestamp: FIXED_TIME.toISOString(),
+    requestId: "req-injected",
+    stage: "authentication",
+    decision: "deny",
+    reason: "missing_assertion",
+    status: 401,
+  });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /"requestId":"req-injected"/);
+});
