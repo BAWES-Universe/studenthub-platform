@@ -38,6 +38,7 @@ export const ACTIVATION_REQUIREMENTS = Object.freeze([
   "codex_sandbox_network",
   "github_head_credentials",
   "git_push_authentication",
+  "host_push_broker",
   "durable_state_persistence",
   "coordinator_on_brick_box",
 ]);
@@ -157,6 +158,26 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
       problems.push(unmet("git_push_authentication", "the builder worktree has no push remote",
         "configure an authenticated push remote for the worktree the builder runs in"));
     }
+  }
+
+  // 3b. host_push_broker (Option A, ratified 2026-09-07). The sandboxed worker
+  //     NEVER pushes; a host-side broker pushes ONLY the validated exact result
+  //     SHA using the repo-scoped deploy key. Dispatch for a builder lane is
+  //     therefore REFUSED unless the broker is enabled and fully configured.
+  //     A builder result that is never pushed is not a usable COMPLETED, and the
+  //     sandbox cannot push on its own — so this gate is not optional.
+  if (env.SHU_PUSH_BROKER_ENABLED !== "true") {
+    problems.push(unmet(
+      "host_push_broker",
+      `SHU_PUSH_BROKER_ENABLED is ${env.SHU_PUSH_BROKER_ENABLED ? `"${env.SHU_PUSH_BROKER_ENABLED}"` : "unset"}`,
+      "set SHU_PUSH_BROKER_ENABLED=true: the host-side broker is the only authorized pusher (worker never pushes)",
+    ));
+  } else if (!env.SHU_WORKTREE_ROOT || !env.SHU_PUSH_REMOTE_URL) {
+    problems.push(unmet(
+      "host_push_broker",
+      `SHU_WORKTREE_ROOT=${env.SHU_WORKTREE_ROOT ? "set" : "unset"} SHU_PUSH_REMOTE_URL=${env.SHU_PUSH_REMOTE_URL ? "set" : "unset"}`,
+      "provide SHU_WORKTREE_ROOT (approved worktree root) and SHU_PUSH_REMOTE_URL (fixed repo URL) for the push broker; absent config must never be guessed",
+    ));
   }
 
   // 4. Durable state persistence.

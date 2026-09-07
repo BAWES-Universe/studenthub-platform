@@ -23,7 +23,9 @@ import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { hostname as nodeHostname, platform as nodePlatform } from "node:os";
-import path from "node:path";
+import * as nodePath from "node:path";
+import { pushExactSha } from "../push-broker.mjs";
+const path = nodePath;
 
 export const ADAPTER_NAME = "codex-cli";
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
@@ -91,10 +93,10 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Attempt: ${attempt_id}`,
     task_context,
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
-    "Implement the change, run the relevant tests, and push the work to the SAME branch as a normal PR.",
+    "Implement the change and commit it locally (git add + git commit) so the worktree HEAD holds your exact result. Run the relevant tests. Do NOT push, do NOT open a PR, do NOT touch the network — a separate host-side broker pushes your exact result commit after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your work>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<PR url or evidence urls>"],"summary":"<short note>"}`,
-    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure.",
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your commit>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence urls>"],"summary":"<short note>"}`,
+    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. result_sha must be the exact commit you created — a host broker pushes precisely that SHA, never your branch tip or any uncommitted state.",
   ].filter(Boolean).join("\n");
 }
 
@@ -549,6 +551,9 @@ export async function launchBuilder({
   verifyDescendantImpl = headDescendsFromTarget,
   schemaFile = null,
   io = {},
+  branch = null,
+  repo = null,
+  pushBrokerImpl = null,
   timeout_ms = 45 * 60 * 1000,
   timeout_grace_ms = 30_000,
   max_output_bytes = 32 * 1024 * 1024,
@@ -639,7 +644,7 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context };
+  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo };
   const schemaPath = schemaFile ?? path.join(durableStateDir, `.callback-schema-${attempt_id}-${randomUUID()}.json`);
   const ownsSchemaFile = schemaFile === null;
   try {
@@ -806,6 +811,58 @@ export async function launchBuilder({
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };
   }
+
+  // OPTION A (ratified 2026-09-07): the sandboxed worker never pushes. The
+  // host-side broker pushes ONLY the validated exact callback SHA. The adapter
+  // process runs on the host under the coordinator identity (deploy-key owner),
+  // so this is the correct seam.
+  //
+  // Broker is opt-in: it is enabled ONLY when dispatch is being exercised
+  // (io.pushBrokerEnabled or SHU_PUSH_BROKER_ENABLED). In deterministic /
+  // contract-test / dry-run mode (dispatch off) the adapter returns COMPLETED
+  // unchanged — nothing launched, so there is nothing to push. In REAL dispatch
+  // the broker is MANDATORY and fails closed: a builder result that was never
+  // pushed is not a usable COMPLETED, and the sandbox cannot push by itself.
+  if (callback.result_sha && SHA_RE.test(String(callback.result_sha))) {
+    const brokerEnabled =
+      io.pushBrokerEnabled === true
+      || env.SHU_PUSH_BROKER_ENABLED === "true";
+    if (brokerEnabled) {
+      const runBroker = pushBrokerImpl ?? io.pushBrokerImpl ?? pushExactSha;
+      const allowedRoot = io.worktreeRoot ?? env.SHU_WORKTREE_ROOT ?? null;
+      const remoteUrl = io.pushRemoteUrl ?? env.SHU_PUSH_REMOTE_URL ?? null;
+      const branchPrefix = io.laneBranchPrefix ?? env.SHU_LANE_BRANCH_PREFIX ?? "coordinator/";
+      if (!allowedRoot || !remoteUrl) {
+        return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+          callback, evidence_links: callback.links,
+          reason: "push broker enabled but not configured (SHU_WORKTREE_ROOT, SHU_PUSH_REMOTE_URL) — HOLD + pause; no PUSH from the sandbox",
+          pause_adapter: true, ok: false };
+      }
+      const push = await runBroker({
+        stateDir: durableStateDir,
+        attempt_id,
+        result_sha: callback.result_sha,
+        target_sha,
+        branch: input.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${issue_id}`,
+        repo: input.repo ?? "BAWES-Universe/studenthub-platform",
+        worktree: cwd,
+        allowedRoot,
+        branchPrefix,
+        remoteUrl,
+        gitImpl: io.brokerGitImpl ?? gitImpl,
+        env,
+        io,
+      });
+      if (push.ok !== true) {
+        return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+          callback, evidence_links: callback.links,
+          reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, pause_adapter: true, ok: false };
+      }
+      if (!callback.links) callback.links = [];
+      callback.links = [...callback.links, `pushed:${push.remote_head ?? callback.result_sha}@${push.stage ?? "PUSHED"}`];
+    }
+  }
+
   // Keep resume ownership after any child actually started. The caller has not
   // durably persisted this terminal outcome yet, so deleting the claim here
   // would let a coordinator holding a stale receipt launch another resume in

@@ -36,6 +36,9 @@ function activatedEnv(over = {}) {
     CODEX_SANDBOX_NETWORK: "enabled",
     GITHUB_TOKEN: "gh-token",
     CODEX_GIT_PUSH_READY: "true",
+    SHU_PUSH_BROKER_ENABLED: "true",
+    SHU_WORKTREE_ROOT: "/srv/shu/worktrees",
+    SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
     COORDINATOR_HOST: HOST,
     ...over,
   };
@@ -55,6 +58,7 @@ for (const [requirement, override] of [
   ["codex_sandbox_network", { CODEX_SANDBOX_NETWORK: undefined }],
   ["github_head_credentials", { GITHUB_TOKEN: "" }],
   ["git_push_authentication", { CODEX_GIT_PUSH_READY: undefined }],
+  ["host_push_broker", { SHU_PUSH_BROKER_ENABLED: undefined }],
   ["coordinator_on_brick_box", { COORDINATOR_HOST: undefined }],
 ]) {
   test(`activation fails closed when ${requirement} is missing`, () => {
