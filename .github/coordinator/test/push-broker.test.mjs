@@ -49,7 +49,10 @@ function makeGit(script = {}) {
     let hit = script[a];
     if (!hit) {
       for (const k of Object.keys(script)) {
-        if (k !== "default" && a.startsWith(k)) { hit = script[k]; break; }
+        if (k === "default") continue;
+        // prefix match OR the key appears as a standalone token (handles
+        // `-c ... push ...` where the subcommand is not argv[0]).
+        if (a.startsWith(k) || a.split(" ").includes(k)) { hit = script[k]; break; }
       }
     }
     if (!hit) hit = script.default;
@@ -108,7 +111,7 @@ test("pushes the exact validated result SHA to the lane branch and confirms remo
   assert.equal(res.ok, true, res.reason);
   assert.equal(res.stage, "PUSHED");
   assert.equal(res.remote_head, RESULT);
-  assert.equal(git.calls.some((c) => c[0] === "push"), true, "broker must push");
+  assert.equal(git.calls.some((c) => c.includes("push")), true, "broker must push");
   assert.equal(git.calls.some((c) => c.includes("--force")), false, "force push prohibited");
 });
 
@@ -214,7 +217,7 @@ test("crash-after-push-before-record: remote already has result -> idempotent AL
   const res = await pushExactSha(baseOpts({ gitImpl: git.fn }));
   assert.equal(res.ok, true);
   assert.equal(res.stage, "ALREADY_PUSHED");
-  assert.equal(git.calls.filter((c) => c[0] === "push").length, 0, "no re-push when remote already has result");
+  assert.equal(git.calls.filter((c) => c.includes("push")).length, 0, "no re-push when remote already has result");
 });
 
 test("remote divergence: branch exists at a different sha -> HOLD, never clobber", async () => {

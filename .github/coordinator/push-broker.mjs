@@ -321,10 +321,11 @@ export async function pushExactSha({
   }
 
   // --- the push: hooks off, credential helpers off, force prohibited, explicit refspec ----
+  // `-c` config flags must precede the subcommand (git push -c ... is invalid).
   const pushArgs = [
-    "push",
     "-c", "core.hooksPath=/dev/null",
     "-c", "credential.helper=",
+    "push",
     remoteUrl,
     `${result_sha}:refs/heads/${branch}`,
   ];
