@@ -16,13 +16,14 @@ and local JWKS resolver, fake OIDC transport, injected clock and entropy source,
 and in-memory state, session, identity, and authorization stores. All origins and
 identities use reserved `.invalid` names or synthetic values.
 
-The repository test suite also runs a conforming reference adapter and thirty-two
+The repository test suite also runs a conforming reference adapter and thirty-three
 deliberately broken variants. Each broken variant must fail the scenario that
 names its disabled control. The reference adapter lives under `test/` and must
 never be wired into the gateway.
 
 The contract covers server-side code exchange and browser secrecy, CSPRNG and
-session-bound one-time state, PKCE S256, nonce verification, exact redirect
+session-bound one-time state, PKCE S256, nonce verification bound to the
+initiating browser session even across interleaved logins, exact redirect
 allowlisting, ID-token signature and claim validation, Universe subject policy,
 issuer/subject identity binding without profile matching, server-derived
 authorization, profile isolation, secure cookies, and server-side logout.

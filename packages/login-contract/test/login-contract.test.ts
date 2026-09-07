@@ -8,7 +8,7 @@ test("the conforming deterministic reference adapter satisfies every SHU-60 scen
   const report = await runLoginConformance(referenceLoginFactory());
   assert.equal(report.ok, true, JSON.stringify(report.results, null, 2));
   assert.deepEqual(report.results.map(({ name }) => name), LOGIN_CONTRACT_SCENARIOS);
-  assert.ok(report.results.length >= 6);
+  assert.ok(report.results.length >= 7);
   assert.equal(LOGIN_CONTRACT_VERSION, "1.0.0");
 });
 
@@ -27,6 +27,7 @@ const CONTROL_MUTATIONS: ReadonlyArray<readonly [keyof ReferenceFaults, string, 
   ["skipPkce", "PKCE S256", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["omitNonceIssuance", "nonce issuance", LOGIN_CONTRACT_SCENARIOS[0]!],
   ["skipNonceValidation", "nonce validation", LOGIN_CONTRACT_SCENARIOS[3]!],
+  ["nonceNotSessionBound", "nonce-to-session binding", LOGIN_CONTRACT_SCENARIOS[6]!],
   ["unsafeRedirect", "exact redirect allowlist", LOGIN_CONTRACT_SCENARIOS[2]!],
   ["skipSignature", "ID-token signature", LOGIN_CONTRACT_SCENARIOS[3]!],
   ["skipIssuer", "issuer", LOGIN_CONTRACT_SCENARIOS[3]!],

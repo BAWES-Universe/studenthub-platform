@@ -25,6 +25,7 @@ export interface ReferenceFaults {
   readonly skipPkce?: boolean;
   readonly omitNonceIssuance?: boolean;
   readonly skipNonceValidation?: boolean;
+  readonly nonceNotSessionBound?: boolean;
   readonly unsafeRedirect?: boolean;
   readonly skipSignature?: boolean;
   readonly skipIssuer?: boolean;
@@ -118,6 +119,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
     const cachedAuthorization = new Map<string, string>();
     let ignoredLoginCounter = 1;
     let ignoredSessionCounter = 101;
+    let latestIssuedNonce = "";
     const loginToken = () => faults.ignoreLoginEntropy
       ? Buffer.alloc(32, ignoredLoginCounter++).toString("base64url")
       : randomToken(dependencies);
@@ -130,6 +132,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
         if (!faults.unsafeRedirect && !config.allowedReturnUrls.includes(request.returnTo)) return failure();
         const state = faults.shortState ? "weak" : loginToken();
         const nonce = faults.omitNonceIssuance ? "" : loginToken();
+        latestIssuedNonce = nonce;
         const codeVerifier = loginToken();
         const codeChallenge = faults.skipPkce
           ? codeVerifier
@@ -201,7 +204,8 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
             redirectUri: faults.wrongCallbackUrl ? "https://attacker.invalid/callback" : config.callbackUrl,
             codeVerifier: loginState.codeVerifier,
           });
-          const claims = await validateIdToken(tokens.idToken, loginState.nonce, dependencies, config, faults);
+          const expectedNonce = faults.nonceNotSessionBound ? latestIssuedNonce : loginState.nonce;
+          const claims = await validateIdToken(tokens.idToken, expectedNonce, dependencies, config, faults);
           const candidateSubject = faults.emailSubjectFallback ? claims.email ?? claims.sub : claims.sub;
           if (!faults.skipSubjectPolicy && !config.subjectPolicy(candidateSubject)) return failure();
           const profile: ClaimedProfile = {

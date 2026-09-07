@@ -485,6 +485,36 @@ const SCENARIOS: readonly Scenario[] = [
       await expectRejected(rig.app.profile({ sessionId }), "logged-out session");
     },
   },
+  {
+    name: "nonce is bound to its initiating browser session under interleaved logins",
+    run: async (factory) => {
+      const acceptsOwnNonce = createSyntheticLoginRig(factory);
+      const loginA = await begin(acceptsOwnNonce, RETURN_URL, "browser-a");
+      const codeForA = acceptsOwnNonce.provider.authorize();
+      await begin(acceptsOwnNonce, "https://studenthub.test.invalid/profile", "browser-b");
+      const callbackA = await acceptsOwnNonce.app.callback({
+        browserSessionId: "browser-a",
+        state: loginA.request.state,
+        code: codeForA,
+      });
+      assert.equal(callbackA.status, 302, "login A must validate against A's nonce after login B starts");
+      assert.equal(callbackA.headers?.location, RETURN_URL, "login A must retain A's callback state");
+
+      const rejectsOtherNonce = createSyntheticLoginRig(factory);
+      const otherLoginA = await begin(rejectsOtherNonce, RETURN_URL, "browser-a");
+      await begin(rejectsOtherNonce, "https://studenthub.test.invalid/profile", "browser-b");
+      const codeForB = rejectsOtherNonce.provider.authorize();
+      await expectRejected(
+        rejectsOtherNonce.app.callback({
+          browserSessionId: "browser-a",
+          state: otherLoginA.request.state,
+          code: codeForB,
+        }),
+        "ID token carrying login B's nonce in login A's callback",
+      );
+      assert.equal(rejectsOtherNonce.sessions.records.size, 0, "cross-session nonce must not create a session");
+    },
+  },
 ];
 
 export async function runLoginConformance(factory: LoginApplicationFactory): Promise<ConformanceReport> {
