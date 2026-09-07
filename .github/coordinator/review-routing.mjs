@@ -126,6 +126,22 @@ export function activeWriter(entries) {
   return null;
 }
 
+// The output head of the most recent build/revise entry (its result_sha), or
+// null when no completed write recorded a result. Re-review must bind this
+// head — the head the completed write actually produced — never the stale
+// input target the write started from.
+export function latestResultSha(entries, withinAttempt = null) {
+  const list = entries ?? [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const e = list[i];
+    if (!e || typeof e !== "object") continue;
+    if (e.role !== "build" && e.role !== "revise") continue;
+    if (withinAttempt && e.attempt_id !== withinAttempt) continue;
+    if (typeof e.result_sha === "string" && /^[0-9a-f]{40}$/.test(e.result_sha)) return e.result_sha;
+  }
+  return null;
+}
+
 // Decide the next work order from review state. Pure: no side effects.
 //
 // state.requested      — the work order that just completed
@@ -145,6 +161,9 @@ export function nextWorkOrder(state = {}) {
       return { ok: false, reason: "no eligible non-author reviewer — visible HOLD until a fresh session is available", exhausted: false, hold: "no_eligible_reviewer" };
     }
     const reviewer = eligible[0];
+    // The review binds the WRITE's output head (result_sha) when the completed
+    // build/revise moved the branch — never the stale input target_sha.
+    const outputHead = latestResultSha(entries, requested.attempt_id) ?? requested.target_sha;
     return {
       ok: true,
       order: {
@@ -152,6 +171,7 @@ export function nextWorkOrder(state = {}) {
         role: "review",
         runtime: reviewer.runtime,
         actor: reviewer.actor,
+        target_sha: outputHead,
         attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
       },
     };
@@ -204,4 +224,56 @@ export function freshAttempt(priorAttemptId, stage, round) {
   const stageTag = h2.toString(16).padStart(8, "0").slice(0, 4);
   const roundTag = round.toString(16).padStart(4, "0");
   return `${hex}-${stageTag}-4${prior.slice(1, 4)}-8${prior.slice(4, 7)}-${prior.slice(0, 8)}${roundTag}`;
+}
+
+// Render a routed work order as the machine-readable directive posted to the
+// Linear card. The card — not a human relay — is the instruction channel: the
+// named actor reads role/runtime/exact head/stage and executes without anyone
+// forwarding messages. Round-trips through parseWorkOrderDirective.
+export const WORK_ORDER_MARKER = "coordinator-work-order v1";
+
+export function renderWorkOrderDirective(order) {
+  const v = validWorkOrder(order);
+  if (!v.ok) throw new Error(`cannot render invalid work order: ${v.reason}`);
+  return [
+    `<!-- ${WORK_ORDER_MARKER} -->`,
+    `**Work order (SHU-68 routing)** — role ${order.role} · runtime ${order.runtime} · actor ${order.actor ?? "coordinator-assigned"}`,
+    "```json",
+    JSON.stringify(
+      {
+        version: order.version,
+        role: order.role,
+        runtime: order.runtime,
+        actor: order.actor ?? null,
+        issue_id: order.issue_id,
+        attempt_id: order.attempt_id,
+        authorization_ref: order.authorization_ref,
+        target_sha: order.target_sha,
+        base_sha: order.base_sha ?? null,
+        outcome: order.outcome ?? null,
+        writer: order.writer ?? null,
+      },
+      null,
+      2,
+    ),
+    "```",
+  ].join("\n");
+}
+
+// Parse a directive back into an order object. Returns { ok, order? } —
+// a malformed or forged-looking directive is never trusted as an order.
+export function parseWorkOrderDirective(body) {
+  if (typeof body !== "string" || !body.includes(`<!-- ${WORK_ORDER_MARKER} -->`)) {
+    return { ok: false, reason: "not a work-order directive" };
+  }
+  const m = /```json\n([\s\S]*?)\n```/.exec(body);
+  if (!m) return { ok: false, reason: "no JSON block in directive" };
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1]);
+  } catch {
+    return { ok: false, reason: "directive JSON does not parse" };
+  }
+  if (validWorkOrder(parsed).ok) return { ok: true, order: parsed };
+  return { ok: false, reason: validWorkOrder(parsed).reason };
 }

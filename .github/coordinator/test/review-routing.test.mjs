@@ -19,6 +19,9 @@ import {
   activeWriter,
   nextWorkOrder,
   freshAttempt,
+  WORK_ORDER_MARKER,
+  renderWorkOrderDirective,
+  parseWorkOrderDirective,
 } from "../review-routing.mjs";
 
 const SHA = "a".repeat(40);
@@ -177,4 +180,62 @@ test("shared Git identity can never fabricate independence (derived actor is not
   ];
   const eligible = eligibleReviewers(entries);
   assert.equal(eligible.length, 0, "relabeled author session is not independence");
+});
+
+test("work-order directive: rendered directive round-trips and carries the exact head", () => {
+  const order = baseOrder({ role: "review", runtime: "claude-code", actor: "claude:v1", outcome: null });
+  const body = renderWorkOrderDirective(order);
+  assert.match(body, /coordinator-work-order v1/);
+  assert.match(body, /role review/);
+  const parsed = parseWorkOrderDirective(body);
+  assert.equal(parsed.ok, true, parsed.reason);
+  assert.equal(parsed.order.role, "review");
+  assert.equal(parsed.order.runtime, "claude-code");
+  assert.equal(parsed.order.actor, "claude:v1");
+  assert.equal(parsed.order.target_sha, SHA, "the exact head is in the directive");
+});
+
+test("work-order directive: BLOCK revision directive names the writer as actor (card is the instruction channel)", () => {
+  const entries = [
+    provenanceEntry({ attempt_id: "1", actor: "codex:s1", role: "build", runtime: "codex-cli", target_sha: SHA }),
+    provenanceEntry({ attempt_id: "2", actor: "claude:v1", role: "review", runtime: "claude-code", target_sha: SHA }),
+  ];
+  const requested = baseOrder({ role: "review", runtime: "claude-code", outcome: "BLOCKED" });
+  const r = nextWorkOrder({ requested, entries, review_round: 1 });
+  assert.equal(r.ok, true, r.reason);
+  const body = renderWorkOrderDirective(r.order);
+  assert.match(body, /role revise/);
+  assert.match(body, /actor codex:s1/, "the directive names who acts next — no human relay needed");
+  const parsed = parseWorkOrderDirective(body);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.order.actor, "codex:s1");
+  assert.equal(parsed.order.writer, null, "directive renderer emits writer:null when not set");
+});
+
+test("work-order directive: malformed / non-directive text is never trusted as an order", () => {
+  assert.equal(parseWorkOrderDirective("just a comment").ok, false);
+  assert.equal(parseWorkOrderDirective("<!-- coordinator-work-order v1 -->\nno json").ok, false);
+  assert.equal(parseWorkOrderDirective("<!-- coordinator-work-order v1 -->\n```json\n{not json}\n```").ok, false);
+  assert.equal(parseWorkOrderDirective(null).ok, false);
+  const invalid = parseWorkOrderDirective("<!-- coordinator-work-order v1 -->\n```json\n{\"version\":\"1.0.0\",\"role\":\"ship\",\"runtime\":\"codex-cli\"}\n```");
+  assert.equal(invalid.ok, false, "an invalid role never parses to an order");
+});
+
+test("routing round-trip: BLOCK -> revise directive -> next build review cycle stays author-excluding", () => {
+  // Full loop the fixture will exercise: build by codex:s1 -> review by claude:v1
+  // BLOCKs -> revise directive names codex:s1 -> after revise, claude:v1 reviews
+  // again (still not an author) and PASSes.
+  const entries = [
+    provenanceEntry({ attempt_id: "1", actor: "codex:s1", role: "build", runtime: "codex-cli", target_sha: SHA }),
+    provenanceEntry({ attempt_id: "2", actor: "claude:v1", role: "review", runtime: "claude-code", target_sha: SHA }),
+  ];
+  const blocked = nextWorkOrder({ requested: baseOrder({ role: "review", runtime: "claude-code", outcome: "BLOCKED" }), entries, review_round: 1 });
+  assert.equal(blocked.ok, true);
+  assert.equal(blocked.order.role, "revise");
+  const revisedEntries = [...entries, provenanceEntry({ attempt_id: blocked.order.attempt_id, actor: "codex:s1", role: "revise", runtime: "codex-cli", target_sha: SHA2, result_sha: SHA2 })];
+  const again = nextWorkOrder({ requested: { ...blocked.order, role: "revise", outcome: "BUILD_READY", review_runtimes: ["claude-code"] }, entries: revisedEntries, review_round: 1 });
+  assert.equal(again.ok, true, again.reason);
+  assert.equal(again.order.role, "review");
+  assert.equal(again.order.actor, "claude:v1", "non-author reviewer reviews the revision");
+  assert.notEqual(again.order.target_sha, SHA, "re-review binds the NEW head");
 });
