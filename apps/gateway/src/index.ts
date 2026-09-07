@@ -130,10 +130,14 @@ export function createGatewayServer(
 
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/profile") {
       const url = new URL(request.url, "http://gateway.invalid");
-      writeBrowserResponse(response, await login.profile({
+      const result = await login.profile({
         sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
         personId: url.searchParams.get("person_id") ?? undefined,
-      }));
+      });
+      writeBrowserResponse(response, {
+        ...result,
+        headers: { ...result.headers, "cache-control": "no-store" },
+      });
       return;
     }
 

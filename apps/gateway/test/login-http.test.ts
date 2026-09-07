@@ -66,6 +66,7 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
     headers: { cookie: `__Host-studenthub_session=${SESSION}` },
   });
   assert.equal(profile.status, 200);
+  assert.equal(profile.headers.get("cache-control"), "no-store");
   assert.deepEqual(await profile.json(), { personId: "person-synthetic", role: "self" });
 
   const falsePrefix = await fetch(`${origin}/profile-foreign`, {

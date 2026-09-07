@@ -18,19 +18,30 @@ interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
 }
 
-class HttpOidcTransport implements OidcTransport {
+const DEFAULT_OIDC_HTTP_TIMEOUT_MS = 10_000;
+
+export class HttpOidcTransport implements OidcTransport {
   readonly #issuer: string;
   readonly #authorizationEndpoint: string;
   readonly #tokenEndpoint: string;
+  readonly #requestTimeoutMs: number;
+  readonly #fetch: typeof fetch;
 
   constructor(
     issuer: string,
     authorizationEndpoint: string,
     tokenEndpoint: string,
+    requestTimeoutMs = DEFAULT_OIDC_HTTP_TIMEOUT_MS,
+    fetchImplementation: typeof fetch = fetch,
   ) {
+    if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) {
+      throw new RangeError("OIDC request timeout must be a positive safe integer");
+    }
     this.#issuer = issuer;
     this.#authorizationEndpoint = authorizationEndpoint;
     this.#tokenEndpoint = tokenEndpoint;
+    this.#requestTimeoutMs = requestTimeoutMs;
+    this.#fetch = fetchImplementation;
   }
 
   authorizationUrl(request: AuthorizationRequest): string {
@@ -50,7 +61,7 @@ class HttpOidcTransport implements OidcTransport {
   }
 
   async exchange(request: TokenRequest): Promise<TokenResponse> {
-    const response = await fetch(this.#tokenEndpoint, {
+    const response = await this.#fetch(this.#tokenEndpoint, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -62,6 +73,7 @@ class HttpOidcTransport implements OidcTransport {
         code_verifier: request.codeVerifier,
       }),
       redirect: "error",
+      signal: AbortSignal.timeout(this.#requestTimeoutMs),
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
@@ -75,20 +87,29 @@ class HttpOidcTransport implements OidcTransport {
   }
 }
 
-class RefreshingJwksResolver implements JwksResolver {
+export class RefreshingJwksResolver implements JwksResolver {
   readonly #keys = new Map<string, { readonly jwk: TestJsonWebKey; readonly expiresAt: number }>();
   readonly #issuer: string;
   readonly #jwksUrl: string;
   readonly #ttlSeconds: number;
+  readonly #requestTimeoutMs: number;
+  readonly #fetch: typeof fetch;
 
   constructor(
     issuer: string,
     jwksUrl: string,
     ttlSeconds = 300,
+    requestTimeoutMs = DEFAULT_OIDC_HTTP_TIMEOUT_MS,
+    fetchImplementation: typeof fetch = fetch,
   ) {
+    if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) {
+      throw new RangeError("OIDC request timeout must be a positive safe integer");
+    }
     this.#issuer = issuer;
     this.#jwksUrl = jwksUrl;
     this.#ttlSeconds = ttlSeconds;
+    this.#requestTimeoutMs = requestTimeoutMs;
+    this.#fetch = fetchImplementation;
   }
 
   async resolve(issuer: string, kid: string): Promise<TestJsonWebKey | undefined> {
@@ -100,7 +121,10 @@ class RefreshingJwksResolver implements JwksResolver {
     // Refresh on expiry and every unknown kid. Keys absent from the latest
     // issuer document are evicted, so rotation cannot fall back to a retired
     // key indefinitely.
-    const response = await fetch(this.#jwksUrl, { redirect: "error" });
+    const response = await this.#fetch(this.#jwksUrl, {
+      redirect: "error",
+      signal: AbortSignal.timeout(this.#requestTimeoutMs),
+    });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       throw new Error("OIDC JWKS refresh failed");
@@ -154,9 +178,11 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
   const authorizationUrl = exactHttpsUrl(value("OIDC_AUTHORIZATION_URL"), "OIDC_AUTHORIZATION_URL");
   const tokenUrl = exactHttpsUrl(value("OIDC_TOKEN_URL"), "OIDC_TOKEN_URL");
   const jwksUrl = exactHttpsUrl(value("OIDC_JWKS_URL"), "OIDC_JWKS_URL");
+  if (value("LOGIN_ALLOWED_RETURN_URLS").trim().length === 0) {
+    throw new Error("LOGIN_ALLOWED_RETURN_URLS must not be empty");
+  }
   const allowedReturnUrls = value("LOGIN_ALLOWED_RETURN_URLS").split(",").map((item) =>
     exactHttpsUrl(item.trim(), "LOGIN_ALLOWED_RETURN_URLS"));
-  if (allowedReturnUrls.length === 0) throw new Error("LOGIN_ALLOWED_RETURN_URLS must not be empty");
 
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
