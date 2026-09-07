@@ -101,7 +101,7 @@ export function createGatewayServer(
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/login/universe") {
       const url = new URL(request.url, "http://gateway.invalid");
       const returnTo = url.searchParams.get("return_to") ?? "";
-      const browserSessionId = cookieValue(request.headers.cookie, "studenthub_browser")
+      const browserSessionId = cookieValue(request.headers.cookie, "__Host-studenthub_browser")
         ?? randomBytes(32).toString("base64url");
       let result: import("@studenthub/login-contract").BrowserResponse;
       try {
@@ -110,14 +110,14 @@ export function createGatewayServer(
         result = { status: 503, body: { error: "login_unavailable" } };
       }
       writeBrowserResponse(response, result, result.status === 302
-        ? `studenthub_browser=${browserSessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`
+        ? `__Host-studenthub_browser=${browserSessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`
         : undefined);
       return;
     }
 
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/login/callback") {
       const url = new URL(request.url, "http://gateway.invalid");
-      const browserSessionId = cookieValue(request.headers.cookie, "studenthub_browser");
+      const browserSessionId = cookieValue(request.headers.cookie, "__Host-studenthub_browser");
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
       if (!browserSessionId || !state || !code) {
@@ -131,7 +131,7 @@ export function createGatewayServer(
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/profile") {
       const url = new URL(request.url, "http://gateway.invalid");
       writeBrowserResponse(response, await login.profile({
-        sessionId: cookieValue(request.headers.cookie, "studenthub_session"),
+        sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
         personId: url.searchParams.get("person_id") ?? undefined,
       }));
       return;
@@ -140,7 +140,7 @@ export function createGatewayServer(
     if (login && request.method === "POST" && request.url === "/logout") {
       writeBrowserResponse(
         response,
-        await login.logout(cookieValue(request.headers.cookie, "studenthub_session")),
+        await login.logout(cookieValue(request.headers.cookie, "__Host-studenthub_session")),
       );
       return;
     }

@@ -162,7 +162,7 @@ export const createLoginApplication: LoginApplicationFactory = (
         status: 302,
         headers: {
           location: loginState.returnTo,
-          "set-cookie": `studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+          "set-cookie": `__Host-studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
         },
       };
     } catch {
@@ -189,7 +189,7 @@ export const createLoginApplication: LoginApplicationFactory = (
       return {
         status: 204,
         headers: {
-          "set-cookie": "studenthub_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+          "set-cookie": "__Host-studenthub_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
         },
       };
     } catch {

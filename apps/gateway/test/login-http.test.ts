@@ -21,7 +21,7 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
         status: 302,
         headers: {
           location: "https://studenthub.test.invalid/home",
-          "set-cookie": `studenthub_session=${SESSION}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+          "set-cookie": `__Host-studenthub_session=${SESSION}; Path=/; HttpOnly; Secure; SameSite=Lax`,
         },
       };
     },
@@ -31,7 +31,7 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
     },
     async logout(sessionId) {
       assert.equal(sessionId, SESSION);
-      return { status: 204, headers: { "set-cookie": "studenthub_session=; Max-Age=0" } };
+      return { status: 204, headers: { "set-cookie": "__Host-studenthub_session=; Max-Age=0" } };
     },
   };
   const server = createGatewayServer(undefined, undefined, undefined, login);
@@ -48,7 +48,7 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
   assert.equal(start.status, 302);
   assert.equal(start.headers.get("location"), "https://identity.test.invalid/authorize");
   const browserCookie = start.headers.get("set-cookie") ?? "";
-  assert.match(browserCookie, /^studenthub_browser=[A-Za-z0-9_-]{43};/);
+  assert.match(browserCookie, /^__Host-studenthub_browser=[A-Za-z0-9_-]{43};/);
   assert.match(browserCookie, /HttpOnly/);
   assert.match(browserCookie, /Secure/);
   assert.match(browserCookie, /SameSite=Lax/);
@@ -63,19 +63,19 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
   assert.doesNotMatch(JSON.stringify([...callback.headers]), /state|code|token|secret/i);
 
   const profile = await fetch(`${origin}/profile`, {
-    headers: { cookie: `studenthub_session=${SESSION}` },
+    headers: { cookie: `__Host-studenthub_session=${SESSION}` },
   });
   assert.equal(profile.status, 200);
   assert.deepEqual(await profile.json(), { personId: "person-synthetic", role: "self" });
 
   const falsePrefix = await fetch(`${origin}/profile-foreign`, {
-    headers: { cookie: `studenthub_session=${SESSION}` },
+    headers: { cookie: `__Host-studenthub_session=${SESSION}` },
   });
   assert.equal(falsePrefix.status, 404);
 
   const logout = await fetch(`${origin}/logout`, {
     method: "POST",
-    headers: { cookie: `studenthub_session=${SESSION}` },
+    headers: { cookie: `__Host-studenthub_session=${SESSION}` },
   });
   assert.equal(logout.status, 204);
 });
