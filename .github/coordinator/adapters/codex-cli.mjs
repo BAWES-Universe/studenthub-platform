@@ -23,7 +23,9 @@ import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { hostname as nodeHostname, platform as nodePlatform } from "node:os";
-import path from "node:path";
+import * as nodePath from "node:path";
+import { pushExactSha } from "../push-broker.mjs";
+const path = nodePath;
 
 export const ADAPTER_NAME = "codex-cli";
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
@@ -91,10 +93,10 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Attempt: ${attempt_id}`,
     task_context,
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
-    "Implement the change, run the relevant tests, and push the work to the SAME branch as a normal PR.",
+    "Implement the change and commit it locally (git add + git commit) so the worktree HEAD holds your exact result. Run the relevant tests. Do NOT push, do NOT open a PR, do NOT touch the network — a separate host-side broker pushes your exact result commit after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your work>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<PR url or evidence urls>"],"summary":"<short note>"}`,
-    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure.",
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your commit>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
+    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. result_sha must be the exact commit you created — a host broker pushes precisely that SHA, never your branch tip or any uncommitted state.",
   ].filter(Boolean).join("\n");
 }
 
@@ -267,18 +269,38 @@ export function parseCodexCallback(stdout) {
   }
 }
 
+// The broker is the ONLY authorized pusher, so it runs unless a caller
+// EXPLICITLY opts out. Deriving "enabled" from a flag that had to be PRESENT
+// meant an omission produced a COMPLETED with nothing pushed. One definition,
+// because two copies drift and the launch-time check and the push-time check
+// must never disagree about whether the broker is in play.
+export function brokerOptedOut(io = {}, env = {}) {
+  return io.pushBrokerEnabled === false || env.SHU_PUSH_BROKER_ENABLED === "false";
+}
+
 export function callbackValid(callback, { attempt_id, target_sha }) {
   if (!callback || typeof callback !== "object") return false;
   if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
   if (!SHA_RE.test(callback.result_sha ?? "")) return false;
   if (!CALLBACK_STAGES.includes(callback.stage)) return false;
   if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
+  // Option A removed the worker's ability to produce an http(s) URL: it never
+  // pushes, never opens a PR, and has no network. Requiring one made the
+  // callback unsatisfiable for a COMPLIANT worker, so validation always failed
+  // and the broker could never run (Sentry 16535525/1 — real, and it would have
+  // surfaced on the first live fixture rather than in any mocked test).
+  //
+  // Evidence is still required, and anything that IS a URL must still be
+  // http(s): these strings are rendered into Linear and GitHub comments, so a
+  // file:, data: or javascript: link must never be accepted.
   return callback.links.every((link) => {
     if (typeof link !== "string") return false;
+    const trimmed = link.trim();
+    if (trimmed.length === 0 || trimmed.length > 512) return false;
     try {
-      return ["http:", "https:"].includes(new URL(link).protocol);
+      return ["http:", "https:"].includes(new URL(trimmed).protocol);
     } catch {
-      return false;
+      return true; // a plain evidence reference, e.g. a test name or path
     }
   });
 }
@@ -549,6 +571,9 @@ export async function launchBuilder({
   verifyDescendantImpl = headDescendsFromTarget,
   schemaFile = null,
   io = {},
+  branch = null,
+  repo = null,
+  pushBrokerImpl = null,
   timeout_ms = 45 * 60 * 1000,
   timeout_grace_ms = 30_000,
   max_output_bytes = 32 * 1024 * 1024,
@@ -639,7 +664,7 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context };
+  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo };
   const schemaPath = schemaFile ?? path.join(durableStateDir, `.callback-schema-${attempt_id}-${randomUUID()}.json`);
   const ownsSchemaFile = schemaFile === null;
   try {
@@ -734,9 +759,31 @@ export async function launchBuilder({
     };
     // execFileImpl remains an explicit compatibility seam for deterministic unit
     // tests. Production uses spawn so thread.started is persisted before exit.
+    // The builder runs through the privilege-drop wrapper when one is
+    // configured, so it does NOT inherit the coordinator's OS identity. That is
+    // the boundary the push broker's isolation depends on: a same-uid worker can
+    // write the broker's own repository after createBrokerRepo() returns and
+    // redirect the push, which an independent verifier reproduced at `abe816a`.
+    // activation.mjs refuses dispatch when the wrapper or SHU_WORKER_UID is
+    // missing — but activation runs in main(), and launchBuilder is exported.
+    // This comment used to end "so reaching here unwrapped means the broker is
+    // disabled", which was an ASSUMPTION where a check belonged: a direct caller
+    // with broker config and no wrapper would run codex as the coordinator and
+    // then hand the credentialed broker its result (CodeRabbit). That is the
+    // same fail-closed gap this adapter already fixed once for the broker
+    // opt-out, and the mechanism must refuse on its own rather than trusting a
+    // gate somewhere upstream.
+    const wrapper = (env.SHU_WORKER_LAUNCH_WRAPPER ?? "").trim();
+    if (!brokerOptedOut(io, env) && !wrapper) {
+      return { stage: "HOLD", pause_adapter: true, ok: false,
+        reason: "push broker enabled but SHU_WORKER_LAUNCH_WRAPPER is unset — refusing to run the builder under the coordinator's OS identity" };
+    }
+    const [launchBin, launchArgs] = wrapper
+      ? [wrapper.split(/\s+/)[0], [...wrapper.split(/\s+/).slice(1), "codex", ...args]]
+      : ["codex", args];
     result = execImpl !== nodeExecFile && !io.spawnImpl
-      ? await runExecFile(execImpl, "codex", args, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
-      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
+      ? await runExecFile(execImpl, launchBin, launchArgs, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
+      : await runSpawn(io.spawnImpl ?? spawnImpl, launchBin, launchArgs, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {
@@ -806,6 +853,66 @@ export async function launchBuilder({
   if (!SUCCESS_CALLBACK_STAGES.includes(callback.stage)) {
     return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed", callback, evidence_links: callback.links, reason: `builder returned ${callback.stage}`, ok: false };
   }
+
+  // OPTION A (ratified 2026-09-07): the sandboxed worker never pushes. The
+  // host-side broker pushes ONLY the validated exact callback SHA. The adapter
+  // process runs on the host under the coordinator identity (deploy-key owner),
+  // so this is the correct seam.
+  //
+  // Broker is opt-in: it is enabled ONLY when dispatch is being exercised
+  // (io.pushBrokerEnabled or SHU_PUSH_BROKER_ENABLED). In deterministic /
+  // contract-test / dry-run mode (dispatch off) the adapter returns COMPLETED
+  // unchanged — nothing launched, so there is nothing to push. In REAL dispatch
+  // the broker is MANDATORY and fails closed: a builder result that was never
+  // pushed is not a usable COMPLETED, and the sandbox cannot push by itself.
+  if (callback.result_sha && SHA_RE.test(String(callback.result_sha))) {
+    // FAIL CLOSED (Opus R3). The broker is the ONLY authorized pusher, so it
+    // runs unless a caller EXPLICITLY opts out. Deriving "enabled" from a flag
+    // that had to be PRESENT meant an omission produced a COMPLETED with nothing
+    // pushed — the exact outcome this broker exists to prevent — and no test
+    // bound it: forcing the flag off left 288/288 green. An opt-out cannot be
+    // reached by forgetting something.
+    if (!brokerOptedOut(io, env)) {
+      const runBroker = pushBrokerImpl ?? io.pushBrokerImpl ?? pushExactSha;
+      const allowedRoot = io.worktreeRoot ?? env.SHU_WORKTREE_ROOT ?? null;
+      const remoteUrl = io.pushRemoteUrl ?? env.SHU_PUSH_REMOTE_URL ?? null;
+      const branchPrefix = io.laneBranchPrefix ?? env.SHU_LANE_BRANCH_PREFIX ?? "coordinator/";
+      if (!allowedRoot || !remoteUrl) {
+        return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+          callback, evidence_links: callback.links,
+          reason: "push broker enabled but not configured (SHU_WORKTREE_ROOT, SHU_PUSH_REMOTE_URL) — HOLD + pause; no PUSH from the sandbox",
+          pause_adapter: true, ok: false };
+      }
+      const push = await runBroker({
+        stateDir: durableStateDir,
+        attempt_id,
+        result_sha: callback.result_sha,
+        target_sha,
+        branch: input.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${issue_id}`,
+        repo: input.repo ?? "BAWES-Universe/studenthub-platform",
+        worktree: cwd,
+        allowedRoot,
+        branchPrefix,
+        remoteUrl,
+        // `gitImpl` was undefined here: a ReferenceError crashed the configured
+        // success path instead of returning a controlled result (Codex R3).
+        // It must be the REAL git executor — NOT execFileImpl, which tests
+        // substitute with the codex CLI double, and which would hand the broker
+        // codex JSONL where it expects git output.
+        gitImpl: io.brokerGitImpl ?? nodeExecFile,
+        env,
+        io,
+      });
+      if (push.ok !== true) {
+        return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+          callback, evidence_links: callback.links,
+          reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, pause_adapter: true, ok: false };
+      }
+      if (!callback.links) callback.links = [];
+      callback.links = [...callback.links, `pushed:${push.remote_head ?? callback.result_sha}@${push.stage ?? "PUSHED"}`];
+    }
+  }
+
   // Keep resume ownership after any child actually started. The caller has not
   // durably persisted this terminal outcome yet, so deleting the claim here
   // would let a coordinator holding a stale receipt launch another resume in

@@ -42,6 +42,11 @@ const CWD = "/repo";
 const TEST_STATE_DIR = mkdtempSync(join(tmpdir(), "codex-state-"));
 
 function launchInput(over = {}) {
+  // `io` MERGES rather than being replaced: the broker fails closed, so the
+  // suite-wide opt-out must survive a test that supplies its own io keys.
+  // Overwriting it silently re-enabled the broker and turned unrelated tests
+  // into HOLDs — which is the fail-closed default doing its job.
+  const { io: ioOver, ...rest } = over;
   return {
     issue_id: "SHU-63",
     authorization_ref: "SHU-63",
@@ -51,8 +56,8 @@ function launchInput(over = {}) {
     cwd: CWD,
     env: { PATH: "/usr/bin", HOME: "/root", CODEX_HOME: "/root/.codex", OPENAI_API_KEY: "should-never-leak" },
     readHeadImpl: async () => SHA, // tests never hit real git; checkout is at the bound head
-    io: { codexStateDir: TEST_STATE_DIR },
-    ...over,
+    ...rest,
+    io: { codexStateDir: TEST_STATE_DIR, pushBrokerEnabled: false, ...(ioOver ?? {}) },
   };
 }
 
@@ -106,6 +111,118 @@ test("launch args match the documented CLI contract: exec --json --sandbox works
   assert.equal(args[args.indexOf("-C") + 1], CWD);
   assert.ok(args.some((a) => a.includes("--output-schema")), "schema-constrained output");
   assert.ok(calls[0].file === "codex", "execFile codex, never a shell");
+});
+
+// ---------------------------------------------------------------------------
+// The push broker is the ONLY authorized pusher, so the adapter must fail CLOSED
+// (Opus R3). Before this, `if (brokerEnabled)` had no else: a successful callback
+// with the flag unset returned COMPLETED having pushed nothing — and forcing the
+// flag off left the whole suite green, so nothing bound it. These two tests make
+// the opt-out explicit and the omission fatal.
+// ---------------------------------------------------------------------------
+
+// No pushBrokerEnabled key at all: the production shape where configuration was
+// forgotten. Named so a blanket opt-out edit can never reach it.
+const BROKER_UNCONFIGURED = Object.freeze({ codexStateDir: TEST_STATE_DIR });
+
+test("a success callback with the broker neither disabled nor configured HOLDs — never a COMPLETED with nothing pushed", async () => {
+  const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
+  const input = launchInput();
+  // Explicitly DROP the opt-out: this is the production shape where someone
+  // forgot to configure the broker. It must refuse, not silently complete.
+  const out = await launchBuilder({
+    ...input,
+    // The wrapper is supplied so this test reaches the check it is about. The
+    // missing-wrapper case is a SEPARATE fail-closed gate with its own test;
+    // without this the HOLD would come from there and this assertion would pass
+    // for the wrong reason.
+    env: { ...input.env, SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker" },
+    io: BROKER_UNCONFIGURED, // deliberately NO opt-out — this is the forgotten-config shape
+    execFileImpl: recordingExec([]),
+    schemaFile: join(schemaDir, "schema.json"),
+  });
+  assert.equal(out.stage, "HOLD", `expected HOLD, got ${out.stage}`);
+  assert.equal(out.pause_adapter, true, "an unpushable success must pause the lane");
+  assert.match(String(out.reason ?? ""), /push broker enabled but not configured/);
+  assert.equal(out.callback.stage, "BUILD_READY", "the callback is still reported for evidence");
+});
+
+test("a network-isolated worker's local evidence is accepted, but a non-http URL never is", async () => {
+  // Sentry 16535525/1: Option A forbids network/PR, so requiring an http(s)
+  // link made the callback unsatisfiable for a compliant worker and the broker
+  // could never run. Local evidence is now valid; a file:/javascript:/data:
+  // link is still refused because these strings are rendered into comments.
+  const base = { attempt_id: ATTEMPT, target_sha: SHA, result_sha: SHA, stage: "BUILD_READY" };
+  const ok = (links) => callbackValid({ ...base, links }, { attempt_id: ATTEMPT, target_sha: SHA });
+
+  assert.equal(ok(["packages/db/test/postgres-authz-store.test.ts"]), true, "a file path is valid evidence");
+  assert.equal(ok(["coordinator suite 303/303"]), true, "a test result is valid evidence");
+  assert.equal(ok(["https://github.com/BAWES-Universe/studenthub-platform/pull/32"]), true);
+
+  assert.equal(ok([]), false, "evidence is still required");
+  assert.equal(ok([""]), false, "empty evidence is not evidence");
+  assert.equal(ok(["   "]), false);
+  assert.equal(ok(["file:///etc/passwd"]), false, "a file: URL must never be rendered as evidence");
+  assert.equal(ok(["javascript:alert(1)"]), false);
+  assert.equal(ok(["data:text/html,<script>"]), false);
+  assert.equal(ok(["x".repeat(513)]), false, "unbounded evidence is refused");
+  assert.equal(ok([42]), false);
+});
+
+test("a CONFIGURED success path reaches the real broker seam and returns a controlled result, never a crash", async () => {
+  // Codex R3 BLOCK #1: `io.brokerGitImpl ?? gitImpl` referenced an undefined
+  // `gitImpl`, so the configured success path threw ReferenceError instead of
+  // returning HOLD. The forgotten-config test exits BEFORE that line and the
+  // opt-out tests never reach it, so neither covered this seam.
+  //
+  // This test therefore supplies a full broker configuration and deliberately
+  // does NOT inject io.brokerGitImpl, so the adapter must bind a real git
+  // executor itself and the broker must actually run.
+  const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
+  const brokerRoot = mkdtempSync(join(tmpdir(), "codex-broker-root-"));
+  const notARepo = join(brokerRoot, "worktree");
+  mkdirSync(notARepo, { recursive: true });
+
+  const out = await launchBuilder({
+    ...launchInput({
+      cwd: notARepo,
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/root",
+        CODEX_HOME: "/root/.codex",
+        SHU_WORKTREE_ROOT: brokerRoot,
+        SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+        // Production shape: the broker never runs unwrapped, so a test of the
+        // configured broker seam must be wrapped too.
+        SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker",
+      },
+    }),
+    // Set AFTER the spread so launchInput's suite-wide opt-out is genuinely
+    // absent: no pushBrokerEnabled and no brokerGitImpl, exactly the production
+    // shape. Keep it a distinct object so a future blanket edit cannot reach it.
+    io: { codexStateDir: TEST_STATE_DIR },
+    branch: "coordinator/SHU-63",
+    repo: "BAWES-Universe/studenthub-platform",
+    execFileImpl: recordingExec([]),
+    schemaFile: join(schemaDir, "schema.json"),
+  });
+
+  // The contract is a CONTROLLED result. Before the fix this line was never
+  // reached — the call threw.
+  assert.equal(out.stage, "HOLD", `expected a controlled HOLD, got ${out.stage}`);
+  assert.equal(out.pause_adapter, true);
+  assert.match(String(out.reason ?? ""), /push broker did not confirm result commit/);
+  assert.equal(out.callback.stage, "BUILD_READY", "the builder callback is still reported");
+});
+
+test("an explicit opt-out is the only way to skip the broker, and it still COMPLETEs", async () => {
+  const schemaDir = mkdtempSync(join(tmpdir(), "codex-"));
+  const out = await launchBuilder({
+    ...launchInput({ io: { codexStateDir: TEST_STATE_DIR, pushBrokerEnabled: false } }),
+    execFileImpl: recordingExec([]),
+    schemaFile: join(schemaDir, "schema.json"),
+  });
+  assert.equal(out.stage, "COMPLETED");
 });
 
 test("thread.started binds the durable run id: codexrun_<thread-uuid> + codex identity", async () => {
@@ -218,7 +335,7 @@ test("resume accepts builder commits descended from the bound input and rejects 
       readHeadImpl: async () => RESULT_SHA,
       verifyDescendantImpl: async ({ target_sha }) => { checks += 1; assert.equal(target_sha, SHA); return descends; },
       execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
-      io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
     });
     assert.equal(checks, 1);
     return out;
@@ -274,7 +391,7 @@ test("resume binds the EXACT thread id from the receipt; --last never appears; m
     external_run_id: `codexrun_${THREAD}`,
     execFileImpl: recordingExec(calls),
     schemaFile: join(schemaDir, "schema.json"),
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => null },
   });
   assert.equal(out.stage, "COMPLETED");
   const args = calls[0].args;
@@ -288,7 +405,7 @@ test("resume binds the EXACT thread id from the receipt; --last never appears; m
 
   // No durable id -> visible HOLD, and the execFile must never run.
   const calls2 = [];
-  const outNoId = await launchBuilder({ ...launchInput(), resume: true, external_run_id: null, execFileImpl: recordingExec(calls2), schemaFile: join(schemaDir, "schema.json"), io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-empty-")) } });
+  const outNoId = await launchBuilder({ ...launchInput(), resume: true, external_run_id: null, execFileImpl: recordingExec(calls2), schemaFile: join(schemaDir, "schema.json"), io: { pushBrokerEnabled: false, codexStateDir: mkdtempSync(join(tmpdir(), "codex-empty-")) } });
   assert.equal(outNoId.stage, "HOLD");
   assert.equal(outNoId.pause_adapter, true);
   assert.equal(calls2.length, 0);
@@ -323,7 +440,7 @@ test("missing durable state directory HOLDs before checkout or spawn", async () 
   const out = await launchBuilder({
     ...launchInput(),
     env: { PATH: "/usr/bin" },
-    io: {},
+    io: { pushBrokerEnabled: false },
     readHeadImpl: async () => { starts += 1; return SHA; },
     execFileImpl: (...args) => { starts += 1; args.at(-1)(null, "", ""); },
   });
@@ -393,7 +510,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     task_context: "fixture",
     cwd: worktree,
     env: { PATH: `${fakeBin}:${process.env.PATH}`, HOME: process.env.HOME, CODEX_HOME: join(worktree, ".codex") },
-  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100" }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
+  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100", pushBrokerEnabled: false }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
   const coordinator = spawn(process.execPath, [runner], { stdio: "ignore" });
   const sidecar = join(stateDir, `${ATTEMPT}.json`);
   const deadline = Date.now() + 5000;
@@ -409,7 +526,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     ...launchInput(),
     resume: true,
     external_run_id: null,
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
     execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, "", ""); },
   });
   assert.equal(recovered.stage, "LAUNCH_UNKNOWN");
@@ -420,7 +537,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     ...launchInput(),
     resume: true,
     external_run_id: recovered.external_run_id,
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
     execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, "", ""); },
   });
   assert.equal(stillRunning.stage, "LAUNCH_UNKNOWN");
@@ -432,7 +549,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     ...launchInput(),
     resume: true,
     external_run_id: recovered.external_run_id,
-    io: { codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "fixture-host", processStartToken: () => existsSync(aliveMarker) ? "100" : null },
     execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("REVISION_READY") }) }),
   });
   assert.equal(afterExit.stage, "COMPLETED", "only a definitely exited original process permits exact-id resume");
@@ -442,12 +559,12 @@ test("internally generated callback schema is removed; caller-owned schema is pr
   const cwd = mkdtempSync(join(tmpdir(), "codex-schema-cleanup-"));
   const generated = join(cwd, `.codex-callback-schema-${ATTEMPT}.json`);
   const stateDir = mkdtempSync(join(tmpdir(), "codex-state-"));
-  await launchBuilder({ ...launchInput(), cwd, execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }), io: { codexStateDir: stateDir } });
+  await launchBuilder({ ...launchInput(), cwd, execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }), io: { pushBrokerEnabled: false, codexStateDir: stateDir } });
   assert.equal(existsSync(generated), false);
   assert.equal(readdirSync(stateDir).some((name) => name.startsWith(".callback-schema-")), false, "generated schema is removed from durable state too");
 
   const owned = join(cwd, "caller-schema.json");
-  await launchBuilder({ ...launchInput(), cwd, schemaFile: owned, execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }), io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-state-")) } });
+  await launchBuilder({ ...launchInput(), cwd, schemaFile: owned, execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }), io: { pushBrokerEnabled: false, codexStateDir: mkdtempSync(join(tmpdir(), "codex-state-")) } });
   assert.equal(existsSync(owned), true);
 });
 
@@ -505,6 +622,7 @@ test("directory-fsync failure after thread.started HOLDs and pauses", async () =
     ...launchInput(),
     spawnImpl: streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })]),
     io: {
+      pushBrokerEnabled: false,
       codexStateDir: mkdtempSync(join(tmpdir(), "codex-dir-fsync-launch-")),
       processStartToken: () => "100",
       hostname: () => "fixture-host",
@@ -534,6 +652,7 @@ test("resume ownership is not accepted when its directory entry cannot be fsynce
     external_run_id: `codexrun_${THREAD}`,
     spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
     io: {
+      pushBrokerEnabled: false,
       codexStateDir: stateDir,
       hostname: () => "fixture-host",
       processStartToken: () => null,
@@ -558,7 +677,7 @@ test("timeout escalates to SIGKILL and settles even when the child never closes"
   const out = await launchBuilder({
     ...launchInput(),
     spawnImpl: neverClosingSpawn,
-    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-timeout-")), processStartToken: () => "100", hostname: () => "fixture-host" },
+    io: { pushBrokerEnabled: false, codexStateDir: mkdtempSync(join(tmpdir(), "codex-timeout-")), processStartToken: () => "100", hostname: () => "fixture-host" },
     timeout_ms: 5,
     timeout_grace_ms: 5,
   });
@@ -585,7 +704,7 @@ test("production spawn bounds combined output and pauses instead of exhausting c
   const out = await launchBuilder({
     ...launchInput(),
     spawnImpl: noisySpawn,
-    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-output-limit-")) },
+    io: { pushBrokerEnabled: false, codexStateDir: mkdtempSync(join(tmpdir(), "codex-output-limit-")) },
     max_output_bytes: 64,
   });
   assert.deepEqual(signals, ["SIGTERM"]);
@@ -613,7 +732,7 @@ test("output overflow after thread.started preserves the exact resumable identit
   const out = await launchBuilder({
     ...launchInput(),
     spawnImpl: spawnWithKnownThreadThenNoise,
-    io: { codexStateDir: mkdtempSync(join(tmpdir(), "codex-known-output-limit-")), processStartToken: () => "100", hostname: () => "fixture-host" },
+    io: { pushBrokerEnabled: false, codexStateDir: mkdtempSync(join(tmpdir(), "codex-known-output-limit-")), processStartToken: () => "100", hostname: () => "fixture-host" },
     max_output_bytes: 256,
   });
   assert.equal(out.stage, "LAUNCH_UNKNOWN");
@@ -626,7 +745,7 @@ test("generated-schema cleanup failure cannot replace a valid completion", async
   const out = await launchBuilder({
     ...launchInput(),
     execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
-    io: { codexStateDir: stateDir, unlinkSync: () => { throw Object.assign(new Error("cleanup denied"), { code: "EACCES" }); } },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir, unlinkSync: () => { throw Object.assign(new Error("cleanup denied"), { code: "EACCES" }); } },
   });
   assert.equal(out.stage, "COMPLETED");
   assert.equal(out.pause_adapter, undefined);
@@ -650,13 +769,13 @@ test("resume requires a definitely exited bound process; live, foreign-host, and
     external_run_id: `codexrun_${THREAD}`,
     execFileImpl: (...args) => { spawns += 1; args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), ""); },
   };
-  const live = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "100" } });
+  const live = await launchBuilder({ ...base, io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "100" } });
   assert.equal(live.stage, "LAUNCH_UNKNOWN");
-  const foreign = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-b", processStartToken: () => null } });
+  const foreign = await launchBuilder({ ...base, io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "host-b", processStartToken: () => null } });
   assert.equal(foreign.stage, "HOLD");
   assert.equal(foreign.pause_adapter, true);
   assert.equal(spawns, 0);
-  const reusedPid = await launchBuilder({ ...base, io: { codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "200" } });
+  const reusedPid = await launchBuilder({ ...base, io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "host-a", processStartToken: () => "200" } });
   assert.equal(reusedPid.stage, "COMPLETED", "a mismatched process start token proves the recorded child exited despite PID reuse");
   assert.equal(spawns, 1);
 });
@@ -690,7 +809,7 @@ test("two recoveries can never resume the same exact Codex session concurrently"
     resume: true,
     external_run_id: `codexrun_${THREAD}`,
     spawnImpl,
-    io: {
+    io: { pushBrokerEnabled: false,
       codexStateDir: stateDir,
       hostname: () => "test-host",
       processStartToken: (pid) => pid === 111 ? null : String(pid * 10),
@@ -757,7 +876,7 @@ test("a completed resume retains its claim until the terminal receipt is durably
       spawns += 1;
       args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), "");
     },
-    io: { codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
   };
 
   assert.equal((await launchBuilder(input)).stage, "COMPLETED");
@@ -790,7 +909,7 @@ test("resume fails closed for missing, conflicting, or unverifiable durable side
       resume: true,
       external_run_id: `codexrun_${THREAD}`,
       spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
-      io: { codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
     });
     assert.equal(out.stage, "HOLD", label);
     assert.equal(out.pause_adapter, true, label);
@@ -823,7 +942,7 @@ test("unreadable process metadata and malformed ownership never authorize resume
       resume: true,
       external_run_id: `codexrun_${THREAD}`,
       spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
-      io: { codexStateDir: stateDir, hostname: () => "test-host", ...extraIo },
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", ...extraIo },
     });
     assert.equal(out.stage, "HOLD", label);
     assert.equal(out.pause_adapter, true, label);
@@ -855,7 +974,7 @@ test("malformed or wrong-PID proc records cannot manufacture PID-reuse authority
       resume: true,
       external_run_id: `codexrun_${THREAD}`,
       spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
-      io: { codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => statText },
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => statText },
     });
     assert.equal(out.stage, "HOLD", label);
     assert.equal(out.pause_adapter, true, label);
@@ -882,6 +1001,7 @@ test("a host without Linux procfs cannot treat its missing proc path as a dead P
     external_run_id: `codexrun_${THREAD}`,
     spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
     io: {
+      pushBrokerEnabled: false,
       codexStateDir: stateDir,
       hostname: () => "test-host",
       platform: () => "darwin",
@@ -918,7 +1038,7 @@ test("a structurally valid matching or reused PID proc record is classified corr
         spawns += 1;
         args.at(-1)(null, jsonl({ finalText: callbackJson("REVISION_READY") }), "");
       },
-      io: { codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => procStat(111, currentStart) },
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", readProcessStat: () => procStat(111, currentStart) },
     });
     assert.equal(out.stage, expectedStage, label);
     assert.equal(spawns, expectedSpawns, label);
@@ -947,7 +1067,7 @@ test("an abandoned or corrupt recovery claim is visible and never authorizes ano
       resume: true,
       external_run_id: `codexrun_${THREAD}`,
       spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
-      io: { codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
+      io: { pushBrokerEnabled: false, codexStateDir: stateDir, hostname: () => "test-host", processStartToken: () => null },
     });
     assert.equal(out.stage, "HOLD", label);
     assert.equal(out.pause_adapter, true, label);
@@ -982,7 +1102,7 @@ test("a resumed-owner record without its claim still blocks before spawn", async
     resume: true,
     external_run_id: `codexrun_${THREAD}`,
     spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
-    io: {
+    io: { pushBrokerEnabled: false,
       codexStateDir: stateDir,
       hostname: () => "test-host",
       processStartToken: (pid) => pid === 111 ? null : "222",
@@ -1077,6 +1197,7 @@ for (const [label, exitCode] of [["clean exit", 0], ["killed after thread.starte
       ...launchInput(),
       schemaFile: join(dir, "schema.json"),
       io: {
+        pushBrokerEnabled: false,
         codexStateDir: stateDir,
         spawnImpl: streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })], { exitCode }),
         processStartToken: () => "100",
@@ -1097,7 +1218,7 @@ test("durable session failure on the BUFFERED path also HOLDs and pauses", async
     ...launchInput(),
     schemaFile: join(dir, "schema.json"),
     execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
-    io: { codexStateDir: stateDir },
+    io: { pushBrokerEnabled: false, codexStateDir: stateDir },
   });
   assert.equal(out.stage, "HOLD", "an unrecordable session must never terminate the attempt");
   assert.equal(out.pause_adapter, true);
@@ -1134,6 +1255,7 @@ test("Linux without a readable procfs must not treat ENOENT as proof of death", 
     spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
     execFileImpl: () => { spawns += 1; throw new Error("must not spawn"); },
     io: {
+      pushBrokerEnabled: false,
       codexStateDir: stateDir,
       hostname: () => "test-host",
       platform: () => "linux",
@@ -1173,6 +1295,7 @@ for (const [label, selfStat] of [["empty", ""], ["not a proc record", "hello"], 
       spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
       execFileImpl: () => { spawns += 1; throw new Error("must not spawn"); },
       io: {
+        pushBrokerEnabled: false,
         codexStateDir: stateDir,
         hostname: () => "test-host",
         platform: () => "linux",
@@ -1201,6 +1324,7 @@ test("a truncated procfs self record cannot authorize resume", async () => {
     spawnImpl: () => { spawns += 1; throw new Error("must not spawn"); },
     execFileImpl: () => { spawns += 1; throw new Error("must not spawn"); },
     io: {
+      pushBrokerEnabled: false,
       codexStateDir: stateDir, hostname: () => "test-host", platform: () => "linux",
       readProcessStat: (p) => {
         if (p.includes("/proc/self/")) return "1 (";
@@ -1232,6 +1356,7 @@ test("Linux WITH a readable procfs still treats a missing pid path as dead", asy
     execFileImpl: execResult({ stdout: jsonl({ finalText: callbackJson("BUILD_READY") }) }),
     spawnImpl: () => { spawns += 1; throw new Error("unused"); },
     io: {
+      pushBrokerEnabled: false,
       codexStateDir: stateDir,
       hostname: () => "test-host",
       platform: () => "linux",
@@ -1244,4 +1369,79 @@ test("Linux WITH a readable procfs still treats a missing pid path as dead", asy
   });
   assert.equal(out.stage, "COMPLETED", "a genuinely dead pid on a working procfs must allow exact-ID recovery");
   assert.equal(spawns, 0, "the deterministic exec seam completes; the production spawn seam is unused");
+});
+
+// ---------------------------------------------------------------------------
+// Privilege-drop wrapper. activation.mjs refuses dispatch unless SHU_WORKER_UID
+// and SHU_WORKER_LAUNCH_WRAPPER are both set — but a gate that names a wrapper
+// nothing invokes is a declaration, not a boundary. An independent verifier
+// reproduced the consequence at `abe816a`: a same-uid worker wrote
+// url.*.insteadOf into the broker's own repository and the remote check
+// followed it to a foreign remote.
+// ---------------------------------------------------------------------------
+
+test("the builder is launched THROUGH the configured privilege-drop wrapper", async () => {
+  const launched = [];
+  await launchBuilder({
+    ...launchInput({
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/root",
+        CODEX_HOME: "/root/.codex",
+        SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker --regid=shu-worker --clear-groups",
+      },
+    }),
+    spawnImpl: (file, args, ...rest) => {
+      launched.push([file, args]);
+      return streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })])(file, args, ...rest);
+    },
+    io: { pushBrokerEnabled: false, codexStateDir: TEST_STATE_DIR },
+  });
+
+  assert.ok(launched.length, "the builder must actually be spawned");
+  const [file, args] = launched[0];
+  assert.equal(file, "setpriv", "the wrapper is the process actually executed, not codex");
+  assert.deepEqual(args.slice(0, 4), ["--reuid=shu-worker", "--regid=shu-worker", "--clear-groups", "codex"],
+    "codex runs as an argument OF the wrapper, with the wrapper's own flags preserved in order");
+});
+
+test("with no wrapper configured the builder is launched directly", async () => {
+  const launched = [];
+  await launchBuilder({
+    ...launchInput(),
+    spawnImpl: (file, args, ...rest) => {
+      launched.push([file, args]);
+      return streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })])(file, args, ...rest);
+    },
+    io: { pushBrokerEnabled: false, codexStateDir: TEST_STATE_DIR },
+  });
+  assert.equal(launched[0][0], "codex", "an unset wrapper must not become an empty argv[0]");
+});
+
+test("a broker-enabled launch with NO wrapper HOLDs before the builder is spawned", async () => {
+  // CodeRabbit: activation.mjs enforces the wrapper, but activation runs in
+  // main() and launchBuilder is exported. A direct caller with broker config and
+  // no wrapper would run codex as the coordinator and then hand the credentialed
+  // broker its result — the exact state the identity split exists to prevent.
+  // The mechanism must refuse on its own, not trust a gate upstream.
+  let spawned = 0;
+  const out = await launchBuilder({
+    ...launchInput({
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/root",
+        CODEX_HOME: "/root/.codex",
+        SHU_WORKTREE_ROOT: "/srv/shu/worktrees",
+        SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+        // No SHU_WORKER_LAUNCH_WRAPPER.
+      },
+    }),
+    spawnImpl: (...a) => { spawned += 1; return streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })])(...a); },
+    io: { codexStateDir: TEST_STATE_DIR }, // set AFTER the spread: no opt-out
+  });
+
+  assert.equal(out.stage, "HOLD", JSON.stringify(out));
+  assert.equal(out.pause_adapter, true);
+  assert.match(String(out.reason ?? ""), /SHU_WORKER_LAUNCH_WRAPPER/);
+  assert.equal(spawned, 0, "the builder must never run: a HOLD after it has already run as the coordinator is not protection");
 });

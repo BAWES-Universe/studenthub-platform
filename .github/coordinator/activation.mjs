@@ -3,14 +3,23 @@
 // The pivot was described as "only two login steps" (`codex login` on the box,
 // and a Claude subscription token). That is the AUTH surface, not the ACTIVATION
 // surface. A Codex builder that logs in successfully still cannot do the job
-// unless five further things are true, and every one of them fails at a
+// unless seven further things are true, and every one of them fails at a
 // different, later, and more expensive moment if it is discovered at runtime:
 //
-//   1. the Codex sandbox may reach the network         -> otherwise it cannot push
+//   1. the sandbox network posture matches the prompt  -> otherwise the worker is
+//                                                         told one thing and
+//                                                         configured for another
 //   2. GitHub head-verification credentials exist      -> otherwise COMPLETED can
 //                                                         never be head-checked
-//   3. git push authentication is wired                -> otherwise finished work
+//   3. git push authority sits where the design says   -> otherwise the deploy key
+//                                                         is not confined to the
+//                                                         coordinator
+//   3b. the host push broker is enabled and configured -> otherwise finished work
 //                                                         never leaves the box
+//   3c. the worker is a DISTINCT OS identity           -> otherwise it can rewrite
+//                                                         the broker's own
+//                                                         repository and redirect
+//                                                         the push
 //   4. durable state survives a reboot                 -> otherwise thread ids are
 //                                                         lost and sessions are
 //                                                         unresumable
@@ -19,9 +28,11 @@
 //                                                         on a machine that is
 //                                                         thrown away
 //
-// Requirements 2-5 are checked against the environment. Requirement 1 cannot be
-// probed from inside this process, so it must be DECLARED by the operator; the
-// declaration is recorded so the assumption is visible rather than implied.
+// Requirement 1 cannot be probed from inside this process, so it is DECLARED and
+// the declaration recorded. Requirement 3c is half declared, half checked: the
+// operator states the builder's uid and the privilege-drop wrapper, and the
+// coordinator verifies that uid is neither root nor its own. Everything else is
+// checked outright.
 //
 // Nothing here enables dispatch. It only refuses to start a builder when the
 // wiring that makes a builder useful is absent.
@@ -38,6 +49,8 @@ export const ACTIVATION_REQUIREMENTS = Object.freeze([
   "codex_sandbox_network",
   "github_head_credentials",
   "git_push_authentication",
+  "host_push_broker",
+  "worker_identity_split",
   "durable_state_persistence",
   "coordinator_on_brick_box",
 ]);
@@ -117,11 +130,29 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
   //    under --sandbox workspace-write, whose network posture is a property of
   //    the CLI's sandbox configuration on the box. This process cannot inspect
   //    that, so the operator declares it and the declaration is auditable.
-  if (env.CODEX_SANDBOX_NETWORK !== "enabled") {
+  //
+  //    Option A inverts this the same way it inverts gate 3. The prompt this
+  //    adapter sends now says "Do NOT touch the network", and the host broker
+  //    owns every remote operation — so under the broker a declaration of
+  //    "enabled" contradicts the instructions the worker is given in the same
+  //    run. The old remedy ("it must fetch and push") described a worker that
+  //    no longer exists, and demanding it made a truthfully network-isolated
+  //    deployment unable to dispatch at all.
+  //
+  //    Open deployment question, deliberately NOT settled here: whether the
+  //    worker needs network for DEPENDENCIES (install, test fixtures) even
+  //    though it needs none for git. If it does, the prompt and this gate must
+  //    change together and on purpose — which is what failing closed here
+  //    forces, instead of letting the two quietly disagree.
+  const networkPosture = env.CODEX_SANDBOX_NETWORK;
+  const brokerOwnsRemotes = env.SHU_PUSH_BROKER_ENABLED === "true";
+  if (brokerOwnsRemotes ? networkPosture !== "disabled" : networkPosture !== "enabled") {
     problems.push(unmet(
       "codex_sandbox_network",
-      `CODEX_SANDBOX_NETWORK is ${env.CODEX_SANDBOX_NETWORK ? `"${env.CODEX_SANDBOX_NETWORK}"` : "unset"}`,
-      "confirm the Codex sandbox may reach the network (it must fetch and push), then set CODEX_SANDBOX_NETWORK=enabled on the coordinator",
+      `CODEX_SANDBOX_NETWORK is ${networkPosture ? `"${networkPosture}"` : "unset"}`,
+      brokerOwnsRemotes
+        ? "the worker is network-isolated under Option A (the host broker performs every remote operation): set CODEX_SANDBOX_NETWORK=disabled on the coordinator, and change the builder prompt in the same commit if the worker genuinely needs network for dependencies"
+        : "confirm the Codex sandbox may reach the network (it must fetch and push), then set CODEX_SANDBOX_NETWORK=enabled on the coordinator",
     ));
   }
 
@@ -136,9 +167,40 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
     ));
   }
 
-  // 3. git push authentication. The builder's whole output is a pushed branch;
-  //    without a push remote the work is finished and stranded on the box.
-  if (env.CODEX_GIT_PUSH_READY !== "true") {
+  // 3. git push authentication.
+  //
+  //    Option A splits this in two, because the two modes want OPPOSITE things
+  //    from the builder and a single gate cannot serve both.
+  //
+  //    Under the host broker (3b below) the worker never pushes and must hold
+  //    no push credentials at all. Demanding CODEX_GIT_PUSH_READY=true there
+  //    made a correctly isolated deployment unable to activate honestly — the
+  //    only way past the gate was to declare credentials the design forbids the
+  //    worker to have. A gate an operator can satisfy only by lying is worse
+  //    than no gate, so under the broker the declaration is INVERTED: asserting
+  //    worker push-readiness is itself the unmet requirement.
+  //
+  //    With the broker disabled (legacy worker-push mode) the original gate
+  //    stands: the builder's whole output is a pushed branch, and without a
+  //    push remote the work is finished and stranded on the box. 3b refuses
+  //    that mode outright today, so this branch cannot be part of a passing
+  //    preflight — it is kept so the requirement does not silently vanish if
+  //    3b is ever relaxed.
+  //
+  //    NOT covered here: proof that the BROKER's own host-side credential
+  //    works. That needs a live ls-remote under the coordinator identity — a
+  //    network probe in preflight — and belongs with the SHU-69 fixture
+  //    readiness gates, not with a declaration check.
+  const brokerIsThePusher = env.SHU_PUSH_BROKER_ENABLED === "true";
+  if (brokerIsThePusher) {
+    if (env.CODEX_GIT_PUSH_READY === "true") {
+      problems.push(unmet(
+        "git_push_authentication",
+        "CODEX_GIT_PUSH_READY is \"true\" while the host push broker is enabled",
+        "under Option A the worker never pushes: unset CODEX_GIT_PUSH_READY and remove push credentials from the builder worktree — the host broker is the only authorized pusher",
+      ));
+    }
+  } else if (env.CODEX_GIT_PUSH_READY !== "true") {
     problems.push(unmet(
       "git_push_authentication",
       `CODEX_GIT_PUSH_READY is ${env.CODEX_GIT_PUSH_READY ? `"${env.CODEX_GIT_PUSH_READY}"` : "unset"}`,
@@ -156,6 +218,73 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
     if (pushRemote !== null && (typeof pushRemote !== "string" || pushRemote.length === 0)) {
       problems.push(unmet("git_push_authentication", "the builder worktree has no push remote",
         "configure an authenticated push remote for the worktree the builder runs in"));
+    }
+  }
+
+  // 3b. host_push_broker (Option A, ratified 2026-09-07). The sandboxed worker
+  //     NEVER pushes; a host-side broker pushes ONLY the validated exact result
+  //     SHA using the repo-scoped deploy key. Dispatch for a builder lane is
+  //     therefore REFUSED unless the broker is enabled and fully configured.
+  //     A builder result that is never pushed is not a usable COMPLETED, and the
+  //     sandbox cannot push on its own — so this gate is not optional.
+  if (env.SHU_PUSH_BROKER_ENABLED !== "true") {
+    problems.push(unmet(
+      "host_push_broker",
+      `SHU_PUSH_BROKER_ENABLED is ${env.SHU_PUSH_BROKER_ENABLED ? `"${env.SHU_PUSH_BROKER_ENABLED}"` : "unset"}`,
+      "set SHU_PUSH_BROKER_ENABLED=true: the host-side broker is the only authorized pusher (worker never pushes)",
+    ));
+  } else if (!env.SHU_WORKTREE_ROOT || !env.SHU_PUSH_REMOTE_URL) {
+    problems.push(unmet(
+      "host_push_broker",
+      `SHU_WORKTREE_ROOT=${env.SHU_WORKTREE_ROOT ? "set" : "unset"} SHU_PUSH_REMOTE_URL=${env.SHU_PUSH_REMOTE_URL ? "set" : "unset"}`,
+      "provide SHU_WORKTREE_ROOT (approved worktree root) and SHU_PUSH_REMOTE_URL (fixed repo URL) for the push broker; absent config must never be guessed",
+    ));
+  }
+
+  // 3c. worker_identity_split — the prerequisite the broker's whole design
+  //     rests on, and until now the one boundary activation ASSERTED without
+  //     establishing.
+  //
+  //     An independent verifier reproduced the consequence at `abe816a`: the
+  //     broker repository is created mode 0700, which stops a DIFFERENT OS user
+  //     and nothing else. A same-UID process wrote `url.*.insteadOf` into that
+  //     repository after creation and `remoteBranchHead()` followed the
+  //     injected rewrite to a foreign remote — the exact destination-redirect
+  //     the broker repo exists to prevent, re-entered underneath it.
+  //     (`same_uid_config_write: true`, `redirected: true`.)
+  //
+  //     The privilege-drop mechanism is host configuration (setpriv, sudo -u, a
+  //     systemd user unit), so this module does not pick one. What it can do —
+  //     and what it previously failed to do — is REFUSE to declare the broker
+  //     ready while the split is unestablished. Both parts are required
+  //     together: a uid nothing applies is a declaration, and a wrapper with no
+  //     distinct uid to drop to is a no-op.
+  //
+  //     Required UNCONDITIONALLY, not only under the broker. Scoping it to
+  //     broker mode left a hole the contract's own meta-test caught: a
+  //     requirement that can be skipped is not enforced, and this is the
+  //     requirement least able to afford that. Legacy worker-push mode is
+  //     refused by 3b anyway, so there is no configuration where skipping it
+  //     would have been the difference between dispatching and not.
+  {
+    const rawUid = env.SHU_WORKER_UID;
+    const workerUid = /^\d+$/.test(rawUid ?? "") ? Number(rawUid) : null;
+    const ownUid = (io.getuid ?? (() => (typeof process.getuid === "function" ? process.getuid() : null)))();
+    if (workerUid === null) {
+      problems.push(unmet("worker_identity_split",
+        `SHU_WORKER_UID is ${rawUid ? `"${rawUid}"` : "unset"}`,
+        "set SHU_WORKER_UID to the numeric uid of the unprivileged builder account (e.g. shu-worker); the broker's isolation is void while the worker shares the coordinator's identity"));
+    } else if (workerUid === 0) {
+      problems.push(unmet("worker_identity_split", "SHU_WORKER_UID is 0 (root)",
+        "the builder must run as an unprivileged account, never root"));
+    } else if (ownUid !== null && workerUid === ownUid) {
+      problems.push(unmet("worker_identity_split",
+        `SHU_WORKER_UID ${workerUid} is the coordinator's own uid`,
+        "the builder and the coordinator must be DISTINCT OS users: a same-uid worker can write the broker's repository after it is created and redirect the push"));
+    }
+    if (!env.SHU_WORKER_LAUNCH_WRAPPER) {
+      problems.push(unmet("worker_identity_split", "SHU_WORKER_LAUNCH_WRAPPER is unset",
+        "set SHU_WORKER_LAUNCH_WRAPPER to the privilege-drop command the builder is launched through (e.g. `setpriv --reuid=shu-worker --regid=shu-worker --clear-groups`); without it SHU_WORKER_UID is a declaration nothing enforces"));
     }
   }
 
