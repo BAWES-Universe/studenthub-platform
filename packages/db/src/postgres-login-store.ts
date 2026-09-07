@@ -143,7 +143,9 @@ export class PostgresLoginStore {
       await client.query("BEGIN");
       // Serialize only this immutable issuer/subject pair. Concurrent first
       // callbacks return one person instead of creating an orphan principal.
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`${issuer}\u0000${subject}`]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        storedToken(`${issuer}\u0000${subject}`),
+      ]);
       const existing = await client.query<IdentityRow>(
         "SELECT issuer, subject, person_id FROM external_identities WHERE issuer = $1 AND subject = $2",
         [issuer, subject],
