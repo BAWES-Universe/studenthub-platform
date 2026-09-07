@@ -1362,3 +1362,50 @@ test("Linux WITH a readable procfs still treats a missing pid path as dead", asy
   assert.equal(out.stage, "COMPLETED", "a genuinely dead pid on a working procfs must allow exact-ID recovery");
   assert.equal(spawns, 0, "the deterministic exec seam completes; the production spawn seam is unused");
 });
+
+// ---------------------------------------------------------------------------
+// Privilege-drop wrapper. activation.mjs refuses dispatch unless SHU_WORKER_UID
+// and SHU_WORKER_LAUNCH_WRAPPER are both set — but a gate that names a wrapper
+// nothing invokes is a declaration, not a boundary. An independent verifier
+// reproduced the consequence at `abe816a`: a same-uid worker wrote
+// url.*.insteadOf into the broker's own repository and the remote check
+// followed it to a foreign remote.
+// ---------------------------------------------------------------------------
+
+test("the builder is launched THROUGH the configured privilege-drop wrapper", async () => {
+  const launched = [];
+  await launchBuilder({
+    ...launchInput({
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/root",
+        CODEX_HOME: "/root/.codex",
+        SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker --regid=shu-worker --clear-groups",
+      },
+    }),
+    spawnImpl: (file, args, ...rest) => {
+      launched.push([file, args]);
+      return streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })])(file, args, ...rest);
+    },
+    io: { pushBrokerEnabled: false, codexStateDir: TEST_STATE_DIR },
+  });
+
+  assert.ok(launched.length, "the builder must actually be spawned");
+  const [file, args] = launched[0];
+  assert.equal(file, "setpriv", "the wrapper is the process actually executed, not codex");
+  assert.deepEqual(args.slice(0, 4), ["--reuid=shu-worker", "--regid=shu-worker", "--clear-groups", "codex"],
+    "codex runs as an argument OF the wrapper, with the wrapper's own flags preserved in order");
+});
+
+test("with no wrapper configured the builder is launched directly", async () => {
+  const launched = [];
+  await launchBuilder({
+    ...launchInput(),
+    spawnImpl: (file, args, ...rest) => {
+      launched.push([file, args]);
+      return streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })])(file, args, ...rest);
+    },
+    io: { pushBrokerEnabled: false, codexStateDir: TEST_STATE_DIR },
+  });
+  assert.equal(launched[0][0], "codex", "an unset wrapper must not become an empty argv[0]");
+});

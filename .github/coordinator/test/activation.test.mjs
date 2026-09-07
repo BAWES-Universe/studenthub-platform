@@ -48,6 +48,11 @@ function activatedEnv(over = {}) {
     SHU_PUSH_BROKER_ENABLED: "true",
     SHU_WORKTREE_ROOT: "/srv/shu/worktrees",
     SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+    // The broker's isolation is void while the worker shares the coordinator's
+    // OS identity, so a truthful activation states the split AND the mechanism
+    // that enforces it.
+    SHU_WORKER_UID: "2001",
+    SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker --regid=shu-worker --clear-groups",
     COORDINATOR_HOST: HOST,
     ...over,
   };
@@ -73,6 +78,8 @@ for (const [requirement, override] of [
   // violation, because the worker must hold no push credentials at all.
   ["git_push_authentication", { CODEX_GIT_PUSH_READY: "true" }],
   ["host_push_broker", { SHU_PUSH_BROKER_ENABLED: undefined }],
+  ["worker_identity_split", { SHU_WORKER_UID: undefined }],
+  ["worker_identity_split", { SHU_WORKER_LAUNCH_WRAPPER: undefined }],
   ["coordinator_on_brick_box", { COORDINATOR_HOST: undefined }],
 ]) {
   test(`activation fails closed when ${requirement} is missing`, () => {
@@ -463,4 +470,68 @@ test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the ada
   assert.equal(code, 0, "the existing active receipt remains held; no new dispatch is attempted");
   assert.match(output.join("\n"), /activation contract unmet/);
   assert.ok(comments.some((c) => c.body.includes("coordinator-pause: codex-cli")));
+});
+
+// ---------------------------------------------------------------------------
+// worker_identity_split — the boundary activation previously ASSERTED without
+// establishing. An independent verifier reproduced the consequence at
+// `abe816a`: a same-uid process wrote url.*.insteadOf into the broker's own
+// repository after creation, and the remote check followed the rewrite.
+// ---------------------------------------------------------------------------
+
+test("a worker sharing the coordinator's uid is refused, not merely noted", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_WORKER_UID: "4242" }),
+    stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 4242 },
+  });
+  assert.equal(out.ok, false, "same-uid worker defeats the broker repository's 0700 isolation");
+  const entry = out.unmet.find((u) => u.requirement === "worker_identity_split");
+  assert.match(entry?.detail ?? "", /coordinator's own uid/);
+});
+
+test("a distinct worker uid with the enforcing wrapper satisfies the split", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv(), stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 1000 },
+  });
+  assert.equal(out.ok, true, describeUnmetActivation(out.unmet));
+});
+
+test("root is never an acceptable builder identity", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_WORKER_UID: "0" }),
+    stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 1000 },
+  });
+  assert.equal(out.ok, false);
+  assert.match(out.unmet.find((u) => u.requirement === "worker_identity_split")?.detail ?? "", /root/);
+});
+
+test("a non-numeric worker uid is not accepted as a declaration", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_WORKER_UID: "shu-worker" }),
+    stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 1000 },
+  });
+  assert.equal(out.ok, false, "a name is not a uid the coordinator can compare against its own");
+});
+
+test("the split is required even with the broker flag absent", () => {
+  // Scoping this to broker mode left a hole the contract meta-test caught: a
+  // requirement that can be skipped is not enforced. This is the requirement
+  // least able to afford that, and legacy mode is refused by 3b regardless.
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_PUSH_BROKER_ENABLED: undefined, SHU_WORKER_UID: undefined, SHU_WORKER_LAUNCH_WRAPPER: undefined }),
+    stateDir: "/srv/codex/state", cwd: "/repo", io,
+  });
+  assert.ok(
+    out.unmet.some((u) => u.requirement === "worker_identity_split"),
+    "no configuration may reach dispatch with the worker sharing the coordinator's identity",
+  );
 });

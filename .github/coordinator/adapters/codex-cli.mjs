@@ -750,9 +750,20 @@ export async function launchBuilder({
     };
     // execFileImpl remains an explicit compatibility seam for deterministic unit
     // tests. Production uses spawn so thread.started is persisted before exit.
+    // The builder runs through the privilege-drop wrapper when one is
+    // configured, so it does NOT inherit the coordinator's OS identity. That is
+    // the boundary the push broker's isolation depends on: a same-uid worker can
+    // write the broker's own repository after createBrokerRepo() returns and
+    // redirect the push, which an independent verifier reproduced at `abe816a`.
+    // activation.mjs refuses dispatch when the wrapper or SHU_WORKER_UID is
+    // missing, so reaching here unwrapped means the broker is disabled.
+    const wrapper = (env.SHU_WORKER_LAUNCH_WRAPPER ?? "").trim();
+    const [launchBin, launchArgs] = wrapper
+      ? [wrapper.split(/\s+/)[0], [...wrapper.split(/\s+/).slice(1), "codex", ...args]]
+      : ["codex", args];
     result = execImpl !== nodeExecFile && !io.spawnImpl
-      ? await runExecFile(execImpl, "codex", args, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
-      : await runSpawn(io.spawnImpl ?? spawnImpl, "codex", args, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
+      ? await runExecFile(execImpl, launchBin, launchArgs, { ...options, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })
+      : await runSpawn(io.spawnImpl ?? spawnImpl, launchBin, launchArgs, options, onLine, onSpawn, timeout_grace_ms, max_output_bytes);
     if (!streamedThreadId) {
       const bufferedThreadId = parseThreadStarted(result.stdout);
       if (bufferedThreadId) {
