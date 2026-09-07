@@ -269,6 +269,15 @@ export function parseCodexCallback(stdout) {
   }
 }
 
+// The broker is the ONLY authorized pusher, so it runs unless a caller
+// EXPLICITLY opts out. Deriving "enabled" from a flag that had to be PRESENT
+// meant an omission produced a COMPLETED with nothing pushed. One definition,
+// because two copies drift and the launch-time check and the push-time check
+// must never disagree about whether the broker is in play.
+export function brokerOptedOut(io = {}, env = {}) {
+  return io.pushBrokerEnabled === false || env.SHU_PUSH_BROKER_ENABLED === "false";
+}
+
 export function callbackValid(callback, { attempt_id, target_sha }) {
   if (!callback || typeof callback !== "object") return false;
   if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
@@ -756,8 +765,19 @@ export async function launchBuilder({
     // write the broker's own repository after createBrokerRepo() returns and
     // redirect the push, which an independent verifier reproduced at `abe816a`.
     // activation.mjs refuses dispatch when the wrapper or SHU_WORKER_UID is
-    // missing, so reaching here unwrapped means the broker is disabled.
+    // missing — but activation runs in main(), and launchBuilder is exported.
+    // This comment used to end "so reaching here unwrapped means the broker is
+    // disabled", which was an ASSUMPTION where a check belonged: a direct caller
+    // with broker config and no wrapper would run codex as the coordinator and
+    // then hand the credentialed broker its result (CodeRabbit). That is the
+    // same fail-closed gap this adapter already fixed once for the broker
+    // opt-out, and the mechanism must refuse on its own rather than trusting a
+    // gate somewhere upstream.
     const wrapper = (env.SHU_WORKER_LAUNCH_WRAPPER ?? "").trim();
+    if (!brokerOptedOut(io, env) && !wrapper) {
+      return { stage: "HOLD", pause_adapter: true, ok: false,
+        reason: "push broker enabled but SHU_WORKER_LAUNCH_WRAPPER is unset — refusing to run the builder under the coordinator's OS identity" };
+    }
     const [launchBin, launchArgs] = wrapper
       ? [wrapper.split(/\s+/)[0], [...wrapper.split(/\s+/).slice(1), "codex", ...args]]
       : ["codex", args];
@@ -852,10 +872,7 @@ export async function launchBuilder({
     // pushed — the exact outcome this broker exists to prevent — and no test
     // bound it: forcing the flag off left 288/288 green. An opt-out cannot be
     // reached by forgetting something.
-    const brokerDisabled =
-      io.pushBrokerEnabled === false
-      || env.SHU_PUSH_BROKER_ENABLED === "false";
-    if (!brokerDisabled) {
+    if (!brokerOptedOut(io, env)) {
       const runBroker = pushBrokerImpl ?? io.pushBrokerImpl ?? pushExactSha;
       const allowedRoot = io.worktreeRoot ?? env.SHU_WORKTREE_ROOT ?? null;
       const remoteUrl = io.pushRemoteUrl ?? env.SHU_PUSH_REMOTE_URL ?? null;

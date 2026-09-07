@@ -132,6 +132,11 @@ test("a success callback with the broker neither disabled nor configured HOLDs �
   // forgot to configure the broker. It must refuse, not silently complete.
   const out = await launchBuilder({
     ...input,
+    // The wrapper is supplied so this test reaches the check it is about. The
+    // missing-wrapper case is a SEPARATE fail-closed gate with its own test;
+    // without this the HOLD would come from there and this assertion would pass
+    // for the wrong reason.
+    env: { ...input.env, SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker" },
     io: BROKER_UNCONFIGURED, // deliberately NO opt-out — this is the forgotten-config shape
     execFileImpl: recordingExec([]),
     schemaFile: join(schemaDir, "schema.json"),
@@ -187,6 +192,9 @@ test("a CONFIGURED success path reaches the real broker seam and returns a contr
         CODEX_HOME: "/root/.codex",
         SHU_WORKTREE_ROOT: brokerRoot,
         SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+        // Production shape: the broker never runs unwrapped, so a test of the
+        // configured broker seam must be wrapped too.
+        SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker",
       },
     }),
     // Set AFTER the spread so launchInput's suite-wide opt-out is genuinely
@@ -502,7 +510,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
     task_context: "fixture",
     cwd: worktree,
     env: { PATH: `${fakeBin}:${process.env.PATH}`, HOME: process.env.HOME, CODEX_HOME: join(worktree, ".codex") },
-  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100" }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
+  })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100", pushBrokerEnabled: false }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
   const coordinator = spawn(process.execPath, [runner], { stdio: "ignore" });
   const sidecar = join(stateDir, `${ATTEMPT}.json`);
   const deadline = Date.now() + 5000;
@@ -1408,4 +1416,32 @@ test("with no wrapper configured the builder is launched directly", async () => 
     io: { pushBrokerEnabled: false, codexStateDir: TEST_STATE_DIR },
   });
   assert.equal(launched[0][0], "codex", "an unset wrapper must not become an empty argv[0]");
+});
+
+test("a broker-enabled launch with NO wrapper HOLDs before the builder is spawned", async () => {
+  // CodeRabbit: activation.mjs enforces the wrapper, but activation runs in
+  // main() and launchBuilder is exported. A direct caller with broker config and
+  // no wrapper would run codex as the coordinator and then hand the credentialed
+  // broker its result — the exact state the identity split exists to prevent.
+  // The mechanism must refuse on its own, not trust a gate upstream.
+  let spawned = 0;
+  const out = await launchBuilder({
+    ...launchInput({
+      env: {
+        PATH: process.env.PATH,
+        HOME: "/root",
+        CODEX_HOME: "/root/.codex",
+        SHU_WORKTREE_ROOT: "/srv/shu/worktrees",
+        SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+        // No SHU_WORKER_LAUNCH_WRAPPER.
+      },
+    }),
+    spawnImpl: (...a) => { spawned += 1; return streamingSpawn([JSON.stringify({ type: "thread.started", thread_id: THREAD })])(...a); },
+    io: { codexStateDir: TEST_STATE_DIR }, // set AFTER the spread: no opt-out
+  });
+
+  assert.equal(out.stage, "HOLD", JSON.stringify(out));
+  assert.equal(out.pause_adapter, true);
+  assert.match(String(out.reason ?? ""), /SHU_WORKER_LAUNCH_WRAPPER/);
+  assert.equal(spawned, 0, "the builder must never run: a HOLD after it has already run as the coordinator is not protection");
 });
