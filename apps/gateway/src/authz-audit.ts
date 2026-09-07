@@ -152,6 +152,24 @@ export type AuthorizationAuditFailureHandler = (failure: AuthorizationAuditFailu
  */
 const guardedStreams = new WeakSet<NodeJS.WritableStream>();
 
+/**
+ * How much unflushed audit output the process will hold before dropping records.
+ * A cap rather than a queue: the only bound that matters is the one on memory,
+ * and 1 MiB of JSON lines is far more slack than a healthy log consumer needs.
+ */
+const MAX_PENDING_AUDIT_BYTES = 1024 * 1024;
+
+/**
+ * Bytes the stream is still holding. `writableLength` is standard on Node's
+ * Writable, but the sink accepts any WritableStream, so a stream that does not
+ * report it is treated as not backpressured — an unknown depth must not become
+ * a reason to start dropping audit records.
+ */
+function pendingBytes(stream: NodeJS.WritableStream): number {
+  const length = (stream as NodeJS.WritableStream & { writableLength?: unknown }).writableLength;
+  return typeof length === "number" ? length : 0;
+}
+
 function guardStream(stream: NodeJS.WritableStream): void {
   if (guardedStreams.has(stream)) return;
   guardedStreams.add(stream);
@@ -179,7 +197,26 @@ export function createStdoutAuditSink(
     // on every authorization decision, and an unused sink costs a listener that
     // was harmless anyway.
     guardStream(stream);
-    emit = (line: string) => void stream.write(line);
+    emit = (line: string) => {
+      // Backpressure. `write()` returning false means the consumer is not
+      // keeping up; ignoring it — which `void stream.write(line)` did — lets the
+      // stream buffer grow without bound, one line per authorization decision,
+      // until the process runs out of memory. That is property 1 again: audit
+      // does not change the decision, it kills the process making them.
+      //
+      // Deliberately NOT a queue. A queue is a second unbounded buffer in front
+      // of the first, and draining it correctly means holding audit state the
+      // gateway would then have to reason about. Once the stream is holding more
+      // than the cap, the record is DROPPED and the drop is SIGNALLED: throwing
+      // here routes into the containment `emitAuthorizationAuditEvent` already
+      // has, which raises `audit_sink_failure` carrying the request id and
+      // nothing else. A dropped audit line becomes a visible failure rather than
+      // silence, and no path awaits stdout from a request.
+      if (pendingBytes(stream) > MAX_PENDING_AUDIT_BYTES) {
+        throw new Error("audit stream is backpressured");
+      }
+      void stream.write(line);
+    };
   }
   return {
     record(event: AuthorizationAuditEvent): void {

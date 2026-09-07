@@ -465,3 +465,91 @@ test("an injected write is used verbatim and leaves the default stream alone", (
   assert.equal(lines.length, 1);
   assert.match(lines[0]!, /"requestId":"req-injected"/);
 });
+
+/**
+ * MUTATION: remove the `pendingBytes(stream) > MAX_PENDING_AUDIT_BYTES` check.
+ *
+ * CodeRabbit, on head 3a83f79: the sink discarded `write()`'s return value, so a
+ * slow log consumer let the stream buffer grow one line per authorization
+ * decision until the process ran out of memory. Same class as the EPIPE guard —
+ * auditing does not change the decision, it kills the process making them.
+ *
+ * The drop is signalled rather than silent: `record` throws, which routes into
+ * the containment `emitAuthorizationAuditEvent` already has, so the operator
+ * sees `audit_sink_failure` with the request id instead of a missing line.
+ */
+function backpressuredStream(pending: number): NodeJS.WritableStream {
+  return {
+    writableLength: pending,
+    write: () => false,
+    on() { return this; },
+  } as unknown as NodeJS.WritableStream;
+}
+
+test("a backpressured audit stream drops the record instead of growing without bound", () => {
+  const sink = createStdoutAuditSink(undefined, backpressuredStream(4 * 1024 * 1024));
+  const failures: AuthorizationAuditFailure[] = [];
+  emitAuthorizationAuditEvent(
+    sink,
+    {
+      type: "authorization_decision",
+      timestamp: FIXED_TIME.toISOString(),
+      requestId: "req-backpressure",
+      stage: "authorization",
+      decision: "allow",
+      principalId: "principal-1",
+      orgId: TEST_ORG,
+      role: "inspector",
+    },
+    (failure) => void failures.push(failure),
+  );
+  // Contained, signalled, and carrying nothing but the request id.
+  assert.deepEqual(failures, [{ kind: "audit_sink_failure", requestId: "req-backpressure" }]);
+});
+
+test("an audit stream under the cap still writes", () => {
+  const written: string[] = [];
+  const stream = {
+    writableLength: 1024,
+    write: (line: string) => { written.push(line); return true; },
+    on() { return this; },
+  } as unknown as NodeJS.WritableStream;
+
+  const failures: AuthorizationAuditFailure[] = [];
+  emitAuthorizationAuditEvent(
+    createStdoutAuditSink(undefined, stream),
+    {
+      type: "authorization_decision",
+      timestamp: FIXED_TIME.toISOString(),
+      requestId: "req-under-cap",
+      stage: "authentication",
+      decision: "deny",
+      reason: "missing_assertion",
+      status: 401,
+    },
+    (failure) => void failures.push(failure),
+  );
+  assert.deepEqual(failures, [], "a healthy stream must not be treated as backpressured");
+  assert.equal(written.length, 1);
+  assert.match(written[0]!, /"requestId":"req-under-cap"/);
+});
+
+/** A stream that does not report depth must not be assumed backpressured. */
+test("a stream without writableLength is written to, not dropped", () => {
+  const written: string[] = [];
+  const stream = {
+    write: (line: string) => { written.push(line); return true; },
+    on() { return this; },
+  } as unknown as NodeJS.WritableStream;
+
+  createStdoutAuditSink(undefined, stream).record({
+    type: "authorization_decision",
+    timestamp: FIXED_TIME.toISOString(),
+    requestId: "req-no-length",
+    stage: "authentication",
+    decision: "deny",
+    reason: "missing_assertion",
+    status: 401,
+  });
+  assert.equal(written.length, 1);
+});
