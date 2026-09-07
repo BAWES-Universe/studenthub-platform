@@ -2,9 +2,14 @@
 //
 // "Only two login steps" describes the AUTH surface. These tests pin the rest of
 // the ACTIVATION surface: a Codex builder that authenticates perfectly still
-// cannot do the job unless it can reach the network, its COMPLETED can be
-// head-checked, its work can be pushed, its session identity survives a reboot,
-// and the coordinator writing that host-local identity is the brick box itself.
+// cannot do the job unless its COMPLETED can be head-checked, its work can be
+// pushed by the host broker, its session identity survives a reboot, and the
+// coordinator writing that host-local identity is the brick box itself.
+//
+// Two gates are INVERTED under Option A (codex_sandbox_network and
+// git_push_authentication): the worker performs no remote operation, so
+// declaring it networked or push-ready contradicts the prompt it is sent in the
+// same run. A gate an operator can satisfy only by lying is worse than no gate.
 //
 // Every requirement fails CLOSED and independently, so a half-wired activation
 // refuses to start a worker instead of discovering the gap mid-run.
@@ -33,9 +38,21 @@ function durableDir() {
 
 function activatedEnv(over = {}) {
   return {
-    CODEX_SANDBOX_NETWORK: "enabled",
+    // Option A: the worker performs no remote operation, and its prompt says
+    // so. A truthful activation therefore declares the sandbox isolated.
+    CODEX_SANDBOX_NETWORK: "disabled",
     GITHUB_TOKEN: "gh-token",
-    CODEX_GIT_PUSH_READY: "true",
+    // Deliberately NO CODEX_GIT_PUSH_READY. Under Option A the worker never
+    // pushes and holds no push credentials, so a truthful activation cannot
+    // declare push-readiness — see gate 3 in activation.mjs.
+    SHU_PUSH_BROKER_ENABLED: "true",
+    SHU_WORKTREE_ROOT: "/srv/shu/worktrees",
+    SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
+    // The broker's isolation is void while the worker shares the coordinator's
+    // OS identity, so a truthful activation states the split AND the mechanism
+    // that enforces it.
+    SHU_WORKER_UID: "2001",
+    SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=shu-worker --regid=shu-worker --clear-groups",
     COORDINATOR_HOST: HOST,
     ...over,
   };
@@ -53,8 +70,16 @@ test("a fully wired activation passes and names no unmet requirement", () => {
 // only in combination would let one silently stop being enforced.
 for (const [requirement, override] of [
   ["codex_sandbox_network", { CODEX_SANDBOX_NETWORK: undefined }],
+  // Inverted under the broker, like git_push_authentication: declaring the
+  // worker networked contradicts the prompt it is sent in the same run.
+  ["codex_sandbox_network", { CODEX_SANDBOX_NETWORK: "enabled" }],
   ["github_head_credentials", { GITHUB_TOKEN: "" }],
-  ["git_push_authentication", { CODEX_GIT_PUSH_READY: undefined }],
+  // Under Option A the gate is inverted: DECLARING worker push-readiness is the
+  // violation, because the worker must hold no push credentials at all.
+  ["git_push_authentication", { CODEX_GIT_PUSH_READY: "true" }],
+  ["host_push_broker", { SHU_PUSH_BROKER_ENABLED: undefined }],
+  ["worker_identity_split", { SHU_WORKER_UID: undefined }],
+  ["worker_identity_split", { SHU_WORKER_LAUNCH_WRAPPER: undefined }],
   ["coordinator_on_brick_box", { COORDINATOR_HOST: undefined }],
 ]) {
   test(`activation fails closed when ${requirement} is missing`, () => {
@@ -138,18 +163,49 @@ test("whitespace is not a GitHub credential", () => {
   assert.ok(out.unmet.some((u) => u.requirement === "github_head_credentials"));
 });
 
-test("a push remote does not prove authentication without the operator declaration", () => {
+// LEGACY worker-push mode (broker disabled). 3b refuses this mode outright, so
+// these can never be part of a passing preflight — they exist so the legacy
+// requirement cannot silently stop being enforced if 3b is ever relaxed.
+const LEGACY = { SHU_PUSH_BROKER_ENABLED: undefined };
+
+test("legacy mode: a push remote does not prove authentication without the operator declaration", () => {
   const io = { statImpl: () => ({ isDirectory: () => true }), accessImpl: () => {}, realpathImpl: (p) => p, hostname: () => HOST, gitPushRemote: () => "git@github.com:BAWES-Universe/studenthub-platform.git" };
-  const out = preflightActivation({ env: activatedEnv({ CODEX_GIT_PUSH_READY: undefined }), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  const out = preflightActivation({ env: activatedEnv({ ...LEGACY, CODEX_GIT_PUSH_READY: undefined }), stateDir: "/srv/codex/state", cwd: "/repo", io });
   assert.equal(out.ok, false, "a remote URL says nothing about whether credentials can use it");
   assert.ok(out.unmet.some((u) => u.requirement === "git_push_authentication"));
 });
 
-test("a worktree with no push remote fails closed even when the declaration is set", () => {
+test("legacy mode: a worktree with no push remote fails closed even when the declaration is set", () => {
   const io = { statImpl: () => ({ isDirectory: () => true }), accessImpl: () => {}, realpathImpl: (p) => p, hostname: () => HOST, gitPushRemote: () => "" };
-  const out = preflightActivation({ env: activatedEnv(), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  const out = preflightActivation({ env: activatedEnv({ ...LEGACY, CODEX_GIT_PUSH_READY: "true" }), stateDir: "/srv/codex/state", cwd: "/repo", io });
   assert.equal(out.ok, false, "a declaration must never outrank an observed missing remote");
-  assert.ok(out.unmet.some((u) => u.requirement === "git_push_authentication"));
+  const entry = out.unmet.find((u) => u.requirement === "git_push_authentication");
+  // Pin WHICH check fired: the Option A inversion also reports this requirement
+  // for the same env, so matching the name alone would pass on the wrong one.
+  assert.match(entry?.detail ?? "", /no push remote/, "the observed missing remote must be what fails");
+});
+
+// The contradiction Codex found: gate 3b (this PR) says the worker never
+// pushes, while gate 3 demanded the worker prove it can. A correctly isolated
+// Option A deployment could not activate honestly, and the only way through was
+// to declare credentials the design forbids.
+test("Option A: a truthfully isolated worker activates without declaring push credentials", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({ env: activatedEnv(), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  assert.equal(out.ok, true, describeUnmetActivation(out.unmet));
+  assert.ok(
+    !out.unmet.some((u) => u.requirement === "git_push_authentication"),
+    "a worker with no push credentials is the CORRECT Option A state, not an unmet requirement",
+  );
+});
+
+test("Option A: declaring worker push-readiness is itself an unmet requirement", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({ env: activatedEnv({ CODEX_GIT_PUSH_READY: "true" }), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  assert.equal(out.ok, false, "the worker must hold no push credentials while the broker is the pusher");
+  const entry = out.unmet.find((u) => u.requirement === "git_push_authentication");
+  assert.ok(entry, "the contradiction must be named, not silently tolerated");
+  assert.match(entry.remedy, /unset CODEX_GIT_PUSH_READY/, "the remedy must tell the operator to remove it, never to keep it");
 });
 
 test("activation creates its private state directory before checking it", () => {
@@ -190,6 +246,29 @@ test("an apparently durable path resolving onto ephemeral storage fails closed",
   });
   assert.equal(out.ok, false, "a symlink must not disguise /tmp as persistent state");
   assert.ok(out.unmet.some((u) => u.requirement === "durable_state_persistence"));
+});
+
+// The flag being PRESENT but the broker unconfigured is a distinct failure from
+// the flag being absent, and only the absent case was covered — deleting this
+// arm of the gate left the whole suite green (Opus R3).
+test("host_push_broker: enabled but unconfigured is unmet, not silently accepted", () => {
+  for (const missing of [
+    { SHU_WORKTREE_ROOT: undefined },
+    { SHU_PUSH_REMOTE_URL: undefined },
+    { SHU_WORKTREE_ROOT: undefined, SHU_PUSH_REMOTE_URL: undefined },
+  ]) {
+    const { io } = durableDir();
+    const out = preflightActivation({
+      env: activatedEnv({ SHU_PUSH_BROKER_ENABLED: "true", ...missing }),
+      stateDir: "/srv/codex/state",
+      cwd: "/repo",
+      io,
+    });
+    assert.equal(out.ok, false, JSON.stringify(missing));
+    const entry = out.unmet.find((u) => u.requirement === "host_push_broker");
+    assert.ok(entry, `enabled-but-unconfigured must be reported: ${JSON.stringify(missing)}`);
+    assert.match(entry.detail, /SHU_WORKTREE_ROOT|SHU_PUSH_REMOTE_URL/);
+  }
 });
 
 test("every declared requirement is actually enforced by the preflight", () => {
@@ -391,4 +470,68 @@ test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the ada
   assert.equal(code, 0, "the existing active receipt remains held; no new dispatch is attempted");
   assert.match(output.join("\n"), /activation contract unmet/);
   assert.ok(comments.some((c) => c.body.includes("coordinator-pause: codex-cli")));
+});
+
+// ---------------------------------------------------------------------------
+// worker_identity_split — the boundary activation previously ASSERTED without
+// establishing. An independent verifier reproduced the consequence at
+// `abe816a`: a same-uid process wrote url.*.insteadOf into the broker's own
+// repository after creation, and the remote check followed the rewrite.
+// ---------------------------------------------------------------------------
+
+test("a worker sharing the coordinator's uid is refused, not merely noted", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_WORKER_UID: "4242" }),
+    stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 4242 },
+  });
+  assert.equal(out.ok, false, "same-uid worker defeats the broker repository's 0700 isolation");
+  const entry = out.unmet.find((u) => u.requirement === "worker_identity_split");
+  assert.match(entry?.detail ?? "", /coordinator's own uid/);
+});
+
+test("a distinct worker uid with the enforcing wrapper satisfies the split", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv(), stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 1000 },
+  });
+  assert.equal(out.ok, true, describeUnmetActivation(out.unmet));
+});
+
+test("root is never an acceptable builder identity", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_WORKER_UID: "0" }),
+    stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 1000 },
+  });
+  assert.equal(out.ok, false);
+  assert.match(out.unmet.find((u) => u.requirement === "worker_identity_split")?.detail ?? "", /root/);
+});
+
+test("a non-numeric worker uid is not accepted as a declaration", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_WORKER_UID: "shu-worker" }),
+    stateDir: "/srv/codex/state", cwd: "/repo",
+    io: { ...io, getuid: () => 1000 },
+  });
+  assert.equal(out.ok, false, "a name is not a uid the coordinator can compare against its own");
+});
+
+test("the split is required even with the broker flag absent", () => {
+  // Scoping this to broker mode left a hole the contract meta-test caught: a
+  // requirement that can be skipped is not enforced. This is the requirement
+  // least able to afford that, and legacy mode is refused by 3b regardless.
+  const { io } = durableDir();
+  const out = preflightActivation({
+    env: activatedEnv({ SHU_PUSH_BROKER_ENABLED: undefined, SHU_WORKER_UID: undefined, SHU_WORKER_LAUNCH_WRAPPER: undefined }),
+    stateDir: "/srv/codex/state", cwd: "/repo", io,
+  });
+  assert.ok(
+    out.unmet.some((u) => u.requirement === "worker_identity_split"),
+    "no configuration may reach dispatch with the worker sharing the coordinator's identity",
+  );
 });
