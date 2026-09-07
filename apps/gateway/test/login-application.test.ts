@@ -112,7 +112,11 @@ test("stalled OIDC token and JWKS requests terminate at the configured bound", a
   const stalledFetch = ((_input: string | URL | Request, init?: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {
       assert.ok(init?.signal);
-      init.signal.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      const failureTimer = setTimeout(() => reject(new Error("OIDC request did not abort")), 1_000);
+      init.signal.addEventListener("abort", () => {
+        clearTimeout(failureTimer);
+        reject(init.signal?.reason);
+      }, { once: true });
     })) as typeof fetch;
 
   const transport = new HttpOidcTransport(

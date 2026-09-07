@@ -9,8 +9,10 @@ const SESSION = "s".repeat(43);
 
 test("gateway routes bind the browser cookie and expose no callback secrets", async (context) => {
   let browserSessionId = "";
+  let startCalls = 0;
   const login: LoginApplication = {
     async start(request) {
+      startCalls += 1;
       browserSessionId = request.browserSessionId;
       assert.equal(request.returnTo, "https://studenthub.test.invalid/home");
       return { status: 302, headers: { location: "https://identity.test.invalid/authorize" } };
@@ -41,11 +43,17 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
   assert.ok(address && typeof address !== "string");
   const origin = `http://127.0.0.1:${address.port}`;
 
+  const missingReturnTo = await fetch(`${origin}/login/universe`, { redirect: "manual" });
+  assert.equal(missingReturnTo.status, 400);
+  assert.deepEqual(await missingReturnTo.json(), { error: "login_rejected" });
+  assert.equal(startCalls, 0);
+
   const start = await fetch(
     `${origin}/login/universe?return_to=${encodeURIComponent("https://studenthub.test.invalid/home")}`,
     { redirect: "manual" },
   );
   assert.equal(start.status, 302);
+  assert.equal(startCalls, 1);
   assert.equal(start.headers.get("location"), "https://identity.test.invalid/authorize");
   const browserCookie = start.headers.get("set-cookie") ?? "";
   assert.match(browserCookie, /^__Host-studenthub_browser=[A-Za-z0-9_-]{43};/);
@@ -74,9 +82,43 @@ test("gateway routes bind the browser cookie and expose no callback secrets", as
   });
   assert.equal(falsePrefix.status, 404);
 
-  const logout = await fetch(`${origin}/logout`, {
+  const logout = await fetch(`${origin}/logout?source=profile`, {
     method: "POST",
     headers: { cookie: `__Host-studenthub_session=${SESSION}` },
   });
   assert.equal(logout.status, 204);
+});
+
+test("gateway contains rejecting login dependencies and remains available", async (context) => {
+  const unavailable = async () => { throw new Error("synthetic dependency failure"); };
+  const login: LoginApplication = {
+    start: unavailable,
+    callback: unavailable,
+    profile: unavailable,
+    logout: unavailable,
+  };
+  const server = createGatewayServer(undefined, undefined, undefined, login);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const cases = [
+    fetch(`${origin}/login/universe?return_to=${encodeURIComponent("https://studenthub.test.invalid/home")}`),
+    fetch(`${origin}/login/callback?state=state&code=code`, {
+      headers: { cookie: `__Host-studenthub_browser=${"b".repeat(43)}` },
+    }),
+    fetch(`${origin}/profile`, {
+      headers: { cookie: `__Host-studenthub_session=${SESSION}` },
+    }),
+    fetch(`${origin}/logout`, {
+      method: "POST",
+      headers: { cookie: `__Host-studenthub_session=${SESSION}` },
+    }),
+  ];
+  for (const response of await Promise.all(cases)) {
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "login_unavailable" });
+  }
+  assert.equal((await fetch(`${origin}/health`)).status, 200);
 });

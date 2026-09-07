@@ -100,7 +100,11 @@ export function createGatewayServer(
 
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/login/universe") {
       const url = new URL(request.url, "http://gateway.invalid");
-      const returnTo = url.searchParams.get("return_to") ?? "";
+      const returnTo = url.searchParams.get("return_to");
+      if (!returnTo) {
+        writeBrowserResponseSafely(response, { status: 400, body: { error: "login_rejected" } });
+        return;
+      }
       const browserSessionId = cookieValue(request.headers.cookie, "__Host-studenthub_browser")
         ?? randomBytes(32).toString("base64url");
       let result: import("@studenthub/login-contract").BrowserResponse;
@@ -109,7 +113,7 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "login_unavailable" } };
       }
-      writeBrowserResponse(response, result, result.status === 302
+      writeBrowserResponseSafely(response, result, result.status === 302
         ? `__Host-studenthub_browser=${browserSessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`
         : undefined);
       return;
@@ -121,31 +125,45 @@ export function createGatewayServer(
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
       if (!browserSessionId || !state || !code) {
-        writeBrowserResponse(response, { status: 400, body: { error: "login_rejected" } });
+        writeBrowserResponseSafely(response, { status: 400, body: { error: "login_rejected" } });
         return;
       }
-      writeBrowserResponse(response, await login.callback({ browserSessionId, state, code }));
+      let result: import("@studenthub/login-contract").BrowserResponse;
+      try {
+        result = await login.callback({ browserSessionId, state, code });
+      } catch {
+        result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      writeBrowserResponseSafely(response, result);
       return;
     }
 
     if (login && request.method === "GET" && request.url && requestPath(request.url) === "/profile") {
       const url = new URL(request.url, "http://gateway.invalid");
-      const result = await login.profile({
-        sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
-        personId: url.searchParams.get("person_id") ?? undefined,
-      });
-      writeBrowserResponse(response, {
+      let result: import("@studenthub/login-contract").BrowserResponse;
+      try {
+        result = await login.profile({
+          sessionId: cookieValue(request.headers.cookie, "__Host-studenthub_session"),
+          personId: url.searchParams.get("person_id") ?? undefined,
+        });
+      } catch {
+        result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      writeBrowserResponseSafely(response, {
         ...result,
         headers: { ...result.headers, "cache-control": "no-store" },
       });
       return;
     }
 
-    if (login && request.method === "POST" && request.url === "/logout") {
-      writeBrowserResponse(
-        response,
-        await login.logout(cookieValue(request.headers.cookie, "__Host-studenthub_session")),
-      );
+    if (login && request.method === "POST" && request.url && requestPath(request.url) === "/logout") {
+      let result: import("@studenthub/login-contract").BrowserResponse;
+      try {
+        result = await login.logout(cookieValue(request.headers.cookie, "__Host-studenthub_session"));
+      } catch {
+        result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      writeBrowserResponseSafely(response, result);
       return;
     }
 
@@ -251,6 +269,18 @@ function writeBrowserResponse(
   }
   response.writeHead(result.status, headers);
   response.end(result.body === undefined ? undefined : JSON.stringify(result.body));
+}
+
+function writeBrowserResponseSafely(
+  response: import("node:http").ServerResponse,
+  result: import("@studenthub/login-contract").BrowserResponse,
+  additionalCookie?: string,
+): void {
+  try {
+    writeBrowserResponse(response, result, additionalCookie);
+  } catch {
+    response.destroy();
+  }
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
