@@ -41,7 +41,11 @@ export const RUNTIME_ROLE_SUPPORT = Object.freeze({
   "hermes-pool": ["build", "revise", "review"],
 });
 
-export const RUNTIME_ROLE_PROMPT = Object.freeze({
+// Maps a role to the name of the callback stage that signals SUCCESS for that
+// role in the coordinator's receipt machinery (codex-cli/codex-contract use
+// BUILD_READY/REVISION_READY; claude-verifier uses PASS). This is a callback
+// STAGE name, not a prompt or instruction sent to any runtime.
+export const ROLE_SUCCESS_STAGE = Object.freeze({
   build: "BUILD_READY",
   revise: "REVISION_READY",
   review: "PASS",
