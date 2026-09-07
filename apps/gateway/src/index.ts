@@ -15,6 +15,7 @@ import {
 } from "./authz-middleware.js";
 
 export * from "./authz-middleware.js";
+export * from "./authz-audit.js";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
