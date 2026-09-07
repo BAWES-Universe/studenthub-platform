@@ -156,8 +156,14 @@ const guardedStreams = new WeakSet<NodeJS.WritableStream>();
  * How much unflushed audit output the process will hold before dropping records.
  * A cap rather than a queue: the only bound that matters is the one on memory,
  * and 1 MiB of JSON lines is far more slack than a healthy log consumer needs.
+ *
+ * The bound is INCLUSIVE of the record being written. Checking only what the
+ * stream already holds lets the crossing record through — the buffer settles at
+ * the cap plus one line, and the record that broke the bound is the one write
+ * that reports no failure. A cap that admits the record that exceeds it is not
+ * a cap; it is a threshold that announces one.
  */
-const MAX_PENDING_AUDIT_BYTES = 1024 * 1024;
+export const MAX_PENDING_AUDIT_BYTES = 1024 * 1024;
 
 /**
  * Bytes the stream is still holding. `writableLength` is standard on Node's
@@ -212,7 +218,11 @@ export function createStdoutAuditSink(
       // has, which raises `audit_sink_failure` carrying the request id and
       // nothing else. A dropped audit line becomes a visible failure rather than
       // silence, and no path awaits stdout from a request.
-      if (pendingBytes(stream) > MAX_PENDING_AUDIT_BYTES) {
+      //
+      // The record's own bytes count toward the cap. A stream that does not
+      // report its depth still reads as empty, so an ordinary event is written
+      // as before; only a single record larger than the whole cap is refused.
+      if (pendingBytes(stream) + Buffer.byteLength(line, "utf8") > MAX_PENDING_AUDIT_BYTES) {
         throw new Error("audit stream is backpressured");
       }
       void stream.write(line);

@@ -17,6 +17,7 @@ import { authorizeRequest } from "../src/authz-middleware.js";
 import {
   createStdoutAuditSink,
   emitAuthorizationAuditEvent,
+  MAX_PENDING_AUDIT_BYTES,
   type AuthorizationAuditEvent,
   type AuthorizationAuditFailure,
   type AuthorizationAuditSink,
@@ -467,7 +468,7 @@ test("an injected write is used verbatim and leaves the default stream alone", (
 });
 
 /**
- * MUTATION: remove the `pendingBytes(stream) > MAX_PENDING_AUDIT_BYTES` check.
+ * MUTATION: remove the cap check, or drop the record's own bytes from it.
  *
  * CodeRabbit, on head 3a83f79: the sink discarded `write()`'s return value, so a
  * slow log consumer let the stream buffer grow one line per authorization
@@ -477,6 +478,12 @@ test("an injected write is used verbatim and leaves the default stream alone", (
  * The drop is signalled rather than silent: `record` throws, which routes into
  * the containment `emitAuthorizationAuditEvent` already has, so the operator
  * sees `audit_sink_failure` with the request id instead of a missing line.
+ *
+ * Codex, on head 9312a35: the check read only what the stream already held, so
+ * the record that crossed the cap was written anyway and reported nothing —
+ * the bound settled at cap plus one line. The pair of boundary tests below pins
+ * both sides, because a cap that also refuses records which fit drops audit
+ * output for no reason.
  */
 function backpressuredStream(pending: number): NodeJS.WritableStream {
   return {
@@ -505,6 +512,98 @@ test("a backpressured audit stream drops the record instead of growing without b
   );
   // Contained, signalled, and carrying nothing but the request id.
   assert.deepEqual(failures, [{ kind: "audit_sink_failure", requestId: "req-backpressure" }]);
+});
+
+/**
+ * A stream parked just under the cap, recording what it is asked to write.
+ * `writableLength` stays put: nothing drains, and the point of the test is what
+ * the sink decides BEFORE writing.
+ */
+function stalledStream(pending: number): { stream: NodeJS.WritableStream; written: string[] } {
+  const written: string[] = [];
+  const stream = {
+    writableLength: pending,
+    write: (line: string) => { written.push(line); return false; },
+    on() { return this; },
+  } as unknown as NodeJS.WritableStream;
+  return { stream, written };
+}
+
+/**
+ * The boundary itself. Checking only what the stream already holds lets the
+ * crossing record through, so the buffer settles at the cap plus one line and
+ * the write that broke the bound is the one that reports nothing.
+ */
+test("the record that would cross the cap is refused, not written", () => {
+  const line = `${JSON.stringify({
+    type: "authorization_decision",
+    timestamp: FIXED_TIME.toISOString(),
+    requestId: "req-crosses-cap",
+    stage: "authorization",
+    decision: "allow",
+    principalId: "principal-1",
+    orgId: TEST_ORG,
+    role: "inspector",
+  })}\n`;
+  // One byte of headroom: the stream fits everything except this record.
+  const { stream, written } = stalledStream(MAX_PENDING_AUDIT_BYTES - Buffer.byteLength(line, "utf8") + 1);
+
+  const failures: AuthorizationAuditFailure[] = [];
+  emitAuthorizationAuditEvent(
+    createStdoutAuditSink(undefined, stream),
+    {
+      type: "authorization_decision",
+      timestamp: FIXED_TIME.toISOString(),
+      requestId: "req-crosses-cap",
+      stage: "authorization",
+      decision: "allow",
+      principalId: "principal-1",
+      orgId: TEST_ORG,
+      role: "inspector",
+    },
+    (failure) => void failures.push(failure),
+  );
+
+  assert.deepEqual(written, [], "the crossing record must never reach the stream");
+  assert.deepEqual(failures, [{ kind: "audit_sink_failure", requestId: "req-crosses-cap" }]);
+});
+
+/**
+ * The other side of the same boundary. A cap that also refuses records which
+ * fit would drop audit output for no reason, so the exact fit must go through.
+ */
+test("the record that exactly fills the cap is still written", () => {
+  const line = `${JSON.stringify({
+    type: "authorization_decision",
+    timestamp: FIXED_TIME.toISOString(),
+    requestId: "req-exact-fit",
+    stage: "authorization",
+    decision: "allow",
+    principalId: "principal-1",
+    orgId: TEST_ORG,
+    role: "inspector",
+  })}\n`;
+  const { stream, written } = stalledStream(MAX_PENDING_AUDIT_BYTES - Buffer.byteLength(line, "utf8"));
+
+  const failures: AuthorizationAuditFailure[] = [];
+  emitAuthorizationAuditEvent(
+    createStdoutAuditSink(undefined, stream),
+    {
+      type: "authorization_decision",
+      timestamp: FIXED_TIME.toISOString(),
+      requestId: "req-exact-fit",
+      stage: "authorization",
+      decision: "allow",
+      principalId: "principal-1",
+      orgId: TEST_ORG,
+      role: "inspector",
+    },
+    (failure) => void failures.push(failure),
+  );
+
+  assert.deepEqual(failures, [], "a record that fits must not be dropped");
+  assert.equal(written.length, 1);
+  assert.match(written[0]!, /"requestId":"req-exact-fit"/);
 });
 
 test("an audit stream under the cap still writes", () => {
