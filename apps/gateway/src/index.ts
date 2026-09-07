@@ -18,6 +18,7 @@ import type { LoginApplication } from "@studenthub/login-contract";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 
 export * from "./authz-middleware.js";
+export * from "./authz-audit.js";
 export { createLoginApplication } from "./login-application.js";
 export { createRuntimeLoginFromEnv } from "./login-runtime.js";
 
