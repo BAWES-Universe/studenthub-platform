@@ -3,6 +3,22 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "../../dist/packages/login-contract/src/index.js",
-  "types": "../../dist/packages/login-contract/src/index.d.ts"
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.3"
+  }
 }

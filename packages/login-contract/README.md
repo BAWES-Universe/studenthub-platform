@@ -26,4 +26,5 @@ session-bound one-time state, PKCE S256, nonce verification bound to the
 initiating browser session even across interleaved logins, exact redirect
 allowlisting, ID-token signature and claim validation, Universe subject policy,
 issuer/subject identity binding without profile matching, server-derived
-authorization, profile isolation, secure cookies, and server-side logout.
+authorization, profile isolation, `__Host-` prefixed secure cookies, and
+server-side logout.
