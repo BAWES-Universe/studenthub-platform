@@ -90,6 +90,11 @@ export const BROKER_GIT_CONFIG_ARGS = Object.freeze([
   "-c", "core.askPass=",
   "-c", "protocol.ext.allow=never",  // ext:: URLs execute a shell command
   "-c", "protocol.file.allow=always",// alternates/local paths stay usable
+  // `git replace --graft` gives a commit a FAKE parent, and every history
+  // question git answers — ancestry included — honours it by default. A worker
+  // owns refs/replace/* in its own repository, so it could manufacture descent
+  // from target_sha for a commit that descends from nothing.
+  "-c", "core.useReplaceRefs=false",
 ]);
 
 // Environment variables that inject config or name a command to execute.
@@ -482,13 +487,21 @@ export async function pushExactSha({
   };
 
   // --- ancestry: result_sha must descend from target_sha ----------------------
+  //
+  // Asked in the BROKER's repository, not the worker's. Ancestry is a question
+  // about history, and the worker owns refs/replace/* in its own repo:
+  // `git replace --graft <orphan> <target>` gives an orphan a fake parent, and
+  // every history question git answers honours that by default. The broker repo
+  // reaches the same objects through alternates but carries none of the worker's
+  // refs, so there is no replacement to honour. `core.useReplaceRefs=false` in
+  // the boundary flags closes the same door a second way, for every call.
   if (isAncestorImpl) {
     const anc = await isAncestorImpl({ cwd, result_sha, target_sha, gitImpl, env });
     if (anc !== true) {
       return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha}`);
     }
   } else {
-    const a = await brokerGit(gitImpl, ["merge-base", "--is-ancestor", target_sha, result_sha], { cwd, env });
+    const a = await brokerGit(gitImpl, ["merge-base", "--is-ancestor", target_sha, result_sha], { cwd: remoteCwd, env });
     if (a.error) {
       return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha} (${a.stderr.trim() || a.error.message})`);
     }

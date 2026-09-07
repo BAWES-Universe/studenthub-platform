@@ -334,6 +334,10 @@ test("the hardening flags are applied to EVERY broker call, not just the push", 
     "core.gitProxy=",
     "uploadpack.packObjectsHook=",
     "protocol.ext.allow=never",
+    // Binds the flag independently: the broker-repo ancestry cwd would cover
+    // the graft attack on its own, so without this the flag could be deleted
+    // with the suite still green.
+    "core.useReplaceRefs=false",
   ]) {
     assert.ok(joined.includes(key), `${key} must be in the boundary's -c overrides`);
   }
@@ -467,4 +471,29 @@ test("real git: a pre-seeded lane ref cannot complete a SHA that fails the local
   assert.notEqual(res.stage, "ALREADY_PUSHED", "a SHA that could not be pushed must not be reported as already pushed");
   assert.equal(res.ok, false, JSON.stringify(res));
   assert.match(res.reason, /does not descend/i, "the ancestry control must be what refuses it");
+});
+
+// ---------------------------------------------------------------------------
+// 7. Worker replacement refs (Codex, reproduced). `git replace --graft` gives
+//    a commit a FAKE parent. The ancestry check ran in the worker repository,
+//    which owns refs/replace/*, so the worker could manufacture descent from
+//    target_sha for a commit that descends from nothing.
+// ---------------------------------------------------------------------------
+
+test("real git: a worker replace/graft ref cannot manufacture ancestry", async () => {
+  const f = await fixture();
+  const tree = (await git(["rev-parse", "HEAD^{tree}"], f.wt)).stdout.trim();
+  // An orphan: no parents at all, so it descends from nothing.
+  const orphan = (await git(["commit-tree", tree, "-m", "orphan result"], f.wt)).stdout.trim();
+  await git(["checkout", "-q", orphan], f.wt);          // worktree HEAD === result_sha
+  await git(["replace", "--graft", orphan, f.target_sha], f.wt);
+
+  // The lie is real in the worker's own repository:
+  await git(["merge-base", "--is-ancestor", f.target_sha, orphan], f.wt);
+
+  const res = await pushExactSha(opts(f, { result_sha: orphan }));
+
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.match(res.reason, /does not descend/i, "ancestry must be judged without the worker's replacement refs");
+  assert.equal(await bareHasCommit(f.legit, orphan), false, "the orphan must never reach the remote");
 });
