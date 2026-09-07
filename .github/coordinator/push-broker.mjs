@@ -123,12 +123,16 @@ const GIT_EXEC_ENV_KEYS = Object.freeze([
 // nothing to do with this broker — silently choosing the program the broker
 // executes. Selection now requires a name that only this coordinator's
 // configuration has any reason to set.
-export function brokerGitEnv(env = {}, { sshCommand = null } = {}) {
+// `indexFile`, like `sshCommand`, is a COORDINATOR-supplied argument and is
+// never read from the environment — GIT_INDEX_FILE is stripped above with the
+// other variables that redirect git at worker-controlled state.
+export function brokerGitEnv(env = {}, { sshCommand = null, indexFile = null } = {}) {
   const out = { ...env };
   for (const key of Object.keys(out)) {
     if (/^GIT_CONFIG(_|$)/.test(key)) delete out[key]; // GIT_CONFIG, _GLOBAL, _SYSTEM, _COUNT, _KEY_n, _VALUE_n
   }
   for (const key of GIT_EXEC_ENV_KEYS) delete out[key];
+  if (indexFile) out.GIT_INDEX_FILE = indexFile;
   const ssh = sshCommand ?? env.SHU_PUSH_SSH_COMMAND ?? "ssh";
   out.GIT_CONFIG_GLOBAL = "/dev/null";
   out.GIT_CONFIG_SYSTEM = "/dev/null";
@@ -141,10 +145,10 @@ export function brokerGitEnv(env = {}, { sshCommand = null } = {}) {
 
 // Every broker git invocation goes through here — no exceptions, so a new call
 // site cannot forget the boundary.
-function brokerGit(gitImpl, args, { cwd, env, sshCommand = null } = {}) {
+function brokerGit(gitImpl, args, { cwd, env, sshCommand = null, indexFile = null } = {}) {
   return runGit(gitImpl, [...BROKER_GIT_CONFIG_ARGS, ...args], {
     cwd,
-    env: brokerGitEnv(env, { sshCommand }),
+    env: brokerGitEnv(env, { sshCommand, indexFile }),
   });
 }
 
@@ -262,17 +266,76 @@ export async function createBrokerRepo({
   const objectsDir = `${absCommon.replace(/\/+$/, "")}/objects`;
 
   const dir = mkdtempImpl(`${tmpRoot ?? tmpdir()}/shu-broker-repo-`);
+  // The directory exists before init can fail, and `dir` is not returned on a
+  // failure — so the caller has nothing to clean up and every failed attempt
+  // would leave one behind (CodeRabbit).
+  const discard = () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } };
   const init = await brokerGit(gitImpl, ["init", "--bare", "-q", dir], { cwd: dir, env });
   if (init.error) {
+    discard();
     return { ok: false, reason: `could not create the broker repository: ${init.stderr.trim() || init.error.message}` };
   }
   try {
     mkdirImpl(`${dir}/objects/info`, { recursive: true, mode: 0o700 });
     writeImpl(`${dir}/objects/info/alternates`, `${objectsDir}\n`, { mode: 0o600 });
   } catch (e) {
+    discard();
     return { ok: false, reason: `could not link worker objects into the broker repository: ${e?.message ?? "unknown"}` };
   }
   return { ok: true, dir, objectsDir };
+}
+
+// brokerCleanTree — is the worker's worktree exactly `sha`, with nothing
+// uncommitted and nothing untracked?
+//
+// This is the ONE broker operation that must read worker CONTENT, and content
+// is where worker-authored filters execute: a committed `.gitattributes` naming
+// `filter=p` plus `filter.p.clean` in the worker's own config runs that program
+// as the broker during an ordinary `git status`. Both writes are legitimate
+// worker-side actions and neither makes the worktree dirty, so the check that
+// was supposed to notice tampering was itself the execution vector.
+//
+// `filter.<anything>.clean` is an unbounded key space, exactly like
+// `url.*.insteadOf`. No list of `-c` overrides can close it — enumeration is
+// the wrong shape of defence. So the check runs against the BROKER's
+// repository instead: broker git-dir (whose config defines no filters at all),
+// a broker-owned index, the worker's tree read only as data. A committed
+// `.gitattributes` may still name `filter=p`, but with no matching driver in
+// broker config there is nothing for git to run.
+//
+// Comparing against `sha` directly rather than HEAD keeps the broker repo's own
+// refs out of it: `diff-index` reports worktree drift, `ls-files --others`
+// reports untracked files, and neither needs a branch to exist.
+export async function brokerCleanTree({ dir, worktree, sha, gitImpl, env = {} }) {
+  const indexFile = `${dir}/broker-index`;
+  const at = (args) => brokerGit(gitImpl, ["-c", "core.bare=false", "--git-dir", dir, "--work-tree", worktree, ...args],
+    { cwd: worktree, env, indexFile });
+
+  const read = await at(["read-tree", sha]);
+  if (read.error) {
+    return { ok: false, reason: `could not stage ${sha} for the cleanliness check: ${read.stderr.trim() || read.error.message}` };
+  }
+  // read-tree leaves every entry with zeroed stat info, so diff-index would
+  // report a pristine worktree as fully modified. Refreshing re-stats (and
+  // re-hashes where stat is inconclusive) against the real files first.
+  await at(["update-index", "-q", "--refresh"]);
+  const diff = await at(["diff-index", "--name-only", sha, "--"]);
+  if (diff.error) {
+    return { ok: false, reason: `could not compare the worktree against ${sha}: ${diff.stderr.trim() || diff.error.message}` };
+  }
+  const modified = diff.stdout.trim();
+  if (modified.length) {
+    return { ok: false, reason: `worktree is dirty: ${modified.split("\n")[0]}` };
+  }
+  const others = await at(["ls-files", "--others", "--exclude-standard"]);
+  if (others.error) {
+    return { ok: false, reason: `could not list untracked files: ${others.stderr.trim() || others.error.message}` };
+  }
+  const untracked = others.stdout.trim();
+  if (untracked.length) {
+    return { ok: false, reason: `worktree is dirty: untracked ${untracked.split("\n")[0]}` };
+  }
+  return { ok: true };
 }
 
 // The result commit must be readable from the broker repository before we push
@@ -418,10 +481,69 @@ export async function pushExactSha({
     return { stage: "HOLD", reason, pause_adapter: true, ok: false };
   };
 
-  // --- recovery + idempotency FIRST, before any git write --------------------
+  // --- ancestry: result_sha must descend from target_sha ----------------------
+  if (isAncestorImpl) {
+    const anc = await isAncestorImpl({ cwd, result_sha, target_sha, gitImpl, env });
+    if (anc !== true) {
+      return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha}`);
+    }
+  } else {
+    const a = await brokerGit(gitImpl, ["merge-base", "--is-ancestor", target_sha, result_sha], { cwd, env });
+    if (a.error) {
+      return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha} (${a.stderr.trim() || a.error.message})`);
+    }
+  }
+
+  // --- exact worktree HEAD === result_sha -------------------------------------
+  let head = null;
+  if (readHeadImpl) {
+    head = await readHeadImpl({ cwd, gitImpl, env });
+  } else {
+    const h = await brokerGit(gitImpl, ["rev-parse", "HEAD"], { cwd, env });
+    if (h.error) {
+      return held(`could not resolve worktree HEAD: ${h.stderr.trim() || h.error.message}`);
+    }
+    head = h.stdout.trim();
+  }
+  if (head !== result_sha) {
+    return held(`worktree HEAD ${head} != result_sha ${result_sha}; worktree moved after build`);
+  }
+
+  // --- clean tree (no uncommitted / untracked changes) -------------------------
+  let cleanOk = true;
+  let cleanDetail = "";
+  if (cleanTreeImpl) {
+    const c = await cleanTreeImpl({ cwd, gitImpl, env });
+    cleanOk = c.ok;
+    cleanDetail = c.reason ?? "";
+  } else {
+    // NOT `git status` in the worker worktree: that reads the worker's config
+    // and executes its filters. See brokerCleanTree.
+    const c = await brokerCleanTree({ dir: remoteCwd, worktree: cwd, sha: result_sha, gitImpl, env });
+    cleanOk = c.ok;
+    cleanDetail = c.reason ?? "";
+  }
+  if (!cleanOk) {
+    return held(cleanDetail || "worktree is not clean");
+  }
+
+  // --- recovery + idempotency, before any git WRITE --------------------------
   // A durable pre-push record distinguishes "crash-before-push" from
   // "crash-after-push-before-record". Recovery checks the REMOTE first and only
   // then decides. Never clobber, never re-push blindly.
+  //
+  // These run AFTER the local validations above, deliberately. When the lane ref
+  // already equals the worker-supplied result_sha the broker returns
+  // ALREADY_PUSHED — a success the adapter reports as COMPLETED. Reaching that
+  // return before ancestry, worktree HEAD and cleanliness meant a retry, or a
+  // pre-seeded lane, could complete by naming an old remote SHA that never
+  // descended from the current target_sha: every control this broker exists to
+  // bind, skipped by claiming the work was already done. A SHA is only
+  // "already pushed" if it would have been allowed to be pushed.
+  //
+  // Nothing above writes to the worker repo or the remote — the ancestry and
+  // HEAD reads are read-only, and the cleanliness check writes only the broker's
+  // own index — so the recovery ordering that matters is unchanged.
   const existingRecord = readPreImpl(stateDir, attempt_id);
   const remote = await remoteHeadImpl({ repo, branch, gitImpl, remoteUrl, cwd: remoteCwd, env });
   if (remote.ok === false) {
@@ -463,53 +585,6 @@ export async function pushExactSha({
   // refusal — that is someone else's commit, and this broker does not clobber.
   if (remote.ok === true && remote.head && remote.head !== target_sha) {
     return held(`remote branch ${branch} already at ${remote.head}, not ${result_sha} or the bound ${target_sha}; refusing to clobber`);
-  }
-
-  // --- ancestry: result_sha must descend from target_sha ----------------------
-  if (isAncestorImpl) {
-    const anc = await isAncestorImpl({ cwd, result_sha, target_sha, gitImpl, env });
-    if (anc !== true) {
-      return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha}`);
-    }
-  } else {
-    const a = await brokerGit(gitImpl, ["merge-base", "--is-ancestor", target_sha, result_sha], { cwd, env });
-    if (a.error) {
-      return held(`result_sha ${result_sha} does not descend from target_sha ${target_sha} (${a.stderr.trim() || a.error.message})`);
-    }
-  }
-
-  // --- exact worktree HEAD === result_sha -------------------------------------
-  let head = null;
-  if (readHeadImpl) {
-    head = await readHeadImpl({ cwd, gitImpl, env });
-  } else {
-    const h = await brokerGit(gitImpl, ["rev-parse", "HEAD"], { cwd, env });
-    if (h.error) {
-      return held(`could not resolve worktree HEAD: ${h.stderr.trim() || h.error.message}`);
-    }
-    head = h.stdout.trim();
-  }
-  if (head !== result_sha) {
-    return held(`worktree HEAD ${head} != result_sha ${result_sha}; worktree moved after build`);
-  }
-
-  // --- clean tree (no uncommitted / untracked changes) -------------------------
-  let cleanOk = true;
-  let cleanDetail = "";
-  if (cleanTreeImpl) {
-    const c = await cleanTreeImpl({ cwd, gitImpl, env });
-    cleanOk = c.ok;
-    cleanDetail = c.reason ?? "";
-  } else {
-    const s = await brokerGit(gitImpl, ["status", "--porcelain"], { cwd, env });
-    if (s.error) {
-      return held(`could not check worktree cleanliness: ${s.stderr.trim() || s.error.message}`);
-    }
-    cleanOk = s.stdout.trim().length === 0;
-    cleanDetail = cleanOk ? "" : `worktree is dirty: ${s.stdout.trim().split("\n")[0]}`;
-  }
-  if (!cleanOk) {
-    return held(cleanDetail || "worktree is not clean");
   }
 
   // --- durable pre-push record (BEFORE the push, distinguished from after) ----

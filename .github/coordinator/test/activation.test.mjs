@@ -2,9 +2,14 @@
 //
 // "Only two login steps" describes the AUTH surface. These tests pin the rest of
 // the ACTIVATION surface: a Codex builder that authenticates perfectly still
-// cannot do the job unless it can reach the network, its COMPLETED can be
-// head-checked, its work can be pushed, its session identity survives a reboot,
-// and the coordinator writing that host-local identity is the brick box itself.
+// cannot do the job unless its COMPLETED can be head-checked, its work can be
+// pushed by the host broker, its session identity survives a reboot, and the
+// coordinator writing that host-local identity is the brick box itself.
+//
+// Two gates are INVERTED under Option A (codex_sandbox_network and
+// git_push_authentication): the worker performs no remote operation, so
+// declaring it networked or push-ready contradicts the prompt it is sent in the
+// same run. A gate an operator can satisfy only by lying is worse than no gate.
 //
 // Every requirement fails CLOSED and independently, so a half-wired activation
 // refuses to start a worker instead of discovering the gap mid-run.
@@ -33,7 +38,9 @@ function durableDir() {
 
 function activatedEnv(over = {}) {
   return {
-    CODEX_SANDBOX_NETWORK: "enabled",
+    // Option A: the worker performs no remote operation, and its prompt says
+    // so. A truthful activation therefore declares the sandbox isolated.
+    CODEX_SANDBOX_NETWORK: "disabled",
     GITHUB_TOKEN: "gh-token",
     // Deliberately NO CODEX_GIT_PUSH_READY. Under Option A the worker never
     // pushes and holds no push credentials, so a truthful activation cannot
@@ -58,6 +65,9 @@ test("a fully wired activation passes and names no unmet requirement", () => {
 // only in combination would let one silently stop being enforced.
 for (const [requirement, override] of [
   ["codex_sandbox_network", { CODEX_SANDBOX_NETWORK: undefined }],
+  // Inverted under the broker, like git_push_authentication: declaring the
+  // worker networked contradicts the prompt it is sent in the same run.
+  ["codex_sandbox_network", { CODEX_SANDBOX_NETWORK: "enabled" }],
   ["github_head_credentials", { GITHUB_TOKEN: "" }],
   // Under Option A the gate is inverted: DECLARING worker push-readiness is the
   // violation, because the worker must hold no push credentials at all.

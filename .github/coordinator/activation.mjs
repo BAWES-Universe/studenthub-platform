@@ -118,11 +118,29 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
   //    under --sandbox workspace-write, whose network posture is a property of
   //    the CLI's sandbox configuration on the box. This process cannot inspect
   //    that, so the operator declares it and the declaration is auditable.
-  if (env.CODEX_SANDBOX_NETWORK !== "enabled") {
+  //
+  //    Option A inverts this the same way it inverts gate 3. The prompt this
+  //    adapter sends now says "Do NOT touch the network", and the host broker
+  //    owns every remote operation — so under the broker a declaration of
+  //    "enabled" contradicts the instructions the worker is given in the same
+  //    run. The old remedy ("it must fetch and push") described a worker that
+  //    no longer exists, and demanding it made a truthfully network-isolated
+  //    deployment unable to dispatch at all.
+  //
+  //    Open deployment question, deliberately NOT settled here: whether the
+  //    worker needs network for DEPENDENCIES (install, test fixtures) even
+  //    though it needs none for git. If it does, the prompt and this gate must
+  //    change together and on purpose — which is what failing closed here
+  //    forces, instead of letting the two quietly disagree.
+  const networkPosture = env.CODEX_SANDBOX_NETWORK;
+  const brokerOwnsRemotes = env.SHU_PUSH_BROKER_ENABLED === "true";
+  if (brokerOwnsRemotes ? networkPosture !== "disabled" : networkPosture !== "enabled") {
     problems.push(unmet(
       "codex_sandbox_network",
-      `CODEX_SANDBOX_NETWORK is ${env.CODEX_SANDBOX_NETWORK ? `"${env.CODEX_SANDBOX_NETWORK}"` : "unset"}`,
-      "confirm the Codex sandbox may reach the network (it must fetch and push), then set CODEX_SANDBOX_NETWORK=enabled on the coordinator",
+      `CODEX_SANDBOX_NETWORK is ${networkPosture ? `"${networkPosture}"` : "unset"}`,
+      brokerOwnsRemotes
+        ? "the worker is network-isolated under Option A (the host broker performs every remote operation): set CODEX_SANDBOX_NETWORK=disabled on the coordinator, and change the builder prompt in the same commit if the worker genuinely needs network for dependencies"
+        : "confirm the Codex sandbox may reach the network (it must fetch and push), then set CODEX_SANDBOX_NETWORK=enabled on the coordinator",
     ));
   }
 

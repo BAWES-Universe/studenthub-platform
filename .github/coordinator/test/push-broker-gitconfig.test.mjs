@@ -175,16 +175,18 @@ test("real git: worker core.sshCommand never executes as the broker, not even on
   // this test would pass without exercising anything — a file:// remote made an
   // earlier version of it vacuous. The ls-remote is expected to fail (no
   // network, no key); what matters is that the worker's script did not run.
-  const res = await pushExactSha(
-    opts(f, { remoteUrl: "git@github.com:BAWES-Universe/studenthub-platform.git", allowedHost: undefined }),
-  );
+  const res = await pushExactSha(sshOpts(f));
 
   assert.equal(existsSync(marker), false, "core.sshCommand must never run under the broker identity");
   assert.equal(res.ok, false, "an unreachable remote is a HOLD, never a claimed push");
 });
 
-test("real git: worker core.gitProxy and core.fsmonitor never execute as the broker", async () => {
-  for (const key of ["core.gitProxy", "core.fsmonitor"]) {
+test("real git: worker core.fsmonitor never executes as the broker", async () => {
+  // core.gitProxy is NOT exercised here: it applies only to git:// URLs, which
+  // validateRepoUrl refuses outright, so the iteration could never run the
+  // script (CodeRabbit). Its `-c` override is pinned by the
+  // BROKER_GIT_CONFIG_ARGS test instead.
+  for (const key of ["core.fsmonitor"]) {
     const f = await fixture();
     const { marker, script } = markerScript(f.root, `${key.replace(".", "-")}-marker`);
     await git(["config", key, script], f.wt);
@@ -219,8 +221,13 @@ test("real git: an included worker config cannot smuggle in an executing key or 
 // what matters is which program git chose to run first.
 function sshOpts(f, over = {}) {
   return opts(f, {
-    remoteUrl: "git@github.com:BAWES-Universe/studenthub-platform.git",
-    allowedHost: undefined,
+    // ssh-shaped so git actually invokes the ssh program — and pointed at an
+    // RFC 2606 .invalid host so it can never resolve. The earlier
+    // git@github.com form named the REAL repository: on any machine that did
+    // have a deploy key, pushExactSha would have attempted a genuine push to
+    // production before the assertion ran (CodeRabbit).
+    remoteUrl: "git@ssh.invalid:BAWES-Universe/studenthub-platform.git",
+    allowedHost: "ssh.invalid",
     ...over,
   });
 }
@@ -405,4 +412,59 @@ test("real git: a lane branch at any OTHER sha is still never clobbered", async 
   assert.match(res.reason, /refusing to clobber/, "the broker's own refusal, not git's rejection");
   const ref = (await git(["rev-parse", "refs/heads/coordinator/SHU-63"], f.legit)).stdout.trim();
   assert.equal(ref, unrelated, "the foreign head must be left exactly as it was");
+});
+
+// ---------------------------------------------------------------------------
+// 5. Worker-authored content filters (Codex + CodeRabbit, reproduced with real
+//    git). `filter.<name>.clean` has an unbounded key space exactly like
+//    `url.*.insteadOf`, so no list of `-c` overrides can close it. The clean
+//    tree check must therefore run without the worker's config at all.
+// ---------------------------------------------------------------------------
+
+test("real git: a worker clean filter never executes during the cleanliness check", async () => {
+  const f = await fixture();
+  const marker = join(f.root, "filter-marker");
+  const script = join(f.root, "filter.sh");
+  writeFileSync(script, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\ncat\n`, { mode: 0o755 });
+  chmodSync(script, 0o755);
+
+  // The attribute is COMMITTED (worker owns its tree) and the driver is in the
+  // worker's local config (worker owns its .git/config). Both are legitimate
+  // worker-side writes; neither makes the worktree dirty.
+  writeFileSync(join(f.wt, ".gitattributes"), "* filter=p\n");
+  await git(["add", ".gitattributes"], f.wt);
+  await git(["commit", "-qm", "attrs"], f.wt);
+  const result_sha = (await git(["rev-parse", "HEAD"], f.wt)).stdout.trim();
+  await git(["config", "filter.p.clean", script], f.wt);
+  // Rewrite identical content so the entry is stat-dirty: git can no longer
+  // decide from stat alone and must re-read the file — which is when a clean
+  // filter runs. (Nothing in this setup may itself touch worker content under
+  // the worker's config, or the harness would create the marker, not the code
+  // under test.)
+  writeFileSync(join(f.wt, "a.txt"), "worker result\n");
+
+  await pushExactSha(opts(f, { result_sha }));
+
+  assert.equal(existsSync(marker), false, "a worker clean filter must never run under the broker identity");
+});
+
+// ---------------------------------------------------------------------------
+// 6. ALREADY_PUSHED is a SUCCESS the adapter reports as COMPLETED, so it must
+//    clear the same bar as a push. Returning it before the local validations
+//    let a pre-seeded lane complete by naming a SHA that never descended from
+//    target_sha (Codex).
+// ---------------------------------------------------------------------------
+
+test("real git: a pre-seeded lane ref cannot complete a SHA that fails the local controls", async () => {
+  const f = await fixture();
+  const tree = (await git(["rev-parse", "HEAD^{tree}"], f.wt)).stdout.trim();
+  const stray = (await git(["commit-tree", tree, "-m", "does not descend from target"], f.wt)).stdout.trim();
+  // The lane already carries it, so the idempotency check would match exactly.
+  await git(["push", `file://${f.legit}`, `${stray}:refs/heads/coordinator/SHU-63`], f.wt);
+
+  const res = await pushExactSha(opts(f, { result_sha: stray }));
+
+  assert.notEqual(res.stage, "ALREADY_PUSHED", "a SHA that could not be pushed must not be reported as already pushed");
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.match(res.reason, /does not descend/i, "the ancestry control must be what refuses it");
 });

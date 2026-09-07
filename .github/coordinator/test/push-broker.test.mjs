@@ -124,7 +124,10 @@ test("pushes the exact validated result SHA to the lane branch and confirms remo
   const git = makeGit({
     "merge-base --is-ancestor": { stdout: "" },
     "rev-parse HEAD": { stdout: `${RESULT}\n` },
-    "status --porcelain": { stdout: "" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
     "ls-remote": { run: ({ args }) => ({ stdout: remote.ls(LANE) }) },
     "push": { run: () => { remote.set(LANE, RESULT); return { stdout: "" }; } },
   });
@@ -178,7 +181,10 @@ test("worktree HEAD != result_sha -> HOLD + pause", async () => {
     "ls-remote": { stdout: "" },
     "merge-base --is-ancestor": { stdout: "" },
     "rev-parse HEAD": { stdout: `${OTHER}\n` },
-    "status --porcelain": { stdout: "" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
   });
   const res = await pushExactSha(baseOpts({ gitImpl: git.fn }));
   expectHold(res);
@@ -190,7 +196,10 @@ test("result_sha does not descend from target_sha -> HOLD + pause", async () => 
     "ls-remote": { stdout: "" },
     "merge-base --is-ancestor": { error: new Error("exit code 1"), stderr: "fatal: not ancestor" },
     "rev-parse HEAD": { stdout: `${RESULT}\n` },
-    "status --porcelain": { stdout: "" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
   });
   const res = await pushExactSha(baseOpts({ gitImpl: git.fn }));
   expectHold(res);
@@ -202,7 +211,10 @@ test("dirty worktree -> HOLD + pause", async () => {
     "ls-remote": { stdout: "" },
     "merge-base --is-ancestor": { stdout: "" },
     "rev-parse HEAD": { stdout: `${RESULT}\n` },
-    "status --porcelain": { stdout: " M index.ts\n" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "index.ts\n" },
+    "ls-files": { stdout: "" },
   });
   const res = await pushExactSha(baseOpts({ gitImpl: git.fn }));
   expectHold(res);
@@ -214,7 +226,10 @@ test("hooks & credential helpers stripped; explicit SHA->branch refspec; no forc
   const git = makeGit({
     "merge-base --is-ancestor": { stdout: "" },
     "rev-parse HEAD": { stdout: `${RESULT}\n` },
-    "status --porcelain": { stdout: "" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
     "ls-remote": { run: () => ({ stdout: remote.ls(LANE) }) },
     "push": { run: ({ args }) => { pushArgs = args; remote.set(LANE, RESULT); return { stdout: "" }; } },
   });
@@ -233,7 +248,17 @@ test("crash-before-push: leftover PENDING pre-push record -> HOLD, recovery must
   persistPrePush({ stateDir, attempt_id: ATTEMPT, result_sha: RESULT, branch: LANE, repo: REPO, worktree: WT });
   const rec = readPrePushRecord(stateDir, ATTEMPT);
   assert.equal(rec.stage, "PENDING");
-  const git = makeGit({ default: { stdout: "" } });
+  const git = makeGit({
+    // Locally valid: the validations now run BEFORE the recovery branch, so a
+    // bare default would HOLD on worktree HEAD and never reach recovery.
+    "merge-base --is-ancestor": { stdout: "" },
+    "rev-parse HEAD": { stdout: `${RESULT}\n` },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
+    default: { stdout: "" },
+  });
   const res = await pushExactSha(baseOpts({ stateDir, gitImpl: git.fn }));
   expectHold(res);
   assert.match(res.reason, /pre-push record already exists|recovery required/i);
@@ -244,6 +269,12 @@ test("crash-after-push-before-record: remote already has result -> idempotent AL
   remote.set(LANE, RESULT);
   const git = makeGit({
     "ls-remote": { run: () => ({ stdout: remote.ls(LANE) }) },
+    "merge-base --is-ancestor": { stdout: "" },
+    "rev-parse HEAD": { stdout: `${RESULT}\n` },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
     default: { stdout: "" },
   });
   const res = await pushExactSha(baseOpts({ gitImpl: git.fn }));
@@ -257,6 +288,12 @@ test("remote divergence: branch exists at a different sha -> HOLD, never clobber
   remote.set(LANE, OTHER);
   const git = makeGit({
     "ls-remote": { run: () => ({ stdout: remote.ls(LANE) }) },
+    "merge-base --is-ancestor": { stdout: "" },
+    "rev-parse HEAD": { stdout: `${RESULT}\n` },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
     default: { stdout: "" },
   });
   const res = await pushExactSha(baseOpts({ gitImpl: git.fn }));
@@ -269,7 +306,10 @@ test("post-push confirmation fails -> HOLD + pause, never claim success", async 
   const git = makeGit({
     "merge-base --is-ancestor": { stdout: "" },
     "rev-parse HEAD": { stdout: `${RESULT}\n` },
-    "status --porcelain": { stdout: "" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
     "ls-remote": { run: () => ({ stdout: remote.ls(LANE) }) },
     "push": { run: () => { remote.set(LANE, OTHER); return { stdout: "" }; } }, // push "succeeds" but remote shows OTHER
   });
@@ -283,7 +323,10 @@ test("concurrent broker calls for the same attempt resolve without double-push o
   const git = makeGit({
     "merge-base --is-ancestor": { stdout: "" },
     "rev-parse HEAD": { stdout: `${RESULT}\n` },
-    "status --porcelain": { stdout: "" },
+    "read-tree": { stdout: "" },
+    "update-index": { stdout: "" },
+    "diff-index": { stdout: "" },
+    "ls-files": { stdout: "" },
     "ls-remote": { run: () => ({ stdout: remote.ls(LANE) }) },
     "push": { run: () => { remote.set(LANE, RESULT); return { stdout: "" }; } },
   });
