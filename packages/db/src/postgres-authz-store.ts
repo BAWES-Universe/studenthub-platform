@@ -24,6 +24,10 @@
  *     every pbuuid row the principal previously owned before inserting the
  *     current set, inside the SAME transaction, so a detached identity stops
  *     resolving atomically with the re-registration.
+ *  4. THE ORGANIZATION TREE IS ONE CONCURRENCY DOMAIN. Every organization
+ *     mutation takes one transaction-scoped advisory lock before validating
+ *     parentage, so disjoint reparentings cannot each validate a different
+ *     pre-commit view and together create a cycle.
  *
  * Referential integrity deviations from the in-memory store (documented):
  * upsertOrganization requires the parent row to already exist (FK), and
@@ -308,11 +312,16 @@ export class PostgresAuthzStore implements AuthzStore {
     // alone cannot enforce this: once both rows exist, UPDATE parent_org_id
     // is FK-valid for a self-parent and for A→B→A.
     await this.#transaction(async (client) => {
-      // Lock the org row and its prospective parent so concurrent
-      // reparenting serializes: two writers building a cycle in opposite
-      // directions (A→B and B→A) both take both row locks, so the second
-      // sees the first's committed parent and is rejected below instead of
-      // both committing a cycle.
+      // A cycle is a whole-tree invariant, so row locks on only the org and
+      // its prospective parent are insufficient: two disjoint reparentings
+      // can each validate against the pre-commit tree and together close a
+      // four-node cycle. Serialize every tree mutation for the duration of
+      // this transaction. hashtext collisions can only serialize unrelated
+      // advisory-lock users; they cannot weaken this safety property.
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('studenthub:organizations:tree'))",
+      );
+      // Keep the target-row locks as local write ordering and FK diagnostics.
       const lockTargets =
         org.parentOrgId === undefined ? [org.id] : [org.id, org.parentOrgId];
       await client.query(

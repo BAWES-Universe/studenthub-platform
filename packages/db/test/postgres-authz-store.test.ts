@@ -21,6 +21,7 @@ import {
 } from "@studenthub/contracts";
 import {
   PostgresAuthzStore,
+  PostgresLoginStore,
   runMigrations,
   bootstrapAdmin,
   organizationAuditRef,
@@ -41,12 +42,49 @@ const ACME_INDIA = "acme-india";
 
 let adminPool: pg.Pool;
 let activeStores: PostgresAuthzStore[] = [];
+let activeLoginStores: PostgresLoginStore[] = [];
 
 /** A fresh store over the shared test database; closed by afterEach. */
 function makeStore(): PostgresAuthzStore {
   const store = new PostgresAuthzStore({ connectionString: DB_URL });
   activeStores.push(store);
   return store;
+}
+
+function makeNamedStore(applicationName: string): PostgresAuthzStore {
+  const store = new PostgresAuthzStore({
+    connectionString: DB_URL,
+    application_name: applicationName,
+  });
+  activeStores.push(store);
+  return store;
+}
+
+function makeLoginStore(): PostgresLoginStore {
+  const store = new PostgresLoginStore({ connectionString: DB_URL });
+  activeLoginStores.push(store);
+  return store;
+}
+
+async function waitForLockOrSettlement(
+  applicationName: string,
+  isSettled: () => boolean = () => false,
+): Promise<"locked" | "settled"> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (isSettled()) return "settled";
+    const { rows } = await adminPool.query<{ wait_event_type: string | null }>(
+      `SELECT wait_event_type
+       FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND application_name = $1
+         AND state <> 'idle'`,
+      [applicationName],
+    );
+    if (rows.some((row) => row.wait_event_type === "Lock")) return "locked";
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${applicationName} to block or settle`);
 }
 
 before(async () => {
@@ -62,14 +100,15 @@ before(async () => {
 
 beforeEach(async () => {
   activeStores = [];
+  activeLoginStores = [];
   // Test isolation is deliberate owner administration. Production app paths
-  // cannot TRUNCATE because migration 0003's statement trigger rejects it.
+  // cannot TRUNCATE because migration 0004's statement trigger rejects it.
   await adminPool.query(
     "ALTER TABLE authorization_mutation_audit DISABLE TRIGGER authorization_mutation_audit_no_truncate",
   );
   try {
     await adminPool.query(
-      "TRUNCATE authorization_mutation_audit, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
+      "TRUNCATE authorization_mutation_audit, login_states, login_sessions, external_identities, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
     );
   } finally {
     await adminPool.query(
@@ -83,6 +122,7 @@ afterEach(async () => {
   // (the restart test closes its first store on purpose), and pool.end() on
   // an ended pool must not fail the suite.
   for (const store of activeStores) await store.close().catch(() => undefined);
+  for (const store of activeLoginStores) await store.close().catch(() => undefined);
 });
 
 after(async () => {
@@ -984,6 +1024,93 @@ test("integrity: a cycle spanning three organizations is rejected (A<-B->A close
   assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
 });
 
+test("integrity: disjoint concurrent reparents cannot commit a four-organization cycle", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "b", name: "B" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "a", name: "A", parentOrgId: "b" }),
+  );
+  await store.upsertOrganization(createOrganization({ id: "d", name: "D" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "c", name: "C", parentOrgId: "d" }),
+  );
+
+  // Pause B->C in a BEFORE UPDATE trigger. At that point its recursive cycle
+  // check has already read the old tree. Without a whole-tree lock, D->A has
+  // disjoint row locks, also validates against the old tree, and both commit:
+  // A->B->C->D->A. With the lock, D->A cannot validate until B->C commits and
+  // is then rejected. The application names let the test observe the lock
+  // waits without timing guesses.
+  const blocker = await adminPool.connect();
+  const writerA = makeNamedStore("shu72-tree-writer-a");
+  const writerB = makeNamedStore("shu72-tree-writer-b");
+  let first: Promise<void> | undefined;
+  let second: Promise<void> | undefined;
+  let blockerHeld = false;
+  try {
+    await adminPool.query(`
+      CREATE OR REPLACE FUNCTION shu72_block_b_reparent() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.id = 'b' THEN
+          PERFORM pg_advisory_xact_lock(63072);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await adminPool.query(`
+      CREATE OR REPLACE TRIGGER shu72_block_b_reparent
+      BEFORE UPDATE ON organizations
+      FOR EACH ROW EXECUTE FUNCTION shu72_block_b_reparent()
+    `);
+    await blocker.query("SELECT pg_advisory_lock(63072)");
+    blockerHeld = true;
+
+    first = writerA.upsertOrganization(
+      createOrganization({ id: "b", name: "B", parentOrgId: "c" }),
+    );
+    assert.equal(await waitForLockOrSettlement("shu72-tree-writer-a"), "locked");
+
+    let secondSettled = false;
+    second = writerB
+      .upsertOrganization(createOrganization({ id: "d", name: "D", parentOrgId: "a" }))
+      .finally(() => {
+        secondSettled = true;
+      });
+    const secondState = await waitForLockOrSettlement(
+      "shu72-tree-writer-b",
+      () => secondSettled,
+    );
+
+    await blocker.query("SELECT pg_advisory_unlock(63072)");
+    blockerHeld = false;
+    const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+    assert.equal(firstResult.status, "fulfilled", "the first valid reparent commits");
+    assert.equal(
+      secondState,
+      "locked",
+      "the second writer must wait before validating the whole-tree invariant",
+    );
+    assert.equal(secondResult.status, "rejected", "the cycle-closing reparent is rejected");
+    if (secondResult.status === "rejected") {
+      assert.ok(
+        secondResult.reason instanceof TypeError &&
+          /cycle detected/.test(secondResult.reason.message),
+        `expected cycle rejection, got ${String(secondResult.reason)}`,
+      );
+    }
+    assert.equal((await store.getOrganization("b"))?.parentOrgId, "c");
+    assert.equal((await store.getOrganization("d"))?.parentOrgId, undefined);
+  } finally {
+    if (blockerHeld) await blocker.query("SELECT pg_advisory_unlock(63072)").catch(() => undefined);
+    await Promise.allSettled([first, second].filter((value): value is Promise<void> => value !== undefined));
+    blocker.release();
+    await adminPool.query("DROP TRIGGER IF EXISTS shu72_block_b_reparent ON organizations");
+    await adminPool.query("DROP FUNCTION IF EXISTS shu72_block_b_reparent()");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Bootstrap: the one-root-admin rule is a DATABASE property (SHU-55, GPT R3)
 // ---------------------------------------------------------------------------
@@ -1124,6 +1251,112 @@ test("bootstrap: re-running with the exact same admin is a no-op; a different id
 });
 
 // ---------------------------------------------------------------------------
+// SHU-29 login persistence: cross-process state/session/identity boundaries
+// ---------------------------------------------------------------------------
+
+test("login state is persistent and atomically consumed once across store instances", async () => {
+  const first = makeLoginStore();
+  const second = makeLoginStore();
+  const record = {
+    browserSessionId: "browser-synthetic-a",
+    state: "state-synthetic-a",
+    nonce: "nonce-synthetic-a",
+    codeVerifier: "verifier-synthetic-a",
+    returnTo: "https://studenthub.test.invalid/home",
+  };
+  await first.states.put(record);
+
+  const [left, right] = await Promise.all([
+    first.states.consume(record.state),
+    second.states.consume(record.state),
+  ]);
+  assert.equal([left, right].filter(Boolean).length, 1);
+  assert.deepEqual(left ?? right, record);
+  assert.equal(await first.states.consume(record.state), undefined);
+});
+
+test("login sessions survive store restart and logout invalidates server-side", async () => {
+  const first = makeLoginStore();
+  const identity = await first.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    { email: "attribute-only@login.invalid", name: "Synthetic Person" },
+  );
+  await first.sessions.put({ id: "session-synthetic-a", personId: identity.personId });
+  await first.close();
+
+  const second = makeLoginStore();
+  assert.deepEqual(await second.sessions.get("session-synthetic-a"), {
+    id: "session-synthetic-a",
+    personId: identity.personId,
+  });
+  await second.sessions.delete("session-synthetic-a");
+  assert.equal(await second.sessions.get("session-synthetic-a"), undefined);
+});
+
+test("concurrent first login creates one immutable issuer/subject binding", async () => {
+  const first = makeLoginStore();
+  const second = makeLoginStore();
+  const create = (store: PostgresLoginStore) => store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    { email: "shared-attribute@login.invalid", name: "Synthetic Person" },
+  );
+  const [left, right] = await Promise.all([create(first), create(second)]);
+  assert.equal(left.personId, right.personId);
+  const counts = await adminPool.query<{ principals: number; identities: number }>(
+    `SELECT
+       (SELECT count(*)::int FROM principals) AS principals,
+       (SELECT count(*)::int FROM external_identities) AS identities`,
+  );
+  assert.deepEqual(counts.rows[0], { principals: 1, identities: 1 });
+});
+
+test("mutable profile attributes never match or merge external identities", async () => {
+  const store = makeLoginStore();
+  const first = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-subject-a",
+    { email: "same@login.invalid", phone: "+000000001", name: "Same Name" },
+  );
+  const second = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-subject-b",
+    { email: "same@login.invalid", phone: "+000000001", name: "Same Name" },
+  );
+  assert.notEqual(first.personId, second.personId);
+  assert.equal(await store.identities.findLegacyMatch({ email: "same@login.invalid" }), undefined);
+});
+
+test("login bearer values are hashed at rest and expiration fails closed", async () => {
+  const store = makeLoginStore();
+  const identity = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    {},
+  );
+  const state = {
+    browserSessionId: "browser-synthetic-a",
+    state: "raw-state-synthetic-a",
+    nonce: "nonce-synthetic-a",
+    codeVerifier: "verifier-synthetic-a",
+    returnTo: "https://studenthub.test.invalid/home",
+  };
+  await store.states.put(state);
+  await store.sessions.put({ id: "raw-session-synthetic-a", personId: identity.personId });
+  const stored = await adminPool.query<{ state: string; id: string }>(
+    "SELECT s.state, l.id FROM login_states s CROSS JOIN login_sessions l",
+  );
+  assert.notEqual(stored.rows[0]?.state, state.state);
+  assert.notEqual(stored.rows[0]?.id, "raw-session-synthetic-a");
+
+  await adminPool.query("UPDATE login_states SET expires_at = now() - interval '1 second'");
+  await adminPool.query("UPDATE login_sessions SET expires_at = now() - interval '1 second'");
+  assert.equal(await store.states.consume(state.state), undefined);
+  assert.equal(await store.sessions.get("raw-session-synthetic-a"), undefined);
+});
+
+// ---------------------------------------------------------------------------
 // Migrations: concurrent first-run runners are serialized (GPT R3, round 2 #2)
 // ---------------------------------------------------------------------------
 
@@ -1172,7 +1405,8 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
         [
           "0001_create_authz_tables",
           "0002_enforce_single_root_admin",
-          "0003_create_authorization_mutation_audit",
+          "0003_create_login_tables",
+          "0004_create_authorization_mutation_audit",
         ],
         "each migration is recorded exactly once",
       );
@@ -1218,7 +1452,8 @@ test(
           [
             "0001_create_authz_tables",
             "0002_enforce_single_root_admin",
-            "0003_create_authorization_mutation_audit",
+            "0003_create_login_tables",
+            "0004_create_authorization_mutation_audit",
           ],
         );
       } finally {

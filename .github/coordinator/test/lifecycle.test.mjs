@@ -323,6 +323,66 @@ test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linea
   assert.equal(comments.length, writesBefore, "disabled mode must never write Linear comments");
 });
 
+test("SHU-65: dispatch-disabled mode never enters the LIFECYCLE pass (zero monitorRun calls, zero writes)", async () => {
+  // The BLOCK #1 test above cannot observe a removed `dispatchEnabled &&` on the
+  // lifecycle gate: its fake polls as still-RUNNING, so even with the gate gone
+  // the lifecycle pass produces no transition and no Linear write. This test
+  // seeds a RUNNING receipt whose poll would report COMPLETED — the moment the
+  // lifecycle pass runs, the adapter is polled AND a terminal transition is
+  // durably written. Mutation-testing main at f6287c74 confirmed removing
+  // `dispatchEnabled &&` from reconcile.mjs:1391 broke zero tests (SHU-65).
+  const comments = [];
+  const store = persistentStore([FIXTURE_NODE], comments);
+  const wa = waAgent();
+  const enabledCfg = tempConfig();
+  await main(
+    [],
+    ENV,
+    {
+      skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
+      configPath: enabledCfg,
+      adapterModules: { "codex-cli": waCompat },
+      stdout: () => {},
+      fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+      fetchDurable: true,
+      pollRuns: true,
+    },
+  );
+  const [seeded] = parseReceiptsFromComments(comments);
+  assert.equal(seeded.stage, "RUNNING", "seed run persists RUNNING");
+
+  // Wrap the adapter so a poll is observable AND would complete: if the
+  // lifecycle pass runs under dispatch-disabled, monitorRun is called once and
+  // the RUNNING -> COMPLETED transition is written to Linear.
+  let monitorCalls = 0;
+  const completingCompat = {
+    launchBuilder: async () => { throw new Error("launchBuilder must never run with dispatch disabled"); },
+    monitorRun: async (o) => {
+      monitorCalls += 1;
+      return { stage: "COMPLETED", evidence_links: ["https://example.com/evidence"], worker_identity: "shu65-probe" };
+    },
+  };
+  const writesBefore = comments.length;
+  const disabledEnv = { ...ENV, ENABLE_DISPATCH: "false" };
+  const cfg = JSON.parse(readFileSync(enabledCfg, "utf8"));
+  const disabledCfgPath = join(mkdtempSync(join(tmpdir(), "coordinator-off65-")), "config.json");
+  writeFileSync(disabledCfgPath, JSON.stringify({ ...cfg, enable_dispatch: false }));
+  const out = [];
+  const code = await main([], disabledEnv, {
+    skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
+    configPath: disabledCfgPath,
+    adapterModules: { "codex-cli": completingCompat },
+    stdout: (s) => out.push(s),
+    fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+    fetchDurable: true,
+    pollRuns: true,
+  });
+  assert.equal(code, 0, out.join("\n"));
+  assert.equal(monitorCalls, 0, "dispatch-disabled must never poll RUNNING receipts (lifecycle gate holds)");
+  assert.equal(comments.length, writesBefore, "dispatch-disabled must never persist a lifecycle transition");
+  assert.equal(parseReceiptsFromComments(comments)[0].stage, "RUNNING", "receipt stays RUNNING untouched");
+});
+
 test("BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest callback wins", async () => {
   const comments = [];
   const store = persistentStore([FIXTURE_NODE], comments);
