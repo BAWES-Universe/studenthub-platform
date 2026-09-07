@@ -42,6 +42,36 @@ function makeStore(): PostgresAuthzStore {
   return store;
 }
 
+function makeNamedStore(applicationName: string): PostgresAuthzStore {
+  const store = new PostgresAuthzStore({
+    connectionString: DB_URL,
+    application_name: applicationName,
+  });
+  activeStores.push(store);
+  return store;
+}
+
+async function waitForLockOrSettlement(
+  applicationName: string,
+  isSettled: () => boolean = () => false,
+): Promise<"locked" | "settled"> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (isSettled()) return "settled";
+    const { rows } = await adminPool.query<{ wait_event_type: string | null }>(
+      `SELECT wait_event_type
+       FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND application_name = $1
+         AND state <> 'idle'`,
+      [applicationName],
+    );
+    if (rows.some((row) => row.wait_event_type === "Lock")) return "locked";
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${applicationName} to block or settle`);
+}
+
 before(async () => {
   if (DB_URL.length === 0) {
     throw new Error(
@@ -475,6 +505,93 @@ test("integrity: a cycle spanning three organizations is rejected (A<-B->A close
     TypeError,
   );
   assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+});
+
+test("integrity: disjoint concurrent reparents cannot commit a four-organization cycle", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "b", name: "B" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "a", name: "A", parentOrgId: "b" }),
+  );
+  await store.upsertOrganization(createOrganization({ id: "d", name: "D" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "c", name: "C", parentOrgId: "d" }),
+  );
+
+  // Pause B->C in a BEFORE UPDATE trigger. At that point its recursive cycle
+  // check has already read the old tree. Without a whole-tree lock, D->A has
+  // disjoint row locks, also validates against the old tree, and both commit:
+  // A->B->C->D->A. With the lock, D->A cannot validate until B->C commits and
+  // is then rejected. The application names let the test observe the lock
+  // waits without timing guesses.
+  const blocker = await adminPool.connect();
+  const writerA = makeNamedStore("shu72-tree-writer-a");
+  const writerB = makeNamedStore("shu72-tree-writer-b");
+  let first: Promise<void> | undefined;
+  let second: Promise<void> | undefined;
+  let blockerHeld = false;
+  try {
+    await adminPool.query(`
+      CREATE OR REPLACE FUNCTION shu72_block_b_reparent() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.id = 'b' THEN
+          PERFORM pg_advisory_xact_lock(63072);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await adminPool.query(`
+      CREATE OR REPLACE TRIGGER shu72_block_b_reparent
+      BEFORE UPDATE ON organizations
+      FOR EACH ROW EXECUTE FUNCTION shu72_block_b_reparent()
+    `);
+    await blocker.query("SELECT pg_advisory_lock(63072)");
+    blockerHeld = true;
+
+    first = writerA.upsertOrganization(
+      createOrganization({ id: "b", name: "B", parentOrgId: "c" }),
+    );
+    assert.equal(await waitForLockOrSettlement("shu72-tree-writer-a"), "locked");
+
+    let secondSettled = false;
+    second = writerB
+      .upsertOrganization(createOrganization({ id: "d", name: "D", parentOrgId: "a" }))
+      .finally(() => {
+        secondSettled = true;
+      });
+    const secondState = await waitForLockOrSettlement(
+      "shu72-tree-writer-b",
+      () => secondSettled,
+    );
+
+    await blocker.query("SELECT pg_advisory_unlock(63072)");
+    blockerHeld = false;
+    const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+    assert.equal(firstResult.status, "fulfilled", "the first valid reparent commits");
+    assert.equal(
+      secondState,
+      "locked",
+      "the second writer must wait before validating the whole-tree invariant",
+    );
+    assert.equal(secondResult.status, "rejected", "the cycle-closing reparent is rejected");
+    if (secondResult.status === "rejected") {
+      assert.ok(
+        secondResult.reason instanceof TypeError &&
+          /cycle detected/.test(secondResult.reason.message),
+        `expected cycle rejection, got ${String(secondResult.reason)}`,
+      );
+    }
+    assert.equal((await store.getOrganization("b"))?.parentOrgId, "c");
+    assert.equal((await store.getOrganization("d"))?.parentOrgId, undefined);
+  } finally {
+    if (blockerHeld) await blocker.query("SELECT pg_advisory_unlock(63072)").catch(() => undefined);
+    await Promise.allSettled([first, second].filter((value): value is Promise<void> => value !== undefined));
+    blocker.release();
+    await adminPool.query("DROP TRIGGER IF EXISTS shu72_block_b_reparent ON organizations");
+    await adminPool.query("DROP FUNCTION IF EXISTS shu72_block_b_reparent()");
+  }
 });
 
 // ---------------------------------------------------------------------------
