@@ -213,6 +213,18 @@ test("real git: an included worker config cannot smuggle in an executing key or 
   assert.equal(await bareHasCommit(f.legit, f.result_sha), true);
 });
 
+// An ssh-shaped destination is REQUIRED for every one of these: with a file://
+// remote git never invokes ssh, so `GIT_SSH_COMMAND` assertions pass without
+// exercising anything. The ls-remote is expected to fail (no network, no key);
+// what matters is which program git chose to run first.
+function sshOpts(f, over = {}) {
+  return opts(f, {
+    remoteUrl: "git@github.com:BAWES-Universe/studenthub-platform.git",
+    allowedHost: undefined,
+    ...over,
+  });
+}
+
 test("real git: environment-provided git configuration cannot reach a broker call", async () => {
   const f = await fixture();
   const { marker, script } = markerScript(f.root, "env-marker");
@@ -227,9 +239,56 @@ test("real git: environment-provided git configuration cannot reach a broker cal
     GIT_CONFIG_VALUE_0: script,
   };
 
-  await pushExactSha(opts(f, { env: hostile }));
+  const res = await pushExactSha(sshOpts(f, { env: hostile }));
 
   assert.equal(existsSync(marker), false, "no environment-provided command may run under the broker identity");
+  assert.equal(res.ok, false, "an unreachable remote is a HOLD, never a claimed push");
+});
+
+test("real git: an inherited GIT_SSH_COMMAND never selects the broker's ssh program", async () => {
+  const f = await fixture();
+  const { marker, script } = markerScript(f.root, "inherited-ssh-marker");
+
+  // GIT_SSH_COMMAND alone, arriving from outside the coordinator's own
+  // configuration. It outranks core.sshCommand in git's precedence order, so
+  // if the broker were to pass it through, this is the program that would run.
+  const res = await pushExactSha(sshOpts(f, { env: { ...CLEAN_ENV, GIT_SSH_COMMAND: script } }));
+
+  assert.equal(
+    existsSync(marker),
+    false,
+    "only SHU_PUSH_SSH_COMMAND may select the ssh program; an inherited GIT_SSH_COMMAND must be ignored",
+  );
+  assert.equal(res.ok, false, "an unreachable remote is a HOLD, never a claimed push");
+});
+
+test("real git: an explicitly configured SHU_PUSH_SSH_COMMAND is preserved", async () => {
+  const f = await fixture();
+  const { marker, script } = markerScript(f.root, "configured-ssh-marker");
+  const { marker: inherited, script: inheritedScript } = markerScript(f.root, "losing-ssh-marker");
+
+  // The coordinator's own setting, alongside an inherited value it must beat.
+  await pushExactSha(sshOpts(f, {
+    env: { ...CLEAN_ENV, SHU_PUSH_SSH_COMMAND: script, GIT_SSH_COMMAND: inheritedScript },
+  }));
+
+  assert.equal(existsSync(marker), true, "the operator's configured deploy-key route must still be used");
+  assert.equal(existsSync(inherited), false, "the inherited value must lose to the configured one");
+});
+
+test("brokerGitEnv selects ssh only from the coordinator's own configuration", () => {
+  const hostile = { GIT_SSH_COMMAND: "/evil.sh" };
+  assert.equal(brokerGitEnv(hostile).GIT_SSH_COMMAND, "ssh", "an inherited value is discarded, not honoured");
+  assert.equal(
+    brokerGitEnv({ ...hostile, SHU_PUSH_SSH_COMMAND: "/opt/deploy-ssh" }).GIT_SSH_COMMAND,
+    "/opt/deploy-ssh",
+    "the coordinator's own setting selects the program",
+  );
+  assert.equal(
+    brokerGitEnv(hostile, { sshCommand: "/explicit-ssh" }).GIT_SSH_COMMAND,
+    "/explicit-ssh",
+    "an explicit argument selects the program",
+  );
 });
 
 test("brokerGitEnv strips every config-injection variable and pins ssh by precedence", () => {

@@ -94,7 +94,7 @@ export const BROKER_GIT_CONFIG_ARGS = Object.freeze([
 
 // Environment variables that inject config or name a command to execute.
 const GIT_EXEC_ENV_KEYS = Object.freeze([
-  "GIT_SSH", "GIT_PROXY_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS",
+  "GIT_SSH", "GIT_SSH_COMMAND", "GIT_PROXY_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS",
   "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
   "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_OBJECT_DIRECTORY",
   "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_COMMON_DIR",
@@ -106,13 +106,30 @@ const GIT_EXEC_ENV_KEYS = Object.freeze([
 // outranks `core.sshCommand`, so setting it here neutralizes a worker-authored
 // `core.sshCommand` by precedence while preserving the operator's real
 // deploy-key route when one is configured.
+//
+// Which program it names comes ONLY from the coordinator's own configuration —
+// the explicit `sshCommand` argument, or `SHU_PUSH_SSH_COMMAND`. An inherited
+// `GIT_SSH_COMMAND` is discarded like every other key in GIT_EXEC_ENV_KEYS: it
+// names a program to execute, and a value that reached the coordinator's
+// environment from outside its approved configuration must not choose it.
+// Honouring it would have re-opened, through the environment, exactly the
+// execution route the `core.sshCommand` override closes.
+//
+// Scope, stated plainly: both names live in the same process environment, so
+// this does not make `SHU_PUSH_SSH_COMMAND` unforgeable to something that can
+// already write the coordinator's environment. What it removes is the far
+// wider surface of a GENERIC git variable — one a CI image, a wrapper script,
+// a parent process or a worker-shaped context may set for reasons that have
+// nothing to do with this broker — silently choosing the program the broker
+// executes. Selection now requires a name that only this coordinator's
+// configuration has any reason to set.
 export function brokerGitEnv(env = {}, { sshCommand = null } = {}) {
   const out = { ...env };
   for (const key of Object.keys(out)) {
     if (/^GIT_CONFIG(_|$)/.test(key)) delete out[key]; // GIT_CONFIG, _GLOBAL, _SYSTEM, _COUNT, _KEY_n, _VALUE_n
   }
   for (const key of GIT_EXEC_ENV_KEYS) delete out[key];
-  const ssh = sshCommand ?? env.SHU_PUSH_SSH_COMMAND ?? env.GIT_SSH_COMMAND ?? "ssh";
+  const ssh = sshCommand ?? env.SHU_PUSH_SSH_COMMAND ?? "ssh";
   out.GIT_CONFIG_GLOBAL = "/dev/null";
   out.GIT_CONFIG_SYSTEM = "/dev/null";
   out.GIT_CONFIG_NOSYSTEM = "1";
