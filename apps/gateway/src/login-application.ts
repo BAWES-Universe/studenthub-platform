@@ -179,7 +179,7 @@ export const createLoginApplication: LoginApplicationFactory = (
       const role = await dependencies.authorization.roleFor(session.personId);
       return { status: 200, body: { personId: session.personId, role } };
     } catch {
-      return rejected(403);
+      return { status: 503, body: { error: "login_unavailable" } };
     }
   },
 

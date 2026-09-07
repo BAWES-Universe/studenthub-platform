@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runLoginConformance } from "@studenthub/login-contract";
+import { createSyntheticLoginRig, runLoginConformance } from "@studenthub/login-contract";
 
 import { createLoginApplication } from "../src/login-application.js";
 import {
@@ -26,6 +26,25 @@ test("runtime login stays disabled when unconfigured and rejects partial configu
     () => createRuntimeLoginFromEnv({ OIDC_ISSUER: "https://identity.test.invalid/" }),
     /incomplete login configuration/,
   );
+});
+
+test("the real profile path reports persistent dependency failure as unavailable", async () => {
+  const sessionFailure = createSyntheticLoginRig(createLoginApplication);
+  sessionFailure.sessions.get = async () => { throw new Error("synthetic session-store failure"); };
+  assert.deepEqual(await sessionFailure.app.profile({ sessionId: "synthetic-session" }), {
+    status: 503,
+    body: { error: "login_unavailable" },
+  });
+
+  const authorizationFailure = createSyntheticLoginRig(createLoginApplication);
+  await authorizationFailure.sessions.put({ id: "synthetic-session", personId: "person-1" });
+  authorizationFailure.authorization.roleFor = async () => {
+    throw new Error("synthetic authorization-store failure");
+  };
+  assert.deepEqual(await authorizationFailure.app.profile({ sessionId: "synthetic-session" }), {
+    status: 503,
+    body: { error: "login_unavailable" },
+  });
 });
 
 test("runtime configuration rejects non-HTTPS identity endpoints before opening PostgreSQL", () => {
