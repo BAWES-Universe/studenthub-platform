@@ -16,7 +16,7 @@ and local JWKS resolver, fake OIDC transport, injected clock and entropy source,
 and in-memory state, session, identity, and authorization stores. All origins and
 identities use reserved `.invalid` names or synthetic values.
 
-The repository test suite also runs a conforming reference adapter and twenty-eight
+The repository test suite also runs a conforming reference adapter and thirty-two
 deliberately broken variants. Each broken variant must fail the scenario that
 names its disabled control. The reference adapter lives under `test/` and must
 never be wired into the gateway.

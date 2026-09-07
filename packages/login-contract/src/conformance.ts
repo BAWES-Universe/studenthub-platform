@@ -305,6 +305,7 @@ const SCENARIOS: readonly Scenario[] = [
     run: async (factory) => {
       const rig = createSyntheticLoginRig(factory);
       const { response: start, request } = await begin(rig);
+      assert.equal(request.issuer, rig.config.issuer);
       assert.equal(request.codeChallengeMethod, "S256");
       assert.equal(request.redirectUri, CALLBACK_URL);
       assert.ok(request.state.length >= 32);
@@ -356,19 +357,30 @@ const SCENARIOS: readonly Scenario[] = [
       assert.notEqual(first.request.state, second.request.state);
       const code = rig.provider.authorize();
       await expectRejected(rig.app.callback({ browserSessionId: "browser-b", state: second.request.state, code }), "cross-session state");
+      assert.equal(rig.provider.tokenRequests.length, 0, "state and browser binding must be validated before code exchange");
+      const afterMismatchCode = rig.provider.authorize();
+      await expectRejected(
+        rig.app.callback({ browserSessionId: "browser-a", state: second.request.state, code: afterMismatchCode }),
+        "state consumed after a binding mismatch",
+      );
+      assert.equal(rig.provider.tokenRequests.length, 0, "a consumed mismatched state must never reach code exchange");
       const fresh = await begin(rig);
       const validCode = rig.provider.authorize();
       const success = await rig.app.callback({ browserSessionId: "browser-a", state: fresh.request.state, code: validCode });
       assert.equal(success.status, 302);
+      const exchangesAfterSuccess = rig.provider.tokenRequests.length;
       const replayCode = rig.provider.authorize();
       await expectRejected(
         rig.app.callback({ browserSessionId: "browser-a", state: fresh.request.state, code: replayCode }),
         "state replay",
       );
+      assert.equal(rig.provider.tokenRequests.length, exchangesAfterSuccess, "state replay must be rejected before code exchange");
+      const unknownStateCode = rig.provider.authorize();
       await expectRejected(
-        rig.app.callback({ browserSessionId: "browser-a", state: "invented-state", code: "invented-code" }),
+        rig.app.callback({ browserSessionId: "browser-a", state: "invented-state", code: unknownStateCode }),
         "state mismatch",
       );
+      assert.equal(rig.provider.tokenRequests.length, exchangesAfterSuccess, "unknown state must be rejected before code exchange");
     },
   },
   {

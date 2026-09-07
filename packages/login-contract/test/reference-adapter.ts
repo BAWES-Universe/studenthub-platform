@@ -19,13 +19,16 @@ export interface ReferenceFaults {
   readonly ignoreSessionEntropy?: boolean;
   readonly shortState?: boolean;
   readonly skipStateBinding?: boolean;
+  readonly preserveStateAfterBindingFailure?: boolean;
   readonly reusableState?: boolean;
+  readonly exchangeBeforeStateValidation?: boolean;
   readonly skipPkce?: boolean;
   readonly omitNonceIssuance?: boolean;
   readonly skipNonceValidation?: boolean;
   readonly unsafeRedirect?: boolean;
   readonly skipSignature?: boolean;
   readonly skipIssuer?: boolean;
+  readonly wrongAuthorizationIssuer?: boolean;
   readonly skipAudience?: boolean;
   readonly skipExpiry?: boolean;
   readonly skipIssuedAt?: boolean;
@@ -39,6 +42,7 @@ export interface ReferenceFaults {
   readonly exposeOtherProfile?: boolean;
   readonly insecureCookie?: boolean;
   readonly skipLogoutInvalidation?: boolean;
+  readonly wrongCallbackUrl?: boolean;
 }
 
 interface Claims {
@@ -140,9 +144,9 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
         await dependencies.states.put(record);
         stateCache.set(state, record);
         const location = dependencies.oidc.authorizationUrl({
-          issuer: config.issuer,
+          issuer: faults.wrongAuthorizationIssuer ? "https://attacker.invalid" : config.issuer,
           clientId: config.clientId,
-          redirectUri: config.callbackUrl,
+          redirectUri: faults.wrongCallbackUrl ? "https://attacker.invalid/callback" : config.callbackUrl,
           state,
           nonce,
           codeChallenge,
@@ -153,6 +157,22 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
 
       async callback(request) {
         try {
+          if (faults.exchangeBeforeStateValidation) {
+            const latestState = [...stateCache.values()].at(-1);
+            if (latestState) {
+              await dependencies.oidc.exchange({
+                code: request.code,
+                clientId: config.clientId,
+                clientSecret: config.clientSecret,
+                redirectUri: config.callbackUrl,
+                codeVerifier: latestState.codeVerifier,
+              });
+            }
+          }
+          if (faults.preserveStateAfterBindingFailure) {
+            const cachedState = stateCache.get(request.state);
+            if (cachedState && cachedState.browserSessionId !== request.browserSessionId) return failure();
+          }
           const loginState = faults.reusableState
             ? stateCache.get(request.state)
             : await dependencies.states.consume(request.state);
@@ -178,7 +198,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
             code: request.code,
             clientId: config.clientId,
             clientSecret: config.clientSecret,
-            redirectUri: config.callbackUrl,
+            redirectUri: faults.wrongCallbackUrl ? "https://attacker.invalid/callback" : config.callbackUrl,
             codeVerifier: loginState.codeVerifier,
           });
           const claims = await validateIdToken(tokens.idToken, loginState.nonce, dependencies, config, faults);
