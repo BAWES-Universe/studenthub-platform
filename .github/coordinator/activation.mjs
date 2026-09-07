@@ -137,9 +137,40 @@ export function preflightActivation({ env = {}, stateDir = null, cwd = null, io 
     ));
   }
 
-  // 3. git push authentication. The builder's whole output is a pushed branch;
-  //    without a push remote the work is finished and stranded on the box.
-  if (env.CODEX_GIT_PUSH_READY !== "true") {
+  // 3. git push authentication.
+  //
+  //    Option A splits this in two, because the two modes want OPPOSITE things
+  //    from the builder and a single gate cannot serve both.
+  //
+  //    Under the host broker (3b below) the worker never pushes and must hold
+  //    no push credentials at all. Demanding CODEX_GIT_PUSH_READY=true there
+  //    made a correctly isolated deployment unable to activate honestly — the
+  //    only way past the gate was to declare credentials the design forbids the
+  //    worker to have. A gate an operator can satisfy only by lying is worse
+  //    than no gate, so under the broker the declaration is INVERTED: asserting
+  //    worker push-readiness is itself the unmet requirement.
+  //
+  //    With the broker disabled (legacy worker-push mode) the original gate
+  //    stands: the builder's whole output is a pushed branch, and without a
+  //    push remote the work is finished and stranded on the box. 3b refuses
+  //    that mode outright today, so this branch cannot be part of a passing
+  //    preflight — it is kept so the requirement does not silently vanish if
+  //    3b is ever relaxed.
+  //
+  //    NOT covered here: proof that the BROKER's own host-side credential
+  //    works. That needs a live ls-remote under the coordinator identity — a
+  //    network probe in preflight — and belongs with the SHU-69 fixture
+  //    readiness gates, not with a declaration check.
+  const brokerIsThePusher = env.SHU_PUSH_BROKER_ENABLED === "true";
+  if (brokerIsThePusher) {
+    if (env.CODEX_GIT_PUSH_READY === "true") {
+      problems.push(unmet(
+        "git_push_authentication",
+        "CODEX_GIT_PUSH_READY is \"true\" while the host push broker is enabled",
+        "under Option A the worker never pushes: unset CODEX_GIT_PUSH_READY and remove push credentials from the builder worktree — the host broker is the only authorized pusher",
+      ));
+    }
+  } else if (env.CODEX_GIT_PUSH_READY !== "true") {
     problems.push(unmet(
       "git_push_authentication",
       `CODEX_GIT_PUSH_READY is ${env.CODEX_GIT_PUSH_READY ? `"${env.CODEX_GIT_PUSH_READY}"` : "unset"}`,

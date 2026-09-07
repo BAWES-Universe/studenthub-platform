@@ -449,8 +449,20 @@ export async function pushExactSha({
     cleanupBrokerRepo();
     return { stage: "ALREADY_PUSHED", ok: true, remote_head: result_sha };
   }
-  if (remote.ok === true && remote.head) {
-    return held(`remote branch ${branch} already at ${remote.head}, not ${result_sha}; refusing to clobber`);
+  // The lane branch may legitimately already be at the commit this attempt is
+  // BOUND to: codex-cli.mjs instructs the builder to return REVISION_READY
+  // "when addressing review findings on the same branch", so every follow-up
+  // revision arrives with the branch sitting at the previous revision — which
+  // is this attempt's target_sha. Refusing that is not clobber protection, it
+  // is a deadlock: no revision could ever land.
+  //
+  // Accepting it is safe on three independent counts: the head equals the exact
+  // commit the work was based on, the ancestry check below still requires
+  // result_sha to descend from it, and the push is never forced, so git itself
+  // rejects anything that is not a fast-forward. Any OTHER head is still a
+  // refusal — that is someone else's commit, and this broker does not clobber.
+  if (remote.ok === true && remote.head && remote.head !== target_sha) {
+    return held(`remote branch ${branch} already at ${remote.head}, not ${result_sha} or the bound ${target_sha}; refusing to clobber`);
   }
 
   // --- ancestry: result_sha must descend from target_sha ----------------------

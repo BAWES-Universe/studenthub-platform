@@ -35,7 +35,9 @@ function activatedEnv(over = {}) {
   return {
     CODEX_SANDBOX_NETWORK: "enabled",
     GITHUB_TOKEN: "gh-token",
-    CODEX_GIT_PUSH_READY: "true",
+    // Deliberately NO CODEX_GIT_PUSH_READY. Under Option A the worker never
+    // pushes and holds no push credentials, so a truthful activation cannot
+    // declare push-readiness — see gate 3 in activation.mjs.
     SHU_PUSH_BROKER_ENABLED: "true",
     SHU_WORKTREE_ROOT: "/srv/shu/worktrees",
     SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git",
@@ -57,7 +59,9 @@ test("a fully wired activation passes and names no unmet requirement", () => {
 for (const [requirement, override] of [
   ["codex_sandbox_network", { CODEX_SANDBOX_NETWORK: undefined }],
   ["github_head_credentials", { GITHUB_TOKEN: "" }],
-  ["git_push_authentication", { CODEX_GIT_PUSH_READY: undefined }],
+  // Under Option A the gate is inverted: DECLARING worker push-readiness is the
+  // violation, because the worker must hold no push credentials at all.
+  ["git_push_authentication", { CODEX_GIT_PUSH_READY: "true" }],
   ["host_push_broker", { SHU_PUSH_BROKER_ENABLED: undefined }],
   ["coordinator_on_brick_box", { COORDINATOR_HOST: undefined }],
 ]) {
@@ -142,18 +146,49 @@ test("whitespace is not a GitHub credential", () => {
   assert.ok(out.unmet.some((u) => u.requirement === "github_head_credentials"));
 });
 
-test("a push remote does not prove authentication without the operator declaration", () => {
+// LEGACY worker-push mode (broker disabled). 3b refuses this mode outright, so
+// these can never be part of a passing preflight — they exist so the legacy
+// requirement cannot silently stop being enforced if 3b is ever relaxed.
+const LEGACY = { SHU_PUSH_BROKER_ENABLED: undefined };
+
+test("legacy mode: a push remote does not prove authentication without the operator declaration", () => {
   const io = { statImpl: () => ({ isDirectory: () => true }), accessImpl: () => {}, realpathImpl: (p) => p, hostname: () => HOST, gitPushRemote: () => "git@github.com:BAWES-Universe/studenthub-platform.git" };
-  const out = preflightActivation({ env: activatedEnv({ CODEX_GIT_PUSH_READY: undefined }), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  const out = preflightActivation({ env: activatedEnv({ ...LEGACY, CODEX_GIT_PUSH_READY: undefined }), stateDir: "/srv/codex/state", cwd: "/repo", io });
   assert.equal(out.ok, false, "a remote URL says nothing about whether credentials can use it");
   assert.ok(out.unmet.some((u) => u.requirement === "git_push_authentication"));
 });
 
-test("a worktree with no push remote fails closed even when the declaration is set", () => {
+test("legacy mode: a worktree with no push remote fails closed even when the declaration is set", () => {
   const io = { statImpl: () => ({ isDirectory: () => true }), accessImpl: () => {}, realpathImpl: (p) => p, hostname: () => HOST, gitPushRemote: () => "" };
-  const out = preflightActivation({ env: activatedEnv(), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  const out = preflightActivation({ env: activatedEnv({ ...LEGACY, CODEX_GIT_PUSH_READY: "true" }), stateDir: "/srv/codex/state", cwd: "/repo", io });
   assert.equal(out.ok, false, "a declaration must never outrank an observed missing remote");
-  assert.ok(out.unmet.some((u) => u.requirement === "git_push_authentication"));
+  const entry = out.unmet.find((u) => u.requirement === "git_push_authentication");
+  // Pin WHICH check fired: the Option A inversion also reports this requirement
+  // for the same env, so matching the name alone would pass on the wrong one.
+  assert.match(entry?.detail ?? "", /no push remote/, "the observed missing remote must be what fails");
+});
+
+// The contradiction Codex found: gate 3b (this PR) says the worker never
+// pushes, while gate 3 demanded the worker prove it can. A correctly isolated
+// Option A deployment could not activate honestly, and the only way through was
+// to declare credentials the design forbids.
+test("Option A: a truthfully isolated worker activates without declaring push credentials", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({ env: activatedEnv(), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  assert.equal(out.ok, true, describeUnmetActivation(out.unmet));
+  assert.ok(
+    !out.unmet.some((u) => u.requirement === "git_push_authentication"),
+    "a worker with no push credentials is the CORRECT Option A state, not an unmet requirement",
+  );
+});
+
+test("Option A: declaring worker push-readiness is itself an unmet requirement", () => {
+  const { io } = durableDir();
+  const out = preflightActivation({ env: activatedEnv({ CODEX_GIT_PUSH_READY: "true" }), stateDir: "/srv/codex/state", cwd: "/repo", io });
+  assert.equal(out.ok, false, "the worker must hold no push credentials while the broker is the pusher");
+  const entry = out.unmet.find((u) => u.requirement === "git_push_authentication");
+  assert.ok(entry, "the contradiction must be named, not silently tolerated");
+  assert.match(entry.remedy, /unset CODEX_GIT_PUSH_READY/, "the remedy must tell the operator to remove it, never to keep it");
 });
 
 test("activation creates its private state directory before checking it", () => {

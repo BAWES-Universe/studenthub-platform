@@ -366,3 +366,43 @@ test("file: transport is refused under the DEFAULT github.com policy", async () 
   assert.match(String(res.reason), /unrecognized remote URL/);
   assert.equal(await bareHasCommit(f.legit, f.result_sha), false, "nothing may be pushed under a refused policy");
 });
+
+// ---------------------------------------------------------------------------
+// 4. REVISION_READY: a follow-up revision fast-forwards the lane branch.
+//    codex-cli.mjs tells the builder to use REVISION_READY "when addressing
+//    review findings on the same branch", so the lane branch ALREADY points at
+//    the prior revision — which is the target_sha the attempt is bound to.
+//    Treating any non-empty remote head as a clobber deadlocks that flow.
+// ---------------------------------------------------------------------------
+
+test("real git: a revision fast-forwards a lane branch already at the bound target_sha", async () => {
+  const f = await fixture();
+  // Seed the lane branch at target_sha exactly as a prior revision would leave it.
+  await git(["push", `file://${f.legit}`, `${f.target_sha}:refs/heads/coordinator/SHU-63`], f.wt);
+
+  const res = await pushExactSha(opts(f));
+
+  assert.equal(res.stage, "PUSHED", JSON.stringify(res));
+  assert.equal(res.remote_head, f.result_sha);
+  const ref = (await git(["rev-parse", "refs/heads/coordinator/SHU-63"], f.legit)).stdout.trim();
+  assert.equal(ref, f.result_sha, "the revision must land, not HOLD");
+});
+
+test("real git: a lane branch at any OTHER sha is still never clobbered", async () => {
+  const f = await fixture();
+  // A commit the attempt is not bound to — someone else's push, or a stale lane.
+  const tree = (await git(["rev-parse", "HEAD^{tree}"], f.wt)).stdout.trim();
+  const unrelated = (await git(["commit-tree", tree, "-m", "not ours"], f.wt)).stdout.trim();
+  await git(["push", `file://${f.legit}`, `${unrelated}:refs/heads/coordinator/SHU-63`], f.wt);
+
+  const res = await pushExactSha(opts(f));
+
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.pause_adapter, true);
+  // The BROKER must refuse, before git is ever asked to push. Asserting only
+  // the outcome would pass on git's own non-fast-forward rejection — real
+  // defence in depth, but not this check — so pin which layer said no.
+  assert.match(res.reason, /refusing to clobber/, "the broker's own refusal, not git's rejection");
+  const ref = (await git(["rev-parse", "refs/heads/coordinator/SHU-63"], f.legit)).stdout.trim();
+  assert.equal(ref, unrelated, "the foreign head must be left exactly as it was");
+});
