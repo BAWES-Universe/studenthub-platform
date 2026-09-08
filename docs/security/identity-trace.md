@@ -176,7 +176,7 @@ forged or lost.
 | L3 | **Issuer key registry persistence** | `registry.ts:70-136` | Same class: in-memory only. Rotations/retirements vanish on restart. |
 | L4 | Registry population gap | `authz-middleware.ts:148-156` | The deny-all default has an empty registry: until keys and grants are actually seeded, everything denies. Seeding is the SHU-55 bootstrap question. |
 | L5 | Gateway is single-process | `index.ts:172` | Binds 127.0.0.1, no replica story. Correct for now; SHU-55's "where it runs" decision determines the real deployment shape. |
-| L6 | **Audit trail absent (enforcement path)** | `authz-middleware.ts` (whole file), `index.ts:173` | Every authorization decision — allow, 401/403/503, and each typed denial reason — is computed and discarded. No logging anywhere in the enforcement path (`grep` for logging across `authz-middleware.ts` returns zero); the only `process.stdout.write` in `index.ts` is the startup banner (`:173`). Identity thus flows into no record at the traced commit — a finding for the loss table because SHU-38's ledger commits the platform to "soft-delete + audit", and SHU-54 exists *because* the legacy upload path has no audit. **Closed after this trace by SHU-58 (structured authz-decision audit events, `apps/gateway/src/authz-audit.ts`) + SHU-59 (transactional audit persistence).** |
+| L6 | **Audit trail absent (enforcement path)** | `authz-middleware.ts` (whole file), `index.ts:173` | Every authorization decision — allow, 401/403/503, and each typed denial reason — is computed and discarded. No logging anywhere in the enforcement path (`grep` for logging across `authz-middleware.ts` returns zero); the only `process.stdout.write` in `index.ts` is the startup banner (`:173`). Identity thus flows into no record at the traced commit — a finding for the loss table because SHU-38's ledger commits the platform to "soft-delete + audit", and SHU-54 exists *because* the legacy upload path has no audit. **Closed after this trace by SHU-58 (structured authz-decision audit events, `apps/gateway/src/authz-audit.ts`), which emits every allow / 401 / 403 / 503 with its typed reason to an injectable sink — stdout by default, so decision audit is emitted but not yet durably stored. SHU-59 (`authorization_mutation_audit`) persists authorization *mutations*, a separate surface, not these decisions.** |
 
 ## 4. Bottom line
 
@@ -198,4 +198,7 @@ forged or lost.
 Independent verification by Opus requested per card label `verifier:opus`.
 Opus PASS `49f024d` (2026-09-04) with requested additions A1 (audit trail
 absent → L6) and A2 (search-scope/freshness). A1+A2 additions made by Hermes
-2026-09-08; changed head re-handed to Opus for exact-head re-verification.*
+2026-09-08 → `f2947aa`; Opus re-verification PASS with one required L6 wording
+correction (SHU-59 audits mutations, not decisions; SHU-58 decision audit is
+stdout-only, not durable). L6 wording corrected by Hermes 2026-09-08 →
+`5a31eec`; Opus merges the new head routinely.*
