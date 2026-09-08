@@ -37,6 +37,8 @@ import {
 } from "./fixtures.js";
 import { maskIdentifier, personRef } from "./mask.js";
 import {
+  CONFLICT_KINDS,
+  REJECTION_REASONS,
   SOURCE_CONNECTION_CONTRACT_VERSION,
   SUPPORTED_SOURCES,
   type DryRunReport,
@@ -67,6 +69,7 @@ export const SOURCE_CONNECTION_SCENARIOS = [
   "a dry run reports counts consistent with normalization and leaks nothing",
   "identity keys are exact, never cleaned",
   "distinct identifiers never collide into one candidate",
+  "a report carries only closed vocabulary, masks and references",
 ] as const;
 
 export type SourceConnectionScenario = (typeof SOURCE_CONNECTION_SCENARIOS)[number];
@@ -711,6 +714,81 @@ const distinctIdentifiersNeverCollide: Scenario = (impl, check) => {
   check.equal(result.conflicts.length, 0, "two different people holding two different accounts is not a conflict");
 };
 
+/** Every string shape a report is allowed to contain. */
+const MASK_SHAPE = /^(?:\*\*\*|.{2}\*\*\*.{2})\(\d+\)$/;
+const REF_SHAPE = /^[0-9a-f]{64}$/;
+
+function collectStrings(value: unknown, found: string[]): void {
+  if (typeof value === "string") {
+    found.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStrings(item, found);
+    }
+  } else if (value !== null && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      collectStrings(item, found);
+    }
+  }
+}
+
+/**
+ * The structural version of the secrecy rules, and the reason they are not just
+ * three canaries.
+ *
+ * Chasing individual leaks finds the fields you thought of: the profile canary
+ * caught `profile`, and a person canary caught `personIds`, but an unsupported
+ * `source` was echoed verbatim past both because nobody had thought of it. So
+ * this inverts the check. Every string a report contains must match one of the
+ * shapes the contract defines -- a closed vocabulary value, a mask, a
+ * reference, or the version -- and a field carrying anything else fails without
+ * anyone having to guess in advance which field it will be.
+ */
+const reportsCarryOnlyApprovedShapes: Scenario = (impl, check) => {
+  const untrusted = "operator@example.invalid";
+  const records = [
+    // An unsupported source, shaped like an address a donor might really carry.
+    discordRecord({ source: untrusted }),
+    discordRecord({ observedAt: "not-a-date" }),
+    discordRecord({ externalId: DISCORD_ACCOUNT_TWO, personId: PERSON_ALPHA }),
+    discordRecord({ externalId: DISCORD_ACCOUNT_TWO, personId: PERSON_BETA }),
+    googleRecord(),
+  ];
+
+  const allowed = new Set<string>([
+    SOURCE_CONNECTION_CONTRACT_VERSION,
+    ...SUPPORTED_SOURCES,
+    "unsupported",
+    ...REJECTION_REASONS,
+    ...CONFLICT_KINDS,
+  ]);
+  const approved = (value: string): boolean =>
+    allowed.has(value) || MASK_SHAPE.test(value) || REF_SHAPE.test(value);
+
+  for (const [label, payload] of [
+    ["normalization reports", (() => {
+      const result = impl.normalize(records);
+      return { rejected: result.rejected, conflicts: result.conflicts };
+    })()],
+    ["the dry run", impl.dryRun(records)],
+  ] as const) {
+    const strings: string[] = [];
+    collectStrings(payload, strings);
+    const unapproved = [...new Set(strings.filter((value) => !approved(value)))];
+    check.equal(
+      unapproved.map(maskIdentifier),
+      [],
+      `${label} may contain only closed vocabulary, masks and references`,
+    );
+  }
+
+  // And the specific case that motivated the rule.
+  check.ok(
+    !JSON.stringify(impl.dryRun(records)).includes(untrusted),
+    "an unrecognized source is never echoed back into a report",
+  );
+};
+
 const SCENARIO_TABLE: Readonly<Record<SourceConnectionScenario, Scenario>> = {
   "required fields and supported sources are enforced": requiredFields,
   "provenance is mandatory and preserved verbatim": provenanceRequired,
@@ -726,6 +804,7 @@ const SCENARIO_TABLE: Readonly<Record<SourceConnectionScenario, Scenario>> = {
   "a dry run reports counts consistent with normalization and leaks nothing": dryRunIsConsistentAndClean,
   "identity keys are exact, never cleaned": exactIdentityKeys,
   "distinct identifiers never collide into one candidate": distinctIdentifiersNeverCollide,
+  "a report carries only closed vocabulary, masks and references": reportsCarryOnlyApprovedShapes,
 };
 
 /**

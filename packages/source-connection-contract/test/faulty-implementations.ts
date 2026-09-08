@@ -75,6 +75,8 @@ export interface SourceConnectionFaults {
   readonly misattributeBySource?: boolean;
   /** Puts raw person ids into conflict reports instead of references. */
   readonly rawPersonIdsInReports?: boolean;
+  /** Echoes the donor's unrecognized source string back into a rejection. */
+  readonly echoUnsupportedSource?: boolean;
 }
 
 const STRICT_INSTANT =
@@ -324,6 +326,18 @@ function postprocess(
       ...rejection,
       externalIdMask: rawRejectedIds[index] || rejection.externalIdMask,
     }));
+  }
+
+  if (faults.echoUnsupportedSource) {
+    const echoed = records
+      .filter((record) => !(SUPPORTED_SOURCES as readonly string[]).includes(str(record.source).toLowerCase()))
+      .map((record) => str(record.source));
+    let next = 0;
+    rejected = rejected.map((rejection) =>
+      rejection.reason === "unsupported_source" && echoed[next] !== undefined
+        ? { ...rejection, source: echoed[next++] as typeof rejection.source }
+        : rejection,
+    );
   }
 
   if (faults.rawPersonIdsInReports) {

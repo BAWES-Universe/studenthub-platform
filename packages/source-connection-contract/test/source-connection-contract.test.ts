@@ -71,16 +71,17 @@ const FAULT_EXPECTATIONS: ReadonlyArray<
   ["emitInInputOrder", [scenario(6)]],
   ["acceptIdentityClaimedByMultiplePeople", [scenario(7)]],
   ["acceptPersonClaimedInconsistently", [scenario(8)]],
-  ["unmaskedRejections", [scenario(9), scenario(11)]],
-  ["unmaskedConflicts", [scenario(7), scenario(8), scenario(9), scenario(11)]],
+  ["unmaskedRejections", [scenario(9), scenario(11), scenario(14)]],
+  ["unmaskedConflicts", [scenario(7), scenario(8), scenario(9), scenario(11), scenario(14)]],
   ["leakProfileInAccepted", [scenario(3), scenario(10)]],
-  ["dryRunEmitsRawRecords", [scenario(11)]],
+  ["dryRunEmitsRawRecords", [scenario(11), scenario(14)]],
   ["cleanIdentityKeys", [scenario(12)]],
   ["collidingTripleKey", [scenario(13)]],
   ["acceptSubMillisecondPrecision", [scenario(2)]],
   ["firstObservationOnTie", [scenario(5), scenario(6)]],
   ["misattributeBySource", [scenario(11)]],
-  ["rawPersonIdsInReports", [scenario(7), scenario(8), scenario(9), scenario(11)]],
+  ["rawPersonIdsInReports", [scenario(7), scenario(8), scenario(9), scenario(11), scenario(14)]],
+  ["echoUnsupportedSource", [scenario(14)]],
 ];
 
 test("the fault wrapper with no fault set satisfies the contract", () => {

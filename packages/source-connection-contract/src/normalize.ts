@@ -130,7 +130,11 @@ function normalizeOne(raw: RawSourceRecord): NormalizeOutcome {
 
   const reject = (reason: RejectionReason): NormalizeOutcome => ({
     ok: false,
-    rejection: { reason, externalIdMask, source: source === "" ? "unknown" : source },
+    rejection: {
+      reason,
+      externalIdMask,
+      source: isSupportedSource(source) ? source : "unsupported",
+    },
   });
 
   if (!isSupportedSource(source)) {

@@ -76,31 +76,50 @@ export interface NormalizedSourceConnection {
   readonly observedAt: string;
 }
 
-export type RejectionReason =
-  | "unsupported_source"
-  | "missing_external_id"
+/**
+ * Every rejection reason. Declared as values and the type derived from them, so
+ * the list a report's vocabulary is checked against cannot drift from the list
+ * the implementation can produce.
+ */
+export const REJECTION_REASONS = [
+  "unsupported_source",
+  "missing_external_id",
   /** An external id that would have to be cleaned before it could be a key. */
-  | "malformed_external_id"
-  | "missing_person_id"
+  "malformed_external_id",
+  "missing_person_id",
   /** A person id that would have to be cleaned before it could be a key. */
-  | "malformed_person_id"
-  | "missing_provenance"
-  | "missing_observed_at"
-  | "malformed_observed_at";
+  "malformed_person_id",
+  "missing_provenance",
+  "missing_observed_at",
+  "malformed_observed_at",
+] as const;
+
+export type RejectionReason = (typeof REJECTION_REASONS)[number];
 
 /** One input that did not meet the contract, with the reason it failed. */
 export interface RejectedRecord {
   readonly reason: RejectionReason;
   /** Masked. Never the raw value — see `maskIdentifier`. */
   readonly externalIdMask: string;
-  readonly source: string;
+  /**
+   * A closed vocabulary, never the donor's string. An unrecognized source is
+   * reported as `"unsupported"` rather than echoed: `reason` already says the
+   * source was not recognized, so the value adds nothing an operator cannot get
+   * from their own export, and echoing an untrusted field into a shareable
+   * report is how `operator@example.invalid` ends up in an issue thread.
+   */
+  readonly source: SourceSystem | "unsupported";
 }
 
-export type ConflictKind =
+/** Every conflict kind, as values, with the type derived from them. */
+export const CONFLICT_KINDS = [
   /** One external identity claimed by more than one person. */
-  | "external_identity_claimed_by_multiple_people"
+  "external_identity_claimed_by_multiple_people",
   /** One person claimed by the same source under different external ids. */
-  | "person_claimed_inconsistently";
+  "person_claimed_inconsistently",
+] as const;
+
+export type ConflictKind = (typeof CONFLICT_KINDS)[number];
 
 /**
  * A conflict that a human must resolve. Fails closed: neither side is imported,

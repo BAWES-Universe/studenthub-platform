@@ -65,6 +65,7 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 | Idempotency | Rows collapse on the `(source, externalId, personId)` triple, the later `observedAt` refreshing the survivor, and output is sorted. Re-running an export, or running it with its rows shuffled, gives exactly the same accepted set. Two observations at the same instant are ordered by provenance, so a tie is resolved by the records rather than by export order. |
 | Conflict, fails closed | One external identity claimed by more than one person: **neither** side is accepted, and a conflict is reported. |
 | Ambiguity, fails closed | One person claimed by one source under more than one external id: **neither** account is accepted, and a conflict is reported. |
+| Report vocabulary | Every string a report contains must be a closed-vocabulary value, a mask, a reference, or the contract version. Chasing individual leaks only finds the fields you thought of — a canary caught `profile` and another caught `personIds`, but an unrecognized `source` was echoed verbatim past both. Inverting the check catches the field nobody predicted. |
 | Sensitive output | Rejections and conflicts carry masked identifiers only. External ids are elided; **person ids are SHA-256 references**, because a person id can literally be an email address under `sub_mode = user_email` and the platform already stores such identifiers as digests (SHU-59). No profile claim survives normalization, and a dry run carries counts, reasons, masks and refs — never a raw identifier of either kind. Accepted candidates still carry both ids raw: they are the join keys an import needs, and they are not the artifact that gets pasted into an issue. |
 
 Both conflict rules withhold rather than choose. A withheld candidate can be
@@ -87,11 +88,11 @@ assert.equal(report.ok, true, JSON.stringify(report.results, null, 2));
 
 ## What the test suite proves
 
-`npm test` runs the fourteen scenarios against the real implementation, and then:
+`npm test` runs the fifteen scenarios against the real implementation, and then:
 
 - **A no-fault control.** The fault wrapper with no fault set passes every
   scenario, so each fault's failures are attributable to the fault.
-- **Nineteen faults, each with a declared failure set.** Every fault must fail
+- **Twenty faults, each with a declared failure set.** Every fault must fail
   exactly the scenarios it declares and pass all the others. A fault that fails
   more has stopped being surgical; one that fails fewer means a scenario is not
   reading the behaviour it names.
