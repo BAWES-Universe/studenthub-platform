@@ -1260,6 +1260,7 @@ export function parseWorkOrderDirectiveFromComments(comments = []) {
 export async function backfillSuccessorDirectives({
   receipts = [],
   commentsByIssue = new Map(),
+  dispatchEnabled = false,
   linearToken = "",
   githubToken = "",
   linearIdFor = new Map(),
@@ -1269,6 +1270,10 @@ export async function backfillSuccessorDirectives({
   stdout = null,
 }) {
   const out = stdout ?? ((s) => console.log(s));
+  // Defense in depth: this is the only helper that publishes successor
+  // directives, so it owns a dispatch gate instead of relying solely on its
+  // current caller's control flow.
+  if (!dispatchEnabled) return 0;
   if (!linearToken) return 0;
   let considered = 0;
   // Durable, terminal, verdict-bearing receipts across all issues. Older-infra
@@ -1284,8 +1289,8 @@ export async function backfillSuccessorDirectives({
     const lineage = (receipts ?? []).filter((r) => r && r.issue_id === issueId);
     // Authoritative head binding (Codex BLOCK #1): when a githubToken + branch
     // are present, fetch the LIVE branch head and bind routing to it — an
-    // attacker/volatile result_sha that differs fails closed. Unverifiable/missing
-    // head falls back to the durable receipt result_sha, then the bound target.
+    // attacker/volatile result_sha that differs fails closed. If a live head is
+    // expected but cannot be verified, publication also fails closed.
     let authoritativeHead = null;
     let branchHeadUnverified = false;
     if (githubToken && terminal.repo && terminal.branch) {
@@ -1330,88 +1335,6 @@ export async function backfillSuccessorDirectives({
     out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> POSTED ${routed.order.role} order (actor=${routed.order.actor ?? "coordinator-assigned"}, attempt=${routed.order.attempt_id})`);
   }
   return considered;
-}
-
-// ---------------------------------------------------------------------------
-// Work-order directive wiring (SHU-68 real-path integration, Hermes 2026-09-08)
-// ---------------------------------------------------------------------------
-// After a receipt transitions to a VERDICT-BEARING terminal stage (a validated
-// BUILD_READY / REVISION_READY completion, or a validated BLOCKED/FAILED/PASS
-// review verdict), compute the successor work order from the issue's durable
-// receipt lineage and post the rendered directive to the Linear card — the
-// card, not a human relay, is the next actor's instruction channel.
-//
-// Guards (all inherited from the callers, which run only when dispatch is
-// enabled):
-//   * Only verdict stages route. An infra FAILED with no callback carries no
-//     verdict stage and mints nothing.
-//   * The evidence must be attempt-bound: callers pass the parsed evidence for
-//     THIS attempt (validated links + stage) or the adapter's validated
-//     callback — never free text.
-//   * PASS is terminal: nextWorkOrder returns terminal:true with no order, so
-//     nothing is posted and the loop stops before merge.
-//   * no eligible reviewer / revisions exhausted / no active writer → visible
-//     HOLD: no order is minted and nothing is posted (the terminal receipt
-//     already records the HOLD).
-//   * Idempotent by construction: the callers persist the terminal transition
-//     exactly once per receipt (terminal receipts are never re-polled), so the
-//     directive posts exactly once, when the transition happens.
-export async function maybePostSuccessorDirective({
-  issue_id,
-  issueReceipts = [],
-  terminal = null,
-  verdictStage = null,
-  verdictResultSha = null,
-  linearIssueId = null,
-  linearToken = "",
-  config = {},
-  fetchImpl = fetch,
-  stdout = null,
-  existingDirectives = [], // directives already on the card (dedup; idempotent post)
-  authoritativeHead = null, // verified live branch head — binds routing (Codex BLOCK #1)
-}) {
-  const out = stdout ?? ((s) => console.log(s));
-  if (!terminalVerdictCoherent(terminal, verdictStage)) return null;
-  if (!linearIssueId || !linearToken) return null;
-  // Chronological lineage, oldest first; the just-terminal receipt belongs last
-  // (its last_activity is the newest). routeSuccessorFromReceipts needs the
-  // full lineage INCLUDING the terminal attempt so the successor seed and
-  // review-round count are correct.
-  const lineage = [...(issueReceipts ?? [])]
-    .filter((r) => r && r.issue_id === issue_id)
-    .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")));
-  if (!lineage.some((r) => r.attempt_id === terminal.attempt_id)) lineage.push(terminal);
-
-  const routed = routeSuccessorFromReceipts({
-    issueReceipts: lineage,
-    terminal,
-    evidenceStage: verdictStage,
-    evidenceResultSha: verdictResultSha,
-    max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
-    authoritativeHead,
-  });
-  if (!routed.ok) {
-    // PASS is a real terminal outcome (no successor) — say so distinctly from
-    // holds; holds are visible on the receipt already. A forged result_sha fails
-    // closed here and is reported distinctly.
-    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> no successor (${routed.reason})${routed.forged ? " — FORGED EVIDENCE, FAIL CLOSED" : ""}${routed.terminal ? " — loop complete, stop before merge" : ""}`);
-    return null;
-  }
-  if (!routed.order) {
-    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> ${routed.hold ?? "no order"} — visible HOLD, nothing posted`);
-    return null;
-  }
-  // Idempotency (Codex BLOCK #2): never post a directive whose deterministic
-  // successor attempt is already on the card — re-derivation after a crash must
-  // not duplicate the order.
-  if ((existingDirectives ?? []).some((o) => o.attempt_id === routed.order.attempt_id)) {
-    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> successor ${routed.order.attempt_id} ALREADY POSTED, skip`);
-    return null;
-  }
-  const body = renderWorkOrderDirective(routed.order);
-  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body }, linearToken, fetchImpl);
-  out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> posted ${routed.order.role} order (actor=${routed.order.actor ?? "coordinator-assigned"}, attempt=${routed.order.attempt_id})`);
-  return { order: routed.order, body };
 }
 
 // A durable verdict may route only when it explains the terminal state that
@@ -1870,24 +1793,23 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // each reconcile, and posted only if no post for that successor attempt already
   // exists on the card. This is what makes a crash after the terminal persist
   // (but before the directive) self-healing: the next reconcile re-derives the
-  // same successor attempt and posts it exactly once. It runs here — after the
-  // lifecycle transitions persisted but before new dispatch — so a directive is
-  // never raced by a fresh launch of the same successor.
-  if (dispatchEnabled) {
-    if (io.stdout) io.stdout(`dispatch: backfill successor directives from durable terminal receipts`);
-    const backfilled = await backfillSuccessorDirectives({
-      receipts,
-      commentsByIssue,
-      linearToken,
-      githubToken,
-      linearIdFor,
-      config,
-      env,
-      fetchImpl,
-      stdout: io.stdout,
-    });
-    if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
-  }
+  // same successor attempt and posts it exactly once. It runs only on a tick
+  // where no lifecycle transition was persisted, before new dispatch, so a
+  // directive is never raced by a fresh launch of the same successor.
+  if (io.stdout) io.stdout(`dispatch: backfill successor directives from durable terminal receipts`);
+  const backfilled = await backfillSuccessorDirectives({
+    receipts,
+    commentsByIssue,
+    dispatchEnabled,
+    linearToken,
+    githubToken,
+    linearIdFor,
+    config,
+    env,
+    fetchImpl,
+    stdout: io.stdout,
+  });
+  if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   const { candidate, skipped } = selection;
   if (!candidate) {
     if (io.stdout) io.stdout(`dispatch: no reservation — ${skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}`);

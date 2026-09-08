@@ -24,7 +24,6 @@ import {
   receiptCommentBody,
   parseEvidenceFromComments,
   parseWorkOrderDirectiveFromComments,
-  maybePostSuccessorDirective,
   backfillSuccessorDirectives,
   createReceipt,
   nextReceiptState,
@@ -479,6 +478,7 @@ test("security: backfill rejects incoherent HOLD plus success verdict", async ()
   const considered = await backfillSuccessorDirectives({
     receipts: [held],
     commentsByIssue: new Map([[held.issue_id, []]]),
+    dispatchEnabled: true,
     linearToken: "linear",
     linearIdFor: new Map([[held.issue_id, FIXTURE_NODE.id]]),
     fetchImpl: async () => { writes += 1; throw new Error("must not write"); },
@@ -509,6 +509,7 @@ test("security: backfill fails closed when an expected live branch head is unrea
   const considered = await backfillSuccessorDirectives({
     receipts: [reviewer, terminal],
     commentsByIssue: new Map([[terminal.issue_id, []]]),
+    dispatchEnabled: true,
     linearToken: "linear",
     githubToken: "github",
     linearIdFor: new Map([[terminal.issue_id, FIXTURE_NODE.id]]),
@@ -521,6 +522,69 @@ test("security: backfill fails closed when an expected live branch head is unrea
   });
   assert.equal(considered, 1);
   assert.equal(linearWrites, 0);
+});
+
+test("security: backfill binds routing to the fetched authoritative branch head", async () => {
+  const terminal = {
+    ...seededReceipt({
+      stage: "COMPLETED",
+      requested_worker: "codex-builder",
+      worker_identity: "codex:s1",
+      attempt_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+    }),
+    verdict_stage: "BUILD_READY",
+    result_sha: SHA,
+  };
+  const reviewer = seededReceipt({
+    stage: "RUNNING",
+    requested_worker: "claude-verifier",
+    worker_identity: "claude:v1",
+    attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  });
+  let linearWrites = 0;
+  const considered = await backfillSuccessorDirectives({
+    receipts: [reviewer, terminal],
+    commentsByIssue: new Map([[terminal.issue_id, []]]),
+    dispatchEnabled: true,
+    linearToken: "linear",
+    githubToken: "github",
+    linearIdFor: new Map([[terminal.issue_id, FIXTURE_NODE.id]]),
+    fetchImpl: async (url) => {
+      if (String(url).includes("api.github.com")) {
+        return { ok: true, json: async () => ({ commit: { sha: SHA2 } }) };
+      }
+      linearWrites += 1;
+      throw new Error("forged durable result must not write");
+    },
+    stdout: () => {},
+  });
+  assert.equal(considered, 1);
+  assert.equal(linearWrites, 0, "backfill supplies the fetched head and rejects the mismatched durable result");
+});
+
+test("security: the publication helper itself refuses durable verdicts when dispatch is disabled", async () => {
+  const terminal = {
+    ...seededReceipt({
+      stage: "COMPLETED",
+      requested_worker: "codex-builder",
+      worker_identity: "codex:s1",
+      attempt_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+    }),
+    verdict_stage: "BUILD_READY",
+    result_sha: SHA2,
+  };
+  let writes = 0;
+  const considered = await backfillSuccessorDirectives({
+    receipts: [terminal],
+    commentsByIssue: new Map([[terminal.issue_id, []]]),
+    dispatchEnabled: false,
+    linearToken: "linear",
+    linearIdFor: new Map([[terminal.issue_id, FIXTURE_NODE.id]]),
+    fetchImpl: async () => { writes += 1; throw new Error("dispatch-disabled must not touch a network"); },
+    stdout: () => {},
+  });
+  assert.equal(considered, 0);
+  assert.equal(writes, 0);
 });
 
 test("wiring: a polled COMPLETED build with an eligible reviewer posts the review directive via the durable backfill pass", async () => {
@@ -633,13 +697,19 @@ test("wiring: dispatch-disabled makes zero writes even when a verdict-bearing re
   const store = persistentStore([FIXTURE_NODE], comments);
   // Seed a COMPLETED builder receipt + BUILD_READY evidence + eligible reviewer:
   // the exact state that WOULD post a directive under dispatch-enabled.
-  const builderDone = seededReceipt({
-    stage: "COMPLETED",
-    requested_worker: "codex-builder",
-    worker_identity: "codex:s1",
-    attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-    last_activity: "2026-09-05T10:00:00.000Z",
-  });
+  const builderDone = {
+    ...seededReceipt({
+      stage: "COMPLETED",
+      requested_worker: "codex-builder",
+      worker_identity: "codex:s1",
+      attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      last_activity: "2026-09-05T10:00:00.000Z",
+    }),
+    // Simulates a verdict persisted during an earlier dispatch-enabled run.
+    // This must remain inert after the operator disables dispatch.
+    verdict_stage: "BUILD_READY",
+    result_sha: SHA2,
+  };
   comments.push({ body: receiptCommentBody(builderDone), createdAt: "2026-09-05T10:01:00.000Z" });
   comments.push(callbackComment(builderDone.attempt_id, { result_sha: SHA2 }));
   const writesBefore = comments.length;
@@ -662,57 +732,6 @@ test("wiring: dispatch-disabled makes zero writes even when a verdict-bearing re
   assert.equal(code, 0, out.join("\n"));
   assert.equal(comments.length, writesBefore, "dispatch-disabled: zero Linear writes, no directive");
   assert.ok(!out.some((l) => l.includes("posted ")), out.join("\n"));
-});
-
-// ---------------------------------------------------------------------------
-// maybePostSuccessorDirective direct (pure async) — the terminal-stage guard
-// ---------------------------------------------------------------------------
-
-test("directive helper: infra FAILED receipt never routes even with a stray verdict comment", async () => {
-  const out = [];
-  const failed = seededReceipt({
-    stage: "FAILED",
-    requested_worker: "codex-builder",
-    worker_identity: "codex:s1",
-    attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-    external_run_id: null,
-    last_activity: "2026-09-05T10:00:00.000Z",
-  });
-  const r = await maybePostSuccessorDirective({
-    issue_id: "SHU-FIXTURE-001",
-    issueReceipts: [failed],
-    terminal: failed,
-    verdictStage: "BUILD_READY", // stray: an infra FAILED receipt carries no verdict
-    linearIssueId: FIXTURE_NODE.id,
-    linearToken: "tok",
-    config: { max_revise: 3 },
-    fetchImpl: async () => { throw new Error("no write expected"); },
-    stdout: (s) => out.push(s),
-  });
-  assert.equal(r, null, "FAILED terminal + any stage must never route");
-});
-
-test("directive helper: BUILD_READY only routes from a COMPLETED receipt", async () => {
-  const out = [];
-  const held = seededReceipt({
-    stage: "HOLD",
-    requested_worker: "claude-verifier",
-    worker_identity: "claude:v1",
-    attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-    last_activity: "2026-09-05T10:00:00.000Z",
-  });
-  const r = await maybePostSuccessorDirective({
-    issue_id: "SHU-FIXTURE-001",
-    issueReceipts: [held],
-    terminal: held,
-    verdictStage: "BUILD_READY", // success stage cannot explain a HOLD terminal
-    linearIssueId: FIXTURE_NODE.id,
-    linearToken: "tok",
-    config: { max_revise: 3 },
-    fetchImpl: async () => { throw new Error("no write expected"); },
-    stdout: (s) => out.push(s),
-  });
-  assert.equal(r, null);
 });
 
 // ---------------------------------------------------------------------------
