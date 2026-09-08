@@ -9,6 +9,10 @@ account, repository, branch, isolated worktree, overlap keys, estimated cost,
 deadline, retry, and revision. Reservations are serialized under one exclusive
 host-local transaction lock so the capacity snapshot and write cannot race.
 The lock is not stolen by age; ambiguity HOLDs rather than oversubscribing.
+Directory hardening opens the state directory with `O_NOFOLLOW`, applies mode
+`0700` through that descriptor, and verifies the path still names the same
+inode. The configured state root's parent remains part of the trusted host
+boundary and must not be writable by worker identities.
 
 The policy enforces:
 
