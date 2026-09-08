@@ -28,6 +28,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
 | PostgreSQL data layer | `packages/db`, `packages/db/migrations` | ✅ persistent authz, OIDC state, sessions, and issuer/subject bindings |
 | Login contract | `packages/login-contract` | ✅ executable OIDC conformance and mutation harness |
+| Source-connection contract | `packages/source-connection-contract` | ✅ executable Discord/Google import contract; candidates and conflicts only, no I/O |
 | Search adapter | `packages/search` | ✅ Typesense adapter and indexer |
 | Migration tools | `tools/legacy-import`, `tools/fixtures`, `tools/reconciliation` | ✅ |
 | Search benchmark | `tools/search-bakeoff` | ✅ Meilisearch vs Typesense evidence (SHU-47) |
