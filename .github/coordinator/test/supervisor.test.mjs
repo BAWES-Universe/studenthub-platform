@@ -319,6 +319,23 @@ test("deadline kills and HOLDs an incomplete worker", async () => {
   assert.deepEqual(children[0].kills, ["SIGTERM"]);
 });
 
+test("synchronous worker output cannot race deadline initialization", async () => {
+  const child = fakeChild();
+  const originalOn = child.stdout.on.bind(child.stdout);
+  child.stdout.on = (event, handler) => {
+    const result = originalOn(event, handler);
+    if (event === "data") handler(Buffer.from("123456"));
+    return result;
+  };
+  const { instance, schedules } = supervisor({ spawnWorker: () => child, maxOutputBytes: 5 });
+  await instance.submit(signedSupervisorRequest(order(), SECRET));
+  await assert.doesNotReject(() => drain(schedules));
+  const run = instance.store.readRun(ATTEMPT);
+  assert.equal(run.status, "hold");
+  assert.equal(run.error_code, "OUTPUT_LIMIT");
+  assert.deepEqual(child.kills, ["SIGTERM"]);
+});
+
 test("Unix socket is forced owner-only before it is returned as ready", async () => {
   const root = tempState();
   const socketPath = join(root, "run", "supervisor.sock");
@@ -361,6 +378,41 @@ test("one broken IPC client cannot crash the supervisor server", async () => {
   brokenClient.end = () => {};
   accept(brokenClient);
   assert.doesNotThrow(() => brokenClient.emit("error", new Error("reset")));
+});
+
+test("answered IPC clients are destroyed and later input is never buffered", async () => {
+  const root = tempState();
+  const socketPath = join(root, "run", "supervisor.sock");
+  const { instance } = supervisor({ stateDir: join(root, "state") });
+  let accept;
+  const fakeServer = new EventEmitter();
+  fakeServer.listen = (path, callback) => {
+    writeFileSync(path, "socket fixture", { mode: 0o600 });
+    callback();
+  };
+  fakeServer.close = () => {};
+  await listenSupervisor({
+    supervisor: instance,
+    socketPath,
+    maxRequestBytes: 5,
+    serverFactory: (handler) => {
+      accept = handler;
+      return fakeServer;
+    },
+  });
+  const client = new EventEmitter();
+  client.setEncoding = () => {};
+  let destroyed = 0;
+  client.destroy = () => { destroyed += 1; };
+  client.end = (_response, callback) => callback();
+  accept(client);
+  client.emit("data", "123456");
+  assert.equal(destroyed, 1);
+  let appended = 0;
+  const mustNotAppend = { [Symbol.toPrimitive]: () => { appended += 1; return "x"; } };
+  client.emit("data", mustNotAppend);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(appended, 0, "post-answer input must not reach the request buffer");
 });
 
 test("Unix socket round trip accepts durable work where the host permits sockets", async (t) => {
