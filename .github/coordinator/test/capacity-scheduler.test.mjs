@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -223,6 +223,17 @@ test("existing lock HOLDs visibly and is never stolen by elapsed time", () => {
   assert.equal(result.code, "SCHEDULER_BUSY");
   assert.equal(existsSync(join(root, "capacity-ledger.json")), false);
   rmdirSync(join(root, "capacity-ledger.lock"));
+});
+
+test("state hardening does not follow a symlink or chmod its target", () => {
+  const root = stateDir();
+  const target = join(root, "target");
+  const link = join(root, "state-link");
+  mkdirSync(target, { mode: 0o777 });
+  chmodSync(target, 0o777);
+  symlinkSync(target, link);
+  assert.throws(() => new CapacityScheduler({ stateDir: link, policy: policy() }), /ELOOP|ENOTDIR|unsafe/);
+  assert.equal(statSync(target).mode & 0o777, 0o777, "rejected symlink target permissions must remain untouched");
 });
 
 test("malformed persisted costs fail closed without replacing forensic evidence", () => {
