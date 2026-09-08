@@ -72,7 +72,7 @@ function tempConfig() {
   return p;
 }
 
-let clockMs = 1700000000000;
+let clockMs = 1793200000000; // 2026-09-09 — AFTER the seeded receipts' 2026-09-05 timestamps, so durable transitions win the dedup
 const tick = () => new Date((clockMs += 1000)).toISOString();
 
 // Minimal persistent Linear store (mirrors lifecycle.test.mjs shape).
@@ -414,18 +414,14 @@ function seededReceipt({ stage, requested_worker = "codex-builder", worker_ident
   };
 }
 
-test("wiring: a polled COMPLETED build with an eligible reviewer in lineage posts the review directive", async () => {
+test("wiring: a polled COMPLETED build with an eligible reviewer posts the review directive via the durable backfill pass", async () => {
   const comments = [];
   const store = persistentStore([FIXTURE_NODE], comments);
   const wa = waAgent();
   // Durable state at reconcile start, exactly as a prior launch would leave it:
   // * a claude-verifier session that reviewed this issue before (COMPLETED,
   //   worker identity known, did NOT edit -> still an eligible non-author);
-  // * the builder attempt already RUNNING (launched by an earlier process),
-  //   whose poll is about to report completed with BUILD_READY evidence.
-  // NOTE: the issue is parked (terminal receipt exists) so NO new dispatch can
-  // happen; the lifecycle pass polls the RUNNING receipt and the wiring posts
-  // the successor directive on that single transition.
+  // * the builder attempt already RUNNING (launched by an earlier process).
   const reviewerReceipt = seededReceipt({
     stage: "COMPLETED",
     requested_worker: "claude-verifier",
@@ -445,26 +441,45 @@ test("wiring: a polled COMPLETED build with an eligible reviewer in lineage post
   });
   comments.push({ body: receiptCommentBody(builderRunning), createdAt: "2026-09-05T09:41:00.000Z" });
 
-  // Worker posts BUILD_READY + result_sha; poll completes; the wiring posts the
-  // successor review directive on the SAME transition.
+  // Worker posts BUILD_READY + result_sha; poll completes. On THIS reconcile the
+  // lifecycle pass transitions RUNNING -> COMPLETED and persists the DURABLE
+  // verdict facts (verdict_stage + result_sha) on the terminal receipt.
   comments.push(callbackComment(builderRunning.attempt_id, { result_sha: SHA2 }));
   wa.setPoll({ status: "completed", agent_id: "codex:s1" });
-  const out = [];
-  await main([], ENV, {
-    skipActivationPreflight: true,
-    configPath: tempConfig(),
-    adapterModules: { "codex-cli": waCompat },
-    stdout: (s) => out.push(s),
-    fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
-    fetchDurable: true,
-    pollRuns: true,
-  });
-  assert.ok(out.some((l) => l.includes("posted review order")), `directive posted: ${out.join("\n")}`);
+  const runReconcile = async (out) =>
+    main([], ENV, {
+      skipActivationPreflight: true,
+      configPath: tempConfig(),
+      adapterModules: { "codex-cli": waCompat },
+      stdout: (s) => out.push(s),
+      fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+      fetchDurable: true,
+      pollRuns: true,
+    });
+  const out1 = [];
+  await runReconcile(out1);
+  // Transition persisted, but the directive NOT yet posted (backfill runs on a
+  // reconcile with no lifecycle transition). This is the crash-window: the
+  // terminal receipt is durable, so a restart self-heals.
+  assert.ok(!parseWorkOrderDirectiveFromComments(comments).some((o) => o.role === "review"), "directive deferred to backfill pass");
+
+  // SECOND reconcile: no lifecycle transition -> the durable backfill pass derives
+  // the same deterministic successor attempt and posts it exactly once.
+  const out2 = [];
+  await runReconcile(out2);
+  assert.ok(out2.some((l) => l.includes("POSTED review order")), `backfill posted: ${out2.join("\n")}`);
   const directives = parseWorkOrderDirectiveFromComments(comments);
   assert.equal(directives.length, 1, "exactly one work-order directive on the card");
   assert.equal(directives[0].role, "review");
   assert.equal(directives[0].actor, "claude:v1");
   assert.equal(directives[0].target_sha, SHA2, "review directive binds the evidence result head");
+
+  // THIRD reconcile: idempotent — the same successor attempt is already on the
+  // card, so the backfill post is deduplicated (NO duplicate directive).
+  const out3 = [];
+  await runReconcile(out3);
+  assert.ok(!out3.some((l) => l.includes("POSTED review order")), `no duplicate on replay: ${out3.join("\n")}`);
+  assert.equal(parseWorkOrderDirectiveFromComments(comments).length, 1, "one directive even after replay");
 });
 
 test("wiring: no eligible reviewer -> visible hold, ZERO directives posted", async () => {
@@ -486,17 +501,21 @@ test("wiring: no eligible reviewer -> visible hold, ZERO directives posted", asy
   comments.push({ body: receiptCommentBody(builderRunning), createdAt: "2026-09-05T09:41:00.000Z" });
   comments.push(callbackComment(builderRunning.attempt_id, { result_sha: SHA2 }));
   wa.setPoll({ status: "completed", agent_id: "codex:s1" });
-  const out = [];
-  await main([], ENV, {
-    skipActivationPreflight: true,
-    configPath: tempConfig(),
-    adapterModules: { "codex-cli": waCompat },
-    stdout: (s) => out.push(s),
-    fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
-    fetchDurable: true,
-    pollRuns: true,
-  });
-  assert.ok(out.some((l) => l.includes("no eligible non-author reviewer")), `visible hold logged: ${out.join("\n")}`);
+  const runReconcile = async (out) =>
+    main([], ENV, {
+      skipActivationPreflight: true,
+      configPath: tempConfig(),
+      adapterModules: { "codex-cli": waCompat },
+      stdout: (s) => out.push(s),
+      fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+      fetchDurable: true,
+      pollRuns: true,
+    });
+  const out1 = [];
+  await runReconcile(out1); // transition RUNNING -> COMPLETED, persists durable verdict facts
+  const out2 = [];
+  await runReconcile(out2); // backfill pass: no eligible reviewer -> visible HOLD, nothing posted
+  assert.ok(out2.some((l) => l.includes("no eligible non-author reviewer")), `visible hold logged: ${out2.join("\n")}`);
   assert.equal(parseWorkOrderDirectiveFromComments(comments).length, 0, "no directive without an eligible reviewer");
 });
 
@@ -585,4 +604,97 @@ test("directive helper: BUILD_READY only routes from a COMPLETED receipt", async
     stdout: (s) => out.push(s),
   });
   assert.equal(r, null);
+});
+
+// ---------------------------------------------------------------------------
+// Codex BLOCK #1 regression — forged evidence cannot route or choose a head
+// ---------------------------------------------------------------------------
+
+test("routing: forged result_sha (≠ verified authoritative head) FAILS CLOSED — attacker cannot choose the successor head", async () => {
+  // A completed codex-builder receipt with a worker identity (eligible lineage)
+  // + an attacker-chosen result_sha that the VERIFIED authoritative branch head
+  // refutes. routeSuccessorFromReceipts must refuse to route (no order -> no
+  // directive -> no launch), exactly what Codex's probe (attacker SHA eeeee...)
+  // demanded.
+  const build = {
+    issue_id: "SHU-FIXTURE-001",
+    attempt_id: "11111111-1111-4111-8111-111111111111",
+    requested_worker: "codex-builder",
+    worker_identity: "codex:s1",
+    target_sha: SHA,
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    stage: "COMPLETED",
+  };
+  const attackerSha = "e".repeat(40); // Codex's probe used this shape
+  const r = routeSuccessorFromReceipts({
+    issueReceipts: [build],
+    terminal: build,
+    evidenceStage: "BUILD_READY",
+    evidenceResultSha: attackerSha,
+    authoritativeHead: SHA2, // the real verified branch head
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.forged, true, "confirm the failure is flagged as forged");
+  assert.match(r.reason, /does not match verified authoritative head|FORGED/i);
+  assert.equal(r.order, undefined, "no successor order from forged evidence");
+});
+
+test("routing: matching authoritative head routes and binds the VERIFIED head, not the volatile evidence", async () => {
+  const build = {
+    issue_id: "SHU-FIXTURE-001",
+    attempt_id: "11111111-1111-4111-8111-111111111111",
+    requested_worker: "codex-builder",
+    worker_identity: "codex:s1",
+    target_sha: SHA,
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    stage: "COMPLETED",
+  };
+  const reviewer = {
+    issue_id: "SHU-FIXTURE-001",
+    attempt_id: "22222222-2222-4222-8222-222222222222",
+    requested_worker: "claude-verifier",
+    worker_identity: "claude:v1",
+    target_sha: SHA2,
+    stage: "RUNNING",
+  };
+  const r = routeSuccessorFromReceipts({
+    issueReceipts: [build, reviewer],
+    terminal: build,
+    evidenceStage: "BUILD_READY",
+    evidenceResultSha: "d".repeat(40), // volatile evidence, ignored in favor of verified head
+    authoritativeHead: SHA2,
+  });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.order.target_sha, SHA2, "review binds the authoritative verified head");
+});
+
+test("routing: replay determinism — same input yields the SAME successor attempt id (backfill dedup key)", async () => {
+  const build = {
+    issue_id: "SHU-FIXTURE-001",
+    attempt_id: "11111111-1111-4111-8111-111111111111",
+    requested_worker: "codex-builder",
+    worker_identity: "codex:s1",
+    target_sha: SHA,
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    stage: "COMPLETED",
+  };
+  const reviewer = {
+    issue_id: "SHU-FIXTURE-001",
+    attempt_id: "22222222-2222-4222-8222-222222222222",
+    requested_worker: "claude-verifier",
+    worker_identity: "claude:v1",
+    target_sha: SHA2,
+    stage: "RUNNING",
+  };
+  const mk = () => routeSuccessorFromReceipts({
+    issueReceipts: [build, reviewer],
+    terminal: build,
+    evidenceStage: "BUILD_READY",
+    authoritativeHead: SHA2,
+  });
+  const a = mk();
+  const b = mk();
+  assert.equal(a.ok && b.ok, true);
+  assert.equal(a.order.attempt_id, b.order.attempt_id, "deterministic successor attempt — the backfill dedup key");
+  assert.equal(a.order.target_sha, b.order.target_sha, "deterministic head binding");
 });

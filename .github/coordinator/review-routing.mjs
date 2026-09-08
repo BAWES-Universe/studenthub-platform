@@ -406,10 +406,24 @@ export function verdictMatchesLane(requestedWorker, evidenceStage) {
 //     so the successor review binds this output head, never the stale input
 //     target_sha. Ignored for review verdicts.
 //   state.max_revise   — bound on revision rounds (default 3).
+//   state.authoritativeHead — the VERIFIED live branch head (github token
+//     available + fetched). When present, a successor review binds THIS head and
+//     any evidenceResultSha that disagrees is stale/forged — the write did not
+//     produce it — so routing fails closed (Codex BLOCK #1, SHU-68): an
+//     attacker-chosen 40-hex never becomes a review target. Without it (no token
+//     / head unverifiable), fall back to the durable receipt result_sha, then the
+//     bound target_sha.
 //
-// Returns { ok, order?, terminal?, reason?, hold?, exhausted? }.
+// Returns { ok, order?, terminal?, reason?, hold?, exhausted?, forged? }.
 export function routeSuccessorFromReceipts(state = {}) {
-  const { issueReceipts = [], terminal = null, evidenceStage = null, evidenceResultSha = null, max_revise = 3 } = state;
+  const {
+    issueReceipts = [],
+    terminal = null,
+    evidenceStage = null,
+    evidenceResultSha = null,
+    max_revise = 3,
+    authoritativeHead = null,
+  } = state;
   if (!terminal || typeof terminal !== "object") {
     return { ok: false, reason: "no terminal receipt to route from" };
   }
@@ -422,6 +436,21 @@ export function routeSuccessorFromReceipts(state = {}) {
   if (!verdictMatchesLane(terminal.requested_worker, evidenceStage)) {
     return { ok: false, reason: `verdict ${String(evidenceStage)} does not match lane ${String(terminal.requested_worker)} — machine HOLD, no route` };
   }
+  // Authoritative-head binding (Codex BLOCK #1, SHU-68). When the VERIFIED head
+  // is known, a conflicting evidence result_sha is forged or stale — fail closed.
+  const authoritative = typeof authoritativeHead === "string" && /^[0-9a-f]{40}$/.test(authoritativeHead);
+  if (authoritative && typeof evidenceResultSha === "string" && /^[0-9a-f]{40}$/.test(evidenceResultSha) && evidenceResultSha !== authoritativeHead) {
+    return {
+      ok: false,
+      forged: true,
+      reason: `evidence result_sha ${evidenceResultSha} does not match verified authoritative head ${authoritativeHead} — FORGED or stale; FAIL CLOSED`,
+    };
+  }
+  // Effective output head: verified head when known, else durable receipt
+  // result_sha (replay path), else the supplied evidence result_sha, else the
+  // bound input target_sha (no write advanced the branch).
+  const durableResultSha = typeof terminal.result_sha === "string" && /^[0-9a-f]{40}$/.test(terminal.result_sha) ? terminal.result_sha : null;
+  const outputHead = authoritative ? authoritativeHead : durableResultSha ?? evidenceResultSha;
   // Provenance lineage: every receipt that actually ran (has a worker
   // identity), oldest first. Reviews that EDITED are authors — reconcile can
   // only mark kind:"edited" with proof; the pure bridge never fabricates it.
@@ -429,12 +458,11 @@ export function routeSuccessorFromReceipts(state = {}) {
   for (const receipt of issueReceipts) {
     const entry = provenanceFromReceipt(receipt);
     if (!entry) continue;
-    // Stamp the completed write's OUTPUT head from the validated evidence —
-    // this is the head a successor review must bind. Never fabricate from a
-    // receipt field (receipts do not carry result_sha by schema).
+    // Stamp the completed write's OUTPUT head — the head a successor review must
+    // bind. Prefer the authoritative/durable head over the volatile evidence.
     if (receipt.attempt_id === terminal.attempt_id && (entry.role === "build" || entry.role === "revise")) {
-      if (typeof evidenceResultSha === "string" && /^[0-9a-f]{40}$/.test(evidenceResultSha)) {
-        entry.result_sha = evidenceResultSha;
+      if (typeof outputHead === "string" && /^[0-9a-f]{40}$/.test(outputHead)) {
+        entry.result_sha = outputHead;
       }
     }
     entries.push(entry);

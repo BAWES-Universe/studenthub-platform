@@ -668,6 +668,15 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
+          // Durable verdict facts (SHU-68 wiring replay): the terminal receipt
+          // records the verdict stage + output head that routing consumed, so a
+          // crash AFTER this persist can re-derive the successor directive on the
+          // next reconcile without re-reading volatile state. Extra fields are
+          // tolerated by validateReceipt (checked fields only).
+          if (typeof callback.stage === "string" && callback.stage.length) next.verdict_stage = callback.stage;
+          if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
+            next.result_sha = callback.result_sha;
+          }
           if (typeof event.worker_identity === "string" && event.worker_identity.length) {
             next.worker_identity = event.worker_identity; // poll's agent_id, persisted with the terminal state
           }
@@ -681,6 +690,18 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         );
         next.stage = "HOLD";
         next.adapter_status = "completed";
+        // Durable verdict facts on HOLD too: a REVIEW BLOCK/FAIL that reached the
+        // machine as "completed without SUCCESS callback" still carries a real
+        // verdict the routing layer must replay after a crash. Persist the bound
+        // callback's stage + output head whenever the callback is attempt-bound
+        // (BLOCKED/FAILED never authorize COMPLETED — GPT lifecycle BLOCK — but
+        // they ARE durable routing input). Unbound/no callback -> no verdict.
+        if (callback && typeof callback.stage === "string" && callback.stage.length) {
+          next.verdict_stage = callback.stage;
+          if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
+            next.result_sha = callback.result_sha;
+          }
+        }
         if (typeof event.worker_identity === "string" && event.worker_identity.length) {
           next.worker_identity = event.worker_identity; // agent_id is known even when the callback is not
         }
@@ -1015,7 +1036,7 @@ export const LINEAR_ISSUE_COMMENTS_QUERY = `
   query CoordinatorIssueComments($issueId: String!) {
     issue(id: $issueId) {
       comments(first: 100, orderBy: createdAt) {
-        nodes { body createdAt }
+        nodes { body createdAt user { id displayName } }
       }
     }
   }`;
@@ -1213,6 +1234,88 @@ export function parseWorkOrderDirectiveFromComments(comments = []) {
 }
 
 // ---------------------------------------------------------------------------
+// Successor-directive replay/backfill (SHU-68 wiring, Codex BLOCK #2 resolved)
+// ---------------------------------------------------------------------------
+// The directive is derived from the DURABLE receipt verdict facts (verdict_stage
+// + result_sha recorded on the terminal receipt at persist time) and routeSuccessor
+// is idempotent: freshAttempt derives the successor attempt_id deterministically
+// from the prior attempt + stage + round. So recomputing it on a later reconcile
+// yields the SAME successor attempt, and posting is deduplicated against the
+// card's existing directives (parseWorkOrderDirectiveFromComments). A crash after
+// the terminal persist but before the directive post therefore self-heals on the
+// next dispatch-enabled reconcile — exactly once, never duplicated.
+export async function backfillSuccessorDirectives({
+  receipts = [],
+  commentsByIssue = new Map(),
+  linearToken = "",
+  githubToken = "",
+  linearIdFor = new Map(),
+  config = {},
+  env = {},
+  fetchImpl = fetch,
+  stdout = null,
+}) {
+  const out = stdout ?? ((s) => console.log(s));
+  if (!linearToken) return 0;
+  let considered = 0;
+  // Durable, terminal, verdict-bearing receipts across all issues. Older-infra
+  // FAILED receipts carry no verdict_stage and are skipped (never route).
+  const eligible = (receipts ?? []).filter((r) => r && TERMINAL_STAGES.includes(r.stage) && typeof r.verdict_stage === "string");
+  for (const terminal of eligible) {
+    considered += 1;
+    const issueId = terminal.issue_id;
+    const comments = commentsByIssue.get(issueId) ?? commentsByIssue.get(terminal.linearId ?? "") ?? [];
+    const linearIssueId = linearIdFor.get(issueId) ?? terminal.linearId ?? null;
+    // Existing directives on THIS card, dedup keyed by successor attempt_id.
+    const existing = parseWorkOrderDirectiveFromComments(comments);
+    const lineage = (receipts ?? []).filter((r) => r && r.issue_id === issueId);
+    // Authoritative head binding (Codex BLOCK #1): when a githubToken + branch
+    // are present, fetch the LIVE branch head and bind routing to it — an
+    // attacker/volatile result_sha that differs fails closed. Unverifiable/missing
+    // head falls back to the durable receipt result_sha, then the bound target.
+    let authoritativeHead = null;
+    let branchHeadUnverified = false;
+    if (githubToken && terminal.repo && terminal.branch) {
+      try {
+        const head = await fetchBranchHead({ repo: terminal.repo, branch: terminal.branch, token: githubToken, fetchImpl });
+        if (head) {
+          authoritativeHead = head;
+        } else {
+          branchHeadUnverified = true;
+        }
+      } catch {
+        branchHeadUnverified = true;
+      }
+    }
+    const routed = routeSuccessorFromReceipts({
+      issueReceipts: lineage,
+      terminal,
+      evidenceStage: terminal.verdict_stage,
+      evidenceResultSha: terminal.result_sha ?? null,
+      max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
+      authoritativeHead,
+    });
+    if (!routed.ok || !routed.order) {
+      // PASS / no eligible reviewer / exhaustion / lane mismatch / forged — nothing to post.
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} (${terminal.verdict_stage}) -> no post (${routed.reason ?? "no order"})${branchHeadUnverified ? " [branch head unverifiable]" : ""}`);
+      continue;
+    }
+    if (existing.some((o) => o.attempt_id === routed.order.attempt_id)) {
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> successor ${routed.order.attempt_id} ALREADY POSTED, skip`);
+      continue;
+    }
+    if (!linearIssueId) {
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> successor ${routed.order.attempt_id} (no linearIssueId — skipped)`);
+      continue;
+    }
+    const body = renderWorkOrderDirective(routed.order);
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body }, linearToken, fetchImpl);
+    out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> POSTED ${routed.order.role} order (actor=${routed.order.actor ?? "coordinator-assigned"}, attempt=${routed.order.attempt_id})`);
+  }
+  return considered;
+}
+
+// ---------------------------------------------------------------------------
 // Work-order directive wiring (SHU-68 real-path integration, Hermes 2026-09-08)
 // ---------------------------------------------------------------------------
 // After a receipt transitions to a VERDICT-BEARING terminal stage (a validated
@@ -1247,6 +1350,8 @@ export async function maybePostSuccessorDirective({
   config = {},
   fetchImpl = fetch,
   stdout = null,
+  existingDirectives = [], // directives already on the card (dedup; idempotent post)
+  authoritativeHead = null, // verified live branch head — binds routing (Codex BLOCK #1)
 }) {
   const out = stdout ?? ((s) => console.log(s));
   if (!terminal || !TERMINAL_STAGES.includes(terminal.stage)) return null;
@@ -1281,15 +1386,24 @@ export async function maybePostSuccessorDirective({
     evidenceStage: verdictStage,
     evidenceResultSha: verdictResultSha,
     max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
+    authoritativeHead,
   });
   if (!routed.ok) {
     // PASS is a real terminal outcome (no successor) — say so distinctly from
-    // holds; holds are visible on the receipt already.
-    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> no successor (${routed.reason})${routed.terminal ? " — loop complete, stop before merge" : ""}`);
+    // holds; holds are visible on the receipt already. A forged result_sha fails
+    // closed here and is reported distinctly.
+    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> no successor (${routed.reason})${routed.forged ? " — FORGED EVIDENCE, FAIL CLOSED" : ""}${routed.terminal ? " — loop complete, stop before merge" : ""}`);
     return null;
   }
   if (!routed.order) {
     out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> ${routed.hold ?? "no order"} — visible HOLD, nothing posted`);
+    return null;
+  }
+  // Idempotency (Codex BLOCK #2): never post a directive whose deterministic
+  // successor attempt is already on the card — re-derivation after a crash must
+  // not duplicate the order.
+  if ((existingDirectives ?? []).some((o) => o.attempt_id === routed.order.attempt_id)) {
+    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> successor ${routed.order.attempt_id} ALREADY POSTED, skip`);
     return null;
   }
   const body = renderWorkOrderDirective(routed.order);
@@ -1603,24 +1717,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
       }
-      // SHU-68 wiring: a recovered launch that folded straight to a terminal
-      // verdict (COMPLETED w/ success stage, or HOLD w/ BLOCKED/FAILED review)
-      // posts the successor work order to the card. The adapter validated the
-      // callback (attempt/SHA-bound) before returning it.
-      if (TERMINAL_STAGES.includes(nextReceipt.stage) && launch.callback && typeof launch.callback.stage === "string") {
-        await maybePostSuccessorDirective({
-          issue_id: receipt.issue_id,
-          issueReceipts: receipts,
-          terminal: nextReceipt,
-          verdictStage: launch.callback.stage,
-          verdictResultSha: launch.callback.result_sha ?? null,
-          linearIssueId,
-          linearToken,
-          config,
-          fetchImpl,
-          stdout: io.stdout,
-        });
-      }
       const idx = receipts.indexOf(receipt);
       if (idx >= 0) receipts[idx] = nextReceipt;
       if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> ${nextReceipt.stage} using the same attempt/idempotency key`);
@@ -1682,7 +1778,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           event = {
             type: "run_status",
             status: "completed",
-            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null },
+            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
             worker_identity: outcome.worker_identity ?? null,
           };
         }
@@ -1711,25 +1807,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       if (transition.pause_adapter === true) {
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
-      }
-      // SHU-68 wiring: a polled run that reached a verdict-bearing terminal
-      // stage posts the successor work order to the card. The verdict stage is
-      // the attempt-bound evidence comment (BUILD_READY/REVISION_READY/PASS for
-      // COMPLETED; a review BLOCKED/FAILED surfaces as the polled HOLD — the
-      // helper only routes when stage explains the terminal stage).
-      if (TERMINAL_STAGES.includes(nextReceipt.stage) && evidence && typeof evidence.stage === "string") {
-        await maybePostSuccessorDirective({
-          issue_id: receipt.issue_id,
-          issueReceipts: receipts,
-          terminal: nextReceipt,
-          verdictStage: evidence.stage,
-          verdictResultSha: evidence.result_sha ?? null,
-          linearIssueId,
-          linearToken,
-          config,
-          fetchImpl,
-          stdout: io.stdout,
-        });
       }
       const idx = receipts.indexOf(receipt);
       if (idx >= 0) receipts[idx] = nextReceipt;
@@ -1768,6 +1845,31 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // never compounds onto a transition made seconds ago in the same process.
     if (io.stdout) io.stdout(`dispatch: DEFERRED — lifecycle transitions were persisted this run; selection resumes next reconcile`);
     return 0;
+  }
+
+  // ---- SHU-68 replay/backfill (Codex BLOCK #2, resolved): ----
+  // Successor-directive publication is derived from the DURABLE receipt verdict
+  // facts, computed idempotently from the deterministic successor attempt id new
+  // each reconcile, and posted only if no post for that successor attempt already
+  // exists on the card. This is what makes a crash after the terminal persist
+  // (but before the directive) self-healing: the next reconcile re-derives the
+  // same successor attempt and posts it exactly once. It runs here — after the
+  // lifecycle transitions persisted but before new dispatch — so a directive is
+  // never raced by a fresh launch of the same successor.
+  if (dispatchEnabled) {
+    if (io.stdout) io.stdout(`dispatch: backfill successor directives from durable terminal receipts`);
+    const backfilled = await backfillSuccessorDirectives({
+      receipts,
+      commentsByIssue,
+      linearToken,
+      githubToken,
+      linearIdFor,
+      config,
+      env,
+      fetchImpl,
+      stdout: io.stdout,
+    });
+    if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   }
   const { candidate, skipped } = selection;
   if (!candidate) {
@@ -1919,24 +2021,6 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     const adapter = adapterNameFor(candidate.requested_worker);
     config.adapter_pause_map[adapter] = true;
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
-  }
-  // SHU-68 wiring: a SYNCHRONOUS launch (e.g. `claude -p` review) returns its
-  // terminal verdict straight from launchBuilder — the receipt never passes
-  // through the lifecycle poll. Post the successor work order here when the
-  // fold reached a verdict-bearing terminal stage.
-  if (TERMINAL_STAGES.includes(next.stage) && launch.callback && typeof launch.callback.stage === "string") {
-    await maybePostSuccessorDirective({
-      issue_id: candidate.id,
-      issueReceipts: receipts,
-      terminal: next,
-      verdictStage: launch.callback.stage,
-      verdictResultSha: launch.callback.result_sha ?? null,
-      linearIssueId,
-      linearToken,
-      config,
-      fetchImpl,
-      stdout: io.stdout,
-    });
   }
   if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})`);
   return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;
