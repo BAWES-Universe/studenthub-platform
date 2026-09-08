@@ -21,6 +21,11 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:22.19.0-bookworm-slim AS runtime
 
+# Coolify's container healthcheck runs curl INSIDE the container. The slim base
+# has neither curl nor wget, so a healthchecked deploy would be marked unhealthy
+# and rolled back. Install curl in the runtime image (bookworm-slim has apt).
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 ENV NODE_ENV=production
