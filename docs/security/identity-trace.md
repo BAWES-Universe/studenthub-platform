@@ -200,5 +200,5 @@ Opus PASS `49f024d` (2026-09-04) with requested additions A1 (audit trail
 absent → L6) and A2 (search-scope/freshness). A1+A2 additions made by Hermes
 2026-09-08 → `f2947aa`; Opus re-verification PASS with one required L6 wording
 correction (SHU-59 audits mutations, not decisions; SHU-58 decision audit is
-stdout-only, not durable). L6 wording corrected by Hermes 2026-09-08 →
-`5a31eec`; Opus merges the new head routinely.*
+stdout-only, not durable). L6 wording corrected by Hermes 2026-09-08 in this
+PR; Opus merges the corrected head routinely.*
