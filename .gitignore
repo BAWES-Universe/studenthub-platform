@@ -1,4 +1,3 @@
-!.env.example
 *.dump
 *.log
 *.sql
@@ -6,6 +5,8 @@
 .DS_Store
 .env
 .env.*
+!.env.example
+!deploy/coolify/.env.example
 .next/
 coverage/
 dist/
