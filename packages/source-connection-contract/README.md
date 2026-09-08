@@ -58,9 +58,11 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 | -- | -- |
 | Required fields | `source`, `externalId`, `personId`, `provenance` and `observedAt` are all mandatory. Rule order is fixed, so a row failing several rules always reports the same reason. |
 | Provenance | A row with no stated origin is rejected, never imported with a guessed one. Provenance is carried verbatim onto the candidate. |
-| Unambiguous time | `observedAt` must be ISO-8601 with an explicit offset, and must be a real calendar instant. `"2026-01-02T03:04:05"` is local time to `Date` and is rejected; `"2026-02-30T00:00:00Z"` parses as 2 March and is rejected. |
+| Unambiguous time | `observedAt` must be ISO-8601 with an explicit offset, a real calendar instant, and no more precision than can be stored. `"2026-01-02T03:04:05"` is local time to `Date`; `"2026-02-30T00:00:00Z"` parses as 2 March; `"…05.0001Z"` would be truncated to `.000`. All three are rejected rather than guessed at. |
+| Exact identity keys | `externalId` and `personId` are used verbatim. Edge whitespace is rejected, not trimmed — cleaning `" z "` into `"z"` would merge a padded row into a different account's identity. Inner whitespace is the donor's business and is carried through. |
+| Unambiguous keys | The grouping keys use a structured encoding, not a delimiter join. `("a b", "c")` and `("a", "b c")` are distinct triples and stay two candidates; a separator-joined key would silently drop one. |
 | No matching on mutable claims | The only keys are `source`, `externalId` and `personId`. Profile claims are dropped at the boundary and never key, match, or join anything. |
-| Idempotency | Rows collapse on the `(source, externalId, personId)` triple, the later `observedAt` refreshing the survivor, and output is sorted. Re-running an export, or running it with its rows shuffled, gives exactly the same accepted set. |
+| Idempotency | Rows collapse on the `(source, externalId, personId)` triple, the later `observedAt` refreshing the survivor, and output is sorted. Re-running an export, or running it with its rows shuffled, gives exactly the same accepted set. Two observations at the same instant are ordered by provenance, so a tie is resolved by the records rather than by export order. |
 | Conflict, fails closed | One external identity claimed by more than one person: **neither** side is accepted, and a conflict is reported. |
 | Ambiguity, fails closed | One person claimed by one source under more than one external id: **neither** account is accepted, and a conflict is reported. |
 | Sensitive output | Rejections and conflicts carry masked identifiers only. No profile claim survives normalization, and a dry run carries counts, reasons and masks, never a raw identifier. |
@@ -85,11 +87,11 @@ assert.equal(report.ok, true, JSON.stringify(report.results, null, 2));
 
 ## What the test suite proves
 
-`npm test` runs the twelve scenarios against the real implementation, and then:
+`npm test` runs the fourteen scenarios against the real implementation, and then:
 
 - **A no-fault control.** The fault wrapper with no fault set passes every
   scenario, so each fault's failures are attributable to the fault.
-- **Thirteen faults, each with a declared failure set.** Every fault must fail
+- **Eighteen faults, each with a declared failure set.** Every fault must fail
   exactly the scenarios it declares and pass all the others. A fault that fails
   more has stopped being surgical; one that fails fewer means a scenario is not
   reading the behaviour it names.

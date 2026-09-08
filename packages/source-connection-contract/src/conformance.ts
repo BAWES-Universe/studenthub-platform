@@ -38,10 +38,12 @@ import {
 import { maskIdentifier } from "./mask.js";
 import {
   SOURCE_CONNECTION_CONTRACT_VERSION,
+  SUPPORTED_SOURCES,
   type DryRunReport,
   type NormalizationResult,
   type NormalizedSourceConnection,
   type RawSourceRecord,
+  type SourceSystem,
 } from "./types.js";
 
 /** What an implementation of this contract has to provide. */
@@ -63,6 +65,8 @@ export const SOURCE_CONNECTION_SCENARIOS = [
   "reports carry masked identifiers, never raw ones",
   "profile claims never survive normalization",
   "a dry run reports counts consistent with normalization and leaks nothing",
+  "identity keys are exact, never cleaned",
+  "distinct identifiers never collide into one candidate",
 ] as const;
 
 export type SourceConnectionScenario = (typeof SOURCE_CONNECTION_SCENARIOS)[number];
@@ -234,8 +238,16 @@ const unambiguousObservedAt: Scenario = (impl, check) => {
       personId: PERSON_GAMMA,
       observedAt: "2026-01-02T25:00:00Z",
     }),
+    // More fractional precision than `toISOString` can store. Accepting it would
+    // silently truncate, and truncation makes two distinct observations equal.
+    discordRecord({ personId: PERSON_BETA, observedAt: "2026-01-02T03:04:05.0001Z" }),
     discordRecord({ observedAt: "2026-01-02T03:04:05Z" }),
     googleRecord({ observedAt: "2026-01-02T03:04:05+03:00" }),
+    googleRecord({
+      externalId: GOOGLE_ACCOUNT_TWO,
+      personId: PERSON_GAMMA,
+      observedAt: "2026-01-02T03:04:05.123+00:00",
+    }),
   ];
 
   const result = impl.normalize(records);
@@ -249,8 +261,14 @@ const unambiguousObservedAt: Scenario = (impl, check) => {
       "malformed_observed_at",
       "malformed_observed_at",
       "malformed_observed_at",
+      "malformed_observed_at",
     ],
-    "a timestamp without an explicit offset, or one that is not a real instant, is rejected",
+    "a timestamp without an explicit offset, one that is not a real instant, or one carrying precision that cannot be stored, is rejected",
+  );
+  check.equal(
+    result.accepted.find((candidate) => candidate.externalId === GOOGLE_ACCOUNT_TWO)?.observedAt,
+    "2026-01-02T03:04:05.123Z",
+    "millisecond precision, which can be stored, is kept",
   );
   check.equal(
     result.accepted.find((candidate) => candidate.source === "discord")?.observedAt,
@@ -379,6 +397,17 @@ const latestObservationWins: Scenario = (impl, check) => {
       `${label}: a re-export refreshes provenance rather than regressing it`,
     );
   }
+
+  // Two observations of one triple at the SAME instant. "Keep what is already
+  // there" would make the survivor depend on export order, so the tie is broken
+  // on the records themselves.
+  const tied = [
+    discordRecord({ provenance: "synthetic-fixture/discord-export-aaa" }),
+    discordRecord({ provenance: "synthetic-fixture/discord-export-zzz" }),
+  ];
+  const tieForward = impl.normalize(tied).accepted[0]?.provenance;
+  const tieReversed = impl.normalize([...tied].reverse()).accepted[0]?.provenance;
+  check.equal(tieForward, tieReversed, "an equal-timestamp tie resolves the same way in either order");
 };
 
 /**
@@ -394,6 +423,13 @@ const orderIndependent: Scenario = (impl, check) => {
     discordRecord({ externalId: DISCORD_ACCOUNT_TWO, personId: PERSON_GAMMA }),
     googleRecord({ externalId: GOOGLE_ACCOUNT_TWO, personId: PERSON_GAMMA }),
     discordRecord({ personId: PERSON_BETA }),
+    // Same triple as the third row, same instant, different provenance: the
+    // case where "first one wins" and "last one wins" diverge.
+    discordRecord({
+      externalId: DISCORD_ACCOUNT_TWO,
+      personId: PERSON_GAMMA,
+      provenance: "synthetic-fixture/discord-export-zzz",
+    }),
   ];
 
   const forward = impl.normalize(batch);
@@ -565,8 +601,26 @@ const dryRunIsConsistentAndClean: Scenario = (impl, check) => {
   check.equal(report.rejections, result.rejected, "the report carries the same rejections");
   check.equal(report.conflictReports, result.conflicts, "the report carries the same conflicts");
 
-  const perSource = Object.values(report.bySource).reduce((total, count) => total + count, 0);
-  check.equal(perSource, report.accepted, "the per-source counts add up to the accepted count");
+  // A total-only check passes for {discord: 2, google: 0} when the accepted set
+  // is one of each, so the split is compared source by source.
+  const expectedBySource = Object.fromEntries(
+    SUPPORTED_SOURCES.map((source) => [source, 0]),
+  ) as Record<SourceSystem, number>;
+  for (const candidate of result.accepted) {
+    expectedBySource[candidate.source] += 1;
+  }
+  for (const source of SUPPORTED_SOURCES) {
+    check.equal(
+      report.bySource[source],
+      expectedBySource[source],
+      `the ${source} count matches the accepted set`,
+    );
+  }
+  check.equal(
+    Object.keys(report.bySource).sort((a, b) => a.localeCompare(b)),
+    [...SUPPORTED_SOURCES].sort((a, b) => a.localeCompare(b)),
+    "every supported source is reported, including the ones with no candidates",
+  );
 
   const serialized = JSON.stringify(report);
   check.ok(!serialized.includes(PROFILE_CANARY), "a dry run carries no profile claim");
@@ -576,6 +630,67 @@ const dryRunIsConsistentAndClean: Scenario = (impl, check) => {
       `a dry run carries no raw identifier, including the one behind ${maskIdentifier(rawId)}`,
     );
   }
+};
+
+/**
+ * The two identity keys are used verbatim. Cleaning them is not a courtesy: an
+ * export row padded to " z " and a genuine row for "z" are different strings,
+ * and trimming one into the other merges a link into an account that did not
+ * claim it. A key that would need cleaning is malformed, and deciding what to
+ * do about it belongs to the mapping adapter, where a human can see it.
+ */
+const exactIdentityKeys: Scenario = (impl, check) => {
+  const result = impl.normalize([
+    discordRecord({ externalId: ` ${DISCORD_ACCOUNT_ONE} ` }),
+    discordRecord({ externalId: DISCORD_ACCOUNT_TWO, personId: `${PERSON_ALPHA} ` }),
+    discordRecord({ externalId: DISCORD_ACCOUNT_TWO, personId: PERSON_GAMMA }),
+  ]);
+
+  check.equal(
+    result.rejected.map((rejection) => rejection.reason),
+    ["malformed_external_id", "malformed_person_id"],
+    "an identity key carrying edge whitespace is rejected, not quietly cleaned",
+  );
+  check.equal(
+    uniqueTriples(result.accepted),
+    [`discord|${DISCORD_ACCOUNT_TWO}|${PERSON_GAMMA}`],
+    "the padded rows do not merge into the identity they would have been cleaned into",
+  );
+
+  // Only the EDGES are the problem. What is inside an identifier is the donor's
+  // business, and is carried through untouched.
+  const inner = impl.normalize([discordRecord({ externalId: "discord-uid-with inner space" })]);
+  check.equal(
+    inner.accepted[0]?.externalId,
+    "discord-uid-with inner space",
+    "an identifier is carried verbatim, inner whitespace included",
+  );
+};
+
+/**
+ * Two distinct identity triples must stay two candidates. Joining the parts of
+ * a key with a separator collapses them when an identifier contains that
+ * separator: ("a b", "c") and ("a", "b c") both render as "a b c", and whichever
+ * arrives second is silently dropped. Nothing constrains a donor identifier's
+ * characters, so the key encoding cannot assume any are unused.
+ */
+const distinctIdentifiersNeverCollide: Scenario = (impl, check) => {
+  const result = impl.normalize([
+    discordRecord({ externalId: "collide-a collide-b", personId: "collide-c" }),
+    discordRecord({ externalId: "collide-a", personId: "collide-b collide-c" }),
+  ]);
+
+  const triples = uniqueTriples(result.accepted);
+  check.equal(triples.length, 2, "two distinct identity triples remain two candidates");
+  check.ok(
+    triples.includes("discord|collide-a collide-b|collide-c"),
+    "the candidate whose external id contains the separator survives",
+  );
+  check.ok(
+    triples.includes("discord|collide-a|collide-b collide-c"),
+    "the candidate whose person id contains the separator survives",
+  );
+  check.equal(result.conflicts.length, 0, "two different people holding two different accounts is not a conflict");
 };
 
 const SCENARIO_TABLE: Readonly<Record<SourceConnectionScenario, Scenario>> = {
@@ -591,6 +706,8 @@ const SCENARIO_TABLE: Readonly<Record<SourceConnectionScenario, Scenario>> = {
   "reports carry masked identifiers, never raw ones": reportsAreMasked,
   "profile claims never survive normalization": profileNeverSurvives,
   "a dry run reports counts consistent with normalization and leaks nothing": dryRunIsConsistentAndClean,
+  "identity keys are exact, never cleaned": exactIdentityKeys,
+  "distinct identifiers never collide into one candidate": distinctIdentifiersNeverCollide,
 };
 
 /**

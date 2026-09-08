@@ -75,6 +75,11 @@ const FAULT_EXPECTATIONS: ReadonlyArray<
   ["unmaskedConflicts", [scenario(7), scenario(8), scenario(9), scenario(11)]],
   ["leakProfileInAccepted", [scenario(3), scenario(10)]],
   ["dryRunEmitsRawRecords", [scenario(11)]],
+  ["cleanIdentityKeys", [scenario(12)]],
+  ["collidingTripleKey", [scenario(13)]],
+  ["acceptSubMillisecondPrecision", [scenario(2)]],
+  ["firstObservationOnTie", [scenario(5), scenario(6)]],
+  ["misattributeBySource", [scenario(11)]],
 ];
 
 test("the fault wrapper with no fault set satisfies the contract", () => {

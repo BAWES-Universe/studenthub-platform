@@ -79,7 +79,11 @@ export interface NormalizedSourceConnection {
 export type RejectionReason =
   | "unsupported_source"
   | "missing_external_id"
+  /** An external id that would have to be cleaned before it could be a key. */
+  | "malformed_external_id"
   | "missing_person_id"
+  /** A person id that would have to be cleaned before it could be a key. */
+  | "malformed_person_id"
   | "missing_provenance"
   | "missing_observed_at"
   | "malformed_observed_at";

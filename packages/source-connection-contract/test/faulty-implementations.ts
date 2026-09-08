@@ -62,10 +62,21 @@ export interface SourceConnectionFaults {
   readonly leakProfileInAccepted?: boolean;
   /** Attaches the raw input rows to the dry-run report. */
   readonly dryRunEmitsRawRecords?: boolean;
+  /** Joins the identity triple with a separator an identifier may contain. */
+  readonly collidingTripleKey?: boolean;
+  /** Trims edge whitespace off identity keys instead of rejecting them. */
+  readonly cleanIdentityKeys?: boolean;
+  /** Truncates fractional precision the contract refuses to store. */
+  readonly acceptSubMillisecondPrecision?: boolean;
+  /** Breaks an equal-timestamp tie by input order rather than by the records. */
+  readonly firstObservationOnTie?: boolean;
+  /** Reports every accepted candidate under one source. */
+  readonly misattributeBySource?: boolean;
 }
 
 const STRICT_INSTANT =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const SUB_MILLISECOND = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d+)(Z|[+-]\d{2}:\d{2})$/;
 const NAIVE_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$/;
 const NAIVE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -129,6 +140,21 @@ function preprocess(
 
     if (faults.defaultMissingProvenance && str(next.provenance) === "") {
       next = { ...next, provenance: "unknown-export" };
+    }
+
+    if (faults.cleanIdentityKeys) {
+      next = {
+        ...next,
+        externalId: typeof next.externalId === "string" ? next.externalId.trim() : next.externalId,
+        personId: typeof next.personId === "string" ? next.personId.trim() : next.personId,
+      };
+    }
+
+    if (faults.acceptSubMillisecondPrecision) {
+      const parts = SUB_MILLISECOND.exec(str(next.observedAt));
+      if (parts && parts[2] !== undefined && parts[2].length > 3) {
+        next = { ...next, observedAt: `${parts[1]}.${parts[2].slice(0, 3)}${parts[3]}` };
+      }
     }
 
     if (faults.coerceNaiveObservedAt) {
@@ -236,6 +262,39 @@ function postprocess(
     });
   }
 
+  if (faults.collidingTripleKey) {
+    // Re-collapse on a separator-joined key, keeping whichever candidate the
+    // Map saw first. This is exactly what a delimiter-joined key does.
+    const byLooseKey = new Map<string, NormalizedSourceConnection>();
+    for (const candidate of accepted) {
+      const loose = `${candidate.source} ${candidate.externalId} ${candidate.personId}`;
+      if (!byLooseKey.has(loose)) {
+        byLooseKey.set(loose, candidate);
+      }
+    }
+    accepted = sortCandidates([...byLooseKey.values()]);
+  }
+
+  if (faults.firstObservationOnTie) {
+    accepted = accepted.map((candidate) => {
+      for (const record of records) {
+        if (rawTriple(record) !== candidateTriple(candidate)) {
+          continue;
+        }
+        const observed = str(record.observedAt);
+        if (!STRICT_INSTANT.test(observed)) {
+          continue;
+        }
+        if (new Date(Date.parse(observed)).toISOString() !== candidate.observedAt) {
+          continue;
+        }
+        // First matching row in INPUT order wins the tie.
+        return { ...candidate, provenance: str(record.provenance) };
+      }
+      return candidate;
+    });
+  }
+
   if (faults.emitDuplicateRows) {
     accepted = accepted.flatMap((candidate) => [candidate, candidate]);
   }
@@ -317,6 +376,12 @@ export function makeFaultyImplementation(
     const report = summarizeNormalization(normalize(records));
     if (faults.dryRunEmitsRawRecords) {
       return { ...report, records } as unknown as DryRunReport;
+    }
+    if (faults.misattributeBySource) {
+      const bySource = Object.fromEntries(
+        SUPPORTED_SOURCES.map((source, index) => [source, index === 0 ? report.accepted : 0]),
+      ) as Record<SourceSystem, number>;
+      return { ...report, bySource };
     }
     return report;
   };

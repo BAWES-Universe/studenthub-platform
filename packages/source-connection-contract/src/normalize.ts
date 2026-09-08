@@ -46,9 +46,17 @@ export { maskIdentifier } from "./mask.js";
  * export would order its duplicates differently depending on which machine ran
  * the import, and ordering is what decides which duplicate survives. Such a
  * value is rejected rather than guessed at.
+ *
+ * The fraction is capped at three digits because that is all `toISOString` can
+ * represent. Accepting "…00.0001Z" and storing "…00.000Z" would make two
+ * distinct observations indistinguishable, and since `observedAt` decides which
+ * duplicate survives, the survivor would then be decided by input order. That
+ * is the same silent coercion as the calendar rollover below, so it is refused
+ * the same way. An operator whose export carries microseconds decides
+ * deliberately, in the mapping adapter, what to do with them.
  */
 const INSTANT_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /** Days in a month, using the UTC calendar so no local timezone is involved. */
 function daysInMonth(year: number, month: number): number {
@@ -116,7 +124,8 @@ type NormalizeOutcome =
  */
 function normalizeOne(raw: RawSourceRecord): NormalizeOutcome {
   const source = text(raw.source).toLowerCase();
-  const externalId = text(raw.externalId);
+  const rawExternalId = typeof raw.externalId === "string" ? raw.externalId : "";
+  const externalId = rawExternalId.trim();
   const externalIdMask = maskIdentifier(externalId);
 
   const reject = (reason: RejectionReason): NormalizeOutcome => ({
@@ -130,9 +139,22 @@ function normalizeOne(raw: RawSourceRecord): NormalizeOutcome {
   if (externalId === "") {
     return reject("missing_external_id");
   }
-  const personId = text(raw.personId);
+  // `source` is a fixed vocabulary and `provenance` is a label, so normalizing
+  // their whitespace is safe. The two identity keys are not: trimming " z " to
+  // "z" would silently merge a padded donor row into a different account's
+  // identity. An identifier that needs cleaning is malformed, and cleaning it is
+  // the mapping adapter's decision to make explicitly, not this contract's to
+  // make silently.
+  if (externalId !== rawExternalId) {
+    return reject("malformed_external_id");
+  }
+  const rawPersonId = typeof raw.personId === "string" ? raw.personId : "";
+  const personId = rawPersonId.trim();
   if (personId === "") {
     return reject("missing_person_id");
+  }
+  if (personId !== rawPersonId) {
+    return reject("malformed_person_id");
   }
   const provenance = text(raw.provenance);
   if (provenance === "") {
@@ -160,18 +182,28 @@ function normalizeOne(raw: RawSourceRecord): NormalizeOutcome {
   };
 }
 
+/*
+ * The three grouping keys. All use a structured encoding rather than a
+ * delimiter join, because an identifier may legitimately contain the delimiter:
+ * `"discord a b c"` is both (externalId "a b", personId "c") and (externalId
+ * "a", personId "b c"), and a Map keyed that way silently drops one of two
+ * distinct candidates. Nothing constrains a donor identifier's character set,
+ * and this contract does not get to assume one.
+ */
+
 /** The identity side of the link: which external account. */
 function identityKey(candidate: NormalizedSourceConnection): string {
-  return `${candidate.source} ${candidate.externalId}`;
+  return JSON.stringify([candidate.source, candidate.externalId]);
 }
 
 /** The person side of the link, scoped to one source. */
 function personKey(candidate: NormalizedSourceConnection): string {
-  return `${candidate.source} ${candidate.personId}`;
+  return JSON.stringify([candidate.source, candidate.personId]);
 }
 
+/** The full identity triple: the unit an import collapses duplicates onto. */
 function tripleKey(candidate: NormalizedSourceConnection): string {
-  return `${identityKey(candidate)} ${candidate.personId}`;
+  return JSON.stringify([candidate.source, candidate.externalId, candidate.personId]);
 }
 
 function compareCandidates(
@@ -183,6 +215,25 @@ function compareCandidates(
     left.externalId.localeCompare(right.externalId) ||
     left.personId.localeCompare(right.personId)
   );
+}
+
+/**
+ * Which of two observations of one triple survives.
+ *
+ * Ordering on `observedAt` alone is a partial order: two rows can share a
+ * timestamp and differ in provenance, and "keep the one already there" would
+ * then make the survivor depend on the order the donor happened to export in.
+ * Provenance breaks the tie, so the accepted set stays a function of the
+ * records rather than of their sequence.
+ */
+function supersedes(
+  candidate: NormalizedSourceConnection,
+  existing: NormalizedSourceConnection,
+): boolean {
+  if (candidate.observedAt !== existing.observedAt) {
+    return candidate.observedAt > existing.observedAt;
+  }
+  return candidate.provenance > existing.provenance;
 }
 
 function sortedUnique(values: Iterable<string>): readonly string[] {
@@ -210,7 +261,7 @@ export function normalizeSourceConnections(
     // Idempotency: the same triple seen twice is one candidate. The later
     // observation wins, so a re-export refreshes provenance rather than
     // duplicating it or regressing it to an older row.
-    if (existing === undefined || outcome.value.observedAt > existing.observedAt) {
+    if (existing === undefined || supersedes(outcome.value, existing)) {
       byTriple.set(key, outcome.value);
     }
   }
