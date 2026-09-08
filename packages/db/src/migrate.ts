@@ -34,6 +34,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
   // pg.Pool({ max: 1 }) the advisory-lock connection IS the only connection,
   // so any pool.query/pool.connect while it is held would wait forever.
   const client = await pool.connect();
+  let destroyClient = false;
   try {
     // Serialize concurrent runners (GPT R3, round 2 #2): two processes
     // bootstrapping a fresh database can both read the same pending set and
@@ -85,16 +86,23 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
         try {
           await client.query("ROLLBACK");
         } catch {
+          destroyClient = true;
           // Swallow: the original error below is the one the caller needs.
         }
         throw error;
       }
     }
   } finally {
-    await client
-      .query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY])
-      .catch(() => undefined);
-    client.release();
+    if (!destroyClient) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]);
+      } catch {
+        // A client that cannot release its session lock cleanly must not be
+        // returned to the pool. Destroying the connection releases the lock.
+        destroyClient = true;
+      }
+    }
+    client.release(destroyClient);
   }
 }
 

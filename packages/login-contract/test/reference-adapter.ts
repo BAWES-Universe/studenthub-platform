@@ -193,7 +193,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
               status: 302,
               headers: {
                 location: loginState.returnTo,
-                "set-cookie": `studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+                "set-cookie": `__Host-studenthub_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
               },
             };
           }
@@ -229,7 +229,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
             status: 302,
             headers: {
               location: loginState.returnTo,
-              "set-cookie": `studenthub_session=${sessionId}; ${secureAttributes}`,
+              "set-cookie": `__Host-studenthub_session=${sessionId}; ${secureAttributes}`,
             },
           };
           if (!faults.leakBrowserSecrets && !faults.leakIdTokenOnly) return response;
@@ -270,7 +270,7 @@ export function referenceLoginFactory(faults: ReferenceFaults = {}): LoginApplic
         if (sessionId && !faults.skipLogoutInvalidation) await dependencies.sessions.delete(sessionId);
         return {
           status: 204,
-          headers: { "set-cookie": "studenthub_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0" },
+          headers: { "set-cookie": "__Host-studenthub_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0" },
         };
       },
     };

@@ -66,8 +66,8 @@ function browserText(response: BrowserResponse): string {
 function cookieSession(response: BrowserResponse): string {
   const cookie = response.headers?.["set-cookie"];
   assert.ok(cookie, "successful callback must set a session cookie");
-  const match = /^studenthub_session=([^;]+)/.exec(cookie);
-  assert.ok(match?.[1], "session cookie must carry an opaque id");
+  const match = /^__Host-studenthub_session=([^;]+)/.exec(cookie);
+  assert.ok(match?.[1], "session cookie must be __Host-prefixed and carry an opaque id");
   return match[1];
 }
 
