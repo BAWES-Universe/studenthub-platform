@@ -7,9 +7,11 @@
 // oversubscribe.
 
 import {
-  chmodSync,
   closeSync,
+  constants,
   existsSync,
+  fchmodSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -34,9 +36,21 @@ const SAFE_ID = /^[A-Za-z0-9._:/-]{1,255}$/;
 
 function privateDirectory(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`unsafe capacity state directory: ${path}`);
-  chmodSync(path, 0o700);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isDirectory()) throw new Error(`unsafe capacity state directory: ${path}`);
+    fchmodSync(fd, 0o700);
+    const current = lstatSync(path);
+    if (current.isSymbolicLink()
+      || !current.isDirectory()
+      || current.dev !== opened.dev
+      || current.ino !== opened.ino) {
+      throw new Error(`capacity state directory changed during validation: ${path}`);
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function syncDirectory(path) {
