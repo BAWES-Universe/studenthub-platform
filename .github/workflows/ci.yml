@@ -21,7 +21,7 @@ jobs:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: shu55labpw
+          POSTGRES_PASSWORD: ci-only-placeholder
           POSTGRES_DB: studenthub_authz
         ports:
           - 55432:5432
@@ -31,7 +31,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:shu55labpw@localhost:55432/studenthub_authz
+      DATABASE_URL: postgres://postgres:ci-only-placeholder@localhost:55432/studenthub_authz
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,3 +51,21 @@ jobs:
       - run: npm test
       - run: npm run test:db
       - run: npm run build
+      - name: Validate Coolify Compose package
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+          PLATFORM_DB_NAME: studenthub
+          PLATFORM_DB_USER: studenthub
+          PLATFORM_DB_PASSWORD: ci-only-placeholder
+          PLATFORM_DATABASE_URL: postgresql://studenthub:ci-only-placeholder@platform-postgres:5432/studenthub
+          OIDC_ISSUER: https://auth.example.test/application/o/studenthub/
+          OIDC_CLIENT_ID: studenthub
+          OIDC_CLIENT_SECRET: ci-only-placeholder
+          OIDC_CALLBACK_URL: https://studenthub.example.test/login/callback
+          OIDC_AUTHORIZATION_URL: https://auth.example.test/application/o/authorize/
+          OIDC_TOKEN_URL: https://auth.example.test/application/o/token/
+          OIDC_JWKS_URL: https://auth.example.test/application/o/studenthub/jwks/
+          LOGIN_ALLOWED_RETURN_URLS: https://studenthub.example.test/
+        run: docker compose -f deploy/coolify/compose.yaml config --quiet
+      - name: Build staging gateway image
+        run: docker build --build-arg SOURCE_REVISION="${GITHUB_SHA}" .
