@@ -1212,7 +1212,6 @@ test("bootstrap concurrency: two simultaneous bootstraps cannot create two root 
   }
 });
 
-
 test("bootstrap: a client whose rollback fails is destroyed and preserves the mutation error", async () => {
   const pool = new pg.Pool({ connectionString: DB_URL, max: 1 });
   const originalConnect = pool.connect.bind(pool);
