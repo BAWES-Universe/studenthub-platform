@@ -25,6 +25,10 @@ import {
   parseEvidenceFromComments,
   parseWorkOrderDirectiveFromComments,
   maybePostSuccessorDirective,
+  backfillSuccessorDirectives,
+  createReceipt,
+  nextReceiptState,
+  terminalVerdictCoherent,
 } from "../reconcile.mjs";
 import {
   roleForRequestedWorker,
@@ -41,6 +45,7 @@ import {
 const SHA = "c".repeat(40);
 const SHA2 = "d".repeat(40);
 const TRIGGER = "agtch_wire_1";
+const TRUSTED_CALLBACK_ACTOR = "linear-worker-test";
 
 const FIXTURE_NODE = {
   id: "11111111-aaaa-4bbb-8ccc-000000000001",
@@ -63,6 +68,7 @@ function tempConfig() {
     enable_dispatch: true,
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
+    linear_callback_actor_ids: [TRUSTED_CALLBACK_ACTOR],
     max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   };
@@ -382,6 +388,7 @@ function callbackComment(attempt_id, { stage = "BUILD_READY", result_sha = null,
   const payload = { attempt_id, target_sha, stage, links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"] };
   if (result_sha) payload.result_sha = result_sha;
   return {
+    user: { id: TRUSTED_CALLBACK_ACTOR, displayName: "Worker" },
     body: [
       "<!-- coordinator-callback v1 -->",
       "coordinator-callback v1",
@@ -413,6 +420,108 @@ function seededReceipt({ stage, requested_worker = "codex-builder", worker_ident
     notes: [],
   };
 }
+
+test("security: callback comments require an immutable trusted Linear actor id", () => {
+  const attempt = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
+  const trusted = callbackComment(attempt, { stage: "BUILD_READY" });
+  const forged = {
+    ...callbackComment(attempt, { stage: "BLOCKED" }),
+    user: { id: "attacker", displayName: "Attacker" },
+    createdAt: "9999-12-31T23:59:59.999Z",
+  };
+  assert.equal(parseEvidenceFromComments([trusted, forged], attempt, [TRUSTED_CALLBACK_ACTOR])?.stage, "BUILD_READY");
+  assert.equal(parseEvidenceFromComments([forged], attempt, [TRUSTED_CALLBACK_ACTOR]), null);
+  assert.equal(parseEvidenceFromComments([trusted], attempt, []), null, "an unconfigured allowlist fails closed");
+});
+
+test("security: a rejected attempt or target callback never becomes a durable verdict", () => {
+  const attempt = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
+  const made = createReceipt({
+    issue_id: "SHU-FIXTURE-001",
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    requested_worker: "codex-builder",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "coordinator/SHU-FIXTURE-001",
+    target_sha: SHA,
+    attempt_id: attempt,
+  });
+  assert.equal(made.ok, true);
+  let receipt = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+  receipt = nextReceiptState(receipt, {
+    type: "worker_ack",
+    external_run_id: "apirun_wire_security",
+    adapter_status: "in_progress",
+    worker_identity: "codex:s1",
+  }).receipt;
+  const held = nextReceiptState(receipt, {
+    type: "run_status",
+    status: "completed",
+    callback: { attempt_id: attempt, target_sha: SHA2, stage: "BUILD_READY", links: ["https://example.invalid/evidence"] },
+  }).receipt;
+  assert.equal(held.stage, "HOLD");
+  assert.equal(held.verdict_stage, undefined);
+  assert.equal(held.result_sha, undefined);
+});
+
+test("security: backfill rejects incoherent HOLD plus success verdict", async () => {
+  const held = {
+    ...seededReceipt({
+      stage: "HOLD",
+      requested_worker: "codex-builder",
+      worker_identity: "codex:s1",
+      attempt_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+    }),
+    verdict_stage: "BUILD_READY",
+    result_sha: SHA2,
+  };
+  assert.equal(terminalVerdictCoherent(held, held.verdict_stage), false);
+  let writes = 0;
+  const considered = await backfillSuccessorDirectives({
+    receipts: [held],
+    commentsByIssue: new Map([[held.issue_id, []]]),
+    linearToken: "linear",
+    linearIdFor: new Map([[held.issue_id, FIXTURE_NODE.id]]),
+    fetchImpl: async () => { writes += 1; throw new Error("must not write"); },
+    stdout: () => {},
+  });
+  assert.equal(considered, 0);
+  assert.equal(writes, 0);
+});
+
+test("security: backfill fails closed when an expected live branch head is unreadable", async () => {
+  const terminal = {
+    ...seededReceipt({
+      stage: "COMPLETED",
+      requested_worker: "codex-builder",
+      worker_identity: "codex:s1",
+      attempt_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+    }),
+    verdict_stage: "BUILD_READY",
+    result_sha: SHA2,
+  };
+  const reviewer = seededReceipt({
+    stage: "RUNNING",
+    requested_worker: "claude-verifier",
+    worker_identity: "claude:v1",
+    attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+  });
+  let linearWrites = 0;
+  const considered = await backfillSuccessorDirectives({
+    receipts: [reviewer, terminal],
+    commentsByIssue: new Map([[terminal.issue_id, []]]),
+    linearToken: "linear",
+    githubToken: "github",
+    linearIdFor: new Map([[terminal.issue_id, FIXTURE_NODE.id]]),
+    fetchImpl: async (url) => {
+      if (String(url).includes("api.github.com")) throw new Error("head unavailable");
+      linearWrites += 1;
+      throw new Error("must not write");
+    },
+    stdout: () => {},
+  });
+  assert.equal(considered, 1);
+  assert.equal(linearWrites, 0);
+});
 
 test("wiring: a polled COMPLETED build with an eligible reviewer posts the review directive via the durable backfill pass", async () => {
   const comments = [];

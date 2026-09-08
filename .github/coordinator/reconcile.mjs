@@ -537,8 +537,12 @@ export function createReceipt({
 // past it, the verdict describes a superseded tree and cannot satisfy this
 // receipt. BLOCKED/FAILED callbacks never authorize COMPLETED (GPT BLOCK #2).
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY", "PASS"]);
+export const CALLBACK_EVIDENCE_STAGES = Object.freeze([...SUCCESS_CALLBACK_STAGES, "BLOCKED", "FAILED"]);
 
-export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
+// Bind every verdict-bearing callback to the durable attempt and head. This is
+// deliberately broader than callbackEvidenceValid: BLOCKED/FAILED are valid
+// review outcomes that route from HOLD, but can never authorize COMPLETED.
+export function callbackBindingValid(receipt, evidence, ctx = {}) {
   if (!evidence || typeof evidence !== "object") return false;
   if (!Array.isArray(evidence.links) || evidence.links.length === 0) return false;
   if (evidence.attempt_id !== receipt.attempt_id) return false;
@@ -546,8 +550,11 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   const expectedHead = Object.hasOwn(ctx, "expected_head") ? ctx.expected_head : receipt.target_sha;
   if (!TARGET_SHA_RE.test(expectedHead ?? "")) return false;
   if (ctx.current_head && ctx.current_head !== expectedHead) return false;
-  if (!SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) return false;
-  return true;
+  return CALLBACK_EVIDENCE_STAGES.includes(evidence.stage);
+}
+
+export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
+  return callbackBindingValid(receipt, evidence, ctx) && SUCCESS_CALLBACK_STAGES.includes(evidence.stage);
 }
 
 const nowIso = (at) => at ?? new Date().toISOString();
@@ -696,7 +703,7 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         // callback's stage + output head whenever the callback is attempt-bound
         // (BLOCKED/FAILED never authorize COMPLETED — GPT lifecycle BLOCK — but
         // they ARE durable routing input). Unbound/no callback -> no verdict.
-        if (callback && typeof callback.stage === "string" && callback.stage.length) {
+        if (callbackBindingValid(receipt, callback, ctx) && (callback.stage === "BLOCKED" || callback.stage === "FAILED")) {
           next.verdict_stage = callback.stage;
           if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
             next.result_sha = callback.result_sha;
@@ -1183,10 +1190,16 @@ export function parseReceiptsFromComments(comments = []) {
 // successful callback can never mask a newer BLOCKED/FAILED one (GPT BLOCK #2).
 export const COORDINATOR_CALLBACK_MARKER_RE = /^coordinator-callback v1$/m;
 
-export function parseEvidenceFromComments(comments = [], attempt_id) {
+// Linear issue comments are an untrusted transport. Accept callback evidence
+// only from immutable Linear actor IDs configured for the worker identities;
+// display names are mutable and therefore cannot establish authorship.
+export function parseEvidenceFromComments(comments = [], attempt_id, allowedActorIds = []) {
+  const allowed = new Set((allowedActorIds ?? []).filter((id) => typeof id === "string" && id.length));
+  if (allowed.size === 0) return null;
   let best = null;
   for (const comment of comments ?? []) {
     if (!comment?.body || !COORDINATOR_CALLBACK_MARKER_RE.test(comment.body)) continue;
+    if (!allowed.has(comment.user?.id)) continue;
     const m = /```json\n([\s\S]*?)\n```/.exec(comment.body);
     if (!m) continue;
     try {
@@ -1260,7 +1273,7 @@ export async function backfillSuccessorDirectives({
   let considered = 0;
   // Durable, terminal, verdict-bearing receipts across all issues. Older-infra
   // FAILED receipts carry no verdict_stage and are skipped (never route).
-  const eligible = (receipts ?? []).filter((r) => r && TERMINAL_STAGES.includes(r.stage) && typeof r.verdict_stage === "string");
+  const eligible = (receipts ?? []).filter((r) => r && terminalVerdictCoherent(r, r.verdict_stage));
   for (const terminal of eligible) {
     considered += 1;
     const issueId = terminal.issue_id;
@@ -1286,6 +1299,10 @@ export async function backfillSuccessorDirectives({
       } catch {
         branchHeadUnverified = true;
       }
+    }
+    if (branchHeadUnverified) {
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> no post (live branch head could not be verified — HOLD, fail closed)`);
+      continue;
     }
     const routed = routeSuccessorFromReceipts({
       issueReceipts: lineage,
@@ -1354,23 +1371,8 @@ export async function maybePostSuccessorDirective({
   authoritativeHead = null, // verified live branch head — binds routing (Codex BLOCK #1)
 }) {
   const out = stdout ?? ((s) => console.log(s));
-  if (!terminal || !TERMINAL_STAGES.includes(terminal.stage)) return null;
-  if (!verdictStage) return null; // no verdict (e.g. infra failure / no callback) — never route
+  if (!terminalVerdictCoherent(terminal, verdictStage)) return null;
   if (!linearIssueId || !linearToken) return null;
-  const verdict = outcomeForEvidenceStage(verdictStage);
-  if (!verdict) return null;
-  // The verdict stage must EXPLAIN the terminal stage: a success stage
-  // (BUILD_READY/REVISION_READY/PASS) routes only from COMPLETED; a review
-  // BLOCKED/FAILED routes only from HOLD (BLOCKED never authorizes COMPLETED —
-  // GPT lifecycle BLOCK). An infra FAILED receipt never routes even when a
-  // stray verdict comment exists on the card.
-  if (verdict.role === "review" && (verdict.outcome === "PASS" || verdict.outcome === null)) {
-    if (terminal.stage !== "COMPLETED") return null;
-  } else if (verdict.outcome === "BLOCKED" || verdict.outcome === "FAILED") {
-    if (terminal.stage !== "HOLD") return null;
-  } else if (terminal.stage !== "COMPLETED") {
-    return null;
-  }
   // Chronological lineage, oldest first; the just-terminal receipt belongs last
   // (its last_activity is the newest). routeSuccessorFromReceipts needs the
   // full lineage INCLUDING the terminal attempt so the successor seed and
@@ -1410,6 +1412,17 @@ export async function maybePostSuccessorDirective({
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body }, linearToken, fetchImpl);
   out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> posted ${routed.order.role} order (actor=${routed.order.actor ?? "coordinator-assigned"}, attempt=${routed.order.attempt_id})`);
   return { order: routed.order, body };
+}
+
+// A durable verdict may route only when it explains the terminal state that
+// persisted it. Success/PASS belongs to COMPLETED; BLOCKED/FAILED belongs to
+// HOLD. Infrastructure FAILED and every mismatched pair are non-routable.
+export function terminalVerdictCoherent(terminal, verdictStage) {
+  if (!terminal || !TERMINAL_STAGES.includes(terminal.stage)) return false;
+  const verdict = outcomeForEvidenceStage(verdictStage);
+  if (!verdict) return false;
+  if (verdict.outcome === "BLOCKED" || verdict.outcome === "FAILED") return terminal.stage === "HOLD";
+  return terminal.stage === "COMPLETED";
 }
 
 
@@ -1727,7 +1740,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const adapterModule = await loadAdapterModule(adapter, io);
       // Callback evidence from the durable issue thread (same attempt_id bound);
       // selection is deterministic by newest createdAt (GPT BLOCK #2).
-      const evidence = parseEvidenceFromComments(commentsByIssue.get(receipt.issue_id) ?? [], receipt.attempt_id) ?? undefined;
+      const evidence = parseEvidenceFromComments(
+        commentsByIssue.get(receipt.issue_id) ?? [],
+        receipt.attempt_id,
+        config.linear_callback_actor_ids,
+      ) ?? undefined;
       // Head verification is TRI-STATE (GPT BLOCK #4): no GitHub token -> the
       // bound target_sha IS the reference head; token present -> the live branch
       // head must resolve, and an unreadable/missing head must prevent COMPLETED
