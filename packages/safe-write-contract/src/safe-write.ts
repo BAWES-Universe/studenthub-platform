@@ -20,6 +20,14 @@ import {
 
 const DEFAULT_TOKEN_LIFETIME_MS = 5 * 60 * 1000;
 
+/**
+ * Distinguishes "the field was absent" from "the field held this string".
+ * The presence tag is a separate line rather than a prefix on the value, so no
+ * stored string can be crafted to collide with the absent case.
+ */
+const ABSENT = "absent";
+const PRESENT = "present";
+
 function sorted(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sorted);
   if (!value || typeof value !== "object") return value;
@@ -50,6 +58,17 @@ export function changeSetDigest(change: ChangeRequest): string {
   );
 }
 
+/**
+ * The digest of the value a preview showed as current. A confirm compares this
+ * against what the record holds now, so approving "A becomes C" cannot apply to
+ * a record that has since become B.
+ */
+export function expectedStateDigest(before: string | null): string {
+  return sha256Hex(
+    `${SAFE_WRITE_CONTRACT_VERSION}\n${before === null ? ABSENT : PRESENT}\n${before ?? ""}`,
+  );
+}
+
 function refused(reason: RejectionReason): { ok: false; reason: RejectionReason } {
   return { ok: false, reason };
 }
@@ -63,17 +82,6 @@ function validateChange(change: ChangeRequest, policy: FieldPolicy): RejectionRe
   // stores something other than what the preview showed the person.
   if (change.value !== change.value.trim()) return "invalid_value";
   return null;
-}
-
-export interface SafeWriteOptions {
-  readonly store: SafeWriteStore;
-  /** Signs action tokens. Must be at least 32 bytes. */
-  readonly secret: SafeWriteSecret;
-  readonly policy: FieldPolicy;
-  readonly clock?: SafeWriteClock;
-  readonly tokenLifetimeMs?: number;
-  /** Injectable so a test can observe which tokens were spent. */
-  readonly spentTokens?: Set<string>;
 }
 
 function assertSecret(secret: SafeWriteSecret): Buffer {
@@ -93,6 +101,17 @@ function tokenMac(token: Omit<ActionToken, "mac">, secret: Buffer): string {
     .digest("base64url");
 }
 
+export interface SafeWriteOptions {
+  readonly store: SafeWriteStore;
+  /** Signs action tokens. Must be at least 32 bytes. */
+  readonly secret: SafeWriteSecret;
+  readonly policy: FieldPolicy;
+  readonly clock?: SafeWriteClock;
+  readonly tokenLifetimeMs?: number;
+  /** Injectable so a test can observe which tokens were spent. */
+  readonly spentTokens?: Set<string>;
+}
+
 export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementation {
   const { store, policy } = options;
   const secret = assertSecret(options.secret);
@@ -100,7 +119,7 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
   const lifetimeMs = options.tokenLifetimeMs ?? DEFAULT_TOKEN_LIFETIME_MS;
   const spent = options.spentTokens ?? new Set<string>();
 
-  function preview(request: PreviewRequest): PreviewResult {
+  async function preview(request: PreviewRequest): Promise<PreviewResult> {
     const { change, principalRef } = request;
     if (!REFERENCE_PATTERN.test(principalRef)) return refused("malformed_reference");
 
@@ -109,13 +128,14 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
 
     // Own-record only. Checked here so a preview cannot be used to read a field
     // off someone else's record, and checked AGAIN at confirm — see below.
-    if (store.ownedRecord(principalRef) !== change.personRef) return refused("not_own_record");
+    if ((await store.ownedRecord(principalRef)) !== change.personRef) return refused("not_own_record");
 
-    const before = store.readField(change.personRef, change.field);
+    const before = await store.readField(change.personRef, change.field);
     const issuedAt = clock.now();
     const unsigned: Omit<ActionToken, "mac"> = {
       tokenId: randomBytes(16).toString("hex"),
       changeSetDigest: changeSetDigest(change),
+      expectedBeforeDigest: expectedStateDigest(before),
       principalRef,
       issuedAt: issuedAt.toISOString(),
       expiresAt: new Date(issuedAt.getTime() + lifetimeMs).toISOString(),
@@ -129,7 +149,7 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
     };
   }
 
-  function confirm(request: ConfirmRequest): ConfirmResult {
+  async function confirm(request: ConfirmRequest): Promise<ConfirmResult> {
     const { token, change, principalRef } = request;
     if (!REFERENCE_PATTERN.test(principalRef)) return refused("malformed_reference");
 
@@ -140,9 +160,9 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
     // whatever else it claims, and reporting some other reason would tell a
     // forger which field to edit next.
     const { mac, ...unsigned } = token;
-    const expected = Buffer.from(tokenMac(unsigned, secret));
-    const supplied = Buffer.from(typeof mac === "string" ? mac : "");
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    const expectedMac = Buffer.from(tokenMac(unsigned, secret));
+    const suppliedMac = Buffer.from(typeof mac === "string" ? mac : "");
+    if (suppliedMac.length !== expectedMac.length || !timingSafeEqual(suppliedMac, expectedMac)) {
       return refused("token_not_issued");
     }
 
@@ -157,7 +177,13 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
 
     // Re-derived, never inherited from the preview. Grants can be revoked
     // between the two calls, and a token is not an authorization.
-    if (store.ownedRecord(principalRef) !== change.personRef) return refused("not_own_record");
+    if ((await store.ownedRecord(principalRef)) !== change.personRef) return refused("not_own_record");
+
+    // Read the current value to report `state_changed` early and cheaply. This
+    // read is NOT the guard — the guard is the compare inside the atomic commit
+    // below, because anything checked here could change before the write.
+    const current = await store.readField(change.personRef, change.field);
+    if (token.expectedBeforeDigest !== expectedStateDigest(current)) return refused("state_changed");
 
     const committedAt = clock.now().toISOString();
     const receipt: Receipt = {
@@ -170,11 +196,13 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
       committedAt,
     };
 
+    let outcome;
     try {
-      store.commit({
+      outcome = await store.commit({
         personRef: change.personRef,
         principalRef,
         field: change.field,
+        expectedBefore: current,
         value: change.value,
         changeSetDigest: digest,
         receipt,
@@ -185,6 +213,9 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
       // would strand the person with no way to complete their own change.
       return refused("receipt_failed");
     }
+
+    // The compare half of compare-and-write lost the race. Nothing was written.
+    if (!outcome?.ok) return refused("state_changed");
 
     spent.add(token.tokenId);
     return { ok: true, receipt };

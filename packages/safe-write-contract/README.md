@@ -12,10 +12,16 @@ It has no I/O: no route, no database handle, no network call, no credential. The
 store is a port the caller supplies, which is what lets a scenario *prove* "a
 preview writes nothing" instead of asserting it.
 
+The port is **asynchronous**. Every real store this contract must bind is async,
+and a synchronous port could not run against one — worse, it would accept a
+Promise from `commit` and read a rejected write as a successful one, so the
+"receipt is part of the transaction" rule would silently not hold. Synchronous
+implementations still satisfy `Awaitable`.
+
 ```ts
 import { createSafeWrite, runSafeWriteConformance } from "@studenthub/safe-write-contract";
 
-const report = runSafeWriteConformance((input) => createSafeWrite(input));
+const report = await runSafeWriteConformance((input) => createSafeWrite(input));
 assert.equal(report.ok, true, JSON.stringify(report.results, null, 2));
 ```
 
@@ -28,6 +34,8 @@ time, and they are not mistakes a test finds by accident:
 - a token that can be replayed, or reused for a different change
 - a preview that reads a record its caller does not own
 - a write that succeeds while its receipt fails, leaving an unaudited mutation
+- a confirm that overwrites a change the person never saw, because the record
+  moved between the preview and the confirm
 - a receipt that records the outcome and, with it, the person's data
 
 ## The rules
@@ -43,6 +51,8 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 | Tokens bind the change set | The token commits to a digest over `(record, field, value)`. A confirm carrying a different change set is refused **before** anything is written. This is the reason a token exists. |
 | Tokens are single-use, expiring, caller-bound | Replay is refused, an expired token is refused, and a token issued to one principal cannot be spent by another. |
 | Own record only | Enforced at preview *and* re-derived at confirm. A grant revoked between the two is noticed: a token is not an authorization. |
+| Tokens bind the transition, not just the destination | The token also carries a digest of the value the preview showed as *current*. A person who approved "A becomes C" has not approved "B becomes C", so a record that changed since the preview is refused `state_changed` rather than overwritten. |
+| The compare belongs inside the commit | The confirm's own read cannot close the race — a writer can land between that read and the write. `commit` receives `expectedBefore` and must apply the change only if the stored value still equals it, as one atomic unit. A refused compare is reported, not thrown, and a confirm that ignored it would report a completed write that never happened. |
 | Receipt is part of the transaction | A mutation whose receipt cannot be written does not commit. Proven by a store that fails the commit and a record that is unchanged afterwards. |
 | A failed write stays retryable | A receipt failure means nothing happened, so the token is *not* spent. Spending it would strand a person whose change never applied. |
 | Values are exact | Edge whitespace is refused, never trimmed. Cleaning `" x "` into `"x"` stores something other than what the person was shown. |
@@ -60,15 +70,21 @@ requiring an approved shape catches the field nobody predicted.
 
 ## What the test suite proves
 
-`npm test` runs the sixteen scenarios against the real implementation, and then:
+`npm test` runs the eighteen scenarios against the real implementation, and then:
 
 - **A no-fault control.** The fault wrapper with no fault set passes every
   scenario, so each fault's failures are attributable to the fault.
-- **Sixteen faults, each with a declared failure set.** Every fault must fail
+- **Eighteen faults, each with a declared failure set.** Every fault must fail
   exactly the scenarios it declares. A fault that fails more has stopped being
   surgical; one that fails fewer means a scenario is not reading the behaviour
-  it names. Three faults legitimately break several scenarios, and are declared
-  that way rather than narrowed to make the table look tidier.
+  it names. Every entry in that table is *measured*, never assumed: five faults
+  legitimately break more than one scenario and are declared that way rather
+  than narrowed to make the table look tidier.
+- **Thirteen source mutations** (run out of tree) each break the source of the
+  real implementation one rule at a time. Each is read back from disk **and
+  recompiled** before its result is trusted, because a mutation that fails to
+  compile produces silence indistinguishable from an unbound control. All
+  thirteen fail a named scenario; none fails nothing.
 - **Every scenario is bound.** No scenario is absent from every fault's set. A
   scenario nothing can break is not a control.
 - **Anti-circularity.** Two implementations break the contract with **no fault
@@ -93,6 +109,26 @@ joins the closed vocabulary, and the rule has a scenario and a fault of its own.
 The `spent` set in the reference implementation is in-memory, which is fine for a
 contract with no I/O. **SHU-84 must make single-use durable**, or a restart
 re-opens replay.
+
+## Two rules this contract only has because a second reviewer found them missing
+
+The second published head was **async-unsound and state-blind**, and the two
+faults compounded:
+
+1. `commit` returned a Promise into a synchronous port, so a *rejected* write
+   was read as a successful one. Reproduced: `commit rejected, but confirm
+   returned ok: true`, with the rejection escaping as an unhandled rejection.
+2. The token bound only the change set, never the state the preview observed.
+   Reproduced: preview showed `before = canary-value-must-not-escape`, the
+   record became `Concurrent Name`, and the confirm returned `ok: true` with
+   `commits: 1` — a change the person never saw, silently overwritten.
+
+The port is now async end-to-end, the token carries `expectedBeforeDigest`, and
+the compare-and-write lives inside `commit` where the race actually is. Codex's
+review found both; eighteen scenarios of my own did not. This is the second time
+an independent reviewer has found a hole the author's own corpus could not, which
+is the argument for cross-vendor verification stated as evidence rather than as
+policy.
 
 ## Three rules this contract only has because a mutation found them missing
 

@@ -1,5 +1,5 @@
 import { sha256Hex } from "./safe-write.js";
-import type { FieldPolicy, Receipt, SafeWriteStore } from "./types.js";
+import type { CommitInput, CommitOutcome, FieldPolicy, Receipt, SafeWriteStore } from "./types.js";
 
 /**
  * Every fixture value is invented and lives here, so a real identifier
@@ -32,7 +32,6 @@ export interface RecordedCommit {
 export interface RecordingStore extends SafeWriteStore {
   /** Every commit the implementation actually made, in order. */
   readonly commits: RecordedCommit[];
-  /** Reads are counted too: a preview may read, a refusal should not write. */
   readonly fields: Map<string, string>;
   snapshot(): string;
 }
@@ -40,6 +39,12 @@ export interface RecordingStore extends SafeWriteStore {
 export interface RecordingStoreOptions {
   /** Make the receipt write fail, to prove the mutation does not survive it. */
   readonly failCommit?: boolean;
+  /**
+   * Change the record from underneath, at the instant the commit runs. Models
+   * a concurrent writer winning the race after the confirm's own read, which
+   * is the case only the atomic compare can catch.
+   */
+  readonly mutateAtCommit?: string;
   readonly ownership?: ReadonlyMap<string, string>;
   readonly initial?: ReadonlyMap<string, string>;
 }
@@ -66,16 +71,28 @@ export function createRecordingStore(options: RecordingStoreOptions = {}): Recor
     snapshot() {
       return JSON.stringify([...fields.entries()].sort());
     },
-    readField(personRef, field) {
+    // Async on purpose: every real store is, and a synchronous port could not
+    // bind one. The await points here are where a race would open.
+    async readField(personRef, field) {
       return fields.get(fieldKey(personRef, field)) ?? null;
     },
-    ownedRecord(principalRef) {
+    async ownedRecord(principalRef) {
       return ownership.get(principalRef) ?? null;
     },
-    commit(input) {
+    async commit(input: CommitInput): Promise<CommitOutcome> {
       // A real store applies the field and writes the receipt in one
       // transaction. Failing BEFORE mutating is what "neither happened" means.
       if (options.failCommit) throw new Error("receipt write failed");
+
+      if (options.mutateAtCommit !== undefined) {
+        fields.set(fieldKey(input.personRef, input.field), options.mutateAtCommit);
+      }
+
+      // Compare-and-write. The comparison belongs INSIDE the atomic unit;
+      // doing it in application code leaves a window before the write.
+      const current = fields.get(fieldKey(input.personRef, input.field)) ?? null;
+      if (current !== input.expectedBefore) return { ok: false, reason: "state_changed" };
+
       fields.set(fieldKey(input.personRef, input.field), input.value);
       commits.push({
         personRef: input.personRef,
@@ -83,6 +100,7 @@ export function createRecordingStore(options: RecordingStoreOptions = {}): Recor
         value: input.value,
         receipt: input.receipt,
       });
+      return { ok: true };
     },
   };
 

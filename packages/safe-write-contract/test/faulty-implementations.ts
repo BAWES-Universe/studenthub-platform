@@ -8,6 +8,7 @@
 import {
   changeSetDigest,
   createSafeWrite,
+  expectedStateDigest,
   fieldKey,
   signActionToken,
   type ConfirmRequest,
@@ -21,38 +22,42 @@ import {
 } from "../src/index.js";
 
 export interface SafeWriteFaults {
-  /** Rule 1: a preview must not write. */
+  /** Rule: a preview must not write. */
   previewWritesEagerly?: boolean;
-  /** Rule 1: a preview must show what the value is now. */
+  /** Rule: a preview must show what the value is now. */
   hideBeforeValue?: boolean;
-  /** Rule 2: what is committed is what the preview showed. */
+  /** Rule: what is committed is what the preview showed. */
   confirmWritesDifferentValue?: boolean;
-  /** Rule 2: the token commits to the change set. */
+  /** Rule: the token commits to the change set. */
   confirmIgnoresChangeSet?: boolean;
-  /** Rule 3: single-use. */
+  /** Rule: single-use. */
   reusableTokens?: boolean;
-  /** Rule 3: expiring. */
+  /** Rule: expiring. */
   ignoreExpiry?: boolean;
-  /** Rule 3: caller-bound. */
+  /** Rule: caller-bound. */
   ignoreTokenPrincipal?: boolean;
-  /** Rule 4: re-derived at confirm, never inherited. */
+  /** Rule: re-derived at confirm, never inherited. */
   inheritPreviewAuthorization?: boolean;
-  /** Rule 5: the record must not survive a failed receipt. */
+  /** Rule: the record must not survive a failed receipt. */
   commitBeforeReceipt?: boolean;
-  /** Rule 6: receipts carry references, not content. */
+  /** Rule: receipts carry references, not content. */
   receiptEchoesValue?: boolean;
-  /** Rule 7: closed refusal vocabulary. */
+  /** Rule: closed refusal vocabulary. */
   freeTextRefusals?: boolean;
-  /** Rule 7 / policy: only permitted fields are writable. */
+  /** Rule: only permitted fields are writable. */
   acceptAnyField?: boolean;
-  /** Rule 4: a preview must not read a record the caller does not own. */
+  /** Rule: a preview must not read a record the caller does not own. */
   previewAllowsForeignRecord?: boolean;
-  /** Rule 1: values are exact, never cleaned. */
+  /** Rule: values are exact, never cleaned. */
   trimValues?: boolean;
-  /** Rule 5: a write that never happened must not consume its token. */
+  /** Rule: a write that never happened must not consume its token. */
   spendTokenOnFailure?: boolean;
-  /** Rule 2: only a token this implementation issued may be confirmed. */
+  /** Rule: only a token this implementation issued may be confirmed. */
   acceptForgedTokens?: boolean;
+  /** Rule: a record changed since the preview is not overwritten. */
+  overwriteConcurrentChange?: boolean;
+  /** Rule: the atomic compare-and-write guard is honoured. */
+  ignoreCompareAndWrite?: boolean;
 }
 
 /** A Set that accepts additions and forgets them, so tokens stay reusable. */
@@ -65,34 +70,65 @@ class ForgetfulSet extends Set<string> {
 export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
   return (input) => {
     const { store, policy, clock } = input;
-    // The fault wrapper keeps its own spent-token set so `reusableTokens` can
-    // decline to record a spend without reaching into the real implementation.
     const spent = faults.reusableTokens ? new ForgetfulSet() : new Set<string>();
-    const effectiveStore: SafeWriteStore = faults.confirmWritesDifferentValue
-      ? { ...store, commit: (input) => store.commit({ ...input, value: `${input.value} (altered)` }) }
-      : store;
+
+    // Counted so `overwriteConcurrentChange` can tell WHICH guard refused: the
+    // application-level state binding (before any commit is attempted) or the
+    // atomic compare inside the store (after one is). Disabling both at once
+    // would be two faults wearing one name.
+    let commitAttempts = 0;
+
+    const effectiveStore: SafeWriteStore = {
+      ...store,
+      commit: async (commitInput) => {
+        commitAttempts += 1;
+        if (faults.commitBeforeReceipt) {
+          // Field write and receipt write are not one unit. The field lands
+          // first, so when the receipt fails the mutation survives a failure it
+          // should not have survived. Only a store that was going to fail is
+          // affected: a fault that broke every commit would not isolate a rule.
+          try {
+            return await store.commit(commitInput);
+          } catch (error) {
+            const recording = store as Partial<RecordingStore>;
+            recording.fields?.set(fieldKey(commitInput.personRef, commitInput.field), commitInput.value);
+            throw error;
+          }
+        }
+        const altered = faults.confirmWritesDifferentValue
+          ? { ...commitInput, value: `${commitInput.value} (altered)` }
+          : commitInput;
+        const outcome = await store.commit(altered);
+        // Pretend the compare-and-write guard succeeded, so a race that the
+        // store refused is reported as a completed write.
+        return faults.ignoreCompareAndWrite ? { ok: true } : outcome;
+      },
+    };
+
     const real = createSafeWrite({
       store: effectiveStore,
       secret: input.secret,
-      policy: faults.acceptAnyField ? { ...policy, allowed: [...policy.allowed, "secret_field", "candidate_civil_photo_front"] } : policy,
+      policy: faults.acceptAnyField
+        ? { ...policy, allowed: [...policy.allowed, "secret_field", "candidate_civil_photo_front"] }
+        : policy,
       clock,
       tokenLifetimeMs: faults.ignoreExpiry ? 100 * 365 * 24 * 3600 * 1000 : input.tokenLifetimeMs,
       spentTokens: spent,
     });
 
     const implementation: SafeWriteImplementation = {
-      preview(request: PreviewRequest): PreviewResult {
+      async preview(request: PreviewRequest): Promise<PreviewResult> {
         const effective = faults.trimValues
           ? { ...request, change: { ...request.change, value: request.change.value.trim() } }
           : request;
-        let result = real.preview(effective);
+        let result = await real.preview(effective);
 
         if (faults.previewAllowsForeignRecord && !result.ok && result.reason === "not_own_record") {
           result = {
             ok: true,
             changes: [{
               field: request.change.field,
-              before: store.readField(request.change.personRef, request.change.field),
+              before: await store.readField(request.change.personRef, request.change.field),
               after: request.change.value,
             }],
             token: {
@@ -101,6 +137,7 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
               // and a confirm with this token would rightly be refused.
               mac: "foreign-not-signed",
               changeSetDigest: changeSetDigest(request.change),
+              expectedBeforeDigest: expectedStateDigest(null),
               principalRef: request.principalRef,
               issuedAt: clock.now().toISOString(),
               expiresAt: new Date(clock.now().getTime() + 300_000).toISOString(),
@@ -109,9 +146,12 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
         }
 
         if (faults.previewWritesEagerly && result.ok) {
+          // Writes an UNRELATED key. A preview that writes anything violates
+          // the rule; touching the field under test would additionally trip
+          // the expected-state rule and stop this fault isolating one thing.
           const recording = store as Partial<RecordingStore>;
           recording.fields?.set(
-            fieldKey(request.change.personRef, request.change.field),
+            fieldKey(request.change.personRef, "preview_side_effect"),
             request.change.value,
           );
         }
@@ -127,12 +167,10 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
         return result;
       },
 
-      confirm(request: ConfirmRequest): ConfirmResult {
+      async confirm(request: ConfirmRequest): Promise<ConfirmResult> {
         if (faults.acceptForgedTokens) {
           // Re-sign the token that ARRIVED, leaving every other field alone, so
-          // only the issuance rule is disabled. Re-issuing a fresh token here
-          // would also defeat substitution, single-use and expiry, and the
-          // fault would stop isolating what it names.
+          // only the issuance rule is disabled.
           const { mac: _ignored, ...unsigned } = request.token;
           return real.confirm({
             ...request,
@@ -140,9 +178,29 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
           });
         }
 
+        if (faults.overwriteConcurrentChange) {
+          const attemptsBefore = commitAttempts;
+          const refused = await real.confirm(request);
+          // Only the binding between preview and confirm is disabled. A refusal
+          // that came from the atomic compare (a commit WAS attempted) stands,
+          // so `ignoreCompareAndWrite` remains the only fault that breaks it.
+          if (refused.ok || refused.reason !== "state_changed" || commitAttempts !== attemptsBefore) {
+            return refused;
+          }
+          // Re-point the token at whatever the record holds NOW, which is what
+          // an implementation with no expected-state binding effectively does.
+          // The token is already known authentic — an unissued one would have
+          // been refused above — so this cannot launder a forgery.
+          const current = await store.readField(request.change.personRef, request.change.field);
+          const { mac: _unused, ...unsigned } = request.token;
+          const rebound = { ...unsigned, expectedBeforeDigest: expectedStateDigest(current) };
+          return real.confirm({
+            ...request,
+            token: { ...rebound, mac: signActionToken(rebound, input.secret) },
+          });
+        }
+
         if (faults.confirmIgnoresChangeSet) {
-          // Re-point the token at whatever change arrived, so any submitted
-          // change matches: the substitution the token exists to prevent.
           return real.confirm({
             ...request,
             token: { ...request.token, changeSetDigest: changeSetDigest(request.change) },
@@ -156,27 +214,20 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
         if (faults.inheritPreviewAuthorization) {
           // Treat the token as proof of authorization. Ownership revoked after
           // the preview is never noticed.
-          const permissive = {
-            ...store,
-            ownedRecord: () => request.change.personRef,
+          const permissive: SafeWriteStore = {
+            ...effectiveStore,
+            ownedRecord: async () => request.change.personRef,
           };
-          const lenient = createSafeWrite({ store: permissive, secret: input.secret, policy, clock, spentTokens: spent });
+          const lenient = createSafeWrite({
+            store: permissive, secret: input.secret, policy, clock, spentTokens: spent,
+          });
           return lenient.confirm(request);
-        }
-
-        if (faults.commitBeforeReceipt) {
-          const recording = store as Partial<RecordingStore>;
-          recording.fields?.set(
-            fieldKey(request.change.personRef, request.change.field),
-            request.change.value,
-          );
-          return real.confirm(request);
         }
 
         const effective = faults.trimValues
           ? { ...request, change: { ...request.change, value: request.change.value.trim() } }
           : request;
-        const result = real.confirm(effective);
+        const result = await real.confirm(effective);
 
         if (faults.spendTokenOnFailure && !result.ok && result.reason === "receipt_failed") {
           spent.add(request.token.tokenId);
@@ -196,34 +247,43 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
 
 /** Anti-circularity: breaks the contract with no fault flag set at all. */
 export const passthroughFactory: SafeWriteFactory = () => ({
-  preview: (request) => ({
-    ok: true,
-    changes: [{ field: request.change.field, before: null, after: request.change.value }],
-    token: {
-      tokenId: "static-token",
-      mac: "static-mac",
-      changeSetDigest: "static",
-      principalRef: request.principalRef,
-      issuedAt: "2026-09-08T12:00:00.000Z",
-      expiresAt: "2099-01-01T00:00:00.000Z",
-    },
-  }),
-  confirm: (request) => ({
-    ok: true,
-    receipt: {
-      contractVersion: "1.0.0",
-      receiptRef: "static",
-      personRef: request.change.personRef,
-      principalRef: request.principalRef,
-      changeSetDigest: "static",
-      fields: [request.change.value],
-      committedAt: "2026-09-08T12:00:00.000Z",
-    },
-  }),
+  async preview(request) {
+    return {
+      ok: true,
+      changes: [{ field: request.change.field, before: null, after: request.change.value }],
+      token: {
+        tokenId: "static-token",
+        mac: "static-mac",
+        changeSetDigest: "static",
+        expectedBeforeDigest: "static",
+        principalRef: request.principalRef,
+        issuedAt: "2026-09-08T12:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    };
+  },
+  async confirm(request) {
+    return {
+      ok: true,
+      receipt: {
+        contractVersion: "2.0.0",
+        receiptRef: "static",
+        personRef: request.change.personRef,
+        principalRef: request.principalRef,
+        changeSetDigest: "static",
+        fields: [request.change.value],
+        committedAt: "2026-09-08T12:00:00.000Z",
+      },
+    };
+  },
 });
 
 /** Anti-circularity: refuses everything, which is also not the contract. */
 export const inertFactory: SafeWriteFactory = () => ({
-  preview: () => ({ ok: false, reason: "invalid_value" }),
-  confirm: () => ({ ok: false, reason: "invalid_value" }),
+  async preview() {
+    return { ok: false, reason: "invalid_value" };
+  },
+  async confirm() {
+    return { ok: false, reason: "invalid_value" };
+  },
 });

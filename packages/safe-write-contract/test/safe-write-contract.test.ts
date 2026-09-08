@@ -13,6 +13,7 @@ import {
   createClock,
   createRecordingStore,
   createSafeWrite,
+  expectedStateDigest,
   failedScenarios,
   runSafeWriteConformance,
   type SafeWriteFactory,
@@ -33,19 +34,19 @@ function scenario(index: number): SafeWriteScenario {
   return name;
 }
 
-test("the real implementation satisfies every scenario in the contract", () => {
-  const report = runSafeWriteConformance(REAL_FACTORY);
+test("the real implementation satisfies every scenario in the contract", async () => {
+  const report = await runSafeWriteConformance(REAL_FACTORY);
   assert.deepEqual(failedScenarios(report), [], JSON.stringify(report.results, null, 2));
   assert.equal(report.ok, true);
   assert.equal(report.contractVersion, SAFE_WRITE_CONTRACT_VERSION);
   assert.equal(new Set(SAFE_WRITE_SCENARIOS).size, SAFE_WRITE_SCENARIOS.length);
 });
 
-test("the fixtures carry what the sensitive-output scenarios look for", () => {
+test("the fixtures carry what the sensitive-output scenarios look for", async () => {
   // Without this the "must not appear in the receipt" checks could pass simply
   // because the value was never in the store to begin with.
   const store = createRecordingStore();
-  assert.equal(store.readField(OWNER_PERSON_REF, "display_name"), PROFILE_CANARY);
+  assert.equal(await store.readField(OWNER_PERSON_REF, "display_name"), PROFILE_CANARY);
   assert.ok(TEST_POLICY.allowed.includes("display_name"));
 });
 
@@ -60,6 +61,19 @@ test("the change-set digest is stable under key order and sensitive to every par
   ]) {
     assert.notEqual(changeSetDigest(base), changeSetDigest(mutation));
   }
+});
+
+test("an absent field is not confusable with any value a field could hold", () => {
+  // The expected-state digest has to separate "there was nothing here" from
+  // "there was this string here", or a caller could aim a token minted against
+  // an empty record at a populated one. The presence tag is its own line, so no
+  // stored value can be crafted to reproduce the absent digest.
+  const absent = expectedStateDigest(null);
+  for (const value of ["", "absent", "present", "absent\n", "\nabsent", "null", "undefined"]) {
+    assert.notEqual(expectedStateDigest(value), absent, `"${value}" collided with absent`);
+  }
+  assert.notEqual(expectedStateDigest("a"), expectedStateDigest("b"));
+  assert.equal(expectedStateDigest("a"), expectedStateDigest("a"));
 });
 
 /**
@@ -79,7 +93,10 @@ const FAULT_EXPECTATIONS: ReadonlyArray<readonly [keyof SafeWriteFaults, readonl
   ["ignoreExpiry", [scenario(5)]],
   ["ignoreTokenPrincipal", [scenario(6)]],
   ["inheritPreviewAuthorization", [scenario(7)]],
-  ["commitBeforeReceipt", [scenario(8)]],
+  // A field that survives its failed receipt also strands the retry: the record
+  // has changed, so the second attempt is refused `state_changed` rather than
+  // being retryable. Both failures are the same bug, so both are declared.
+  ["commitBeforeReceipt", [scenario(8), scenario(14)]],
   ["receiptEchoesValue", [scenario(9)]],
   // Free-text reasons break every scenario that reads a refusal's reason, which
   // is four of them. Declared as measured rather than narrowed to look tidy.
@@ -89,18 +106,20 @@ const FAULT_EXPECTATIONS: ReadonlyArray<readonly [keyof SafeWriteFaults, readonl
   ["trimValues", [scenario(10), scenario(13)]],
   ["spendTokenOnFailure", [scenario(14)]],
   ["acceptForgedTokens", [scenario(15)]],
+  ["overwriteConcurrentChange", [scenario(16)]],
+  ["ignoreCompareAndWrite", [scenario(17)]],
 ];
 
-test("the fault wrapper with no fault set satisfies the contract", () => {
+test("the fault wrapper with no fault set satisfies the contract", async () => {
   // The control for every mutation below: if the wrapper itself broke a rule,
   // a fault's failures could not be attributed to the fault.
-  const report = runSafeWriteConformance(makeFaultyFactory({}));
+  const report = await runSafeWriteConformance(makeFaultyFactory({}));
   assert.deepEqual(failedScenarios(report), [], JSON.stringify(report.results, null, 2));
 });
 
 for (const [fault, expected] of FAULT_EXPECTATIONS) {
-  test(`disabling ${fault} fails exactly ${expected.length} scenario(s)`, () => {
-    const report = runSafeWriteConformance(makeFaultyFactory({ [fault]: true }));
+  test(`disabling ${fault} fails exactly ${expected.length} scenario(s)`, async () => {
+    const report = await runSafeWriteConformance(makeFaultyFactory({ [fault]: true }));
     assert.deepEqual(
       failedScenarios(report),
       expected,
@@ -115,10 +134,10 @@ test("every scenario is bound by at least one fault", () => {
   assert.deepEqual(unbound, [], "a scenario no fault can break is not a control");
 });
 
-test("the suite rejects implementations that break the contract with no fault flag set", () => {
+test("the suite rejects implementations that break the contract with no fault flag set", async () => {
   // Anti-circularity: the scenarios must read behaviour, not a flag they were
   // handed. Neither implementation below sets any flag.
-  const passthrough = runSafeWriteConformance(passthroughFactory);
+  const passthrough = await runSafeWriteConformance(passthroughFactory);
   assert.equal(passthrough.ok, false);
   for (const index of [3, 4, 6, 9, 11]) {
     assert.ok(
@@ -127,7 +146,7 @@ test("the suite rejects implementations that break the contract with no fault fl
     );
   }
 
-  const inert = runSafeWriteConformance(inertFactory);
+  const inert = await runSafeWriteConformance(inertFactory);
   assert.equal(inert.ok, false);
   assert.ok(
     failedScenarios(inert).length >= 8,
@@ -135,7 +154,7 @@ test("the suite rejects implementations that break the contract with no fault fl
   );
 });
 
-test("a spent token stays spent across a later failed confirm", () => {
+test("a spent token stays spent across a later failed confirm", async () => {
   // Regression guard for the deliberate asymmetry in createSafeWrite: a token
   // is spent on success and NOT spent when the receipt fails, so a person can
   // retry a write that never happened without being locked out.
@@ -143,21 +162,21 @@ test("a spent token stays spent across a later failed confirm", () => {
   const clock = createClock();
   const implementation = createSafeWrite({ store, secret: TEST_SECRET, policy: TEST_POLICY, clock });
   const change = { personRef: OWNER_PERSON_REF, field: "display_name", value: "Chosen Name" };
-  const preview = implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+  const preview = await implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
   assert.ok(preview.ok);
-  const first = implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
+  const first = await implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
   assert.ok(first.ok);
-  const replay = implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
+  const replay = await implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
   assert.equal(replay.ok, false);
   assert.equal(replay.ok === false && replay.reason, "token_already_used");
 
   const failing = createRecordingStore({ failCommit: true });
   const retryable = createSafeWrite({ store: failing, secret: TEST_SECRET, policy: TEST_POLICY, clock: createClock() });
-  const secondPreview = retryable.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+  const secondPreview = await retryable.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
   assert.ok(secondPreview.ok);
-  const failed = retryable.confirm({ token: secondPreview.token, change, principalRef: OWNER_PRINCIPAL_REF });
+  const failed = await retryable.confirm({ token: secondPreview.token, change, principalRef: OWNER_PRINCIPAL_REF });
   assert.equal(failed.ok, false);
   assert.equal(failed.ok === false && failed.reason, "receipt_failed");
-  const retried = retryable.confirm({ token: secondPreview.token, change, principalRef: OWNER_PRINCIPAL_REF });
+  const retried = await retryable.confirm({ token: secondPreview.token, change, principalRef: OWNER_PRINCIPAL_REF });
   assert.equal(retried.ok === false && retried.reason, "receipt_failed", "a failed write must remain retryable");
 });
