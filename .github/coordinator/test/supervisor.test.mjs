@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   DurableSupervisor,
   listenSupervisor,
@@ -325,6 +325,7 @@ test("Unix socket is forced owner-only before it is returned as ready", async ()
   const { instance } = supervisor({ stateDir: join(root, "state") });
   const fakeServer = new EventEmitter();
   fakeServer.listen = (path, callback) => {
+    assert.equal(statSync(dirname(path)).mode & 0o777, 0o700, "parent must be private before socket bind");
     writeFileSync(path, "socket fixture", { mode: 0o666 });
     callback();
   };
