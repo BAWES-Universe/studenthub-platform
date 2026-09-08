@@ -101,6 +101,12 @@ function profileEmail(record: RawSourceRecord): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Relax the INPUT so the real implementation accepts what the contract says it
+ * must reject. Used by the faults that disable a validation rule: filling a
+ * missing field in is indistinguishable, from the normalizer's side, from an
+ * implementation that never required it.
+ */
 function preprocess(
   records: readonly RawSourceRecord[],
   faults: SourceConnectionFaults,
@@ -172,6 +178,11 @@ function unionOverPartitions(
   };
 }
 
+/**
+ * Corrupt the OUTPUT of the real implementation. Used by the faults that break
+ * a rule the normalizer applies after validation: deduplication, ordering,
+ * conflict withholding, masking, and profile exclusion.
+ */
 function postprocess(
   result: NormalizationResult,
   records: readonly RawSourceRecord[],
@@ -277,7 +288,15 @@ function postprocess(
   return { accepted, rejected, conflicts };
 }
 
-/** Build an implementation that breaks exactly the rules named by `faults`. */
+/**
+ * Build an implementation that breaks exactly the rules named by `faults`.
+ *
+ * With no fault set this is the real implementation and must satisfy the whole
+ * contract; that is the control every mutation below is measured against. `dryRun`
+ * is derived from THIS `normalize` via the real `summarizeNormalization`, so a
+ * fault's counts stay self-consistent and only the fault under test can move a
+ * scenario.
+ */
 export function makeFaultyImplementation(
   faults: SourceConnectionFaults = {},
 ): SourceConnectionImplementation {

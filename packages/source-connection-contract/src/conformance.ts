@@ -117,6 +117,12 @@ function sortedMasks(rawIds: readonly string[]): readonly string[] {
 
 type Scenario = (impl: SourceConnectionImplementation, check: Checks) => void;
 
+/**
+ * A record missing any of the five mandatory fields is rejected, and the reason
+ * is decided by a fixed rule order rather than by which check happened to run
+ * first. Without that order a record failing two rules could report either one,
+ * and a rejection count would stop being a stable thing to assert on.
+ */
 const requiredFields: Scenario = (impl, check) => {
   const records = [
     discordRecord(),
@@ -155,6 +161,12 @@ const requiredFields: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * Provenance is where a candidate came from, and it is the only field that lets
+ * an operator go back and check a link against its source. A row that arrives
+ * without one is rejected rather than imported with an invented origin, and an
+ * accepted row carries the string verbatim.
+ */
 const provenanceRequired: Scenario = (impl, check) => {
   const records = [
     discordRecord(),
@@ -190,6 +202,13 @@ const provenanceRequired: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * `observedAt` decides which duplicate survives, so an ambiguous one is not a
+ * cosmetic problem. A timestamp with no offset is local time to `Date`, which
+ * would make the surviving row depend on the importing machine's timezone; a
+ * date that does not exist is rolled over by `Date.parse` rather than refused,
+ * which would move an observation silently. Both are rejected.
+ */
 const unambiguousObservedAt: Scenario = (impl, check) => {
   const records = [
     // Parsed as LOCAL time by Date, so the surviving duplicate would depend on
@@ -245,6 +264,13 @@ const unambiguousObservedAt: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * The rule SHU-29 exists to protect, checked in both directions: two people
+ * sharing every mutable claim must not merge, and one identity carrying
+ * differing claims must not split. Only the first direction is the dangerous
+ * one, but an implementation that got the second wrong would be keying on
+ * profile data just as much.
+ */
 const neverMatchOnProfile: Scenario = (impl, check) => {
   // Two different people sharing every mutable claim. SHU-29 refuses to match
   // identities on such claims; an importer that matches on them reintroduces
@@ -281,6 +307,13 @@ const neverMatchOnProfile: Scenario = (impl, check) => {
   check.equal(withClaimA, withClaimB, "the profile claims of a record change nothing about its output");
 };
 
+/**
+ * Re-running an export must not accumulate. Rows collapse on the identity
+ * triple, so the same row three times is one candidate, and normalizing the
+ * same batch twice gives the same result. This is the one scenario that asserts
+ * on exact accepted counts; every other scenario compares unique triples, so
+ * that duplication has exactly one control.
+ */
 const idempotent: Scenario = (impl, check) => {
   const batch = [
     discordRecord(),
@@ -312,6 +345,12 @@ const idempotent: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * The other half of idempotency: when the same triple appears twice, the later
+ * observation survives and brings its provenance with it. Checked in both input
+ * orders, because an implementation that simply kept the last row it saw would
+ * pass one order and fail the other.
+ */
 const latestObservationWins: Scenario = (impl, check) => {
   const older = discordRecord({
     observedAt: "2026-01-01T00:00:00Z",
@@ -342,6 +381,12 @@ const latestObservationWins: Scenario = (impl, check) => {
   }
 };
 
+/**
+ * The accepted set is a function of the records, not of the order a donor
+ * happened to export them in. Without this, "re-running gives the same result"
+ * would hold only for a byte-identical export, which is not what an operator
+ * re-running an import actually has.
+ */
 const orderIndependent: Scenario = (impl, check) => {
   const batch = [
     discordRecord(),
@@ -366,6 +411,12 @@ const orderIndependent: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * One external account claimed by two people is unresolvable from the export
+ * alone, so NEITHER claim is imported and the dispute is reported. The scenario
+ * also checks that an unrelated record in the same batch is still accepted:
+ * failing closed means withholding the ambiguous link, not the whole import.
+ */
 const identityClaimedByMultiplePeople: Scenario = (impl, check) => {
   const result = impl.normalize([
     discordRecord({ personId: PERSON_ALPHA }),
@@ -395,6 +446,15 @@ const identityClaimedByMultiplePeople: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * The mirror case: one person claimed by one source under two external ids.
+ * Deliberately conservative — `external_identities` permits a person to hold
+ * many identities, and two accounts may be legitimate, but an importer cannot
+ * tell that from a mis-keyed export row, and a wrong link is permanent while a
+ * withheld one is re-runnable. Scoped to a single source: the same person
+ * holding one Discord and one Google identity is not a conflict, which this
+ * scenario also pins.
+ */
 const personClaimedInconsistently: Scenario = (impl, check) => {
   const result = impl.normalize([
     discordRecord({ externalId: DISCORD_ACCOUNT_ONE, personId: PERSON_ALPHA }),
@@ -422,6 +482,13 @@ const personClaimedInconsistently: Scenario = (impl, check) => {
   );
 };
 
+/**
+ * Rejections and conflicts are the output most likely to be pasted into an
+ * issue, a chat message, or a log, and they are about records that failed — so
+ * they carry masks, never the identifier itself. Asserted by searching the
+ * serialized reports for the raw values, not by checking that a field is named
+ * "mask".
+ */
 const reportsAreMasked: Scenario = (impl, check) => {
   const result = impl.normalize([
     discordRecord({ observedAt: "not-a-date" }),
@@ -445,6 +512,13 @@ const reportsAreMasked: Scenario = (impl, check) => {
   check.equal(result.conflicts.length, 1, "the disputed identity is reported");
 };
 
+/**
+ * Mutable claims are carried into normalization and must not come out of it,
+ * anywhere: not on a candidate, not in a rejection, not in a conflict. Checked
+ * with a canary planted in the input rather than by asserting the absence of a
+ * `profile` field, because an implementation that inlined the same value under
+ * another name would pass the second check and fail this one.
+ */
 const profileNeverSurvives: Scenario = (impl, check) => {
   const result = impl.normalize([
     discordRecord(),
@@ -466,6 +540,12 @@ const profileNeverSurvives: Scenario = (impl, check) => {
   }
 };
 
+/**
+ * A dry run is what someone reads before deciding to import, so it has to agree
+ * with the normalization it describes — a count that drifts from the result is
+ * worse than no count. It must also be safe to circulate: no raw identifier and
+ * no profile claim.
+ */
 const dryRunIsConsistentAndClean: Scenario = (impl, check) => {
   const records = [
     discordRecord(),

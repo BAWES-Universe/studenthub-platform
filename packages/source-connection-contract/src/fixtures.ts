@@ -60,6 +60,13 @@ export function syntheticProfile(
   };
 }
 
+/**
+ * Merge overrides over a base record, then attach profile claims derived from
+ * the FINAL `personId` unless the caller supplied their own. Deriving after the
+ * merge is what keeps two rows for one person sharing claims and two rows for
+ * different people not sharing them, so a scenario that needs a cross-person
+ * claim collision has to ask for it explicitly.
+ */
 function withDerivedProfile(
   base: RawSourceRecord,
   overrides: Partial<RawSourceRecord>,
