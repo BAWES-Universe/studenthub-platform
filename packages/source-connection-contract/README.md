@@ -32,6 +32,23 @@ by construction, the thing that binding refuses to do. So this contract states
 what evidence justifies a link rather than inheriting a matching heuristic (most
 likely email) by accident.
 
+## Open operator dependency: the input field names are not yet pinned
+
+The field names in `RawSourceRecord` are this contract's own. They were not
+derived from a donor schema, because there is no donor schema to derive them
+from: the StudentHub Next donor baseline (`donor/studenthub-codex`, 129 Prisma
+models) has no Discord or Google source-connection table, and neither does this
+repository or `workadventure-universe-admin`. Whatever actually produces these
+rows is a live Discord or Google export, and reading one needs credentials and
+data authorization that SHU-77 explicitly excludes.
+
+So this card stops where its boundaries say to stop, with the contract and the
+fixtures, and records the dependency: **an operator with export access has to
+map the real export columns onto `source`, `externalId`, `personId`,
+`provenance` and `observedAt`.** Every rule below holds whatever those columns
+turn out to be called, and the mapping is a thin adapter, not a change to the
+rules.
+
 ## The rules
 
 Each rule is a named scenario in `src/conformance.ts`, and each is bound by a

@@ -28,9 +28,21 @@ export type SourceSystem = (typeof SUPPORTED_SOURCES)[number];
 export const SOURCE_CONNECTION_CONTRACT_VERSION = "1.0.0" as const;
 
 /**
- * A raw record as a donor export presents it. Deliberately permissive: the
- * point of normalization is to reject what does not meet the contract, so the
- * input type must be able to express the malformed cases.
+ * The input shape this contract accepts.
+ *
+ * These field names are the CONTRACT's own, not an observed donor schema. The
+ * StudentHub Next donor baseline (`donor/studenthub-codex`, 129 Prisma models)
+ * has no Discord or Google source-connection table at all, and neither does
+ * this repository, so there was nothing to derive a field set from. Whatever
+ * really produces these rows is a live Discord/Google export, and reading one
+ * needs credentials and data authorization this card does not have. Mapping a
+ * real export onto these fields is therefore an open operator dependency,
+ * recorded on SHU-77; the rules below hold whatever the donor field names turn
+ * out to be.
+ *
+ * Deliberately permissive: the point of normalization is to reject what does
+ * not meet the contract, so the input type must be able to express the
+ * malformed cases.
  */
 export interface RawSourceRecord {
   readonly source?: string;
