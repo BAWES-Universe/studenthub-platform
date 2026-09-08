@@ -24,6 +24,7 @@ export { createRuntimeLoginFromEnv } from "./login-runtime.js";
 
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
+const DEFAULT_GATEWAY_HOST = "127.0.0.1";
 
 type RequestBodyReadResult =
   | { readonly ok: true; readonly body: Buffer }
@@ -71,6 +72,19 @@ export function parseGatewayPort(value: string | undefined): number {
     throw new RangeError("PORT must be an integer between 1 and 65535");
   }
   return port;
+}
+
+export function parseGatewayHost(value: string | undefined): string {
+  if (value === undefined) return DEFAULT_GATEWAY_HOST;
+  if (value !== "127.0.0.1" && value !== "::1" && value !== "0.0.0.0") {
+    throw new RangeError("HOST must be 127.0.0.1, ::1, or 0.0.0.0");
+  }
+  return value;
+}
+
+export function gatewayListenUrl(host: string, port: number): string {
+  const urlHost = host.includes(":") ? `[${host}]` : host;
+  return `http://${urlHost}:${port}`;
 }
 
 export class UnconfiguredMcpAdapter implements McpAdapter {
@@ -287,6 +301,7 @@ function writeBrowserResponseSafely(
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
 if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
+  const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
   const server = createGatewayServer(
     new UnconfiguredMcpAdapter(),
@@ -295,7 +310,7 @@ if (entrypoint === import.meta.url) {
     runtimeLogin?.application,
   );
   server.once("close", () => { void runtimeLogin?.close(); });
-  server.listen(port, "127.0.0.1", () => {
-    process.stdout.write(`studenthub gateway listening on http://127.0.0.1:${port}\n`);
+  server.listen(port, host, () => {
+    process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });
 }

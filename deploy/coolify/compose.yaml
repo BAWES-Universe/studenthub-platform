@@ -1,0 +1,49 @@
+services:
+  platform-postgres:
+    image: postgres:17.6-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PLATFORM_DB_NAME:?set PLATFORM_DB_NAME}
+      POSTGRES_USER: ${PLATFORM_DB_USER:?set PLATFORM_DB_USER}
+      POSTGRES_PASSWORD: ${PLATFORM_DB_PASSWORD:?set PLATFORM_DB_PASSWORD}
+    volumes:
+      - platform-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:?set SOURCE_REVISION}
+    restart: unless-stopped
+    depends_on:
+      platform-postgres:
+        condition: service_healthy
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      SOURCE_REVISION: ${SOURCE_REVISION:?set SOURCE_REVISION}
+      DATABASE_URL: ${PLATFORM_DATABASE_URL:?set PLATFORM_DATABASE_URL}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET}
+      OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:?set OIDC_CALLBACK_URL}
+      OIDC_AUTHORIZATION_URL: ${OIDC_AUTHORIZATION_URL:?set OIDC_AUTHORIZATION_URL}
+      OIDC_TOKEN_URL: ${OIDC_TOKEN_URL:?set OIDC_TOKEN_URL}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:?set OIDC_JWKS_URL}
+      LOGIN_ALLOWED_RETURN_URLS: ${LOGIN_ALLOWED_RETURN_URLS:?set LOGIN_ALLOWED_RETURN_URLS}
+    healthcheck:
+      test: ["CMD", "node", "deploy/coolify/healthcheck.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  platform-postgres-data:
