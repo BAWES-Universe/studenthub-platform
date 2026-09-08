@@ -21,8 +21,12 @@ import {
   type SafeWriteStore,
 } from "./types.js";
 
+/** Fixture signing key. Self-describing so it is obviously not a real secret. */
+export const TEST_SECRET = "safe-write-contract-test-secret-not-a-real-key";
+
 export interface SafeWriteFactoryInput {
   readonly store: SafeWriteStore;
+  readonly secret: string;
   readonly policy: FieldPolicy;
   readonly clock: SafeWriteClock;
   readonly tokenLifetimeMs?: number;
@@ -51,6 +55,7 @@ export const SAFE_WRITE_SCENARIOS = [
   "a preview refuses a record the caller does not own",
   "a value with edge whitespace is refused, never trimmed",
   "a failed write leaves its token spendable",
+  "a token no preview issued is refused",
 ] as const;
 
 export type SafeWriteScenario = (typeof SAFE_WRITE_SCENARIOS)[number];
@@ -85,6 +90,7 @@ function build(factory: SafeWriteFactory, options: {
   const clock = createClock();
   const implementation = factory({
     store,
+    secret: TEST_SECRET,
     policy: TEST_POLICY,
     clock,
     tokenLifetimeMs: options.tokenLifetimeMs,
@@ -231,7 +237,7 @@ function scenarioChecks(factory: SafeWriteFactory): Record<SafeWriteScenario, Ch
       const ownership = new Map([[OWNER_PRINCIPAL_REF, OWNER_PERSON_REF]]);
       const store = createRecordingStore({ ownership });
       const clock = createClock();
-      const implementation = factory({ store, policy: TEST_POLICY, clock });
+      const implementation = factory({ store, secret: TEST_SECRET, policy: TEST_POLICY, clock });
       const change = ownerChange();
       const preview = implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
       if (!preview.ok) return `preview refused: ${preview.reason}`;
@@ -336,6 +342,27 @@ function scenarioChecks(factory: SafeWriteFactory): Record<SafeWriteScenario, Ch
       if (retry.reason === "token_already_used") return "a write that never happened consumed its token";
       if (retry.reason !== "receipt_failed") return `wrong reason: ${retry.reason}`;
       if (store.commits.length !== 0) return "a failed write committed";
+      return null;
+    },
+
+    "a token no preview issued is refused": () => {
+      // Found by an external review of this very package: every field of a
+      // token is caller-suppliable, so without proof of issuance a caller can
+      // mint one and skip the preview entirely — defeating the one step the
+      // token exists to make unskippable.
+      const { store, implementation } = build(factory);
+      const change = ownerChange();
+      const issued = implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+      if (!issued.ok) return `preview refused: ${issued.reason}`;
+      const forged = {
+        ...issued.token,
+        tokenId: "never-issued-by-any-preview",
+        mac: "forged",
+      };
+      const confirmed = implementation.confirm({ token: forged, change, principalRef: OWNER_PRINCIPAL_REF });
+      if (confirmed.ok) return "a token no preview issued completed a write";
+      if (confirmed.reason !== "token_not_issued") return `wrong reason: ${confirmed.reason}`;
+      if (store.commits.length !== 0) return "a forged confirm still wrote";
       return null;
     },
 

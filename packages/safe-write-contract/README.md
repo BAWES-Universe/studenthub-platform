@@ -39,6 +39,7 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 | -- | -- |
 | Preview is inert | A preview names the field with its before and after value, and writes nothing. The store snapshot is identical afterwards. |
 | Confirm applies the preview | What lands is what was shown. A confirm that validates one change and commits another fails. |
+| Tokens are unforgeable | A token carries an HMAC over its own fields. Without it every field is caller-suppliable, so a caller could mint one and confirm a change **no preview ever showed** — skipping the one step the token exists to make unskippable. Checked first, because a token this implementation never issued is unauthentic whatever else it claims. |
 | Tokens bind the change set | The token commits to a digest over `(record, field, value)`. A confirm carrying a different change set is refused **before** anything is written. This is the reason a token exists. |
 | Tokens are single-use, expiring, caller-bound | Replay is refused, an expired token is refused, and a token issued to one principal cannot be spent by another. |
 | Own record only | Enforced at preview *and* re-derived at confirm. A grant revoked between the two is noticed: a token is not an authorization. |
@@ -59,11 +60,11 @@ requiring an approved shape catches the field nobody predicted.
 
 ## What the test suite proves
 
-`npm test` runs the fifteen scenarios against the real implementation, and then:
+`npm test` runs the sixteen scenarios against the real implementation, and then:
 
 - **A no-fault control.** The fault wrapper with no fault set passes every
   scenario, so each fault's failures are attributable to the fault.
-- **Fifteen faults, each with a declared failure set.** Every fault must fail
+- **Sixteen faults, each with a declared failure set.** Every fault must fail
   exactly the scenarios it declares. A fault that fails more has stopped being
   surgical; one that fails fewer means a scenario is not reading the behaviour
   it names. Three faults legitimately break several scenarios, and are declared
@@ -75,6 +76,23 @@ requiring an approved shape catches the field nobody predicted.
   own flags rather than behaviour would pass them.
 - **The fixtures carry what the negative assertions look for**, so the "must not
   appear" checks cannot pass vacuously.
+
+## A fourth rule this contract only has because a reviewer found it missing
+
+The first published head of this package was **forgeable**. `confirm` checked
+that a token was unspent, unexpired, caller-matching and change-set-matching —
+but never that any `preview` had issued it. Every field was caller-suppliable
+and `changeSetDigest` is exported, so a caller could mint a token and write
+directly. Reproduced against the real implementation: a write completed, the
+record changed, `commits: 1`.
+
+That defeats the entire point of the contract. Sentry's review found it; fifteen
+scenarios of my own did not. Tokens are now signed and verified, `token_not_issued`
+joins the closed vocabulary, and the rule has a scenario and a fault of its own.
+
+The `spent` set in the reference implementation is in-memory, which is fine for a
+contract with no I/O. **SHU-84 must make single-use durable**, or a restart
+re-opens replay.
 
 ## Three rules this contract only has because a mutation found them missing
 

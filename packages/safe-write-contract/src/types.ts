@@ -29,6 +29,7 @@ export const REJECTION_REASONS = [
   "token_already_used",
   "token_principal_mismatch",
   "token_change_set_mismatch",
+  "token_not_issued",
   "receipt_failed",
 ] as const;
 
@@ -60,6 +61,13 @@ export interface FieldChange {
  */
 export interface ActionToken {
   readonly tokenId: string;
+  /**
+   * HMAC over the token's own fields. Without it every field of a token is
+   * attacker-suppliable, so a caller can mint one and confirm a change no
+   * preview ever showed — which is precisely the step the token exists to
+   * make unskippable.
+   */
+  readonly mac: string;
   /** SHA-256 over the canonical change set. */
   readonly changeSetDigest: string;
   /** Only this principal may confirm. */
@@ -134,6 +142,9 @@ export interface SafeWriteStore {
     readonly receipt: Receipt;
   }): void;
 }
+
+/** Signing key for action tokens. At least 32 bytes. */
+export type SafeWriteSecret = string | Buffer;
 
 export interface SafeWriteClock {
   now(): Date;

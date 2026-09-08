@@ -9,6 +9,7 @@ import {
   changeSetDigest,
   createSafeWrite,
   fieldKey,
+  signActionToken,
   type ConfirmRequest,
   type ConfirmResult,
   type PreviewRequest,
@@ -50,6 +51,8 @@ export interface SafeWriteFaults {
   trimValues?: boolean;
   /** Rule 5: a write that never happened must not consume its token. */
   spendTokenOnFailure?: boolean;
+  /** Rule 2: only a token this implementation issued may be confirmed. */
+  acceptForgedTokens?: boolean;
 }
 
 /** A Set that accepts additions and forgets them, so tokens stay reusable. */
@@ -70,13 +73,12 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
       : store;
     const real = createSafeWrite({
       store: effectiveStore,
+      secret: input.secret,
       policy: faults.acceptAnyField ? { ...policy, allowed: [...policy.allowed, "secret_field", "candidate_civil_photo_front"] } : policy,
       clock,
-      tokenLifetimeMs: input.tokenLifetimeMs,
+      tokenLifetimeMs: faults.ignoreExpiry ? 100 * 365 * 24 * 3600 * 1000 : input.tokenLifetimeMs,
       spentTokens: spent,
     });
-
-    const implementationConfirm = (request: ConfirmRequest): ConfirmResult => real.confirm(request);
 
     const implementation: SafeWriteImplementation = {
       preview(request: PreviewRequest): PreviewResult {
@@ -95,6 +97,9 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
             }],
             token: {
               tokenId: `foreign-${Math.random().toString(16).slice(2)}`,
+              // Deliberately unauthentic: this fault breaks the PREVIEW rule,
+              // and a confirm with this token would rightly be refused.
+              mac: "foreign-not-signed",
               changeSetDigest: changeSetDigest(request.change),
               principalRef: request.principalRef,
               issuedAt: clock.now().toISOString(),
@@ -123,22 +128,24 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
       },
 
       confirm(request: ConfirmRequest): ConfirmResult {
+        if (faults.acceptForgedTokens) {
+          // Re-sign the token that ARRIVED, leaving every other field alone, so
+          // only the issuance rule is disabled. Re-issuing a fresh token here
+          // would also defeat substitution, single-use and expiry, and the
+          // fault would stop isolating what it names.
+          const { mac: _ignored, ...unsigned } = request.token;
+          return real.confirm({
+            ...request,
+            token: { ...unsigned, mac: signActionToken(unsigned, input.secret) },
+          });
+        }
+
         if (faults.confirmIgnoresChangeSet) {
           // Re-point the token at whatever change arrived, so any submitted
           // change matches: the substitution the token exists to prevent.
           return real.confirm({
             ...request,
             token: { ...request.token, changeSetDigest: changeSetDigest(request.change) },
-          });
-        }
-
-        if (faults.ignoreExpiry) {
-          // Skip the check by moving the deadline, rather than by widening the
-          // lifetime — an unbounded lifetime overflows Date and would fail
-          // every scenario for a reason that has nothing to do with expiry.
-          return implementationConfirm({
-            ...request,
-            token: { ...request.token, expiresAt: "2099-01-01T00:00:00.000Z" },
           });
         }
 
@@ -153,7 +160,7 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
             ...store,
             ownedRecord: () => request.change.personRef,
           };
-          const lenient = createSafeWrite({ store: permissive, policy, clock, spentTokens: spent });
+          const lenient = createSafeWrite({ store: permissive, secret: input.secret, policy, clock, spentTokens: spent });
           return lenient.confirm(request);
         }
 
@@ -194,6 +201,7 @@ export const passthroughFactory: SafeWriteFactory = () => ({
     changes: [{ field: request.change.field, before: null, after: request.change.value }],
     token: {
       tokenId: "static-token",
+      mac: "static-mac",
       changeSetDigest: "static",
       principalRef: request.principalRef,
       issuedAt: "2026-09-08T12:00:00.000Z",

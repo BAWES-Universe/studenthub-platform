@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import {
   REFERENCE_PATTERN,
@@ -14,6 +14,7 @@ import {
   type RejectionReason,
   type SafeWriteClock,
   type SafeWriteImplementation,
+  type SafeWriteSecret,
   type SafeWriteStore,
 } from "./types.js";
 
@@ -66,6 +67,8 @@ function validateChange(change: ChangeRequest, policy: FieldPolicy): RejectionRe
 
 export interface SafeWriteOptions {
   readonly store: SafeWriteStore;
+  /** Signs action tokens. Must be at least 32 bytes. */
+  readonly secret: SafeWriteSecret;
   readonly policy: FieldPolicy;
   readonly clock?: SafeWriteClock;
   readonly tokenLifetimeMs?: number;
@@ -73,8 +76,26 @@ export interface SafeWriteOptions {
   readonly spentTokens?: Set<string>;
 }
 
+function assertSecret(secret: SafeWriteSecret): Buffer {
+  const bytes = Buffer.isBuffer(secret) ? secret : Buffer.from(secret ?? "");
+  if (bytes.length < 32) throw new Error("safe-write secret must be at least 32 bytes");
+  return bytes;
+}
+
+/** The MAC covers every field a confirm trusts, so none of them can be edited. */
+export function signActionToken(token: Omit<ActionToken, "mac">, secret: SafeWriteSecret): string {
+  return tokenMac(token, assertSecret(secret));
+}
+
+function tokenMac(token: Omit<ActionToken, "mac">, secret: Buffer): string {
+  return createHmac("sha256", secret)
+    .update(`${SAFE_WRITE_CONTRACT_VERSION}\n${canonical(token)}`)
+    .digest("base64url");
+}
+
 export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementation {
   const { store, policy } = options;
+  const secret = assertSecret(options.secret);
   const clock = options.clock ?? { now: () => new Date() };
   const lifetimeMs = options.tokenLifetimeMs ?? DEFAULT_TOKEN_LIFETIME_MS;
   const spent = options.spentTokens ?? new Set<string>();
@@ -92,13 +113,14 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
 
     const before = store.readField(change.personRef, change.field);
     const issuedAt = clock.now();
-    const token: ActionToken = {
+    const unsigned: Omit<ActionToken, "mac"> = {
       tokenId: randomBytes(16).toString("hex"),
       changeSetDigest: changeSetDigest(change),
       principalRef,
       issuedAt: issuedAt.toISOString(),
       expiresAt: new Date(issuedAt.getTime() + lifetimeMs).toISOString(),
     };
+    const token: ActionToken = { ...unsigned, mac: tokenMac(unsigned, secret) };
 
     return {
       ok: true,
@@ -113,6 +135,16 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
 
     const invalid = validateChange(change, policy);
     if (invalid) return refused(invalid);
+
+    // Checked FIRST: a token this implementation never issued is unauthentic
+    // whatever else it claims, and reporting some other reason would tell a
+    // forger which field to edit next.
+    const { mac, ...unsigned } = token;
+    const expected = Buffer.from(tokenMac(unsigned, secret));
+    const supplied = Buffer.from(typeof mac === "string" ? mac : "");
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      return refused("token_not_issued");
+    }
 
     if (token.principalRef !== principalRef) return refused("token_principal_mismatch");
     if (spent.has(token.tokenId)) return refused("token_already_used");

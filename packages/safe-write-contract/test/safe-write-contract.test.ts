@@ -8,6 +8,7 @@ import {
   SAFE_WRITE_CONTRACT_VERSION,
   SAFE_WRITE_SCENARIOS,
   TEST_POLICY,
+  TEST_SECRET,
   changeSetDigest,
   createClock,
   createRecordingStore,
@@ -87,6 +88,7 @@ const FAULT_EXPECTATIONS: ReadonlyArray<readonly [keyof SafeWriteFaults, readonl
   ["previewAllowsForeignRecord", [scenario(10), scenario(12)]],
   ["trimValues", [scenario(10), scenario(13)]],
   ["spendTokenOnFailure", [scenario(14)]],
+  ["acceptForgedTokens", [scenario(15)]],
 ];
 
 test("the fault wrapper with no fault set satisfies the contract", () => {
@@ -139,7 +141,7 @@ test("a spent token stays spent across a later failed confirm", () => {
   // retry a write that never happened without being locked out.
   const store = createRecordingStore();
   const clock = createClock();
-  const implementation = createSafeWrite({ store, policy: TEST_POLICY, clock });
+  const implementation = createSafeWrite({ store, secret: TEST_SECRET, policy: TEST_POLICY, clock });
   const change = { personRef: OWNER_PERSON_REF, field: "display_name", value: "Chosen Name" };
   const preview = implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
   assert.ok(preview.ok);
@@ -150,7 +152,7 @@ test("a spent token stays spent across a later failed confirm", () => {
   assert.equal(replay.ok === false && replay.reason, "token_already_used");
 
   const failing = createRecordingStore({ failCommit: true });
-  const retryable = createSafeWrite({ store: failing, policy: TEST_POLICY, clock: createClock() });
+  const retryable = createSafeWrite({ store: failing, secret: TEST_SECRET, policy: TEST_POLICY, clock: createClock() });
   const secondPreview = retryable.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
   assert.ok(secondPreview.ok);
   const failed = retryable.confirm({ token: secondPreview.token, change, principalRef: OWNER_PRINCIPAL_REF });
