@@ -34,14 +34,18 @@ const RESOURCES = new Set(["global", "host", "account", "runtime"]);
 const PAUSE_REASONS = new Set(["quota", "authentication", "access", "maintenance", "operator_hold"]);
 const SAFE_ID = /^[A-Za-z0-9._:/-]{1,255}$/;
 
-function privateDirectory(path) {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+const DIRECTORY_OPS = Object.freeze({ mkdirSync, openSync, fstatSync, fchmodSync, lstatSync, closeSync });
+
+// The operation seam keeps the swap-detection behavior deterministically
+// testable without relying on a scheduler race in the test process.
+export function privateDirectory(path, ops = DIRECTORY_OPS) {
+  ops.mkdirSync(path, { recursive: true, mode: 0o700 });
+  const fd = ops.openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
-    const opened = fstatSync(fd);
+    const opened = ops.fstatSync(fd);
     if (!opened.isDirectory()) throw new Error(`unsafe capacity state directory: ${path}`);
-    fchmodSync(fd, 0o700);
-    const current = lstatSync(path);
+    ops.fchmodSync(fd, 0o700);
+    const current = ops.lstatSync(path);
     if (current.isSymbolicLink()
       || !current.isDirectory()
       || current.dev !== opened.dev
@@ -49,7 +53,7 @@ function privateDirectory(path) {
       throw new Error(`capacity state directory changed during validation: ${path}`);
     }
   } finally {
-    closeSync(fd);
+    ops.closeSync(fd);
   }
 }
 

@@ -12,6 +12,7 @@ import { main, parseReceiptsFromComments, receiptCommentBody, parseEvidenceFromC
 
 const SHA = "c".repeat(40);
 const TRIGGER = "agtch_life_1";
+const TRUSTED_CALLBACK_ACTOR = "linear-worker-test";
 
 const FIXTURE_NODE = {
   id: "11111111-aaaa-4bbb-8ccc-000000000001",
@@ -46,6 +47,7 @@ function tempConfig() {
     enable_dispatch: true,
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
+    linear_callback_actor_ids: [TRUSTED_CALLBACK_ACTOR],
     max_failed_attempts: 3,
     fixture_lane: { id: "SHU-FIXTURE-001", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" },
   };
@@ -145,6 +147,7 @@ const waCompat = (() => {
 
 function callbackComment(attempt_id) {
   return {
+    user: { id: TRUSTED_CALLBACK_ACTOR, displayName: "Worker" },
     body: [
       "<!-- coordinator-callback v1 -->",
       "coordinator-callback v1",
@@ -273,11 +276,11 @@ function requireReceipt(stage) {
 test("parseEvidenceFromComments extracts the callback for the matching attempt only", () => {
   const mine = callbackComment("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
   const other = callbackComment("bbbbbbbb-cccc-4ddd-8eee-ffffffffffff");
-  const ev = parseEvidenceFromComments([other, mine], "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+  const ev = parseEvidenceFromComments([other, mine], "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", [TRUSTED_CALLBACK_ACTOR]);
   assert.ok(ev);
   assert.equal(ev.target_sha, SHA);
   assert.ok(ev.links.length === 1);
-  assert.equal(parseEvidenceFromComments([other], "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), null);
+  assert.equal(parseEvidenceFromComments([other], "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", [TRUSTED_CALLBACK_ACTOR]), null);
 });
 
 test("BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linear writes", async () => {
@@ -391,6 +394,7 @@ test("BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest cal
   const [running] = parseReceiptsFromComments(comments);
 
   const cb = (stage, createdAt) => ({
+    user: { id: TRUSTED_CALLBACK_ACTOR, displayName: "Worker" },
     body: [
       "<!-- coordinator-callback v1 -->",
       "coordinator-callback v1",

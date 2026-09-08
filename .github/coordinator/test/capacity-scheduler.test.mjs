@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import {
   CapacityScheduler,
+  privateDirectory,
   readableTaskStatus,
   validateCapacityPolicy,
 } from "../capacity-scheduler.mjs";
@@ -169,6 +170,14 @@ test("terminal task identity is immutable and cannot be recycled", () => {
   assert.equal(scheduler.snapshot().spent_micros, 1_000);
 });
 
+test("repeating the same terminal transition charges actual cost exactly once", () => {
+  const scheduler = new CapacityScheduler({ stateDir: stateDir(), policy: policy() });
+  scheduler.reserve(task("terminal-retry"));
+  assert.equal(scheduler.transition("terminal-retry", "completed", { actual_cost_micros: 250_000 }).status, "completed");
+  assert.equal(scheduler.transition("terminal-retry", "completed", { actual_cost_micros: 250_000 }).status, "completed");
+  assert.equal(scheduler.snapshot().spent_micros, 250_000);
+});
+
 test("dependency, overlap, and worktree exclusions fail before capacity is consumed", () => {
   const scheduler = new CapacityScheduler({ stateDir: stateDir(), policy: policy() });
   const blocked = scheduler.reserve(task("blocked", { blocked_by: ["SHU-67"] }));
@@ -236,6 +245,59 @@ test("state hardening does not follow a symlink or chmod its target", () => {
   assert.equal(statSync(target).mode & 0o777, 0o777, "rejected symlink target permissions must remain untouched");
 });
 
+test("state hardening rejects a directory swapped after descriptor chmod", () => {
+  let chmodCalled = false;
+  let closed = false;
+  const directory = (dev, ino) => ({
+    dev,
+    ino,
+    isDirectory: () => true,
+    isSymbolicLink: () => false,
+  });
+  assert.throws(() => privateDirectory("/trusted/state", {
+    mkdirSync: () => {},
+    openSync: () => 7,
+    fstatSync: () => directory(10, 20),
+    fchmodSync: (fd, mode) => {
+      assert.equal(fd, 7);
+      assert.equal(mode, 0o700);
+      chmodCalled = true;
+    },
+    lstatSync: () => {
+      assert.equal(chmodCalled, true, "identity is checked after descriptor hardening");
+      return directory(10, 21);
+    },
+    closeSync: (fd) => {
+      assert.equal(fd, 7);
+      closed = true;
+    },
+  }), /changed during validation/);
+  assert.equal(closed, true, "opened descriptor is closed after swap detection");
+});
+
+test("a valid external ledger reached through a symlink is rejected", () => {
+  const root = stateDir();
+  const external = join(stateDir(), "forged-ledger.json");
+  writeFileSync(external, `${JSON.stringify({
+    version: "1.0.0",
+    spent_micros: 0,
+    reservations: {},
+    pauses: {},
+  })}\n`, { mode: 0o600 });
+  symlinkSync(external, join(root, "capacity-ledger.json"));
+  const scheduler = new CapacityScheduler({ stateDir: root, policy: policy() });
+  const result = scheduler.reserve(task("must-not-trust-external-ledger"));
+  assert.equal(result.code, "LEDGER_INVALID");
+  assert.equal(result.status, "hold");
+});
+
+test("new capacity ledger is owner-readable and owner-writable only", () => {
+  const root = stateDir();
+  const scheduler = new CapacityScheduler({ stateDir: root, policy: policy() });
+  assert.equal(scheduler.reserve(task("private-ledger")).status, "reserved");
+  assert.equal(statSync(join(root, "capacity-ledger.json")).mode & 0o777, 0o600);
+});
+
 test("malformed persisted costs fail closed without replacing forensic evidence", () => {
   const root = stateDir();
   const ledgerPath = join(root, "capacity-ledger.json");
@@ -252,6 +314,20 @@ test("malformed persisted costs fail closed without replacing forensic evidence"
   assert.equal(result.status, "hold");
   assert.equal(readFileSync(ledgerPath, "utf8"), corrupted, "corrupt ledger remains available for diagnosis");
   assert.equal(existsSync(join(root, "capacity-ledger.lock")), false, "transaction lock is released");
+});
+
+test("persisted reservation estimated cost must remain an integer", () => {
+  const root = stateDir();
+  const scheduler = new CapacityScheduler({ stateDir: root, policy: policy() });
+  assert.equal(scheduler.reserve(task("seed-valid-ledger")).status, "reserved");
+  const ledgerPath = join(root, "capacity-ledger.json");
+  const corrupted = JSON.parse(readFileSync(ledgerPath, "utf8"));
+  corrupted.reservations["seed-valid-ledger"].estimated_cost_micros = 1.5;
+  writeFileSync(ledgerPath, `${JSON.stringify(corrupted)}\n`, { mode: 0o600 });
+  const reloaded = new CapacityScheduler({ stateDir: root, policy: policy() });
+  const result = reloaded.reserve(task("must-not-use-fractional-cost"));
+  assert.equal(result.code, "LEDGER_INVALID");
+  assert.equal(result.status, "hold");
 });
 
 test("four concurrent processes cannot oversubscribe a two-slot ledger", async () => {
