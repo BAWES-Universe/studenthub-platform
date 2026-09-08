@@ -4,6 +4,7 @@ import test from "node:test";
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import {
   createGatewayServer,
+  gatewayListenUrl,
   parseGatewayHost,
   parseGatewayPort,
   readRequestBody,
@@ -175,4 +176,10 @@ test("gateway host parsing is explicit and rejects ambiguous bind targets", () =
   for (const value of ["localhost", "*", "", " 0.0.0.0", "gateway"]) {
     assert.throws(() => parseGatewayHost(value), /HOST must be/);
   }
+});
+
+test("gateway startup URL brackets an IPv6 bind address", () => {
+  assert.equal(gatewayListenUrl("::1", 3000), "http://[::1]:3000");
+  assert.equal(gatewayListenUrl("127.0.0.1", 3000), "http://127.0.0.1:3000");
+  assert.equal(gatewayListenUrl("0.0.0.0", 8080), "http://0.0.0.0:8080");
 });

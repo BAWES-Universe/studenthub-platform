@@ -82,6 +82,11 @@ export function parseGatewayHost(value: string | undefined): string {
   return value;
 }
 
+export function gatewayListenUrl(host: string, port: number): string {
+  const urlHost = host.includes(":") ? `[${host}]` : host;
+  return `http://${urlHost}:${port}`;
+}
+
 export class UnconfiguredMcpAdapter implements McpAdapter {
   async callTool(call: McpToolCall): Promise<McpToolResult> {
     return {
@@ -306,6 +311,6 @@ if (entrypoint === import.meta.url) {
   );
   server.once("close", () => { void runtimeLogin?.close(); });
   server.listen(port, host, () => {
-    process.stdout.write(`studenthub gateway listening on http://${host}:${port}\n`);
+    process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });
 }
