@@ -4,6 +4,7 @@ import test from "node:test";
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import {
   createGatewayServer,
+  parseGatewayHost,
   parseGatewayPort,
   readRequestBody,
   type UnconfiguredMcpAdapter,
@@ -163,5 +164,15 @@ test("gateway port parsing rejects invalid configuration", () => {
 
   for (const value of ["not-a-port", "3000x", "0", "65536", "1.5"]) {
     assert.throws(() => parseGatewayPort(value), /PORT must be an integer/);
+  }
+});
+
+test("gateway host parsing is explicit and rejects ambiguous bind targets", () => {
+  assert.equal(parseGatewayHost(undefined), "127.0.0.1");
+  assert.equal(parseGatewayHost("0.0.0.0"), "0.0.0.0");
+  assert.equal(parseGatewayHost("::1"), "::1");
+
+  for (const value of ["localhost", "*", "", " 0.0.0.0", "gateway"]) {
+    assert.throws(() => parseGatewayHost(value), /HOST must be/);
   }
 });
