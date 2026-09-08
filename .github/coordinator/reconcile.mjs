@@ -25,6 +25,7 @@
 // Linear API token names only — no secrets live in this repository.
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage } from "./review-routing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -536,8 +537,12 @@ export function createReceipt({
 // past it, the verdict describes a superseded tree and cannot satisfy this
 // receipt. BLOCKED/FAILED callbacks never authorize COMPLETED (GPT BLOCK #2).
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY", "PASS"]);
+export const CALLBACK_EVIDENCE_STAGES = Object.freeze([...SUCCESS_CALLBACK_STAGES, "BLOCKED", "FAILED"]);
 
-export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
+// Bind every verdict-bearing callback to the durable attempt and head. This is
+// deliberately broader than callbackEvidenceValid: BLOCKED/FAILED are valid
+// review outcomes that route from HOLD, but can never authorize COMPLETED.
+export function callbackBindingValid(receipt, evidence, ctx = {}) {
   if (!evidence || typeof evidence !== "object") return false;
   if (!Array.isArray(evidence.links) || evidence.links.length === 0) return false;
   if (evidence.attempt_id !== receipt.attempt_id) return false;
@@ -545,8 +550,11 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   const expectedHead = Object.hasOwn(ctx, "expected_head") ? ctx.expected_head : receipt.target_sha;
   if (!TARGET_SHA_RE.test(expectedHead ?? "")) return false;
   if (ctx.current_head && ctx.current_head !== expectedHead) return false;
-  if (!SUCCESS_CALLBACK_STAGES.includes(evidence.stage)) return false;
-  return true;
+  return CALLBACK_EVIDENCE_STAGES.includes(evidence.stage);
+}
+
+export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
+  return callbackBindingValid(receipt, evidence, ctx) && SUCCESS_CALLBACK_STAGES.includes(evidence.stage);
 }
 
 const nowIso = (at) => at ?? new Date().toISOString();
@@ -667,6 +675,15 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
+          // Durable verdict facts (SHU-68 wiring replay): the terminal receipt
+          // records the verdict stage + output head that routing consumed, so a
+          // crash AFTER this persist can re-derive the successor directive on the
+          // next reconcile without re-reading volatile state. Extra fields are
+          // tolerated by validateReceipt (checked fields only).
+          if (typeof callback.stage === "string" && callback.stage.length) next.verdict_stage = callback.stage;
+          if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
+            next.result_sha = callback.result_sha;
+          }
           if (typeof event.worker_identity === "string" && event.worker_identity.length) {
             next.worker_identity = event.worker_identity; // poll's agent_id, persisted with the terminal state
           }
@@ -680,6 +697,18 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         );
         next.stage = "HOLD";
         next.adapter_status = "completed";
+        // Durable verdict facts on HOLD too: a REVIEW BLOCK/FAIL that reached the
+        // machine as "completed without SUCCESS callback" still carries a real
+        // verdict the routing layer must replay after a crash. Persist the bound
+        // callback's stage + output head whenever the callback is attempt-bound
+        // (BLOCKED/FAILED never authorize COMPLETED — GPT lifecycle BLOCK — but
+        // they ARE durable routing input). Unbound/no callback -> no verdict.
+        if (callbackBindingValid(receipt, callback, ctx) && (callback.stage === "BLOCKED" || callback.stage === "FAILED")) {
+          next.verdict_stage = callback.stage;
+          if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
+            next.result_sha = callback.result_sha;
+          }
+        }
         if (typeof event.worker_identity === "string" && event.worker_identity.length) {
           next.worker_identity = event.worker_identity; // agent_id is known even when the callback is not
         }
@@ -1014,7 +1043,7 @@ export const LINEAR_ISSUE_COMMENTS_QUERY = `
   query CoordinatorIssueComments($issueId: String!) {
     issue(id: $issueId) {
       comments(first: 100, orderBy: createdAt) {
-        nodes { body createdAt }
+        nodes { body createdAt user { id displayName } }
       }
     }
   }`;
@@ -1161,10 +1190,16 @@ export function parseReceiptsFromComments(comments = []) {
 // successful callback can never mask a newer BLOCKED/FAILED one (GPT BLOCK #2).
 export const COORDINATOR_CALLBACK_MARKER_RE = /^coordinator-callback v1$/m;
 
-export function parseEvidenceFromComments(comments = [], attempt_id) {
+// Linear issue comments are an untrusted transport. Accept callback evidence
+// only from immutable Linear actor IDs configured for the worker identities;
+// display names are mutable and therefore cannot establish authorship.
+export function parseEvidenceFromComments(comments = [], attempt_id, allowedActorIds = []) {
+  const allowed = new Set((allowedActorIds ?? []).filter((id) => typeof id === "string" && id.length));
+  if (allowed.size === 0) return null;
   let best = null;
   for (const comment of comments ?? []) {
     if (!comment?.body || !COORDINATOR_CALLBACK_MARKER_RE.test(comment.body)) continue;
+    if (!allowed.has(comment.user?.id)) continue;
     const m = /```json\n([\s\S]*?)\n```/.exec(comment.body);
     if (!m) continue;
     try {
@@ -1174,6 +1209,7 @@ export function parseEvidenceFromComments(comments = [], attempt_id) {
         links: Array.isArray(cb.links) ? cb.links : [],
         attempt_id: cb.attempt_id,
         target_sha: typeof cb.target_sha === "string" ? cb.target_sha : null,
+        result_sha: typeof cb.result_sha === "string" ? cb.result_sha : null, // exact commit the write produced (review binds this head)
         stage: typeof cb.stage === "string" ? cb.stage : null, // BUILD_READY | REVISION_READY | PASS | BLOCKED | FAILED
       };
       const createdAt = typeof comment.createdAt === "string" ? comment.createdAt : null;
@@ -1184,7 +1220,9 @@ export function parseEvidenceFromComments(comments = [], attempt_id) {
       // malformed callback comment — ignore, the next one may parse
     }
   }
-  return best ? { links: best.links, attempt_id: best.attempt_id, target_sha: best.target_sha, stage: best.stage } : null;
+  return best
+    ? { links: best.links, attempt_id: best.attempt_id, target_sha: best.target_sha, result_sha: best.result_sha, stage: best.stage }
+    : null;
 }
 
 export function parsePausedAdapters(comments = []) {
@@ -1195,6 +1233,121 @@ export function parsePausedAdapters(comments = []) {
   }
   return [...paused];
 }
+
+// Parse every parseable work-order directive from a comment thread (newest
+// last). Used by tests and by consumers that read the card as the instruction
+// channel. Non-directive comments are skipped.
+export function parseWorkOrderDirectiveFromComments(comments = []) {
+  const orders = [];
+  for (const comment of comments ?? []) {
+    const parsed = parseWorkOrderDirective(comment?.body ?? "");
+    if (parsed.ok && parsed.order) orders.push(parsed.order);
+  }
+  return orders;
+}
+
+// ---------------------------------------------------------------------------
+// Successor-directive replay/backfill (SHU-68 wiring, Codex BLOCK #2 resolved)
+// ---------------------------------------------------------------------------
+// The directive is derived from the DURABLE receipt verdict facts (verdict_stage
+// + result_sha recorded on the terminal receipt at persist time) and routeSuccessor
+// is idempotent: freshAttempt derives the successor attempt_id deterministically
+// from the prior attempt + stage + round. So recomputing it on a later reconcile
+// yields the SAME successor attempt, and posting is deduplicated against the
+// card's existing directives (parseWorkOrderDirectiveFromComments). A crash after
+// the terminal persist but before the directive post therefore self-heals on the
+// next dispatch-enabled reconcile — exactly once, never duplicated.
+export async function backfillSuccessorDirectives({
+  receipts = [],
+  commentsByIssue = new Map(),
+  dispatchEnabled = false,
+  linearToken = "",
+  githubToken = "",
+  linearIdFor = new Map(),
+  config = {},
+  env = {},
+  fetchImpl = fetch,
+  stdout = null,
+}) {
+  const out = stdout ?? ((s) => console.log(s));
+  // Defense in depth: this is the only helper that publishes successor
+  // directives, so it owns a dispatch gate instead of relying solely on its
+  // current caller's control flow.
+  if (!dispatchEnabled) return 0;
+  if (!linearToken) return 0;
+  let considered = 0;
+  // Durable, terminal, verdict-bearing receipts across all issues. Older-infra
+  // FAILED receipts carry no verdict_stage and are skipped (never route).
+  const eligible = (receipts ?? []).filter((r) => r && terminalVerdictCoherent(r, r.verdict_stage));
+  for (const terminal of eligible) {
+    considered += 1;
+    const issueId = terminal.issue_id;
+    const comments = commentsByIssue.get(issueId) ?? commentsByIssue.get(terminal.linearId ?? "") ?? [];
+    const linearIssueId = linearIdFor.get(issueId) ?? terminal.linearId ?? null;
+    // Existing directives on THIS card, dedup keyed by successor attempt_id.
+    const existing = parseWorkOrderDirectiveFromComments(comments);
+    const lineage = (receipts ?? []).filter((r) => r && r.issue_id === issueId);
+    // Authoritative head binding (Codex BLOCK #1): when a githubToken + branch
+    // are present, fetch the LIVE branch head and bind routing to it — an
+    // attacker/volatile result_sha that differs fails closed. If a live head is
+    // expected but cannot be verified, publication also fails closed.
+    let authoritativeHead = null;
+    let branchHeadUnverified = false;
+    if (githubToken && terminal.repo && terminal.branch) {
+      try {
+        const head = await fetchBranchHead({ repo: terminal.repo, branch: terminal.branch, token: githubToken, fetchImpl });
+        if (head) {
+          authoritativeHead = head;
+        } else {
+          branchHeadUnverified = true;
+        }
+      } catch {
+        branchHeadUnverified = true;
+      }
+    }
+    if (branchHeadUnverified) {
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> no post (live branch head could not be verified — HOLD, fail closed)`);
+      continue;
+    }
+    const routed = routeSuccessorFromReceipts({
+      issueReceipts: lineage,
+      terminal,
+      evidenceStage: terminal.verdict_stage,
+      evidenceResultSha: terminal.result_sha ?? null,
+      max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
+      authoritativeHead,
+    });
+    if (!routed.ok || !routed.order) {
+      // PASS / no eligible reviewer / exhaustion / lane mismatch / forged — nothing to post.
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} (${terminal.verdict_stage}) -> no post (${routed.reason ?? "no order"})${branchHeadUnverified ? " [branch head unverifiable]" : ""}`);
+      continue;
+    }
+    if (existing.some((o) => o.attempt_id === routed.order.attempt_id)) {
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> successor ${routed.order.attempt_id} ALREADY POSTED, skip`);
+      continue;
+    }
+    if (!linearIssueId) {
+      out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> successor ${routed.order.attempt_id} (no linearIssueId — skipped)`);
+      continue;
+    }
+    const body = renderWorkOrderDirective(routed.order);
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body }, linearToken, fetchImpl);
+    out(`backfill: ${issueId} attempt ${terminal.attempt_id} -> POSTED ${routed.order.role} order (actor=${routed.order.actor ?? "coordinator-assigned"}, attempt=${routed.order.attempt_id})`);
+  }
+  return considered;
+}
+
+// A durable verdict may route only when it explains the terminal state that
+// persisted it. Success/PASS belongs to COMPLETED; BLOCKED/FAILED belongs to
+// HOLD. Infrastructure FAILED and every mismatched pair are non-routable.
+export function terminalVerdictCoherent(terminal, verdictStage) {
+  if (!terminal || !TERMINAL_STAGES.includes(terminal.stage)) return false;
+  const verdict = outcomeForEvidenceStage(verdictStage);
+  if (!verdict) return false;
+  if (verdict.outcome === "BLOCKED" || verdict.outcome === "FAILED") return terminal.stage === "HOLD";
+  return terminal.stage === "COMPLETED";
+}
+
 
 // ---------------------------------------------------------------------------
 // Wake-hint gating (issue_comment events)
@@ -1510,7 +1663,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const adapterModule = await loadAdapterModule(adapter, io);
       // Callback evidence from the durable issue thread (same attempt_id bound);
       // selection is deterministic by newest createdAt (GPT BLOCK #2).
-      const evidence = parseEvidenceFromComments(commentsByIssue.get(receipt.issue_id) ?? [], receipt.attempt_id) ?? undefined;
+      const evidence = parseEvidenceFromComments(
+        commentsByIssue.get(receipt.issue_id) ?? [],
+        receipt.attempt_id,
+        config.linear_callback_actor_ids,
+      ) ?? undefined;
       // Head verification is TRI-STATE (GPT BLOCK #4): no GitHub token -> the
       // bound target_sha IS the reference head; token present -> the live branch
       // head must resolve, and an unreadable/missing head must prevent COMPLETED
@@ -1561,7 +1718,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           event = {
             type: "run_status",
             status: "completed",
-            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null },
+            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
             worker_identity: outcome.worker_identity ?? null,
           };
         }
@@ -1629,6 +1786,30 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (io.stdout) io.stdout(`dispatch: DEFERRED — lifecycle transitions were persisted this run; selection resumes next reconcile`);
     return 0;
   }
+
+  // ---- SHU-68 replay/backfill (Codex BLOCK #2, resolved): ----
+  // Successor-directive publication is derived from the DURABLE receipt verdict
+  // facts, computed idempotently from the deterministic successor attempt id new
+  // each reconcile, and posted only if no post for that successor attempt already
+  // exists on the card. This is what makes a crash after the terminal persist
+  // (but before the directive) self-healing: the next reconcile re-derives the
+  // same successor attempt and posts it exactly once. It runs only on a tick
+  // where no lifecycle transition was persisted, before new dispatch, so a
+  // directive is never raced by a fresh launch of the same successor.
+  if (io.stdout) io.stdout(`dispatch: backfill successor directives from durable terminal receipts`);
+  const backfilled = await backfillSuccessorDirectives({
+    receipts,
+    commentsByIssue,
+    dispatchEnabled,
+    linearToken,
+    githubToken,
+    linearIdFor,
+    config,
+    env,
+    fetchImpl,
+    stdout: io.stdout,
+  });
+  if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   const { candidate, skipped } = selection;
   if (!candidate) {
     if (io.stdout) io.stdout(`dispatch: no reservation — ${skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}`);
