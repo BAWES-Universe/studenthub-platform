@@ -21,8 +21,8 @@ Safety properties:
 - Accepted-but-not-launched work resumes after restart. Completed state remains
   terminal. Running workers whose identity cannot be proved remain occupied in
   HOLD and are never silently replaced.
-- The worker wrapper receives a per-attempt completion token and completion
-  token. The worker wrapper calls `recordSupervisorCompletion` against the
+- The worker wrapper receives a per-attempt completion token and calls
+  `recordSupervisorCompletion` against the
   private state root. The receipt carries the token in its immutable 0600 file
   so restart re-validates it against the launch-time token hash before trusting
   it. Its terminal receipt is therefore recoverable even if the supervisor
