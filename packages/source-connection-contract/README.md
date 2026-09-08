@@ -65,7 +65,7 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 | Idempotency | Rows collapse on the `(source, externalId, personId)` triple, the later `observedAt` refreshing the survivor, and output is sorted. Re-running an export, or running it with its rows shuffled, gives exactly the same accepted set. Two observations at the same instant are ordered by provenance, so a tie is resolved by the records rather than by export order. |
 | Conflict, fails closed | One external identity claimed by more than one person: **neither** side is accepted, and a conflict is reported. |
 | Ambiguity, fails closed | One person claimed by one source under more than one external id: **neither** account is accepted, and a conflict is reported. |
-| Sensitive output | Rejections and conflicts carry masked identifiers only. No profile claim survives normalization, and a dry run carries counts, reasons and masks, never a raw identifier. |
+| Sensitive output | Rejections and conflicts carry masked identifiers only. External ids are elided; **person ids are SHA-256 references**, because a person id can literally be an email address under `sub_mode = user_email` and the platform already stores such identifiers as digests (SHU-59). No profile claim survives normalization, and a dry run carries counts, reasons, masks and refs — never a raw identifier of either kind. Accepted candidates still carry both ids raw: they are the join keys an import needs, and they are not the artifact that gets pasted into an issue. |
 
 Both conflict rules withhold rather than choose. A withheld candidate can be
 imported after a human resolves it; a wrong identity link is permanent, so the
@@ -91,7 +91,7 @@ assert.equal(report.ok, true, JSON.stringify(report.results, null, 2));
 
 - **A no-fault control.** The fault wrapper with no fault set passes every
   scenario, so each fault's failures are attributable to the fault.
-- **Eighteen faults, each with a declared failure set.** Every fault must fail
+- **Nineteen faults, each with a declared failure set.** Every fault must fail
   exactly the scenarios it declares and pass all the others. A fault that fails
   more has stopped being surgical; one that fails fewer means a scenario is not
   reading the behaviour it names.

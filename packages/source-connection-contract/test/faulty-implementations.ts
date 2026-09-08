@@ -26,6 +26,7 @@ import {
   SUPPORTED_SOURCES,
   maskIdentifier,
   normalizeSourceConnections,
+  personRef,
   summarizeNormalization,
   type DryRunReport,
   type NormalizationResult,
@@ -72,6 +73,8 @@ export interface SourceConnectionFaults {
   readonly firstObservationOnTie?: boolean;
   /** Reports every accepted candidate under one source. */
   readonly misattributeBySource?: boolean;
+  /** Puts raw person ids into conflict reports instead of references. */
+  readonly rawPersonIdsInReports?: boolean;
 }
 
 const STRICT_INSTANT =
@@ -320,6 +323,20 @@ function postprocess(
     rejected = rejected.map((rejection, index) => ({
       ...rejection,
       externalIdMask: rawRejectedIds[index] || rejection.externalIdMask,
+    }));
+  }
+
+  if (faults.rawPersonIdsInReports) {
+    const rawByRef = new Map<string, string>();
+    for (const record of records) {
+      const personId = str(record.personId);
+      if (personId !== "") {
+        rawByRef.set(personRef(personId), personId);
+      }
+    }
+    conflicts = conflicts.map((conflict) => ({
+      ...conflict,
+      personRefs: conflict.personRefs.map((ref) => rawByRef.get(ref) ?? ref),
     }));
   }
 

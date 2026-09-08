@@ -35,7 +35,7 @@ import {
   googleRecord,
   syntheticProfile,
 } from "./fixtures.js";
-import { maskIdentifier } from "./mask.js";
+import { maskIdentifier, personRef } from "./mask.js";
 import {
   SOURCE_CONNECTION_CONTRACT_VERSION,
   SUPPORTED_SOURCES,
@@ -466,9 +466,9 @@ const identityClaimedByMultiplePeople: Scenario = (impl, check) => {
   check.equal(claimed.length, 1, "one disputed identity produces exactly one conflict report");
   check.equal(claimed[0]?.source, "discord", "the conflict names the source it came from");
   check.equal(
-    claimed[0]?.personIds,
-    [PERSON_ALPHA, PERSON_BETA],
-    "the conflict names every person claiming the identity, in a stable order",
+    claimed[0]?.personRefs,
+    [PERSON_ALPHA, PERSON_BETA].map(personRef).sort((a, b) => a.localeCompare(b)),
+    "the conflict references every person claiming the identity, in a stable order",
   );
   check.equal(
     claimed[0]?.externalIdMasks,
@@ -505,7 +505,11 @@ const personClaimedInconsistently: Scenario = (impl, check) => {
   );
   check.equal(inconsistent.length, 1, "one inconsistently claimed person produces exactly one conflict report");
   check.equal(inconsistent[0]?.source, "discord", "the conflict is scoped to the source that produced it");
-  check.equal(inconsistent[0]?.personIds, [PERSON_ALPHA], "the conflict names the person in dispute");
+  check.equal(
+    inconsistent[0]?.personRefs,
+    [personRef(PERSON_ALPHA)],
+    "the conflict references the person in dispute",
+  );
   check.equal(
     inconsistent[0]?.externalIdMasks,
     sortedMasks([DISCORD_ACCOUNT_ONE, DISCORD_ACCOUNT_TWO]),
@@ -533,6 +537,14 @@ const reportsAreMasked: Scenario = (impl, check) => {
   ]);
 
   const serialized = JSON.stringify({ rejected: result.rejected, conflicts: result.conflicts });
+  // A person id can be an email address under `sub_mode = user_email`, so it is
+  // no safer in a report than an external id is.
+  for (const personId of [PERSON_ALPHA, PERSON_BETA]) {
+    check.ok(
+      !serialized.includes(personId),
+      `reports must not contain the raw person id behind ${personRef(personId).slice(0, 8)}...`,
+    );
+  }
   for (const rawId of [DISCORD_ACCOUNT_ONE, DISCORD_ACCOUNT_TWO]) {
     // The message carries the mask, never the value it is complaining about.
     check.ok(
@@ -624,6 +636,12 @@ const dryRunIsConsistentAndClean: Scenario = (impl, check) => {
 
   const serialized = JSON.stringify(report);
   check.ok(!serialized.includes(PROFILE_CANARY), "a dry run carries no profile claim");
+  for (const personId of [PERSON_ALPHA, PERSON_BETA, PERSON_GAMMA]) {
+    check.ok(
+      !serialized.includes(personId),
+      `a dry run carries no raw person id, including the one behind ${personRef(personId).slice(0, 8)}...`,
+    );
+  }
   for (const rawId of [DISCORD_ACCOUNT_ONE, DISCORD_ACCOUNT_TWO, GOOGLE_ACCOUNT_ONE, GOOGLE_ACCOUNT_TWO]) {
     check.ok(
       !serialized.includes(rawId),

@@ -111,7 +111,12 @@ export interface ConflictReport {
   readonly source: SourceSystem;
   /** Masked identifiers only, sorted, so the report is deterministic. */
   readonly externalIdMasks: readonly string[];
-  readonly personIds: readonly string[];
+  /**
+   * SHA-256 references, never raw person ids -- see `personRef`. A person id can
+   * be an email address under `sub_mode = user_email`, and a conflict report is
+   * the artifact most likely to be pasted into an issue or a chat message.
+   */
+  readonly personRefs: readonly string[];
 }
 
 /** What a dry run is allowed to emit. Counts and masks, nothing else. */

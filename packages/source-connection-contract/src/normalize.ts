@@ -36,9 +36,9 @@ import {
   type RejectionReason,
   type SourceSystem,
 } from "./types.js";
-import { maskIdentifier } from "./mask.js";
+import { maskIdentifier, personRef } from "./mask.js";
 
-export { maskIdentifier } from "./mask.js";
+export { maskIdentifier, personRef } from "./mask.js";
 
 /**
  * An ISO-8601 instant with an EXPLICIT offset. A timezone-less timestamp such
@@ -298,7 +298,7 @@ export function normalizeSourceConnections(
       kind: "external_identity_claimed_by_multiple_people",
       source: candidate.source,
       externalIdMasks: [maskIdentifier(candidate.externalId)],
-      personIds: sortedUnique(persons),
+      personRefs: sortedUnique([...persons].map(personRef)),
     });
   }
 
@@ -316,7 +316,7 @@ export function normalizeSourceConnections(
       kind: "person_claimed_inconsistently",
       source: candidate.source,
       externalIdMasks: sortedUnique([...identities].map(maskIdentifier)),
-      personIds: [candidate.personId],
+      personRefs: [personRef(candidate.personId)],
     });
   }
 
@@ -333,7 +333,7 @@ export function normalizeSourceConnections(
       left.kind.localeCompare(right.kind) ||
       left.source.localeCompare(right.source) ||
       left.externalIdMasks.join(",").localeCompare(right.externalIdMasks.join(",")) ||
-      left.personIds.join(",").localeCompare(right.personIds.join(",")),
+      left.personRefs.join(",").localeCompare(right.personRefs.join(",")),
   );
 
   return { accepted, rejected, conflicts };

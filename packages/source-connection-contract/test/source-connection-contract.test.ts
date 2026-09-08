@@ -80,6 +80,7 @@ const FAULT_EXPECTATIONS: ReadonlyArray<
   ["acceptSubMillisecondPrecision", [scenario(2)]],
   ["firstObservationOnTie", [scenario(5), scenario(6)]],
   ["misattributeBySource", [scenario(11)]],
+  ["rawPersonIdsInReports", [scenario(7), scenario(8), scenario(9), scenario(11)]],
 ];
 
 test("the fault wrapper with no fault set satisfies the contract", () => {
