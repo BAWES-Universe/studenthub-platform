@@ -7,6 +7,20 @@ This document traces a verified human identity from the wire to every
 authorization decision, file-and-line, and lists every point where it could be
 forged or lost.
 
+> **Scope and freshness (A2 — Opus PASS addition).** The trace is a snapshot
+> of the exact commit above and must not be read as current `main`. Decision
+> points that arrived after `8fce8a19` are out of scope here and are named so
+> a reader is not misled:
+> - **Candidate search scope (SHU-52)** — `CandidateSearchAdapter` carries a
+>   `scope` field that is an authorization decision (`{ kind: "all" }` applies
+>   no grant-bound filter). It landed on `main` after this trace, so the
+>   "every authorization decision" claim in this document covers the traced
+>   commit's enforcement path only, not search scope.
+> - **Authorization decision audit (SHU-58/SHU-59)** — the traced commit had
+>   no audit trail in the enforcement path (see L6). Both landed on `main`
+>   after this trace; the L6 row records the state at the traced commit and
+>   points to where the gap was closed.
+
 ---
 
 ## 1. The path, end to end
@@ -162,6 +176,7 @@ forged or lost.
 | L3 | **Issuer key registry persistence** | `registry.ts:70-136` | Same class: in-memory only. Rotations/retirements vanish on restart. |
 | L4 | Registry population gap | `authz-middleware.ts:148-156` | The deny-all default has an empty registry: until keys and grants are actually seeded, everything denies. Seeding is the SHU-55 bootstrap question. |
 | L5 | Gateway is single-process | `index.ts:172` | Binds 127.0.0.1, no replica story. Correct for now; SHU-55's "where it runs" decision determines the real deployment shape. |
+| L6 | **Audit trail absent (enforcement path)** | `authz-middleware.ts` (whole file), `index.ts:173` | Every authorization decision — allow, 401/403/503, and each typed denial reason — is computed and discarded. No logging anywhere in the enforcement path (`grep` for logging across `authz-middleware.ts` returns zero); the only `process.stdout.write` in `index.ts` is the startup banner (`:173`). Identity thus flows into no record at the traced commit — a finding for the loss table because SHU-38's ledger commits the platform to "soft-delete + audit", and SHU-54 exists *because* the legacy upload path has no audit. **Closed after this trace by SHU-58 (structured authz-decision audit events, `apps/gateway/src/authz-audit.ts`) + SHU-59 (transactional audit persistence).** |
 
 ## 4. Bottom line
 
@@ -180,4 +195,7 @@ forged or lost.
   beyond SHU-55 itself.
 
 *Trace performed 2026-09-04 by Hermes (owner), against the exact commit above.
-Independent verification by Opus requested per card label `verifier:opus`.*
+Independent verification by Opus requested per card label `verifier:opus`.
+Opus PASS `49f024d` (2026-09-04) with requested additions A1 (audit trail
+absent → L6) and A2 (search-scope/freshness). A1+A2 additions made by Hermes
+2026-09-08; changed head re-handed to Opus for exact-head re-verification.*
