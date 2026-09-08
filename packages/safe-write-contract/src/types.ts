@@ -17,7 +17,7 @@
  * hold. Sync implementations still satisfy `Awaitable`.
  */
 
-export const SAFE_WRITE_CONTRACT_VERSION = "2.0.0";
+export const SAFE_WRITE_CONTRACT_VERSION = "3.0.0";
 
 /** SHA-256 hex. Person and principal identities appear in this shape only. */
 export const REFERENCE_PATTERN = /^[0-9a-f]{64}$/;
@@ -140,15 +140,31 @@ export interface PreviewRequest {
 }
 
 /**
- * What an atomic commit reports. A rejected compare-and-write is a normal
- * outcome and says so; a thrown error means the transaction failed and neither
+ * What an atomic commit reports. A rejected precondition is a normal outcome and
+ * says which one failed; a thrown error means the transaction failed and neither
  * the field nor the receipt survived it.
+ *
+ * All three refusals exist because all three preconditions are re-checked INSIDE
+ * the transaction. Anything checked before it can change before the write lands:
+ * the record can move, the grant can be revoked, and a second confirm of the
+ * same token can arrive while the first is still in flight.
  */
-export type CommitOutcome = { readonly ok: true } | { readonly ok: false; readonly reason: "state_changed" };
+export type CommitRefusal = "state_changed" | "token_already_used" | "not_own_record";
+
+export type CommitOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: CommitRefusal };
 
 export interface CommitInput {
   readonly personRef: string;
   readonly principalRef: string;
+  /**
+   * The token being spent. Single-use is enforced HERE, not by the caller: an
+   * in-memory guard cannot survive a restart and cannot see a second process,
+   * so a store that does not record spent tokens does not have a single-use
+   * token, it has a token that is usually used once.
+   */
+  readonly tokenId: string;
   readonly field: string;
   /**
    * The value the preview showed. The commit must apply the change ONLY if the
@@ -163,10 +179,18 @@ export interface CommitInput {
 }
 
 /**
- * The persistence port. `commit` must compare, apply the field and write the
- * receipt as ONE unit: if it throws, none of it happened. An implementation
- * that writes the field and then fails to record the receipt has left an
- * unaudited mutation, which is the failure rule 6 exists to forbid.
+ * The persistence port. `commit` must check every precondition, apply the field
+ * and write the receipt as ONE unit: if it throws, none of it happened. An
+ * implementation that writes the field and then fails to record the receipt has
+ * left an unaudited mutation, which is the failure rule 6 exists to forbid.
+ *
+ * The preconditions are checked inside the transaction and NOT delegated back to
+ * the caller, because each one can change between a caller-side check and the
+ * write:
+ *
+ * - `expectedBefore` still matches the stored value  -> else `state_changed`
+ * - `tokenId` has not already been committed         -> else `token_already_used`
+ * - `principalRef` still owns `personRef`            -> else `not_own_record`
  */
 export interface SafeWriteStore {
   readField(personRef: string, field: string): Awaitable<string | null>;

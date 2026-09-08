@@ -11,6 +11,7 @@ import {
   expectedStateDigest,
   fieldKey,
   signActionToken,
+  type ActionToken,
   type ConfirmRequest,
   type ConfirmResult,
   type PreviewRequest,
@@ -58,6 +59,12 @@ export interface SafeWriteFaults {
   overwriteConcurrentChange?: boolean;
   /** Rule: the atomic compare-and-write guard is honoured. */
   ignoreCompareAndWrite?: boolean;
+  /** Rule: the store's single-use record is honoured. */
+  ignoreStoreTokenSpend?: boolean;
+  /** Rule: ownership is re-checked inside the atomic commit. */
+  ignoreCommitOwnership?: boolean;
+  /** Rule: a receipt's `fields` names fields, not references. */
+  receiptFieldsCarryReferences?: boolean;
 }
 
 /** A Set that accepts additions and forgets them, so tokens stay reusable. */
@@ -70,6 +77,13 @@ class ForgetfulSet extends Set<string> {
 export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
   return (input) => {
     const { store, policy, clock } = input;
+
+    /** Rewrite token fields and re-sign, so only the named rule is disabled. */
+    const resign = (token: ActionToken, changes: Partial<Omit<ActionToken, "mac">>): ActionToken => {
+      const { mac: _stale, ...unsigned } = token;
+      const rebound = { ...unsigned, ...changes };
+      return { ...rebound, mac: signActionToken(rebound, input.secret) };
+    };
     const spent = faults.reusableTokens ? new ForgetfulSet() : new Set<string>();
 
     // Counted so `overwriteConcurrentChange` can tell WHICH guard refused: the
@@ -77,6 +91,13 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
     // atomic compare inside the store (after one is). Disabling both at once
     // would be two faults wearing one name.
     let commitAttempts = 0;
+    /**
+     * Whether the grant was ALREADY gone when the confirm started. Separates
+     * "the confirm inherited the preview's authorization" (revoked before it
+     * ran) from "the grant was withdrawn mid-commit" — different rules, and a
+     * fault that broke both would be two faults under one name.
+     */
+    let staleAtConfirmEntry = false;
 
     const effectiveStore: SafeWriteStore = {
       ...store,
@@ -99,9 +120,17 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
           ? { ...commitInput, value: `${commitInput.value} (altered)` }
           : commitInput;
         const outcome = await store.commit(altered);
-        // Pretend the compare-and-write guard succeeded, so a race that the
-        // store refused is reported as a completed write.
-        return faults.ignoreCompareAndWrite ? { ok: true } : outcome;
+        // Report a refusal the store made as a completed write. Each flag
+        // suppresses exactly one of the three preconditions the commit checks.
+        if (outcome.ok) return outcome;
+        if (faults.ignoreCompareAndWrite && outcome.reason === "state_changed") return { ok: true };
+        if (faults.ignoreStoreTokenSpend && outcome.reason === "token_already_used") return { ok: true };
+        if (faults.ignoreCommitOwnership && outcome.reason === "not_own_record") return { ok: true };
+        if (faults.inheritPreviewAuthorization && staleAtConfirmEntry
+            && outcome.reason === "not_own_record") {
+          return { ok: true };
+        }
+        return outcome;
       },
     };
 
@@ -200,20 +229,38 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
           });
         }
 
+        // Both of these rewrite a token field, so both must RE-SIGN it. Without
+        // that the MAC check refuses the token first and the fault disables the
+        // issuance rule instead of the one it names — the scenario still fails,
+        // but for the wrong reason, which is indistinguishable from working.
+        //
+        // Re-signing must not launder a FORGERY, though, or the fault would also
+        // disable the issuance rule. So the real implementation sees the token
+        // untouched first: one it rejects as unissued stays rejected, and only
+        // an authentic token gets its rule disabled.
+        const disableWithResignedToken = async (
+          changes: Partial<Omit<ActionToken, "mac">>,
+        ): Promise<ConfirmResult> => {
+          const asIs = await real.confirm(request);
+          if (asIs.ok || asIs.reason === "token_not_issued") return asIs;
+          return real.confirm({ ...request, token: resign(request.token, changes) });
+        };
+
         if (faults.confirmIgnoresChangeSet) {
-          return real.confirm({
-            ...request,
-            token: { ...request.token, changeSetDigest: changeSetDigest(request.change) },
-          });
+          return disableWithResignedToken({ changeSetDigest: changeSetDigest(request.change) });
         }
 
         if (faults.ignoreTokenPrincipal) {
-          return real.confirm({ ...request, token: { ...request.token, principalRef: request.principalRef } });
+          return disableWithResignedToken({ principalRef: request.principalRef });
         }
 
         if (faults.inheritPreviewAuthorization) {
           // Treat the token as proof of authorization. Ownership revoked after
-          // the preview is never noticed.
+          // the preview is never noticed — at either layer, since the store's
+          // own check would otherwise backstop the application's and the fault
+          // would isolate nothing.
+          staleAtConfirmEntry =
+            (await store.ownedRecord(request.principalRef)) !== request.change.personRef;
           const permissive: SafeWriteStore = {
             ...effectiveStore,
             ownedRecord: async () => request.change.personRef,
@@ -231,6 +278,12 @@ export function makeFaultyFactory(faults: SafeWriteFaults): SafeWriteFactory {
 
         if (faults.spendTokenOnFailure && !result.ok && result.reason === "receipt_failed") {
           spent.add(request.token.tokenId);
+        }
+
+        if (faults.receiptFieldsCarryReferences && result.ok) {
+          // A well-shaped string in a slot that means something else. Passes a
+          // whitelist that approves strings independently of their position.
+          return { ...result, receipt: { ...result.receipt, fields: [result.receipt.personRef] } };
         }
 
         if (faults.receiptEchoesValue && result.ok) {
@@ -266,7 +319,7 @@ export const passthroughFactory: SafeWriteFactory = () => ({
     return {
       ok: true,
       receipt: {
-        contractVersion: "2.0.0",
+        contractVersion: "3.0.0",
         receiptRef: "static",
         personRef: request.change.personRef,
         principalRef: request.principalRef,

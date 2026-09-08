@@ -33,6 +33,8 @@ export interface RecordingStore extends SafeWriteStore {
   /** Every commit the implementation actually made, in order. */
   readonly commits: RecordedCommit[];
   readonly fields: Map<string, string>;
+  /** Token ids this store has committed. Single-use lives here, durably. */
+  readonly spentTokens: Set<string>;
   snapshot(): string;
 }
 
@@ -45,6 +47,12 @@ export interface RecordingStoreOptions {
    * is the case only the atomic compare can catch.
    */
   readonly mutateAtCommit?: string;
+  /**
+   * Revoke the principal's grant at the instant the commit runs. Models a grant
+   * withdrawn after the confirm checked it — the case only the ownership check
+   * inside the transaction can catch.
+   */
+  readonly revokeAtCommit?: boolean;
   readonly ownership?: ReadonlyMap<string, string>;
   readonly initial?: ReadonlyMap<string, string>;
 }
@@ -64,10 +72,15 @@ export function createRecordingStore(options: RecordingStoreOptions = {}): Recor
       ]),
   );
   const commits: RecordedCommit[] = [];
+  const spentTokens = new Set<string>();
+  const revoked = new Set<string>();
+  const ownedRecordNow = (principalRef: string): string | null =>
+    revoked.has(principalRef) ? null : ownership.get(principalRef) ?? null;
 
   const store: RecordingStore = {
     commits,
     fields,
+    spentTokens,
     snapshot() {
       return JSON.stringify([...fields.entries()].sort());
     },
@@ -77,15 +90,29 @@ export function createRecordingStore(options: RecordingStoreOptions = {}): Recor
       return fields.get(fieldKey(personRef, field)) ?? null;
     },
     async ownedRecord(principalRef) {
-      return ownership.get(principalRef) ?? null;
+      return ownedRecordNow(principalRef);
     },
     async commit(input: CommitInput): Promise<CommitOutcome> {
       // A real store applies the field and writes the receipt in one
       // transaction. Failing BEFORE mutating is what "neither happened" means.
       if (options.failCommit) throw new Error("receipt write failed");
 
+      // These two model writers that land at the instant of the commit — after
+      // every check the caller could have made. They run BEFORE the checks
+      // below precisely so the checks have to be the ones that catch them.
       if (options.mutateAtCommit !== undefined) {
         fields.set(fieldKey(input.personRef, input.field), options.mutateAtCommit);
+      }
+      if (options.revokeAtCommit) revoked.add(input.principalRef);
+
+      // Single-use. Recorded by the store, so it survives a restart and holds
+      // across processes; an in-memory guard in the caller does neither.
+      if (spentTokens.has(input.tokenId)) return { ok: false, reason: "token_already_used" };
+
+      // Ownership, re-checked here rather than trusted from the caller: a grant
+      // can be revoked between the caller's check and this write.
+      if (ownedRecordNow(input.principalRef) !== input.personRef) {
+        return { ok: false, reason: "not_own_record" };
       }
 
       // Compare-and-write. The comparison belongs INSIDE the atomic unit;
@@ -93,6 +120,7 @@ export function createRecordingStore(options: RecordingStoreOptions = {}): Recor
       const current = fields.get(fieldKey(input.personRef, input.field)) ?? null;
       if (current !== input.expectedBefore) return { ok: false, reason: "state_changed" };
 
+      spentTokens.add(input.tokenId);
       fields.set(fieldKey(input.personRef, input.field), input.value);
       commits.push({
         personRef: input.personRef,

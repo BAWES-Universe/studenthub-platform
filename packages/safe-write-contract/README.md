@@ -51,12 +51,15 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 | Tokens bind the change set | The token commits to a digest over `(record, field, value)`. A confirm carrying a different change set is refused **before** anything is written. This is the reason a token exists. |
 | Tokens are single-use, expiring, caller-bound | Replay is refused, an expired token is refused, and a token issued to one principal cannot be spent by another. |
 | Own record only | Enforced at preview *and* re-derived at confirm. A grant revoked between the two is noticed: a token is not an authorization. |
+| Single-use is the store's job | The token id goes into the commit, and the store refuses one it has already committed. A caller-side `spent` set is per-instance and in-memory: it cannot see another process and does not survive a restart, so an implementation relying on it does not have a single-use token — it has one that is usually used once. |
+| Ownership is re-checked inside the commit | The confirm re-derives ownership, then awaits twice more before writing. A grant withdrawn in that window is invisible to every check a caller can make, so the authorization predicate is evaluated in the same atomic operation as the mutation. |
+| A refusal reveals nothing to someone who lost access | Ownership is re-derived *before* the current value is read, so a principal whose grant is gone is told that and nothing else. Check it later and the same caller is told `state_changed` instead — which discloses that a record they no longer own has been modified. |
 | Tokens bind the transition, not just the destination | The token also carries a digest of the value the preview showed as *current*. A person who approved "A becomes C" has not approved "B becomes C", so a record that changed since the preview is refused `state_changed` rather than overwritten. |
 | The compare belongs inside the commit | The confirm's own read cannot close the race — a writer can land between that read and the write. `commit` receives `expectedBefore` and must apply the change only if the stored value still equals it, as one atomic unit. A refused compare is reported, not thrown, and a confirm that ignored it would report a completed write that never happened. |
 | Receipt is part of the transaction | A mutation whose receipt cannot be written does not commit. Proven by a store that fails the commit and a record that is unchanged afterwards. |
 | A failed write stays retryable | A receipt failure means nothing happened, so the token is *not* spent. Spending it would strand a person whose change never applied. |
 | Values are exact | Edge whitespace is refused, never trimmed. Cleaning `" x "` into `"x"` stores something other than what the person was shown. |
-| Receipts carry references | SHA-256 references, field names, closed-vocabulary values and timestamps — nothing else. |
+| Receipts carry references, positionally | Every key is checked against what is valid *there*: references where references belong, permitted field names in `fields`, the contract version, an instant. An unexpected key is itself a defect. |
 | Refusals are typed | Every refusal names a reason from a closed vocabulary, and no refusal carries record content. |
 
 ### On the receipt rule
@@ -64,27 +67,33 @@ deliberately broken variant in `test/faulty-implementations.ts`.
 Under `sub_mode = user_email`, Universe issues `sub` as the user's email address.
 A receipt that echoed a subject would be publishing personal data into an audit
 surface built to be shared. So the check is inverted rather than defensive:
-**every string a receipt contains must match an approved shape.** Chasing
-individual leaks only finds the field somebody thought to plant a canary in;
-requiring an approved shape catches the field nobody predicted.
+chasing individual leaks only finds the field somebody thought to plant a canary
+in; requiring an approved shape catches the field nobody predicted.
+
+It also has to be **positional**, which took a second reviewer to notice. An
+earlier version approved any string matching any approved shape, wherever it
+appeared — so an implementation returning `fields: [receipt.personRef]` passed
+the entire corpus while emitting audit metadata that names no field at all.
+"Contains only approved strings" is a weaker claim than "each position holds the
+kind of value that position is for", and only the second one is the rule.
 
 ## What the test suite proves
 
-`npm test` runs the eighteen scenarios against the real implementation, and then:
+`npm test` runs the twenty-one scenarios against the real implementation, and then:
 
 - **A no-fault control.** The fault wrapper with no fault set passes every
   scenario, so each fault's failures are attributable to the fault.
-- **Eighteen faults, each with a declared failure set.** Every fault must fail
+- **Twenty-one faults, each with a declared failure set.** Every fault must fail
   exactly the scenarios it declares. A fault that fails more has stopped being
   surgical; one that fails fewer means a scenario is not reading the behaviour
   it names. Every entry in that table is *measured*, never assumed: five faults
   legitimately break more than one scenario and are declared that way rather
   than narrowed to make the table look tidier.
-- **Thirteen source mutations** (run out of tree) each break the source of the
+- **Fifteen source mutations** (run out of tree) each break the source of the
   real implementation one rule at a time. Each is read back from disk **and
   recompiled** before its result is trusted, because a mutation that fails to
   compile produces silence indistinguishable from an unbound control. All
-  thirteen fail a named scenario; none fails nothing.
+  fifteen fail a named *scenario*; none fails nothing.
 - **Every scenario is bound.** No scenario is absent from every fault's set. A
   scenario nothing can break is not a control.
 - **Anti-circularity.** Two implementations break the contract with **no fault
@@ -106,9 +115,12 @@ That defeats the entire point of the contract. Sentry's review found it; fifteen
 scenarios of my own did not. Tokens are now signed and verified, `token_not_issued`
 joins the closed vocabulary, and the rule has a scenario and a fault of its own.
 
-The `spent` set in the reference implementation is in-memory, which is fine for a
-contract with no I/O. **SHU-84 must make single-use durable**, or a restart
-re-opens replay.
+The `spent` set in the reference implementation was in-memory, and this README
+used to say "SHU-84 must make single-use durable, or a restart re-opens replay."
+That was a note where a rule belonged. Single-use is now part of the commit
+contract — the token id goes into `CommitInput` and the store refuses one it has
+already committed — so SHU-84 inherits the guarantee instead of a TODO. The
+in-memory set survives only as a local shortcut, and the comment on it says so.
 
 ## Two rules this contract only has because a second reviewer found them missing
 
@@ -129,6 +141,46 @@ review found both; eighteen scenarios of my own did not. This is the second time
 an independent reviewer has found a hole the author's own corpus could not, which
 is the argument for cross-vendor verification stated as evidence rather than as
 policy.
+
+## Four more rules, and two corrections, from a third review round
+
+Codex and CodeRabbit reviewed the async head independently and converged on the
+same two P1s. All four findings below were **reproduced before being fixed**;
+none was a near miss.
+
+1. **One token, two writes.** Two concurrent confirms both passed the caller's
+   `spent` check before either recorded the spend. For a permitted *no-op* change
+   the compare-and-write succeeded twice as well — the value already equalled the
+   stored one, so the first commit left nothing for the second to notice.
+   Reproduced: two `ok: true` receipts, `commits: 2`.
+2. **Ownership was time-of-check, not time-of-use.** The confirm re-derives
+   ownership and then awaits twice more before writing. Reproduced: a grant
+   revoked in that window, `ok: true`, one commit, and no owner left on the record.
+3. **The receipt whitelist was position-blind** — see the receipt section above.
+4. **Two faults were disabling the wrong rule.** `confirmIgnoresChangeSet` and
+   `ignoreTokenPrincipal` rewrote a token field without re-signing it, so the MAC
+   check refused them first. Their scenarios failed, the table stayed green, and
+   the anti-substitution rule — the one this README calls *the reason a token
+   exists* — was bound by nothing. A fault that fails the right scenario for the
+   wrong reason is indistinguishable from one that works.
+
+The first two are fixed in the same place, because they are the same shape of
+bug: **a precondition checked outside the transaction is not a precondition.**
+`commit` now receives the token id and re-checks all three — state, single-use,
+ownership — inside the atomic unit, and reports which one failed rather than
+flattening them into one refusal.
+
+Both reviewers proposed an in-process reservation for the token instead. That
+was implemented first, and then **deleted**: with the store enforcing single-use
+atomically, a mutation removing the reservation broke nothing at all. It was
+dead code that looked like a safety mechanism, which is worse than no code —
+it invites the next reader to believe the guarantee lives there.
+
+Moving ownership into the commit made the confirm's own ownership check look
+redundant too. It is not, and the difference is a confidentiality one: because
+ownership is re-derived *before* the record is read, a revoked principal is told
+`not_own_record`. Check it later and they are told `state_changed` — learning
+that a record they no longer own has changed. That is now its own scenario.
 
 ## Three rules this contract only has because a mutation found them missing
 

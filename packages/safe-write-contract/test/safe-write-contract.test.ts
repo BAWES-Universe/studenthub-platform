@@ -92,7 +92,10 @@ const FAULT_EXPECTATIONS: ReadonlyArray<readonly [keyof SafeWriteFaults, readonl
   ["reusableTokens", [scenario(4)]],
   ["ignoreExpiry", [scenario(5)]],
   ["ignoreTokenPrincipal", [scenario(6)]],
-  ["inheritPreviewAuthorization", [scenario(7)]],
+  // Re-deriving at confirm is one rule with two consequences: a revoked grant
+  // is refused, and it is refused BEFORE the record is read, so the refusal
+  // does not disclose the record's state to someone who no longer owns it.
+  ["inheritPreviewAuthorization", [scenario(7), scenario(20)]],
   // A field that survives its failed receipt also strands the retry: the record
   // has changed, so the second attempt is refused `state_changed` rather than
   // being retryable. Both failures are the same bug, so both are declared.
@@ -108,6 +111,11 @@ const FAULT_EXPECTATIONS: ReadonlyArray<readonly [keyof SafeWriteFaults, readonl
   ["acceptForgedTokens", [scenario(15)]],
   ["overwriteConcurrentChange", [scenario(16)]],
   ["ignoreCompareAndWrite", [scenario(17)]],
+  ["ignoreStoreTokenSpend", [scenario(18)]],
+  ["ignoreCommitOwnership", [scenario(19)]],
+  // Two different ways to break one rule: echoing the value, and putting a
+  // well-shaped reference where only a field name means anything.
+  ["receiptFieldsCarryReferences", [scenario(9)]],
 ];
 
 test("the fault wrapper with no fault set satisfies the contract", async () => {
@@ -152,6 +160,31 @@ test("the suite rejects implementations that break the contract with no fault fl
     failedScenarios(inert).length >= 8,
     "an implementation that writes nothing fails most of the contract",
   );
+});
+
+test("one instance does not spend a token twice under concurrency", async () => {
+  // The cross-instance case is scenario 18, which any implementation must pass.
+  // This is the same guarantee WITHIN one instance, where `createSafeWrite`
+  // meets it by reserving the token id before the commit rather than by the
+  // store. Without that reservation both confirms pass the `spent` check before
+  // either records the spend, and because this change is a no-op the
+  // compare-and-write succeeds twice too.
+  const store = createRecordingStore();
+  const implementation = createSafeWrite({
+    store, secret: TEST_SECRET, policy: TEST_POLICY, clock: createClock(),
+  });
+  const change = { personRef: OWNER_PERSON_REF, field: "display_name", value: PROFILE_CANARY };
+  const preview = await implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+  assert.ok(preview.ok);
+
+  const results = await Promise.all([
+    implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF }),
+    implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF }),
+  ]);
+  assert.equal(results.filter((result) => result.ok).length, 1, "one token completed two writes");
+  const refused = results.find((result) => !result.ok);
+  assert.equal(refused?.ok === false && refused.reason, "token_already_used");
+  assert.equal(store.commits.length, 1);
 });
 
 test("a spent token stays spent across a later failed confirm", async () => {

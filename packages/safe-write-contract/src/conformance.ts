@@ -17,6 +17,8 @@ import {
   SAFE_WRITE_CONTRACT_VERSION,
   type ChangeRequest,
   type FieldPolicy,
+  type Receipt,
+  type Refused,
   type SafeWriteClock,
   type SafeWriteImplementation,
   type SafeWriteStore,
@@ -59,6 +61,9 @@ export const SAFE_WRITE_SCENARIOS = [
   "a token no preview issued is refused",
   "a record changed since the preview is not overwritten",
   "the atomic commit refuses a change that lands after the confirm's own read",
+  "a token spent through one instance cannot be spent through another",
+  "authorization revoked during the confirm stops the write",
+  "a refusal to a revoked principal does not disclose the record's state",
 ] as const;
 
 export type SafeWriteScenario = (typeof SAFE_WRITE_SCENARIOS)[number];
@@ -88,12 +93,14 @@ function ownerChange(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
 function build(factory: SafeWriteFactory, options: {
   failCommit?: boolean;
   mutateAtCommit?: string;
+  revokeAtCommit?: boolean;
   tokenLifetimeMs?: number;
   ownership?: ReadonlyMap<string, string>;
 } = {}) {
   const store = createRecordingStore({
     failCommit: options.failCommit,
     mutateAtCommit: options.mutateAtCommit,
+    revokeAtCommit: options.revokeAtCommit,
     ownership: options.ownership,
   });
   const clock = createClock();
@@ -108,38 +115,75 @@ function build(factory: SafeWriteFactory, options: {
 }
 
 /**
- * The sensitive-output rule, inverted. Chasing individual leaks only finds the
- * field somebody thought to plant a canary in; requiring every emitted string
- * to match an approved shape catches the field nobody predicted.
+ * The sensitive-output rule, made POSITIONAL.
+ *
+ * An earlier version approved any string that matched any approved shape,
+ * wherever it appeared. That accepts a reference in a slot where only a field
+ * name is meaningful: an implementation returning `fields: [receipt.personRef]`
+ * passed the entire corpus while emitting audit metadata that names no field.
+ * "Contains only approved strings" is a weaker claim than "each position holds
+ * the kind of value that position is for", and only the second one is the rule.
+ *
+ * So every key is checked against what is valid THERE, and an unexpected key is
+ * a defect in itself — a receipt that grew a field nobody predicted is exactly
+ * the case the whitelist exists to catch.
  */
-function unapprovedStrings(value: unknown, policy: FieldPolicy): string[] {
-  const bad: string[] = [];
-  const approved = (candidate: string): boolean =>
-    REFERENCE_PATTERN.test(candidate)
-    || policy.allowed.includes(candidate)
-    || candidate === SAFE_WRITE_CONTRACT_VERSION
-    || (REJECTION_REASONS as readonly string[]).includes(candidate)
-    || ISO_INSTANT.test(candidate);
+function receiptDefects(receipt: Receipt, policy: FieldPolicy): string[] {
+  const defects: string[] = [];
+  const record = receipt as unknown as Record<string, unknown>;
+  const expected = [
+    "contractVersion", "receiptRef", "personRef", "principalRef",
+    "changeSetDigest", "fields", "committedAt",
+  ];
 
-  const walk = (node: unknown): void => {
-    if (typeof node === "string") {
-      if (!approved(node)) bad.push(node);
-      return;
-    }
-    if (Array.isArray(node)) {
-      node.forEach(walk);
-      return;
-    }
-    if (node && typeof node === "object") {
-      for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
-        if (!approved(key) && !/^[a-z][A-Za-z]*$/.test(key)) bad.push(key);
-        walk(child);
-      }
+  for (const key of Object.keys(record)) {
+    if (!expected.includes(key)) defects.push(`unexpected key: ${key}`);
+  }
+
+  const reference = (key: string): void => {
+    const value = record[key];
+    if (typeof value !== "string" || !REFERENCE_PATTERN.test(value)) {
+      defects.push(`${key} is not a reference: ${JSON.stringify(value)}`);
     }
   };
+  for (const key of ["receiptRef", "personRef", "principalRef", "changeSetDigest"]) reference(key);
 
-  walk(value);
-  return bad;
+  if (receipt.contractVersion !== SAFE_WRITE_CONTRACT_VERSION) {
+    defects.push(`contractVersion is not the contract's: ${JSON.stringify(receipt.contractVersion)}`);
+  }
+  if (typeof receipt.committedAt !== "string" || !ISO_INSTANT.test(receipt.committedAt)) {
+    defects.push(`committedAt is not an instant: ${JSON.stringify(receipt.committedAt)}`);
+  }
+  if (!Array.isArray(receipt.fields) || receipt.fields.length === 0) {
+    defects.push(`fields is not a non-empty list: ${JSON.stringify(receipt.fields)}`);
+  } else {
+    for (const field of receipt.fields) {
+      // A field name, and one this deployment permits. A reference here would
+      // be a well-shaped string that names nothing an auditor can act on.
+      if (typeof field !== "string" || !policy.allowed.includes(field)) {
+        defects.push(`fields entry is not a permitted field name: ${JSON.stringify(field)}`);
+      }
+    }
+  }
+
+  return defects;
+}
+
+/**
+ * The same rule for refusals, which have their own tiny shape: a refusal must
+ * be exactly `{ ok: false, reason }` with the reason from the closed vocabulary.
+ * Anything else it carries is content that a refusal has no business emitting.
+ */
+function refusalDefects(refusal: Refused): string[] {
+  const defects: string[] = [];
+  const record = refusal as unknown as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (key !== "ok" && key !== "reason") defects.push(`unexpected key: ${key}`);
+  }
+  if (!(REJECTION_REASONS as readonly string[]).includes(refusal.reason)) {
+    defects.push(`reason outside the closed vocabulary: ${JSON.stringify(refusal.reason)}`);
+  }
+  return defects;
 }
 
 type Check = () => Promise<string | null>;
@@ -280,8 +324,8 @@ function scenarioChecks(factory: SafeWriteFactory): Record<SafeWriteScenario, Ch
       if (serialized.includes(PROFILE_CANARY)) return "the receipt echoed the prior value";
       if (serialized.includes(NEW_VALUE)) return "the receipt echoed the written value";
       if (serialized.includes(OWNER_SUBJECT)) return "the receipt echoed a subject";
-      const bad = unapprovedStrings(confirmed.receipt, TEST_POLICY);
-      if (bad.length > 0) return `receipt carries unapproved strings: ${JSON.stringify(bad)}`;
+      const bad = receiptDefects(confirmed.receipt, TEST_POLICY);
+      if (bad.length > 0) return `receipt is malformed: ${JSON.stringify(bad)}`;
       return null;
     },
 
@@ -297,8 +341,8 @@ function scenarioChecks(factory: SafeWriteFactory): Record<SafeWriteScenario, Ch
         if (!(REJECTION_REASONS as readonly string[]).includes(refusal.reason)) {
           return `reason outside the closed vocabulary: ${refusal.reason}`;
         }
-        const bad = unapprovedStrings(refusal, TEST_POLICY);
-        if (bad.length > 0) return `refusal carries unapproved strings: ${JSON.stringify(bad)}`;
+        const bad = refusalDefects(refusal);
+        if (bad.length > 0) return `refusal is malformed: ${JSON.stringify(bad)}`;
       }
       return null;
     },
@@ -395,6 +439,84 @@ function scenarioChecks(factory: SafeWriteFactory): Record<SafeWriteScenario, Ch
       const confirmed = await implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
       if (confirmed.ok) return "a change landing at commit time was overwritten";
       if (confirmed.reason !== "state_changed") return `wrong reason: ${confirmed.reason}`;
+      if (store.commits.length !== 0) return "a refused confirm still wrote";
+      return null;
+    },
+
+    "a token spent through one instance cannot be spent through another": async () => {
+      // Two instances over one store are two processes. Neither can see the
+      // other's in-memory guard, so an implementation that tracks spent tokens
+      // only in memory does not have a single-use token — it has one that is
+      // usually used once, and a restart re-opens replay.
+      //
+      // The change is deliberately a NO-OP, so compare-and-write cannot save
+      // it either: the value already equals what is stored, so the first commit
+      // leaves nothing for the second to notice. Only the store recording the
+      // token id refuses the second write.
+      const store = createRecordingStore();
+      const clock = createClock();
+      const instance = () => factory({ store, secret: TEST_SECRET, policy: TEST_POLICY, clock });
+      const [first, second] = [instance(), instance()];
+      const change = ownerChange({ value: PROFILE_CANARY });
+      const preview = await first.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+      if (!preview.ok) return `preview refused: ${preview.reason}`;
+
+      const [a, b] = await Promise.all([
+        first.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF }),
+        second.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF }),
+      ]);
+      const accepted = [a, b].filter((result) => result.ok);
+      if (accepted.length > 1) return "one token completed two writes";
+      if (accepted.length === 0) return "neither confirm succeeded";
+      const rejected = [a, b].find((result) => !result.ok) as Refused;
+      if (rejected.reason !== "token_already_used") return `wrong reason: ${rejected.reason}`;
+      if (store.commits.length !== 1) return `expected one commit, got ${store.commits.length}`;
+      return null;
+    },
+
+    "authorization revoked during the confirm stops the write": async () => {
+      // The confirm re-derives ownership, but awaits twice more before writing.
+      // A grant withdrawn in that window is invisible to every check the caller
+      // could make, so the ownership predicate has to be evaluated in the same
+      // atomic operation as the mutation.
+      const { store, implementation } = build(factory, { revokeAtCommit: true });
+      const change = ownerChange();
+      const preview = await implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+      if (!preview.ok) return `preview refused: ${preview.reason}`;
+      const confirmed = await implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
+      if (confirmed.ok) return "a write landed on a record the caller no longer owned";
+      if (confirmed.reason !== "not_own_record") return `wrong reason: ${confirmed.reason}`;
+      if (store.commits.length !== 0) return "a refused confirm still wrote";
+      if (store.fields.get(fieldKey(OWNER_PERSON_REF, "display_name")) !== PROFILE_CANARY) {
+        return "the record changed although the write was refused";
+      }
+      return null;
+    },
+
+    "a refusal to a revoked principal does not disclose the record's state": async () => {
+      // The ownership check inside the commit makes the confirm's own check
+      // look redundant — it is not. Ownership is re-derived BEFORE the current
+      // value is read, so a principal whose grant is gone is told that and
+      // nothing else. Drop the early check and the same caller is instead told
+      // `state_changed`, which reveals that a record they no longer own has
+      // been modified since they last saw it.
+      const ownership = new Map([[OWNER_PRINCIPAL_REF, OWNER_PERSON_REF]]);
+      const store = createRecordingStore({ ownership });
+      const implementation = factory({ store, secret: TEST_SECRET, policy: TEST_POLICY, clock: createClock() });
+      const change = ownerChange();
+      const preview = await implementation.preview({ change, principalRef: OWNER_PRINCIPAL_REF });
+      if (!preview.ok) return `preview refused: ${preview.reason}`;
+
+      // Both happen after the preview: the grant is withdrawn AND the record moves.
+      ownership.delete(OWNER_PRINCIPAL_REF);
+      store.fields.set(fieldKey(OWNER_PERSON_REF, "display_name"), CONCURRENT_VALUE);
+
+      const confirmed = await implementation.confirm({ token: preview.token, change, principalRef: OWNER_PRINCIPAL_REF });
+      if (confirmed.ok) return "a revoked principal completed a write";
+      if (confirmed.reason === "state_changed") {
+        return "the refusal disclosed that the record changed to a principal who no longer owns it";
+      }
+      if (confirmed.reason !== "not_own_record") return `wrong reason: ${confirmed.reason}`;
       if (store.commits.length !== 0) return "a refused confirm still wrote";
       return null;
     },

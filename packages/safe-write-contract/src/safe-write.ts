@@ -167,6 +167,10 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
     }
 
     if (token.principalRef !== principalRef) return refused("token_principal_mismatch");
+    // A cheap local shortcut, NOT the guarantee. This set is per-instance and
+    // in-memory: it cannot see another process and does not survive a restart.
+    // Single-use is enforced by the store inside the commit, which is the only
+    // place that can enforce it — see `CommitInput.tokenId`.
     if (spent.has(token.tokenId)) return refused("token_already_used");
     if (clock.now().getTime() >= Date.parse(token.expiresAt)) return refused("token_expired");
 
@@ -201,6 +205,7 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
       outcome = await store.commit({
         personRef: change.personRef,
         principalRef,
+        tokenId: token.tokenId,
         field: change.field,
         expectedBefore: current,
         value: change.value,
@@ -214,8 +219,11 @@ export function createSafeWrite(options: SafeWriteOptions): SafeWriteImplementat
       return refused("receipt_failed");
     }
 
-    // The compare half of compare-and-write lost the race. Nothing was written.
-    if (!outcome?.ok) return refused("state_changed");
+    // A precondition the store re-checked inside the transaction did not hold.
+    // Nothing was written, and each reason is reported as itself rather than
+    // being flattened into one — a caller that cannot tell "someone else
+    // changed the record" from "you no longer own it" cannot act on either.
+    if (!outcome?.ok) return refused(outcome?.reason ?? "state_changed");
 
     spent.add(token.tokenId);
     return { ok: true, receipt };
