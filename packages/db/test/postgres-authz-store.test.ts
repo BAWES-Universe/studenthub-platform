@@ -1,0 +1,1574 @@
+/**
+ * SHU-55 acceptance tests: PostgresAuthzStore against the REAL lab Postgres
+ * (127.0.0.1:55432/studenthub_authz, DATABASE_URL overridable).
+ *
+ * Every run starts from a clean schema: the `before` hook applies all
+ * migrations, and `beforeEach` truncates the authz tables so no test ever
+ * depends on leftover state. The store under test is a brand-new
+ * PostgresAuthzStore per test — same interface shape the in-memory tests
+ * exercise, so the parity suite below is the focused proof that the Postgres
+ * implementation is behaviorally interchangeable.
+ */
+import assert from "node:assert/strict";
+import { after, afterEach, before, beforeEach, test } from "node:test";
+import pg from "pg";
+
+import {
+  createOrganization,
+  createPrincipal,
+  resolveActiveContext,
+  type RoleGrant,
+} from "@studenthub/contracts";
+import {
+  PostgresAuthzStore,
+  PostgresLoginStore,
+  runMigrations,
+  bootstrapAdmin,
+  organizationAuditRef,
+  principalAuditRef,
+  requestAuditRef,
+} from "@studenthub/db";
+
+// DATABASE_URL is REQUIRED: the suite runs against a scratch Postgres that
+// must never be a default in the repo. CI injects it (postgres service in
+// .github/workflows/ci.yml); local runs export it (e.g. the SHU-55 lab
+// database at 127.0.0.1:55432/studenthub_authz).
+const DB_URL = process.env.DATABASE_URL ?? "";
+
+const ACME = "acme";
+const ACME_INDIA = "acme-india";
+
+// --- Suite plumbing --------------------------------------------------------------
+
+let adminPool: pg.Pool;
+let activeStores: PostgresAuthzStore[] = [];
+let activeLoginStores: PostgresLoginStore[] = [];
+
+/** A fresh store over the shared test database; closed by afterEach. */
+function makeStore(): PostgresAuthzStore {
+  const store = new PostgresAuthzStore({ connectionString: DB_URL });
+  activeStores.push(store);
+  return store;
+}
+
+function makeNamedStore(applicationName: string): PostgresAuthzStore {
+  const store = new PostgresAuthzStore({
+    connectionString: DB_URL,
+    application_name: applicationName,
+  });
+  activeStores.push(store);
+  return store;
+}
+
+function makeLoginStore(): PostgresLoginStore {
+  const store = new PostgresLoginStore({ connectionString: DB_URL });
+  activeLoginStores.push(store);
+  return store;
+}
+
+async function waitForLockOrSettlement(
+  applicationName: string,
+  isSettled: () => boolean = () => false,
+): Promise<"locked" | "settled"> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (isSettled()) return "settled";
+    const { rows } = await adminPool.query<{ wait_event_type: string | null }>(
+      `SELECT wait_event_type
+       FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND application_name = $1
+         AND state <> 'idle'`,
+      [applicationName],
+    );
+    if (rows.some((row) => row.wait_event_type === "Lock")) return "locked";
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${applicationName} to block or settle`);
+}
+
+before(async () => {
+  if (DB_URL.length === 0) {
+    throw new Error(
+      "DATABASE_URL is required to run the db suite: point it at a scratch " +
+        "Postgres (CI injects it via the postgres service container).",
+    );
+  }
+  adminPool = new pg.Pool({ connectionString: DB_URL });
+  await runMigrations(adminPool);
+});
+
+beforeEach(async () => {
+  activeStores = [];
+  activeLoginStores = [];
+  // Test isolation is deliberate owner administration. Production app paths
+  // cannot TRUNCATE because migration 0004's statement trigger rejects it.
+  await adminPool.query(
+    "ALTER TABLE authorization_mutation_audit DISABLE TRIGGER authorization_mutation_audit_no_truncate",
+  );
+  try {
+    await adminPool.query(
+      "TRUNCATE authorization_mutation_audit, login_states, login_sessions, external_identities, organizations, principals, principal_pbuuids, grants RESTART IDENTITY CASCADE",
+    );
+  } finally {
+    await adminPool.query(
+      "ALTER TABLE authorization_mutation_audit ENABLE TRIGGER authorization_mutation_audit_no_truncate",
+    );
+  }
+});
+
+afterEach(async () => {
+  // close() is idempotent-safe here: a test may already have closed a store
+  // (the restart test closes its first store on purpose), and pool.end() on
+  // an ended pool must not fail the suite.
+  for (const store of activeStores) await store.close().catch(() => undefined);
+  for (const store of activeLoginStores) await store.close().catch(() => undefined);
+});
+
+after(async () => {
+  await adminPool.end();
+});
+
+// ---------------------------------------------------------------------------
+// Parity: organization store
+// ---------------------------------------------------------------------------
+
+test("parity: organizations upsert, update in place, fetch and list", async () => {
+  const store = makeStore();
+
+  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+  // Parent must exist before its child (schema FK; see store header).
+  await store.upsertOrganization(
+    createOrganization({ id: ACME_INDIA, name: "Acme India Pvt", parentOrgId: ACME }),
+  );
+
+  const org = await store.getOrganization(ACME_INDIA);
+  assert.deepEqual(org, { id: ACME_INDIA, name: "Acme India Pvt", parentOrgId: ACME });
+
+  // Upsert of an existing id updates in place instead of duplicating.
+  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc (renamed)" }));
+  const renamed = await store.getOrganization(ACME);
+  assert.equal(renamed?.name, "Acme Inc (renamed)");
+
+  const all = await store.listOrganizations();
+  assert.equal(all.length, 2);
+  assert.deepEqual(
+    all.map((o) => o.id).sort(),
+    [ACME, ACME_INDIA],
+  );
+  assert.equal(await store.getOrganization("ghost"), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Parity: principal store
+// ---------------------------------------------------------------------------
+
+test("parity: principals register, list, and resolve by pbuuid", async () => {
+  const store = makeStore();
+
+  await store.registerPrincipal(
+    createPrincipal({
+      id: "alice",
+      pbuuids: ["alice-1@example.invalid", "alice-2@example.invalid"],
+      displayName: "Alice",
+      email: "alice-1@example.invalid",
+    }),
+  );
+
+  const byPbuuid = await store.findPrincipalByPbuuid("alice-1@example.invalid");
+  assert.equal(byPbuuid?.id, "alice");
+  assert.equal(byPbuuid?.displayName, "Alice");
+  assert.deepEqual([...(byPbuuid?.pbuuids ?? [])].sort(), ["alice-1@example.invalid", "alice-2@example.invalid"]);
+
+  const direct = await store.getPrincipal("alice");
+  assert.equal(direct?.id, "alice");
+  assert.equal(direct?.email, "alice-1@example.invalid");
+
+  assert.equal((await store.findPrincipalByPbuuid("alice-2@example.invalid"))?.id, "alice");
+  assert.equal(await store.findPrincipalByPbuuid("ghost@example.invalid"), undefined);
+  assert.equal(await store.getPrincipal("ghost"), undefined);
+
+  const listed = await store.listPrincipals();
+  assert.deepEqual(listed.map((p) => p.id), ["alice"]);
+
+  // Optional fields omitted on the input stay undefined on the output.
+  await store.registerPrincipal(createPrincipal({ id: "minimal", pbuuids: ["m@example.invalid"] }));
+  const minimal = await store.getPrincipal("minimal");
+  assert.equal(minimal?.displayName, undefined);
+  assert.equal(minimal?.email, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Parity: grant store semantics (many-at-once, idempotent, widest scope wins)
+// ---------------------------------------------------------------------------
+
+async function seedOrgAndPrincipal(store: PostgresAuthzStore): Promise<void> {
+  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+  await store.registerPrincipal(createPrincipal({ id: "alice", pbuuids: ["alice@example.invalid"] }));
+}
+
+test("parity: grantMany is many-at-once; re-granting upgrades self -> subtree in place", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+
+  await store.grantMany("alice", [
+    { orgId: ACME, role: "candidate", scope: "self" },
+    { orgId: ACME, role: "recruiter" }, // scope defaults to self
+  ]);
+
+  let grants = await store.listGrantsForPrincipal("alice");
+  assert.equal(grants.length, 2);
+  const candidateRow = grants.find((g) => g.role === "candidate");
+  assert.ok(candidateRow);
+  assert.equal(candidateRow.scope, "self");
+  assert.equal(Object.isFrozen(candidateRow), true);
+  assert.equal(Object.isFrozen(grants), true);
+  assert.equal(typeof candidateRow.id, "string", "grant ids are strings like the in-memory store");
+
+  // Idempotent re-grant of the same (org, role) widens self -> subtree.
+  await store.grantMany("alice", [{ orgId: ACME, role: "candidate", scope: "subtree" }]);
+  grants = await store.listGrantsForPrincipal("alice");
+  assert.equal(grants.length, 2, "merge must not add a duplicate row");
+  const upgraded = grants.find((g) => g.role === "candidate");
+  assert.equal(upgraded?.scope, "subtree");
+  assert.equal(upgraded?.id, candidateRow.id, "row replaced in place, not duplicated");
+
+  // Widest scope wins is a one-way ratchet: a later 'self' grant must NOT
+  // narrow an existing 'subtree' grant.
+  await store.grantMany("alice", [{ orgId: ACME, role: "candidate", scope: "self" }]);
+  grants = await store.listGrantsForPrincipal("alice");
+  assert.equal(grants.length, 2);
+  assert.equal(grants.find((g) => g.role === "candidate")?.scope, "subtree");
+});
+
+test("parity: grantMany rejects an invalid entry without touching existing grants", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await store.grantMany("alice", [{ orgId: ACME, role: "candidate" }]);
+
+  await assert.rejects(
+    () => store.grantMany("alice", [{ orgId: ACME, role: "superuser" }]),
+    TypeError,
+  );
+  const grants = await store.listGrantsForPrincipal("alice");
+  assert.equal(grants.length, 1, "a rejected grantMany must not partially apply");
+});
+
+test("parity: grantMany with duplicate (orgId, role) entries in ONE call merges widest-scope-wins", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+
+  // self + subtree for the SAME (org, role) in one call: InMemoryAuthzStore
+  // collapses to one row with the widest scope. A single INSERT ... ON
+  // CONFLICT cannot resolve two conflicting rows from its own VALUES list,
+  // so the store must dedupe before building the statement (GPT R3 #3).
+  await store.grantMany("alice", [
+    { orgId: ACME, role: "candidate", scope: "self" },
+    { orgId: ACME, role: "candidate", scope: "subtree" },
+  ]);
+
+  const grants = await store.listGrantsForPrincipal("alice");
+  assert.equal(grants.length, 1, "duplicate keys in one call collapse to one row");
+  assert.equal(grants[0]?.role, "candidate");
+  assert.equal(grants[0]?.scope, "subtree", "widest scope wins within the call");
+});
+
+test("parity: revokeMany removes exactly the targeted (org, role) rows; unknown ignored", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await store.grantMany("alice", [
+    { orgId: ACME, role: "candidate" },
+    { orgId: ACME, role: "finance" },
+    { orgId: ACME, role: "recruiter", scope: "subtree" },
+  ]);
+
+  // Scope is irrelevant to a revocation; unknown targets delete nothing.
+  await store.revokeMany("alice", [
+    { orgId: ACME, role: "candidate" },
+    { orgId: ACME, role: "superuser" },
+  ]);
+  const grants = await store.listGrantsForPrincipal("alice");
+  assert.deepEqual(
+    grants.map((g: RoleGrant) => g.role).sort(),
+    ["finance", "recruiter"],
+  );
+});
+
+test("parity: clearGrantsForPrincipal empties the grant set but keeps the principal", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await store.grantMany("alice", [{ orgId: ACME, role: "finance", scope: "subtree" }]);
+
+  await store.clearGrantsForPrincipal("alice");
+  assert.deepEqual(await store.listGrantsForPrincipal("alice"), []);
+
+  await store.clearGrantsForPrincipal("never-granted"); // no-op on unknowns
+  assert.equal((await store.getPrincipal("alice"))?.id, "alice");
+});
+
+// ---------------------------------------------------------------------------
+// SHU-59: authorization mutation audit is transaction-coupled and secret-free
+// ---------------------------------------------------------------------------
+
+test("audit: every persisted principal/grant mutation records bounded before/after facts", async () => {
+  const store = makeStore();
+  const sensitiveOrg = "org-owner@example.invalid";
+  await store.upsertOrganization(
+    createOrganization({ id: sensitiveOrg, name: "Synthetic audit org" }),
+  );
+
+  const rawIdentity = "audit-person@example.invalid";
+  const actor = "principal-reviewer@example.invalid";
+  await store.registerPrincipal(
+    createPrincipal({
+      id: "audit-person",
+      pbuuids: [rawIdentity],
+      displayName: "Bearer secret-value",
+      email: rawIdentity,
+    }),
+    { requestId: "req.principal-1", actorPrincipalId: actor },
+  );
+  await store.grantMany(
+    "audit-person",
+    [{ orgId: sensitiveOrg, role: "candidate", scope: "self" }],
+    { requestId: "req.grant-1", actorPrincipalId: actor },
+  );
+  await store.revokeMany(
+    "audit-person",
+    [{ orgId: sensitiveOrg, role: "candidate" }],
+    { requestId: "req.revoke-1", actorPrincipalId: actor },
+  );
+  await store.grantMany(
+    "audit-person",
+    [{ orgId: sensitiveOrg, role: "finance", scope: "subtree" }],
+    { requestId: "req.seed-clear" },
+  );
+  await store.clearGrantsForPrincipal("audit-person", {
+    requestId: "req.clear-1",
+    actorPrincipalId: actor,
+  });
+
+  const expected = [
+    ["req.principal-1", "principal.register"],
+    ["req.grant-1", "grants.grant"],
+    ["req.revoke-1", "grants.revoke"],
+    ["req.clear-1", "grants.clear"],
+  ] as const;
+  for (const [requestId, operation] of expected) {
+    const records = await store.listAuthorizationMutationAuditRecords({ requestId });
+    assert.equal(records.length, 1);
+    const record = records[0];
+    assert.equal(record?.operation, operation);
+    assert.equal(record?.requestRef, requestAuditRef(requestId));
+    assert.equal(record?.actorPrincipalRef, principalAuditRef(actor));
+    assert.equal(record?.targetPrincipalRef, principalAuditRef("audit-person"));
+    assert.ok(record?.occurredAt.endsWith("Z"));
+    assert.equal(Object.isFrozen(record), true);
+    assert.equal(Object.isFrozen(record?.before), true);
+    assert.equal(Object.isFrozen(record?.after), true);
+  }
+
+  const grant = (await store.listAuthorizationMutationAuditRecords({
+    requestId: "req.grant-1",
+  }))[0];
+  assert.deepEqual(grant?.targetOrgRefs, [organizationAuditRef(sensitiveOrg)]);
+  assert.deepEqual(grant?.before, { grantCount: 0, selfCount: 0, subtreeCount: 0 });
+  assert.deepEqual(grant?.after, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
+
+  const serialized = JSON.stringify(await store.listAuthorizationMutationAuditRecords());
+  for (const forbidden of [
+    rawIdentity,
+    actor,
+    "Bearer secret-value",
+    "secret-value",
+    "req.principal-1",
+    sensitiveOrg,
+  ]) {
+    assert.equal(serialized.includes(forbidden), false, `audit leaked forbidden value: ${forbidden}`);
+  }
+});
+
+test("audit: concurrent grant summaries serialize per principal", async () => {
+  const storeA = makeStore();
+  const storeB = makeStore();
+  await seedOrgAndPrincipal(storeA);
+
+  // Hold the referenced org row so writer A stops at its FK check after it
+  // has taken the audit lock and read the before summary. Writer B must then
+  // wait on the same advisory lock instead of reading the same stale summary.
+  const blocker = await adminPool.connect();
+  let blockerOpen = true;
+  let writerA: Promise<void> | undefined;
+  let writerB: Promise<void> | undefined;
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [ACME]);
+    writerA = storeA.grantMany(
+      "alice",
+      [{ orgId: ACME, role: "candidate" }],
+      { requestId: "req.concurrent-a" },
+    );
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const held = await adminPool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted",
+      );
+      if ((held.rows[0]?.n ?? 0) > 0) break;
+      if (attempt === 99) assert.fail("writer A never acquired the per-principal audit lock");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    writerB = storeB.grantMany(
+      "alice",
+      [{ orgId: ACME, role: "finance", scope: "subtree" }],
+      { requestId: "req.concurrent-b" },
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const waiting = await adminPool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted",
+      );
+      if ((waiting.rows[0]?.n ?? 0) > 0) break;
+      if (attempt === 99) assert.fail("writer B bypassed the per-principal audit lock");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    await blocker.query("COMMIT");
+    blockerOpen = false;
+    await Promise.all([writerA, writerB]);
+
+    const first = (await storeA.listAuthorizationMutationAuditRecords({
+      requestId: "req.concurrent-a",
+    }))[0];
+    const second = (await storeA.listAuthorizationMutationAuditRecords({
+      requestId: "req.concurrent-b",
+    }))[0];
+    assert.deepEqual(first?.before, { grantCount: 0, selfCount: 0, subtreeCount: 0 });
+    assert.deepEqual(first?.after, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
+    assert.deepEqual(second?.before, { grantCount: 1, selfCount: 1, subtreeCount: 0 });
+    assert.deepEqual(second?.after, { grantCount: 2, selfCount: 1, subtreeCount: 1 });
+  } finally {
+    if (blockerOpen) await blocker.query("ROLLBACK").catch(() => undefined);
+    blocker.release();
+    await Promise.allSettled([writerA, writerB].filter((value) => value !== undefined));
+  }
+});
+
+test("audit: a rejected cross-principal identity claim leaves no success record", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "victim", pbuuids: ["taken@example.invalid"] }),
+    { requestId: "req.victim-seed" },
+  );
+  await assert.rejects(
+    () =>
+      store.registerPrincipal(
+        createPrincipal({ id: "attacker", pbuuids: ["taken@example.invalid"] }),
+        { requestId: "req.rejected-identity" },
+      ),
+    /already owned/,
+  );
+  assert.deepEqual(
+    await store.listAuthorizationMutationAuditRecords({
+      requestId: "req.rejected-identity",
+    }),
+    [],
+  );
+  assert.equal(await store.getPrincipal("attacker"), undefined);
+});
+
+test("audit: an invalid correlation id rolls back the authorization mutation", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await assert.rejects(
+    () =>
+      store.grantMany(
+        "alice",
+        [{ orgId: ACME, role: "finance" }],
+        { requestId: "" },
+      ),
+    /request audit reference input/,
+  );
+  assert.deepEqual(await store.listGrantsForPrincipal("alice"), []);
+});
+
+test("audit: record reads are bounded", async () => {
+  const store = makeStore();
+  await assert.rejects(
+    () => store.listAuthorizationMutationAuditRecords({ limit: 0 }),
+    /limit must be an integer from 1 to 1000/,
+  );
+  await assert.rejects(
+    () => store.listAuthorizationMutationAuditRecords({ limit: 1_001 }),
+    /limit must be an integer from 1 to 1000/,
+  );
+});
+
+test("audit: logical no-ops emit no mutation facts", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+  const principal = createPrincipal({
+    id: "no-op-person",
+    pbuuids: ["no-op@example.invalid"],
+    displayName: "No Op",
+  });
+  await store.registerPrincipal(principal, { requestId: "req.noop-principal-seed" });
+  await store.registerPrincipal(principal, { requestId: "req.noop-principal" });
+
+  await store.grantMany(
+    principal.id,
+    [{ orgId: ACME, role: "candidate", scope: "self" }],
+    { requestId: "req.noop-grant-seed" },
+  );
+  await store.grantMany(
+    principal.id,
+    [{ orgId: ACME, role: "candidate", scope: "self" }],
+    { requestId: "req.noop-grant" },
+  );
+  await store.revokeMany(
+    principal.id,
+    [{ orgId: ACME, role: "finance" }],
+    { requestId: "req.noop-revoke" },
+  );
+  await store.clearGrantsForPrincipal(principal.id, { requestId: "req.clear-once" });
+  await store.clearGrantsForPrincipal(principal.id, { requestId: "req.noop-clear" });
+
+  for (const requestId of [
+    "req.noop-principal",
+    "req.noop-grant",
+    "req.noop-revoke",
+    "req.noop-clear",
+  ]) {
+    assert.deepEqual(
+      await store.listAuthorizationMutationAuditRecords({ requestId }),
+      [],
+      `${requestId} must not manufacture a mutation fact`,
+    );
+  }
+});
+
+test("audit: an insert failure rolls back its paired mutation and emits no success fact", async () => {
+  const store = makeStore();
+  await seedOrgAndPrincipal(store);
+  await adminPool.query(`
+    CREATE OR REPLACE FUNCTION fail_shu59_audit_insert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.request_ref = '${requestAuditRef("req.fail-audit")}' THEN
+        RAISE EXCEPTION 'injected audit failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_shu59_audit_insert
+      BEFORE INSERT ON authorization_mutation_audit
+      FOR EACH ROW EXECUTE FUNCTION fail_shu59_audit_insert();
+  `);
+  try {
+    await assert.rejects(
+      () =>
+        store.grantMany(
+          "alice",
+          [{ orgId: ACME, role: "recruiter" }],
+          { requestId: "req.fail-audit" },
+        ),
+      /injected audit failure/,
+    );
+    assert.deepEqual(await store.listGrantsForPrincipal("alice"), []);
+    assert.deepEqual(
+      await store.listAuthorizationMutationAuditRecords({ requestId: "req.fail-audit" }),
+      [],
+    );
+  } finally {
+    await adminPool.query("DROP TRIGGER IF EXISTS fail_shu59_audit_insert ON authorization_mutation_audit");
+    await adminPool.query("DROP FUNCTION IF EXISTS fail_shu59_audit_insert()");
+  }
+});
+
+test("audit: a client whose rollback fails is destroyed, never returned to the pool", async () => {
+  const seed = makeStore();
+  await seedOrgAndPrincipal(seed);
+  const pool = new pg.Pool({ connectionString: DB_URL });
+  const store = new PostgresAuthzStore(pool);
+  const originalConnect = pool.connect.bind(pool);
+  let releasedWith: boolean | Error | undefined;
+
+  await adminPool.query(`
+    CREATE OR REPLACE FUNCTION fail_shu59_rollback_audit()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.request_ref = '${requestAuditRef("req.rollback-fails")}' THEN
+        RAISE EXCEPTION 'injected mutation failure before rollback';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_shu59_rollback_audit
+      BEFORE INSERT ON authorization_mutation_audit
+      FOR EACH ROW EXECUTE FUNCTION fail_shu59_rollback_audit();
+  `);
+
+  const client = await originalConnect();
+  const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+  const originalRelease = client.release.bind(client);
+  client.query = ((...args: unknown[]) => {
+    const statement =
+      typeof args[0] === "string"
+        ? args[0]
+        : (args[0] as { readonly text?: string } | undefined)?.text;
+    if (statement === "ROLLBACK") return Promise.reject(new Error("injected rollback failure"));
+    return originalQuery(...args);
+  }) as typeof client.query;
+  client.release = ((destroy?: boolean | Error) => {
+    releasedWith = destroy;
+    originalRelease(destroy);
+  }) as typeof client.release;
+  pool.connect = (async () => client) as typeof pool.connect;
+
+  try {
+    await assert.rejects(
+      () =>
+        store.grantMany(
+          "alice",
+          [{ orgId: ACME, role: "finance" }],
+          { requestId: "req.rollback-fails" },
+        ),
+      /injected mutation failure before rollback/,
+    );
+    assert.equal(releasedWith, true, "unknown transaction state must destroy the client");
+  } finally {
+    pool.connect = originalConnect as typeof pool.connect;
+    await pool.end();
+    await adminPool.query(
+      "DROP TRIGGER IF EXISTS fail_shu59_rollback_audit ON authorization_mutation_audit",
+    );
+    await adminPool.query("DROP FUNCTION IF EXISTS fail_shu59_rollback_audit()");
+  }
+
+  assert.deepEqual(await seed.listGrantsForPrincipal("alice"), []);
+});
+
+test("organizations: a client whose rollback fails is destroyed, never returned to the pool", async () => {
+  const pool = new pg.Pool({ connectionString: DB_URL });
+  const store = new PostgresAuthzStore(pool);
+  const originalConnect = pool.connect.bind(pool);
+  let releasedWith: boolean | Error | undefined;
+
+  await adminPool.query(`
+    CREATE OR REPLACE FUNCTION fail_shu59_org_upsert()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.id = 'rollback-org' THEN
+        RAISE EXCEPTION 'injected organization mutation failure before rollback';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_shu59_org_upsert
+      BEFORE INSERT OR UPDATE ON organizations
+      FOR EACH ROW EXECUTE FUNCTION fail_shu59_org_upsert();
+  `);
+
+  const client = await originalConnect();
+  const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+  const originalRelease = client.release.bind(client);
+  client.query = ((...args: unknown[]) => {
+    const statement =
+      typeof args[0] === "string"
+        ? args[0]
+        : (args[0] as { readonly text?: string } | undefined)?.text;
+    if (statement === "ROLLBACK") return Promise.reject(new Error("injected rollback failure"));
+    return originalQuery(...args);
+  }) as typeof client.query;
+  client.release = ((destroy?: boolean | Error) => {
+    releasedWith = destroy;
+    originalRelease(destroy);
+  }) as typeof client.release;
+  pool.connect = (async () => client) as typeof pool.connect;
+
+  try {
+    await assert.rejects(
+      () =>
+        store.upsertOrganization(
+          createOrganization({ id: "rollback-org", name: "Rollback Org" }),
+        ),
+      /injected organization mutation failure before rollback/,
+    );
+    assert.equal(releasedWith, true, "unknown transaction state must destroy the client");
+  } finally {
+    pool.connect = originalConnect as typeof pool.connect;
+    await pool.end();
+    await adminPool.query("DROP TRIGGER IF EXISTS fail_shu59_org_upsert ON organizations");
+    await adminPool.query("DROP FUNCTION IF EXISTS fail_shu59_org_upsert()");
+  }
+
+  const { rows } = await adminPool.query<{ id: string }>(
+    "SELECT id FROM organizations WHERE id = 'rollback-org'",
+  );
+  assert.deepEqual(rows, [], "failed organization upsert must not persist");
+});
+
+test("audit: application audit rows reject update and delete", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "append-only", pbuuids: [] }),
+    { requestId: "req.append-only" },
+  );
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        "UPDATE authorization_mutation_audit SET request_ref = repeat('0', 64) WHERE request_ref = $1",
+        [requestAuditRef("req.append-only")],
+      ),
+    /append-only/,
+  );
+  await assert.rejects(
+    () => adminPool.query("TRUNCATE authorization_mutation_audit"),
+    /append-only/,
+  );
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        "DELETE FROM authorization_mutation_audit WHERE request_ref = $1",
+        [requestAuditRef("req.append-only")],
+      ),
+    /append-only/,
+  );
+  assert.equal(
+    (await store.listAuthorizationMutationAuditRecords({ requestId: "req.append-only" })).length,
+    1,
+  );
+});
+
+test("audit: database constraints reject raw organization identifiers", async () => {
+  const summary = { grantCount: 0, selfCount: 0, subtreeCount: 0 };
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        `INSERT INTO authorization_mutation_audit
+           (request_ref, operation, target_principal_ref, target_org_refs,
+            before_summary, after_summary)
+         VALUES ($1, 'grants.grant', $2, $3::text[], $4::jsonb, $4::jsonb)`,
+        [
+          requestAuditRef("req.raw-org"),
+          principalAuditRef("target"),
+          ["org-owner@example.invalid"],
+          JSON.stringify(summary),
+        ],
+      ),
+    /auth_audit_target_org_refs_shape/,
+  );
+  const leaked = await adminPool.query(
+    "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+    [requestAuditRef("req.raw-org")],
+  );
+  assert.equal(leaked.rowCount, 0);
+});
+
+test("audit: database constraints reject secrets in summary JSON", async () => {
+  const unsafe = {
+    grantCount: 0,
+    selfCount: 0,
+    subtreeCount: 0,
+    token: "raw-secret-token",
+  };
+  await assert.rejects(
+    () =>
+      adminPool.query(
+        `INSERT INTO authorization_mutation_audit
+           (request_ref, operation, target_principal_ref, target_org_refs,
+            before_summary, after_summary)
+         VALUES ($1, 'grants.grant', $2, $3::text[], $4::jsonb, $5::jsonb)`,
+        [
+          requestAuditRef("req.raw-summary"),
+          principalAuditRef("target"),
+          [organizationAuditRef(ACME)],
+          JSON.stringify(unsafe),
+          JSON.stringify({ grantCount: 0, selfCount: 0, subtreeCount: 0 }),
+        ],
+      ),
+    /auth_audit_before_summary_shape/,
+  );
+  const leaked = await adminPool.query(
+    "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+    [requestAuditRef("req.raw-summary")],
+  );
+  assert.equal(leaked.rowCount, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Integrity: pbuuid ownership (stale mapping removal + cross-principal theft)
+// ---------------------------------------------------------------------------
+
+test("integrity: re-registering a principal detaches its removed pbuuids", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "p1", pbuuids: ["a@example.invalid", "b@example.invalid"] }),
+  );
+  assert.equal((await store.findPrincipalByPbuuid("a@example.invalid"))?.id, "p1");
+
+  // Detach a@example.invalid by re-registering without it.
+  await store.registerPrincipal(createPrincipal({ id: "p1", pbuuids: ["b@example.invalid"] }));
+
+  assert.equal(
+    await store.findPrincipalByPbuuid("a@example.invalid"),
+    undefined,
+    "a detached identity must stop resolving — otherwise it still reaches p1's grants",
+  );
+  assert.equal((await store.findPrincipalByPbuuid("b@example.invalid"))?.id, "p1");
+
+  // Detaching the LAST pbuuid leaves a principal with no identities at all.
+  await store.registerPrincipal(createPrincipal({ id: "p1", pbuuids: [] }));
+  assert.equal(await store.findPrincipalByPbuuid("b@example.invalid"), undefined);
+  assert.equal((await store.getPrincipal("p1"))?.id, "p1");
+});
+
+test("integrity: a pbuuid owned by another principal cannot be claimed", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "victim", pbuuids: ["victim@example.invalid"] }),
+  );
+
+  await assert.rejects(
+    () =>
+      store.registerPrincipal(
+        createPrincipal({ id: "attacker", pbuuids: ["victim@example.invalid"] }),
+      ),
+    (error: unknown) =>
+      error instanceof TypeError &&
+      /already owned by principal 'victim'/.test(error.message),
+  );
+
+  assert.equal((await store.findPrincipalByPbuuid("victim@example.invalid"))?.id, "victim");
+  assert.equal(
+    await store.getPrincipal("attacker"),
+    undefined,
+    "rejected registration must not partially apply",
+  );
+});
+
+test("integrity: a rejected registration leaves NO trace of any of its pbuuids", async () => {
+  const store = makeStore();
+  await store.registerPrincipal(
+    createPrincipal({ id: "victim", pbuuids: ["taken@example.invalid"] }),
+  );
+  // First pbuuid is free, second is taken: the whole transaction must roll
+  // back, so even the free one is not indexed (matches the in-memory
+  // validation-before-mutation behavior).
+  await assert.rejects(() =>
+    store.registerPrincipal(
+      createPrincipal({ id: "attacker", pbuuids: ["free@example.invalid", "taken@example.invalid"] }),
+    ),
+    TypeError,
+  );
+  assert.equal(await store.findPrincipalByPbuuid("free@example.invalid"), undefined);
+  assert.equal(
+    (await store.findPrincipalByPbuuid("taken@example.invalid"))?.id,
+    "victim",
+    "the victim's mapping survives the failed claim",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Concurrency: the pbuuid primary key serializes competing claims (TOCTOU)
+// ---------------------------------------------------------------------------
+
+test("concurrency: parallel claims of one pbuuid — exactly one principal wins", async () => {
+  const store = makeStore();
+  const shared = "shared@example.invalid";
+  const principalA = createPrincipal({ id: "principal-a", pbuuids: [shared] });
+  const principalB = createPrincipal({ id: "principal-b", pbuuids: [shared] });
+
+  const [resultA, resultB] = await Promise.allSettled([
+    store.registerPrincipal(principalA),
+    store.registerPrincipal(principalB),
+  ]);
+
+  // The unique index serializes the writers: exactly one registration
+  // commits, the other fails with the ownership TypeError. Both succeeding
+  // would be the CWE-863 theft both stores must prevent; both failing would
+  // mean the constraint rejected a legitimate first claim.
+  const settled = [resultA, resultB];
+  const winnerIndex = settled.findIndex((r) => r.status === "fulfilled");
+  const loser = settled[1 - winnerIndex];
+  assert.ok(winnerIndex !== -1, "exactly one registration must succeed");
+  assert.equal(settled.filter((r) => r.status === "fulfilled").length, 1);
+  assert.equal(loser.status, "rejected");
+  if (loser.status === "rejected") {
+    assert.ok(
+      loser.reason instanceof TypeError && /already owned by principal/.test(loser.reason.message),
+      `loser must fail with the ownership TypeError, got: ${String(loser.reason)}`,
+    );
+  }
+
+  const winnerId = winnerIndex === 0 ? principalA.id : principalB.id;
+  const loserId = winnerIndex === 0 ? principalB.id : principalA.id;
+
+  // The pbuuid resolves to the winner — and only the winner exists.
+  assert.equal((await store.findPrincipalByPbuuid(shared))?.id, winnerId);
+  assert.equal(await store.getPrincipal(loserId), undefined);
+  assert.equal((await store.getPrincipal(winnerId))?.id, winnerId);
+});
+
+// ---------------------------------------------------------------------------
+// Restart persistence: data survives close(); a fresh store resolves it
+// ---------------------------------------------------------------------------
+
+test("persistence: contexts resolve identically after close + fresh store on the same database", async () => {
+  const storeA = makeStore();
+  await storeA.upsertOrganization(createOrganization({ id: ACME, name: "Acme Inc" }));
+  await storeA.upsertOrganization(
+    createOrganization({ id: ACME_INDIA, name: "Acme India Pvt", parentOrgId: ACME }),
+  );
+  await storeA.registerPrincipal(
+    createPrincipal({
+      id: "root-admin",
+      pbuuids: ["root-admin@example.invalid"],
+      displayName: "Root Admin",
+    }),
+  );
+  await storeA.grantMany("root-admin", [
+    { orgId: ACME, role: "admin", scope: "subtree" },
+  ]);
+  await storeA.close();
+
+  // A NEW store over the same database — nothing in memory, everything from
+  // Postgres — must resolve the exact same active context the old store
+  // would have: the subtree grant at acme reaches acme-india.
+  const storeB = makeStore();
+  const resolution = await resolveActiveContext(
+    { kind: "pbuuid", pbuuid: "root-admin@example.invalid" },
+    { orgId: ACME_INDIA, role: "admin" },
+    storeB,
+  );
+  assert.equal(resolution.kind, "authorized");
+  if (resolution.kind === "authorized") {
+    assert.equal(resolution.context.principalId, "root-admin");
+    assert.equal(resolution.context.orgId, ACME_INDIA);
+    assert.equal(resolution.context.role, "admin");
+    assert.equal(resolution.context.scope, "subtree");
+    assert.equal(resolution.context.grantedByOrgId, ACME);
+    assert.equal(resolution.context.direct, false);
+  }
+
+  const grants = await storeB.listGrantsForPrincipal("root-admin");
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0]?.orgId, ACME);
+  assert.equal(grants[0]?.role, "admin");
+  assert.equal(grants[0]?.scope, "subtree");
+
+  const orgs = await storeB.listOrganizations();
+  assert.equal(orgs.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Integrity: organization tree cycles (parity with InMemoryAuthzStore)
+// ---------------------------------------------------------------------------
+
+test("integrity: reparenting into a cycle (A->B->A) is rejected atomically", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "a", name: "A" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "b", name: "B", parentOrgId: "a" }),
+  );
+
+  // Reparent A under B would close the cycle A->B->A. The self-referencing
+  // FK alone permits it (both rows exist); the store must reject it like
+  // InMemoryAuthzStore does.
+  await assert.rejects(
+    () =>
+      store.upsertOrganization(
+        createOrganization({ id: "a", name: "A", parentOrgId: "b" }),
+      ),
+    (error: unknown) =>
+      error instanceof TypeError && /cycle detected/.test(error.message),
+  );
+
+  // The rejected reparent must leave the tree exactly as it was.
+  assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+  assert.equal((await store.getOrganization("b"))?.parentOrgId, "a");
+});
+
+test("integrity: an organization cannot become its own parent at the store boundary", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "a", name: "A" }));
+
+  // Hand-built object bypassing createOrganization: the store itself must
+  // reject self-parenting (a raw UPDATE would satisfy the FK).
+  await assert.rejects(
+    () => store.upsertOrganization({ id: "a", name: "A", parentOrgId: "a" }),
+    (error: unknown) =>
+      error instanceof TypeError && /own parent/.test(error.message),
+  );
+
+  assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+});
+
+test("integrity: a cycle spanning three organizations is rejected (A<-B->A closed via C)", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "a", name: "A" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "b", name: "B", parentOrgId: "a" }),
+  );
+  await store.upsertOrganization(
+    createOrganization({ id: "c", name: "C", parentOrgId: "b" }),
+  );
+
+  // Reparent A under C: A -> C -> B -> A.
+  await assert.rejects(
+    () =>
+      store.upsertOrganization(
+        createOrganization({ id: "a", name: "A", parentOrgId: "c" }),
+      ),
+    TypeError,
+  );
+  assert.equal((await store.getOrganization("a"))?.parentOrgId, undefined);
+});
+
+test("integrity: disjoint concurrent reparents cannot commit a four-organization cycle", async () => {
+  const store = makeStore();
+  await store.upsertOrganization(createOrganization({ id: "b", name: "B" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "a", name: "A", parentOrgId: "b" }),
+  );
+  await store.upsertOrganization(createOrganization({ id: "d", name: "D" }));
+  await store.upsertOrganization(
+    createOrganization({ id: "c", name: "C", parentOrgId: "d" }),
+  );
+
+  // Pause B->C in a BEFORE UPDATE trigger. At that point its recursive cycle
+  // check has already read the old tree. Without a whole-tree lock, D->A has
+  // disjoint row locks, also validates against the old tree, and both commit:
+  // A->B->C->D->A. With the lock, D->A cannot validate until B->C commits and
+  // is then rejected. The application names let the test observe the lock
+  // waits without timing guesses.
+  const blocker = await adminPool.connect();
+  const writerA = makeNamedStore("shu72-tree-writer-a");
+  const writerB = makeNamedStore("shu72-tree-writer-b");
+  let first: Promise<void> | undefined;
+  let second: Promise<void> | undefined;
+  let blockerHeld = false;
+  try {
+    await adminPool.query(`
+      CREATE OR REPLACE FUNCTION shu72_block_b_reparent() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.id = 'b' THEN
+          PERFORM pg_advisory_xact_lock(63072);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await adminPool.query(`
+      CREATE OR REPLACE TRIGGER shu72_block_b_reparent
+      BEFORE UPDATE ON organizations
+      FOR EACH ROW EXECUTE FUNCTION shu72_block_b_reparent()
+    `);
+    await blocker.query("SELECT pg_advisory_lock(63072)");
+    blockerHeld = true;
+
+    first = writerA.upsertOrganization(
+      createOrganization({ id: "b", name: "B", parentOrgId: "c" }),
+    );
+    assert.equal(await waitForLockOrSettlement("shu72-tree-writer-a"), "locked");
+
+    let secondSettled = false;
+    second = writerB
+      .upsertOrganization(createOrganization({ id: "d", name: "D", parentOrgId: "a" }))
+      .finally(() => {
+        secondSettled = true;
+      });
+    const secondState = await waitForLockOrSettlement(
+      "shu72-tree-writer-b",
+      () => secondSettled,
+    );
+
+    await blocker.query("SELECT pg_advisory_unlock(63072)");
+    blockerHeld = false;
+    const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+    assert.equal(firstResult.status, "fulfilled", "the first valid reparent commits");
+    assert.equal(
+      secondState,
+      "locked",
+      "the second writer must wait before validating the whole-tree invariant",
+    );
+    assert.equal(secondResult.status, "rejected", "the cycle-closing reparent is rejected");
+    if (secondResult.status === "rejected") {
+      assert.ok(
+        secondResult.reason instanceof TypeError &&
+          /cycle detected/.test(secondResult.reason.message),
+        `expected cycle rejection, got ${String(secondResult.reason)}`,
+      );
+    }
+    assert.equal((await store.getOrganization("b"))?.parentOrgId, "c");
+    assert.equal((await store.getOrganization("d"))?.parentOrgId, undefined);
+  } finally {
+    if (blockerHeld) await blocker.query("SELECT pg_advisory_unlock(63072)").catch(() => undefined);
+    await Promise.allSettled([first, second].filter((value): value is Promise<void> => value !== undefined));
+    blocker.release();
+    await adminPool.query("DROP TRIGGER IF EXISTS shu72_block_b_reparent ON organizations");
+    await adminPool.query("DROP FUNCTION IF EXISTS shu72_block_b_reparent()");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Bootstrap: the one-root-admin rule is a DATABASE property (SHU-55, GPT R3)
+// ---------------------------------------------------------------------------
+
+test("bootstrap concurrency: two simultaneous bootstraps cannot create two root admins", async () => {
+  // Two independent processes (separate pools) race a fresh database. Both
+  // can pass the pre-write SELECT guard; migration 0002's partial unique
+  // index is what actually enforces one root admin — exactly one run must
+  // succeed and exactly one admin grant row may exist afterwards.
+  const poolA = new pg.Pool({ connectionString: DB_URL });
+  const poolB = new pg.Pool({ connectionString: DB_URL });
+  try {
+    const [resultA, resultB] = await Promise.allSettled([
+      bootstrapAdmin(poolA, {
+        pbuuid: "admin-a@example.invalid",
+        requestId: "bootstrap-a",
+      }),
+      bootstrapAdmin(poolB, {
+        pbuuid: "admin-b@example.invalid",
+        requestId: "bootstrap-b",
+      }),
+    ]);
+
+    const settled = [resultA, resultB];
+    const fulfilledCount = settled.filter((r) => r.status === "fulfilled").length;
+    assert.equal(
+      fulfilledCount,
+      1,
+      `exactly one bootstrap may create the root admin, got ${fulfilledCount} ` +
+        `(both succeeding would be the TOCTOU two-root-admins bug)`,
+    );
+    const loser = settled.find((r) => r.status === "rejected");
+    assert.ok(loser, "the losing bootstrap must be rejected");
+    if (loser?.status === "rejected") {
+      assert.match(
+        String(loser.reason),
+        /second platform admin/i,
+        `loser must fail with the second-admin refusal, got: ${String(loser.reason)}`,
+      );
+    }
+
+    const { rows } = await adminPool.query<{ principal_id: string }>(
+      "SELECT principal_id FROM grants WHERE org_id = 'root' AND role = 'admin'",
+    );
+    assert.equal(rows.length, 1, "the database holds exactly one root admin grant");
+
+    // Zero-trace atomicity (GPT R3, round 2 #1): the LOSER's principal and
+    // pbuuid must not exist — the whole bootstrap transaction rolled back,
+    // not just the grant. The winner's principal must exist (positive control).
+    const winnerPbuuid =
+      resultA.status === "fulfilled"
+        ? "admin-a@example.invalid"
+        : "admin-b@example.invalid";
+    const loserPbuuid =
+      resultA.status === "fulfilled"
+        ? "admin-b@example.invalid"
+        : "admin-a@example.invalid";
+    const winnerRows = await adminPool.query(
+      "SELECT 1 FROM principals WHERE id = $1",
+      [`principal-${winnerPbuuid}`],
+    );
+    assert.equal(winnerRows.rowCount, 1, "the winning bootstrap's principal exists");
+    const loserPrincipal = await adminPool.query(
+      "SELECT 1 FROM principals WHERE id = $1",
+      [`principal-${loserPbuuid}`],
+    );
+    assert.equal(
+      loserPrincipal.rowCount,
+      0,
+      "a rejected bootstrap must leave NO principal behind (atomic rollback)",
+    );
+    const loserPbuuidRow = await adminPool.query(
+      "SELECT 1 FROM principal_pbuuids WHERE pbuuid = $1",
+      [loserPbuuid],
+    );
+    assert.equal(
+      loserPbuuidRow.rowCount,
+      0,
+      "a rejected bootstrap must leave NO pbuuid mapping behind (atomic rollback)",
+    );
+    const winnerRequest = resultA.status === "fulfilled" ? "bootstrap-a" : "bootstrap-b";
+    const loserRequest = resultA.status === "fulfilled" ? "bootstrap-b" : "bootstrap-a";
+    const winnerAudit = await adminPool.query(
+      "SELECT operation FROM authorization_mutation_audit WHERE request_ref = $1 ORDER BY id",
+      [requestAuditRef(winnerRequest)],
+    );
+    assert.deepEqual(
+      winnerAudit.rows.map((row: { operation: string }) => row.operation),
+      ["principal.register", "grants.grant"],
+    );
+    const loserAudit = await adminPool.query(
+      "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+      [requestAuditRef(loserRequest)],
+    );
+    assert.equal(loserAudit.rowCount, 0, "a rejected bootstrap emits no success audit fact");
+  } finally {
+    await poolA.end();
+    await poolB.end();
+  }
+});
+
+test("bootstrap: a client whose rollback fails is destroyed and preserves the mutation error", async () => {
+  const pool = new pg.Pool({ connectionString: DB_URL, max: 1 });
+  const originalConnect = pool.connect.bind(pool);
+  let connectCount = 0;
+  let releasedWith: boolean | Error | undefined;
+
+  const injectedPool = {
+    query: pool.query.bind(pool),
+    connect: async () => {
+      const client = await originalConnect();
+      connectCount += 1;
+
+      // bootstrapAdmin first checks out one client for runMigrations. Inject
+      // failures only into the second checkout, which owns the bootstrap
+      // transaction itself.
+      if (connectCount === 2) {
+        const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+        const originalRelease = client.release.bind(client);
+        client.query = ((...args: unknown[]) => {
+          const statement =
+            typeof args[0] === "string"
+              ? args[0]
+              : (args[0] as { readonly text?: string } | undefined)?.text;
+          if (statement?.includes("INSERT INTO organizations")) {
+            return Promise.reject(new Error("injected bootstrap mutation failure"));
+          }
+          if (statement === "ROLLBACK") {
+            return Promise.reject(new Error("injected bootstrap rollback failure"));
+          }
+          return originalQuery(...args);
+        }) as typeof client.query;
+        client.release = ((destroy?: boolean | Error) => {
+          releasedWith = destroy;
+          originalRelease(destroy);
+        }) as typeof client.release;
+      }
+
+      return client;
+    },
+  } as unknown as pg.Pool;
+
+  try {
+    await assert.rejects(
+      () =>
+        bootstrapAdmin(injectedPool, {
+          pbuuid: "rollback-admin@example.invalid",
+          requestId: "bootstrap-rollback-fails",
+        }),
+      /injected bootstrap mutation failure/,
+    );
+    assert.equal(connectCount, 2, "the injected client must own the bootstrap transaction");
+    assert.equal(releasedWith, true, "unknown bootstrap state must destroy the client");
+
+    const { rows } = await adminPool.query<{ id: string }>(
+      "SELECT id FROM principals WHERE id = $1",
+      ["principal-rollback-admin@example.invalid"],
+    );
+    assert.deepEqual(rows, [], "the failed bootstrap must leave no principal behind");
+  } finally {
+    await pool.end();
+  }
+});
+
+test("bootstrap: re-running with the exact same admin is a no-op; a different identity is refused", async () => {
+  const pool = new pg.Pool({ connectionString: DB_URL });
+  try {
+    const first = await bootstrapAdmin(pool, {
+      pbuuid: "admin@example.invalid",
+      displayName: "Admin",
+      requestId: "bootstrap-first",
+    });
+    assert.equal(first, "created");
+
+    const second = await bootstrapAdmin(pool, {
+      pbuuid: "admin@example.invalid",
+      displayName: "Admin",
+      requestId: "bootstrap-noop",
+    });
+    assert.equal(second, "noop", "identical principal + grant is idempotent");
+
+    await assert.rejects(
+      () => bootstrapAdmin(pool, { pbuuid: "intruder@example.invalid" }),
+      (error: unknown) =>
+        error instanceof Error && /second platform admin/i.test(error.message),
+    );
+
+    const { rows } = await adminPool.query<{ principal_id: string }>(
+      "SELECT principal_id FROM grants WHERE org_id = 'root' AND role = 'admin'",
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.principal_id, "principal-admin@example.invalid");
+    const noopAudit = await adminPool.query(
+      "SELECT 1 FROM authorization_mutation_audit WHERE request_ref = $1",
+      [requestAuditRef("bootstrap-noop")],
+    );
+    assert.equal(noopAudit.rowCount, 0, "a bootstrap no-op emits no mutation audit fact");
+  } finally {
+    await pool.end();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// SHU-29 login persistence: cross-process state/session/identity boundaries
+// ---------------------------------------------------------------------------
+
+test("login state is persistent and atomically consumed once across store instances", async () => {
+  const first = makeLoginStore();
+  const second = makeLoginStore();
+  const record = {
+    browserSessionId: "browser-synthetic-a",
+    state: "state-synthetic-a",
+    nonce: "nonce-synthetic-a",
+    codeVerifier: "verifier-synthetic-a",
+    returnTo: "https://studenthub.test.invalid/home",
+  };
+  await first.states.put(record);
+
+  const [left, right] = await Promise.all([
+    first.states.consume(record.state),
+    second.states.consume(record.state),
+  ]);
+  assert.equal([left, right].filter(Boolean).length, 1);
+  assert.deepEqual(left ?? right, record);
+  assert.equal(await first.states.consume(record.state), undefined);
+});
+
+test("login sessions survive store restart and logout invalidates server-side", async () => {
+  const first = makeLoginStore();
+  const identity = await first.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    { email: "attribute-only@login.invalid", name: "Synthetic Person" },
+  );
+  await first.sessions.put({ id: "session-synthetic-a", personId: identity.personId });
+  await first.close();
+
+  const second = makeLoginStore();
+  assert.deepEqual(await second.sessions.get("session-synthetic-a"), {
+    id: "session-synthetic-a",
+    personId: identity.personId,
+  });
+  await second.sessions.delete("session-synthetic-a");
+  assert.equal(await second.sessions.get("session-synthetic-a"), undefined);
+});
+
+test("concurrent first login creates one immutable issuer/subject binding", async () => {
+  const first = makeLoginStore();
+  const second = makeLoginStore();
+  const create = (store: PostgresLoginStore) => store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    { email: "shared-attribute@login.invalid", name: "Synthetic Person" },
+  );
+  const [left, right] = await Promise.all([create(first), create(second)]);
+  assert.equal(left.personId, right.personId);
+  const counts = await adminPool.query<{ principals: number; identities: number }>(
+    `SELECT
+       (SELECT count(*)::int FROM principals) AS principals,
+       (SELECT count(*)::int FROM external_identities) AS identities`,
+  );
+  assert.deepEqual(counts.rows[0], { principals: 1, identities: 1 });
+});
+
+test("mutable profile attributes never match or merge external identities", async () => {
+  const store = makeLoginStore();
+  const first = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-subject-a",
+    { email: "same@login.invalid", phone: "+000000001", name: "Same Name" },
+  );
+  const second = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-subject-b",
+    { email: "same@login.invalid", phone: "+000000001", name: "Same Name" },
+  );
+  assert.notEqual(first.personId, second.personId);
+  assert.equal(await store.identities.findLegacyMatch({ email: "same@login.invalid" }), undefined);
+});
+
+test("login bearer values are hashed at rest and expiration fails closed", async () => {
+  const store = makeLoginStore();
+  const identity = await store.identities.createForSubject(
+    "https://identity.test.invalid/",
+    "opaque-synthetic-subject",
+    {},
+  );
+  const state = {
+    browserSessionId: "browser-synthetic-a",
+    state: "raw-state-synthetic-a",
+    nonce: "nonce-synthetic-a",
+    codeVerifier: "verifier-synthetic-a",
+    returnTo: "https://studenthub.test.invalid/home",
+  };
+  await store.states.put(state);
+  await store.sessions.put({ id: "raw-session-synthetic-a", personId: identity.personId });
+  const stored = await adminPool.query<{ state: string; id: string }>(
+    "SELECT s.state, l.id FROM login_states s CROSS JOIN login_sessions l",
+  );
+  assert.notEqual(stored.rows[0]?.state, state.state);
+  assert.notEqual(stored.rows[0]?.id, "raw-session-synthetic-a");
+
+  await adminPool.query("UPDATE login_states SET expires_at = now() - interval '1 second'");
+  await adminPool.query("UPDATE login_sessions SET expires_at = now() - interval '1 second'");
+  assert.equal(await store.states.consume(state.state), undefined);
+  assert.equal(await store.sessions.get("raw-session-synthetic-a"), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Migrations: concurrent first-run runners are serialized (GPT R3, round 2 #2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Point a DATABASE_URL at a different database while preserving its user,
+ * host, port and query options (e.g. ?sslmode=...). A naive string replace
+ * of the last path segment would leave the query attached to the old
+ * database name (GPT R3, round 3 #2).
+ */
+function withDatabaseName(url: string, dbName: string): string {
+  const parsed = new URL(url);
+  parsed.pathname = `/${dbName}`;
+  return parsed.toString();
+}
+
+test("migrations: concurrent first-run migrations serialize via the advisory lock", async () => {
+  // Two processes bootstrapping a FRESH database both read the same pending
+  // set. Without serialization one loses the ledger insert race with a raw
+  // 23505; with pg_advisory_lock the loser blocks, re-reads, and no-ops.
+  // Runs against a throwaway scratch database so the shared test database's
+  // schema is untouched.
+  const dbName = `shu55_migrate_race_${Date.now()}`;
+  const admin = new pg.Pool({ connectionString: DB_URL });
+  try {
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const raceUrl = withDatabaseName(DB_URL, dbName);
+    const poolA = new pg.Pool({ connectionString: raceUrl });
+    const poolB = new pg.Pool({ connectionString: raceUrl });
+    try {
+      const results = await Promise.allSettled([
+        runMigrations(poolA),
+        runMigrations(poolB),
+      ]);
+      assert.equal(
+        results.filter((r) => r.status === "fulfilled").length,
+        2,
+        "both concurrent first-run migrations must succeed — the loser no-ops " +
+          "after the winner instead of failing on the ledger PK",
+      );
+
+      const { rows } = await poolA.query<{ version: string }>(
+        "SELECT version FROM schema_migrations ORDER BY version",
+      );
+      assert.deepEqual(
+        rows.map((r) => r.version),
+        [
+          "0001_create_authz_tables",
+          "0002_enforce_single_root_admin",
+          "0003_create_login_tables",
+          "0004_create_authorization_mutation_audit",
+        ],
+        "each migration is recorded exactly once",
+      );
+      const idx = await poolA.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'one_root_admin_grant'",
+      );
+      assert.equal(idx.rows[0]?.n, 1, "0002 applied exactly once");
+    } finally {
+      await poolA.end();
+      await poolB.end();
+    }
+  } finally {
+    // No connections may be open to the scratch DB before dropping it.
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => undefined);
+    await admin.end();
+  }
+});
+
+test(
+  "migrations: runner works against a pg.Pool({ max: 1 }) single connection",
+  { timeout: 30_000 },
+  async () => {
+    // Regression (GPT R3, round 3 #1): runMigrations used to hold one
+    // connection for the advisory lock and then check out more from the
+    // pool — with max:1 the extra checkouts waited forever (deadlock). All
+    // work must run on the locked client. The timeout makes a regression
+    // fail fast instead of hanging the suite.
+    const dbName = `shu55_migrate_max1_${Date.now()}`;
+    const admin = new pg.Pool({ connectionString: DB_URL });
+    try {
+      await admin.query(`CREATE DATABASE ${dbName}`);
+      const pool = new pg.Pool({
+        connectionString: withDatabaseName(DB_URL, dbName),
+        max: 1,
+      });
+      try {
+        await runMigrations(pool); // must resolve, not hang
+        const { rows } = await pool.query<{ version: string }>(
+          "SELECT version FROM schema_migrations ORDER BY version",
+        );
+        assert.deepEqual(
+          rows.map((r) => r.version),
+          [
+            "0001_create_authz_tables",
+            "0002_enforce_single_root_admin",
+            "0003_create_login_tables",
+            "0004_create_authorization_mutation_audit",
+          ],
+        );
+      } finally {
+        await pool.end();
+      }
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => undefined);
+      await admin.end();
+    }
+  },
+);
+
+test("migrations: a client whose rollback fails is destroyed and preserves the migration error", async () => {
+  const dbName = `shu59_migrate_rollback_${Date.now()}`;
+  const admin = new pg.Pool({ connectionString: DB_URL });
+  try {
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    const pool = new pg.Pool({
+      connectionString: withDatabaseName(DB_URL, dbName),
+      max: 1,
+    });
+    const originalConnect = pool.connect.bind(pool);
+    let releasedWith: boolean | Error | undefined;
+    const client = await originalConnect();
+    const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+    const originalRelease = client.release.bind(client);
+    client.query = ((...args: unknown[]) => {
+      const statement =
+        typeof args[0] === "string"
+          ? args[0]
+          : (args[0] as { readonly text?: string } | undefined)?.text;
+      if (statement === "ROLLBACK") return Promise.reject(new Error("injected rollback failure"));
+      if (statement?.includes("CREATE TABLE IF NOT EXISTS organizations")) {
+        return Promise.reject(new Error("injected migration body failure"));
+      }
+      return originalQuery(...args);
+    }) as typeof client.query;
+    client.release = ((destroy?: boolean | Error) => {
+      releasedWith = destroy;
+      originalRelease(destroy);
+    }) as typeof client.release;
+    pool.connect = (async () => client) as typeof pool.connect;
+
+    try {
+      await assert.rejects(() => runMigrations(pool), /injected migration body failure/);
+      assert.equal(releasedWith, true, "unknown migration state must destroy the client");
+    } finally {
+      pool.connect = originalConnect as typeof pool.connect;
+      await pool.end();
+    }
+  } finally {
+    await admin.query(`DROP DATABASE IF EXISTS ${dbName}`).catch(() => undefined);
+    await admin.end();
+  }
+});

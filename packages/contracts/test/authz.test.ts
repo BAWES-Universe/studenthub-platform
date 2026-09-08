@@ -5,6 +5,7 @@ import {
   AUTHZ_CONTRACT_VERSION,
   CONTRACT_VERSIONS,
   PLATFORM_CONTRACT_VERSION,
+  SEARCH_CONTRACT_VERSION,
   ROLE,
   ROLES,
   InMemoryAuthzStore,
@@ -549,15 +550,18 @@ test("versions: every contract slot is versioned independently", () => {
     health: "1.0.0",
     authz: "1.0.0",
     identity: "1.0.0",
+    search: "1.0.0",
   });
   assert.equal(CONTRACT_VERSIONS.health, PLATFORM_CONTRACT_VERSION);
   assert.equal(CONTRACT_VERSIONS.authz, AUTHZ_CONTRACT_VERSION);
+  assert.equal(CONTRACT_VERSIONS.search, SEARCH_CONTRACT_VERSION);
 });
 
 test("versions: the version helper returns the requested contract slot", () => {
   assert.equal(contractVersion("authz"), "1.0.0");
   assert.equal(contractVersion("health"), "1.0.0");
   assert.equal(contractVersion("identity"), "1.0.0");
+  assert.equal(contractVersion("search"), "1.0.0");
 });
 
 test("store: re-registering a principal drops its removed pbuuid mappings", async () => {

@@ -1,5 +1,19 @@
 # StudentHub × Universe — Platform
 
+## Universe login runtime (SHU-29)
+
+The gateway exposes `GET /login/universe`, `GET /login/callback`, `GET /profile`,
+and `POST /logout` only when the complete login configuration is present. Run
+the database migrations first; login state, sessions, and immutable
+issuer/subject bindings are PostgreSQL-backed and shared across processes.
+
+Required variables are `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+`OIDC_CLIENT_SECRET`, `OIDC_CALLBACK_URL`, `OIDC_AUTHORIZATION_URL`,
+`OIDC_TOKEN_URL`, `OIDC_JWKS_URL`, and comma-separated exact
+`LOGIN_ALLOWED_RETURN_URLS`. All OIDC/browser URLs must be HTTPS. Partial
+configuration fails startup; absent configuration leaves every login route
+disabled. Tokens and client secrets never enter browser responses.
+
 The StudentHub platform is a **planned** modular monolith: web/iframe panels, HTTP API, MCP gateway, worker, domain packages, and a PostgreSQL schema. This README separates what **exists** at the current commit from what is **planned** — every row in the table below is checkable against the tree.
 
 **Program:** ratified execution plan v1.2. See the delivery board (Linear, team `StudentHub Universe`) for task contracts.
@@ -8,10 +22,14 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 
 | Claim | Where | Status |
 | -- | -- | -- |
-| HTTP gateway | `apps/gateway` | ✅ two routes: `GET /health`, `POST /mcp/tools/call` |
+| HTTP gateway | `apps/gateway` | ✅ health, MCP, and optional PostgreSQL-backed Universe login/profile/logout routes |
 | Worker | `apps/worker` (heartbeat) | ✅ |
 | Shared contracts incl. authz | `packages/contracts` | ✅ authz store **interfaces** + `InMemoryAuthzStore` test implementation |
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
+| PostgreSQL data layer | `packages/db`, `packages/db/migrations` | ✅ persistent authz, OIDC state, sessions, and issuer/subject bindings |
+| Login contract | `packages/login-contract` | ✅ executable OIDC conformance and mutation harness |
+| Source-connection contract | `packages/source-connection-contract` | ✅ executable Discord/Google import contract; candidates and conflicts only, no I/O |
+| Search adapter | `packages/search` | ✅ Typesense adapter and indexer |
 | Migration tools | `tools/legacy-import`, `tools/fixtures`, `tools/reconciliation` | ✅ |
 | Search benchmark | `tools/search-bakeoff` | ✅ Meilisearch vs Typesense evidence (SHU-47) |
 | ADRs + design docs | `docs/adr` (`ADR-0001-actor-assertion-v1`), `docs/authz-roles.md` | ✅ |
@@ -23,8 +41,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | -- | -- |
 | Web/iframe panels | zero `.tsx` files today; platform web is unbuilt |
 | 7 domain packages (`domain-*`) | none exist |
-| PostgreSQL schema + migrations | no SQL, no schema, no migrations — **no persistence yet**; authz grants live in `InMemoryAuthzStore` and are lost on restart → [SHU-55](https://linear.app/bawes/issue/SHU-55/platform-has-no-persistence-authz-grants-live-in-memory-and-are-lost) |
-| `packages/`: capabilities, authorization, audit, db, observability, ui | only `contracts` and `actor-assertion` exist today |
+| Remaining `packages/` capabilities | domain packages, observability, and UI are not built yet |
 
 Planned layout (target, for orientation):
 
