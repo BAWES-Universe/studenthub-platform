@@ -141,16 +141,78 @@ test("route: no eligible reviewer -> visible HOLD, never a relaunch storm", () =
   assert.equal(r.order, undefined, "no order minted -> no launch");
 });
 
-test("route: revisions are BOUND — exhaustion is a terminal HOLD", () => {
+test("route: revisions are BOUND — exhaustion is a terminal HOLD at max_revise+1", () => {
   const entries = [
     provenanceEntry({ attempt_id: "1", actor: "codex:s1", role: "build", runtime: "codex-cli", target_sha: SHA }),
     provenanceEntry({ attempt_id: "2", actor: "claude:v1", role: "review", runtime: "claude-code", target_sha: SHA }),
   ];
+  // max_revise: 3 promises THREE revision attempts: rounds 1..3 each BLOCK
+  // and each schedules its revision. Exhaustion begins only at round 4.
   const requested = baseOrder({ role: "review", runtime: "claude-code", outcome: "BLOCKED" });
-  const r = nextWorkOrder({ requested, entries, review_round: 3, max_revise: 3 });
-  assert.equal(r.ok, false);
-  assert.equal(r.hold, "revisions_exhausted");
-  assert.equal(r.exhausted, true);
+  const r3 = nextWorkOrder({ requested, entries, review_round: 3, max_revise: 3 });
+  assert.equal(r3.ok, true, `round 3 BLOCK must still schedule revision #3: ${r3.reason}`);
+  assert.equal(r3.order.role, "revise");
+  const r4 = nextWorkOrder({ requested, entries, review_round: 4, max_revise: 3 });
+  assert.equal(r4.ok, false);
+  assert.equal(r4.hold, "revisions_exhausted");
+  assert.equal(r4.exhausted, true);
+});
+
+test("route: BLOCKED outcome NEVER leaks into successor orders (revise or next review)", () => {
+  const entries = [
+    provenanceEntry({ attempt_id: "1", actor: "codex:s1", role: "build", runtime: "codex-cli", target_sha: SHA }),
+    provenanceEntry({ attempt_id: "2", actor: "claude:v1", role: "review", runtime: "claude-code", target_sha: SHA }),
+  ];
+  // A completed BLOCKED review must produce a revise order born WITHOUT the
+  // result-only outcome — a new instruction is not already completed/blocked.
+  const requested = baseOrder({ role: "review", runtime: "claude-code", outcome: "BLOCKED", review_runtimes: ["claude-code"] });
+  const revise = nextWorkOrder({ requested, entries, review_round: 1 });
+  assert.equal(revise.ok, true, revise.reason);
+  assert.equal(revise.order.role, "revise");
+  assert.equal(revise.order.outcome, undefined, "revise order must not inherit outcome:BLOCKED");
+  assert.equal("outcome" in revise.order, false, "result-only key must be stripped, not nulled");
+
+  // A completed revise (outcome BUILD_READY) must produce a review order born
+  // WITHOUT the completed outcome — same leak class on the review side.
+  const revisedEntries = [...entries, provenanceEntry({ attempt_id: revise.order.attempt_id, actor: "codex:s1", role: "revise", runtime: "codex-cli", target_sha: SHA2, result_sha: SHA2 })];
+  const review = nextWorkOrder({
+    requested: { ...revise.order, role: "revise", outcome: "BUILD_READY", review_runtimes: ["claude-code"] },
+    entries: revisedEntries,
+    review_round: 1,
+  });
+  assert.equal(review.ok, true, review.reason);
+  assert.equal(review.order.role, "review");
+  assert.equal("outcome" in review.order, false, "review order must not inherit outcome:BUILD_READY");
+
+  // Round-trip through the directive: a successor directive must render and
+  // re-parse outcome-free. The renderer normalizes a missing outcome to null
+  // (explicit in the directive JSON) — the leak would be a non-null inherited
+  // value like "BLOCKED", which must never appear on a fresh instruction.
+  const body = renderWorkOrderDirective(revise.order);
+  const parsed = parseWorkOrderDirective(body);
+  assert.equal(parsed.ok, true, parsed.reason);
+  assert.equal(parsed.order.outcome, null, "successor directive must be born without a completed outcome");
+});
+
+test("route: malformed attempt_id is rejected before routing — no non-UUID successor can be minted", () => {
+  // Codex repro: validWorkOrder accepted attempt_id "x", routing emitted a
+  // non-UUID successor the receipt schema rejects. Must fail closed here.
+  for (const bad of ["x", "3187094a-2257-4-8-x0001", "not-a-uuid", "11111111-1111-4111-8111-11111111111", "11111111-1111-4111-8111-1111111111111"]) {
+    const r = validWorkOrder(baseOrder({ role: "review", attempt_id: bad }));
+    assert.equal(r.ok, false, `attempt_id ${bad} must be rejected`);
+  }
+  const ok = validWorkOrder(baseOrder({ role: "review", attempt_id: "11111111-1111-4111-8111-111111111111" }));
+  assert.equal(ok.ok, true, ok.reason);
+  // And a successor minted from ANY valid UUID attempt stays UUID-shaped:
+  for (const prior of [
+    "11111111-1111-4111-8111-111111111111",
+    "00000000-0000-4000-8000-000000000000",
+    "ffffffff-ffff-4fff-afff-ffffffffffff",
+  ]) {
+    const fresh = freshAttempt(prior, "review", 1);
+    assert.match(fresh, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/, `freshAttempt from ${prior} must be UUID-v4-shaped`);
+    assert.equal(validWorkOrder(baseOrder({ role: "review", attempt_id: fresh })).ok, true, "fresh successor must itself validate");
+  }
 });
 
 test("route: PASS is terminal (stop before merge)", () => {

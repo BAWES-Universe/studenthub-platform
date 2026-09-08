@@ -60,7 +60,14 @@ export function validWorkOrder(order) {
     return { ok: false, reason: `runtime ${order.runtime} cannot perform role ${order.role}` };
   }
   if (typeof order.issue_id !== "string" || order.issue_id.length === 0) return { ok: false, reason: "missing issue_id" };
-  if (typeof order.attempt_id !== "string" || order.attempt_id.length === 0) return { ok: false, reason: "missing attempt_id" };
+  // attempt_id is lineage state AND the successor seed: freshAttempt slices it
+  // to mint the next id. A non-UUID value (e.g. "x") routes to a malformed
+  // successor (Codex BLOCK, SHU-68) that the receipt schema rejects, so it
+  // must fail here, before routing. Canonical UUID shape; version/variant are
+  // not restricted because launch receipts may carry any real UUID.
+  if (typeof order.attempt_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(order.attempt_id)) {
+    return { ok: false, reason: "missing/invalid attempt_id (must be UUID-shaped)" };
+  }
   if (typeof order.target_sha !== "string" || !/^[0-9a-f]{40}$/.test(order.target_sha)) return { ok: false, reason: "missing/invalid target_sha" };
   if (typeof order.authorization_ref !== "string" || order.authorization_ref.length === 0) return { ok: false, reason: "missing authorization_ref" };
   return { ok: true };
@@ -150,6 +157,25 @@ export function latestResultSha(entries, withinAttempt = null) {
 // state.review_round   — 1-based count of completed review rounds
 //
 // Returns { ok, order?, terminal?, reason?, hold?, exhausted? }.
+
+// Result-only keys carried by a COMPLETED order (receipt state). They describe
+// what the completed work did; they must never be inherited by the successor
+// instruction, which has not happened yet. A revise order born with
+// outcome:"BLOCKED" (or a review born with outcome:"BUILD_READY") is a new
+// instruction that is already "completed" — the leak Codex BLOCKed on.
+const RESULT_ONLY_KEYS = new Set(["outcome", "result_sha", "summary", "error"]);
+
+// Mint a successor order from a completed one: copy the instruction fields
+// (version/role/runtime/actor/issue/attempt/refs/heads/constraints), strip
+// every result-only key, then apply the routing overrides.
+function mintOrder(requested, overrides) {
+  const base = {};
+  for (const [key, value] of Object.entries(requested ?? {})) {
+    if (!RESULT_ONLY_KEYS.has(key)) base[key] = value;
+  }
+  return { ...base, ...overrides };
+}
+
 export function nextWorkOrder(state = {}) {
   const { requested = null, entries = [], max_revise = 3, review_round = 0 } = state;
   if (!requested || typeof requested !== "object") return { ok: false, reason: "no completed work order to route from" };
@@ -166,34 +192,36 @@ export function nextWorkOrder(state = {}) {
     const outputHead = latestResultSha(entries, requested.attempt_id) ?? requested.target_sha;
     return {
       ok: true,
-      order: {
-        ...requested,
+      order: mintOrder(requested, {
         role: "review",
         runtime: reviewer.runtime,
         actor: reviewer.actor,
         target_sha: outputHead,
         attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
-      },
+      }),
     };
   }
 
   if (role === "review") {
     const outcome = requested.outcome;
     if (outcome === "BLOCKED" || outcome === "FAILED") {
-      if (review_round >= max_revise) {
+      // review_round is the 1-based round of the review that just BLOCKed.
+      // Revision R is scheduled when round R BLOCKs; exhaustion begins only
+      // when a BLOCK arrives past max_revise (rounds 1..max_revise each get
+      // their revision attempt — the field promises max_revise attempts).
+      if (review_round > max_revise) {
         return { ok: false, reason: `revision attempts exhausted after ${review_round} rounds — HOLD`, exhausted: true, hold: "revisions_exhausted" };
       }
       const writer = activeWriter(entries);
       if (!writer) return { ok: false, reason: "no active writer to route the revision to — HOLD", exhausted: false, hold: "no_active_writer" };
       return {
         ok: true,
-        order: {
-          ...requested,
+        order: mintOrder(requested, {
           role: "revise",
           runtime: writer.runtime,
           actor: writer.actor,
           attempt_id: freshAttempt(requested.attempt_id, "revise", review_round + 1),
-        },
+        }),
       };
     }
     if (outcome === "PASS") {
