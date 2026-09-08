@@ -164,11 +164,15 @@ test("the suite rejects implementations that break the contract with no fault fl
 
 test("one instance does not spend a token twice under concurrency", async () => {
   // The cross-instance case is scenario 18, which any implementation must pass.
-  // This is the same guarantee WITHIN one instance, where `createSafeWrite`
-  // meets it by reserving the token id before the commit rather than by the
-  // store. Without that reservation both confirms pass the `spent` check before
-  // either records the spend, and because this change is a no-op the
-  // compare-and-write succeeds twice too.
+  // This is the same guarantee WITHIN one instance, and it holds for the same
+  // reason: the STORE refuses the second token, not the caller. The in-memory
+  // `spent` set cannot provide it — both confirms read it before either writes
+  // to it — and because this change is a no-op the compare-and-write succeeds
+  // twice as well, so nothing on the caller's side catches this.
+  //
+  // An earlier revision reserved the token id in the caller before committing.
+  // A mutation removing that reservation broke no scenario and no test, which
+  // is what dead code looks like when it is measured, so it was deleted.
   const store = createRecordingStore();
   const implementation = createSafeWrite({
     store, secret: TEST_SECRET, policy: TEST_POLICY, clock: createClock(),
