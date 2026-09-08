@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -322,6 +322,9 @@ test("deadline kills and HOLDs an incomplete worker", async () => {
 test("Unix socket is forced owner-only before it is returned as ready", async () => {
   const root = tempState();
   const socketPath = join(root, "run", "supervisor.sock");
+  mkdirSync(dirname(socketPath), { recursive: true, mode: 0o777 });
+  chmodSync(dirname(socketPath), 0o777);
+  assert.equal(statSync(dirname(socketPath)).mode & 0o777, 0o777, "fixture must begin world-traversable");
   const { instance } = supervisor({ stateDir: join(root, "state") });
   const fakeServer = new EventEmitter();
   fakeServer.listen = (path, callback) => {
