@@ -25,6 +25,7 @@
 // Linear API token names only — no secrets live in this repository.
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage } from "./review-routing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -1174,6 +1175,7 @@ export function parseEvidenceFromComments(comments = [], attempt_id) {
         links: Array.isArray(cb.links) ? cb.links : [],
         attempt_id: cb.attempt_id,
         target_sha: typeof cb.target_sha === "string" ? cb.target_sha : null,
+        result_sha: typeof cb.result_sha === "string" ? cb.result_sha : null, // exact commit the write produced (review binds this head)
         stage: typeof cb.stage === "string" ? cb.stage : null, // BUILD_READY | REVISION_READY | PASS | BLOCKED | FAILED
       };
       const createdAt = typeof comment.createdAt === "string" ? comment.createdAt : null;
@@ -1184,7 +1186,9 @@ export function parseEvidenceFromComments(comments = [], attempt_id) {
       // malformed callback comment — ignore, the next one may parse
     }
   }
-  return best ? { links: best.links, attempt_id: best.attempt_id, target_sha: best.target_sha, stage: best.stage } : null;
+  return best
+    ? { links: best.links, attempt_id: best.attempt_id, target_sha: best.target_sha, result_sha: best.result_sha, stage: best.stage }
+    : null;
 }
 
 export function parsePausedAdapters(comments = []) {
@@ -1195,6 +1199,105 @@ export function parsePausedAdapters(comments = []) {
   }
   return [...paused];
 }
+
+// Parse every parseable work-order directive from a comment thread (newest
+// last). Used by tests and by consumers that read the card as the instruction
+// channel. Non-directive comments are skipped.
+export function parseWorkOrderDirectiveFromComments(comments = []) {
+  const orders = [];
+  for (const comment of comments ?? []) {
+    const parsed = parseWorkOrderDirective(comment?.body ?? "");
+    if (parsed.ok && parsed.order) orders.push(parsed.order);
+  }
+  return orders;
+}
+
+// ---------------------------------------------------------------------------
+// Work-order directive wiring (SHU-68 real-path integration, Hermes 2026-09-08)
+// ---------------------------------------------------------------------------
+// After a receipt transitions to a VERDICT-BEARING terminal stage (a validated
+// BUILD_READY / REVISION_READY completion, or a validated BLOCKED/FAILED/PASS
+// review verdict), compute the successor work order from the issue's durable
+// receipt lineage and post the rendered directive to the Linear card — the
+// card, not a human relay, is the next actor's instruction channel.
+//
+// Guards (all inherited from the callers, which run only when dispatch is
+// enabled):
+//   * Only verdict stages route. An infra FAILED with no callback carries no
+//     verdict stage and mints nothing.
+//   * The evidence must be attempt-bound: callers pass the parsed evidence for
+//     THIS attempt (validated links + stage) or the adapter's validated
+//     callback — never free text.
+//   * PASS is terminal: nextWorkOrder returns terminal:true with no order, so
+//     nothing is posted and the loop stops before merge.
+//   * no eligible reviewer / revisions exhausted / no active writer → visible
+//     HOLD: no order is minted and nothing is posted (the terminal receipt
+//     already records the HOLD).
+//   * Idempotent by construction: the callers persist the terminal transition
+//     exactly once per receipt (terminal receipts are never re-polled), so the
+//     directive posts exactly once, when the transition happens.
+export async function maybePostSuccessorDirective({
+  issue_id,
+  issueReceipts = [],
+  terminal = null,
+  verdictStage = null,
+  verdictResultSha = null,
+  linearIssueId = null,
+  linearToken = "",
+  config = {},
+  fetchImpl = fetch,
+  stdout = null,
+}) {
+  const out = stdout ?? ((s) => console.log(s));
+  if (!terminal || !TERMINAL_STAGES.includes(terminal.stage)) return null;
+  if (!verdictStage) return null; // no verdict (e.g. infra failure / no callback) — never route
+  if (!linearIssueId || !linearToken) return null;
+  const verdict = outcomeForEvidenceStage(verdictStage);
+  if (!verdict) return null;
+  // The verdict stage must EXPLAIN the terminal stage: a success stage
+  // (BUILD_READY/REVISION_READY/PASS) routes only from COMPLETED; a review
+  // BLOCKED/FAILED routes only from HOLD (BLOCKED never authorizes COMPLETED —
+  // GPT lifecycle BLOCK). An infra FAILED receipt never routes even when a
+  // stray verdict comment exists on the card.
+  if (verdict.role === "review" && (verdict.outcome === "PASS" || verdict.outcome === null)) {
+    if (terminal.stage !== "COMPLETED") return null;
+  } else if (verdict.outcome === "BLOCKED" || verdict.outcome === "FAILED") {
+    if (terminal.stage !== "HOLD") return null;
+  } else if (terminal.stage !== "COMPLETED") {
+    return null;
+  }
+  // Chronological lineage, oldest first; the just-terminal receipt belongs last
+  // (its last_activity is the newest). routeSuccessorFromReceipts needs the
+  // full lineage INCLUDING the terminal attempt so the successor seed and
+  // review-round count are correct.
+  const lineage = [...(issueReceipts ?? [])]
+    .filter((r) => r && r.issue_id === issue_id)
+    .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")));
+  if (!lineage.some((r) => r.attempt_id === terminal.attempt_id)) lineage.push(terminal);
+
+  const routed = routeSuccessorFromReceipts({
+    issueReceipts: lineage,
+    terminal,
+    evidenceStage: verdictStage,
+    evidenceResultSha: verdictResultSha,
+    max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
+  });
+  if (!routed.ok) {
+    // PASS is a real terminal outcome (no successor) — say so distinctly from
+    // holds; holds are visible on the receipt already.
+    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> no successor (${routed.reason})${routed.terminal ? " — loop complete, stop before merge" : ""}`);
+    return null;
+  }
+  if (!routed.order) {
+    out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> ${routed.hold ?? "no order"} — visible HOLD, nothing posted`);
+    return null;
+  }
+  const body = renderWorkOrderDirective(routed.order);
+  await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body }, linearToken, fetchImpl);
+  out(`routing: ${issue_id} attempt ${terminal.attempt_id} -> posted ${routed.order.role} order (actor=${routed.order.actor ?? "coordinator-assigned"}, attempt=${routed.order.attempt_id})`);
+  return { order: routed.order, body };
+}
+
 
 // ---------------------------------------------------------------------------
 // Wake-hint gating (issue_comment events)
@@ -1500,6 +1603,24 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
       }
+      // SHU-68 wiring: a recovered launch that folded straight to a terminal
+      // verdict (COMPLETED w/ success stage, or HOLD w/ BLOCKED/FAILED review)
+      // posts the successor work order to the card. The adapter validated the
+      // callback (attempt/SHA-bound) before returning it.
+      if (TERMINAL_STAGES.includes(nextReceipt.stage) && launch.callback && typeof launch.callback.stage === "string") {
+        await maybePostSuccessorDirective({
+          issue_id: receipt.issue_id,
+          issueReceipts: receipts,
+          terminal: nextReceipt,
+          verdictStage: launch.callback.stage,
+          verdictResultSha: launch.callback.result_sha ?? null,
+          linearIssueId,
+          linearToken,
+          config,
+          fetchImpl,
+          stdout: io.stdout,
+        });
+      }
       const idx = receipts.indexOf(receipt);
       if (idx >= 0) receipts[idx] = nextReceipt;
       if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> ${nextReceipt.stage} using the same attempt/idempotency key`);
@@ -1590,6 +1711,25 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       if (transition.pause_adapter === true) {
         config.adapter_pause_map[adapter] = true;
         await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+      }
+      // SHU-68 wiring: a polled run that reached a verdict-bearing terminal
+      // stage posts the successor work order to the card. The verdict stage is
+      // the attempt-bound evidence comment (BUILD_READY/REVISION_READY/PASS for
+      // COMPLETED; a review BLOCKED/FAILED surfaces as the polled HOLD — the
+      // helper only routes when stage explains the terminal stage).
+      if (TERMINAL_STAGES.includes(nextReceipt.stage) && evidence && typeof evidence.stage === "string") {
+        await maybePostSuccessorDirective({
+          issue_id: receipt.issue_id,
+          issueReceipts: receipts,
+          terminal: nextReceipt,
+          verdictStage: evidence.stage,
+          verdictResultSha: evidence.result_sha ?? null,
+          linearIssueId,
+          linearToken,
+          config,
+          fetchImpl,
+          stdout: io.stdout,
+        });
       }
       const idx = receipts.indexOf(receipt);
       if (idx >= 0) receipts[idx] = nextReceipt;
@@ -1779,6 +1919,24 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     const adapter = adapterNameFor(candidate.requested_worker);
     config.adapter_pause_map[adapter] = true;
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+  }
+  // SHU-68 wiring: a SYNCHRONOUS launch (e.g. `claude -p` review) returns its
+  // terminal verdict straight from launchBuilder — the receipt never passes
+  // through the lifecycle poll. Post the successor work order here when the
+  // fold reached a verdict-bearing terminal stage.
+  if (TERMINAL_STAGES.includes(next.stage) && launch.callback && typeof launch.callback.stage === "string") {
+    await maybePostSuccessorDirective({
+      issue_id: candidate.id,
+      issueReceipts: receipts,
+      terminal: next,
+      verdictStage: launch.callback.stage,
+      verdictResultSha: launch.callback.result_sha ?? null,
+      linearIssueId,
+      linearToken,
+      config,
+      fetchImpl,
+      stdout: io.stdout,
+    });
   }
   if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})`);
   return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;

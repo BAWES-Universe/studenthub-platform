@@ -305,3 +305,160 @@ export function parseWorkOrderDirective(body) {
   if (validWorkOrder(parsed).ok) return { ok: true, order: parsed };
   return { ok: false, reason: validWorkOrder(parsed).reason };
 }
+
+// ---------------------------------------------------------------------------
+// Reconcile wiring bridge (SHU-68 real-path integration, Hermes 2026-09-08)
+// ---------------------------------------------------------------------------
+// Translate the coordinator's durable receipts + validated evidence into the
+// pure routing state nextWorkOrder() consumes. This is the ONLY seam between
+// reconcile.mjs's lifecycle receipts and the role-neutral routing module: it
+// runs after a RUNNING receipt transitions to a terminal stage with a verdict.
+//
+// Guards preserved (all fail closed):
+//   * A terminal receipt without worker identity yields NO provenance entry
+//     for routing (ambiguous authorship must never mint an order).
+//   * Evidence must bind the same attempt_id the receipt carries.
+//   * A verdict only routes when its stage is a real review/write outcome.
+
+// Work order role for a launched receipt, by requested worker lane.
+// A "codex-builder" receipt is a build (first write) — later writes on the
+// same issue are revise orders minted by routing, so they carry role revise
+// from the directive, not from the worker label.
+export function roleForRequestedWorker(requestedWorker) {
+  if (requestedWorker === "claude-verifier") return "review";
+  if (requestedWorker === "codex-builder") return "build";
+  if (requestedWorker === "hermes-box") return "build";
+  return null;
+}
+
+// Runtime name for a requested worker lane (matches RUNTIMES vocabulary).
+export function runtimeForRequestedWorker(requestedWorker) {
+  if (requestedWorker === "claude-verifier") return "claude-code";
+  if (requestedWorker === "codex-builder") return "codex-cli";
+  if (requestedWorker === "hermes-box") return "hermes-pool";
+  return null;
+}
+
+// Collapse a durable launch receipt to the identity facts routing needs.
+// `kind: "edited"` is only set when the caller can prove the review edited
+// code (reconcile does not fabricate it from links alone).
+export function provenanceFromReceipt(receipt, { kind = "launch" } = {}) {
+  if (!receipt || typeof receipt !== "object") return null;
+  const role = roleForRequestedWorker(receipt.requested_worker);
+  const runtime = runtimeForRequestedWorker(receipt.requested_worker);
+  // A worker_identity is REQUIRED for routing: an anonymous launch receipt
+  // proves nothing about who acted, so it can neither exclude an author nor
+  // qualify as an eligible fresh reviewer (ambiguous provenance -> HOLD).
+  if (typeof receipt.worker_identity !== "string" || receipt.worker_identity.length === 0) return null;
+  if (!role || !runtime) return null;
+  if (typeof receipt.target_sha !== "string" || !/^[0-9a-f]{40}$/.test(receipt.target_sha)) return null;
+  return provenanceEntry({
+    attempt_id: receipt.attempt_id,
+    actor: receipt.worker_identity,
+    role,
+    runtime,
+    target_sha: receipt.target_sha,
+    result_sha: typeof receipt.result_sha === "string" && /^[0-9a-f]{40}$/.test(receipt.result_sha) ? receipt.result_sha : null,
+    kind,
+  });
+}
+
+// Verdict stage -> routing outcome. BUILD_READY completes a BUILD whose
+// successor is a REVIEW; REVISION_READY completes a REVISE (same routing
+// branch — nextWorkOrder treats build|revise writes alike — but the role is
+// kept truthful for lineage); PASS/BLOCKED/FAILED are REVIEW verdicts whose
+// successors differ by outcome. Null when the stage is not a verdict at all
+// (e.g. an intermediate poll status).
+export function outcomeForEvidenceStage(stage) {
+  if (stage === "BUILD_READY") return { role: "build", outcome: null };
+  if (stage === "REVISION_READY") return { role: "revise", outcome: null };
+  if (stage === "PASS") return { role: "review", outcome: "PASS" };
+  if (stage === "BLOCKED") return { role: "review", outcome: "BLOCKED" };
+  if (stage === "FAILED") return { role: "review", outcome: "FAILED" };
+  return null;
+}
+
+// Lane/verdict compatibility — a receipt may ONLY route when the verdict stage
+// matches the lane that produced it. A builder (write lane) that reports
+// BLOCKED has NOT completed a review: that is an in-scope blocker → machine
+// HOLD, never a revise order. Conversely a verifier (review lane) reporting
+// BUILD_READY is incoherent. Mismatched verdicts fail closed (no route).
+export function verdictMatchesLane(requestedWorker, evidenceStage) {
+  const verdict = outcomeForEvidenceStage(evidenceStage);
+  if (!verdict) return false;
+  const lane = roleForRequestedWorker(requestedWorker);
+  if (!lane) return false;
+  if (lane === "review") return verdict.role === "review"; // verifier: PASS/BLOCKED/FAILED only
+  return verdict.role === "build" || verdict.role === "revise"; // writer: BUILD_READY/REVISION_READY only
+}
+
+// Compute the successor work order for an issue after ONE receipt reaches a
+// verdict-bearing terminal stage. Pure: returns the directive to post, or a
+// hold reason — never launches anything itself.
+//
+//   state.issueReceipts — ALL durable receipts for the issue (every attempt),
+//     oldest first; used to rebuild the provenance lineage.
+//   state.terminal     — the receipt that just became terminal (must carry the
+//     worker identity and the evidence attempt binding).
+//   state.evidenceStage — validated verdict stage bound to terminal.attempt_id.
+//   state.evidenceResultSha — the exact commit the completed WRITE produced
+//     (from the validated callback evidence). Receipts never carry result_sha,
+//     so the successor review binds this output head, never the stale input
+//     target_sha. Ignored for review verdicts.
+//   state.max_revise   — bound on revision rounds (default 3).
+//
+// Returns { ok, order?, terminal?, reason?, hold?, exhausted? }.
+export function routeSuccessorFromReceipts(state = {}) {
+  const { issueReceipts = [], terminal = null, evidenceStage = null, evidenceResultSha = null, max_revise = 3 } = state;
+  if (!terminal || typeof terminal !== "object") {
+    return { ok: false, reason: "no terminal receipt to route from" };
+  }
+  const verdict = outcomeForEvidenceStage(evidenceStage);
+  if (!verdict) {
+    return { ok: false, reason: `evidence stage ${String(evidenceStage)} is not a routing verdict` };
+  }
+  // Lane/verdict compatibility: a builder BLOCK is an in-scope blocker (HOLD),
+  // not a review verdict; a verifier BUILD_READY is incoherent. Fail closed.
+  if (!verdictMatchesLane(terminal.requested_worker, evidenceStage)) {
+    return { ok: false, reason: `verdict ${String(evidenceStage)} does not match lane ${String(terminal.requested_worker)} — machine HOLD, no route` };
+  }
+  // Provenance lineage: every receipt that actually ran (has a worker
+  // identity), oldest first. Reviews that EDITED are authors — reconcile can
+  // only mark kind:"edited" with proof; the pure bridge never fabricates it.
+  const entries = [];
+  for (const receipt of issueReceipts) {
+    const entry = provenanceFromReceipt(receipt);
+    if (!entry) continue;
+    // Stamp the completed write's OUTPUT head from the validated evidence —
+    // this is the head a successor review must bind. Never fabricate from a
+    // receipt field (receipts do not carry result_sha by schema).
+    if (receipt.attempt_id === terminal.attempt_id && (entry.role === "build" || entry.role === "revise")) {
+      if (typeof evidenceResultSha === "string" && /^[0-9a-f]{40}$/.test(evidenceResultSha)) {
+        entry.result_sha = evidenceResultSha;
+      }
+    }
+    entries.push(entry);
+  }
+  if (entries.length === 0) {
+    return { ok: false, reason: "no provenance entries — every receipt lacks worker identity (ambiguous authorship HOLDs routing)" };
+  }
+  // The completed order: role from the verdict + worker lane, outcome only for
+  // review verdicts. target_sha is the head this attempt was bound to.
+  const requested = {
+    version: WORK_ORDER_VERSION,
+    role: verdict.role,
+    runtime: runtimeForRequestedWorker(terminal.requested_worker),
+    issue_id: terminal.issue_id,
+    attempt_id: terminal.attempt_id,
+    target_sha: terminal.target_sha,
+    authorization_ref: terminal.authorization_ref ?? terminal.issue_id,
+    review_runtimes: RUNTIMES.filter((r) => RUNTIME_ROLE_SUPPORT[r]?.includes("review")),
+    outcome: verdict.outcome,
+  };
+  if (!requested.runtime) {
+    return { ok: false, reason: `cannot route from unknown worker lane ${String(terminal.requested_worker)}` };
+  }
+  // review_round: count of completed review attempts already in the lineage.
+  const review_round = entries.filter((e) => e.role === "review").length;
+  return nextWorkOrder({ requested, entries, max_revise, review_round });
+}
