@@ -443,11 +443,12 @@ export class DurableSupervisor {
     this.children.set(attemptId, child);
     let terminal = false;
     let outputBytes = 0;
+    let deadline = null;
 
     const finish = (status, details = {}) => {
       if (terminal) return;
       terminal = true;
-      clearTimeout(deadline);
+      if (deadline !== null) clearTimeout(deadline);
       this.children.delete(attemptId);
       if (this.shutdownHolds.delete(attemptId)) return;
       const latest = this.store.readRun(attemptId);
@@ -488,12 +489,15 @@ export class DurableSupervisor {
       signal: signal ?? null,
       ...(code === 0 ? {} : { error_code: "WORKER_EXIT" }),
     }));
-    const deadline = setTimeout(() => {
-      finish("hold", { error_code: "DEADLINE", reason: "worker exceeded its deadline" });
-      child.kill?.("SIGTERM");
-    }, this.deadlineMs);
-    deadline.unref?.();
-    return running;
+    if (!terminal) {
+      deadline = setTimeout(() => {
+        if (terminal) return;
+        finish("hold", { error_code: "DEADLINE", reason: "worker exceeded its deadline" });
+        child.kill?.("SIGTERM");
+      }, this.deadlineMs);
+      deadline.unref?.();
+    }
+    return terminal ? this.store.readRun(attemptId) : running;
   }
 
   recover() {
@@ -595,16 +599,18 @@ export async function listenSupervisor({
     const respond = (response) => {
       if (answered) return;
       answered = true;
-      socket.end(`${JSON.stringify(response)}\n`);
+      body = "";
+      socket.end(`${JSON.stringify(response)}\n`, () => socket.destroy?.());
     };
     socket.on("data", async (chunk) => {
+      if (answered) return;
       body += chunk;
       if (Buffer.byteLength(body) > maxRequestBytes) {
         respond({ ok: false, stage: "HOLD", reason: "supervisor request too large" });
         return;
       }
       const newline = body.indexOf("\n");
-      if (newline === -1 || answered) return;
+      if (newline === -1) return;
       try {
         respond(await supervisor.submit(JSON.parse(body.slice(0, newline))));
       } catch {
