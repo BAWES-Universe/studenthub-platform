@@ -1212,6 +1212,70 @@ test("bootstrap concurrency: two simultaneous bootstraps cannot create two root 
   }
 });
 
+
+test("bootstrap: a client whose rollback fails is destroyed and preserves the mutation error", async () => {
+  const pool = new pg.Pool({ connectionString: DB_URL, max: 1 });
+  const originalConnect = pool.connect.bind(pool);
+  let connectCount = 0;
+  let releasedWith: boolean | Error | undefined;
+
+  const injectedPool = {
+    query: pool.query.bind(pool),
+    connect: async () => {
+      const client = await originalConnect();
+      connectCount += 1;
+
+      // bootstrapAdmin first checks out one client for runMigrations. Inject
+      // failures only into the second checkout, which owns the bootstrap
+      // transaction itself.
+      if (connectCount === 2) {
+        const originalQuery = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+        const originalRelease = client.release.bind(client);
+        client.query = ((...args: unknown[]) => {
+          const statement =
+            typeof args[0] === "string"
+              ? args[0]
+              : (args[0] as { readonly text?: string } | undefined)?.text;
+          if (statement?.includes("INSERT INTO organizations")) {
+            return Promise.reject(new Error("injected bootstrap mutation failure"));
+          }
+          if (statement === "ROLLBACK") {
+            return Promise.reject(new Error("injected bootstrap rollback failure"));
+          }
+          return originalQuery(...args);
+        }) as typeof client.query;
+        client.release = ((destroy?: boolean | Error) => {
+          releasedWith = destroy;
+          originalRelease(destroy);
+        }) as typeof client.release;
+      }
+
+      return client;
+    },
+  } as unknown as pg.Pool;
+
+  try {
+    await assert.rejects(
+      () =>
+        bootstrapAdmin(injectedPool, {
+          pbuuid: "rollback-admin@example.invalid",
+          requestId: "bootstrap-rollback-fails",
+        }),
+      /injected bootstrap mutation failure/,
+    );
+    assert.equal(connectCount, 2, "the injected client must own the bootstrap transaction");
+    assert.equal(releasedWith, true, "unknown bootstrap state must destroy the client");
+
+    const { rows } = await adminPool.query<{ id: string }>(
+      "SELECT id FROM principals WHERE id = $1",
+      ["principal-rollback-admin@example.invalid"],
+    );
+    assert.deepEqual(rows, [], "the failed bootstrap must leave no principal behind");
+  } finally {
+    await pool.end();
+  }
+});
+
 test("bootstrap: re-running with the exact same admin is a no-op; a different identity is refused", async () => {
   const pool = new pg.Pool({ connectionString: DB_URL });
   try {
