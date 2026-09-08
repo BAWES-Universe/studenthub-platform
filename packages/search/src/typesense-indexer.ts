@@ -15,8 +15,15 @@ export interface TypesenseCandidateIndexerConfig {
 export interface CandidateIndexPublication {
   readonly alias: string;
   readonly collection: string;
+  /** Alias target observed immediately before publication, or null for a new alias. */
+  readonly previousCollection: string | null;
   readonly digest: string;
   readonly documents: number;
+}
+
+export interface CandidateIndexRollback {
+  readonly alias: string;
+  readonly restoredCollection: string | null;
 }
 
 export class CandidateIndexPublishError extends Error {
@@ -78,6 +85,7 @@ export class TypesenseCandidateIndexer {
       .update(JSON.stringify({ fields: SEARCH_FIELDS, documents: canonical }))
       .digest("hex");
     const collection = `${this.#alias}_${CANDIDATE_SEARCH_SCHEMA_VERSION}_${digest.slice(0, 16)}`;
+    const previousCollection = await this.#aliasTarget();
     const created = await this.#ensureCollection(collection);
 
     try {
@@ -96,7 +104,76 @@ export class TypesenseCandidateIndexer {
       throw error;
     }
 
-    return { alias: this.#alias, collection, digest, documents: canonical.length };
+    return { alias: this.#alias, collection, previousCollection, digest, documents: canonical.length };
+  }
+
+  /**
+   * Restore the alias target observed by publish. The compare-before-switch
+   * guard rejects an already-stale receipt. Callers must also serialize alias
+   * changes because Typesense does not expose a compare-and-swap alias API.
+   */
+  async rollback(publication: CandidateIndexPublication): Promise<CandidateIndexRollback> {
+    if (publication.alias !== this.#alias || !this.#ownedCollection(publication.collection)) {
+      throw new TypeError("candidate index rollback receipt does not belong to this alias");
+    }
+    if (publication.previousCollection !== null && !this.#ownedCollection(publication.previousCollection)) {
+      throw new TypeError("candidate index rollback target does not belong to this alias");
+    }
+
+    const current = await this.#aliasTarget();
+    if (current !== publication.collection) {
+      throw new CandidateIndexPublishError("Typesense alias moved after publication; refusing stale rollback");
+    }
+    if (publication.previousCollection === current) {
+      return { alias: this.#alias, restoredCollection: current };
+    }
+
+    if (publication.previousCollection === null) {
+      const response = await this.#request(`/aliases/${encodeURIComponent(this.#alias)}`, { method: "DELETE" });
+      const status = response.status;
+      const ok = response.ok;
+      await this.#discard(response);
+      if (!ok) throw unavailable(status);
+    } else {
+      const response = await this.#json(`/aliases/${encodeURIComponent(this.#alias)}`, {
+        method: "PUT",
+        body: JSON.stringify({ collection_name: publication.previousCollection }),
+      });
+      const status = response.status;
+      const ok = response.ok;
+      await this.#discard(response);
+      if (!ok) throw unavailable(status);
+    }
+
+    return { alias: this.#alias, restoredCollection: publication.previousCollection };
+  }
+
+  async #aliasTarget(): Promise<string | null> {
+    const response = await this.#request(`/aliases/${encodeURIComponent(this.#alias)}`, { method: "GET" });
+    if (response.status === 404) {
+      await this.#discard(response);
+      return null;
+    }
+    if (!response.ok) {
+      const status = response.status;
+      await this.#discard(response);
+      throw unavailable(status);
+    }
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch {
+      throw new CandidateIndexPublishError("Typesense returned invalid alias metadata");
+    }
+    if (!isRecord(value) || typeof value.collection_name !== "string" || !this.#ownedCollection(value.collection_name)) {
+      throw new CandidateIndexPublishError("Typesense alias points outside the candidate index namespace");
+    }
+    return value.collection_name;
+  }
+
+  #ownedCollection(collection: string): boolean {
+    const prefix = `${this.#alias}_${CANDIDATE_SEARCH_SCHEMA_VERSION}_`;
+    return collection.startsWith(prefix) && /^[0-9a-f]{16}$/.test(collection.slice(prefix.length));
   }
 
   async #ensureCollection(collection: string): Promise<boolean> {
