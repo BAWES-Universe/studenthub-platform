@@ -38,7 +38,12 @@ function escapeHtml(value: string): string {
 const securityHeaders = {
   "cache-control": "no-store",
   "content-security-policy": "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-  "referrer-policy": "no-referrer",
+  // `same-origin`, not `no-referrer`: under `no-referrer` browsers serialize the
+  // Origin header of a same-origin form POST as the literal `null` (Fetch,
+  // "append a request Origin header"), so the sign-out form could never satisfy
+  // the /logout origin check. `same-origin` still sends no Referer when the
+  // browser leaves for Universe, which is the property the header was for.
+  "referrer-policy": "same-origin",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
   "vary": "Accept",
