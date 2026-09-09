@@ -3,7 +3,7 @@
 **Card:** SHU-128 (parent SHU-88). Feeds SHU-100 (financial records contract), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`; schema facts additionally from `railway/staging/studenthub.sql` in the same repository, which is the only place several tables are defined. Permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, bank, accounting-system or live-host access. No account numbers, amounts or personal data.
-**Coverage:** 155 of 1,184 production endpoints (`docs/parity/coverage.md`, cluster FI).
+**Coverage:** 138 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster FI).
 
 ## 1. What this cluster is
 
