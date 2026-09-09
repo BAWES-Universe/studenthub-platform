@@ -15,8 +15,11 @@ import {
   createDenyAllAuthzMiddleware,
   type AuthzMiddleware,
 } from "./authz-middleware.js";
-import type { LoginApplication } from "@studenthub/login-contract";
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
+import {
+  type BrowserLoginApplication, profileDocument, renderError, renderLanding,
+  WEB_CSS, wantsHtml, writeHtml,
+} from "./web-ui.js";
 
 export * from "./authz-middleware.js";
 export * from "./authz-audit.js";
@@ -116,7 +119,7 @@ export function createGatewayServer(
   adapter: McpAdapter = new UnconfiguredMcpAdapter(),
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
   authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
-  login?: LoginApplication,
+  login?: BrowserLoginApplication,
   sourceRevision: string | null = readImageSourceRevision(),
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
@@ -124,6 +127,23 @@ export function createGatewayServer(
   }
 
   return createServer(async (request, response) => {
+    const html = wantsHtml(request.headers.accept);
+    if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
+      writeHtml(response, 200, renderLanding(login));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/assets/studenthub.css") {
+      response.writeHead(200, {
+        "content-type": "text/css; charset=utf-8", "cache-control": "no-cache",
+        "x-content-type-options": "nosniff",
+      });
+      response.end(WEB_CSS);
+      return;
+    }
+    if (!login && html && request.url && ["/profile", "/login/universe", "/login/callback", "/logout"].includes(requestPath(request.url))) {
+      writeHtml(response, 503, renderError(503));
+      return;
+    }
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
@@ -134,6 +154,7 @@ export function createGatewayServer(
       const url = new URL(request.url, "http://gateway.invalid");
       const returnTo = url.searchParams.get("return_to");
       if (!returnTo) {
+        if (html) { writeHtml(response, 400, renderError(400, login)); return; }
         writeBrowserResponseSafely(response, { status: 400, body: { error: "login_rejected" } });
         return;
       }
@@ -145,6 +166,7 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
       writeBrowserResponseSafely(response, result, result.status === 302
         ? `__Host-studenthub_browser=${browserSessionId}; Path=/; HttpOnly; Secure; SameSite=Lax`
         : undefined);
@@ -157,6 +179,7 @@ export function createGatewayServer(
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
       if (!browserSessionId || !state || !code) {
+        if (html) { writeHtml(response, 400, renderError(400, login)); return; }
         writeBrowserResponseSafely(response, { status: 400, body: { error: "login_rejected" } });
         return;
       }
@@ -166,6 +189,7 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
       writeBrowserResponseSafely(response, result);
       return;
     }
@@ -181,19 +205,47 @@ export function createGatewayServer(
       } catch {
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (html) {
+        try {
+          const page = await profileDocument(result, login);
+          writeHtml(response, page.status, page.html);
+        } catch {
+          writeHtml(response, 503, renderError(503, login));
+        }
+        return;
+      }
       writeBrowserResponseSafely(response, {
         ...result,
-        headers: { ...result.headers, "cache-control": "no-store" },
+        headers: { ...result.headers, "cache-control": "no-store", vary: "Accept" },
       });
       return;
     }
 
     if (login && request.method === "POST" && request.url && requestPath(request.url) === "/logout") {
+      // Native browser forms must prove the configured origin; Host and forwarded
+      // headers are not authority. Preserve non-browser clients without Origin.
+      const origin = request.headers.origin;
+      if (request.headers["sec-fetch-site"] === "cross-site"
+        || (origin !== undefined && origin !== login.web?.origin)
+        || (html && (!origin || !login.web?.origin))) {
+        if (html) writeHtml(response, 403, renderError(403, login));
+        else writeBrowserResponseSafely(response, { status: 403, body: { error: "login_rejected" } });
+        return;
+      }
       let result: import("@studenthub/login-contract").BrowserResponse;
       try {
         result = await login.logout(cookieValue(request.headers.cookie, "__Host-studenthub_session"));
       } catch {
         result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      if (html) {
+        if (result.status === 204) {
+          response.writeHead(303, { ...result.headers, location: "/", "cache-control": "no-store", vary: "Accept" });
+          response.end();
+        } else {
+          writeHtml(response, result.status, renderError(result.status, login));
+        }
+        return;
       }
       writeBrowserResponseSafely(response, result);
       return;
