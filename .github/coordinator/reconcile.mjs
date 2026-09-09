@@ -294,19 +294,20 @@ export function dispatchEnabledFor(env = {}, config = {}) {
 }
 
 // resolveAuthorizationRef — a dispatch is only legal against an APPROVED contract:
-//   1. an explicit candidate.authorization_ref that passes the regex;
-//   2. the fixture lane's configured authorization_ref for fixture probes;
+//   1. the fixture lane's configured authorization_ref for fixture probes;
+//   2. an explicit candidate.authorization_ref that passes the regex;
 //   3. a canonical card id (SHU-<n>) — the ratified card IS the contract ref.
-// The fixture check must precede the canonical-id fallback because Linear mints
-// ordinary-looking identifiers (for example SHU-140) for fixture cards too.
+// The fixture check must precede every candidate-supplied fallback because Linear
+// mints ordinary-looking identifiers (for example SHU-140) for fixture cards and
+// the fixture must stay pinned to its separately approved contract.
 // Anything else resolves to null and the dispatch is REFUSED loudly.
 export function resolveAuthorizationRef(candidate, config = {}) {
-  if (candidate.authorization_ref && authorizationRefValid(candidate.authorization_ref)) return candidate.authorization_ref;
   const fixtureLane = config.fixture_lane ?? {};
   if (fixtureLane.id && candidate.id === fixtureLane.id) {
     if (fixtureLane.authorization_ref && authorizationRefValid(fixtureLane.authorization_ref)) return fixtureLane.authorization_ref;
     return null; // fixture lane misconfigured — refuse loudly, never guess
   }
+  if (candidate.authorization_ref && authorizationRefValid(candidate.authorization_ref)) return candidate.authorization_ref;
   if (typeof candidate.id === "string" && /^SHU-[0-9]+$/.test(candidate.id)) return candidate.id;
   return null;
 }
