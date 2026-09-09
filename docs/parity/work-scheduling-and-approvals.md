@@ -3,13 +3,13 @@
 **Card:** SHU-126 (parent SHU-88). Feeds SHU-95 (work contract), SHU-100 (finance contract, which consumes approved hours), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database or live-host access. No personal data.
-**Coverage:** 122 of 1,184 production endpoints (`docs/parity/coverage.md`, cluster WK).
+**Coverage:** provisional WK assignment from `docs/parity/coverage.md`. PR #52 must recompute action totals and shares after separating feature actions from Yii `OptionsAction` configurators; this inventory does not rely on the provisional count.
 
 ## 1. What this cluster is
 
 The part of production where a student's time becomes money. A candidate is assigned to a store, clocks in and out on their phone, an employer approves or rejects the day, staff correct mistakes, the candidate can appeal, and the resulting approved hours are what the finance cluster multiplies by two rates to bill the company and pay the student.
 
-**The single most important fact in this inventory: this cluster has no automated tests at all.** There is no `CandidateWorkingHourCest` in any of the five apps, no work-log feedback test, no appeal test, no standup or leave test, and only one fixture (`CandidateWorkHistoryFixture`) for the whole cluster. Every other cluster inventoried so far has at least route-level coverage. The code path that decides what students are paid is the one nobody tested. That is a parity risk and an opportunity: the platform's version can be specified test-first with no legacy expectations to preserve.
+**The single most important fact in this inventory: the hours-to-approval pipeline has no automated tests.** There is no `CandidateWorkingHourCest` in any of the five apps, no work-log feedback test, no appeal test, and no standup or leave test. The surrounding assignment surface does have route-level coverage: five apps read work history, while staff tests assigned-candidate listing plus assign and unassign. One fixture (`CandidateWorkHistoryFixture`) seeds that assignment data. The code path that captures time and decides what students are paid remains untested. That is a parity risk and an opportunity: specify the platform version test-first while preserving only the assignment behavior the legacy tests actually establish.
 
 ## 2. Data model
 
@@ -74,11 +74,11 @@ Two things worth carrying into the platform contract: `rating` and `is_public` m
 
 | App | Actions | Scope |
 |---|---|---|
-| candidate | `ListDate`, `DateDetail`, `Stats`, `AddHour`, `ListHour`, `WorkingDates`, `HoursDetail`, `Appeal`, `AppealDetail`, `MarkReadAppealUpdate` (11) | own |
-| company | `ListDate`, `DateDetail`, `Stats`, `ListHour` (5) | its stores |
-| manager | `ListDate`, `ListHour` (3) | one store |
+| candidate | `ListDate`, `DateDetail`, `Stats`, `AddHour`, `ListHour`, `WorkingDates`, `HoursDetail`, `Appeal`, `AppealDetail`, `MarkReadAppealUpdate` (10) | own |
+| company | `ListDate`, `DateDetail`, `Stats`, `ListHour` (4) | its stores |
+| manager | `ListDate`, `ListHour` (2) | one store |
 | staff | 10 including the corrections above | unscoped |
-| admin | `ListDate`, `ListHour` (3) | unscoped |
+| admin | `ListDate`, `ListHour` (2) | unscoped |
 
 ### 4.6 Internal staff time (a different product)
 
@@ -100,7 +100,7 @@ The first two are named "fix". A repair job that recomputes day totals from sess
 
 | ID | Journey | Actor / grant | Legacy routes | Tests | Disposition | Slice |
 |---|---|---|---|---|---|---|
-| WK-01 | Assign a candidate to a store for a period at agreed rates | staff | `staff/.../CandidateController.php` assign/unassign; `candidate_work_history` | none | REQUIRED | W1 |
+| WK-01 | Assign a candidate to a store for a period at agreed rates | staff | `staff/.../CandidateController.php` assign/unassign; `candidate_work_history` | staff assign/unassign and assigned-list tests; work-history reads in all five apps | REQUIRED | W1 |
 | WK-02 | Employer requests a candidate for a store | org member | `company/.../StoreController.php` `StoreAssignmentRequest`, `Cancel…` | none | REQUIRED | W1 |
 | WK-03 | Clock in | candidate, self | `POST v1/account/start-time` | none | REQUIRED, **ADAPT: fix WK-F1, record `total_time` on close** | W2 |
 | WK-04 | Clock out | candidate, self | `POST v1/account/stop-time` | none | REQUIRED, ADAPT | W2 |
@@ -125,9 +125,9 @@ The first two are named "fix". A repair job that recomputes day totals from sess
 
 ## 7. Tests and fixtures
 
-**Legacy automated coverage of this cluster: zero.** No Cest or Test file in any app targets working hours, work-log feedback, appeals, work history, staff sessions, leave, standup or the hit map. The only fixture is `CandidateWorkHistoryFixture` with `data/candidate_work_history.php`.
+**Legacy automated coverage of the core hours pipeline: zero.** No Cest or Test file targets working hours, work-log feedback, appeals, staff sessions, leave, standup or the hit map. Assignment and history have limited route coverage: candidate, company, manager, staff and admin each read work history; staff also tests assigned-candidate listing, assign and unassign. `CandidateWorkHistoryFixture` with `data/candidate_work_history.php` is the only fixture in this cluster.
 
-Untested behaviour is therefore the entire cluster. Named explicitly, because these are the ones that decide money or a student's record:
+The untested money- and record-determining behavior is:
 
 - clock-in and clock-out, including the double-booking guard and the location handling;
 - day roll-up totals and the two repair jobs;
@@ -149,7 +149,7 @@ Untested behaviour is therefore the entire cluster. Named explicitly, because th
 | **WK-F5** | Staff-created corrected sessions are written as approved immediately, bypassing employer review | `staff/.../CandidateWorkingHourController.php` `AddHour` | Medium (legitimate as a remedy, but needs a recorded reason and an audit entry) | W5 |
 | **WK-F6** | `candidate_working_hour` has no soft-delete column, so there is no way to reconstruct a deleted shift | `common/models/CandidateWorkingHour.php` | Medium | W6 |
 | **WK-F7** | Employer ratings can be marked public with no moderation or appeal path | `candidate_work_log_feedback.rating`, `.is_public` | Decision | D-WK2 |
-| **WK-F8** | No test anywhere covers the hours pipeline | §7 | High for migration confidence | specify test-first in W2–W6 |
+| **WK-F8** | No test covers session capture, roll-up, approval, appeal or correction; existing tests stop at assignment and work-history reads | §7 | High for migration confidence | specify test-first in W2–W6 |
 | **WK-F9** | The candidate appeal endpoint does not verify session ownership at the controller level | `candidate/.../CandidateWorkingHourController.php` `Appeal` | Needs verification against model rules | verifier spot-check; W5 enforces it explicitly |
 
 ## 9. Classification of prior findings
@@ -182,7 +182,7 @@ Cluster total: **31 points**, against the 8-point placeholder. Running total: pr
 | D-WK1 | Should location be required to clock in, and what happens when it is unavailable or implausible? Production records it but never checks it | Record it, show it to the approver, do not block the clock-in; treat it as evidence rather than a gate | Blocks W2. Deciding late means re-opening the session schema |
 | D-WK2 | Keep public employer ratings of students (WK-10, WK-F7)? | Keep the rating private to staff and the employer; no public reputation without a moderation and appeal path | Blocks W4 only |
 | D-WK3 | Who may correct hours after an employer decision, and does a correction need employer re-confirmation? | Staff may correct with a recorded reason; corrections above a threshold notify the employer rather than requiring re-approval | Blocks W5. This is the rule that decides disputes, so it should be explicit before anyone writes it |
-| D-WK4 | Does StudentHub's internal staff HR tooling (work sessions, leave, standup, attendance emails) move to the platform, or leave with the legacy system? | Leave it; it is internal HR, not the student-work product, and 20 endpoints of it | Blocks nothing; it removes about 40 endpoints from the parity surface if dropped |
+| D-WK4 | Does StudentHub's internal staff HR tooling (work sessions, leave, standup, attendance emails) move to the platform, or leave with the legacy system? | Leave it; it is internal HR, not the student-work product | Blocks nothing; PR #52 will quantify the functional actions removed after correcting its endpoint count |
 
 ## 12. Not established
 
