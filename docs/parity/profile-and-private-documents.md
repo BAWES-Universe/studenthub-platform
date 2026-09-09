@@ -7,7 +7,7 @@
 
 ## 1. What this cluster is
 
-A candidate's profile in production is one wide row (`candidate`, 60+ columns) plus eight child tables, edited through roughly 45 single-purpose endpoints in the candidate app and viewed or edited by four other apps (staff, admin, company, manager) under different field projections. Documents (personal photo, resume, civil ID front and back, video) are S3 objects whose keys live in profile columns.
+A candidate's profile in production is one wide row (`candidate`, 60+ columns) plus nine child tables, edited through roughly 45 single-purpose endpoints in the candidate app and viewed or edited by four other apps (staff, admin, company, manager) under different field projections. Documents (personal photo, resume, civil ID front and back, video) are S3 objects whose keys live in profile columns.
 
 The one-app grant model collapses this to **one profile aggregate** and **one set of journeys** whose visible fields and permitted writes are decided by the caller's grant, not by which app they logged into. The matrix in section 6 is written in that shape.
 
@@ -15,7 +15,7 @@ The one-app grant model collapses this to **one profile aggregate** and **one se
 
 ### 2.1 `candidate` (profile columns, grouped)
 
-Created in `console/migrations/m130524_201442_init.php`; columns added across 35 later migrations (list in Appendix A). Groups below are by meaning, not by migration.
+Created in `console/migrations/m130524_201442_init.php`; columns were added across 35 later migrations. Appendix A lists the selected field-bearing migrations used for this inventory, not all 35. Groups below are by meaning, not by migration.
 
 | Group | Columns | Notes |
 |---|---|---|
@@ -136,7 +136,7 @@ Columns: **Actor / grant** in the one-app model; **Legacy route(s)**; **Writes**
 
 | ID | Journey | Actor / grant | Legacy route(s) | Reads | Legacy tests | Disposition | Slice |
 |---|---|---|---|---|---|---|---|
-| PD-01 | View own profile | person, `self` | `GET v1/account/profile` (`AccountController.php:80`) | full self projection §3 + `expand` of any `extraFields` | `AccountCest::tryToGetProfile` asserts 200 and own `candidate_id` | REQUIRED | S1 (SHU-92) |
+| PD-01 | View own safe profile | person, `self` | `GET v1/account/profile` (`AccountController.php:80`) | S1 safe field set in §7. The legacy route returns the broader self projection in §3; civil ID number and private documents move to S4/S5, bank to finance, and video remains pending D3. | `AccountCest::tryToGetProfile` asserts 200 and own `candidate_id` | REQUIRED | S1 (SHU-92) |
 | PD-02 | View own education / experience / skills / links | person, `self` | `GET v1/candidate-educations`, `…-experiences`, `…-links`; skills inline | owner-scoped lists | none | REQUIRED | S3 |
 | PD-03 | Staff views any candidate | staff, `subtree` | `GET v1/candidates/<id>` staff app; `list`, `assigned`, `not-assigned` (`:86`, `:1131`, `:1205`) | staff projection (everything except secrets) | `staff CandidateCest` list/search assert 200 only | REQUIRED | S6 |
 | PD-04 | Admin views / searches / review queue | admin | `search` (`admin/.../CandidateController.php:76`), `report-search :151`, `total-to-review :199`, `view :342` | admin projection incl. `deleted` | `admin CandidateCest` 8 methods, 200 + partial JSON | REQUIRED | S6 |
@@ -252,7 +252,7 @@ Out of this cluster by decision or ownership: PD-16, PD-28, reset-password (iden
 - Real row counts, real key prefixes in the bucket, and any data not reachable from the code.
 - Which of the `verification/` app's rendered fields the live nginx actually serves (the app is in this repository at `verification/`; an earlier draft of this document wrongly called it a separate deployment).
 
-## Appendix A: `candidate` column migrations
+## Appendix A: selected `candidate` column migrations
 
 `m170219_151757` (name_ar, birth_date, civil fields, hourly_rate), `m170223_132254` (store_id), `m170303_134250` (approved), `m170306_112515` (bank_id, iban), `m170307_121642` (phone, bank_account_name), `m170420_125428` (university_id), `m170425_134445` (country_id), `m170427_123738` (personal_photo), `m170529_071050` (address_line1), `m200722_135609` (language), `m200724_100421` (new_email, email_verification, limit_email; nullable birth/civil/rate/auth_key), `m200729_094528` (driving_license, resume, gender, objective; creates skill and experience tables), `m200807_134023` (job_search), `m200907_135723` / `m201009_153032` / `m201019_103154` (video, processed, job id, webhook), `m200922_070412` (area, lat, long), `m201105_063330` (committed), `m201106_074724` (mom_kuwaiti), `m211123_120542` (pending_profile), `m230406_110939` (profile_url), `m230113_065332` (intro), `m230504_083255` (tags), plus `is_duplicate`, `is_incomplete_profile`, `utm_uuid`, nullable password hash.
 
