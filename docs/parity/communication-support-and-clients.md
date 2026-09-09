@@ -3,7 +3,7 @@
 **Card:** SHU-129 (parent SHU-88). Feeds SHU-94 (communication contract), SHU-138 (live client revisions), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, provider console or live-host access. No message contents, addresses, phone numbers or personal data.
-**Coverage:** 135 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster CM).
+**Coverage:** 133 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster CM, regenerated at `84ab149`: the two `Story::actionChangeStoryStatus` recruiter transitions moved to recruit).
 
 ## 1. What this cluster is
 
@@ -119,13 +119,17 @@ Only notes are covered: `admin/NoteCest.php` (8), `staff/NoteCest.php` (7), `com
 |---|---|---|---|---|
 | **CM-F1** | One chat journey is implemented three times, 28 endpoints, with no shared service | §2.1 | Design (this is the cluster's whole collapse opportunity) | C1 |
 | **CM-F2** | Notification messages are rendered and stored as text, so wording and language are frozen at send time and history cannot be re-rendered | `candidate_notification.message` | Medium (blocks Arabic and any copy change) | C3 |
-| **CM-F3** | Preferences are scattered and channel-blind: three boolean columns on `contact`, one on `staff`, a language column on `candidate`, and no evidence any send path consults them | §2.5, §3 CM-13 | Medium (consent and unsubscribe correctness) | C4 |
+| **CM-F3** | Preferences are scattered and channel-blind: three boolean columns on `contact`, one on `staff`, a language column on `candidate`. **Corrected after independent audit:** some send paths do consult them — suggestion emails filter verified contacts on `contact_receive_email` and `contact_receive_suggestions` (`common/models/Suggestion.php:452-457`, `:482-487`) and transfer receipts on `contact_receive_email` (`common/models/Transfer.php:748`, `:778`); no path was found that consults the SMS/push columns | §2.5, §3 CM-13; evidence cited | Medium (consent is partial, not absent) | C4 must preserve the existing recipient rules while unifying the policy |
 | **CM-F4** | Staff can register a webhook to an arbitrary URL and the event manager calls it with the event payload; no allow-list, signing, retry or audit is visible | `common/components/EventManager.php:390`; `webhook` table | **High** (a staff account becomes a data-exfiltration channel) | C5, and D-CM4 |
-| **CM-F5** | `cron/process-campaign` runs every minute over campaigns in status ready with no lease; `progress` and `last_trigger_date_time` suggest resumability but overlapping runs are not visibly prevented | `CronController.php` `actionProcessCampaign` | Medium (duplicate sends to real people) | verifier reads `EmailCampaign::process()`; C4 makes it leased |
+| **CM-F5** | `cron/process-campaign` runs every minute. `EmailCampaign::process()` does set `STATUS_IN_PROGRESS` and save before sending (`common/models/EmailCampaign.php:311-325`), but `processed` restarts at zero, send exceptions are skipped and `progress` is a percentage of attempted batches (`:211-228`), and recurrence is scheduled from the current execution time (`:328-338`) — a persisted percentage is not a per-recipient delivery checkpoint | `CronController.php` `actionProcessCampaign`; `EmailCampaign.php:211-228`, `:311-338` | Medium (a crash mid-campaign resends from the start) | C4: per-recipient delivery log and lease |
 | **CM-F6** | `chat` carries six nullable participant columns plus three duplicate scalars; `candidate_notification` carries thirteen nullable subject columns | §2.1, §2.3 | Design | C1, C3: typed participants and one subject reference |
 | **CM-F7** | Zero tests across every channel that reaches a real person | §5 | High for migration confidence | specify test-first |
 | **CM-F8** | No employer-facing support path exists; employers are pushed into chat | §3 CM-06 | Product gap | D-CM3 |
 | **CM-F9** | Push audience is selected by OneSignal filters rather than a device registry StudentHub controls | §2.4 | Medium (no server-side proof of who was notified) | C3 |
+| **CM-F9** | Chat read state is shared, not per recipient: reading marks every non-candidate (or non-contact) message read, and unread counts use that single status, so in a multi-party chat one reader clears another's unread count | `candidate/.../ChatController.php:206-220`; `company/.../ChatController.php:259-273`; `common/models/Chat.php:194-227` | Medium | C1: per-participant read cursor |
+| **CM-F10** | `message_index` is allocated as a global `MAX+1` across all chats with no atomic allocator; uniqueness is validated on `chat_uuid` only | `common/models/ChatMessage.php:89-90`, `:48` | Medium (ordering/cursor collisions under concurrent sends; not reproduced) | C1: per-conversation sequence |
+| **CM-F11** | A ticket comment sends its mail, then copies attachments; attachment copy/save failures are swallowed and the caller reports success | `common/models/TicketComment.php:105-111`, `:198-223`; `candidate/.../TicketController.php:140-150` | Medium (partial success with no retry or cleanup) | C2: attachments before notification, explicit result |
+| **CM-F12** | Ticket lifecycle events send the free-text `ticket_description` to analytics with ticket and person ids | `common/models/Ticket.php:146-154`, `:165-173`, `:180-188` | Medium (support text is PII) | X3 whitelist; C2 emits ids only |
 
 ## 7. Classification of prior findings
 
@@ -161,8 +165,7 @@ Cluster total: **26 points** (18 if D-CM1 drops campaigns), against the 8-point 
 
 ## 10. Not established
 
-- Whether `EmailCampaign::process()` marks a campaign in-progress before sending, and how `progress` resumes — this decides CM-F5's severity.
-- Whether any send path consults the preference columns.
+- Whether the SMS and push paths consult any preference column (email paths do; CM-F3).
 - Which webhooks are registered in production, and to where.
 - Which candidate client is deployed, and whether any still ships a Cordova build (SHU-138).
 - Message and ticket volumes, which size C1 and C2.
