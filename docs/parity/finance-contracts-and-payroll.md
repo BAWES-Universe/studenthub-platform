@@ -3,7 +3,7 @@
 **Card:** SHU-128 (parent SHU-88). Feeds SHU-100 (financial records contract), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`; schema facts additionally from `railway/staging/studenthub.sql` in the same repository, which is the only place several tables are defined. Permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, bank, accounting-system or live-host access. No account numbers, amounts or personal data.
-**Coverage:** 138 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster FI).
+**Coverage:** 138 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster FI, regenerated at `84ab149` after an independent audit: comments are now masked, so a commented-out cron action is no longer counted, and six assignments were corrected; `cron/daily` is now primary FI with CM and ID effects, and `admin/Staff::actionListCompanies` moved to OR).
 
 ## 1. What this cluster is
 
@@ -29,10 +29,11 @@ This is the highest-consequence cluster in the system: an error here mispays a s
 
 Inside a line (`common/models/TransferCandidate.php`, `saveCandidateTransfer`):
 
-- Hours, minutes and seconds are cast to `(float)` and a per-minute rate is derived as `candidate_hourly_rate / 60`, then a per-second rate as `minute_rate / 60` (`:326-327`, `:359-360`, and the company-side equivalent at `:403`).
-- Rates fall back: an omitted candidate rate uses the candidate's own rate, an omitted company rate uses the company's, then the **parent company's** if the company's is zero (`:101-118`, `:334-346`).
+- Hours, minutes and seconds are cast to `(float)` and a per-minute rate is derived as `candidate_hourly_rate / 60`, then a per-second rate as `minute_rate / 60` (`:1068-1071` and `:1149-1175` in the manual-rate fallback; `:1319-1324` and `:1367-1388` for hourly contracts). An earlier revision of this document cited `:326-327`, which is the `afterSave` docblock; the audit that caught it is recorded in §7.
+- Rates fall back inside the manual-pay branch (`:1062-1208`): work with **no matching contract** is still payable; an omitted candidate rate uses the candidate's own rate, an omitted company rate uses the company's, then the **parent company's** if the company's is zero; a missing or non-positive rate, or a company rate below the candidate rate, is rejected; the line is saved with a null contract reference. The contract that applies is chosen by **overlap with the transfer period** (`:1006-1059`): non-deleted contracts for the candidate and store whose dates overlap the transfer's, newest first, with an explicit UUID/type filter honoured and **more than one match rejected**; when the transfer has no period it falls back to "active today". Neither rule was in this document before the independent audit.
 - Monthly salary is divided by `$noOfPayout`, which the weekly cron sets to **4** with the comment "4 weeks per month/ salary/4 = 1 week salary" (`CronController.php` `actionWeekly`).
-- Line totals are rounded to three decimals only at the end (`:227-228`).
+- Hourly and manual line totals are rounded to three decimals once, at the end (`:1191-1192`, `:1390-1392`). The monthly-salary and fixed-price branches assign **unrounded** float totals (`:1328-1351`), so there is no single rounding point across the three pay models.
+- An hourly-contract line with `hours == 0` and `bonus == 0` returns zero **without looking at minutes or seconds** (`:1243-1252`); the manual branch checks all four values (`:1068-1082`). Minute-only hourly work is silently unpaid on the contract path. Finding FI-F8.
 - A line with no hours, minutes, seconds or bonus returns success with zero totals rather than an error.
 
 **Column types across the same flow are inconsistent** (from the schema dump):
@@ -46,7 +47,7 @@ Inside a line (`common/models/TransferCandidate.php`, `saveCandidateTransfer`):
 | `hourly_contract`, `fixed_price_contract`, `monthly_salary_contract` | amounts | `decimal(12,3)` |
 | `expense`, `staff_salary` | `amount`, `salary` | `decimal(10,3)` |
 
-So the quantity that multiplies every rate is a floating-point number, the line items are `decimal(10,3)` while their parent is `decimal(12,3)`, and PHP does the arithmetic in floats before rounding once at the end. Findings FI-F1 and FI-F2.
+So the quantity that multiplies every rate is a floating-point number, the line items are `decimal(10,3)` while their parent is `decimal(12,3)`, and PHP does the arithmetic in floats, rounding once for hourly and manual lines and never for monthly or fixed-price lines. Findings FI-F1 and FI-F2.
 
 ## 4. Scheduled money movement
 
@@ -60,7 +61,7 @@ So the quantity that multiplies every rate is a floating-point number, the line 
 | `cron/segment-transfer`, `-suggestion`, `-expense` | not scheduled | analytics emitters |
 | `xero/sync-transactions`, `xero/sync-after` | not scheduled | accounting sync |
 
-`process-transfer-files` is the one that touches a bank. It selects pending files in batches of 100 and processes them in a loop, with **no lock, no lease and no in-progress marker before `process()` is called** — the model has a `STATUS_PROCESSING` value, so whether it is set inside `process()` before any external call decides whether two overlapping minute-runs can process the same file twice. Finding FI-F3, and the single most important thing for a verifier to settle.
+`process-transfer-files` is the reconciliation step, not the payment step: `TransferFile::process()` reads a bank statement or the file's entries and **marks lines paid** (`common/models/TransferFile.php:238-250`); it does not issue a payment instruction. It sets `STATUS_PROCESSING` and saves **before** opening its transaction or reading any file (`:179-187`, verified after the independent audit), so the marker exists. What is missing is a claim: the cron preselects pending rows in batches of 100 (`CronController.php:338-348`) and the status save is unconditional, with no compare-and-swap on `pending`, so two overlapping minute-runs that both loaded the same batch can both enter `process()`. Whether that has ever produced a double `paid` mark is not established. Finding FI-F3, downgraded from High to Medium. Separately, `markProcessed` sends the confirmation mail (`:687-692`) **before** the transaction commits (`:327-329`), so a commit failure leaves an email that describes a reconciliation that did not happen. Finding FI-F7.
 
 ## 5. Transfer files and reconciliation
 
@@ -83,7 +84,7 @@ Statuses on `transfer`: 10 initiated (draft), 1 payment sent, 3 salary distribut
 | FI-05 | Adjust a transfer line: hours, bonus, rates, transfer cost | staff, admin | `TransferCandidateController` admin (13) | none | REQUIRED, audited | F2 |
 | FI-06 | Lock, cancel, or advance a transfer's status | staff, admin | transfer controllers | none | REQUIRED as an explicit state machine | F2 |
 | FI-07 | Export a bank transfer file | admin | `TransferFileController` (4), `TransferBankAdvice` (6) | none | REQUIRED, **ADAPT: idempotent, leased, single-writer** | F3 |
-| FI-08 | Process a transfer file and reconcile entries | system | `cron/process-transfer-files` → `TransferFile::process()` | none | REQUIRED, **ADAPT: lock before external effect (FI-F3)** | F3 |
+| FI-08 | Process a transfer file and reconcile entries | system | `cron/process-transfer-files` → `TransferFile::process()` | `admin/tests/functional/TransferFileCest.php` (list/view only) | REQUIRED, **ADAPT: compare-and-swap claim before processing, mail after commit (FI-F3, FI-F7)** | F3 |
 | FI-09 | Notify a candidate that they were paid | system | `TransferCandidate` mail and SMS paths | none | REQUIRED | F3 |
 | FI-10 | Invoices | staff, admin | `Invoice` model, transfer relation | none | REQUIRED | F4 |
 | FI-11 | Company balance and statement | org member, staff | `BalanceController` in four apps (16) | none | REQUIRED | F4 |
@@ -101,9 +102,16 @@ Statuses on `transfer`: 10 initiated (draft), 1 payment sent, 3 salary distribut
 
 ## 7. Tests and fixtures
 
-**Automated coverage of this cluster: zero.** No Cest or Test file in any app targets transfers, transfer files, contracts, invoices, balances, expenses, staff salaries, discounts or Xero. There is no finance fixture. The `admin/tests/functional/TransferCest.php` seen in the admin suite listing exercises the transfer **API listing** only (its `tryToList` asserts HTTP 200 and a JSON envelope), not any money calculation.
+**Correction.** An earlier revision of this section said this cluster had zero tests and no fixtures. That was false, and an independent audit caught it. What exists at `c2ce255`:
 
-That means every statement in §3 and §4 is untested in production: the per-second rate derivation, the parent-company rate fallback, the quarter-month division, the rounding point, the zero-total refusal, the rollback path, and the entire transfer-file lifecycle.
+| Suite | What it establishes |
+|---|---|
+| `common/tests/unit/models/TransferCandidateTest.php` (536 lines) | `:308-343` manual-rate fallback with persisted totals asserted; `:346-387` an overlapping hourly contract; `:390-465` zero-payable and missing-rate errors |
+| `common/tests/unit/models/TransferTest.php` | transfer aggregate behaviour |
+| `admin/tests/functional/TransferCest.php`, `TransferCandidateCest.php`, `TransferFileCest.php` | list/view return 200 with a JSON envelope; `TransferFileCest.php:18-24, :42-61` loads the finance fixture |
+| Fixtures `common/fixtures/TransferFixture.php`, `TransferCandidateFixture.php`, `TransferFileFixture.php`, `TransferFileEntryFixture.php`, `InvoiceFixture.php`, `WalletTransferFixture.php` | synthetic finance rows, reusable for platform tests |
+
+What remains untested in production: the per-second rate derivation on the contract path, the quarter-month division, the monthly and fixed-price (unrounded) branches, the minute-only hourly case (FI-F8), the transfer-file lifecycle beyond list/view, and the rollback path — which the legacy suite cannot reach because of FI-F10. Whether the suite currently passes is not established (nothing was executed).
 
 **Untested behaviour, explicitly:** contract creation and type-specific amounts; transfer generation and its rollback; line adjustment; the weekly auto-generation; transfer-file export, processing, retry and error handling; reconciliation back to lines; payment notifications; invoices; balances; the candidate salary view; expenses; staff salaries; discounts; Xero sync.
 
@@ -113,7 +121,11 @@ That means every statement in §3 and §4 is untested in production: the per-sec
 |---|---|---|---|---|
 | **FI-F1** | `transfer_candidate.hours` is `double unsigned` — floating point — and PHP casts hours, minutes and seconds to `(float)` before multiplying by rates | schema dump; `TransferCandidate::saveCandidateTransfer` `:87-90` | **High** (money computed in binary floating point) | F2: integer minutes or a decimal type end to end |
 | **FI-F2** | Money precision is inconsistent along one flow: parent `transfer` is `decimal(12,3)`, its `transfer_candidate` lines are `decimal(10,3)`, contracts are `decimal(12,3)` | schema dump | Medium (a line that fits its parent can overflow, and sums may not reconcile) | F2, and SHU-97 must check for existing overflow |
-| **FI-F3** | `cron/process-transfer-files` runs **every minute**, batches 100 pending files and calls `process()` with no visible lock, lease or pre-marking; overlapping runs are possible | `CronController.php` `actionProcessTransferFiles`; `cron/cronlist` | **High if `process()` does not set `STATUS_PROCESSING` before any external call** | verifier settles this first; F3 makes it leased and idempotent regardless |
+| **FI-F3** | `cron/process-transfer-files` runs **every minute**; `process()` does set `STATUS_PROCESSING` first (`TransferFile.php:179-187`), but the save is unconditional and the cron preselects pending rows, so overlapping runs that loaded the same batch can both enter | `CronController.php:338-348`; `TransferFile.php:179-187` | Medium (no double payment is evidenced; the method marks lines paid, it does not pay) | F3: claim with compare-and-swap, idempotent marking |
+| **FI-F7** | Confirmation mail is sent inside `markProcessed` before the surrounding transaction commits | `TransferFile.php:327-329`, `:687-692` | Medium (mail can describe a rolled-back reconciliation) | F3: mail after commit |
+| **FI-F8** | Hourly-contract lines with zero hours and zero bonus return zero without checking minutes or seconds; the manual branch checks all four | `TransferCandidate.php:1243-1252` vs `:1068-1082` | Medium (minute-only work unpaid) | F2: test `hours=0, minutes>0` on both branches; do not preserve |
+| **FI-F9** | Locking is role-dependent: the common model locks an initiated transfer after checking assignments and then generates child transfers and invoices (`Transfer.php:1080-1129`, `:990-1018`); the admin subclass allows relocking payment-sent transfers and unlocking locked ones (`admin/models/Transfer.php:76-108`) | see evidence | Medium (state machine differs by app) | F2/F4: one explicit lock state machine |
+| **FI-F10** | Explicit transaction operations are skipped when `inCodeception` is set (`Transfer.php:1200`, `:1271-1311`), so the legacy tests never exercise the production rollback path | see evidence | Migration-confidence | F2: platform tests run with real transactions |
 | **FI-F4** | The quarter-month rule (`$noOfPayout = 4`) treats every month as four weeks, so a monthly salary paid weekly under-pays or over-pays depending on the month | `CronController.php` `actionWeekly` | Medium (systematic drift against the contract) | D-FI2 |
 | **FI-F5** | Rounding happens once at the end of a line (`round(..., 3)`), so intermediate per-second products carry full float error | `TransferCandidate.php:227-228` | Medium | F2 |
 | **FI-F6** | Rate fallback silently reaches through to the parent company when a company rate is zero | `:334-346`, `:112-118` | Medium (a missing rate produces a payment rather than an error) | F1: make the effective rate explicit and recorded on the line |
@@ -154,7 +166,8 @@ Cluster total: **26 points**, against the 8-point placeholder, and this is the e
 
 ## 12. Not established
 
-- Whether `TransferFile::process()` sets `STATUS_PROCESSING` before any external call, and whether the bank interaction is idempotent. This is the first thing a verifier should read; it decides FI-F3's severity.
+- Whether two overlapping `process-transfer-files` runs have ever double-marked a line (`process()` does pre-mark, but without a compare-and-swap; FI-F3). Needs `cron_log` and the database.
+- Where the actual bank payment instruction is produced. `process()` reconciles statements; the outbound file or portal step is outside this method and was not located in this pass.
 - Where `Transfer::STATUS_LOCK` is set and what it prevents.
 - Real volumes: transfers per week, lines per transfer, files per month. These size F3.
 - Whether any existing `transfer_candidate` row has already lost precision, or any line exceeds `decimal(10,3)` — needs the database, and belongs in SHU-97.
