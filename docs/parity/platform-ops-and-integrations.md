@@ -3,7 +3,7 @@
 **Card:** SHU-139 (parent SHU-88). Closes the second coverage gap found by PR #52. Feeds SHU-97 (data map) and the P4 operational-readiness work.
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, provider console, network or live-host access. **No credential values, keys, endpoints or secrets appear in this document**, including ones the repository itself contains.
-**Coverage:** 31 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster OPS, regenerated at `cab8d90`).
+**Coverage:** 29 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster OPS, regenerated at `84ab149`: the commented-out `cron/test` is no longer counted, and `cron/daily` is primary finance with communication and identity effects).
 
 ## 1. What this cluster is
 
