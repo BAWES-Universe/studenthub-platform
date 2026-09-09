@@ -3,7 +3,7 @@
 **Card:** SHU-126 (parent SHU-88). Feeds SHU-95 (work contract), SHU-100 (finance contract, which consumes approved hours), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database or live-host access. No personal data.
-**Coverage:** provisional WK assignment from `docs/parity/coverage.md`. PR #52 must recompute action totals and shares after separating feature actions from Yii `OptionsAction` configurators; this inventory does not rely on the provisional count.
+**Coverage:** 105 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster WK). The ledger was recounted on the SHU-88 branch at `cab8d90`: Yii's `actions()` hook is no longer counted as a feature endpoint and is reported separately, and one declaration written `public  function` is no longer missed.
 
 ## 1. What this cluster is
 
