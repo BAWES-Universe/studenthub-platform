@@ -42,7 +42,7 @@ const ROOT = process.argv[2];
 const OUT = process.argv[3] ?? join(dirname(new URL(import.meta.url).pathname), "../../docs/parity/coverage.md");
 if (!ROOT) { console.error("usage: generate-coverage-ledger.mjs <studenthub-checkout> [out]"); process.exit(2); }
 
-const ACTION_RE = /public\s+function\s+(action[A-Za-z0-9_]*)\s*\(/g;
+const ACTION_RE = /public\s+function\s+(action[A-Za-z0-9_]+)\s*\(/g;
 
 /** The production revision this ledger describes. Regenerating against any other checkout is refused. */
 const SOURCE_REVISION = "c2ce255695eabc7e3a0f23b162f5996274234c63";
