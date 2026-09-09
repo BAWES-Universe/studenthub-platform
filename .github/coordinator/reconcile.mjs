@@ -25,7 +25,7 @@
 // Linear API token names only — no secrets live in this repository.
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
-import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictIndependent } from "./review-routing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -557,6 +557,37 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   return callbackBindingValid(receipt, evidence, ctx) && SUCCESS_CALLBACK_STAGES.includes(evidence.stage);
 }
 
+// ---------------------------------------------------------------------------
+// Evidence classification (SHU-73, Opus SHU-66 standards position)
+// ---------------------------------------------------------------------------
+// Every evidence line that closes a terminal state carries an evidence_class.
+//   independently_checkable — re-derivable by a party with NO privileged access
+//     (public GitHub/Linear permalinks, public endpoints).
+//   privileged_attestation  — only visible to whoever holds deployment/instance
+//     credentials (Coolify env-store state, container artifact reads, image
+//     labels, console reads).
+// A terminal state whose independent legs are ALL privileged_attestation is not
+// closable. Links supplied as plain strings are public permalinks by default.
+export const EVIDENCE_CLASSES = Object.freeze(["independently_checkable", "privileged_attestation"]);
+
+export function classifyEvidenceLinks(links = []) {
+  return (links ?? []).map((link) => {
+    if (typeof link === "object" && link !== null) {
+      const cls = EVIDENCE_CLASSES.includes(link.evidence_class) ? link.evidence_class : "independently_checkable";
+      return { url: typeof link.url === "string" ? link.url : null, evidence_class: cls };
+    }
+    return { url: typeof link === "string" ? link : null, evidence_class: "independently_checkable" };
+  });
+}
+
+// A review verdict may only close COMPLETED when at least one evidence line is
+// independently checkable. Privileged attestation alone cannot satisfy an
+// independent review verdict.
+export function hasIndependentEvidence(evidence) {
+  const links = classifyEvidenceLinks(evidence?.links ?? []);
+  return links.some((l) => l.evidence_class === "independently_checkable" && l.url !== null);
+}
+
 const nowIso = (at) => at ?? new Date().toISOString();
 
 // nextReceiptState — pure transition. Returns
@@ -671,10 +702,41 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         // Completed WITHOUT a validated callback is HOLD — never COMPLETED. Only
         // evidence bound to the same attempt_id + target_sha (+ current head) counts.
         if (callback && callbackEvidenceValid(receipt, callback, ctx)) {
+          const isReviewLane = roleForRequestedWorker(receipt.requested_worker) === "review";
+          // Fold-time independence + evidence gates (SHU-73): routing-time
+          // eligibility picked a non-author reviewer when the order was minted;
+          // this re-checks at the fold, where the verdict becomes the record.
+          // 1. The verifier session the adapter observed (worker_identity) must
+          //    not be an author of the reviewed lineage; unobserved -> HOLD.
+          // 2. A closing PASS needs at least one independently checkable
+          //    evidence line — privileged attestation alone cannot close it.
+          const independence = isReviewLane ? reviewVerdictIndependent(receipt, ctx.lineage ?? []) : { ok: true };
+          const independentEvidence = !isReviewLane || callback.stage !== "PASS" || hasIndependentEvidence(callback);
+          if (!independence.ok || !independentEvidence) {
+            const reasons = [];
+            if (!independence.ok) reasons.push(independence.reason);
+            if (!independentEvidence) reasons.push("review PASS lacks independently checkable evidence (privileged attestation cannot close an independent verdict)");
+            const next = note(`run completed but verdict NOT independently closable — HOLD (${reasons.join("; ")})`);
+            next.stage = "HOLD";
+            next.adapter_status = "completed";
+            // A verdict that fails the gates never records a verdict fact: a
+            // rejected PASS must not route as a completed loop, and an author's
+            // BLOCK/FAIL must not route its own revision. Durable identity is
+            // still kept when the adapter supplied it.
+            if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+              next.worker_identity = event.worker_identity;
+            }
+            next.timestamps.terminal = at();
+            return { receipt: next, accepted: true };
+          }
           const next = note("run completed WITH validated callback (attempt + target_sha match)");
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
+          // Classified evidence record (SHU-73): every closing evidence line
+          // carries evidence_class so a later reconciler can re-derive whether
+          // the terminal state had independent legs. Extra tolerated field.
+          next.verdict_evidence = classifyEvidenceLinks(callback.links);
           // Durable verdict facts (SHU-68 wiring replay): the terminal receipt
           // records the verdict stage + output head that routing consumed, so a
           // crash AFTER this persist can re-derive the successor directive on the
@@ -1638,7 +1700,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           const expectedHead = receipt.requested_worker === "codex-builder"
             ? launch.callback?.result_sha
             : receipt.target_sha;
-          recoveryCtx = { current_head: resolved.head, expected_head: expectedHead };
+          recoveryCtx = {
+            current_head: resolved.head,
+            expected_head: expectedHead,
+            // Fold-time author exclusion (SHU-73): the lineage lets the fold
+            // reject a review verdict whose observed session is a lineage author.
+            lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+          };
         }
       }
       const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
@@ -1729,7 +1797,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       } else {
         continue; // UNCHANGED (transient poll failure or missing credentials) — never touch state, never release the slot
       }
-      const transition = nextReceiptState(receipt, event);
+      const transition = nextReceiptState(receipt, event, {
+        current_head,
+        // Fold-time author exclusion (SHU-73): the lineage lets the fold reject
+        // a review verdict whose observed session is a lineage author.
+        lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+      });
       if (!transition.accepted) {
         if (io.stdout) io.stdout(`lifecycle: transition REJECTED for ${receipt.issue_id} (${transition.reason ?? "unknown"}) — slot held`);
         continue;
@@ -1937,7 +2010,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const expectedHead = receipt.requested_worker === "codex-builder"
         ? launch.callback?.result_sha
         : receipt.target_sha;
-      launchCtx = { current_head: resolved.head, expected_head: expectedHead };
+      launchCtx = {
+        current_head: resolved.head,
+        expected_head: expectedHead,
+        // Fold-time author exclusion (SHU-73): lineage receipts for this issue.
+        lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+      };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);
