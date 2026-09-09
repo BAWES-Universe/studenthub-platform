@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { computeEligibility, requestedWorkerFor, compareIdentifiers } from "../reconcile.mjs";
+import { computeEligibility, requestedWorkerFor, compareIdentifiers, resolveAuthorizationRef } from "../reconcile.mjs";
 
 const CONFIG = { pilot_repo: "BAWES-Universe/studenthub-platform", max_dispatch: 1, adapter_pause_map: {} };
 
@@ -26,6 +26,17 @@ function card(overrides = {}) {
 function eligibleIds(issues, openPRs = []) {
   return computeEligibility({ issues, openPRs, config: CONFIG }).ready.map((i) => i.id);
 }
+
+test("numeric Linear fixture id resolves to the dedicated fixture contract before the canonical-card fallback", () => {
+  const config = { fixture_lane: { id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" } };
+  assert.equal(resolveAuthorizationRef(card({ id: "SHU-140" }), config), "FIXTURE-OPUS-CONTRACT-20260905");
+});
+
+test("a misconfigured numeric fixture id fails closed instead of falling back to its card id", () => {
+  const config = { fixture_lane: { id: "SHU-140", authorization_ref: "not-an-approved-contract" } };
+  assert.equal(resolveAuthorizationRef(card({ id: "SHU-140" }), config), null);
+  assert.equal(resolveAuthorizationRef(card({ id: "SHU-141" }), config), "SHU-141");
+});
 
 test("plain Backlog/Todo cards with no claims are ready", () => {
   const { ready, excluded } = computeEligibility({
