@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { checkReadiness } from "../healthcheck.mjs";
-import { validateApplicationEnv, validateDeploymentEnv } from "../preflight.mjs";
+import { runPreflight, validateApplicationEnv, validateDeploymentEnv, validateImageRevision } from "../preflight.mjs";
 
 const validEnv = {
   HOST: "0.0.0.0",
@@ -17,7 +20,6 @@ const validEnv = {
   OIDC_TOKEN_URL: "https://auth.example.test/application/o/token/",
   OIDC_JWKS_URL: "https://auth.example.test/application/o/studenthub/jwks/",
   LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.example.test/",
-  SOURCE_REVISION: "a".repeat(40),
 };
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -44,16 +46,47 @@ test("the container preflight CLI cannot bypass real gateway validation", () => 
 });
 
 test("deployment preflight fails closed on missing configuration", () => {
-  for (const name of ["DATABASE_URL", "OIDC_CLIENT_SECRET", "SOURCE_REVISION"]) {
+  for (const name of ["DATABASE_URL", "OIDC_CLIENT_SECRET"]) {
     const env = { ...validEnv };
     delete env[name];
     assert.throws(() => validateDeploymentEnv(env), new RegExp(name));
   }
 });
 
-test("deployment preflight rejects a loopback bind and an unpinned revision", () => {
+test("deployment preflight rejects a loopback bind", () => {
   assert.throws(() => validateDeploymentEnv({ ...validEnv, HOST: "127.0.0.1" }), /HOST must be 0\.0\.0\.0/);
-  assert.throws(() => validateDeploymentEnv({ ...validEnv, SOURCE_REVISION: "main" }), /40-character Git commit SHA/);
+});
+
+test("deployment preflight validates the immutable image revision artifact", () => {
+  const root = mkdtempSync(join(tmpdir(), "studenthub-preflight-revision-"));
+  const artifact = join(root, "image-source-revision");
+  writeFileSync(artifact, `${"A".repeat(40)}\n`);
+  assert.equal(validateImageRevision(artifact), "A".repeat(40));
+  writeFileSync(artifact, "main\n");
+  assert.throws(() => validateImageRevision(artifact), /40-character Git commit SHA/);
+});
+
+test("the deployed preflight path requires the immutable image revision artifact", async () => {
+  const root = mkdtempSync(join(tmpdir(), "studenthub-run-preflight-"));
+  const artifact = join(root, "image-source-revision");
+  writeFileSync(artifact, `${"b".repeat(40)}\n`);
+  await assert.doesNotReject(() => runPreflight({
+    env: validEnv,
+    revisionPath: artifact,
+    validateApplication: async () => {},
+  }));
+  writeFileSync(artifact, "stale-env-value\n");
+  await assert.rejects(() => runPreflight({
+    env: validEnv,
+    revisionPath: artifact,
+    validateApplication: async () => {},
+  }), /40-character Git commit SHA/);
+});
+
+test("Docker image stores revision outside runtime environment authority", () => {
+  const dockerfile = readFileSync(join(repositoryRoot, "Dockerfile"), "utf8");
+  assert.match(dockerfile, /> \/image-source-revision/);
+  assert.doesNotMatch(dockerfile, /^ENV SOURCE_REVISION=/m);
 });
 
 function database(overrides = {}) {

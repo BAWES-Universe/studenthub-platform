@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import {
@@ -7,6 +10,7 @@ import {
   gatewayListenUrl,
   parseGatewayHost,
   parseGatewayPort,
+  readImageSourceRevision,
   readRequestBody,
   type UnconfiguredMcpAdapter,
 } from "../src/index.js";
@@ -35,6 +39,18 @@ async function listen(server: ReturnType<typeof createGatewayServer>): Promise<s
 }
 
 test("GET /health exposes the shared versioned contract", async (context) => {
+  // Binds the default wiring. `createGatewayServer()` takes its revision from
+  // readImageSourceRevision() — the root-owned image artifact — so a valid
+  // 40-hex runtime override must not reach the payload. Exporting one here
+  // keeps the assertion below independent of ambient environment state, and
+  // is what fails if the default parameter is ever repointed at process.env.
+  const previousRevision = process.env.SOURCE_REVISION;
+  process.env.SOURCE_REVISION = "f".repeat(40);
+  context.after(() => {
+    if (previousRevision === undefined) delete process.env.SOURCE_REVISION;
+    else process.env.SOURCE_REVISION = previousRevision;
+  });
+
   const server = createGatewayServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => server.close());
@@ -50,6 +66,33 @@ test("GET /health exposes the shared versioned contract", async (context) => {
   assert.equal(body.component, "gateway");
   assert.equal(body.contractVersion, PLATFORM_CONTRACT_VERSION);
   assert.equal(typeof body.timestamp, "string");
+  // Local development has no image artifact, so the revision is null even
+  // though SOURCE_REVISION is set above. Runtime environment variables are
+  // deliberately not revision authority.
+  assert.equal(body.revision, null);
+});
+
+test("GET /health reports the image artifact and ignores runtime env overrides", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "studenthub-revision-"));
+  const artifact = join(root, "image-source-revision");
+  const baked = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+  writeFileSync(artifact, `${baked}\n`);
+  const previous = process.env.SOURCE_REVISION;
+  process.env.SOURCE_REVISION = "f".repeat(40);
+  context.after(() => {
+    if (previous === undefined) delete process.env.SOURCE_REVISION;
+    else process.env.SOURCE_REVISION = previous;
+  });
+
+  const revision = readImageSourceRevision(artifact);
+  const server = createGatewayServer(undefined, undefined, undefined, undefined, revision);
+  const origin = await listen(server);
+  context.after(() => server.close());
+
+  const response = await fetch(`${origin}/health`);
+  const body = (await response.json()) as Record<string, unknown>;
+  assert.equal(body.revision, baked);
+  assert.notEqual(body.revision, process.env.SOURCE_REVISION);
 });
 
 test("POST /mcp/tools/call rejects oversized bodies before dispatch", async (context) => {

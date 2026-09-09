@@ -17,6 +17,14 @@ export interface HealthResponse {
   readonly status: "ok";
   readonly component: PlatformComponent;
   readonly contractVersion: typeof PLATFORM_CONTRACT_VERSION;
+  /**
+   * Exact deployed source revision read from an immutable image artifact.
+   * Null in local development when no build artifact exists. Exposing it
+   * on the health payload
+   * makes every deploy self-attesting: any party can confirm which commit is
+   * serving without GHCR or Coolify access.
+   */
+  readonly revision: string | null;
   readonly timestamp: string;
 }
 
@@ -37,11 +45,13 @@ export interface McpAdapter {
 export function createHealthResponse(
   component: PlatformComponent,
   now: Date = new Date(),
+  revision: string | null = null,
 ): HealthResponse {
   return Object.freeze({
     status: "ok",
     component,
     contractVersion: PLATFORM_CONTRACT_VERSION,
+    revision,
     timestamp: now.toISOString(),
   });
 }
