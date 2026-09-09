@@ -3,7 +3,7 @@
 **Card:** SHU-127 (parent SHU-88). Feeds SHU-96 (recruit contract), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database or live-host access. No personal data.
-**Coverage:** 153 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster RC) — second largest after organizations.
+**Coverage:** 151 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster RC, regenerated at `84ab149`: `staff/CompanyRequest` is company onboarding and moved to organizations; the two `Story::actionChangeStoryStatus` pipeline transitions moved here from communication) — second largest after organizations.
 
 ## 1. What this cluster is
 
@@ -52,7 +52,7 @@ The recruiter's search is Algolia: `staff/.../AlgoliaController.php` `actionKey`
 
 ### 3.3 Candidate discovery and application
 
-`candidate/.../JobController.php` (4 actions). `actionList` queries `job` joined with skills and area, filtered to `Job::STATUS_ACTIVE`. **The eligibility filter is commented out** (`:25-31`): availability window, `min_age`, `max_age` and `gender` are all inert, so every active job is shown to every candidate regardless of the criteria the job was published with. Finding RC-F1.
+`candidate/.../JobController.php` (4 actions). `actionList` queries `job` joined with skills and area, filtered to `Job::STATUS_ACTIVE`, optional text search, and applied/not-applied (`:80-110`). **The field-criteria filter is commented out** (`:104-111`; an earlier revision cited `:25-31`, which is CORS configuration): availability window, `min_age`, `max_age` and `gender` are inert, so the active, not-yet-applied jobs are shown regardless of the criteria they were published with. Finding RC-F1.
 
 `candidate/.../RequestController.php` `actionApply($id)` (`:177`) creates a `request_application` from the caller's id and the request id, then tracks a Segment event in production. No duplicate-application check, no eligibility check, no verification that the request is open. Finding RC-F2.
 
@@ -113,9 +113,9 @@ The recruiter's search is Algolia: `staff/.../AlgoliaController.php` `actionKey`
 
 | ID | Finding | Evidence | Severity | Action |
 |---|---|---|---|---|
-| **RC-F1** | Job eligibility filtering is commented out: availability window, `min_age`, `max_age` and `gender` are stored on every job and never applied, so all active jobs are shown to all candidates | `candidate/modules/v1/controllers/JobController.php:25-31` | Medium (the published criteria are misleading) | R5, and D-RC4 |
+| **RC-F1** | Job field-criteria filtering is commented out: availability window, `min_age`, `max_age` and `gender` are stored on every job and never applied; active/text/applied filters still run | `candidate/modules/v1/controllers/JobController.php:104-111` | Medium (the published criteria are misleading) | R5, and D-RC4 |
 | **RC-F2** | Applying has no duplicate check, no eligibility check and no verification that the request is still open | `candidate/modules/v1/controllers/RequestController.php:177` | Medium | R5 |
-| **RC-F3** | The employer's Algolia key covers the whole candidate index; the filter that would restrict it to unassigned candidates is commented out | `company/modules/v1/controllers/AlgoliaController.php:29-46` | Medium (bulk profile exposure to any employer with a login) | R3 |
+| **RC-F3** | **Corrected after independent audit — the earlier "whole index" claim was wrong.** The employer's secured Algolia key is issued only while the company (or a child) has an active request (`AlgoliaController.php:18-29`), restricted to the candidate index with `facetFilters` `candidate_committed:Yes` and `assigned:0`, a two-minute validity and a user token (`:32-44`); the commented `filters` line duplicates, not replaces, that restriction. What remains: a client-held search credential over a PII index, with the index contents and provider configuration unverified | `company/modules/v1/controllers/AlgoliaController.php:18-44`; `common/components/Algolia.php:21-29` | Low (architecture, not exposure) | R3 replaces it with server-side search for that reason, not for an exposure that was not established |
 | **RC-F4** | Request status is set from the request body with no transition check | `staff/modules/v1/controllers/RequestController.php:808` | Medium | R2 |
 | **RC-F5** | Six status vocabularies across seven tables, one string-valued, none consistent | §2 | Design | R1: one convention |
 | **RC-F6** | `request_interview` carries both `internal_note` and `interview_note` with no evidence of which is candidate-visible | `common/models/RequestInterview.php` | Needs verification before porting | R6, verifier spot-check |
