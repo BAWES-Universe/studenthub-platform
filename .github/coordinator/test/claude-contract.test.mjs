@@ -280,7 +280,7 @@ const VERIFIER_NODE = {
   title: "Fixture: seeded-defect probe card",
   state: { name: "Todo" },
   priorityLabel: "High",
-  labels: { nodes: [{ name: "fixture-safe" }, { name: "worker:claude-verifier" }] },
+  labels: { nodes: [{ name: "fixture-safe" }, { name: "worker:claude-verifier" }, { name: "repo:platform" }] },
   assignee: null,
   delegate: null,
   parent: null,

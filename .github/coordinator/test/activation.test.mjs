@@ -329,7 +329,7 @@ test("main(): an unwired activation aborts dispatch, pauses the lane, and spawns
     title: "Fixture",
     state: { name: "Todo" },
     priorityLabel: "High",
-    labels: { nodes: [{ name: "fixture-safe" }] },
+    labels: { nodes: [{ name: "fixture-safe" }, { name: "repo:platform" }] },
     assignee: null, delegate: null, parent: null, relations: { nodes: [] },
   };
   const cfgDir = mkd(join(tmpdir(), "activation-cfg-"));
@@ -347,6 +347,7 @@ test("main(): an unwired activation aborts dispatch, pauses the lane, and spawns
     ENABLE_DISPATCH: "true", LINEAR_API_TOKEN: "tok", GITHUB_TOKEN: "", DISPATCH_TARGET_SHA: "d".repeat(40),
   }, {
     configPath: cfgPath,
+    openPRsOverride: [],
     stdout: (s) => out.push(s),
     fetchDurable: true,
     pollRuns: false,
@@ -378,7 +379,7 @@ test("main(): an unreadable GitHub target aborts before reservation and adapter 
   const linearId = "11111111-aaaa-4bbb-8ccc-000000000001";
   const node = {
     id: linearId, identifier: "SHU-FIXTURE-001", title: "Fixture", state: { name: "Todo" },
-    priorityLabel: "High", labels: { nodes: [{ name: "fixture-safe" }] },
+    priorityLabel: "High", labels: { nodes: [{ name: "fixture-safe" }, { name: "repo:platform" }] },
     assignee: null, delegate: null, parent: null, relations: { nodes: [] },
   };
   const cfgPath = join(mkd(join(tmpdir(), "activation-github-cfg-")), "config.json");
@@ -394,7 +395,7 @@ test("main(): an unreadable GitHub target aborts before reservation and adapter 
     ENABLE_DISPATCH: "true", LINEAR_API_TOKEN: "tok", DISPATCH_TARGET_SHA: "d".repeat(40),
     ...activatedEnv(),
   }, {
-    configPath: cfgPath, stdout: (s) => output.push(s), fetchDurable: true, pollRuns: false,
+    configPath: cfgPath, openPRsOverride: [], stdout: (s) => output.push(s), fetchDurable: true, pollRuns: false,
     codexStateDir: "/srv/codex/state",
     statImpl: () => ({ isDirectory: () => true, mode: 0o40700 }),
     accessImpl: () => {}, realpathImpl: (p) => p, hostname: () => HOST,
@@ -425,7 +426,7 @@ test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the ada
   const linearId = "11111111-aaaa-4bbb-8ccc-000000000001";
   const node = {
     id: linearId, identifier: "SHU-FIXTURE-001", title: "Fixture", state: { name: "Todo" },
-    priorityLabel: "High", labels: { nodes: [{ name: "fixture-safe" }] },
+    priorityLabel: "High", labels: { nodes: [{ name: "fixture-safe" }, { name: "repo:platform" }] },
     assignee: null, delegate: null, parent: null, relations: { nodes: [] },
   };
   const cfgDir = mkd(join(tmpdir(), "activation-recovery-cfg-"));
@@ -448,7 +449,7 @@ test("main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the ada
   const code = await main([], {
     ENABLE_DISPATCH: "true", LINEAR_API_TOKEN: "tok", GITHUB_TOKEN: "", DISPATCH_TARGET_SHA: "d".repeat(40),
   }, {
-    configPath: cfgPath, stdout: (s) => output.push(s), fetchDurable: true, pollRuns: true,
+    configPath: cfgPath, openPRsOverride: [], stdout: (s) => output.push(s), fetchDurable: true, pollRuns: true,
     hostname: () => "wrong-host",
     adapterModules: { "codex-cli": {
       launchBuilder: async () => { launches += 1; return { stage: "HOLD", pause_adapter: true }; },
