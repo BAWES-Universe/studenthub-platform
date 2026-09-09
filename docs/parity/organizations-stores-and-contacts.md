@@ -3,7 +3,7 @@
 **Card:** SHU-125 (parent SHU-88). Feeds SHU-98 (organizations contract), SHU-91 (one-app role and organization context), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, bucket or live-host access. No personal data, credentials or bucket contents.
-**Coverage:** 192 of 1,184 production endpoints (`docs/parity/coverage.md`, cluster OR) — the largest single cluster.
+**Coverage:** provisional OR assignment from `docs/parity/coverage.md`. PR #52 must recompute action totals and shares after separating feature actions from Yii `OptionsAction` configurators; this inventory does not rely on the provisional count.
 **Authentication note:** where an org journey touches login, the legacy mechanism is migration evidence only. Universe through Authentik is the target credential authority (`docs/parity/identity-and-access.md`).
 
 ## 1. What this cluster is
@@ -38,9 +38,9 @@ Worked example in the source comment (`common/models/Company.php:55-62`): compan
 | Table | Key columns | Delete | DDL |
 |---|---|---|---|
 | `store` | `store_id`, `company_id`, `store_manager_uuid`, `brand_uuid`, `mall_uuid`, `store_name`, `store_location`, `store_total_candidates` (counter), `store_status`, `deleted` | soft (`deleted`) | `m170223_125009` |
-| `contact` | `contact_uuid`, name, email, verification and credential columns, `contact_receive_email/suggestions/notification`, `contact_status`, `deleted` | soft on the model; **hard delete** from staff and admin controllers | **not in migrations** (SQL dump only) |
-| `company_contact` | `(company_id, contact_uuid)` unique, `contact_position`, `allow_access` (bool), `created_by` | link row; `RemoveFromTeam` sets `deleted` | `m200820_144521` |
-| `contact_email`, `contact_phone` | extra addresses and numbers per contact | `deleteAll` on contact delete | with `contact` |
+| `contact` | `contact_uuid`, name, email, verification and credential columns, `contact_receive_email/suggestions/notification`, `contact_status`, `deleted` | staff soft-deletes; admin hard-deletes | **not in migrations** (SQL dump only) |
+| `company_contact` | `company_contact_uuid` PK; `(company_id, contact_uuid)` unique; `contact_position`, `allow_access` (bool), `created_by` | staff `RemoveFromTeam` and employer `RemoveMember` hard-delete the link; there is no `deleted` column | `m200820_144521` |
+| `contact_email`, `contact_phone` | extra addresses and numbers per contact | replaced with `deleteAll` + recreate during contact update | with `contact` |
 | `contact_invitation` | `contact_invitation_uuid`, `contact_uuid`, `company_id`, `email_to_invite`, `role`, `otp` | | with `contact` |
 | `store_manager` | `store_manager_uuid`, `company_id`, `store_id`, name, email, credentials | with the store | `m240422_190025` |
 | `company_request` | `company_request_uuid`, company and contact fields, `requesting_for`, `status` (0 pending / 1 processing / 2 accepted / 3 rejected), `country_id`, `currency_code` | | `m230706_042813` |
@@ -55,11 +55,11 @@ Worked example in the source comment (`common/models/Company.php:55-62`): compan
 | `degree`, `degree_group` | names, sort order, `skip_major` | | **not in migrations** |
 | `bank` | `bank_id`, `bank_name`, `bank_iban_code`, `bank_swift_code`, `bank_code_abk`, `bank_transfer_type` (local / international / within-bank), `deleted` | soft | `m170303_143806` |
 | `tag` | `tag_id`, `tag` | hard delete | `m230510_035749` |
-| `note` | `note_uuid`, one nullable FK per attachable entity (`company_id`, `candidate_id`, `request_uuid`, `contact_uuid`, `story_uuid`, `fulltimer_uuid`, and four more), `note_type` (Internal Note / Phone Call / Email / Meeting / Interview / Task), `note_text`, `created_by` | | |
+| `note` | `note_uuid`, ten nullable subject FKs (`company_id`, `candidate_id`, `request_uuid`, `interview_evaluation_uuid`, `request_checklist_uuid`, `invitation_uuid`, `suggestion_uuid`, `contact_uuid`, `story_uuid`, `fulltimer_uuid`), `note_type` (Internal Note / Phone Call / Email / Meeting / Interview / Task), `note_text`, `created_by` | | |
 
 **Migration gaps for SHU-97:** `contact`, `degree` and `degree_group` have no `createTable` in `console/migrations`. Same class of gap as the four profile child tables. The live database is the schema authority.
 
-**Note shape:** one table with eleven nullable foreign keys is a polymorphic attachment. In the platform this should be one note entity with a typed subject reference, not eleven columns.
+**Note shape:** one table with ten nullable subject foreign keys is a polymorphic attachment. In the platform this should be one note entity with a typed subject reference, not ten columns.
 
 ## 3. Visibility: what each role sees of a company
 
@@ -102,19 +102,19 @@ Two paths converge on the same shape.
 
 - `ChangeStatus` (staff `:330`, admin) writes `company_status_override` under scenario `updateStatus` and logs a `Yii::info` line.
 - Setting the override to **under review** triggers an email to `company_email` copied to every other contact of the company, plus a Segment event (`common/models/Company.php:508-540`). No other status transition notifies anyone.
-- `Activate` (employer, `company/.../CompanyController.php:190-220`) lets the employer upload a commercial licence and sets its own `company_status_override = STATUS_ACTIVE`. **An employer can self-activate by uploading a document, with no staff review step.** Decision D-OR1.
-- `company_approved_to_hire` is set at creation and by `Update`; it gates listing filters (`filterByApprovedToHire`) but no write path.
+- `Activate` (`company/.../CompanyController.php:228-325`) is excluded from bearer authentication and accepts `contact_auth_key`, contact email, company id, an optional password, logo and commercial licence. It marks the contact email verified and sets `company_status_override = STATUS_ACTIVE`. **This is an anonymous legacy invitation/activation flow, not an authenticated org-owner action, and it has no staff review step.** Authentik replaces its identity mechanics; D-OR1 decides the surviving business approval rule.
+- `company_approved_to_hire` is set at creation and by staff/admin `Update`; it gates listing filters (`filterByApprovedToHire`) and has no separate transition route.
 
 ### 4.3 Deletion
 
 - Company: soft delete, refused when the company still has stores (`admin/.../CompanyController.php:370-395`).
 - Store: soft delete, refused when candidates are still assigned (`staff/.../StoreController.php` `Delete`).
-- Contact: **hard delete** plus `ContactEmail::deleteAll` and `ContactPhone::deleteAll` (`staff/.../CompanyContactController.php:362-363`, `:414`; admin equivalent `:301-302`, `:394`). The employer app can also delete a member (`company/.../CompanyContactController.php:99`).
+- Contact and membership use three different paths: staff `Delete` soft-deletes the `contact` row (`deleted = true`, `staff/.../CompanyContactController.php:432-459`); admin `Delete` hard-deletes the contact (`admin/.../CompanyContactController.php:383-400`); staff `RemoveFromTeam` and employer `RemoveMember` hard-delete only the `company_contact` membership link (`staff/...:399-425`; `company/...:73-104`). The `ContactEmail::deleteAll` / `ContactPhone::deleteAll` calls replace child rows during update, not account deletion.
 - Brand, mall, tag: hard delete with no dependency check.
 
 ### 4.4 Team membership
 
-`Create` a contact with a company id, or `AddToTeam` an existing contact, both writing a `company_contact` row with `allow_access` (`staff/.../CompanyContactController.php:242`, `:286-292`). `RemoveFromTeam` sets `deleted` on the link (`:453`). One contact can belong to several companies; `getManagedCompanies()` goes through the links that have access (`common/models/Contact.php:319-341`). At login the session picks **the first** such company (`company/.../AuthController.php` `_loginResponse`), and nothing in the API switches it afterwards. Decision D-OR2.
+`Create` a contact with a company id, or `AddToTeam` an existing contact, both writing a `company_contact` row with `allow_access` (`staff/.../CompanyContactController.php:242`, `:286-292`). `RemoveFromTeam` hard-deletes that link (`:399-425`). One contact can belong to several companies; `getManagedCompanies()` goes through the links that have access (`common/models/Contact.php:319-341`). At login the session picks **the first** such company (`company/.../AuthController.php` `_loginResponse`), and nothing in the legacy API switches it afterwards. The target decision is already made in SHU-91: show the current organization and allow explicit context switching.
 
 ### 4.5 Stores and managers
 
@@ -167,7 +167,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | OR-01 | View own organization | org member | `company/.../CompanyController.php` `View`, `List` | `company CompanyCest` 9 methods, 6 JSON | REQUIRED | O1 |
 | OR-02 | View sub-organizations | org member | `ListChild` (employer, manager) | in the above | REQUIRED | O1 |
 | OR-03 | Update own organization profile | org owner | `Update`, `UpdateLogo`, `RemoveLogo`, `UpdateLicence` | 1 | REQUIRED (through safe-write) | O2 |
-| OR-04 | Self-activate by uploading a licence | org owner | `Activate` (`company/.../CompanyController.php:190`) | none | **EXCLUDE-PENDING-OWNER** (D-OR1) | — |
+| OR-04 | Complete legacy invitation and activate a company | anonymous invitee holding contact auth key | `Activate` (`company/.../CompanyController.php:228`) | none | Identity mechanics REPLACED by Authentik; company approval remains **EXCLUDE-PENDING-OWNER** (D-OR1) | — |
 | OR-05 | Staff/admin list, search, filter organizations | staff, admin | staff `List`, `AssignedList`, `Followups`; admin `List`, `SubCompanies`, `Followups` | `admin CompanyCest` 17 (11 JSON), `staff CompanyCest` 12 (0 JSON) | REQUIRED | O5 |
 | OR-06 | Create organization or sub-organization | staff, admin | staff/admin `Create` | 2 | REQUIRED | O5 |
 | OR-07 | Update commercial terms (rate, commission, currency) | admin | admin `Update` | 1 | REQUIRED, admin-only capability | O5 |
@@ -179,9 +179,9 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | OR-13 | List, view team members | org member | `company/.../CompanyContactController.php` `List`, `View`, `ViewCompanyContact` | `admin CompanyContactCest` 10, `staff` 11 | REQUIRED | O4 |
 | OR-14 | Invite / add a person to the organization | org owner, staff, admin | `Create`, `AddToTeam`, `contact_invitation` | 4 | REQUIRED as a grant invitation | O4 |
 | OR-15 | Set or revoke a member's access | org owner, staff, admin | `allow_access` on the link; `RemoveFromTeam` | 2 | REQUIRED as grant presence | O4 |
-| OR-16 | Remove a person | org owner, staff, admin | `Delete` (hard), `RemoveMember` | 2 | REQUIRED, **ADAPT to soft delete with audit** | O4, O6 |
+| OR-16 | Remove a membership or deactivate a person | org owner, staff, admin | `RemoveFromTeam` / `RemoveMember` hard-delete a membership; staff `Delete` soft-deletes a contact; admin `Delete` hard-deletes it | 2 | REQUIRED, **ADAPT to audited grant revocation and soft account deactivation** | O4, O6 |
 | OR-17 | Contact extra emails and phones | staff, admin | maintained with the contact | none | REQUIRED | O4 |
-| OR-18 | Switch which organization I am acting for | org member with several orgs | **does not exist** | none | REQUIRED (new) — see D-OR2 | O4 |
+| OR-18 | Switch which organization I am acting for | org member with several orgs | **does not exist in legacy** | none | REQUIRED (new); explicit context switching is already selected and implemented by SHU-91 | O4 |
 | OR-19 | List, view stores | org member, manager, staff, admin | `StoreController` in four apps | `staff StoreCest` 17 (0 JSON), `admin` 5, `company` 8 | REQUIRED | O7 |
 | OR-20 | Create, update, delete a store | staff | staff `Create`, `Update`, `Delete` | in the above | REQUIRED | O7 |
 | OR-21 | Assign, change, remove a store manager | staff | `UpdateManager`, `RemoveManager` | none | REQUIRED as a store-scoped grant | O7 |
@@ -220,10 +220,10 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 
 | ID | Finding | Evidence | Severity | Action |
 |---|---|---|---|---|
-| **OR-F1** | An employer can move its own company to active by uploading a commercial licence, with no staff review | `company/modules/v1/controllers/CompanyController.php:190-220` | Medium (business control) | D-OR1 |
+| **OR-F1** | The anonymous legacy activation route accepts a contact auth key and can move the linked company to active with no staff review | `company/modules/v1/controllers/CompanyController.php:228-325`; auth exception at `:24` | Medium (business control) | Authentik replaces the key/password flow; D-OR1 decides staff approval |
 | **OR-F2** | The employer projection recomputes `company_status` **ignoring** `company_status_override`, so employer and staff can see different statuses for the same company | `company/models/Company.php:33-41` vs `common/models/Company.php:253-262` | Medium (data integrity) | fix by construction in O1: one derivation, one place |
-| **OR-F3** | A contact belonging to several companies is silently bound to whichever the query returns first, with no way to switch | `company/.../AuthController.php` `_loginResponse`; `Contact::getManagedCompanies` | High for the one-app model | OR-18, D-OR2 |
-| **OR-F4** | Contact deletion is a hard delete that also purges emails and phones, with no audit trail | `staff/.../CompanyContactController.php:362-363`, `:414` | Medium | O6 |
+| **OR-F3** | A contact belonging to several companies is silently bound to whichever the query returns first, with no way to switch | `company/.../AuthController.php` `_loginResponse`; `Contact::getManagedCompanies` | High for the one-app model | OR-18; resolved in SHU-91 with explicit context switching |
+| **OR-F4** | Deletion semantics conflict by actor: staff soft-deletes contacts, admin hard-deletes contacts, and staff/employer hard-delete membership links; none produces an audit receipt | §4.3 | Medium | O4, O6 |
 | **OR-F5** | Bulk candidate data leaves through Excel exports with no authorization record | `admin/.../CompanyController.php:829`, `:860` | Medium (privacy) | O9, and P4 telemetry |
 | **OR-F6** | `currency.rate` exists but no code updates it; no exchange-rate provider anywhere | `common/models/Currency.php`; repo-wide grep for rate providers finds nothing | Medium (money correctness) | D-OR4 |
 | **OR-F7** | `CompanyRequest::approve()` has the company-activation line commented out, so approved companies keep their under-review override | `common/models/CompanyRequest.php:312` | Low–Medium | verify against live data in SHU-97 |
@@ -255,7 +255,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | O5 | Staff and admin administration: list/search/filter, create incl. sub-organization, commercial terms as an admin-only capability, status change with notification, account-manager assignment | O1 | 5 |
 | O6 | Lifecycle and retention: soft delete everywhere, dependency guards, audited member removal | O1, SHU-59 | 3 |
 | O7 | Stores: CRUD, brand and mall association, store-scoped manager grant | O1, identity I4 | 5 |
-| O8 | Reference-data catalogue: countries, currencies, banks, tags, brands, malls, universities, majors, degrees, with moderated candidate submissions | — | 5 |
+| O8 | Reference-data catalogue: countries, currencies, banks, tags, brands, malls, universities, majors, degrees and degree groups, with moderated candidate submissions | — | 5 |
 | O9 | Notes and exports: one typed note entity; authorized, audited, time-bounded exports | O1, SHU-59 | 5 |
 | O10 | Derived counters: compute rather than store, or reconcile with an audit | O1 | 2 |
 
@@ -265,14 +265,13 @@ Cluster total: **46 points**, against the 8-point placeholder on the delivery ca
 
 | ID | Decision | Recommended default | Cost of waiting |
 |---|---|---|---|
-| D-OR1 | Can an employer activate its own company by uploading a licence (OR-04), or does staff review it? | Staff review. Self-activation is a business control an employer should not hold | Blocks O3 only; O1 and O2 proceed |
-| D-OR2 | When one person belongs to several companies, do they choose per session, or does each grant get its own context switch in the UI? | Explicit switcher, current organization shown at all times | Blocks O4. This is the one genuinely new journey in the cluster and it is central to "one login, every role" |
+| D-OR1 | After Authentik invitation/verification, may a company become active from its own onboarding submission, or must staff approve it? | Staff review. Activation is a business control the applicant should not hold | Blocks O3 only; O1 and O2 proceed |
 | D-OR3 | Rebuild the follow-up CRM (OR-10) in StudentHub, or move account management to Attio? | Move to Attio; StudentHub keeps notes attached to records | Nothing blocked now; deciding late means building it twice |
 | D-OR4 | Currency rates have no source (OR-F6). Fix rates per contract, or integrate a rate provider? | Fix per contract, since billing is per-company and per-currency already | Blocks nothing until multi-currency invoicing; wrong answer is expensive to unwind |
 
 ## 13. Not established
 
 - Whether any company currently sits in a state that `CompanyRequest::approve()` left inconsistent (OR-F7) — needs the database.
-- Real counts of sub-companies, stores per company, contacts per company, and how many contacts belong to more than one company — the last one sizes D-OR2.
+- Real counts of sub-companies, stores per company, contacts per company, and how many contacts belong to more than one company — the last one sizes the impact of OR-18.
 - Whether `company_auth_key` and its siblings hold values.
 - The employer, staff, admin and manager front ends, which live in other repositories (SHU-138).
