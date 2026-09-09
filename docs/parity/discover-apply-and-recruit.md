@@ -3,7 +3,7 @@
 **Card:** SHU-127 (parent SHU-88). Feeds SHU-96 (recruit contract), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database or live-host access. No personal data.
-**Coverage:** 174 of 1,184 production endpoints (`docs/parity/coverage.md`, cluster RC) — second largest after organizations.
+**Coverage:** 153 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster RC) — second largest after organizations.
 
 ## 1. What this cluster is
 
