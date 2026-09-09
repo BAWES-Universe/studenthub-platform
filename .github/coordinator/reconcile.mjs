@@ -993,8 +993,8 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
 }
 
 export const LINEAR_ISSUES_QUERY = `
-  query CoordinatorIssues($team: String!) {
-    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: 100) {
+  query CoordinatorIssues($team: String!, $after: String) {
+    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: 100, after: $after) {
       nodes {
         id
         identifier
@@ -1012,6 +1012,7 @@ export const LINEAR_ISSUES_QUERY = `
           }
         }
       }
+      pageInfo { hasNextPage endCursor }
     }
   }`;
 
@@ -1060,8 +1061,25 @@ export function normalizeLinearIssue(node, repo) {
 }
 
 export async function fetchLinearIssues({ token, repo, team = "SHU", fetchImpl = fetch }) {
-  const data = await sendLinear(LINEAR_ISSUES_QUERY, { team }, token, fetchImpl);
-  return (data?.issues?.nodes ?? []).map((n) => normalizeLinearIssue(n, repo));
+  const nodes = [];
+  let after = null;
+  const seenCursors = new Set();
+  for (;;) {
+    const data = await sendLinear(LINEAR_ISSUES_QUERY, { team, after }, token, fetchImpl);
+    const page = data?.issues;
+    nodes.push(...(page?.nodes ?? []));
+    if (!page?.pageInfo?.hasNextPage) break;
+
+    const cursor = page.pageInfo.endCursor;
+    if (typeof cursor !== "string" || cursor.length === 0 || seenCursors.has(cursor)) {
+      const err = new Error("Linear issues pagination returned an invalid or repeated cursor");
+      err.code = "LINEAR_PAGINATION_INVALID";
+      throw err;
+    }
+    seenCursors.add(cursor);
+    after = cursor;
+  }
+  return nodes.map((n) => normalizeLinearIssue(n, repo));
 }
 
 // fetchIssueComments — read an issue's comment thread (durable receipts + pause
