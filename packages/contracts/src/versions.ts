@@ -16,7 +16,9 @@
  * contract's own slot from this map.
  */
 export const CONTRACT_VERSIONS = {
-  health: "1.0.0",
+  // 1.1.0 — added the additive `revision` field to the health envelope
+  // (SHU-79). Readers built against 1.0.0 keep working; they simply ignore it.
+  health: "1.1.0",
   authz: "1.0.0",
   identity: "1.0.0",
   search: "1.0.0",
@@ -25,8 +27,8 @@ export const CONTRACT_VERSIONS = {
 export type ContractName = keyof typeof CONTRACT_VERSIONS;
 
 /**
- * Deliberately `string`, not the union of today's literals. All three slots
- * currently read "1.0.0", so a literal type would make
+ * Deliberately `string`, not the union of today's literals. The slots do not
+ * move together, so a literal type would make
  * `contractVersion("authz") === "1.1.0"` a compile error for every consumer
  * until something happened to be bumped. The compatibility policy in
  * docs/authz-roles.md defines what a bump means.

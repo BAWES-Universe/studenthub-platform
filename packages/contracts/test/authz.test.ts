@@ -547,7 +547,7 @@ test("registry: issuer keys are constrained to the supported algorithm set", () 
 
 test("versions: every contract slot is versioned independently", () => {
   assert.deepEqual(CONTRACT_VERSIONS, {
-    health: "1.0.0",
+    health: "1.1.0",
     authz: "1.0.0",
     identity: "1.0.0",
     search: "1.0.0",
@@ -559,7 +559,7 @@ test("versions: every contract slot is versioned independently", () => {
 
 test("versions: the version helper returns the requested contract slot", () => {
   assert.equal(contractVersion("authz"), "1.0.0");
-  assert.equal(contractVersion("health"), "1.0.0");
+  assert.equal(contractVersion("health"), "1.1.0");
   assert.equal(contractVersion("identity"), "1.0.0");
   assert.equal(contractVersion("search"), "1.0.0");
 });
