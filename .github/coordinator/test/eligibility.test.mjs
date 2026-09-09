@@ -30,6 +30,11 @@ function eligibleIds(issues, openPRs = []) {
 test("numeric Linear fixture id resolves to the dedicated fixture contract before the canonical-card fallback", () => {
   const config = { fixture_lane: { id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" } };
   assert.equal(resolveAuthorizationRef(card({ id: "SHU-140" }), config), "FIXTURE-OPUS-CONTRACT-20260905");
+  assert.equal(
+    resolveAuthorizationRef(card({ id: "SHU-140", authorization_ref: "SHU-999" }), config),
+    "FIXTURE-OPUS-CONTRACT-20260905",
+    "fixture card authorization cannot override the configured fixture contract",
+  );
 });
 
 test("a misconfigured numeric fixture id fails closed instead of falling back to its card id", () => {
