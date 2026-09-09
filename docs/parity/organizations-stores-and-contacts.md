@@ -3,7 +3,7 @@
 **Card:** SHU-125 (parent SHU-88). Feeds SHU-98 (organizations contract), SHU-91 (one-app role and organization context), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, bucket or live-host access. No personal data, credentials or bucket contents.
-**Coverage:** 164 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster OR). The ledger was recounted on the SHU-88 branch at `cab8d90`: Yii's `actions()` hook is no longer counted as a feature endpoint and is reported separately, and one declaration written `public  function` is no longer missed.
+**Coverage:** 167 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster OR, regenerated at `84ab149`: `staff/CompanyRequest` (company onboarding) and `admin/Staff::actionListCompanies` now belong here; the two `company/Store` assignment-request actions moved to work, matching §OR-18's own hand-off).
 **Authentication note:** where an org journey touches login, the legacy mechanism is migration evidence only. Universe through Authentik is the target credential authority (`docs/parity/identity-and-access.md`).
 
 ## 1. What this cluster is
