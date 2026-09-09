@@ -3,7 +3,7 @@
 **Card:** SHU-129 (parent SHU-88). Feeds SHU-94 (communication contract), SHU-138 (live client revisions), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, provider console or live-host access. No message contents, addresses, phone numbers or personal data.
-**Coverage:** 144 of 1,184 production endpoints (`docs/parity/coverage.md`, cluster CM).
+**Coverage:** 135 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster CM).
 
 ## 1. What this cluster is
 
