@@ -86,7 +86,7 @@ test("private HTML is non-cacheable, has a restrictive CSP and loads no remote a
   const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("vary"), "Accept");
-  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(response.headers.get("referrer-policy"), "same-origin");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.match(response.headers.get("content-security-policy")!, /default-src 'none'/);
   assert.match(response.headers.get("content-security-policy")!, /form-action 'self'/);
@@ -152,6 +152,60 @@ test("browser logout deletes the actual session, clears its cookie and returns t
   assert.match(response.headers.get("set-cookie")!, /Max-Age=0/);
   assert.equal(await f.rig.sessions.get(SESSION), undefined);
   assert.equal((await fetch(`${f.url}/profile`, { headers: BROWSER })).status, 401);
+});
+
+/**
+ * What a browser puts in the Origin header of a same-origin, non-GET request
+ * from a document served with `policy` (Fetch, "append a request Origin
+ * header"). Only the policy decides; the guard the gateway runs cannot see the
+ * page, so the page must be served in a way that lets the guard succeed.
+ */
+function originHeaderForSameOriginPost(policy: string | null, pageOrigin: string): string {
+  const effective = policy && policy.trim() !== "" ? policy.trim().toLowerCase() : "strict-origin-when-cross-origin";
+  const trustworthy = pageOrigin.startsWith("https:");
+  switch (effective) {
+    case "no-referrer": return "null";
+    case "same-origin": return pageOrigin;
+    case "no-referrer-when-downgrade":
+    case "strict-origin":
+    case "strict-origin-when-cross-origin": return trustworthy ? pageOrigin : "null";
+    default: return pageOrigin;
+  }
+}
+
+/** The Referer a browser sends when the page navigates to another origin. */
+function refererForCrossOriginNavigation(policy: string | null, pageUrl: string): string | undefined {
+  const effective = policy && policy.trim() !== "" ? policy.trim().toLowerCase() : "strict-origin-when-cross-origin";
+  switch (effective) {
+    case "no-referrer":
+    case "same-origin": return undefined;
+    case "unsafe-url":
+    case "no-referrer-when-downgrade": return pageUrl;
+    default: return `${new URL(pageUrl).origin}/`;
+  }
+}
+
+test("the sign-out form succeeds under the referrer policy the profile page is actually served with", async (t) => {
+  // SHU-132: the page was served with `referrer-policy: no-referrer`, so the
+  // browser sent `Origin: null` with the sign-out POST and /logout refused it
+  // with 403. The earlier logout test hand-set the Origin header and never
+  // read the policy, so it kept passing while every real sign-out failed.
+  const f = await fixture(t);
+  const profile = await fetch(`${f.url}/profile`, { headers: BROWSER });
+  assert.equal(profile.status, 200);
+  const policy = profile.headers.get("referrer-policy");
+  const origin = originHeaderForSameOriginPost(policy, ORIGIN);
+  const response = await fetch(`${f.url}/logout`, {
+    method: "POST", redirect: "manual",
+    headers: { ...BROWSER, origin, "sec-fetch-site": "same-origin", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
+  });
+  assert.equal(response.status, 303, `a same-origin sign-out under "${policy}" sends Origin "${origin}"`);
+  assert.equal(response.headers.get("location"), "/");
+  assert.equal(await f.rig.sessions.get(SESSION), undefined, "sign-out must end the session");
+  // The privacy property the old header was chosen for still holds: leaving
+  // for Universe never carries the page path.
+  const referer = refererForCrossOriginNavigation(policy, `${ORIGIN}/profile`);
+  assert.ok(referer === undefined || !referer.includes("/profile"), `"${policy}" leaks the page path cross-origin`);
 });
 
 test("cross-site or originless browser logout cannot delete a session even with forged Host", async (t) => {
