@@ -50,6 +50,13 @@ test("GET /health exposes the shared versioned contract", async (context) => {
   assert.equal(body.component, "gateway");
   assert.equal(body.contractVersion, PLATFORM_CONTRACT_VERSION);
   assert.equal(typeof body.timestamp, "string");
+  // The deployed revision must be publicly checkable: it is null only when
+  // SOURCE_REVISION is unset (local development), otherwise it is the exact
+  // 40-hex commit the image was built from.
+  assert.equal(body.revision, process.env.SOURCE_REVISION ?? null);
+  if (body.revision !== null) {
+    assert.match(String(body.revision), /^[0-9a-f]{40}$/);
+  }
 });
 
 test("POST /mcp/tools/call rejects oversized bodies before dispatch", async (context) => {
