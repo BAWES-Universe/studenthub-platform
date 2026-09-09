@@ -3,12 +3,16 @@
   "max_dispatch": 1,
   "enable_dispatch": false,
   "adapter_pause_map": {},
-  "wake_actor_allowlist": ["BAWES"],
-  "linear_callback_actor_ids": ["48918d3d-f843-483f-bb23-2ba6c7ace499"],
+  "wake_actor_allowlist": [
+    "BAWES"
+  ],
+  "linear_callback_actor_ids": [
+    "48918d3d-f843-483f-bb23-2ba6c7ace499"
+  ],
   "max_failed_attempts": 3,
   "fixture_lane": {
-    "id": "SHU-FIXTURE-001",
+    "id": "SHU-140",
     "authorization_ref": "FIXTURE-OPUS-CONTRACT-20260905",
-    "note": "seeded-defect fixture defined by Opus acceptance contract"
+    "note": "seeded-defect fixture (SHU-63); Linear minted identifier SHU-140 for lane id SHU-FIXTURE-001"
   }
 }
