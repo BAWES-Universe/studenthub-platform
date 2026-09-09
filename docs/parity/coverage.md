@@ -1,6 +1,6 @@
 # Production coverage ledger: every controller action assigned to a cluster
 
-**Card:** SHU-88 (acceptance items 2 and 4). **Production source:** `BAWES-Universe/studenthub` at `c2ce255`.
+**Card:** SHU-88 (acceptance items 2 and 4). **Production source:** `BAWES-Universe/studenthub` at `c2ce255695eabc7e3a0f23b162f5996274234c63` (verified by the generator against the checkout it read).
 
 **Generated** by `tools/parity/generate-coverage-ledger.mjs`. Regenerate rather than hand-edit:
 
@@ -12,26 +12,28 @@ node tools/parity/generate-coverage-ledger.mjs <path-to-studenthub-checkout>
 
 A **functional action** is a method matching `/^action[A-Za-z0-9_]+$/` that is not the Yii framework hook `actions()`. In this codebase `actions()` configures CORS `OptionsAction`, so it is an OPTIONS/plumbing declaration rather than a feature endpoint; it is counted separately below. The declaration regex tolerates arbitrary whitespace between `public`, `function` and the name, because production contains at least one method written `public  function actionAppealList()` (`staff/modules/v1/controllers/CandidateWorkingHourController.php:279`).
 
-**Functional actions: 1017.** **`actions()` hooks (OPTIONS/CORS configuration), reported separately: 171.** Controllers: 195.
+**Functional actions: 1016.** **`actions()` hooks (OPTIONS/CORS configuration), reported separately: 171.** Controllers: 195.
 
-Cluster assignment is data, not inference. `CONTROLLER_CLUSTER` in the generator gives each controller a default; `ACTION_CLUSTER` overrides named actions for controllers that span clusters. The generator exits non-zero if any action is unassigned, so the mapping is total by construction.
+Comments and string literals are masked before matching, so a declaration inside a block comment is not counted (production has one: the commented-out `actionTest()` at `console/controllers/CronController.php:952`).
+
+Cluster assignment is data, not inference. `CONTROLLER_CLUSTER` in the generator gives each controller a default; `ACTION_CLUSTER` overrides named actions for controllers that span clusters; `ACTION_EFFECTS` records the secondary clusters an action writes into. The generator exits non-zero on an unassigned action, an unknown cluster code, a mapping entry that names a controller or action the source does not contain, a missing app directory, or a checkout at any revision other than the one named above. The per-action assignment is also written to `coverage-actions.json` with the source line of every declaration.
 
 ## Totals by cluster
 
 | Code | Cluster | Actions | Share |
 |---|---|---:|---:|
 | ID | Identity and access (SHU-124) | 125 | 12% |
-| PD | Profile and private documents (SHU-123) | 120 | 12% |
-| OR | Organizations, stores, contacts, reference data (SHU-125) | 164 | 16% |
-| RC | Discover work, apply, recruit (SHU-127) | 153 | 15% |
-| WK | Work, scheduling, attendance, approvals (SHU-126) | 105 | 10% |
+| PD | Profile and private documents (SHU-123) | 121 | 12% |
+| OR | Organizations, stores, contacts, reference data (SHU-125) | 167 | 16% |
+| RC | Discover work, apply, recruit (SHU-127) | 151 | 15% |
+| WK | Work, scheduling, attendance, approvals (SHU-126) | 106 | 10% |
 | FI | Finance, contracts, payroll (SHU-128) | 138 | 14% |
-| CM | Communication, support, marketing, clients (SHU-129) | 135 | 13% |
+| CM | Communication, support, marketing, clients (SHU-129) | 133 | 13% |
 | RP | Reporting and dashboards (SHU-137) | 46 | 5% |
-| OPS | Platform config, ops, integration plumbing (SHU-139) | 31 | 3% |
-| | **Total functional actions** | **1017** | 100% |
+| OPS | Platform config, ops, integration plumbing (SHU-139) | 29 | 3% |
+| | **Total functional actions** | **1016** | 100% |
 
-The seven inventory clusters cover **940** of 1017 functional actions (92%). The remaining 77 needed two buckets no roadmap card owned when this ledger was first written: reporting and dashboards (46, now SHU-137) and platform config, ops and integration plumbing (31, now SHU-139).
+The seven inventory clusters cover **941** of 1016 functional actions (93%). The remaining 75 needed two buckets no roadmap card owned when this ledger was first written: reporting and dashboards (46, now SHU-137) and platform config, ops and integration plumbing (29, now SHU-139).
 
 ## Totals by app
 
@@ -45,8 +47,8 @@ The seven inventory clusters cover **940** of 1017 functional actions (92%). The
 | inspector | 4 | 8 | 4 |
 | status | 16 | 37 | 16 |
 | verification | 2 | 6 | 0 |
-| console | 7 | 39 | 0 |
-| **All** | **195** | **1017** | **171** |
+| console | 7 | 38 | 0 |
+| **All** | **195** | **1016** | **171** |
 
 ## Assignment, controller by controller
 
@@ -94,14 +96,14 @@ Codes: ID identity, PD profile/documents, OR organizations, RC recruit, WK work,
 | RequestChecklist | 5 | 1 | RC |  |
 | Request | 7 | 1 | RC |  |
 | Setting | 2 | 1 | OPS |  |
-| Staff | 13 | 1 | ID 10, FI 3 |  |
+| Staff | 13 | 1 | ID 10, FI 2, OR 1 |  |
 | StaffExpenses | 6 | 1 | FI |  |
 | StaffLeave | 4 | 1 | WK |  |
 | StaffSalary | 5 | 1 | FI |  |
 | StaffWorkSession | 4 | 1 | WK |  |
 | Statistic | 5 | 1 | RP |  |
 | Store | 3 | 1 | OR |  |
-| Story | 5 | 1 | CM |  |
+| Story | 5 | 1 | CM 4, RC 1 |  |
 | Suggestion | 2 | 1 | RC |  |
 | Tag | 5 | 1 | OR |  |
 | TransferBankAdvice | 5 | 1 | FI |  |
@@ -123,7 +125,7 @@ Codes: ID identity, PD profile/documents, OR organizations, RC recruit, WK work,
 | Aws | 1 | 1 | OPS | SHU-134 |
 | Balance | 3 | 1 | FI |  |
 | Campaign | 1 | 1 | CM |  |
-| Candidate | 4 | 1 | WK |  |
+| Candidate | 4 | 1 | WK 3, PD 1 |  |
 | CandidateEducation | 9 | 1 | PD |  |
 | CandidateExperience | 6 | 1 | PD |  |
 | CandidateLink | 5 | 1 | PD |  |
@@ -168,7 +170,7 @@ Codes: ID identity, PD profile/documents, OR organizations, RC recruit, WK work,
 | RequestActivity | 2 | 0 | RC |  |
 | RequestCandidateInvitation | 4 | 1 | RC |  |
 | Request | 12 | 0 | RC |  |
-| Store | 5 | 0 | OR |  |
+| Store | 5 | 0 | WK 2, OR 3 |  |
 | Suggestion | 4 | 0 | RC |  |
 | Transfer | 13 | 1 | FI |  |
 
@@ -192,7 +194,7 @@ Codes: ID identity, PD profile/documents, OR organizations, RC recruit, WK work,
 | Chat | 9 | 1 | CM |  |
 | CompanyContact | 12 | 1 | OR |  |
 | Company | 13 | 1 | OR |  |
-| CompanyRequest | 4 | 1 | RC |  |
+| CompanyRequest | 4 | 1 | OR |  |
 | Contract | 5 | 1 | FI |  |
 | Country | 3 | 1 | OR |  |
 | CronLog | 1 | 1 | OPS |  |
@@ -220,7 +222,7 @@ Codes: ID identity, PD profile/documents, OR organizations, RC recruit, WK work,
 | Statistic | 1 | 1 | RP |  |
 | StoreAssignmentRequest | 4 | 1 | WK |  |
 | Store | 9 | 1 | OR |  |
-| Story | 8 | 1 | CM |  |
+| Story | 8 | 1 | CM 7, RC 1 |  |
 | Suggestion | 8 | 1 | RC |  |
 | Tag | 2 | 1 | OR |  |
 | Ticket | 7 | 1 | CM |  |
@@ -287,11 +289,21 @@ Codes: ID identity, PD profile/documents, OR organizations, RC recruit, WK work,
 |---|---:|---:|---|---|
 | Algolia | 1 | 0 | RC |  |
 | CentralDb | 4 | 0 | ID | exports users with password hashes to a second database |
-| Cron | 28 | 0 | OPS 7, PD 6, OR 1, WK 5, RC 1, FI 3, CM 2, RP 3 |  |
+| Cron | 27 | 0 | OPS 5, PD 6, OR 1, FI 4, WK 5, RC 1, CM 2, RP 3 |  |
 | Event | 1 | 0 | OPS |  |
 | Report | 1 | 0 | RP |  |
 | Resource | 1 | 0 | PD |  |
 | Xero | 3 | 0 | FI |  |
+
+## Cross-cluster effects
+
+Primary ownership says who specifies an endpoint; these actions also write into other clusters, which must test them too.
+
+| Action | Primary | Also affects |
+|---|---|---|
+| console/Cron::actionDaily | FI | CM, ID |
+| console/Cron::actionEveryMinute | RC | CM |
+| console/Cron::actionSummary | RP | CM |
 
 ## What this ledger does not claim
 

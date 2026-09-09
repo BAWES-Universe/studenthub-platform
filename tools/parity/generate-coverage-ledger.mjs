@@ -14,20 +14,72 @@
  *    `function` and the method name. Production contains at least one
  *    declaration written `public  function actionAppealList()`.
  *  - Base classes contribute no endpoints and are reported as cluster X.
+ *  - Comments and string literals are masked before matching, so a method
+ *    declared inside a block comment (production has one: the commented-out
+ *    `actionTest()` in console/controllers/CronController.php) is not counted.
  *
  * Cluster assignment is data, not inference: CONTROLLER_CLUSTER gives each
- * controller a default cluster, and ACTION_CLUSTER overrides individual
- * actions by "app/Controller::ActionName". Every action is assigned exactly
- * once; the script fails if any action is unassigned.
+ * controller a default cluster, ACTION_CLUSTER overrides individual actions
+ * by "app/Controller::ActionName", and ACTION_EFFECTS records secondary
+ * clusters an action writes into (one scheduled job can span three). Every
+ * action is assigned exactly once.
+ *
+ * The script fails closed on: an unassigned action; a cluster code that is not
+ * in CLUSTERS; a CONTROLLER_CLUSTER or ACTION_CLUSTER entry that names a
+ * controller or action the source does not contain (stale mapping); a missing
+ * app directory; a checkout whose HEAD is not SOURCE_REVISION. A source tree
+ * that yields zero controllers is therefore impossible to ledger silently.
+ *
+ * Besides coverage.md it writes coverage-actions.json: one record per action
+ * with app, controller, action, primary cluster, effects and source line, so a
+ * journey or slice can be traced back to the exact declaration.
  */
 import { readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
 
 const ROOT = process.argv[2];
 const OUT = process.argv[3] ?? join(dirname(new URL(import.meta.url).pathname), "../../docs/parity/coverage.md");
 if (!ROOT) { console.error("usage: generate-coverage-ledger.mjs <studenthub-checkout> [out]"); process.exit(2); }
 
 const ACTION_RE = /public\s+function\s+(action[A-Za-z0-9_]*)\s*\(/g;
+
+/** The production revision this ledger describes. Regenerating against any other checkout is refused. */
+const SOURCE_REVISION = "c2ce255695eabc7e3a0f23b162f5996274234c63";
+const JSON_OUT = join(dirname(OUT), "coverage-actions.json");
+
+/**
+ * Replace PHP comments and string literals with spaces of equal length so that
+ * offsets (and therefore line numbers) are preserved but nothing inside them
+ * can match ACTION_RE. Handles // and # line comments, block comments, and
+ * single/double-quoted strings with backslash escapes. Heredocs are not
+ * handled; none of the controllers use one around a method declaration.
+ */
+function maskCommentsAndStrings(src) {
+  const out = src.split("");
+  const blank = (from, to) => { for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " "; };
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      blank(i, stop); i = stop; continue;
+    }
+    if ((c === "/" && n === "/") || c === "#") {
+      let end = src.indexOf("\n", i);
+      if (end === -1) end = src.length;
+      blank(i, end); i = end; continue;
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) { if (src[j] === "\\") j++; j++; }
+      blank(i + 1, Math.min(j, src.length)); i = j + 1; continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
 
 const CLUSTERS = {
   ID: "Identity and access (SHU-124)",
@@ -83,7 +135,7 @@ const CONTROLLER_CLUSTER = {
   "staff/Base": "X", "staff/Brand": "OR", "staff/Candidate": "PD", "staff/CandidateEvaluation": "RC",
   "staff/CandidateIdCard": "PD", "staff/CandidateIdRequest": "PD", "staff/CandidateWorkingHour": "WK",
   "staff/Certificate": "PD", "staff/Chat": "CM", "staff/CompanyContact": "OR", "staff/Company": "OR",
-  "staff/CompanyRequest": "RC", "staff/Contract": "FI", "staff/Country": "OR", "staff/CronLog": "OPS",
+  "staff/CompanyRequest": "OR", "staff/Contract": "FI", "staff/Country": "OR", "staff/CronLog": "OPS",
   "staff/Currency": "OR", "staff/DailyStandup": "WK", "staff/DiscountCategory": "CM", "staff/Discount": "CM",
   "staff/EmailCampaign": "CM", "staff/FiringHitmap": "WK", "staff/Fulltimer": "RC", "staff/GoogleMap": "OPS",
   "staff/InterviewEvaluation": "RC", "staff/Invitation": "RC", "staff/Jira": "CM", "staff/Job": "RC",
@@ -131,6 +183,17 @@ const ACTION_CLUSTER = {
   "candidate/Account::actionVideoStatus": "PD",
   "candidate/Account::actionVideoByWebhook": "PD",
 
+  // candidate/Candidate is work history; the appreciation certificate is a profile document (PD S8).
+  "candidate/Candidate::actionAppreciationCertificate": "PD",
+
+  // Story status transitions are recruiter pipeline state (RC R2), not messaging.
+  "staff/Story::actionChangeStoryStatus": "RC",
+  "admin/Story::actionChangeStoryStatus": "RC",
+
+  // company/Store: assignment requests are the work cluster's journey (WK W1).
+  "company/Store::actionStoreAssignmentRequest": "WK",
+  "company/Store::actionCancelStoreAssignmentRequest": "WK",
+
   // staff/Candidate spans profile administration, work, recruiting and finance.
   "staff/Candidate::actionAssign": "WK",
   "staff/Candidate::actionUnassign": "WK",
@@ -169,7 +232,7 @@ const ACTION_CLUSTER = {
 
   // admin/Staff: salary administration is finance, the rest is identity.
   "admin/Staff::actionListSalaries": "FI",
-  "admin/Staff::actionListCompanies": "FI",
+  "admin/Staff::actionListCompanies": "OR", // returns the staff member's company relationships, despite the salary docblock
   "admin/Staff::actionImportSalary": "FI",
 
   // console/Cron: one scheduled action per cluster.
@@ -187,6 +250,7 @@ const ACTION_CLUSTER = {
   "console/Cron::actionEndOfMonth": "WK",
   "console/Cron::actionEveryMinute": "RC",
   "console/Cron::actionProcessTransferFiles": "FI",
+  "console/Cron::actionDaily": "FI",
   "console/Cron::actionWeekly": "FI",
   "console/Cron::actionPayableCandidateNotification": "FI",
   "console/Cron::actionProcessCampaign": "CM",
@@ -194,6 +258,19 @@ const ACTION_CLUSTER = {
   "console/Cron::actionSummary": "RP",
   "console/Cron::actionUpdateCandidateStats": "RP",
   "console/Cron::actionUpdateCompanyStats": "RP",
+};
+
+/**
+ * Secondary clusters an action writes into. Primary ownership above answers
+ * "who specifies this endpoint"; effects answer "who else must test it".
+ */
+const ACTION_EFFECTS = {
+  // sends paid-transfer email + push and marks is_candidate_notified (FI, CM), then purges six token tables (ID)
+  "console/Cron::actionDaily": ["CM", "ID"],
+  // token purge and mail-log rotation alongside the reporting counters
+  "console/Cron::actionSummary": ["CM"],
+  // marks candidate/company notification state after suggestions
+  "console/Cron::actionEveryMinute": ["CM"],
 };
 
 const NOTES = {
@@ -214,35 +291,69 @@ const NOTES = {
   "staff/Jira": "support tooling", "admin/Yeaster": "telephony/PBX", "staff/Yeaster": "telephony/PBX",
 };
 
+const problems = [];
+
+// Refuse any checkout that is not the revision this ledger describes.
+let actualRevision = null;
+try {
+  actualRevision = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+} catch (error) {
+  problems.push(`cannot read HEAD of ${ROOT}: ${error?.message ?? error}`);
+}
+if (actualRevision && actualRevision !== SOURCE_REVISION) {
+  problems.push(`source checkout is at ${actualRevision}, ledger describes ${SOURCE_REVISION}`);
+}
+
+// Every cluster code used by the mapping must exist.
+for (const [k, v] of Object.entries(CONTROLLER_CLUSTER)) if (!CLUSTERS[v]) problems.push(`unknown cluster "${v}" for controller ${k}`);
+for (const [k, v] of Object.entries(ACTION_CLUSTER)) if (!CLUSTERS[v]) problems.push(`unknown cluster "${v}" for action ${k}`);
+for (const [k, vs] of Object.entries(ACTION_EFFECTS)) for (const v of vs) if (!CLUSTERS[v]) problems.push(`unknown effect cluster "${v}" for action ${k}`);
+
 const rows = [];
+const records = [];
 let optionsHooks = 0;
 const unassigned = [];
+const seenControllers = new Set();
+const seenActions = new Set();
 
 for (const app of APPS) {
   const dir = join(ROOT, appDir(app));
-  if (!existsSync(dir)) continue;
+  if (!existsSync(dir)) { problems.push(`app directory missing: ${appDir(app)}`); continue; }
   for (const file of readdirSync(dir).sort()) {
     if (!file.endsWith("Controller.php")) continue;
     const name = file.slice(0, -"Controller.php".length);
     const key = `${app}/${name}`;
-    const src = readFileSync(join(dir, file), "utf8");
-    const names = [...src.matchAll(ACTION_RE)].map((m) => m[1]);
-    const hooks = names.filter((n) => n === "actions").length;
+    seenControllers.add(key);
+    const path = join(dir, file);
+    const src = maskCommentsAndStrings(readFileSync(path, "utf8"));
+    const matches = [...src.matchAll(ACTION_RE)];
+    const hooks = matches.filter((m) => m[1] === "actions").length;
     optionsHooks += hooks;
-    const actions = names.filter((n) => n !== "actions");
+    const actions = matches.filter((m) => m[1] !== "actions");
     const byCluster = {};
-    for (const a of actions) {
-      const cluster = ACTION_CLUSTER[`${key}::${a}`] ?? CONTROLLER_CLUSTER[key];
-      if (!cluster) { unassigned.push(`${key}::${a}`); continue; }
+    for (const m of actions) {
+      const a = m[1];
+      const id = `${key}::${a}`;
+      seenActions.add(id);
+      const cluster = ACTION_CLUSTER[id] ?? CONTROLLER_CLUSTER[key];
+      if (!cluster) { unassigned.push(id); continue; }
       byCluster[cluster] = (byCluster[cluster] ?? 0) + 1;
+      const line = src.slice(0, m.index).split("\n").length;
+      records.push({ app, controller: name, action: a, cluster, effects: ACTION_EFFECTS[id] ?? [], source: `${relative(ROOT, path)}:${line}` });
     }
     if (actions.length === 0 && CONTROLLER_CLUSTER[key] === "X") byCluster.X = 0;
     rows.push({ app, name, key, actions: actions.length, hooks, byCluster, note: NOTES[key] ?? "" });
   }
 }
 
-if (unassigned.length) {
-  console.error(`unassigned actions (${unassigned.length}):\n` + unassigned.join("\n"));
+if (rows.length === 0) problems.push("no controllers found under the source checkout");
+for (const k of Object.keys(CONTROLLER_CLUSTER)) if (!seenControllers.has(k)) problems.push(`stale CONTROLLER_CLUSTER entry, no such controller: ${k}`);
+for (const k of Object.keys(ACTION_CLUSTER)) if (!seenActions.has(k)) problems.push(`stale ACTION_CLUSTER entry, no such action: ${k}`);
+for (const k of Object.keys(ACTION_EFFECTS)) if (!seenActions.has(k)) problems.push(`stale ACTION_EFFECTS entry, no such action: ${k}`);
+if (unassigned.length) problems.push(`unassigned actions (${unassigned.length}):\n` + unassigned.join("\n"));
+
+if (problems.length) {
+  console.error("coverage ledger refused:\n- " + problems.join("\n- "));
   process.exit(1);
 }
 
@@ -258,13 +369,14 @@ const fmt = (m) => Object.entries(m).map(([c, n]) => (Object.keys(m).length > 1 
 
 const L = [];
 L.push("# Production coverage ledger: every controller action assigned to a cluster\n");
-L.push("**Card:** SHU-88 (acceptance items 2 and 4). **Production source:** `BAWES-Universe/studenthub` at `c2ce255`.\n");
+L.push(`**Card:** SHU-88 (acceptance items 2 and 4). **Production source:** \`BAWES-Universe/studenthub\` at \`${actualRevision}\` (verified by the generator against the checkout it read).\n`);
 L.push("**Generated** by `tools/parity/generate-coverage-ledger.mjs`. Regenerate rather than hand-edit:\n");
 L.push("```\nnode tools/parity/generate-coverage-ledger.mjs <path-to-studenthub-checkout>\n```\n");
 L.push("## Counting rules\n");
 L.push("A **functional action** is a method matching `/^action[A-Za-z0-9_]+$/` that is not the Yii framework hook `actions()`. In this codebase `actions()` configures CORS `OptionsAction`, so it is an OPTIONS/plumbing declaration rather than a feature endpoint; it is counted separately below. The declaration regex tolerates arbitrary whitespace between `public`, `function` and the name, because production contains at least one method written `public  function actionAppealList()` (`staff/modules/v1/controllers/CandidateWorkingHourController.php:279`).\n");
 L.push(`**Functional actions: ${grand}.** **\`actions()\` hooks (OPTIONS/CORS configuration), reported separately: ${optionsHooks}.** Controllers: ${rows.length}.\n`);
-L.push("Cluster assignment is data, not inference. `CONTROLLER_CLUSTER` in the generator gives each controller a default; `ACTION_CLUSTER` overrides named actions for controllers that span clusters. The generator exits non-zero if any action is unassigned, so the mapping is total by construction.\n");
+L.push("Comments and string literals are masked before matching, so a declaration inside a block comment is not counted (production has one: the commented-out `actionTest()` at `console/controllers/CronController.php:952`).\n");
+L.push("Cluster assignment is data, not inference. `CONTROLLER_CLUSTER` in the generator gives each controller a default; `ACTION_CLUSTER` overrides named actions for controllers that span clusters; `ACTION_EFFECTS` records the secondary clusters an action writes into. The generator exits non-zero on an unassigned action, an unknown cluster code, a mapping entry that names a controller or action the source does not contain, a missing app directory, or a checkout at any revision other than the one named above. The per-action assignment is also written to `coverage-actions.json` with the source line of every declaration.\n");
 L.push("## Totals by cluster\n");
 L.push("| Code | Cluster | Actions | Share |\n|---|---|---:|---:|");
 for (const c of ["ID", "PD", "OR", "RC", "WK", "FI", "CM", "RP", "OPS"]) {
@@ -284,9 +396,14 @@ for (const r of rows) {
   if (r.app !== cur) { cur = r.app; L.push(`\n### ${r.app}\n\n| Controller | Functional actions | \`actions()\` | Cluster | Note |\n|---|---:|---:|---|---|`); }
   L.push(`| ${r.name} | ${r.actions} | ${r.hooks} | ${fmt(r.byCluster)} | ${r.note} |`);
 }
+L.push("\n## Cross-cluster effects\n");
+L.push("Primary ownership says who specifies an endpoint; these actions also write into other clusters, which must test them too.\n");
+L.push("| Action | Primary | Also affects |\n|---|---|---|");
+for (const r of records.filter((x) => x.effects.length)) L.push(`| ${r.app}/${r.controller}::${r.action} | ${r.cluster} | ${r.effects.join(", ")} |`);
 L.push("\n## What this ledger does not claim\n");
 L.push("- That every action is a distinct user journey. Many are CRUD variants of one journey; the per-cluster inventories collapse them.\n- That the assignment is the only defensible cut. It is expressed as data in the generator, so a different cut is a diff, not a recount.\n- Anything about the front-end repositories, the live database, or live infrastructure.\n");
 
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, L.join("\n") + "\n");
+writeFileSync(JSON_OUT, JSON.stringify({ source: `BAWES-Universe/studenthub@${actualRevision}`, functional: grand, hooks: optionsHooks, controllers: rows.length, actions: records }, null, 2) + "\n");
 console.error(`functional=${grand} hooks=${optionsHooks} controllers=${rows.length} seven=${sevenClusters}`);
