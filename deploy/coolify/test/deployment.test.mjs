@@ -20,7 +20,6 @@ const validEnv = {
   OIDC_TOKEN_URL: "https://auth.example.test/application/o/token/",
   OIDC_JWKS_URL: "https://auth.example.test/application/o/studenthub/jwks/",
   LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.example.test/",
-  SOURCE_REVISION: "a".repeat(40),
 };
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
