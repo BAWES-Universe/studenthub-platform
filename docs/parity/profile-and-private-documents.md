@@ -142,7 +142,7 @@ Columns: **Actor / grant** in the one-app model; **Legacy route(s)**; **Writes**
 | PD-04 | Admin views / searches / review queue | admin | `search` (`admin/.../CandidateController.php:76`), `report-search :151`, `total-to-review :199`, `view :342` | admin projection incl. `deleted` | `admin CandidateCest` 8 methods, 200 + partial JSON | REQUIRED | S6 |
 | PD-05 | Employer views a candidate | org-owner / recruiter, org scope | `GET v1/candidates/<id>` company app (`:691`), `search :25`, `list :83` | company projection §3; any id | `company RequestCest` etc. 200-only (per GPT's sample) | REQUIRED, with decision D1 | S7 |
 | PD-06 | Store manager views own store's candidates | manager, store scope | `manager/.../CandidateController.php:19-48` | manager projection, store-scoped | none | REQUIRED | S7 |
-| PD-07 | Public ID verification page | anonymous | QR target `v.studenthub.co/<candidate_uid>` (`CandidateIdCardController.php:100-113`) | not in this repo (separate host) | none | UNRESOLVED: target app not inventoried | S8 |
+| PD-07 | Public verification card by QR | anonymous, no authentication | `verification/controllers/SiteController.php:35-60` (`/<candidate_uid>`), `ViewController.php:34-100` (`view/resume/<uid>`, `view/video/<uid>`, `view/telephone/<uid>`; routes `verification/config/main.php:37-40`). QR target `v.studenthub.co/<uid>` is this app (`CandidateIdCardController.php:108`) | Arabic name, personal photo, **civil ID number**, university, company, store, ID-card expiry (`views/site/index.php`); ID hidden if expired or unassigned. Resume and video links redirect to the public-read object URL; telephone redirects to `tel:<candidate_phone>` | `verification/tests/functional/SiteTest.php` | REQUIRED, ADAPT: signed short-lived link, no civil ID number, no phone without consent; see F10 | S8 |
 
 ### 6.2 Self-service writes (all `Candidate::findOne(user id)`, scenario-gated; all return `operation: success|error`)
 
@@ -213,6 +213,7 @@ Out of this cluster by decision or ownership: PD-16, PD-28, reset-password (iden
 | F7 | Three key prefixes for civil ID photos (`civil-id/`, `candidate-civil-id/`, `photos/`); OCR path assumes `photos/` | `Candidate.php:125-129`, `:1170-1186`, `:2760-2780`, `:~445` | Migration risk | SHU-97 data map must inventory real keys |
 | F8 | Four child tables have no migration DDL | §2.2 | Migration risk | SHU-97 |
 | F9 | `validateFullName` mis-targets its error | `Candidate.php:540` | Low | do not replicate |
+| **F10** | The QR verification app is public and keyed only by `candidate_uid` (20-character random string printed on the ID card). It renders the **civil ID number**, photo, employer and store, and redirects to the resume, video, and the candidate's **phone number**. Anyone who scans, photographs, or guesses a card gets all of it, with no authentication, expiry, or audit. | `verification/controllers/SiteController.php:35-60`, `ViewController.php:34-100`, `verification/views/site/index.php` | **High**, legacy, live | New legacy card in the SHU-54 shape (decision: keep public verification but drop civil ID number and phone; or gate by signed link). Platform S8 requires a signed short-lived link and no civil ID number on the public card. |
 
 ## 9. Classification of prior donor findings
 
@@ -249,7 +250,7 @@ Out of this cluster by decision or ownership: PD-16, PD-28, reset-password (iden
 - The IAM policy attached to the credential returned by `v1/aws/config`.
 - Which candidate UI production users are on, and any behaviour that lives only in those UIs.
 - Real row counts, real key prefixes in the bucket, and any data not reachable from the code.
-- The `v.studenthub.co` verification app (QR target) is a separate deployment not in this repository.
+- Which of the `verification/` app's rendered fields the live nginx actually serves (the app is in this repository at `verification/`; an earlier draft of this document wrongly called it a separate deployment).
 
 ## Appendix A: `candidate` column migrations
 
