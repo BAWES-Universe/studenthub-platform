@@ -393,15 +393,14 @@ export function verdictMatchesLane(requestedWorker, evidenceStage) {
 }
 
 // ---------------------------------------------------------------------------
-// Fold-time independence gate (SHU-73, Hermes 2026-09-09)
+// Fold-time review-provenance gate (SHU-73)
 // ---------------------------------------------------------------------------
-// Routing-time eligibility (eligibleReviewers) picks a non-author reviewer when
-// an order is MINTED. This gate re-checks independence at VERDICT FOLD time so
-// a PASS/BLOCK is only ever treated as an independent review verdict when the
-// session the adapter actually observed (worker_identity) is not an author of
-// the reviewed lineage. A verdict is text; any participant can produce text —
-// the fold is where the record is made, so the check must happen here, not only
-// at order mint. Ambiguous provenance (no observed session) fails closed.
+// Routing-time eligibility picks the current, structurally separate review
+// lane when an order is minted. At verdict fold time this guard requires the
+// adapter-observed session and refuses wholly unreadable lineage instead of
+// silently treating it as an empty author set. The worker identities currently
+// contain attempt ids, so this function does not claim stable cross-role actor
+// independence; SHU-71 owns that requirement before role reversal is enabled.
 //
 //   receipt          — the terminal-bound receipt whose verdict is folding
 //   lineageReceipts  — ALL durable receipts for the same issue (every attempt),
@@ -410,7 +409,7 @@ export function verdictMatchesLane(requestedWorker, evidenceStage) {
 //                      cannot be evaluated and the gate falls back to the
 //                      session-presence requirement only — never to "independent
 //                      by default" from self-declared labels.
-export function reviewVerdictIndependent(receipt, lineageReceipts = []) {
+export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
   if (!receipt || typeof receipt !== "object") return { ok: false, reason: "no receipt to evaluate" };
   // Writer (build/revise) verdicts are not independence claims — the rule only
   // constrains REVIEW verdicts.
@@ -421,9 +420,12 @@ export function reviewVerdictIndependent(receipt, lineageReceipts = []) {
   if (typeof receipt.worker_identity !== "string" || receipt.worker_identity.length === 0) {
     return { ok: false, reason: "review verdict without an observed verifier session (worker_identity) — ambiguous provenance" };
   }
-  const authors = authorSet(
-    (lineageReceipts ?? []).map((r) => provenanceFromReceipt(r)).filter(Boolean),
-  );
+  const supplied = lineageReceipts ?? [];
+  const entries = supplied.map((r) => provenanceFromReceipt(r)).filter(Boolean);
+  if (supplied.length > 0 && entries.length === 0) {
+    return { ok: false, reason: "reviewed lineage carries no readable provenance — authorship ambiguous" };
+  }
+  const authors = authorSet(entries);
   if (authors.has(receipt.worker_identity)) {
     return { ok: false, reason: `verifier session ${receipt.worker_identity} is an author of the reviewed lineage — not independent` };
   }

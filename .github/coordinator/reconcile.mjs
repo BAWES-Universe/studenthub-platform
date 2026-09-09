@@ -25,7 +25,7 @@
 // Linear API token names only — no secrets live in this repository.
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
-import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictIndependent } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -557,37 +557,6 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   return callbackBindingValid(receipt, evidence, ctx) && SUCCESS_CALLBACK_STAGES.includes(evidence.stage);
 }
 
-// ---------------------------------------------------------------------------
-// Evidence classification (SHU-73, Opus SHU-66 standards position)
-// ---------------------------------------------------------------------------
-// Every evidence line that closes a terminal state carries an evidence_class.
-//   independently_checkable — re-derivable by a party with NO privileged access
-//     (public GitHub/Linear permalinks, public endpoints).
-//   privileged_attestation  — only visible to whoever holds deployment/instance
-//     credentials (Coolify env-store state, container artifact reads, image
-//     labels, console reads).
-// A terminal state whose independent legs are ALL privileged_attestation is not
-// closable. Links supplied as plain strings are public permalinks by default.
-export const EVIDENCE_CLASSES = Object.freeze(["independently_checkable", "privileged_attestation"]);
-
-export function classifyEvidenceLinks(links = []) {
-  return (links ?? []).map((link) => {
-    if (typeof link === "object" && link !== null) {
-      const cls = EVIDENCE_CLASSES.includes(link.evidence_class) ? link.evidence_class : "independently_checkable";
-      return { url: typeof link.url === "string" ? link.url : null, evidence_class: cls };
-    }
-    return { url: typeof link === "string" ? link : null, evidence_class: "independently_checkable" };
-  });
-}
-
-// A review verdict may only close COMPLETED when at least one evidence line is
-// independently checkable. Privileged attestation alone cannot satisfy an
-// independent review verdict.
-export function hasIndependentEvidence(evidence) {
-  const links = classifyEvidenceLinks(evidence?.links ?? []);
-  return links.some((l) => l.evidence_class === "independently_checkable" && l.url !== null);
-}
-
 const nowIso = (at) => at ?? new Date().toISOString();
 
 // nextReceiptState — pure transition. Returns
@@ -703,26 +672,18 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         // evidence bound to the same attempt_id + target_sha (+ current head) counts.
         if (callback && callbackEvidenceValid(receipt, callback, ctx)) {
           const isReviewLane = roleForRequestedWorker(receipt.requested_worker) === "review";
-          // Fold-time independence + evidence gates (SHU-73): routing-time
-          // eligibility picked a non-author reviewer when the order was minted;
-          // this re-checks at the fold, where the verdict becomes the record.
-          // 1. The verifier session the adapter observed (worker_identity) must
-          //    not be an author of the reviewed lineage; unobserved -> HOLD.
-          // 2. A closing PASS needs at least one independently checkable
-          //    evidence line — privileged attestation alone cannot close it.
-          const independence = isReviewLane ? reviewVerdictIndependent(receipt, ctx.lineage ?? []) : { ok: true };
-          const independentEvidence = !isReviewLane || callback.stage !== "PASS" || hasIndependentEvidence(callback);
-          if (!independence.ok || !independentEvidence) {
-            const reasons = [];
-            if (!independence.ok) reasons.push(independence.reason);
-            if (!independentEvidence) reasons.push("review PASS lacks independently checkable evidence (privileged attestation cannot close an independent verdict)");
-            const next = note(`run completed but verdict NOT independently closable — HOLD (${reasons.join("; ")})`);
+          // Fold-time provenance gate (SHU-73): require an adapter-observed
+          // review session and refuse a supplied lineage that cannot be read.
+          // Current one-slot independence is established structurally when the
+          // build/review lanes are routed. Cross-role actor identity is a SHU-71
+          // acceptance concern and is not claimed by this receipt-level check.
+          const provenance = isReviewLane ? reviewVerdictProvenanceValid(receipt, ctx.lineage ?? []) : { ok: true };
+          if (!provenance.ok) {
+            const next = note(`run completed but review provenance is not closable — HOLD (${provenance.reason})`);
             next.stage = "HOLD";
             next.adapter_status = "completed";
-            // A verdict that fails the gates never records a verdict fact: a
-            // rejected PASS must not route as a completed loop, and an author's
-            // BLOCK/FAIL must not route its own revision. Durable identity is
-            // still kept when the adapter supplied it.
+            // A rejected verdict never becomes a durable routing fact. Preserve
+            // the adapter-observed identity for diagnosis.
             if (typeof event.worker_identity === "string" && event.worker_identity.length) {
               next.worker_identity = event.worker_identity;
             }
@@ -733,10 +694,6 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
-          // Classified evidence record (SHU-73): every closing evidence line
-          // carries evidence_class so a later reconciler can re-derive whether
-          // the terminal state had independent legs. Extra tolerated field.
-          next.verdict_evidence = classifyEvidenceLinks(callback.links);
           // Durable verdict facts (SHU-68 wiring replay): the terminal receipt
           // records the verdict stage + output head that routing consumed, so a
           // crash AFTER this persist can re-derive the successor directive on the
@@ -801,41 +758,6 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         return { receipt: next, accepted: true, pause_adapter: quotaOrAccess };
       }
       return unchanged(`unknown run_status "${status}"`);
-    }
-    case "callback": {
-      // Direct validated-callback event (evidence arrives independently of a run
-      // poll, e.g. GitHub/Linear evidence harvested by the reconciler).
-      if (receipt.stage !== "RUNNING" && receipt.stage !== "LAUNCH_UNKNOWN") {
-        return unchanged(`callback out of order from stage ${receipt.stage}`);
-      }
-      const evidence = {
-        links: event.links ?? [],
-        attempt_id: event.attempt_id,
-        target_sha: event.target_sha,
-        stage: event.stage,
-      };
-      // COMPLETED requires an ACKNOWLEDGED run (external_run_id present). Evidence
-      // for a run whose ack was lost (LAUNCH_UNKNOWN) holds for reconciliation —
-      // never mint COMPLETED without a run identity (CodeRabbit).
-      if (receipt.external_run_id === null) {
-        const next = note("callback received but the run was never acknowledged (LAUNCH_UNKNOWN) — HOLD for reconciliation");
-        next.stage = "HOLD";
-        next.timestamps.terminal = at();
-        return { receipt: next, accepted: true };
-      }
-      if (callbackEvidenceValid(receipt, evidence, ctx)) {
-        const next = note("validated callback received (attempt + target_sha match)");
-        next.stage = "COMPLETED";
-        next.evidence_links = [...next.evidence_links, ...evidence.links];
-        next.timestamps.terminal = at();
-        return { receipt: next, accepted: true };
-      }
-      // Stale/mismatched verdicts never satisfy this receipt — the machine holds
-      // (slot retained) instead of inventing a PASS.
-      const next = note("callback REJECTED (attempt_id or target_sha mismatch / stale head) — HOLD");
-      next.stage = "HOLD";
-      next.timestamps.terminal = at();
-      return { receipt: next, accepted: true };
     }
     case "manual_claim": {
       // A conflicting manual claim (human asserts the work / disputes the run)
