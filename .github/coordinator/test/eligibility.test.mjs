@@ -58,13 +58,31 @@ test("excluded: needs:decision label", () => {
   assert.equal(excluded[0].reason, "label needs:decision");
 });
 
-test("excluded: parent not Done", () => {
+test("eligible: child of an In Progress parent with no open blockers is eligible (SHU-219)", () => {
+  const ids = eligibleIds([
+    card({ id: "SHU-22", parent: { id: "SHU-1", state: "In Progress" } }),
+  ]);
+  assert.deepEqual(ids, ["SHU-22"]);
+});
+
+test("excluded: child of a Canceled parent is excluded (SHU-219)", () => {
   const { excluded } = computeEligibility({
-    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "In Progress" } })],
+    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "Canceled" } })],
     openPRs: [],
     config: CONFIG,
   });
-  assert.match(excluded[0].reason, /parent SHU-1 not Done/);
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /children of a canceled parent/);
+});
+
+test("excluded: child of a Duplicate parent is excluded (SHU-219)", () => {
+  const { excluded } = computeEligibility({
+    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "Duplicate" } })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /children of a canceled parent/);
 });
 
 test("excluded: blocker not Done", () => {
@@ -185,21 +203,23 @@ test("requestedWorkerFor: explicit worker label wins; default codex-builder", ()
   assert.equal(requestedWorkerFor(card({ labels: ["worker:someone-else"] })), "codex-builder");
 });
 
-test("snapshot fixture: exactly one eligible card, exclusions carry reasons", () => {
+test("snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)", () => {
   const snap = JSON.parse(
     fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
   );
   const { ready, excluded } = computeEligibility({ issues: snap.issues, openPRs: snap.openPRs, config: CONFIG });
-  assert.equal(ready.length, 1);
-  assert.equal(ready[0].id, "SHU-FIXTURE-001");
-  assert.equal(ready[0].state, "Todo");
-  assert.equal(excluded.length, 5);
+  assert.equal(ready.length, 2);
+  const readyIds = ready.map((x) => x.id).sort();
+  assert.deepEqual(readyIds, ["SHU-206", "SHU-FIXTURE-001"]);
+  assert.equal(excluded.length, 6);
   const byId = Object.fromEntries(excluded.map((x) => [x.id, x.reason]));
   assert.ok(byId["SHU-201"].includes("In Progress"));
   assert.ok(byId["SHU-202"].includes("assigned to bob"));
   assert.ok(byId["SHU-203"].includes("needs:decision"));
   assert.ok(byId["SHU-204"].includes("open PR"));
   assert.ok(byId["SHU-205"].includes("R3"));
+  // SHU-207: child of a Canceled parent — excluded by Rule 6.
+  assert.ok(byId["SHU-207"].includes("children of a canceled parent"));
   // Deterministic ordering of excluded by identifier.
-  assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205"]);
+  assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205", "SHU-207"]);
 });

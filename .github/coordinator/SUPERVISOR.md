@@ -33,6 +33,10 @@ Safety properties:
   fallback in the client.
 - The one-shot entry seam checks `dispatchEnabled === true` before contacting
   IPC. Disabled dispatch performs no launch or durable write.
+- Selection precedes the seam. Eligibility Rule 6 (SHU-219): a child of an open
+  or Done parent is dispatchable (a sub-issue completes before its parent); only
+  children of terminal-canceled parents (`Canceled`/`Duplicate`) are excluded.
+  Blockers (Rule 7), not parent state, are the ordering mechanism.
 
 The host service must preserve children across a routine supervisor restart
 (for systemd, `KillMode=process`, not `control-group`). The default shutdown

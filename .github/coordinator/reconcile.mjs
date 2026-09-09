@@ -110,6 +110,10 @@ const R3_PRIORITY_RE = /^r3$/i;
 const VERIFIER_LABEL_RE = /^verifier:/i;
 const NEEDS_DECISION_RE = /^needs:decision$/i;
 const WORKER_LABEL_RE = /^worker:(codex-builder|claude-verifier|hermes-box)$/;
+// Rule 6 (SHU-219): a sub-issue completes BEFORE its parent, so only a parent
+// that is terminal-canceled (Canceled/Duplicate) makes a child ineligible.
+// Open or Done parents are fine; Rule 7 blockers are the ordering mechanism.
+const PARENT_TERMINAL_EXCLUDED_STATES = new Set(["Canceled", "Duplicate"]);
 
 function hasLabel(issue, re) {
   return Array.isArray(issue.labels) && issue.labels.some((l) => re.test(String(l)));
@@ -166,9 +170,11 @@ export function computeEligibility({ issues, openPRs = [], config = {} }) {
       exclude("linked to an open PR");
       continue;
     }
-    // Rule 6: parent not Done.
-    if (issue.parent && issue.parent.state !== "Done") {
-      exclude(`parent ${issue.parent.id ?? "?"} not Done (${stateLabel(issue.parent.state)})`);
+    // Rule 6: parent terminal-canceled → child must not run. Open or Done
+    // parents are eligible — a sub-issue completes before its parent, and
+    // excluding children of In Progress parents deadlocks every epic slice.
+    if (issue.parent && PARENT_TERMINAL_EXCLUDED_STATES.has(issue.parent.state)) {
+      exclude(`parent ${issue.parent.id ?? "?"} is ${stateLabel(issue.parent.state)} — children of a canceled parent must not run`);
       continue;
     }
     // Rule 7: any blocker not Done.

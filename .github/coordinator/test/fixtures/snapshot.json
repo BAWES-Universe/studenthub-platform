@@ -78,6 +78,30 @@
       "linkedPRs": [],
       "parent": null,
       "blockers": []
+    },
+    {
+      "id": "SHU-206",
+      "title": "Child of an open (In Progress) parent — dispatchable under Rule 6 (SHU-219)",
+      "state": "Todo",
+      "priority": "Medium",
+      "labels": [],
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": { "id": "SHU-66", "state": "In Progress" },
+      "blockers": []
+    },
+    {
+      "id": "SHU-207",
+      "title": "Child of a Canceled parent — excluded under Rule 6 (SHU-219)",
+      "state": "Todo",
+      "priority": "High",
+      "labels": [],
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": { "id": "SHU-99", "state": "Canceled" },
+      "blockers": []
     }
   ]
 }
