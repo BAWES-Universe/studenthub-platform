@@ -3,7 +3,7 @@
 **Card:** SHU-126 (parent SHU-88). Feeds SHU-95 (work contract), SHU-100 (finance contract, which consumes approved hours), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database or live-host access. No personal data.
-**Coverage:** 105 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster WK). The ledger was recounted on the SHU-88 branch at `cab8d90`: Yii's `actions()` hook is no longer counted as a feature endpoint and is reported separately, and one declaration written `public  function` is no longer missed.
+**Coverage:** 106 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster WK, regenerated at `84ab149`: comments are masked, `company/Store` assignment-request actions now belong here rather than to organizations).
 
 ## 1. What this cluster is
 
@@ -37,7 +37,7 @@ work_history  ──▶  candidate_working_hour  ──▶  working_date  ──
 (rates fixed)      (clock in/out or manual)     (totals)          (approve/reject)      (hours × rates)
 ```
 
-The rates are captured on the **assignment**, not looked up at payment time (`candidate_work_history.candidate_hourly_rate` and `.company_hourly_rate`), so a rate change does not retroactively alter past work. The finance cluster reads `hours` on `transfer_candidate` and applies the documented formula (`common/models/TransferCandidate.php:47-49`): the company pays hours × company rate plus bonus, the candidate receives hours × candidate rate plus bonus minus commission, and the difference is StudentHub's revenue.
+Rates are **copied onto the assignment** (`candidate_work_history.candidate_hourly_rate` and `.company_hourly_rate`), but — corrected after an independent audit — payment does **not** read them: `TransferCandidate::saveCandidateTransfer` selects the **contract** overlapping the transfer period (`common/models/TransferCandidate.php:1006-1029`) and multiplies by the contract's rates (`:1317-1324`), falling back to candidate/company/parent rates only when no contract matches. So the assignment-time snapshot is informational in production, and a contract change *does* alter what past work pays if the transfer is regenerated. The platform target (W1 + finance F1) is to make the effective rate explicit and recorded per payable line; this document no longer claims production already does that. The documented formula (`:47-49`): the company pays hours × company rate plus bonus, the candidate receives hours × candidate rate plus bonus minus commission, and the difference is StudentHub's revenue.
 
 ## 4. Journeys in detail
 
@@ -94,7 +94,7 @@ Two things worth carrying into the platform contract: `rating` and `is_public` m
 | `cron/gen-hit-map` | 13:30 on the 28th | `FiringHitmap::updateHitMap` per month |
 | `cron/end-of-month` | 13:30 on the 28th | `Company::requestForAttendance()` — asks companies to confirm attendance |
 
-The first two are named "fix". A repair job that recomputes day totals from sessions is not a scheduled task, it is a **missing invariant**: the roll-up should be derived, or maintained transactionally when a session changes. Neither is scheduled, so day totals are only correct after someone runs them by hand. Finding WK-F2.
+The first two are named "fix". Corrected after an independent audit: day totals are **not** maintained only by those jobs. `CandidateWorkingHour::afterSave` and `afterDelete` call `updateStats` (`common/models/CandidateWorkingHour.php:102-116`), which re-sums closed sessions for the candidate, store and date and updates the day row (`:211-234`). The repair jobs exist for drift, not as the mechanism. What remains true: the re-sum is a second statement outside any transaction, so a concurrent session write or a failed update leaves the day row stale until the next save or a manual repair, and the day row is a stored copy rather than a derived value. Finding WK-F2, downgraded from High to Medium.
 
 ## 6. Parity rows
 
@@ -142,8 +142,8 @@ The untested money- and record-determining behavior is:
 
 | ID | Finding | Evidence | Severity | Action |
 |---|---|---|---|---|
-| **WK-F1** | Clock-out overwrites the clock-in coordinates with the clock-out coordinates, destroying where the shift started | `candidate/modules/v1/controllers/AccountController.php`, `actionStopWorkingTime` | Medium (evidence loss; location is the only proof of on-site attendance) | fix by construction in W2; do not port the assignment |
-| **WK-F2** | Day totals are only correct after a manual "fix" job; neither repair job is scheduled | `cron/fix-work-logs`, `cron/fix-work-log-dates`, absent from `cron/cronlist` | High (payable totals can be wrong) | W6: derive or maintain transactionally |
+| **WK-F1** | Clock-out overwrites the clock-in coordinates with the clock-out coordinates, destroying where the shift started | `candidate/modules/v1/controllers/AccountController.php:1846-1850`, `actionStopWorkingTime` | Medium (evidence loss; location is the only proof of on-site attendance) | fix by construction in W2; do not port the assignment |
+| **WK-F2** | Day totals are a stored copy re-summed on every session save/delete outside a transaction (`CandidateWorkingHour.php:102-116`, `:211-234`); the unscheduled repair jobs exist for the drift that leaves | `cron/fix-work-logs`, `cron/fix-work-log-dates`, absent from `cron/cronlist` | Medium (a failed or concurrent update leaves a stale day row) | W6: derive, or maintain in the same transaction |
 | **WK-F3** | Session and day deletion are hard deletes with no audit trail, on records that determine payment | `staff/.../CandidateWorkingHourController.php` `DeleteDay`, `DeleteSession` | High | W6 |
 | **WK-F4** | Approval status is taken from the request body with no state-machine check, in both feedback save and appeal status update | `company/.../CandidateWorkLogFeedbackController.php` `Save`; `staff/.../CandidateWorkingHourController.php` `AppealUpdateStatus` | Medium | W4, W5 |
 | **WK-F5** | Staff-created corrected sessions are written as approved immediately, bypassing employer review | `staff/.../CandidateWorkingHourController.php` `AddHour` | Medium (legitimate as a remedy, but needs a recorded reason and an audit entry) | W5 |
