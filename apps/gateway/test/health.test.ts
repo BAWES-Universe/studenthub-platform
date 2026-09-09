@@ -39,6 +39,18 @@ async function listen(server: ReturnType<typeof createGatewayServer>): Promise<s
 }
 
 test("GET /health exposes the shared versioned contract", async (context) => {
+  // Binds the default wiring. `createGatewayServer()` takes its revision from
+  // readImageSourceRevision() — the root-owned image artifact — so a valid
+  // 40-hex runtime override must not reach the payload. Exporting one here
+  // keeps the assertion below independent of ambient environment state, and
+  // is what fails if the default parameter is ever repointed at process.env.
+  const previousRevision = process.env.SOURCE_REVISION;
+  process.env.SOURCE_REVISION = "f".repeat(40);
+  context.after(() => {
+    if (previousRevision === undefined) delete process.env.SOURCE_REVISION;
+    else process.env.SOURCE_REVISION = previousRevision;
+  });
+
   const server = createGatewayServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => server.close());
@@ -54,12 +66,10 @@ test("GET /health exposes the shared versioned contract", async (context) => {
   assert.equal(body.component, "gateway");
   assert.equal(body.contractVersion, PLATFORM_CONTRACT_VERSION);
   assert.equal(typeof body.timestamp, "string");
-  // Local development has no image artifact. Runtime environment variables
-  // are deliberately not revision authority.
+  // Local development has no image artifact, so the revision is null even
+  // though SOURCE_REVISION is set above. Runtime environment variables are
+  // deliberately not revision authority.
   assert.equal(body.revision, null);
-  if (body.revision !== null) {
-    assert.match(String(body.revision), /^[0-9a-f]{40}$/i);
-  }
 });
 
 test("GET /health reports the image artifact and ignores runtime env overrides", async (context) => {
