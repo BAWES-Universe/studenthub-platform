@@ -994,7 +994,7 @@ export async function sendLinear(query, variables, token, fetchImpl = fetch) {
 
 export const LINEAR_ISSUES_QUERY = `
   query CoordinatorIssues($team: String!) {
-    issues(team: { key: $team }, filter: { state: { type: { neq: "canceled" } } }) {
+    issues(filter: { team: { key: { eq: $team } }, state: { type: { neq: "canceled" } } }, first: 100) {
       nodes {
         id
         identifier
