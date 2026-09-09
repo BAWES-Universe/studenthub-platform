@@ -163,6 +163,40 @@ test("parity: organizations upsert, update in place, fetch and list", async () =
 // Parity: principal store
 // ---------------------------------------------------------------------------
 
+test("browser runtime reads only the session-bound stored principal through the real PostgreSQL gateway", async (context) => {
+  const { createGatewayServer } = await import("../../../apps/gateway/src/index.js");
+  const { createRuntimeLoginFromEnv } = await import("../../../apps/gateway/src/login-runtime.js");
+  const store = makeStore();
+  await store.registerPrincipal(createPrincipal({ id: "web-owner", displayName: "Stored Web Owner", email: "owner@example.invalid" }));
+  await store.registerPrincipal(createPrincipal({ id: "web-other", displayName: "Private Other Person", email: "other@example.invalid" }));
+  const session = "w".repeat(43);
+  await makeLoginStore().sessions.put({ id: session, personId: "web-owner" });
+  const runtime = createRuntimeLoginFromEnv({
+    DATABASE_URL: DB_URL,
+    OIDC_ISSUER: "https://identity.test.invalid/", OIDC_CLIENT_ID: "synthetic", OIDC_CLIENT_SECRET: "synthetic",
+    OIDC_CALLBACK_URL: "https://studenthub.test.invalid/login/callback",
+    OIDC_AUTHORIZATION_URL: "https://identity.test.invalid/authorize", OIDC_TOKEN_URL: "https://identity.test.invalid/token",
+    OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
+  })!;
+  const server = createGatewayServer(undefined, undefined, undefined, runtime.application);
+  context.after(async () => { server.closeAllConnections(); server.close(); await runtime.close(); });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}`;
+  const headers = { accept: "text/html", cookie: `__Host-studenthub_session=${session}` };
+  const own = await fetch(`${url}/profile`, { headers });
+  assert.equal(own.status, 200);
+  const html = await own.text();
+  assert.match(html, /Stored Web Owner/);
+  assert.match(html, /owner@example.invalid/);
+  assert.doesNotMatch(html, /Private Other Person|other@example.invalid/);
+  const other = await fetch(`${url}/profile?person_id=web-other`, { headers });
+  assert.equal(other.status, 404);
+  assert.doesNotMatch(await other.text(), /Private Other Person|other@example.invalid/);
+  const json = await fetch(`${url}/profile`, { headers: { cookie: headers.cookie } });
+  assert.deepEqual(await json.json(), { personId: "web-owner", role: "self" });
+});
+
 test("parity: principals register, list, and resolve by pbuuid", async () => {
   const store = makeStore();
 

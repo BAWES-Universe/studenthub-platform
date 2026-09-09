@@ -5,7 +5,6 @@ import { PostgresAuthzStore, PostgresLoginStore } from "@studenthub/db";
 import type {
   AuthorizationRequest,
   JwksResolver,
-  LoginApplication,
   OidcTransport,
   TestJsonWebKey,
   TokenRequest,
@@ -13,6 +12,7 @@ import type {
 } from "@studenthub/login-contract";
 
 import { createLoginApplication } from "./login-application.js";
+import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
   readonly keys?: readonly TestJsonWebKey[];
@@ -143,7 +143,7 @@ export class RefreshingJwksResolver implements JwksResolver {
 }
 
 export interface RuntimeLogin {
-  readonly application: LoginApplication;
+  readonly application: BrowserLoginApplication;
   close(): Promise<void>;
 }
 
@@ -212,7 +212,18 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
     subjectPolicy: (subject) => UNIVERSE_SUBJECT_POLICY.humanSubjectPattern.test(subject),
   });
   return {
-    application,
+    application: {
+      ...application,
+      web: {
+        origin: new URL(callbackUrl).origin,
+        // Keep the existing exact return allowlist. No Host-derived redirect,
+        // new IdP configuration, or implicit expansion of approved targets.
+        returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
+          ? new URL("/profile", callbackUrl).href : undefined,
+        // Called only after application.profile establishes session ownership.
+        readProfile: (personId) => authzStore.getPrincipal(personId),
+      },
+    },
     async close() {
       await Promise.all([loginStore.close(), authzStore.close()]);
     },

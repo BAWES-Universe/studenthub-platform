@@ -23,6 +23,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | Claim | Where | Status |
 | -- | -- | -- |
 | HTTP gateway | `apps/gateway` | ✅ health, MCP, and optional PostgreSQL-backed Universe login/profile/logout routes |
+| First browser surface | `apps/gateway/src/web-ui.ts` | ✅ HTML welcome page, session-bound own-profile view and browser sign-out; no client JavaScript or external assets |
 | Worker | `apps/worker` (heartbeat) | ✅ |
 | Shared contracts incl. authz | `packages/contracts` | ✅ authz store **interfaces** + `InMemoryAuthzStore` test implementation |
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
@@ -39,7 +40,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 
 | Planned | Card |
 | -- | -- |
-| Web/iframe panels | zero `.tsx` files today; platform web is unbuilt |
+| Full role-aware web/iframe workspace | First server-rendered profile exists; capability panels, context switching and iframe integration are still unbuilt |
 | 7 domain packages (`domain-*`) | none exist |
 | Remaining `packages/` capabilities | domain packages, observability, and UI are not built yet |
 
@@ -53,6 +54,40 @@ docs/       adr, contracts, parity, security, runbooks, evidence
 ```
 
 Target schema is new PostgreSQL — the donor Prisma schema is introspection reference only.
+
+## First browser experience (SHU-89)
+
+`GET /` serves the public welcome page. Its Universe link uses the exact
+same-origin `/profile` URL only when it is already present in
+`LOGIN_ALLOWED_RETURN_URLS`, deriving the origin from the validated
+`OIDC_CALLBACK_URL`, never request Host/forwarded headers. Missing configuration
+shows an unavailable message; this change does not expand the login allowlist.
+
+`GET /profile` renders HTML only when `Accept` explicitly prefers `text/html`.
+JSON, wildcard and missing Accept headers preserve the existing JSON body.
+The HTML path first calls the existing login application's session-bound profile
+authorization, then reads that exact principal's stored display name/email.
+A mismatched/missing principal fails closed. This is **not legacy-data parity**:
+applications, work history, documents and editing are not provided by this slice.
+The `self` profile access marker is not presented as a business role/grant.
+
+HTML has `no-store`, `Vary: Accept`, a restrictive CSP and no external assets.
+It is intentionally not frameable yet; approved Universe embedding is future
+scope. Browser logout is a native POST with an exact configured-origin check,
+followed by a 303 to `/`; non-browser logout retains its 204 response. Rejected
+and unavailable login/profile flows render generic retry/sign-in pages, not raw
+errors or tokens.
+
+Run `npm test` for HTTP, profile-isolation and escaping regressions. For **local
+synthetic visual QA only**, `npm run dev` builds and runs the fixture preview;
+`/__preview/profile` shows the synthetic account and `/profile` shows the
+unauthenticated state. The preview never connects to a database/real provider,
+refuses `NODE_ENV=production` and is not a deployment entrypoint. Real OIDC,
+PostgreSQL and public-URL human acceptance must be recorded separately.
+
+UI publication and independent/human browser acceptance are SHU-93, not a
+consequence of merging this code. SHU-91/92 own multi-grant navigation and the
+production-grounded profile projection; SHU-84/102 own the approved safe action.
 
 ## Keeping this honest
 
