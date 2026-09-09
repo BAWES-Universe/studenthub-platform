@@ -25,7 +25,7 @@
 // Linear API token names only — no secrets live in this repository.
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
-import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -671,6 +671,25 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         // Completed WITHOUT a validated callback is HOLD — never COMPLETED. Only
         // evidence bound to the same attempt_id + target_sha (+ current head) counts.
         if (callback && callbackEvidenceValid(receipt, callback, ctx)) {
+          const isReviewLane = roleForRequestedWorker(receipt.requested_worker) === "review";
+          // Fold-time provenance gate (SHU-73): require an adapter-observed
+          // review session and refuse a supplied lineage that cannot be read.
+          // Current one-slot independence is established structurally when the
+          // build/review lanes are routed. Cross-role actor identity is a SHU-71
+          // acceptance concern and is not claimed by this receipt-level check.
+          const provenance = isReviewLane ? reviewVerdictProvenanceValid(receipt, ctx.lineage ?? []) : { ok: true };
+          if (!provenance.ok) {
+            const next = note(`run completed but review provenance is not closable — HOLD (${provenance.reason})`);
+            next.stage = "HOLD";
+            next.adapter_status = "completed";
+            // A rejected verdict never becomes a durable routing fact. Preserve
+            // the adapter-observed identity for diagnosis.
+            if (typeof event.worker_identity === "string" && event.worker_identity.length) {
+              next.worker_identity = event.worker_identity;
+            }
+            next.timestamps.terminal = at();
+            return { receipt: next, accepted: true };
+          }
           const next = note("run completed WITH validated callback (attempt + target_sha match)");
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
@@ -739,41 +758,6 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         return { receipt: next, accepted: true, pause_adapter: quotaOrAccess };
       }
       return unchanged(`unknown run_status "${status}"`);
-    }
-    case "callback": {
-      // Direct validated-callback event (evidence arrives independently of a run
-      // poll, e.g. GitHub/Linear evidence harvested by the reconciler).
-      if (receipt.stage !== "RUNNING" && receipt.stage !== "LAUNCH_UNKNOWN") {
-        return unchanged(`callback out of order from stage ${receipt.stage}`);
-      }
-      const evidence = {
-        links: event.links ?? [],
-        attempt_id: event.attempt_id,
-        target_sha: event.target_sha,
-        stage: event.stage,
-      };
-      // COMPLETED requires an ACKNOWLEDGED run (external_run_id present). Evidence
-      // for a run whose ack was lost (LAUNCH_UNKNOWN) holds for reconciliation —
-      // never mint COMPLETED without a run identity (CodeRabbit).
-      if (receipt.external_run_id === null) {
-        const next = note("callback received but the run was never acknowledged (LAUNCH_UNKNOWN) — HOLD for reconciliation");
-        next.stage = "HOLD";
-        next.timestamps.terminal = at();
-        return { receipt: next, accepted: true };
-      }
-      if (callbackEvidenceValid(receipt, evidence, ctx)) {
-        const next = note("validated callback received (attempt + target_sha match)");
-        next.stage = "COMPLETED";
-        next.evidence_links = [...next.evidence_links, ...evidence.links];
-        next.timestamps.terminal = at();
-        return { receipt: next, accepted: true };
-      }
-      // Stale/mismatched verdicts never satisfy this receipt — the machine holds
-      // (slot retained) instead of inventing a PASS.
-      const next = note("callback REJECTED (attempt_id or target_sha mismatch / stale head) — HOLD");
-      next.stage = "HOLD";
-      next.timestamps.terminal = at();
-      return { receipt: next, accepted: true };
     }
     case "manual_claim": {
       // A conflicting manual claim (human asserts the work / disputes the run)
@@ -1638,7 +1622,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           const expectedHead = receipt.requested_worker === "codex-builder"
             ? launch.callback?.result_sha
             : receipt.target_sha;
-          recoveryCtx = { current_head: resolved.head, expected_head: expectedHead };
+          recoveryCtx = {
+            current_head: resolved.head,
+            expected_head: expectedHead,
+            // Fold-time author exclusion (SHU-73): the lineage lets the fold
+            // reject a review verdict whose observed session is a lineage author.
+            lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+          };
         }
       }
       const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
@@ -1729,7 +1719,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       } else {
         continue; // UNCHANGED (transient poll failure or missing credentials) — never touch state, never release the slot
       }
-      const transition = nextReceiptState(receipt, event);
+      const transition = nextReceiptState(receipt, event, {
+        current_head,
+        // Fold-time author exclusion (SHU-73): the lineage lets the fold reject
+        // a review verdict whose observed session is a lineage author.
+        lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+      });
       if (!transition.accepted) {
         if (io.stdout) io.stdout(`lifecycle: transition REJECTED for ${receipt.issue_id} (${transition.reason ?? "unknown"}) — slot held`);
         continue;
@@ -1937,7 +1932,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const expectedHead = receipt.requested_worker === "codex-builder"
         ? launch.callback?.result_sha
         : receipt.target_sha;
-      launchCtx = { current_head: resolved.head, expected_head: expectedHead };
+      launchCtx = {
+        current_head: resolved.head,
+        expected_head: expectedHead,
+        // Fold-time author exclusion (SHU-73): lineage receipts for this issue.
+        lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
+      };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);

@@ -392,12 +392,50 @@ export function verdictMatchesLane(requestedWorker, evidenceStage) {
   return verdict.role === "build" || verdict.role === "revise"; // writer: BUILD_READY/REVISION_READY only
 }
 
-// Compute the successor work order for an issue after ONE receipt reaches a
-// verdict-bearing terminal stage. Pure: returns the directive to post, or a
-// hold reason — never launches anything itself.
+// ---------------------------------------------------------------------------
+// Fold-time review-provenance gate (SHU-73)
+// ---------------------------------------------------------------------------
+// Routing-time eligibility picks the current, structurally separate review
+// lane when an order is minted. At verdict fold time this guard requires the
+// adapter-observed session and refuses wholly unreadable lineage instead of
+// silently treating it as an empty author set. The worker identities currently
+// contain attempt ids, so this function does not claim stable cross-role actor
+// independence; SHU-71 owns that requirement before role reversal is enabled.
 //
-//   state.issueReceipts — ALL durable receipts for the issue (every attempt),
-//     oldest first; used to rebuild the provenance lineage.
+//   receipt          — the terminal-bound receipt whose verdict is folding
+//   lineageReceipts  — ALL durable receipts for the same issue (every attempt),
+//                      oldest first; used to rebuild the author set. When the
+//                      caller has no lineage (standalone fold), author exclusion
+//                      cannot be evaluated and the gate falls back to the
+//                      session-presence requirement only — never to "independent
+//                      by default" from self-declared labels.
+export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
+  if (!receipt || typeof receipt !== "object") return { ok: false, reason: "no receipt to evaluate" };
+  // Writer (build/revise) verdicts are not independence claims — the rule only
+  // constrains REVIEW verdicts.
+  if (roleForRequestedWorker(receipt.requested_worker) !== "review") return { ok: true };
+  // An observed verifier session is REQUIRED. worker_identity is only ever set
+  // from an adapter ack/poll (never fabricated, never self-declared), so its
+  // absence means the verdict cannot be attributed to a distinct reviewer.
+  if (typeof receipt.worker_identity !== "string" || receipt.worker_identity.length === 0) {
+    return { ok: false, reason: "review verdict without an observed verifier session (worker_identity) — ambiguous provenance" };
+  }
+  const supplied = lineageReceipts ?? [];
+  const entries = supplied.map((r) => provenanceFromReceipt(r)).filter(Boolean);
+  if (supplied.length > 0 && entries.length === 0) {
+    return { ok: false, reason: "reviewed lineage carries no readable provenance — authorship ambiguous" };
+  }
+  const authors = authorSet(entries);
+  if (authors.has(receipt.worker_identity)) {
+    return { ok: false, reason: `verifier session ${receipt.worker_identity} is an author of the reviewed lineage — not independent` };
+  }
+  return { ok: true };
+}
+
+// Route ONE terminal verdict-bearing receipt to its successor work order. This
+// is the reconcile-facing bridge over nextWorkOrder(): it rebuilds the lineage
+// from durable receipts and validates the verdict against the verified head.
+//
 //   state.terminal     — the receipt that just became terminal (must carry the
 //     worker identity and the evidence attempt binding).
 //   state.evidenceStage — validated verdict stage bound to terminal.attempt_id.
