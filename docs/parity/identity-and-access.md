@@ -9,7 +9,7 @@
 
 Production has **six separate credential stores**, one per application, each with its own table, token table, password hash, reset token, and login controller. Which table a person's row is in decides which app they can use; that is the coarsest and most reliable authorization rule in the system. Inside an app, authorization is a handful of hard-coded checks. A permission model exists in the database and in the admin UI but is enforced nowhere on the server.
 
-In parallel, the candidate app dual-writes new sign-ups to Auth0, and a console job once bulk-exported candidate and staff password hashes into Auth0's import format. Universe (Authentik) is the third identity system in this story. The platform's job is to end up with one.
+In parallel, the candidate app dual-writes new sign-ups to Auth0, and a console job once bulk-exported candidate and staff password hashes into Auth0's import format. These legacy Auth0, Google, Apple, password, OTP and email-verification mechanics are migration and security evidence only, not target parity requirements. Universe through Authentik is the sole target credential and verification authority; StudentHub retains principal links, grants and product-level account state.
 
 ## 2. Data model
 
@@ -74,7 +74,7 @@ Per-principal flag `enable_two_step_auth`. When set, login issues the token with
 - `console/controllers/CentralDbController.php` bulk-inserts candidates (`actionIndex :16-45`) and staff (`actionStaff :47-75`) into a `users` table in a second database (`Yii::$app->db2`) with columns `user_id, name, nickname, email, password, email_verified, user_metadata`, the Auth0 bulk-import shape, rewriting bcrypt prefixes. `actionAgent` and `actionProvider` reference `Agent` and `Provider` models that **do not exist** in `common/models` and would fatal if run.
 - `actionIndex` embeds a hard-coded list of twelve personal email addresses as an exclusion list (`:21`). Not reproduced here.
 
-Consequence for migration: production credentials exist in two places (legacy tables and Auth0). Universe replaces both; the platform imports identities, not password hashes, and the decision on which store is authoritative for "is this email verified" belongs to SHU-130/SHU-131.
+Consequence for migration: production credentials exist in two places (legacy tables and Auth0), but Authentik replaces both as the target authority. The platform imports identity links, never password hashes. Legacy verification flags are migration evidence only; SHU-130/SHU-131 owns how a legacy principal is linked to an Authentik subject.
 
 ### 3.6 Email verification and email change
 
@@ -114,12 +114,12 @@ Hierarchy that the platform must reproduce as grants: **company → sub-companie
 | ID-01 | Candidate self sign-up | anonymous | `POST v1/auth/register` (`candidate/.../AuthController.php:actionSignup`) | row with `approved = 0`, unverified; IP throttle; verification email; Auth0 dual-write | `AuthCest::tryToRegister` asserts JSON | REPLACED by Universe sign-up + StudentHub identity link (SHU-29 done); the *approval* step survives as a grant | I5 |
 | ID-02 | Company self sign-up | anonymous | `POST v1/auth/create-account` company and manager apps (`:585-640`) | contact + `company_request` + company `STATUS_UNDER_REVIEW`, `approved_to_hire = false` | `company AuthCest::tryToSignup` | REPLACED (Universe) for identity; org onboarding stays in the organizations cluster | OR |
 | ID-03 | Password login, all six apps | any | `GET v1/auth/login` | token per device, +1 month | login tests in all six suites (candidate and company assert JSON; staff and admin assert 200) | REPLACED by Universe OIDC (done) | — |
-| ID-04 | Two-step login | any with flag | `POST login-two-step` | inactive token → active on OTP; 3 failures delete token | candidate, company, staff, admin, inspector tests | REPLACED by Universe MFA (D-ID6) | — |
-| ID-05 | Google / Apple / Auth0 login | any | `login-by-google`, `login-by-apple`, `login-auth0` | email-keyed match or candidate auto-create | none | REPLACED by Universe social connections; **the email-keying decision is SHU-130/131** | — |
-| ID-06 | Email verification and change | candidate, contact, manager | `verify-email`, `is-email-verified`, `update-email`, `resend-verification-email` | attempt limits per IP and per principal | 4 candidate, 4 company tests | Universe owns verification; StudentHub keeps `email` as a mutable attribute | — |
-| ID-07 | Password change and reset (email, SMS) | any | `change-password`, `request-reset-password`, `sms-reset-password`, `update-password` | 1 h reset token; SMS OTP | 7 password tests assert messages | REPLACED by Universe | — |
-| ID-08 | Logout / revoke sessions | any | `DELETE discard-session` | deletes all own tokens | none | REQUIRED as "sign out everywhere" on the platform session store | I2 |
-| ID-09 | Token expiry and purge | system | cron `daily` (`CronController.php:247-263`) | purge | none | REQUIRED (platform session TTL + purge) | I2 |
+| ID-04 | Two-step login | any with flag | `POST login-two-step` | inactive token → active on OTP; 3 failures delete token | candidate, company, staff, admin, inspector tests | REPLACED by Authentik MFA; no legacy OTP parity | — |
+| ID-05 | Google / Apple / Auth0 login | any | `login-by-google`, `login-by-apple`, `login-auth0` | email-keyed match or candidate auto-create | none | REPLACED by Authentik connections; legacy provider behavior creates no parity obligation. Subject linking remains SHU-130/131. | — |
+| ID-06 | Email verification and change | candidate, contact, manager | `verify-email`, `is-email-verified`, `update-email`, `resend-verification-email` | attempt limits per IP and per principal | 4 candidate, 4 company tests | Authentik owns identity verification; StudentHub keeps `email` only where the product needs it as a mutable contact attribute | — |
+| ID-07 | Password change and reset (email, SMS) | any | `change-password`, `request-reset-password`, `sms-reset-password`, `update-password` | 1 h reset token; SMS OTP | 7 password tests assert messages | REPLACED by Authentik; no password or reset-token parity | — |
+| ID-08 | Logout / revoke sessions | any | `DELETE discard-session` | deletes all own tokens | none | REPLACED by Authentik session management; StudentHub only invalidates its local OIDC session | I2 |
+| ID-09 | Token expiry and purge | system | cron `daily` (`CronController.php:247-263`) | purge | none | REPLACED by Authentik; local OIDC session TTL remains under the existing Universe login contract | I2 |
 | ID-10 | Staff account CRUD, status, recover, reset | admin | `admin/.../StaffController.php` (14) | password chosen by admin; soft delete renames email | `admin StaffCest` 9 methods | REQUIRED as grant management + invitation; no passwords | I1, I5 |
 | ID-11 | Admin account CRUD, status, limited access | admin | `AdminController.php` (8) | | `AdminCest` 9 | REQUIRED as grants | I1 |
 | ID-12 | Inspector account CRUD | admin | `InspectorController.php` (7) | | none | OPEN until the inspector product is evidenced (D-ID2) | — |
@@ -182,7 +182,7 @@ Hierarchy that the platform must reproduce as grants: **company → sub-companie
 
 ## 10. Platform mapping (input to SHU-99 and SHU-91)
 
-Universe is the only credential store. StudentHub keeps `principals` and `grants`. To reproduce production scopes the grant catalogue needs at least:
+Universe through Authentik is the only target credential and verification authority. StudentHub keeps `principals`, Authentik subject links and `grants`. To reproduce production scopes the grant catalogue needs at least:
 
 | Production scope | Platform grant | Notes |
 |---|---|---|
@@ -198,26 +198,28 @@ Bounded slices for SHU-99:
 | Slice | Scope | Points |
 |---|---|---|
 | I1 | Grant catalogue and admin UI: assign/revoke roles and capabilities per org, audit on every change (SHU-59 exists) | 5 |
-| I2 | Session management: list devices, sign out everywhere, TTL and purge | 3 |
+| I2 | OIDC session integration: local sign-out and Authentik revocation behavior; no legacy token-table parity | 3 |
 | I3 | Organization membership: invite contact, per-company access flag, sub-company inheritance | 5 |
 | I4 | Store-scoped grant for managers | 3 |
 | I5 | Account lifecycle: invitation instead of passwords, deactivate, recover, soft delete with email release rule | 3 |
-| I6 | Edge controls: IP block list, login and OTP rate limits at the gateway | 3 |
+| I6 | StudentHub edge controls: IP block list and product abuse limits; authentication and MFA throttling remain Authentik-owned | 3 |
 | I7 | Audited act-as (only if D2 keeps impersonation) | 3 |
-| I8 | Identity import: email-keyed link of legacy principals to Universe subjects, verified flags, no hashes | 5 |
+| I8 | Identity import: link legacy principals to Authentik subjects using the SHU-130/131 decision; import no passwords, hashes or legacy tokens | 5 |
 
 Cluster size after slicing: **30 points** (27 without I7), against the 8-point placeholder on the corresponding delivery card.
 
-## 11. Decisions needed from the owner
+## 11. Resolved auth boundary and remaining product decisions
 
-| ID | Decision | Default |
+The target auth architecture is already decided; legacy provider behavior is not a parity requirement.
+
+| ID | Status | Rule or decision |
 |---|---|---|
-| D-ID1 | Which store is authoritative for email-verified and for the identity link at import: legacy tables, Auth0, or Universe only | Universe only; legacy `email_verification` imported as a hint |
-| D-ID2 | Keep the inspector role | Drop until a live inspector journey is evidenced |
-| D-ID3 | Keep the wallet user identity (separate database, integration disabled) | Drop; finance cluster records the retirement |
-| D-ID4 | Staff Gmail credential feature | Drop; if mail-as-staff is needed, use delegated OAuth, never stored passwords |
-| D-ID5 | Which social providers Universe must offer at cutover | Google and Apple, matching production |
-| D-ID6 | MFA policy | Universe MFA for staff and admin; optional for candidates and employers |
+| R-ID1 | Resolved | Authentik is authoritative for credentials and verification. Legacy and Auth0 flags are migration evidence only. |
+| R-ID5 | Resolved boundary | Social providers are configured in Authentik; legacy Google/Apple behavior does not require matching providers or flows. |
+| R-ID6 | Resolved boundary | MFA policy and enforcement belong to Authentik, not StudentHub. |
+| D-ID2 | Open product decision | Keep inspector only if a live inspector journey is evidenced; otherwise drop. |
+| D-ID3 | Open product decision | Drop the separate wallet identity unless the finance inventory proves a live dependency. |
+| D-ID4 | Open product decision | Drop stored staff Gmail credentials; if mail-as-staff is needed, use delegated OAuth. |
 
 ## 12. Not established
 
