@@ -28,11 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
-# Bake the build-time revision as the container's default env so the running
-# gateway can attest its own source (exposed on /health). The build workflow
-# always passes SOURCE_REVISION=${{ github.sha }}; local builds without the
-# build-arg get an empty default, which preflight rejects for real deploys.
-ENV SOURCE_REVISION=$SOURCE_REVISION
+# Persist the build revision in the image filesystem rather than ENV. Runtime
+# environment overrides can replace ENV defaults; the node user cannot rewrite
+# this root-owned image artifact.
+RUN printf '%s\n' "$SOURCE_REVISION" > /image-source-revision \
+    && chmod 0444 /image-source-revision
 ENV NODE_ENV=production
 WORKDIR /app
 

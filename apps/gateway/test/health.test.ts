@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { PLATFORM_CONTRACT_VERSION } from "@studenthub/contracts";
 import {
@@ -7,6 +10,7 @@ import {
   gatewayListenUrl,
   parseGatewayHost,
   parseGatewayPort,
+  readImageSourceRevision,
   readRequestBody,
   type UnconfiguredMcpAdapter,
 } from "../src/index.js";
@@ -50,13 +54,35 @@ test("GET /health exposes the shared versioned contract", async (context) => {
   assert.equal(body.component, "gateway");
   assert.equal(body.contractVersion, PLATFORM_CONTRACT_VERSION);
   assert.equal(typeof body.timestamp, "string");
-  // The deployed revision must be publicly checkable: it is null only when
-  // SOURCE_REVISION is unset (local development), otherwise it is the exact
-  // 40-hex commit the image was built from.
-  assert.equal(body.revision, process.env.SOURCE_REVISION ?? null);
+  // Local development has no image artifact. Runtime environment variables
+  // are deliberately not revision authority.
+  assert.equal(body.revision, null);
   if (body.revision !== null) {
-    assert.match(String(body.revision), /^[0-9a-f]{40}$/);
+    assert.match(String(body.revision), /^[0-9a-f]{40}$/i);
   }
+});
+
+test("GET /health reports the image artifact and ignores runtime env overrides", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "studenthub-revision-"));
+  const artifact = join(root, "image-source-revision");
+  const baked = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+  writeFileSync(artifact, `${baked}\n`);
+  const previous = process.env.SOURCE_REVISION;
+  process.env.SOURCE_REVISION = "f".repeat(40);
+  context.after(() => {
+    if (previous === undefined) delete process.env.SOURCE_REVISION;
+    else process.env.SOURCE_REVISION = previous;
+  });
+
+  const revision = readImageSourceRevision(artifact);
+  const server = createGatewayServer(undefined, undefined, undefined, undefined, revision);
+  const origin = await listen(server);
+  context.after(() => server.close());
+
+  const response = await fetch(`${origin}/health`);
+  const body = (await response.json()) as Record<string, unknown>;
+  assert.equal(body.revision, baked);
+  assert.notEqual(body.revision, process.env.SOURCE_REVISION);
 });
 
 test("POST /mcp/tools/call rejects oversized bodies before dispatch", async (context) => {

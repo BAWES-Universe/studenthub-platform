@@ -4,7 +4,7 @@ import test from "node:test";
 import { createHealthResponse, PLATFORM_CONTRACT_VERSION } from "../src/index.js";
 
 test("health responses are deterministic for an injected clock", () => {
-  const response = createHealthResponse("gateway", new Date("2026-09-02T00:00:00.000Z"));
+  const response = createHealthResponse("gateway", new Date("2026-09-02T00:00:00.000Z"), null);
 
   assert.deepEqual(response, {
     status: "ok",
@@ -27,12 +27,12 @@ test("health responses echo an injected source revision verbatim", () => {
   assert.equal(response.revision, sha);
 });
 
-test("health responses fall back to SOURCE_REVISION env when revision is not injected", () => {
+test("health responses never trust a runtime SOURCE_REVISION override", () => {
   const previous = process.env.SOURCE_REVISION;
   try {
     process.env.SOURCE_REVISION = "0123456789abcdef0123456789abcdef01234567";
     const response = createHealthResponse("gateway");
-    assert.equal(response.revision, "0123456789abcdef0123456789abcdef01234567");
+    assert.equal(response.revision, null);
   } finally {
     if (previous === undefined) {
       delete process.env.SOURCE_REVISION;

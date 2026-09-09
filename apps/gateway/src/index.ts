@@ -1,5 +1,6 @@
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -25,6 +26,21 @@ export { createRuntimeLoginFromEnv } from "./login-runtime.js";
 const DEFAULT_MCP_REQUEST_LIMIT_BYTES = 1024 * 1024;
 const DEFAULT_GATEWAY_PORT = 3000;
 const DEFAULT_GATEWAY_HOST = "127.0.0.1";
+const IMAGE_SOURCE_REVISION_PATH = "/image-source-revision";
+
+export function readImageSourceRevision(path = IMAGE_SOURCE_REVISION_PATH): string | null {
+  let revision: string;
+  try {
+    revision = readFileSync(path, "utf8").trim();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (!/^[0-9a-f]{40}$/i.test(revision)) {
+    throw new Error("image source revision must be a 40-character Git commit SHA");
+  }
+  return revision;
+}
 
 type RequestBodyReadResult =
   | { readonly ok: true; readonly body: Buffer }
@@ -101,6 +117,7 @@ export function createGatewayServer(
   maxRequestBytes = DEFAULT_MCP_REQUEST_LIMIT_BYTES,
   authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
   login?: LoginApplication,
+  sourceRevision: string | null = readImageSourceRevision(),
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -109,7 +126,7 @@ export function createGatewayServer(
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(createHealthResponse("gateway")));
+      response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
       return;
     }
 

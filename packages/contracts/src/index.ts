@@ -18,9 +18,9 @@ export interface HealthResponse {
   readonly component: PlatformComponent;
   readonly contractVersion: typeof PLATFORM_CONTRACT_VERSION;
   /**
-   * Exact deployed source revision, baked at image build time via
-   * `SOURCE_REVISION` (preflight requires the 40-hex form). Null when the
-   * variable is unset (local development). Exposing it on the health payload
+   * Exact deployed source revision read from an immutable image artifact.
+   * Null in local development when no build artifact exists. Exposing it
+   * on the health payload
    * makes every deploy self-attesting: any party can confirm which commit is
    * serving without GHCR or Coolify access.
    */
@@ -45,7 +45,7 @@ export interface McpAdapter {
 export function createHealthResponse(
   component: PlatformComponent,
   now: Date = new Date(),
-  revision: string | null = process.env.SOURCE_REVISION || null,
+  revision: string | null = null,
 ): HealthResponse {
   return Object.freeze({
     status: "ok",
