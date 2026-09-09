@@ -3,7 +3,7 @@
 **Card:** SHU-124 (parent SHU-88). Feeds SHU-99 (access administration contract), SHU-130 and SHU-131 (subject keying), SHU-91 (one-app role and organization context).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`. Every `path:line` is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, provider console, or live-host access. No credentials, tokens, keys, or personal data appear here.
-**Coverage:** 139 of 1,184 production endpoints (`docs/parity/coverage.md`, cluster ID).
+**Coverage:** 125 of 1,017 functional production actions (`docs/parity/coverage.md`, cluster ID).
 
 ## 1. What this cluster is
 
