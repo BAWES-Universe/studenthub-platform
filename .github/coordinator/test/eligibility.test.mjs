@@ -77,13 +77,31 @@ test("excluded: needs:decision label", () => {
   assert.equal(excluded[0].reason, "label needs:decision");
 });
 
-test("excluded: parent not Done", () => {
+test("eligible: child of an In Progress parent with no open blockers is eligible (SHU-219)", () => {
+  const ids = eligibleIds([
+    card({ id: "SHU-22", parent: { id: "SHU-1", state: "In Progress" } }),
+  ]);
+  assert.deepEqual(ids, ["SHU-22"]);
+});
+
+test("excluded: child of a Canceled parent is excluded (SHU-219)", () => {
   const { excluded } = computeEligibility({
-    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "In Progress" } })],
+    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "Canceled" } })],
     openPRs: [],
     config: CONFIG,
   });
-  assert.match(excluded[0].reason, /parent SHU-1 not Done/);
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /children of a canceled parent/);
+});
+
+test("excluded: child of a Duplicate parent is excluded (SHU-219)", () => {
+  const { excluded } = computeEligibility({
+    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "Duplicate" } })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /children of a canceled parent/);
 });
 
 test("excluded: blocker not Done", () => {
@@ -249,21 +267,103 @@ test("requestedWorkerFor: explicit worker label wins; default codex-builder", ()
   assert.equal(requestedWorkerFor(card({ labels: ["worker:someone-else"] })), "codex-builder");
 });
 
-test("snapshot fixture: exactly one eligible card, exclusions carry reasons", () => {
+test("snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)", () => {
   const snap = JSON.parse(
     fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
   );
   const { ready, excluded } = computeEligibility({ issues: snap.issues, openPRs: snap.openPRs, config: CONFIG });
-  assert.equal(ready.length, 1);
-  assert.equal(ready[0].id, "SHU-FIXTURE-001");
-  assert.equal(ready[0].state, "Todo");
-  assert.equal(excluded.length, 5);
+  assert.equal(ready.length, 2);
+  const readyIds = ready.map((x) => x.id).sort();
+  assert.deepEqual(readyIds, ["SHU-140", "SHU-206"]);
+  assert.equal(excluded.length, 6);
   const byId = Object.fromEntries(excluded.map((x) => [x.id, x.reason]));
   assert.ok(byId["SHU-201"].includes("In Progress"));
   assert.ok(byId["SHU-202"].includes("assigned to bob"));
   assert.ok(byId["SHU-203"].includes("needs:decision"));
   assert.ok(byId["SHU-204"].includes("open PR"));
   assert.ok(byId["SHU-205"].includes("R3"));
+  // SHU-207: child of a Canceled parent — excluded by Rule 6.
+  assert.ok(byId["SHU-207"].includes("children of a canceled parent"));
   // Deterministic ordering of excluded by identifier.
-  assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205"]);
+  assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205", "SHU-207"]);
+});
+
+// The snapshot board must stay bound to the LIVE fixture lane: config.json says
+// which card is the fixture card, and the fixture card's contract ref must be the
+// SEPARATELY APPROVED constant — not whatever config.json happens to say.
+//
+// Two distinct drift failures, both real:
+//   * the lane id stops identifying the fixture card. Resolution then falls to the
+//     CANDIDATE's own id, not to the lane id: a numeric id resolves to its own
+//     ordinary Linear identifier (an unauthorized contract ref — worse than a
+//     refusal), a non-numeric one resolves to null and dispatch refuses loudly.
+//     (Sentry HIGH + CodeRabbit Major on PR #64: the lane id had moved to Linear's
+//     minted SHU-140 while the snapshot still carried the pre-mint placeholder.)
+//   * the lane's contract ref is edited to some other value. Nothing about
+//     resolution breaks — the fixture simply runs on an unauthorized contract.
+//
+// So both the identity AND the contract ref are pinned here. The ref is pinned as
+// a literal on purpose: reading it back out of the config under test is exactly
+// how a contract edit would go unnoticed (Codex, verification round 2).
+const APPROVED_FIXTURE_CONTRACT = "FIXTURE-OPUS-CONTRACT-20260905";
+const FIXTURE_MARKER_LABELS = ["fixture-safe", "coordinator:pilot"];
+
+test("fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract", () => {
+  const snapshot = JSON.parse(
+    fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
+  );
+  const realConfig = JSON.parse(
+    fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"),
+  );
+  const lane = realConfig.fixture_lane ?? {};
+
+  assert.ok(lane.id, "config.json must configure a fixture lane id");
+  assert.equal(realConfig.enable_dispatch, false, "the fixture lane is a lane, never an activation");
+  assert.match(
+    String(lane.id),
+    /^SHU-[0-9]+$/,
+    "the fixture lane id must be the Linear-minted card identifier (SHU-<n>), not a pre-mint placeholder",
+  );
+  assert.equal(
+    lane.authorization_ref,
+    APPROVED_FIXTURE_CONTRACT,
+    "the fixture lane's contract ref must be the separately approved constant, not an edited value",
+  );
+
+  // The fixture card is identified by its id AND its fixture markers. A lane id
+  // pointed at some other real card must not pass this test.
+  const configured = snapshot.issues.filter((issue) => issue.id === lane.id);
+  assert.equal(
+    configured.length,
+    1,
+    `snapshot must contain exactly one card with the configured fixture lane id "${lane.id}" `
+      + `(snapshot ids: ${snapshot.issues.map((i) => i.id).join(", ")})`,
+  );
+  const [fixtureCard] = configured;
+  const markerLabels = fixtureCard.labels ?? [];
+  assert.ok(
+    FIXTURE_MARKER_LABELS.every((label) => markerLabels.includes(label)),
+    `the card carrying the configured fixture lane id "${lane.id}" must be the fixture card `
+      + `(labels: ${markerLabels.join(", ")})`,
+  );
+
+  // Exactly ONE card in the board may be granted the approved contract — that is
+  // what stops a misconfigured lane id from handing the contract to a real card.
+  const granted = snapshot.issues
+    .filter((issue) => resolveAuthorizationRef(issue, realConfig) === APPROVED_FIXTURE_CONTRACT)
+    .map((issue) => issue.id);
+  assert.deepEqual(
+    granted,
+    [lane.id],
+    "only the fixture card may resolve to the approved fixture contract",
+  );
+
+  // The fixture card resolves to the APPROVED CONTRACT, never to its own minted
+  // Linear identifier and never to a candidate-supplied value.
+  assert.equal(resolveAuthorizationRef(fixtureCard, realConfig), APPROVED_FIXTURE_CONTRACT);
+  assert.equal(
+    resolveAuthorizationRef({ ...fixtureCard, authorization_ref: "SHU-999" }, realConfig),
+    APPROVED_FIXTURE_CONTRACT,
+    "a fixture card cannot override its configured contract ref",
+  );
 });
