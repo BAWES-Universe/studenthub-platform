@@ -536,6 +536,26 @@ try {
 } finally { h.cleanup(); }`,
     failure: /a head moved after selection is refused before reservation/,
   },
+  {
+    // M15 — a terminal attempt without a routable verdict cannot be skipped in
+    // favour of an older coherent predecessor.
+    name: "M15: verdict-less HOLD relaunches from the older BUILD_READY",
+    file: "single-run-activation.mjs",
+    from: "  if (latestTerminalReceipt?.stage === \"HOLD\" && !coherentTerminal(latestTerminalReceipt)) {",
+    to: "  if (false) { // SHU225-MUT-M15",
+    needsHarness: true,
+    assertion: `const h = createEpisodeHarness({ githubToken: "ghtok" });
+try {
+  await h.runTick(); const build = h.latestFor("codex-builder");
+  h.branchHead.value = SHA_WRITE; h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+  h.completeRun(build.external_run_id); await h.runTick(); await h.runTick();
+  const review = h.latestFor("claude-verifier"); h.completeRun(review.external_run_id); await h.runTick();
+  const stopped = await h.runTick();
+  assert.equal(h.triggers["claude-code"], 1, "a verdict-less HOLD never relaunches from its older predecessor");
+  assert.equal(stopped.code, 2, "the ambiguous HOLD spends the bounded activation");
+} finally { h.cleanup(); }`,
+    failure: /a verdict-less HOLD never relaunches from its older predecessor|the ambiguous HOLD spends the bounded activation/,
+  },
 ];
 
 const MUTATION_PRELUDE = `
@@ -567,7 +587,7 @@ const act = await import("./single-run-activation.mjs");
 const { createEpisodeHarness } = await import("./test/fixture/episode-harness.mjs");
 `;
 
-test("SHU-225 MUTATIONS: every invariant and live-head boundary has a load-bearing guard (M1..M14)", () => {
+test("SHU-225 MUTATIONS: every invariant, live-head boundary, and HOLD stop has a load-bearing guard (M1..M15)", () => {
   const root = mkdtempSync(join(tmpdir(), "shu225-mut-"));
   const results = [];
   try {
@@ -601,7 +621,7 @@ test("SHU-225 MUTATIONS: every invariant and live-head boundary has a load-beari
   }
   const survived = results.filter((r) => !r.killed);
   assert.deepEqual(survived, [], `mutations survived:\n${survived.map((r) => `  ${r.name} — ${r.why}`).join("\n")}`);
-  assert.equal(results.length, 14, "all ten spec mutations plus four live-head BLOCK mutations are exercised");
+  assert.equal(results.length, 15, "all ten spec mutations plus four live-head and one HOLD-stop mutation are exercised");
 });
 
 function h_node() {

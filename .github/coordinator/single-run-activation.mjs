@@ -55,16 +55,20 @@
 // (That mapping is `terminalVerdictCoherent` in reconcile.mjs.) An earlier revision
 // of this module spent the activation on the builder's own COMPLETED and was
 // BLOCKed in review for it: the review step could never be dispatched, and every
-// subsequent tick hard-refused. The episode's END is therefore derived from the
-// ROUTING semantics — never from a receipt stage:
+// subsequent tick hard-refused. A coherent step's END is therefore derived from
+// ROUTING semantics. The sole receipt-stage stop is an incoherent terminal HOLD:
+// it has no successor to route and already means human review is required.
 //
 //   * a routable successor (a review order after BUILD_READY/REVISION_READY, a
 //     revise order after a routable BLOCKED)      -> the episode CONTINUES
 //   * PASS                                         -> the episode ENDED
 //   * revision rounds exhausted                    -> the episode ENDED
 //   * retryable failures at `max_failed_attempts`  -> the episode ENDED
-//   * a terminal verdict the routing refuses to continue (no eligible reviewer, no
-//     active writer, lane mismatch, forged/stale head) -> the episode ENDED
+//   * a verdict-less/incoherent terminal HOLD          -> the episode ENDED
+//   * a terminal verdict carrying contradictory facts (lane mismatch,
+//     forged/stale head)                               -> the episode ENDED
+//   * no eligible reviewer / no active writer          -> the episode CONTINUES
+//                                                         until availability or expiry
 //
 // The judgement is the routing module's own: this file calls
 // `routeSuccessorFromReceipts()` and `outcomeForEvidenceStage()` directly rather
@@ -163,6 +167,24 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   const maxFailed = Number.isInteger(config?.max_failed_attempts) ? config.max_failed_attempts : DEFAULT_MAX_FAILED_ATTEMPTS;
   const failed = issueReceipts.filter((r) => r.stage === "FAILED").length;
   if (failed >= maxFailed) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` };
+
+  // HOLD is deliberately not retryable. A newer attempt that completed without
+  // a coherent, bound verdict requires human review; routing again from an older
+  // BUILD_READY would mint a new successor from the wrong predecessor forever.
+  // Valid review BLOCKED/FAILED receipts are coherent HOLDs and still route the
+  // revision below. Availability holds (no reviewer/writer) are routing results,
+  // not receipt stages, and remain armed as adjudicated on PR #68.
+  const latestTerminalReceipt = issueReceipts
+    .filter((r) => r && TERMINAL_RECEIPT_STAGES.includes(r.stage))
+    .slice()
+    .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")))
+    .pop();
+  if (latestTerminalReceipt?.stage === "HOLD" && !coherentTerminal(latestTerminalReceipt)) {
+    return {
+      ended: true,
+      reason: `attempt ${latestTerminalReceipt.attempt_id ?? "<unknown>"} ended HOLD without a coherent verdict — human review required`,
+    };
+  }
 
   const terminal = latestCoherentTerminal(issueReceipts);
   if (!terminal) return { ended: false, reason: "mid-episode: no verdict-bearing terminal yet" };

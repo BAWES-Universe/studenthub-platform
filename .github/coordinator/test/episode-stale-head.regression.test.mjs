@@ -77,6 +77,7 @@ test("R2: one armed activation cannot launch an unbounded series of runs", async
   try {
     await tick();
     const build = h.launched[0];
+    head.value = SHA_WRITE;
     h.completeRun(build.run_id);
     h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
     await tick();
@@ -164,4 +165,51 @@ test("R4: a branch move after selection is rechecked before RESERVED", async () 
   } finally {
     h.cleanup();
   }
+});
+
+// R5 — SHU-225 BLOCK regression #2 (Opus, PR #69 @ ddfab84).
+//
+// R2 no longer exercises the case it was written for: its branch head never moves,
+// so the episode is refused at the stale-head boundary and only one run is ever
+// launched. This drives the HONEST push flow — every live-head check succeeds — and
+// discards the review's verdict for a reason that has nothing to do with heads.
+//
+// I7 (SHU-225): "at most one successor per (issue_id, predecessor attempt_id)".
+async function runEpisode(discard) {
+  const h = createEpisodeHarness({ githubToken: "ghtok" });
+  await h.runTick();
+  const build = h.launched[0];
+  h.branchHead.value = SHA_WRITE;
+  h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+  h.completeRun(build.run_id);
+  await h.runTick();
+  assert.equal(h.receiptFor(build.attempt_id).stage, "COMPLETED", "precondition: the pushed build folds cleanly");
+
+  for (let round = 0; round < 8; round += 1) {
+    const before = h.launched.length;
+    await h.runTick();
+    if (h.launched.length === before) break;
+    const last = h.launched[h.launched.length - 1];
+    discard(h, last);
+    h.completeRun(last.run_id);
+    await h.runTick();
+  }
+  const ledger = h.launched.map((l) => `${l.lane}@${l.target_sha.slice(0, 8)}`).join(", ");
+  const total = h.launched.length;
+  h.cleanup();
+  return { total, ledger };
+}
+
+test("R5: a review whose verdict is discarded is not relaunched without limit (worker posted no callback)", async () => {
+  const { total, ledger } = await runEpisode(() => {});
+  assert.ok(total <= 4, `one armed activation launched ${total} runs: ${ledger}`);
+  assert.equal(total, 2, "the ambiguous review HOLD is not retried from the older build");
+});
+
+test("R5b: ... nor when the callback carries an unusable stage", async () => {
+  const { total, ledger } = await runEpisode((h, last) => {
+    h.postCallback({ attemptId: last.attempt_id, stage: "NOT_A_STAGE", targetSha: last.target_sha });
+  });
+  assert.ok(total <= 4, `one armed activation launched ${total} runs: ${ledger}`);
+  assert.equal(total, 2, "an unusable review verdict is not retried from the older build");
 });
