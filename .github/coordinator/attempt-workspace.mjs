@@ -60,8 +60,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
     throw new Error("workspace authority must be outside worker checkouts");
   }
   const cwd = path.join(root, receipt.attempt_id);
-  const recordPath = path.join(stateRoot, receipt.attempt_id + ".json");
-  const lockPath = path.join(stateRoot, receipt.attempt_id + ".lock");
+  // Namespaced even if the operator uses the same private directory for Codex
+  // session sidecars. That adapter already owns <attempt_id>.json.
+  const recordPath = path.join(stateRoot, receipt.attempt_id + ".workspace.json");
+  const lockPath = path.join(stateRoot, receipt.attempt_id + ".workspace.lock");
   const binding = Object.fromEntries(BINDINGS.map(k => [k, receipt[k]]));
   const hostEnv = brokerGitEnv(env);
   const workerEnv = brokerGitEnv({ PATH: env.PATH ?? process.env.PATH, HOME: "/nonexistent", LANG: "C.UTF-8" });

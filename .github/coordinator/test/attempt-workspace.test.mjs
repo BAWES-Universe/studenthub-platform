@@ -71,6 +71,8 @@ test("SHU-227: empty root provisions an independent exact-head reviewer checkout
     assert.ok(fs.lstatSync(path.join(cwd, ".git")).isDirectory(), "no shared linked-worktree metadata");
     assert.equal(fs.existsSync(path.join(cwd, ".git/objects/info/alternates")), false);
     assert.equal(git(cwd, "remote"), "", "worker checkout has no push remote");
+    assert.doesNotThrow(() => codex.persistDurableSession({ stateDir:f.state,attempt_id:r.attempt_id,
+      target_sha:r.target_sha,thread_id:randomUUID() }), "workspace metadata must not collide with the Codex session sidecar");
     assert.equal(f.prepare(r).cwd, cwd, "replay reuses its own checkout");
     assert.notEqual(f.prepare(f.receipt()).cwd, cwd, "another attempt gets another checkout");
     assert.equal(git(f.seed, "rev-parse", "HEAD"), f.sha, "source checkout untouched");
@@ -101,11 +103,11 @@ test("SHU-227: binding conflicts, symlink paths, missing resume and invalid sour
 test("SHU-227: interrupted preparation and concurrent ownership stay HOLD without reset", () => {
   const f = setup(); try {
     const r = f.receipt();
-    fs.writeFileSync(path.join(f.state, r.attempt_id + ".lock"), "owner", { mode: 0o600 });
+    fs.writeFileSync(path.join(f.state, r.attempt_id + ".workspace.lock"), "owner", { mode: 0o600 });
     assert.throws(() => f.prepare(r), /locked/);
     assert.equal(fs.existsSync(path.join(f.root, r.attempt_id)), false);
     const interrupted = f.receipt();
-    fs.writeFileSync(path.join(f.state, interrupted.attempt_id + ".json"), JSON.stringify({ ...interrupted, status: "preparing" }), { mode: 0o600 });
+    fs.writeFileSync(path.join(f.state, interrupted.attempt_id + ".workspace.json"), JSON.stringify({ ...interrupted, status: "preparing" }), { mode: 0o600 });
     assert.throws(() => f.prepare(interrupted), /interrupted/);
   } finally { f.cleanup(); }
 });
@@ -170,7 +172,6 @@ function installCliDoubles(f) {
     const cb={attempt_id:attempt,target_sha:target,result_sha:result,stage:round===1?'BUILD_READY':'REVISION_READY',links:['round fixture at commit '+result],summary:'fixture'};
     console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(cb)}}));
     console.log(JSON.stringify({type:'turn.completed'}));
-    setTimeout(()=>{},200); // let the host capture the real child process identity
     `;
   const reviewer = common + `
     const round=Number(fs.readFileSync('round','utf8'));console.log(JSON.stringify({type:'result',subtype:'success',session_id:attempt,structured_output:{attempt_id:attempt,target_sha:target,stage:round===1?'BLOCKED':'PASS',links:['https://example.invalid/fixture-evidence']}}));`;
@@ -277,6 +278,7 @@ test("SHU-227: host tick requires an explicit initial head and an already-enable
 
 test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards are bound", () => {
   const mutations = [
+    { file:"attempt-workspace.mjs", from:'receipt.attempt_id + ".workspace.json"', to:'receipt.attempt_id + ".json"', test:"empty root provisions an independent exact-head reviewer", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:"if (record && BINDINGS.some(k => record[k] !== binding[k]))", to:"if (false)", test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"attempt-workspace.mjs", from:'if (!s.isDirectory() || s.isSymbolicLink() || fs.realpathSync(p) !== path.resolve(p))', to:'if (!s.isDirectory() || s.isSymbolicLink())', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"attempt-workspace.mjs", from:'if (!resume || !writer) throw new Error("workspace HEAD does not match the bound commit");', to:'if (false) throw new Error("workspace HEAD does not match the bound commit");', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
