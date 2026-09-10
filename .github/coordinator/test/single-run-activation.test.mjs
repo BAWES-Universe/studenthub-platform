@@ -30,6 +30,7 @@ import {
   coherentTerminal,
   episodeVerdict,
 } from "../single-run-activation.mjs";
+import { routeSuccessorFromReceipts } from "../review-routing.mjs";
 import {
   dispatchEnabledFor,
   main,
@@ -405,6 +406,139 @@ test("SHU-63 activation: a mid-episode step with a ROUTABLE successor is never s
   assert.equal(statusWith(lineage).state, "armed");
 });
 
+test("SHU-63 activation: exhaustion is evaluated BEFORE hold, when the routing reports both", () => {
+  // `revisions_exhausted` carries BOTH `exhausted: true` AND `hold:
+  // "revisions_exhausted"`. The episode ends only because `episodeVerdict` tests
+  // `exhausted` before `hold`: if the hold branch were reached first, an exhausted
+  // loop would keep the authorization alive forever — and that is precisely the
+  // bound that makes the availability-hold asymmetry safe. Nothing pinned this
+  // ordering until now (a reorder left the whole suite green), so it is pinned here
+  // and bound by the EXHAUST-ORDER mutation.
+  const lineage = [
+    mkReceipt({ attempt_id: "e1", stage: "COMPLETED", verdict_stage: "BUILD_READY", worker_identity: "builder-1", last_activity: "2026-09-11T01:00:00.000Z" }),
+    mkReceipt({ attempt_id: "e2", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED", worker_identity: "reviewer-1", last_activity: "2026-09-11T02:00:00.000Z" }),
+    mkReceipt({ attempt_id: "e3", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED", worker_identity: "reviewer-2", last_activity: "2026-09-11T03:00:00.000Z" }),
+  ];
+  const config = { ...COMMITTED, max_revise: 1, max_failed_attempts: 3 };
+  // Both flags, straight from the production router.
+  const routed = routeSuccessorFromReceipts({
+    issueReceipts: lineage,
+    terminal: lineage[2],
+    evidenceStage: "BLOCKED",
+    evidenceResultSha: null,
+    max_revise: 1,
+    authoritativeHead: null,
+  });
+  assert.equal(routed.exhausted, true, "the router reports exhaustion");
+  assert.equal(routed.hold, "revisions_exhausted", "and reports a hold at the same time — both flags are present");
+  // With both present, exhaustion wins: the episode ENDS rather than continuing on
+  // the hold branch.
+  const verdict = episodeVerdict({ receipts: lineage, targetIssueId: TARGET, config });
+  assert.equal(verdict.ended, true, `exhaustion must win over hold: ${verdict.reason}`);
+  assert.match(verdict.reason, /exhaust/);
+  assert.equal(statusOf({}, { receipts: lineage, config }).state, "refused", "and the authorization is spent");
+});
+
+test("SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns — or expiry", () => {
+  // `no_eligible_reviewer`: a successor is DUE, the routing simply cannot name a
+  // free actor yet. That is an availability gap, not a verdict — spending the
+  // authorization here would kill an in-flight fixture and require a human to mint
+  // a fresh one mid-loop.
+  const held = [
+    mkReceipt({ attempt_id: "r1", stage: "COMPLETED", verdict_stage: "BUILD_READY", worker_identity: "builder-1", last_activity: "2026-09-11T01:00:00.000Z" }),
+  ];
+  const { dir, file } = makeFile(record());
+  try {
+    // ONE file, reused across every state below: the point is that the SAME bounded
+    // activation stays in force, not that a fresh one can be minted per step.
+    const statusOfFile = (receipts, now) => singleRunActivationStatus({
+      filePath: file,
+      config: COMMITTED,
+      receipts,
+      now: now ?? NOW,
+      gitHead: REVISION,
+    });
+    const routed = routeSuccessorFromReceipts({
+      issueReceipts: held, terminal: held[0], evidenceStage: "BUILD_READY",
+      evidenceResultSha: null, max_revise: 3, authoritativeHead: null,
+    });
+    assert.equal(routed.hold, "no_eligible_reviewer", "the router reports the availability gap");
+
+    const whileHeld = statusOfFile(held);
+    assert.equal(whileHeld.state, "armed", "an empty reviewer pool must not spend the authorization");
+    assert.match(whileHeld.episode, /hold/);
+
+    // Availability returns: a fresh reviewer session appears in the lineage.
+    const available = [
+      ...held,
+      mkReceipt({ attempt_id: "r2", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED", worker_identity: "reviewer-1", last_activity: "2026-09-11T02:00:00.000Z" }),
+    ];
+    const afterAvailability = statusOfFile(available);
+    assert.equal(afterAvailability.state, "armed", "the same activation is still the one in force");
+    assert.equal(afterAvailability.activation_id, whileHeld.activation_id, "and it is literally the same authorization");
+    const nowRoutable = routeSuccessorFromReceipts({
+      issueReceipts: available, terminal: available[1], evidenceStage: "BLOCKED",
+      evidenceResultSha: null, max_revise: 3, authoritativeHead: null,
+    });
+    assert.ok(nowRoutable.order, "and the successor is routable under it now");
+
+    // Still bounded: past its expiry the same file is refused like any other.
+    const afterExpiry = statusOfFile(available, new Date(NOW.getTime() + 2 * 60 * 60 * 1000));
+    assert.equal(afterExpiry.state, "refused", "the keep-alive is bounded by the expiry");
+    assert.match(afterExpiry.reason, /expired/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns — or expiry", () => {
+  // `no_active_writer`: the reviewer BLOCKed and a revision is DUE, but the lineage
+  // names no writer to route it back to. Same class of gap, same rule.
+  const held = [
+    mkReceipt({ attempt_id: "w1", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED", worker_identity: "reviewer-1", last_activity: "2026-09-11T02:00:00.000Z" }),
+  ];
+  const { dir, file } = makeFile(record());
+  try {
+    const statusOfFile = (receipts, now) => singleRunActivationStatus({
+      filePath: file,
+      config: COMMITTED,
+      receipts,
+      now: now ?? NOW,
+      gitHead: REVISION,
+    });
+    const routed = routeSuccessorFromReceipts({
+      issueReceipts: held, terminal: held[0], evidenceStage: "BLOCKED",
+      evidenceResultSha: null, max_revise: 3, authoritativeHead: null,
+    });
+    assert.equal(routed.hold, "no_active_writer", "the router reports the gap, not an ending");
+
+    const whileHeld = statusOfFile(held);
+    assert.equal(whileHeld.state, "armed", "a missing writer must not spend the authorization");
+
+    // Availability returns: the writer's earlier attempt is in the lineage, so a
+    // revise order can be addressed to it. Its timestamp stays BEFORE the review's,
+    // so the BLOCK remains the deciding verdict.
+    const available = [
+      mkReceipt({ attempt_id: "w0", stage: "COMPLETED", verdict_stage: "BUILD_READY", worker_identity: "builder-1", last_activity: "2026-09-11T01:00:00.000Z" }),
+      held[0],
+    ];
+    const afterAvailability = statusOfFile(available);
+    assert.equal(afterAvailability.state, "armed");
+    assert.equal(afterAvailability.activation_id, whileHeld.activation_id, "the same authorization carries it");
+    const nowRoutable = routeSuccessorFromReceipts({
+      issueReceipts: available, terminal: available[1], evidenceStage: "BLOCKED",
+      evidenceResultSha: null, max_revise: 3, authoritativeHead: null,
+    });
+    assert.equal(nowRoutable.order?.role, "revise", "the revision is now routable back to the writer");
+
+    const afterExpiry = statusOfFile(available, new Date(NOW.getTime() + 2 * 60 * 60 * 1000));
+    assert.equal(afterExpiry.state, "refused", "and the keep-alive is still bounded by the expiry");
+    assert.match(afterExpiry.reason, /expired/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("SHU-63 activation: the duplicated coherence predicate agrees with reconcile's", () => {
   // coherentTerminal deliberately duplicates terminalVerdictCoherent to avoid an
   // import cycle. Bind them together across the whole matrix so they cannot drift.
@@ -648,6 +782,12 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     const out = [];
     const code = await main(["--activation", file], env, {
       configPath,
+      // The activation's expiry is evaluated against this clock. Without it the
+      // episode test reads the LIVE wall clock, and since the fixture record expires
+      // an hour after NOW, the test was a time bomb that went red at 13:00Z on the
+      // day it was written — while the guard it exercises was behaving correctly.
+      // Every other test in this file already freezes the clock; this one must too.
+      now: () => NOW,
       skipActivationPreflight: true,
       stdout: (s) => out.push(s),
       fetchDurable: true,
@@ -857,6 +997,20 @@ test("SHU-63 activation MUTATIONS: every binding, permission, expiry and gate gu
       assertion: `assert.equal(status({ expires_at: new Date(NOW.getTime() + 30 * 24 * 3600 * 1000).toISOString() }).state, "refused",
         "an unbounded expiry window is refused");`,
       failure: /an unbounded expiry window is refused/,
+    },
+    {
+      name: "EXHAUST-ORDER: exhaustion checked after hold (both flags present)",
+      file: "single-run-activation.mjs",
+      from: "  if (routed.exhausted === true) return { ended: true, reason: \"revision attempts exhausted — the episode is over\" };",
+      to: "  if (false) return { ended: true, reason: \"revision attempts exhausted — the episode is over\" }; // SHU63-MUTATION-EXHAUST-ORDER",
+      assertion: `const exh = [{ issue_id: TARGET, attempt_id: "00000000-0000-4000-8000-0000000000f1", stage: "COMPLETED", verdict_stage: "BUILD_READY",
+          requested_worker: "codex-builder", worker_identity: "builder", target_sha: REV, last_activity: "2026-09-11T01:00:00.000Z" }]
+        .concat([1, 2, 3, 4].map((n) => ({ issue_id: TARGET, attempt_id: "00000000-0000-4000-8000-0000000000f" + (n + 1), stage: "HOLD",
+          verdict_stage: "BLOCKED", requested_worker: "claude-verifier", worker_identity: "reviewer-" + n, target_sha: REV,
+          last_activity: "2026-09-11T0" + (n + 1) + ":00:00.000Z" })));
+        assert.equal(statusWith(exh).state, "refused",
+          "exhaustion must end the episode even though the routing reports a hold at the same time");`,
+      failure: /exhaustion must end the episode even though the routing reports a hold at the same time/,
     },
     {
       name: "PREMATURE SPENDING: a routable successor is spent anyway",
