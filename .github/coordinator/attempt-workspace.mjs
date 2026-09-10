@@ -4,7 +4,6 @@
 // worker receives a local object copy, no remote or coordinator credentials.
 import fs from "node:fs";
 import path from "node:path";
-import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, validateRepoUrl } from "./push-broker.mjs";
 
@@ -56,7 +55,7 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
   if ((stateStat.mode & 0o077) !== 0 || stateStat.uid !== process.getuid()) {
     throw new Error("workspace state must be coordinator-owned and private (0700)");
   }
-  if (stateRoot === root || stateRoot.startsWith(root + path.sep)) {
+  if (stateRoot === root || stateRoot.startsWith(root + path.sep) || root.startsWith(stateRoot + path.sep)) {
     throw new Error("workspace authority must be outside worker checkouts");
   }
   const cwd = path.join(root, receipt.attempt_id);
@@ -102,7 +101,9 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
         throw new Error("workspace source is not the approved repository URL");
       }
       fs.writeFileSync(recordPath, JSON.stringify({ ...binding, status: "preparing" }), { flag: "wx", mode: 0o600 });
-      source = fs.mkdtempSync(path.join(tmpdir(), "shu-attempt-source-"));
+      // Linux host contract: /tmp is shared/traversable by both identities.
+      // The coordinator's TMPDIR may instead be private (0700).
+      source = fs.mkdtempSync("/tmp/shu-attempt-source-");
       git(["init", "--bare", "--template=", source], source);
       git(["fetch", "--no-tags", "--no-recurse-submodules", env.SHU_PUSH_REMOTE_URL, receipt.target_sha], source);
       const fetched = git(["rev-parse", "FETCH_HEAD^{commit}"], source);

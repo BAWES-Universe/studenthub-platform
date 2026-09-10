@@ -93,6 +93,8 @@ test("SHU-227: binding conflicts, symlink paths, missing resume and invalid sour
     assert.throws(() => f.prepare(symlink), /path already exists/);
     const alias = path.join(f.dir, "alias"); fs.symlinkSync(f.dir, alias);
     assert.throws(() => f.prepare(f.receipt(), { env: { ...f.env, SHU_WORKTREE_ROOT: path.join(alias,"workspaces") } }), /symlink/);
+    const nested=path.join(f.state,"nested");fs.mkdirSync(nested);
+    assert.throws(() => f.prepare(f.receipt(), { env: { ...f.env, SHU_WORKTREE_ROOT:nested } }), /authority must be outside/);
     assert.equal(fs.readFileSync(path.join(cwd, "uncommitted"), "utf8"), "preserve me");
     git(cwd, "add", "."); git(cwd, "commit", "-m", "changed reviewer tree");
     assert.throws(() => f.prepare(r), /HEAD does not match/);
@@ -201,7 +203,7 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
         return result;
       },
     };
-    const env = { ...f.env, GITHUB_TOKEN: "fake-read-token", LINEAR_API_TOKEN: "fake-linear-token", DISPATCH_TARGET_SHA: f.sha };
+    const env = { ...f.env, GITHUB_TOKEN: "fake-read-token", LINEAR_API_TOKEN: "fake-linear-token", CLAUDE_CODE_OAUTH_TOKEN:"fake-subscription-token", DISPATCH_TARGET_SHA: f.sha };
     for (let i=0; i<4; i++) {
       const tick = await h.runTick({ env, io });
       assert.equal(tick.code, i===1 ? 2 : 0, tick.text + JSON.stringify({receipts:h.receipts(),adapterResults}));
@@ -258,6 +260,7 @@ test("SHU-227: activation expiring during preparation never reaches an adapter",
 
 test("SHU-227: generated schema is worker-readable while session authority remains private", async () => {
   const f = setup(); let schemaPath; const observed=[];
+  const previousTmp=process.env.TMPDIR;process.env.TMPDIR=f.state;
   try {
     const r = f.receipt({ requested_worker: "codex-builder" });
     const execFileImpl = (file, args, options, cb) => {
@@ -270,9 +273,10 @@ test("SHU-227: generated schema is worker-readable while session authority remai
     };
     await codex.launchBuilder({ ...r, cwd: f.seed, env: f.env, execFileImpl, io: { codexStateDir:f.state, pushBrokerEnabled:false } });
     assert.ok(schemaPath, "real checkout check reached schema/CLI boundary");
+    assert.equal(path.dirname(path.dirname(schemaPath)),"/tmp","schema must not inherit a private TMPDIR");
     assert.deepEqual(observed,[0o755,0o644,0o700,codex.CALLBACK_SCHEMA],"schema is readable by worker; session state is private");
     assert.equal(fs.existsSync(schemaPath), false, "public schema cleaned after invocation");
-  } finally { f.cleanup(); }
+  } finally { if(previousTmp===undefined)delete process.env.TMPDIR;else process.env.TMPDIR=previousTmp;f.cleanup(); }
 });
 
 test("SHU-227: host tick requires an explicit initial head and an already-enabled gate", () => {
@@ -292,6 +296,8 @@ test("SHU-227: host tick requires an explicit initial head and an already-enable
 
 test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards are bound", () => {
   const mutations = [
+    { file:"attempt-workspace.mjs", from:' || root.startsWith(stateRoot + path.sep)', to:'', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
+    { file:"adapters/codex-cli.mjs", from:'fs.mkdtempSync("/tmp/shu-codex-schema-")', to:'fs.mkdtempSync(path.join(tmpdir(), "shu-codex-schema-"))', test:"generated schema is worker-readable", reason:/AssertionError/ },
     { file:"reconcile.mjs", from:'if (launch.stage === "HOLD" && launch.pause_adapter === true)', to:'if (false)', test:"broker refusal cannot promote", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:'receipt.attempt_id + ".workspace.json"', to:'receipt.attempt_id + ".json"', test:"empty root provisions an independent exact-head reviewer", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:"if (record && BINDINGS.some(k => record[k] !== binding[k]))", to:"if (false)", test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },

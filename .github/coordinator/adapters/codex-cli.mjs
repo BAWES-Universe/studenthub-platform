@@ -675,7 +675,9 @@ export async function launchBuilder({
       // worker uid cannot traverse the private 0700 durable-state directory.
       // Keep that directory private; expose only this schema in a coordinator-
       // owned, worker-readable temporary directory, removed after the CLI exits.
-      schemaDir = fs.mkdtempSync(path.join(tmpdir(), "shu-codex-schema-"));
+      // Do not inherit a coordinator-private TMPDIR: chmod on the child cannot
+      // make a 0700 ancestor traversable by the distinct worker identity.
+      schemaDir = fs.mkdtempSync("/tmp/shu-codex-schema-");
       fs.chmodSync(schemaDir, 0o755);
       schemaPath = path.join(schemaDir, "callback.json");
     }
