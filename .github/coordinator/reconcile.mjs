@@ -51,7 +51,7 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 // Linear states a card may be picked up from. Anything else (including an unknown
 // or inaccessible state) is ineligible — the resolver NEVER invents backlog.
-export const PICKABLE_STATES = Object.freeze(["Backlog", "Todo"]);
+export const PICKABLE_STATES = Object.freeze(["Todo"]);
 
 export function authorizationRefValid(ref) {
   return typeof ref === "string" && AUTHORIZATION_REF_RE.test(ref);
@@ -102,17 +102,75 @@ function priorityRank(p) {
   return PRIORITY_RANK[p] ?? 5; // unknown priorities sort last, deterministically
 }
 
-// R3 cards require a NAMED verifier (repo convention: "Independent verifier approved
-// R2/R3 work" — see .github/pull_request_template.md). R3-ness is carried as the
-// priority value or an r3 label; a verifier is a label of the form verifier:<name>.
-const R3_RE = /^r3$/i;
-const R3_PRIORITY_RE = /^r3$/i;
-const VERIFIER_LABEL_RE = /^verifier:/i;
+// Repository policy requires independent verification for both R2 and R3 work
+// (`.github/pull_request_template.md`). Linear carries that contract in labels
+// such as `risk:R3`; older snapshots used the priority string directly.
+const REVIEW_RISK_RE = /^risk:(R[23])$/i;
+const LEGACY_REVIEW_PRIORITY_RE = /^R[23]$/i;
+const VERIFIER_LABEL_RE = /^verifier:([^:\s]+)$/i;
 const NEEDS_DECISION_RE = /^needs:decision$/i;
 const WORKER_LABEL_RE = /^worker:(codex-builder|claude-verifier|hermes-box)$/;
 
+export const DEFAULT_REPO_LABEL_MAP = Object.freeze({
+  "repo:platform": "BAWES-Universe/studenthub-platform",
+  "repo:legacy": "BAWES-Universe/studenthub",
+  "repo:infrastructure": "BAWES-Universe/studenthub-infrastructure",
+});
+
 function hasLabel(issue, re) {
   return Array.isArray(issue.labels) && issue.labels.some((l) => re.test(String(l)));
+}
+
+function matchingLabels(issue, re) {
+  return Array.isArray(issue.labels) ? issue.labels.filter((label) => re.test(String(label))) : [];
+}
+
+export function resolveRepositoryOwnership(labels, repoLabelMap = DEFAULT_REPO_LABEL_MAP) {
+  const normalizedMap = Object.fromEntries(
+    Object.entries({ ...DEFAULT_REPO_LABEL_MAP, ...(repoLabelMap ?? {}) })
+      .map(([label, repo]) => [String(label).toLowerCase(), repo]),
+  );
+  const repoLabels = [...new Set((labels ?? [])
+    .map((label) => String(label))
+    .filter((label) => /^repo:/i.test(label)))];
+  if (repoLabels.length === 0) {
+    return { repo: null, error: "missing repo:<name> ownership label" };
+  }
+  if (repoLabels.length > 1) {
+    return { repo: null, error: `multiple repository ownership labels: ${repoLabels.join(", ")}` };
+  }
+  const label = repoLabels[0];
+  const repo = normalizedMap[label.toLowerCase()];
+  if (typeof repo !== "string" || repo.length === 0) {
+    return { repo: null, error: `unknown repository ownership label: ${label}` };
+  }
+  return { repo, error: null };
+}
+
+function requiredReviewRisk(issue) {
+  const risks = matchingLabels(issue, REVIEW_RISK_RE)
+    .map((label) => REVIEW_RISK_RE.exec(String(label))?.[1]?.toUpperCase())
+    .filter(Boolean);
+  if (risks.includes("R3")) return "R3";
+  if (risks.includes("R2")) return "R2";
+  const priority = String(issue.priority ?? "").toUpperCase();
+  return LEGACY_REVIEW_PRIORITY_RE.test(priority) ? priority : null;
+}
+
+function namedVerifier(issue) {
+  for (const label of issue.labels ?? []) {
+    const match = VERIFIER_LABEL_RE.exec(String(label));
+    if (match) return match[1].toLowerCase();
+  }
+  return null;
+}
+
+function verifierConflictsWithImplementationWorker(issue, verifier) {
+  if (!verifier || !hasLabel(issue, /^type:implementation$/i)) return false;
+  const worker = requestedWorkerFor(issue);
+  if (worker === "codex-builder") return ["codex", "gpt", "gpt-6"].includes(verifier);
+  if (worker === "hermes-box") return verifier === "hermes";
+  return false;
 }
 
 function stateLabel(state) {
@@ -182,17 +240,35 @@ export function computeEligibility({ issues, openPRs = [], config = {} }) {
       exclude("label needs:decision");
       continue;
     }
-    // Rule 9: R3 card without a NAMED verifier label.
-    const isR3 = R3_RE.test(String(issue.priority ?? "")) || hasLabel(issue, R3_PRIORITY_RE);
-    if (isR3 && !hasLabel(issue, VERIFIER_LABEL_RE)) {
-      exclude("R3 card without a named verifier label (verifier:<name>)");
+    // Rule 9: repository policy requires a NAMED independent verifier for R2/R3.
+    const reviewRisk = requiredReviewRisk(issue);
+    const verifier = namedVerifier(issue);
+    if (reviewRisk && !verifier) {
+      exclude(`${reviewRisk} card without a named verifier label (verifier:<name>)`);
       continue;
     }
-    // Rule 10: sanity guard — a card must claim to belong to the pilot repo family.
-    // (Snapshot issues carry repo optionally; live Linear issues are scoped by the
-    // team query, so this only rejects cards that explicitly name another repo.)
-    if (issue.repo && issue.repo !== pilotRepo) {
+    if (reviewRisk && verifierConflictsWithImplementationWorker(issue, verifier)) {
+      exclude(`${reviewRisk} implementation would be authored by its named verifier (${verifier})`);
+      continue;
+    }
+    // Rule 10: repository ownership comes from the card's repo:<name> label,
+    // never from whichever repository happened to be queried for open PRs.
+    if (issue.repoResolutionError) {
+      exclude(`repository ownership HOLD — ${issue.repoResolutionError}`);
+      continue;
+    }
+    if (!issue.repo) {
+      exclude("repository ownership HOLD — no authoritative repository was resolved");
+      continue;
+    }
+    if (issue.repo !== pilotRepo) {
       exclude(`repo ${issue.repo} outside pilot repo ${pilotRepo}`);
+      continue;
+    }
+    // An unavailable authoritative PR/claim lookup is evidence missing, not
+    // evidence that no claim exists.
+    if (issue.claimEvidenceError) {
+      exclude(`claim evidence HOLD — ${issue.claimEvidenceError}`);
       continue;
     }
 
@@ -202,6 +278,9 @@ export function computeEligibility({ issues, openPRs = [], config = {} }) {
       title: issue.title ?? "",
       state: issue.state,
       priority: issue.priority ?? "No priority",
+      labels: [...(issue.labels ?? [])],
+      repo: issue.repo,
+      verifier,
       requested_worker: requestedWorkerFor(issue),
     });
   }
@@ -1040,29 +1119,33 @@ export const LINEAR_ISSUE_COMMENTS_QUERY = `
 // resolver never invents backlog for a state it cannot see.
 // NOTE (GPT review #4): children are NOT Linear's blocking relation. Blocking is
 // read from `relations` of type "blockedBy"; delegation from the `delegate` field.
-export function normalizeLinearIssue(node, repo) {
+export function normalizeLinearIssue(node, _queriedRepo, repoLabelMap = DEFAULT_REPO_LABEL_MAP) {
+  const labels = (node.labels?.nodes ?? []).map((l) => l.name);
+  const ownership = resolveRepositoryOwnership(labels, repoLabelMap);
   const blockers = (node.relations?.nodes ?? [])
     .filter((r) => r?.type === "blockedBy")
-    .map((r) => r.relatedIssue)
-    .filter((i) => i?.identifier && i?.state?.name && i.state.name !== "Done" && i.state.name !== "Canceled")
-    .map((i) => ({ id: i.identifier, state: i.state.name }));
+    .map((r) => ({
+      id: r?.relatedIssue?.identifier ?? null,
+      state: r?.relatedIssue?.state?.name ?? null,
+    }));
   return {
     id: node.identifier,
     linearId: node.id ?? null, // Linear API calls need the UUID, not the identifier
     title: node.title ?? "",
     state: node.state?.name ?? null,
     priority: node.priorityLabel ?? "No priority",
-    labels: (node.labels?.nodes ?? []).map((l) => l.name),
+    labels,
     assignee: node.assignee?.displayName ? { name: node.assignee.displayName } : null,
     delegate: node.delegate?.displayName ? { name: node.delegate.displayName } : null,
     linkedPRs: [],
     parent: node.parent ? { id: node.parent.identifier, state: node.parent.state?.name ?? null } : null,
     blockers,
-    repo,
+    repo: ownership.repo,
+    repoResolutionError: ownership.error,
   };
 }
 
-export async function fetchLinearIssues({ token, repo, team = "SHU", fetchImpl = fetch }) {
+export async function fetchLinearIssues({ token, repo, team = "SHU", repoLabelMap = DEFAULT_REPO_LABEL_MAP, fetchImpl = fetch }) {
   const nodes = [];
   let after = null;
   const seenCursors = new Set();
@@ -1081,7 +1164,7 @@ export async function fetchLinearIssues({ token, repo, team = "SHU", fetchImpl =
     seenCursors.add(cursor);
     after = cursor;
   }
-  return nodes.map((n) => normalizeLinearIssue(n, repo));
+  return nodes.map((n) => normalizeLinearIssue(n, repo, repoLabelMap));
 }
 
 // fetchIssueComments — read an issue's comment thread (durable receipts + pause
@@ -1410,27 +1493,63 @@ export function reconcileOnce({ issues, openPRs, config, receipts = [], event = 
   return { eligibility, selection };
 }
 
-async function liveIssues({ config, linearToken, githubToken, fetchImpl = fetch }) {
-  // Best-effort live pull: Linear issues scoped to the team + open PRs from the
-  // pilot repo (links matched by issue id mentioned in PR title/body/head).
-  const issues = await fetchLinearIssues({ token: linearToken, repo: config.pilot_repo, team: config.team ?? "SHU", fetchImpl });
+function issueReferencePattern(issueId) {
+  return new RegExp(`\\b${String(issueId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+}
+
+export function pullRequestClaimsIssue(pr, issueId) {
+  const idPattern = issueReferencePattern(issueId);
+  if (idPattern.test(String(pr?.head?.ref ?? ""))) return true;
+  if (idPattern.test(String(pr?.title ?? ""))) return true;
+  const escapedId = String(issueId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const closingReference = new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s*:?[ \\t]*(?:[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+)?#?${escapedId}\\b`, "im");
+  return closingReference.test(String(pr?.body ?? ""));
+}
+
+export function bindClaimingPullRequests(issues, openPRs) {
+  for (const issue of issues ?? []) {
+    const claims = (openPRs ?? [])
+      .filter((pr) => pullRequestClaimsIssue(pr, issue.id))
+      .map((pr) => ({ number: pr.number ?? null, state: "OPEN" }));
+    if (claims.length) issue.linkedPRs = [...(issue.linkedPRs ?? []), ...claims];
+  }
+  return issues;
+}
+
+async function liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl = fetch }) {
+  // Linear supplies work state and repo:<name> ownership. GitHub supplies active
+  // PR claims. The query repository must never overwrite the card's ownership.
+  const issues = await fetchLinearIssues({
+    token: linearToken,
+    repo: config.pilot_repo,
+    team: config.team ?? "SHU",
+    repoLabelMap: config.repo_label_map,
+    fetchImpl,
+  });
   let openPRs = [];
-  if (githubToken) {
+  let claimEvidenceError = null;
+  if (Array.isArray(openPRsOverride)) {
+    openPRs = openPRsOverride;
+  } else if (!githubToken) {
+    claimEvidenceError = "GITHUB_TOKEN is unavailable; open PR claims cannot be checked";
+  } else {
     const res = await fetchImpl(`https://api.github.com/repos/${config.pilot_repo}/pulls?state=open&per_page=100`, {
       headers: { Authorization: `Bearer ${githubToken}`, Accept: "application/vnd.github+json", "User-Agent": "coordinator-dry-run" },
     });
-    if (res.ok) openPRs = await res.json();
-  }
-  // Heuristic link: open PRs whose head ref or body names an issue id.
-  const idsInFlight = new Set();
-  for (const pr of openPRs) {
-    const blob = `${pr.title ?? ""} ${pr.body ?? ""} ${pr.head?.ref ?? ""}`;
-    for (const issue of issues) {
-      if (new RegExp(`\\b${issue.id}\\b`).test(blob)) idsInFlight.add(issue.id);
+    if (res.ok) {
+      openPRs = await res.json();
+      if (!Array.isArray(openPRs)) {
+        claimEvidenceError = "GitHub open PR response was not an array";
+        openPRs = [];
+      }
+    } else {
+      claimEvidenceError = `GitHub open PR lookup failed with HTTP ${res.status}`;
     }
   }
-  for (const issue of issues) {
-    if (idsInFlight.has(issue.id)) issue.linkedPRs = [{ number: null, state: "OPEN" }];
+  if (claimEvidenceError) {
+    for (const issue of issues) issue.claimEvidenceError = claimEvidenceError;
+  } else {
+    bindClaimingPullRequests(issues, openPRs);
   }
   return { issues, openPRs };
 }
@@ -1442,6 +1561,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const linearToken = env.LINEAR_API_TOKEN ?? "";
   const githubToken = env.GITHUB_TOKEN ?? "";
   const fetchImpl = io.fetchImpl ?? fetch;
+  // Offline coordinator tests already opt out of the live activation contract;
+  // let those tests inject a known-empty PR set without weakening live runs.
+  const openPRsOverride = io.openPRsOverride ?? (io.skipActivationPreflight === true ? [] : undefined);
 
   // Wake-hint filter: an issue_comment from a non-allowlisted actor is not a
   // wake hint (GPT review #5 — explicit allowlist, not just 'not a bot').
@@ -1459,7 +1581,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   let openPRs = [];
   let source;
   if (linearToken) {
-    ({ issues, openPRs } = await liveIssues({ config, linearToken, githubToken, fetchImpl }));
+    ({ issues, openPRs } = await liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl }));
     source = "live Linear";
   } else {
     const snap = loadSnapshot(io.snapshotPath);
@@ -1825,10 +1947,50 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     stdout: io.stdout,
   });
   if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
-  const { candidate, skipped } = selection;
+  let { candidate } = selection;
+  const { skipped } = selection;
   if (!candidate) {
     if (io.stdout) io.stdout(`dispatch: no reservation — ${skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}`);
     return 0;
+  }
+
+  // The initial read can become stale while lifecycle/backfill work runs. Re-read
+  // Linear claims, repository labels, blockers, verifier assignment and GitHub
+  // PR claims immediately before the reservation comment becomes the claim.
+  // Any lookup failure or eligibility change aborts with zero reservation write.
+  if (linearToken) {
+    let refreshed;
+    try {
+      refreshed = await liveIssues({ config, linearToken, githubToken, openPRsOverride, fetchImpl });
+    } catch (error) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — authoritative eligibility recheck failed: ${error.message}`);
+      return 2;
+    }
+    const refreshedIssue = refreshed.issues.find((issue) => issue.id === candidate.id);
+    if (!refreshedIssue) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${candidate.id} disappeared from the authoritative Linear result`);
+      return 2;
+    }
+    const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config });
+    if (refreshedEligibility.ready.length !== 1) {
+      const reason = refreshedEligibility.excluded[0]?.reason ?? "candidate is no longer eligible";
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${candidate.id}: ${reason}`);
+      return 2;
+    }
+    candidate = refreshedEligibility.ready[0];
+    let refreshedComments;
+    try {
+      refreshedComments = await fetchIssueComments({ issueId: candidate.linearId ?? candidate.id, token: linearToken, fetchImpl });
+    } catch (error) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — active receipt lookup failed for ${candidate.id}: ${error.message}`);
+      return 2;
+    }
+    const activeClaim = parseReceiptsFromComments(refreshedComments)
+      .find((receipt) => receipt.issue_id === candidate.id && !TERMINAL_STAGES.includes(receipt.stage));
+    if (activeClaim) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${candidate.id} already has active receipt ${activeClaim.attempt_id} (${activeClaim.stage})`);
+      return 2;
+    }
   }
   const authorization_ref = resolveAuthorizationRef(candidate, config);
   if (!authorization_ref) {
