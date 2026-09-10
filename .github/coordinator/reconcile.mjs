@@ -109,7 +109,11 @@ const REVIEW_RISK_RE = /^risk:(R[23])$/i;
 const LEGACY_REVIEW_PRIORITY_RE = /^R[23]$/i;
 const VERIFIER_LABEL_RE = /^verifier:([^:\s]+)$/i;
 const NEEDS_DECISION_RE = /^needs:decision$/i;
-const WORKER_LABEL_RE = /^worker:(codex-builder|claude-verifier|hermes-box)$/;
+// Worker families the coordinator recognizes. SAME_FAMILY_VERIFIERS must cover
+// every one of them — a coordinator test enforces that, so a new worker family
+// cannot be added without an explicit verifier-independence decision.
+export const WORKER_FAMILIES = Object.freeze(["codex-builder", "claude-verifier", "hermes-box"]);
+const WORKER_LABEL_RE = new RegExp(`^worker:(${WORKER_FAMILIES.join("|")})$`);
 // Rule 6 (SHU-219): a sub-issue completes BEFORE its parent, so only a parent
 // that is terminal-canceled (Canceled/Duplicate) makes a child ineligible.
 // Open or Done parents are fine; Rule 7 blockers are the ordering mechanism.
@@ -169,12 +173,24 @@ function namedVerifier(issue) {
   return null;
 }
 
+// SHU-223 — same-family review is self-verification, not independent review, so a
+// type:implementation card may not name a verifier drawn from its own worker's
+// family. This map is the single source of truth and must cover every entry in
+// WORKER_FAMILIES: previously claude-verifier fell through to "no conflict", so a
+// Claude-family worker could name verifier:claude or verifier:opus even though
+// ELIGIBILITY.md said an implementation worker cannot be its own verifier.
+export const SAME_FAMILY_VERIFIERS = Object.freeze({
+  "codex-builder": Object.freeze(["codex", "gpt", "gpt-6"]),
+  "claude-verifier": Object.freeze(["claude", "opus", "sonnet", "haiku", "fable"]),
+  "hermes-box": Object.freeze(["hermes"]),
+});
+
 function verifierConflictsWithImplementationWorker(issue, verifier) {
   if (!verifier || !hasLabel(issue, /^type:implementation$/i)) return false;
-  const worker = requestedWorkerFor(issue);
-  if (worker === "codex-builder") return ["codex", "gpt", "gpt-6"].includes(verifier);
-  if (worker === "hermes-box") return verifier === "hermes";
-  return false;
+  // Array.isArray also keeps an inherited key (e.g. "constructor") from ever
+  // resolving to something truthy here.
+  const sameFamily = SAME_FAMILY_VERIFIERS[requestedWorkerFor(issue)];
+  return Array.isArray(sameFamily) && sameFamily.includes(verifier);
 }
 
 function stateLabel(state) {
