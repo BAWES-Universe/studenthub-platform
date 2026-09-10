@@ -26,7 +26,7 @@
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine } from "./single-run-activation.mjs";
+import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -1074,8 +1074,18 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
 // selectNextReservation — deterministic slot allocation over the ready list.
 // Honors max_dispatch (number of concurrently ACTIVE — non-terminal — receipts)
 // and adapter_pause_map: a paused adapter is skipped so the next slot does not
-// auto-launch a doomed attempt. Returns { candidate, adapter, skipped:[{id,reason}] }.
-export function selectNextReservation({ ready = [], config = {}, receipts = [] }) {
+// auto-launch a doomed attempt. Returns { candidate, adapter, skipped, successor? }.
+//
+// SHU-225: `episodeContinuations` maps issue_id -> { successor } for the ONE issue
+// of an ARMED single-run episode whose routed successor is due. A terminal receipt
+// normally parks an issue permanently; inside an authorized episode the successor
+// is what re-admits that same issue for its NEXT step. It is an INPUT to this
+// function, never a bypass around it: the continuation still has to clear scope,
+// capacity, the retry cap, the adapter pause map and the pre-claim recheck in the
+// caller, exactly like a first dispatch, and the launch still writes RESERVED
+// before anything reaches an adapter. With no armed activation the map is empty
+// and parking behaviour is byte-for-byte unchanged.
+export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map() }) {
   const scope = resolveDispatchScope(config);
   if (!scope.valid) {
     return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `invalid dispatch_scope — ${scope.reason}; no fallback` }] };
@@ -1111,7 +1121,7 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
       skipped.push({ id: issue.id, reason: "already has an active receipt" });
       continue;
     }
-    if (parkedIssueIds.has(issue.id)) {
+    if (parkedIssueIds.has(issue.id) && !episodeContinuations.has(issue.id)) {
       skipped.push({ id: issue.id, reason: "issue has a terminal COMPLETED/HOLD receipt — parked for human/next-step, not auto-redispatched" });
       continue;
     }
@@ -1124,12 +1134,18 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
       skipped.push({ id: issue.id, reason: `max failed attempts reached (${failedCount} >= ${maxFailed}) — parked for human review` });
       continue;
     }
-    const adapter = adapterNameFor(issue.requested_worker);
+    // SHU-225: the episode continuation selects the SUCCESSOR's own lane, so a
+    // paused successor adapter is skipped here just like a first dispatch — the
+    // pause map is not bypassed by being mid-episode.
+    const continuation = episodeContinuations.get(issue.id) ?? null;
+    const successor = continuation?.successor ?? null;
+    const requestedWorker = successor?.requested_worker ?? issue.requested_worker;
+    const adapter = adapterNameFor(requestedWorker);
     if (pauseMap[adapter] === true) {
       skipped.push({ id: issue.id, reason: `adapter ${adapter} is paused (adapter_pause_map) — no auto-launch of doomed attempts` });
       continue;
     }
-    return { candidate: issue, adapter, skipped };
+    return { candidate: issue, adapter, skipped, successor, continuation: Boolean(continuation) };
   }
   if (scope.configured && !sawScopedIssue) {
     const [issueId] = scope.issueIds;
@@ -1449,6 +1465,7 @@ export async function backfillSuccessorDirectives({
   env = {},
   fetchImpl = fetch,
   stdout = null,
+  bootstrapByIssue = new Map(),
 }) {
   const out = stdout ?? ((s) => console.log(s));
   // Defense in depth: this is the only helper that publishes successor
@@ -1500,6 +1517,10 @@ export async function backfillSuccessorDirectives({
       evidenceResultSha: terminal.result_sha ?? null,
       max_revise: Number.isInteger(config.max_revise) ? config.max_revise : 3,
       authoritativeHead,
+      // SHU-225: the first-review bootstrap, and ONLY for the issue the armed
+      // activation is bound to. Any other card's lineage routes exactly as it did
+      // before this change — a bootstrap is never board-wide.
+      bootstrapReviewer: bootstrapByIssue.get(issueId) ?? null,
     });
     if (!routed.ok || !routed.order) {
       // PASS / no eligible reviewer / exhaustion / lane mismatch / forged — nothing to post.
@@ -1589,9 +1610,9 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
 
 // reconcileOnce — pure-ish orchestration shared by dry-run and dispatch paths.
 // Returns { report, plan } and performs NO I/O except what the caller injects.
-export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {} }) {
+export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map() }) {
   const eligibility = computeEligibility({ issues, openPRs, config });
-  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts });
+  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations });
   return { eligibility, selection };
 }
 
@@ -1754,7 +1775,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // reported and exits 2 with zero writes (see the PREVENTED branch below), so an
   // expired, replayed or mis-bound authorization can never be mistaken for a
   // quiet, disabled coordinator.
-  const singleRunActivation = activationArg.error
+  let singleRunActivation = activationArg.error
     ? { requested: true, state: "refused", valid: false, reason: activationArg.error, target_issue_id: null, activation_id: null, expires_at: null }
     : singleRunActivationStatus({
         filePath: activationArg.path,
@@ -1765,7 +1786,95 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         gitHead: io.gitHead,
         io,
       });
-  const dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
+  let dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
+
+  // A pure activation-status pass cannot fetch GitHub, so its successor is only a
+  // candidate. Before that candidate can re-enter selection, re-derive it from the
+  // same durable terminal using the LIVE branch head. This is the launch boundary:
+  // a head the coordinator cannot read, or evidence that disagrees with it, refuses
+  // the activation and can never fall through to another card.
+  if (
+    dispatchEnabled &&
+    singleRunActivation.state === "armed" &&
+    singleRunActivation.target_issue_id &&
+    singleRunActivation.successor &&
+    githubToken &&
+    !receipts.some((r) =>
+      r &&
+      r.issue_id === singleRunActivation.target_issue_id &&
+      !TERMINAL_STAGES.includes(r.stage)
+    )
+  ) {
+    const targetReceipts = receipts.filter((r) => r && r.issue_id === singleRunActivation.target_issue_id);
+    const terminal = latestCoherentTerminal(targetReceipts);
+    const live = terminal
+      ? await resolveLiveHead(terminal, { githubToken, fetchImpl })
+      : { verified: false, head: null };
+    if (!live.verified) {
+      singleRunActivation = {
+        ...singleRunActivation,
+        state: "refused",
+        valid: false,
+        reason: "activation successor live branch head could not be verified — HOLD, fail closed",
+        successor: null,
+      };
+    } else {
+      const verifiedEpisode = episodeVerdict({
+        receipts,
+        targetIssueId: singleRunActivation.target_issue_id,
+        config,
+        bootstrapReviewer: singleRunActivation.reviewer_lane ? { lane: singleRunActivation.reviewer_lane } : null,
+        authoritativeHead: live.head,
+      });
+      if (verifiedEpisode.ended) {
+        singleRunActivation = {
+          ...singleRunActivation,
+          state: "refused",
+          valid: false,
+          reason: `activation is spent: the episode for ${singleRunActivation.target_issue_id} ended — ${verifiedEpisode.reason}`,
+          successor: null,
+        };
+      } else {
+        singleRunActivation = {
+          ...singleRunActivation,
+          episode: verifiedEpisode.reason,
+          successor: verifiedEpisode.successor ?? null,
+        };
+      }
+    }
+  }
+  // The authoritative-head pass may have changed ARMED -> REFUSED. Recompute
+  // before lifecycle so a refused activation cannot poll, persist, or launch.
+  dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
+
+  // ---- SHU-225: EPISODE-SCOPED CONTINUATION ---------------------------------
+  // An ARMED episode whose routing has named a successor may re-admit that ONE
+  // issue (the activation's bound target) to selection for the next step. Two maps
+  // are derived here, from the trusted record plus the durable receipts only:
+  //
+  //   episodeContinuations  -> the successor that re-admits the parked issue
+  //   episodeBootstrap      -> the record's reviewer lane, for the FIRST review
+  //                            only, and only for the bound target
+  //
+  // Both are empty unless dispatch is enabled (i.e. an armed activation or the
+  // committed switch) and the episode is unfinished, so a spent episode, a
+  // refused activation and the disabled default all leave parking byte-for-byte
+  // unchanged. Neither map can widen the run: the successor is the SAME issue as
+  // the committed dispatch_scope and the activation target, and every guard in
+  // selection + the pre-claim recheck still applies to it.
+  const episodeContinuations = new Map();
+  const episodeBootstrap = new Map();
+  if (dispatchEnabled && singleRunActivation.state === "armed" && singleRunActivation.target_issue_id) {
+    if (singleRunActivation.reviewer_lane) {
+      episodeBootstrap.set(singleRunActivation.target_issue_id, { lane: singleRunActivation.reviewer_lane });
+    }
+    if (singleRunActivation.successor) {
+      episodeContinuations.set(singleRunActivation.target_issue_id, {
+        successor: singleRunActivation.successor,
+        activation_id: singleRunActivation.activation_id,
+      });
+    }
+  }
 
   // ---- LIFECYCLE PASS (GPT lifecycle BLOCK @ f03d445) ----
   // Before selecting new work, poll every active RUNNING receipt through the
@@ -1988,6 +2097,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       const transition = nextReceiptState(receipt, event, {
         current_head,
+        // A write attempt is expected to move its branch. Bind its callback to
+        // the resulting head, while reviews remain bound to their input head.
+        expected_head: !githubToken || roleForRequestedWorker(receipt.requested_worker) === "review"
+          ? receipt.target_sha
+          : evidence?.result_sha,
         // Fold-time author exclusion (SHU-73): the lineage lets the fold reject
         // a review verdict whose observed session is a lineage author.
         lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
@@ -2016,7 +2130,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
   }
 
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts });
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
 
   if (singleRunActivation.requested && singleRunActivation.state === "refused") {
@@ -2082,6 +2196,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     env,
     fetchImpl,
     stdout: io.stdout,
+    bootstrapByIssue: episodeBootstrap,
   });
   if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   let { candidate } = selection;
@@ -2143,11 +2258,35 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
   const repo = candidate.repo ?? config.pilot_repo;
   const branch = candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
-  const target_sha = candidate.target_sha ?? env.DISPATCH_TARGET_SHA ?? null;
+  // SHU-225: when this selection is the ARMED episode's routed successor, the claim
+  // carries the successor's own lane, bound head and deterministic attempt id. This
+  // is the ONLY place a successor is turned into work — there is no second
+  // dispatcher — so everything below (the RESERVED receipt, the durable re-read,
+  // the launch-intent write, the pre-claim recheck above) applies unchanged.
+  const successor = selection.successor ?? null;
+  const requested_worker = successor?.requested_worker ?? candidate.requested_worker;
+  const target_sha = successor?.target_sha ?? candidate.target_sha ?? env.DISPATCH_TARGET_SHA ?? null;
   if (!target_sha || !TARGET_SHA_RE.test(target_sha)) {
     throw new Error(`dispatch refused: no bound head for ${candidate.id} — target_sha is required (old PASS must never satisfy a changed head)`);
   }
-  const adapter = adapterNameFor(candidate.requested_worker);
+  const adapter = adapterNameFor(requested_worker);
+  if (successor) {
+    if (io.stdout) {
+      io.stdout(`dispatch: episode successor — ${successor.role} via ${requested_worker} (attempt ${successor.attempt_id}, head ${target_sha}) under the armed activation`);
+    }
+    // Recheck at the write boundary, not merely while deriving selection. Linear
+    // refresh/backfill can take long enough for the branch to move after the first
+    // read. A successor is never RESERVED unless its bound head is still live.
+    if (githubToken) {
+      const live = await resolveLiveHead({ repo, branch, target_sha }, { githubToken, fetchImpl });
+      if (!live.verified || live.head !== target_sha) {
+        if (io.stdout) {
+          io.stdout(`dispatch: ABORTED before reservation — successor head ${target_sha} is not the verified live branch head ${live.head ?? "<unreadable>"}`);
+        }
+        return 2;
+      }
+    }
+  }
   const linearIssueId = candidate.linearId ?? candidate.id; // UUID for the real API, identifier tolerated by mocks
 
   // Activation is checked before minting and persisting a reservation. A
@@ -2174,10 +2313,16 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const { ok: reservedOk, receipt, errors } = createReceipt({
     issue_id: candidate.id,
     authorization_ref,
-    requested_worker: candidate.requested_worker,
+    requested_worker,
     repo,
     branch,
     target_sha,
+    // SHU-225 I7 (idempotency): a successor's attempt id is DERIVED from its
+    // predecessor (freshAttempt over the predecessor attempt + role + round), not
+    // minted fresh. A restart at any boundary therefore re-derives the SAME
+    // attempt — and the reservation below is written once — instead of minting a
+    // second successor for the same step. A first dispatch keeps randomUUID().
+    ...(successor?.attempt_id ? { attempt_id: successor.attempt_id } : {}),
   });
   if (!reservedOk) {
     throw new Error(`dispatch refused: reservation invalid — ${errors.join("; ")}`);

@@ -1061,8 +1061,8 @@ test("SHU-63 activation MUTATIONS: every binding, permission, expiry and gate gu
     {
       name: "unknown-key guard removed",
       file: "single-run-activation.mjs",
-      from: "  if (keys.length !== expected.length || keys.some((k, i) => k !== expected[i])) {",
-      to: "  if (false) { // SHU63-MUTATION-KEYS",
+      from: "  if (missing.length > 0 || unknown.length > 0) {",
+      to: "  if (missing.length > 0) { // SHU63-MUTATION-KEYS",
       assertion: `assert.equal(mod.validateActivationRecord({ ...rec(), force: true }).ok, false,
         "an unreviewed extra key is refused");`,
       failure: /an unreviewed extra key is refused/,
