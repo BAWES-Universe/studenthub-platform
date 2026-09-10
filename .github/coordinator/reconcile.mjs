@@ -1056,6 +1056,11 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
     if (!transition.accepted || launch.stage === "RUNNING") return transition;
   }
 
+  if (launch.stage === "HOLD" && launch.pause_adapter === true) {
+    // A broker/setup refusal can carry the worker's otherwise valid callback.
+    // That callback cannot override the host's refusal and become COMPLETED.
+    return nextReceiptState(transition.receipt, { type: "hold", reason: launch.reason ?? "adapter refused and paused" });
+  }
   if (launch.stage === "COMPLETED" || launch.stage === "HOLD") {
     // ctx carries current_head. A synchronous adapter reaches COMPLETED here
     // WITHOUT passing through the lifecycle poll, so the stale-head guard in

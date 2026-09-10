@@ -7,7 +7,7 @@ import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { prepareAttemptWorkspace } from "../attempt-workspace.mjs";
 import { resolveCoordinatorRevision } from "../single-run-activation.mjs";
-import { preparedLaunchOptions } from "../reconcile.mjs";
+import { preparedLaunchOptions, foldLaunchOutcome, createReceipt, nextReceiptState } from "../reconcile.mjs";
 import { pushExactSha } from "../push-broker.mjs";
 import * as codex from "../adapters/codex-cli.mjs";
 import * as claude from "../adapters/claude-code.mjs";
@@ -206,7 +206,8 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
       const tick = await h.runTick({ env, io });
       assert.equal(tick.code, i===1 ? 2 : 0, tick.text + JSON.stringify({receipts:h.receipts(),adapterResults}));
       const latest = h.receipts().at(-1);
-      assert.equal(latest.stage, i===1 ? "HOLD" : "COMPLETED", JSON.stringify(latest));
+      assert.equal(latest.stage, i===1 ? "HOLD" : "COMPLETED", tick.text + JSON.stringify({receipts:h.receipts(),adapterResults,brokerPushes}));
+      assert.equal(snapshots.length, i+1, "this tick must actually launch its next actor");
     }
     assert.deepEqual(snapshots.map(r=>r.requested_worker), ["codex-builder", "claude-verifier", "codex-builder", "claude-verifier"]);
     assert.equal(new Set(snapshots.map(r=>r.cwd)).size, 4, "each actor gets an independent checkout");
@@ -216,6 +217,19 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
     assert.equal((await h.runTick({ env, io })).code, 2, "PASS spends the episode");
     assert.equal(snapshots.length, 4, "no extra preparation or launch after PASS");
   } finally { h.cleanup(); f.cleanup(); }
+});
+
+test("SHU-227: broker refusal cannot promote a valid worker callback to success", () => {
+  const made = createReceipt({ issue_id:"SHU-63", authorization_ref:"SHU-63", requested_worker:"codex-builder",
+    repo:REPO, branch:"coordinator/SHU-63", target_sha:"a".repeat(40) });
+  assert.equal(made.ok,true);
+  const r=nextReceiptState(made.receipt,{type:"launch"}).receipt;
+  const result=foldLaunchOutcome(r,{stage:"HOLD",pause_adapter:true,external_run_id:`codexrun_${randomUUID()}`,
+    worker_identity:`codex:${r.attempt_id}`,reason:"broker refused",
+    callback:{attempt_id:r.attempt_id,target_sha:r.target_sha,result_sha:"b".repeat(40),stage:"BUILD_READY",links:["worker evidence"]}});
+  assert.equal(result.accepted,true);
+  assert.equal(result.receipt.stage,"HOLD");
+  assert.ok(!result.receipt.verdict_stage,"unpublished writer result is not routable evidence");
 });
 
 test("SHU-227: disabled/refused runs never provision; preparation refusal never launches", async () => {
@@ -278,6 +292,7 @@ test("SHU-227: host tick requires an explicit initial head and an already-enable
 
 test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards are bound", () => {
   const mutations = [
+    { file:"reconcile.mjs", from:'if (launch.stage === "HOLD" && launch.pause_adapter === true)', to:'if (false)', test:"broker refusal cannot promote", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:'receipt.attempt_id + ".workspace.json"', to:'receipt.attempt_id + ".json"', test:"empty root provisions an independent exact-head reviewer", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:"if (record && BINDINGS.some(k => record[k] !== binding[k]))", to:"if (false)", test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"attempt-workspace.mjs", from:'if (!s.isDirectory() || s.isSymbolicLink() || fs.realpathSync(p) !== path.resolve(p))', to:'if (!s.isDirectory() || s.isSymbolicLink())', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
