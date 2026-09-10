@@ -9,6 +9,7 @@ import {
   backfillSuccessorDirectives,
   main,
   receiptsWithinDispatchScope,
+  receiptsForLifecycle,
   reconcileOnce,
   resolveDispatchScope,
   selectNextReservation,
@@ -121,7 +122,7 @@ test("SHU-224: unscoped terminal receipts cannot publish successor directives", 
   assert.equal(writes, 0);
 });
 
-test("SHU-224: lifecycle and backfill inputs contain only the scoped issue", () => {
+test("SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt", () => {
   const receipts = [
     { issue_id: "SHU-90", stage: "RUNNING" },
     { issue_id: "SHU-140", stage: "RUNNING" },
@@ -129,9 +130,10 @@ test("SHU-224: lifecycle and backfill inputs contain only the scoped issue", () 
   assert.deepEqual(receiptsWithinDispatchScope(receipts, SCOPED), [receipts[1]]);
   assert.deepEqual(receiptsWithinDispatchScope(receipts, { ...SCOPED, dispatch_scope: {} }), []);
   assert.deepEqual(receiptsWithinDispatchScope(receipts, { max_dispatch: 1 }), receipts);
+  assert.deepEqual(receiptsForLifecycle(receipts, SCOPED), receipts);
 });
 
-test("SHU-224: an unscoped active receipt is not polled during the scoped run", async () => {
+test("SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run", async () => {
   const dir = fs.mkdtempSync(join(tmpdir(), "shu224-main-"));
   try {
     const configPath = join(dir, "config.json");
@@ -181,7 +183,7 @@ test("SHU-224: an unscoped active receipt is not polled during the scoped run", 
       stdout: () => undefined,
     });
     assert.equal(exit, 0);
-    assert.equal(monitorCalls, 0);
+    assert.equal(monitorCalls, 1);
     assert.equal(linearWrites, 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -248,9 +250,20 @@ test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed
       assertion: `
         const receipts = [{ issue_id: "SHU-90" }, { issue_id: "SHU-140" }];
         assert.deepEqual(mod.receiptsWithinDispatchScope(receipts, config).map((r) => r.issue_id), ["SHU-140"],
-          "lifecycle and backfill exclude real-card receipts");
+          "successor backfill excludes real-card receipts");
       `,
-      failure: /lifecycle and backfill exclude real-card receipts/,
+      failure: /successor backfill excludes real-card receipts/,
+    },
+    {
+      name: "lifecycle incorrectly scoped",
+      from: "return receipts.filter(Boolean);",
+      to: "return receiptsWithinDispatchScope(receipts, _config); // SHU-224-MUTATION-LIFECYCLE-SCOPE",
+      assertion: `
+        const receipts = [{ issue_id: "SHU-90", stage: "RUNNING" }, { issue_id: "SHU-140", stage: "RUNNING" }];
+        assert.deepEqual(mod.receiptsForLifecycle(receipts, config).map((r) => r.issue_id), ["SHU-90", "SHU-140"],
+          "capacity-consuming receipts remain lifecycle-reconcilable");
+      `,
+      failure: /capacity-consuming receipts remain lifecycle-reconcilable/,
     },
   ];
 

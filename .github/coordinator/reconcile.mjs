@@ -95,6 +95,14 @@ export function receiptsWithinDispatchScope(receipts = [], config = {}) {
   return receipts.filter((receipt) => receipt && dispatchScopeAllows(scope, receipt.issue_id));
 }
 
+// Dispatch scope limits NEW reservations and successor routing. It must never
+// hide an in-flight receipt from lifecycle reconciliation: every non-terminal
+// receipt still consumes the global max_dispatch capacity, so every such
+// receipt must retain a path to terminal state.
+export function receiptsForLifecycle(receipts = [], _config = {}) {
+  return receipts.filter(Boolean);
+}
+
 // The Idempotency-Key for the workspace-agents trigger. It is derived from the
 // immutable attempt_id + stage + the bound target_sha.
 export function idempotencyKey({ attempt_id, stage, target_sha }) {
@@ -1757,7 +1765,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // was lost. Retrying the SAME attempt uses the SAME Idempotency-Key, so it can
     // recover the documented run id without double-launching. Leaving these
     // receipts untouched forever would permanently consume max_dispatch.
-    const lifecycleStartReceipts = receiptsWithinDispatchScope(receipts, config);
+    const lifecycleStartReceipts = receiptsForLifecycle(receipts, config);
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
       const adapter = adapterNameFor(receipt.requested_worker);
       // A paused adapter must not be re-entered through RECOVERY either — the
