@@ -288,19 +288,27 @@ test("snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 pa
   assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205", "SHU-207"]);
 });
 
-// The snapshot board must stay bound to the LIVE fixture lane: config.json is the
-// single source of truth for the fixture card's identifier and its approved
-// contract ref. If the two drift, the fixture card is no longer the card the
-// coordinator was told to dispatch: a non-numeric lane id falls through to null
-// (dispatch refuses loudly), and a numeric one falls through to the card's own
-// ordinary Linear identifier — an unauthorized contract ref, which is worse.
-// This was a real finding (Sentry HIGH + CodeRabbit Major on PR #64: the lane id
-// was bound to Linear's minted SHU-140 while the snapshot still carried the
-// pre-mint placeholder id), so the binding is locked by test, not by comment.
-// The check is deliberately stricter than "the two values agree": an id that
-// happens to exist on some other card must fail, because that silently hands the
-// fixture contract to a card that never had one.
-test("fixture lane: exactly one card is the fixture card, and only it resolves to the fixture contract", () => {
+// The snapshot board must stay bound to the LIVE fixture lane: config.json says
+// which card is the fixture card, and the fixture card's contract ref must be the
+// SEPARATELY APPROVED constant — not whatever config.json happens to say.
+//
+// Two distinct drift failures, both real:
+//   * the lane id stops identifying the fixture card. Resolution then falls to the
+//     CANDIDATE's own id, not to the lane id: a numeric id resolves to its own
+//     ordinary Linear identifier (an unauthorized contract ref — worse than a
+//     refusal), a non-numeric one resolves to null and dispatch refuses loudly.
+//     (Sentry HIGH + CodeRabbit Major on PR #64: the lane id had moved to Linear's
+//     minted SHU-140 while the snapshot still carried the pre-mint placeholder.)
+//   * the lane's contract ref is edited to some other value. Nothing about
+//     resolution breaks — the fixture simply runs on an unauthorized contract.
+//
+// So both the identity AND the contract ref are pinned here. The ref is pinned as
+// a literal on purpose: reading it back out of the config under test is exactly
+// how a contract edit would go unnoticed (Codex, verification round 2).
+const APPROVED_FIXTURE_CONTRACT = "FIXTURE-OPUS-CONTRACT-20260905";
+const FIXTURE_MARKER_LABELS = ["fixture-safe", "coordinator:pilot"];
+
+test("fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract", () => {
   const snapshot = JSON.parse(
     fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
   );
@@ -310,15 +318,16 @@ test("fixture lane: exactly one card is the fixture card, and only it resolves t
   const lane = realConfig.fixture_lane ?? {};
 
   assert.ok(lane.id, "config.json must configure a fixture lane id");
-  assert.ok(
-    lane.authorization_ref,
-    "the fixture lane must carry its separately approved contract ref",
-  );
   assert.equal(realConfig.enable_dispatch, false, "the fixture lane is a lane, never an activation");
   assert.match(
     String(lane.id),
     /^SHU-[0-9]+$/,
     "the fixture lane id must be the Linear-minted card identifier (SHU-<n>), not a pre-mint placeholder",
+  );
+  assert.equal(
+    lane.authorization_ref,
+    APPROVED_FIXTURE_CONTRACT,
+    "the fixture lane's contract ref must be the separately approved constant, not an edited value",
   );
 
   // The fixture card is identified by its id AND its fixture markers. A lane id
@@ -333,28 +342,28 @@ test("fixture lane: exactly one card is the fixture card, and only it resolves t
   const [fixtureCard] = configured;
   const markerLabels = fixtureCard.labels ?? [];
   assert.ok(
-    markerLabels.includes("fixture-safe") && markerLabels.includes("coordinator:pilot"),
+    FIXTURE_MARKER_LABELS.every((label) => markerLabels.includes(label)),
     `the card carrying the configured fixture lane id "${lane.id}" must be the fixture card `
       + `(labels: ${markerLabels.join(", ")})`,
   );
 
-  // Exactly ONE card in the board may be granted the fixture contract — that is
+  // Exactly ONE card in the board may be granted the approved contract — that is
   // what stops a misconfigured lane id from handing the contract to a real card.
   const granted = snapshot.issues
-    .filter((issue) => resolveAuthorizationRef(issue, realConfig) === lane.authorization_ref)
+    .filter((issue) => resolveAuthorizationRef(issue, realConfig) === APPROVED_FIXTURE_CONTRACT)
     .map((issue) => issue.id);
   assert.deepEqual(
     granted,
     [lane.id],
-    "only the fixture card may resolve to the fixture lane's contract ref",
+    "only the fixture card may resolve to the approved fixture contract",
   );
 
-  // The fixture card resolves to the APPROVED CONTRACT REF, never to its own
-  // minted Linear identifier and never to a candidate-supplied value.
-  assert.equal(resolveAuthorizationRef(fixtureCard, realConfig), lane.authorization_ref);
+  // The fixture card resolves to the APPROVED CONTRACT, never to its own minted
+  // Linear identifier and never to a candidate-supplied value.
+  assert.equal(resolveAuthorizationRef(fixtureCard, realConfig), APPROVED_FIXTURE_CONTRACT);
   assert.equal(
     resolveAuthorizationRef({ ...fixtureCard, authorization_ref: "SHU-999" }, realConfig),
-    lane.authorization_ref,
+    APPROVED_FIXTURE_CONTRACT,
     "a fixture card cannot override its configured contract ref",
   );
 });
