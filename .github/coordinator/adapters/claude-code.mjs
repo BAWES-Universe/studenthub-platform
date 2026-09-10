@@ -12,6 +12,7 @@
 import { execFile as nodeExecFile } from "node:child_process";
 
 export const ADAPTER_NAME = "claude-code";
+export const CLAUDE_MODEL = "opus";
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["PASS"]);
 export const CALLBACK_STAGES = Object.freeze(["PASS", "BLOCKED", "FAILED"]);
 const ATTEMPT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -76,6 +77,7 @@ export function buildClaudeArgs(input, { resume = false } = {}) {
   const sessionFlag = resume ? "--resume" : "--session-id";
   return [
     "-p",
+    "--model", CLAUDE_MODEL,
     "--output-format", "json",
     "--json-schema", JSON.stringify(CALLBACK_SCHEMA),
     "--permission-mode", "dontAsk",
