@@ -157,6 +157,7 @@ export function createEpisodeHarness({
       pollRuns: true,
       adapterModules: adapters,
       fetchImpl,
+      ...(options.io ?? {}),
     });
     return { code, text: out.join("\n") };
   };

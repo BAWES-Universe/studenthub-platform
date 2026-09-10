@@ -22,7 +22,7 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { hostname as nodeHostname, platform as nodePlatform } from "node:os";
+import { hostname as nodeHostname, platform as nodePlatform, tmpdir } from "node:os";
 import * as nodePath from "node:path";
 import { pushExactSha } from "../push-broker.mjs";
 const path = nodePath;
@@ -201,7 +201,7 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, 
 }
 
 async function readHead({ cwd, execFileImpl, env }) {
-  const result = await runExecFile(execFileImpl, "git", ["rev-parse", "HEAD"], {
+  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, "rev-parse", "HEAD"], {
     cwd,
     env: buildCodexEnvironment(env),
     encoding: "utf8",
@@ -213,7 +213,7 @@ async function readHead({ cwd, execFileImpl, env }) {
 }
 
 async function headDescendsFromTarget({ cwd, execFileImpl, env, target_sha }) {
-  const result = await runExecFile(execFileImpl, "git", ["merge-base", "--is-ancestor", target_sha, "HEAD"], {
+  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, "merge-base", "--is-ancestor", target_sha, "HEAD"], {
     cwd,
     env: buildCodexEnvironment(env),
     encoding: "utf8",
@@ -665,11 +665,22 @@ export async function launchBuilder({
   }
 
   const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo };
-  const schemaPath = schemaFile ?? path.join(durableStateDir, `.callback-schema-${attempt_id}-${randomUUID()}.json`);
+  let schemaPath = schemaFile;
+  let schemaDir = null;
   const ownsSchemaFile = schemaFile === null;
   try {
     if (ownsSchemaFile) fs.mkdirSync(durableStateDir, { recursive: true, mode: 0o700 });
+    if (ownsSchemaFile) {
+      // The schema is public, static data, not session authority. A distinct
+      // worker uid cannot traverse the private 0700 durable-state directory.
+      // Keep that directory private; expose only this schema in a coordinator-
+      // owned, worker-readable temporary directory, removed after the CLI exits.
+      schemaDir = fs.mkdtempSync(path.join(tmpdir(), "shu-codex-schema-"));
+      fs.chmodSync(schemaDir, 0o755);
+      schemaPath = path.join(schemaDir, "callback.json");
+    }
     writeSchemaFile(schemaPath, CALLBACK_SCHEMA);
+    if (ownsSchemaFile) fs.chmodSync(schemaPath, 0o644);
   } catch {
     return { stage: "FAILED", error_code: "SCHEMA_FILE_UNWRITABLE", ok: false };
   }
@@ -808,9 +819,9 @@ export async function launchBuilder({
     launchError = error;
   } finally {
     if (ownsSchemaFile) {
-      // A leftover schema in the private state directory is not an unrecorded
-      // session. Cleanup failure must not erase a valid terminal result.
+      // Cleanup failure must not erase a valid terminal result.
       try { (io.unlinkSync ?? fs.unlinkSync)(schemaPath); } catch { /* best effort */ }
+      try { fs.rmdirSync(schemaDir); } catch { /* best effort */ }
     }
   }
   // A session that demonstrably exists but was never durably recorded outranks

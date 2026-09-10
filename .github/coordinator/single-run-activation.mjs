@@ -82,7 +82,9 @@
 // Failing that way round is the cheaper mistake.
 
 import fs from "node:fs";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
 import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, REVIEW_LANES } from "./review-routing.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
@@ -298,7 +300,17 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
   if (typeof io.gitHead === "string") return REVISION_RE.test(io.gitHead) ? io.gitHead : null;
   if (typeof io.revisionResolver === "function") return io.revisionResolver(dir) ?? null;
   try {
-    const out = execFileSync("git", ["-c", `safe.directory=${dir}`, "-C", dir, "rev-parse", "HEAD"], {
+    // Git's ownership exception names the checkout ROOT, not the coordinator
+    // subdirectory. Resolve from the executing module, never process.cwd() or
+    // inherited GIT_DIR/GIT_WORK_TREE; do not edit system/global Git trust.
+    let root = fs.realpathSync(dir);
+    while (!fs.existsSync(path.join(root, ".git"))) {
+      const parent = path.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
+    const out = execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${root}`, "-C", root, "rev-parse", "HEAD"], {
+      env: brokerGitEnv(process.env),
       encoding: "utf8",
       timeout: 10000,
       stdio: ["ignore", "pipe", "ignore"],
