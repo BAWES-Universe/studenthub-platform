@@ -124,7 +124,7 @@ test("default checkout verifier calls git rev-parse HEAD before claude", async (
   const out = await launchBuilder({ ...withoutInjectedHead, execFileImpl });
   assert.equal(out.stage, "COMPLETED");
   assert.deepEqual(calls.map(({ file }) => file), ["git", "claude"]);
-  assert.deepEqual(calls[0].args, ["rev-parse", "HEAD"]);
+  assert.deepEqual(calls[0].args, ["-c", `safe.directory=${launchInput.cwd}`, "rev-parse", "HEAD"]);
   assert.equal(calls[0].options.cwd, launchInput.cwd);
 });
 

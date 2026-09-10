@@ -93,7 +93,7 @@ function runExecFile(execFileImpl, file, args, options) {
 }
 
 async function readHead({ cwd, execFileImpl, env }) {
-  const result = await runExecFile(execFileImpl, "git", ["rev-parse", "HEAD"], {
+  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, "rev-parse", "HEAD"], {
     cwd,
     env: buildClaudeEnvironment(env),
     encoding: "utf8",

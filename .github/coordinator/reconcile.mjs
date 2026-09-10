@@ -28,6 +28,7 @@ import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS }
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal } from "./single-run-activation.mjs";
 import fs from "node:fs";
+import { prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -432,6 +433,19 @@ export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
     return {};
   }
   throw new Error(`unknown coordinator adapter: ${adapter}`);
+}
+
+// Preparation is part of the existing launch boundary, after the reservation is
+// durable. Injected adapters remain the seam for tests of unrelated properties;
+// real local adapters always provision and validate an attempt-specific checkout.
+export async function preparedLaunchOptions(adapter, receipt, env, io = {}, { resume = false } = {}) {
+  const options = adapterLaunchOptions(adapter, env, { resume });
+  if (!["codex-cli", "claude-code"].includes(adapter)) return options;
+  const prepare = io.prepareWorkspace ?? (io.adapterModules?.[adapter] ? null : prepareAttemptWorkspace);
+  if (!prepare) return options;
+  const workspace = await prepare({ receipt, env, resume });
+  if (!workspace?.cwd || !path.isAbsolute(workspace.cwd)) throw new Error("workspace preparation returned no absolute checkout");
+  return { ...options, cwd: workspace.cwd };
 }
 
 // dispatchEnabledFor — dispatch requires BOTH gates in DIFFERENT layers (CodeRabbit):
@@ -1042,6 +1056,11 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
     if (!transition.accepted || launch.stage === "RUNNING") return transition;
   }
 
+  if (launch.stage === "HOLD" && launch.pause_adapter === true) {
+    // A broker/setup refusal can carry the worker's otherwise valid callback.
+    // That callback cannot override the host's refusal and become COMPLETED.
+    return nextReceiptState(transition.receipt, { type: "hold", reason: launch.reason ?? "adapter refused and paused" });
+  }
   if (launch.stage === "COMPLETED" || launch.stage === "HOLD") {
     // ctx carries current_head. A synchronous adapter reaches COMPLETED here
     // WITHOUT passing through the lifecycle poll, so the stale-head guard in
@@ -1784,6 +1803,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         now: io.now ? io.now() : new Date(),
         dir: __dirname,
         gitHead: io.gitHead,
+        initialTargetSha: env.DISPATCH_TARGET_SHA,
         io,
       });
   let dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
@@ -1960,6 +1980,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 
       let launch;
       try {
+        const options = await preparedLaunchOptions(adapter, receipt, env, io, { resume: true });
         launch = await adapterModule.launchBuilder({
           recovery: true, // host-local authorization required by Hermes recovery
           external_run_id: receipt.external_run_id ?? null, // codex-cli exact-id resume target (codexrun_<uuid>)
@@ -1970,7 +1991,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           attempt_id: receipt.attempt_id,
           target_sha: receipt.target_sha,
           task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
-          ...adapterLaunchOptions(adapter, env, { resume: true }),
+          ...options,
           fetchImpl,
           io, // hermes-pool lease dir / spawn wiring (SHU-62); ignored by workspace-agents
           env,
@@ -2266,6 +2287,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const successor = selection.successor ?? null;
   const requested_worker = successor?.requested_worker ?? candidate.requested_worker;
   const target_sha = successor?.target_sha ?? candidate.target_sha ?? env.DISPATCH_TARGET_SHA ?? null;
+  if (!successor && singleRunActivation.initial_target_sha && target_sha !== singleRunActivation.initial_target_sha) {
+    if (io.stdout) io.stdout("dispatch: initial target differs from the activation — refused before reservation");
+    return 2;
+  }
   if (!target_sha || !TARGET_SHA_RE.test(target_sha)) {
     throw new Error(`dispatch refused: no bound head for ${candidate.id} — target_sha is required (old PASS must never satisfy a changed head)`);
   }
@@ -2369,7 +2394,27 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
 
   const dispatchAdapterModule = await loadAdapterModule(adapter, io);
-  let launch = await dispatchAdapterModule.launchBuilder({
+  let launch;
+  let options;
+  try {
+    options = await preparedLaunchOptions(adapter, receipt, env, io);
+    // Fetching/cloning can outlast the approval. Recheck before crossing into
+    // the worker; preparation does not extend an activation's lifetime.
+    if (singleRunActivation.requested) {
+      const currentActivation = singleRunActivationStatus({ filePath: activationArg.path, config,
+        receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io });
+      if (currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)) throw new Error("activation no longer allows this launch");
+    }
+  } catch (error) {
+    const diagnosis = workspaceFailureCode(error);
+    const held = nextReceiptState(launchIntent.receipt, { type: "hold",
+      reason: `attempt workspace preparation or final activation check refused (${diagnosis}); no worker launched` });
+    await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
+    if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — workspace preparation or final activation check refused (${diagnosis})`);
+    return 2;
+  }
+  if (!launch) {
+    launch = await dispatchAdapterModule.launchBuilder({
     // Reservation binding (PR #24): the host-local lease records repo/branch so
     // recovery can prove a Linear receipt matches a reservation this coordinator
     // actually made. Without these the lease is created unbound and strict
@@ -2381,11 +2426,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     attempt_id: receipt.attempt_id,
     target_sha: receipt.target_sha,
     task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
-    ...adapterLaunchOptions(adapter, env),
+    ...options,
     fetchImpl,
     io, // hermes-pool lease dir + spawn wiring (SHU-62); ignored by workspace-agents
     env,
-  });
+    });
+  }
   // Drive the state machine IN ORDER: the launch event first (RESERVED ->
   // LAUNCH_UNKNOWN, launch timestamp set), THEN fold the adapter outcome on top
   // (ack -> RUNNING / stays LAUNCH_UNKNOWN / upstream failure). A worker ack

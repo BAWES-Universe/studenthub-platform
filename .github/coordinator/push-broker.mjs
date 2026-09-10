@@ -151,7 +151,10 @@ export function brokerGitEnv(env = {}, { sshCommand = null, indexFile = null } =
 // Every broker git invocation goes through here — no exceptions, so a new call
 // site cannot forget the boundary.
 function brokerGit(gitImpl, args, { cwd, env, sshCommand = null, indexFile = null } = {}) {
-  return runGit(gitImpl, [...BROKER_GIT_CONFIG_ARGS, ...args], {
+  // The configured worker deliberately owns its checkout under another UID.
+  // Trust only this invocation's validated directory, never a global wildcard;
+  // retain the hardened config boundary and broker-owned remote repository.
+  return runGit(gitImpl, [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], {
     cwd,
     env: brokerGitEnv(env, { sshCommand, indexFile }),
   });

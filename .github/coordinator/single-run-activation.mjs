@@ -82,7 +82,9 @@
 // Failing that way round is the cheaper mistake.
 
 import fs from "node:fs";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
 import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, REVIEW_LANES } from "./review-routing.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
@@ -96,14 +98,16 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
   "expires_at",
 ]);
 
-// SHU-225 — the one OPTIONAL reviewed key. The record may name a reviewer lane to
+// Reviewed optional keys. The record may name a reviewer lane to
 // bootstrap an episode's very first review, because a fresh lineage has no
 // review-role entry and the routing (correctly) refuses to invent one. Both
 // present and absent are valid shapes; any OTHER key is still refused, so widening
 // what the record may declare stays a reviewed schema change rather than a free
 // extension point. The value is validated as a known reviewer-capable lane, and
 // the routing additionally refuses a lane in the write lane's own family.
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane"]);
+// SHU-227 adds initial_target_sha: the approved worker input, constant across
+// the episode even while the branch advances through review and revision.
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha"]);
 
 export const ACTIVATION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -298,7 +302,17 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
   if (typeof io.gitHead === "string") return REVISION_RE.test(io.gitHead) ? io.gitHead : null;
   if (typeof io.revisionResolver === "function") return io.revisionResolver(dir) ?? null;
   try {
-    const out = execFileSync("git", ["-c", `safe.directory=${dir}`, "-C", dir, "rev-parse", "HEAD"], {
+    // Git's ownership exception names the checkout ROOT, not the coordinator
+    // subdirectory. Resolve from the executing module, never process.cwd() or
+    // inherited GIT_DIR/GIT_WORK_TREE; do not edit system/global Git trust.
+    let root = fs.realpathSync(dir);
+    while (!fs.existsSync(path.join(root, ".git"))) {
+      const parent = path.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
+    const out = execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${root}`, "-C", root, "rev-parse", "HEAD"], {
+      env: brokerGitEnv(process.env),
       encoding: "utf8",
       timeout: 10000,
       stdio: ["ignore", "pipe", "ignore"],
@@ -347,6 +361,9 @@ export function validateActivationRecord(record) {
     return { ok: false, reason: "activation must be a JSON object" };
   }
   const keys = Object.keys(record).sort();
+  if (Object.hasOwn(record, "initial_target_sha") && (typeof record.initial_target_sha !== "string" || !REVISION_RE.test(record.initial_target_sha))) {
+    return { ok: false, reason: "initial_target_sha must be a 40-character lowercase commit SHA" };
+  }
   const required = [...SINGLE_RUN_ACTIVATION_KEYS].sort();
   const allowed = [...SINGLE_RUN_ACTIVATION_KEYS, ...OPTIONAL_ACTIVATION_KEYS].sort();
   const missing = required.filter((k) => !keys.includes(k));
@@ -406,6 +423,7 @@ export function singleRunActivationStatus({
   now = new Date(),
   dir,
   gitHead,
+  initialTargetSha,
   io = {},
 } = {}) {
   if (!filePath) return { requested: false, state: "absent", valid: true, reason: null, target_issue_id: null, activation_id: null, expires_at: null };
@@ -432,6 +450,11 @@ export function singleRunActivationStatus({
   }
   const shape = validateActivationRecord(record);
   if (!shape.ok) return refused(shape.reason);
+  // The original approved input is constant across ticks. Successors have new
+  // routed heads; compare this field to the operator input, not successor heads.
+  if (Object.hasOwn(record, "initial_target_sha") && record.initial_target_sha !== initialTargetSha) {
+    return refused("activation initial_target_sha does not match DISPATCH_TARGET_SHA (or the operator input is missing)");
+  }
 
   // (3) The activation must name the scoped target and, where the lane carries an
   //     approved contract reference, the same contract reference.
@@ -491,6 +514,7 @@ export function singleRunActivationStatus({
     slots: record.slots,
     expires_at: record.expires_at,
     reviewer_lane: record.reviewer_lane ?? null,
+    initial_target_sha: record.initial_target_sha ?? null,
     episode: episode.reason,
     // SHU-225: the episode's routable successor, when one exists. This is what
     // re-admits the issue to selection for the NEXT step of the SAME episode.

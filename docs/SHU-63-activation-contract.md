@@ -82,6 +82,7 @@ unset CODEX_GIT_PUSH_READY                    # 3 — the worker holds no push c
 # worker's worktree or environment.
 export SHU_PUSH_BROKER_ENABLED=true
 export SHU_WORKTREE_ROOT=/srv/shu/worktrees   # approved root; worktrees are confined to it
+export SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces # coordinator-owned 0700; outside worker root
 export SHU_PUSH_REMOTE_URL=git@github.com:BAWES-Universe/studenthub-platform.git
 # export SHU_PUSH_SSH_COMMAND=...             # optional: only this selects the ssh program
 
@@ -93,6 +94,12 @@ export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker 
 
 `ENABLE_DISPATCH` stays unset. Nothing here enables dispatch; the contract only
 governs what happens once someone does.
+
+See `.github/coordinator/SINGLE-RUN-ACTIVATION.md` for the attempt checkout
+provisioning and `host-tick.sh` launch procedure. The initial
+`DISPATCH_TARGET_SHA` is the verified seeded lane head, distinct from the approved
+coordinator revision. Both local lanes prepare their own exact-head checkout;
+neither requires an operator to make a checkout before dispatch.
 
 ## Test seam
 
