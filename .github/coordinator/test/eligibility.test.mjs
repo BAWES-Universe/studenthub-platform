@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { computeEligibility, requestedWorkerFor, compareIdentifiers, resolveAuthorizationRef } from "../reconcile.mjs";
+import { computeEligibility, requestedWorkerFor, compareIdentifiers, resolveAuthorizationRef, SAME_FAMILY_VERIFIERS, WORKER_FAMILIES } from "../reconcile.mjs";
 
 const CONFIG = { pilot_repo: "BAWES-Universe/studenthub-platform", max_dispatch: 1, adapter_pause_map: {} };
 
@@ -153,6 +153,95 @@ test("SHU-222: an implementation cannot be assigned to its named verifier runtim
     labels: ["type:implementation", "risk:R3", "verifier:codex", "worker:hermes-box"],
   })]);
   assert.deepEqual(ids, ["SHU-29"]);
+});
+
+test("SHU-223: a claude-verifier implementation cannot name a Claude-family verifier", () => {
+  for (const verifier of ["claude", "opus", "sonnet", "haiku", "fable"]) {
+    const { ready, excluded } = computeEligibility({
+      issues: [card({
+        id: "SHU-223",
+        labels: ["type:implementation", "risk:R2", `verifier:${verifier}`, "worker:claude-verifier"],
+      })],
+      openPRs: [],
+      config: CONFIG,
+    });
+    assert.deepEqual(ready, [], `verifier:${verifier} must not review a claude-verifier implementation`);
+    assert.equal(excluded.length, 1);
+    assert.match(excluded[0].reason, new RegExp(`authored by its named verifier \\(${verifier}\\)`));
+  }
+});
+
+test("SHU-223: existing Codex and Hermes same-family exclusions still hold", () => {
+  const sameFamily = [
+    ["codex-builder", "codex"],
+    ["codex-builder", "gpt"],
+    ["codex-builder", "gpt-6"],
+    ["hermes-box", "hermes"],
+  ];
+  for (const [worker, verifier] of sameFamily) {
+    const { ready, excluded } = computeEligibility({
+      issues: [card({
+        id: "SHU-223",
+        labels: ["type:implementation", "risk:R3", `verifier:${verifier}`, `worker:${worker}`],
+      })],
+      openPRs: [],
+      config: CONFIG,
+    });
+    assert.deepEqual(ready, [], `worker:${worker} must not be reviewed by verifier:${verifier}`);
+    assert.match(excluded[0].reason, /authored by its named verifier/);
+  }
+
+  // A card with no worker:<family> label is routed to codex-builder, so the
+  // Codex exclusion must apply to it without an explicit worker label too.
+  const { ready } = computeEligibility({
+    issues: [card({ id: "SHU-223", labels: ["type:implementation", "risk:R3", "verifier:codex"] })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.deepEqual(ready, []);
+});
+
+test("SHU-223: independent cross-family verifiers stay eligible", () => {
+  const independent = [
+    ["claude-verifier", "codex"],
+    ["claude-verifier", "gpt"],
+    ["claude-verifier", "hermes"],
+    ["codex-builder", "opus"],
+    ["codex-builder", "claude"],
+    ["codex-builder", "hermes"],
+    ["hermes-box", "opus"],
+    ["hermes-box", "codex"],
+  ];
+  for (const [worker, verifier] of independent) {
+    const ids = eligibleIds([card({
+      id: "SHU-223",
+      labels: ["type:implementation", "risk:R3", `verifier:${verifier}`, `worker:${worker}`],
+    })]);
+    assert.deepEqual(ids, ["SHU-223"], `worker:${worker} + verifier:${verifier} is independent and must stay eligible`);
+  }
+
+  // The guard is scoped to implementation cards: a verification card naming its
+  // own family is the normal case and must not be excluded by this rule.
+  const ids = eligibleIds([card({
+    id: "SHU-224",
+    labels: ["type:verification", "risk:R3", "verifier:opus", "worker:claude-verifier"],
+  })]);
+  assert.deepEqual(ids, ["SHU-224"]);
+});
+
+test("SHU-223: every recognized worker family declares its same-family verifiers", () => {
+  for (const family of WORKER_FAMILIES) {
+    const declared = SAME_FAMILY_VERIFIERS[family];
+    assert.ok(
+      Array.isArray(declared) && declared.length > 0,
+      `worker family ${family} has no same-family verifier list — a new family must declare one, never fall through to "independent"`,
+    );
+  }
+  assert.deepEqual(
+    Object.keys(SAME_FAMILY_VERIFIERS).sort(),
+    [...WORKER_FAMILIES].sort(),
+    "SAME_FAMILY_VERIFIERS and WORKER_FAMILIES must describe exactly the same set of worker families",
+  );
 });
 
 test("excluded: unknown / inaccessible state — never invent backlog", () => {
