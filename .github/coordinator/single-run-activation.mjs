@@ -79,7 +79,7 @@
 
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, REVIEW_LANES } from "./review-routing.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -91,6 +91,15 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
   "slots",
   "expires_at",
 ]);
+
+// SHU-225 — the one OPTIONAL reviewed key. The record may name a reviewer lane to
+// bootstrap an episode's very first review, because a fresh lineage has no
+// review-role entry and the routing (correctly) refuses to invent one. Both
+// present and absent are valid shapes; any OTHER key is still refused, so widening
+// what the record may declare stays a reviewed schema change rather than a free
+// extension point. The value is validated as a known reviewer-capable lane, and
+// the routing additionally refuses a lane in the write lane's own family.
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane"]);
 
 export const ACTIVATION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
@@ -145,7 +154,7 @@ export function latestCoherentTerminal(issueReceipts = []) {
 // routing semantics. Returns { ended, reason, successor? } and NEVER throws: an
 // internal routing failure must surface as "cannot decide" (ongoing), not as a
 // crashed coordinator.
-export function episodeVerdict({ receipts = [], targetIssueId, config = {} } = {}) {
+export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null } = {}) {
   const issueReceipts = (receipts ?? []).filter((r) => r && r.issue_id === targetIssueId);
   if (issueReceipts.length === 0) return { ended: false, reason: "no attempt has been dispatched yet" };
 
@@ -180,6 +189,10 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {} } = {
       // work, on the durable facts alone. The backfill's own forged/stale-head check
       // still governs whether a successor is actually published.
       authoritativeHead: null,
+      // SHU-225: the trusted record's first-review lane, when it declares one. It
+      // only ever unlocks a review the lineage could not otherwise name (zero
+      // review entries); every later step is routed from real receipts.
+      bootstrapReviewer,
     });
   } catch (err) {
     return { ended: false, reason: `mid-episode: routing could not decide (${err?.message ?? "error"})` };
@@ -312,9 +325,15 @@ export function validateActivationRecord(record) {
     return { ok: false, reason: "activation must be a JSON object" };
   }
   const keys = Object.keys(record).sort();
-  const expected = [...SINGLE_RUN_ACTIVATION_KEYS].sort();
-  if (keys.length !== expected.length || keys.some((k, i) => k !== expected[i])) {
-    return { ok: false, reason: `activation must contain exactly ${expected.join(", ")} (got ${keys.join(", ") || "none"})` };
+  const required = [...SINGLE_RUN_ACTIVATION_KEYS].sort();
+  const allowed = [...SINGLE_RUN_ACTIVATION_KEYS, ...OPTIONAL_ACTIVATION_KEYS].sort();
+  const missing = required.filter((k) => !keys.includes(k));
+  const unknown = keys.filter((k) => !allowed.includes(k));
+  if (missing.length > 0 || unknown.length > 0) {
+    return {
+      ok: false,
+      reason: `activation must contain exactly ${allowed.join(", ")} (missing ${missing.join(", ") || "nothing"}; unrecognised ${unknown.join(", ") || "nothing"})`,
+    };
   }
   if (typeof record.activation_id !== "string" || !ACTIVATION_ID_RE.test(record.activation_id)) {
     return { ok: false, reason: "activation_id must be 8-64 characters of [A-Za-z0-9_-]" };
@@ -333,6 +352,16 @@ export function validateActivationRecord(record) {
   }
   if (typeof record.expires_at !== "string" || Number.isNaN(Date.parse(record.expires_at))) {
     return { ok: false, reason: "expires_at must be an ISO-8601 timestamp" };
+  }
+  // SHU-225: the optional first-review bootstrap lane. Absent is valid (no
+  // bootstrap — the routing then holds visibly, exactly as before this change).
+  // Present must be a KNOWN reviewer-capable lane; an unrecognised value refuses
+  // rather than being ignored, because a silently-dropped reviewer declaration
+  // would leave an operator believing a review was configured when it was not.
+  if ("reviewer_lane" in record) {
+    if (typeof record.reviewer_lane !== "string" || !REVIEW_LANES.includes(record.reviewer_lane)) {
+      return { ok: false, reason: `reviewer_lane must be one of ${REVIEW_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
+    }
   }
   return { ok: true, reason: null };
 }
@@ -416,7 +445,14 @@ export function singleRunActivationStatus({
 
   // (7) One use — spent once the bound target's episode has ended.
   //     The episode — not a single step — is the unit of use: see episodeVerdict().
-  const episode = episodeVerdict({ receipts, targetIssueId: record.target_issue_id, config });
+  const episode = episodeVerdict({
+    receipts,
+    targetIssueId: record.target_issue_id,
+    config,
+    // SHU-225: the record's own first-review lane is the ONLY source of a
+    // bootstrap reviewer. Card labels and comment text are never consulted.
+    bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
+  });
   if (episode.ended) {
     return refused(`activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`);
   }
@@ -432,7 +468,11 @@ export function singleRunActivationStatus({
     coordinator_revision: record.coordinator_revision,
     slots: record.slots,
     expires_at: record.expires_at,
+    reviewer_lane: record.reviewer_lane ?? null,
     episode: episode.reason,
+    // SHU-225: the episode's routable successor, when one exists. This is what
+    // re-admits the issue to selection for the NEXT step of the SAME episode.
+    successor: episode.successor ?? null,
   };
 }
 
