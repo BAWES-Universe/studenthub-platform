@@ -48,6 +48,7 @@ export const TERMINAL_STAGES = Object.freeze(["COMPLETED", "FAILED", "HOLD"]);
 export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
 export const TARGET_SHA_RE = /^[0-9a-f]{40}$/;
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
 
 // Linear states a card may be picked up from. Anything else (including an unknown
 // or inaccessible state) is ineligible — the resolver NEVER invents backlog.
@@ -55,6 +56,51 @@ export const PICKABLE_STATES = Object.freeze(["Todo"]);
 
 export function authorizationRefValid(ref) {
   return typeof ref === "string" && AUTHORIZATION_REF_RE.test(ref);
+}
+
+// A dispatch scope is trusted operator configuration, never card or environment
+// input. SHU-224 deliberately supports exactly one canonical Linear identifier:
+// the fixture needs one issue, and accepting an empty or ambiguous allowlist
+// would make its safety boundary harder to inspect. An absent key preserves the
+// board-wide production behavior; a present-but-invalid key denies all work.
+export function resolveDispatchScope(config = {}) {
+  if (!Object.prototype.hasOwnProperty.call(config, "dispatch_scope")) {
+    return { configured: false, valid: true, issueIds: null, reason: null };
+  }
+  const raw = config.dispatch_scope;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope must be an object" };
+  }
+  const keys = Object.keys(raw);
+  if (keys.length !== 1 || keys[0] !== "issue_ids") {
+    return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope must contain only issue_ids" };
+  }
+  if (!Array.isArray(raw.issue_ids) || raw.issue_ids.length !== 1) {
+    return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope.issue_ids must contain exactly one issue" };
+  }
+  const [issueId] = raw.issue_ids;
+  if (typeof issueId !== "string" || !LINEAR_ISSUE_ID_RE.test(issueId)) {
+    return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope issue must be a canonical SHU-<number> identifier" };
+  }
+  return { configured: true, valid: true, issueIds: new Set([issueId]), reason: null };
+}
+
+function dispatchScopeAllows(scope, issueId) {
+  return scope.valid && (!scope.configured || scope.issueIds.has(issueId));
+}
+
+export function receiptsWithinDispatchScope(receipts = [], config = {}) {
+  const scope = resolveDispatchScope(config);
+  if (!scope.valid) return [];
+  return receipts.filter((receipt) => receipt && dispatchScopeAllows(scope, receipt.issue_id));
+}
+
+// Dispatch scope limits NEW reservations and successor routing. It must never
+// hide an in-flight receipt from lifecycle reconciliation: every non-terminal
+// receipt still consumes the global max_dispatch capacity, so every such
+// receipt must retain a path to terminal state.
+export function receiptsForLifecycle(receipts = [], _config = {}) {
+  return receipts.filter(Boolean);
 }
 
 // The Idempotency-Key for the workspace-agents trigger. It is derived from the
@@ -1020,6 +1066,10 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
 // and adapter_pause_map: a paused adapter is skipped so the next slot does not
 // auto-launch a doomed attempt. Returns { candidate, adapter, skipped:[{id,reason}] }.
 export function selectNextReservation({ ready = [], config = {}, receipts = [] }) {
+  const scope = resolveDispatchScope(config);
+  if (!scope.valid) {
+    return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `invalid dispatch_scope — ${scope.reason}; no fallback` }] };
+  }
   const maxDispatch = Number.isInteger(config.max_dispatch) ? config.max_dispatch : 1;
   const active = receipts.filter((r) => r && !TERMINAL_STAGES.includes(r.stage));
   const activeIssueIds = new Set(active.map((r) => r.issue_id));
@@ -1038,7 +1088,15 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
     return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `max_dispatch=${maxDispatch} reached (${active.length} active)` }] };
   }
 
+  let sawScopedIssue = false;
   for (const issue of ready) {
+    // SHU-224-SCOPE-GUARD: a configured single-issue run must never fall
+    // through to a higher-priority or subsequent board-wide candidate.
+    if (scope.configured && !scope.issueIds.has(issue.id)) {
+      skipped.push({ id: issue.id, reason: "outside trusted dispatch_scope" });
+      continue;
+    }
+    sawScopedIssue = true;
     if (activeIssueIds.has(issue.id)) {
       skipped.push({ id: issue.id, reason: "already has an active receipt" });
       continue;
@@ -1062,6 +1120,10 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [] }
       continue;
     }
     return { candidate: issue, adapter, skipped };
+  }
+  if (scope.configured && !sawScopedIssue) {
+    const [issueId] = scope.issueIds;
+    skipped.unshift({ id: issueId, reason: "dispatch_scope target is unavailable or ineligible — no fallback" });
   }
   return { candidate: null, adapter: null, skipped };
 }
@@ -1384,10 +1446,13 @@ export async function backfillSuccessorDirectives({
   // current caller's control flow.
   if (!dispatchEnabled) return 0;
   if (!linearToken) return 0;
+  const dispatchScope = resolveDispatchScope(config);
+  if (!dispatchScope.valid) return 0;
   let considered = 0;
   // Durable, terminal, verdict-bearing receipts across all issues. Older-infra
   // FAILED receipts carry no verdict_stage and are skipped (never route).
-  const eligible = (receipts ?? []).filter((r) => r && terminalVerdictCoherent(r, r.verdict_stage));
+  const eligible = receiptsWithinDispatchScope(receipts, config)
+    .filter((r) => terminalVerdictCoherent(r, r.verdict_stage));
   for (const terminal of eligible) {
     considered += 1;
     const issueId = terminal.issue_id;
@@ -1491,6 +1556,10 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled }
   const lines = [];
   lines.push(`coordinator reconcile — ${dispatchEnabled ? "DISPATCH ENABLED" : "DRY-RUN (dispatch disabled, no writes)"}`);
   lines.push(`pilot_repo=${config.pilot_repo}  max_dispatch=${config.max_dispatch}  source=${source}`);
+  const scope = resolveDispatchScope(config);
+  lines.push(scope.configured
+    ? `dispatch_scope=${scope.valid ? [...scope.issueIds].join(",") : `INVALID (${scope.reason})`}`
+    : "dispatch_scope=board-wide");
   lines.push(`eligible=${eligibility.ready.length}  excluded=${eligibility.excluded.length}`);
   for (const issue of eligibility.ready) {
     lines.push(`  READY    ${issue.id.padEnd(18)} ${issue.priority.padEnd(11)} ${issue.title}`);
@@ -1579,6 +1648,7 @@ async function liveIssues({ config, linearToken, githubToken, openPRsOverride, f
 export async function main(argv = process.argv.slice(2), env = process.env, io = {}) {
   const config0 = loadConfig(io.configPath);
   const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
+  const dispatchScope = resolveDispatchScope(config);
   const dispatchEnabled = dispatchEnabledFor(env, config);
   const linearToken = env.LINEAR_API_TOKEN ?? "";
   const githubToken = env.GITHUB_TOKEN ?? "";
@@ -1689,13 +1759,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // durableReadFailed also gates the LIFECYCLE block, not just dispatch: a
   // corrupt or self-contradicting durable read must never drive a transition
   // either (PR #24).
-  if (dispatchEnabled && !durableReadFailed && linearToken && io.pollRuns !== false) {
+  if (dispatchEnabled && dispatchScope.valid && !durableReadFailed && linearToken && io.pollRuns !== false) {
     // Reconcile uncertain launches before polling acknowledged runs. A transport
     // failure after POST may mean the upstream accepted the run but the response
     // was lost. Retrying the SAME attempt uses the SAME Idempotency-Key, so it can
     // recover the documented run id without double-launching. Leaving these
     // receipts untouched forever would permanently consume max_dispatch.
-    const lifecycleStartReceipts = [...receipts];
+    const lifecycleStartReceipts = receiptsForLifecycle(receipts, config);
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "LAUNCH_UNKNOWN")) {
       const adapter = adapterNameFor(receipt.requested_worker);
       // A paused adapter must not be re-entered through RECOVERY either — the
@@ -1934,6 +2004,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   //   (4) the adapter trigger carries the launch Idempotency-Key so retries after
   //       LAUNCH_UNKNOWN reuse the exact same upstream key.
   if (io.stdout) io.stdout(report);
+  if (!dispatchScope.valid) {
+    if (io.stdout) io.stdout(`dispatch: PREVENTED — invalid trusted dispatch_scope (${dispatchScope.reason}); no fallback`);
+    return 2;
+  }
   if (durableReadFailed) {
     if (io.stdout) io.stdout(`dispatch: PREVENTED — durable receipt state could not be fully read (fail closed); reconcile after the read path recovers`);
     return 2;
@@ -1991,6 +2065,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     const refreshedIssue = refreshed.issues.find((issue) => issue.id === candidate.id);
     if (!refreshedIssue) {
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${candidate.id} disappeared from the authoritative Linear result`);
+      return 2;
+    }
+    if (!dispatchScopeAllows(dispatchScope, refreshedIssue.id)) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${refreshedIssue.id} is outside trusted dispatch_scope`);
       return 2;
     }
     const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config });
