@@ -1536,7 +1536,10 @@ async function liveIssues({ config, linearToken, githubToken, openPRsOverride, f
     });
     if (res.ok) {
       openPRs = await res.json();
-      if (!Array.isArray(openPRs)) claimEvidenceError = "GitHub open PR response was not an array";
+      if (!Array.isArray(openPRs)) {
+        claimEvidenceError = "GitHub open PR response was not an array";
+        openPRs = [];
+      }
     } else {
       claimEvidenceError = `GitHub open PR lookup failed with HTTP ${res.status}`;
     }

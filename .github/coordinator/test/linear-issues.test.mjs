@@ -6,6 +6,7 @@ import {
   computeEligibility,
   fetchLinearIssues,
   LINEAR_ISSUES_QUERY,
+  main,
   normalizeLinearIssue,
   pullRequestClaimsIssue,
   resolveRepositoryOwnership,
@@ -171,4 +172,35 @@ test("SHU-222/reference-is-not-claim: bare references stay ready; explicit claim
   });
   assert.deepEqual(ready.map((card) => card.id), ["SHU-202"]);
   assert.deepEqual(excluded.map((card) => card.id), ["SHU-201", "SHU-203"]);
+});
+
+test("SHU-222: a 200 OK non-array GitHub PR response produces claim evidence HOLD", async () => {
+  const candidate = issue(204);
+  candidate.labels.nodes = [{ name: "repo:platform" }];
+  const output = [];
+
+  const code = await main([], {
+    LINEAR_API_TOKEN: "linear-token",
+    GITHUB_TOKEN: "github-token",
+  }, {
+    fetchDurable: false,
+    stdout: (line) => output.push(line),
+    fetchImpl: async (url) => {
+      if (url === "https://api.linear.app/graphql") {
+        return response({
+          issues: {
+            nodes: [candidate],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        });
+      }
+      if (url.includes("api.github.com/repos/")) {
+        return { ok: true, status: 200, json: async () => ({ message: "API rate limit exceeded" }) };
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  assert.equal(code, 0);
+  assert.match(output.join("\n"), /SHU-204\s+claim evidence HOLD — GitHub open PR response was not an array/);
 });
