@@ -30,6 +30,8 @@ export function createEpisodeHarness({
   reviewerLane = "claude-verifier",
   withReviewerLane = true,
   callbackActor = "linear-worker-test",
+  githubToken = "",
+  initialBranchHead = SHA_INPUT,
   configOverrides = {},
   extraNodes = [],
 } = {}) {
@@ -52,6 +54,7 @@ export function createEpisodeHarness({
   const triggers = { "codex-cli": 0, "claude-code": 0, "hermes-pool": 0 };
   const polls = new Map();
   const launched = [];
+  const branchHead = { value: initialBranchHead };
 
   const linearFetch = async (url, opts) => {
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
@@ -69,6 +72,19 @@ export function createEpisodeHarness({
       return respond({ commentCreate: { success: true, comment: { id: `c${comments.length + pauses.length}` } } });
     }
     return respond({});
+  };
+
+  const fetchImpl = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("api.github.com")) {
+      if (/\/branches\//.test(u)) {
+        return { status: 200, ok: true, json: async () => ({ commit: { sha: branchHead.value } }) };
+      }
+      const commit = /\/commits\/([0-9a-f]{40})$/.exec(u);
+      if (commit) return { status: 200, ok: true, json: async () => ({ sha: commit[1] }) };
+      return { status: 404, ok: false, json: async () => ({}) };
+    }
+    return linearFetch(url, opts);
   };
 
   const makeAdapter = (name) => ({
@@ -125,9 +141,7 @@ export function createEpisodeHarness({
   const env = {
     ENABLE_DISPATCH: "true",
     LINEAR_API_TOKEN: "tok",
-    // No GitHub token: head verification short-circuits to the bound target_sha,
-    // which is the tri-state rule the coordinator defines for that case.
-    GITHUB_TOKEN: "",
+    GITHUB_TOKEN: githubToken,
     DISPATCH_TARGET_SHA: SHA_INPUT,
   };
 
@@ -142,7 +156,7 @@ export function createEpisodeHarness({
       fetchDurable: true,
       pollRuns: true,
       adapterModules: adapters,
-      fetchImpl: linearFetch,
+      fetchImpl,
     });
     return { code, text: out.join("\n") };
   };
@@ -180,8 +194,9 @@ export function createEpisodeHarness({
     configPath,
     activationPath,
     record,
+    branchHead,
     runTick,
-    fetchImpl: linearFetch,
+    fetchImpl,
     receipts,
     receiptFor,
     latestFor,

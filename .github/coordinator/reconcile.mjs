@@ -26,7 +26,7 @@
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine } from "./single-run-activation.mjs";
+import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -1775,7 +1775,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // reported and exits 2 with zero writes (see the PREVENTED branch below), so an
   // expired, replayed or mis-bound authorization can never be mistaken for a
   // quiet, disabled coordinator.
-  const singleRunActivation = activationArg.error
+  let singleRunActivation = activationArg.error
     ? { requested: true, state: "refused", valid: false, reason: activationArg.error, target_issue_id: null, activation_id: null, expires_at: null }
     : singleRunActivationStatus({
         filePath: activationArg.path,
@@ -1786,7 +1786,66 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         gitHead: io.gitHead,
         io,
       });
-  const dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
+  let dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
+
+  // A pure activation-status pass cannot fetch GitHub, so its successor is only a
+  // candidate. Before that candidate can re-enter selection, re-derive it from the
+  // same durable terminal using the LIVE branch head. This is the launch boundary:
+  // a head the coordinator cannot read, or evidence that disagrees with it, refuses
+  // the activation and can never fall through to another card.
+  if (
+    dispatchEnabled &&
+    singleRunActivation.state === "armed" &&
+    singleRunActivation.target_issue_id &&
+    singleRunActivation.successor &&
+    githubToken &&
+    !receipts.some((r) =>
+      r &&
+      r.issue_id === singleRunActivation.target_issue_id &&
+      !TERMINAL_STAGES.includes(r.stage)
+    )
+  ) {
+    const targetReceipts = receipts.filter((r) => r && r.issue_id === singleRunActivation.target_issue_id);
+    const terminal = latestCoherentTerminal(targetReceipts);
+    const live = terminal
+      ? await resolveLiveHead(terminal, { githubToken, fetchImpl })
+      : { verified: false, head: null };
+    if (!live.verified) {
+      singleRunActivation = {
+        ...singleRunActivation,
+        state: "refused",
+        valid: false,
+        reason: "activation successor live branch head could not be verified — HOLD, fail closed",
+        successor: null,
+      };
+    } else {
+      const verifiedEpisode = episodeVerdict({
+        receipts,
+        targetIssueId: singleRunActivation.target_issue_id,
+        config,
+        bootstrapReviewer: singleRunActivation.reviewer_lane ? { lane: singleRunActivation.reviewer_lane } : null,
+        authoritativeHead: live.head,
+      });
+      if (verifiedEpisode.ended) {
+        singleRunActivation = {
+          ...singleRunActivation,
+          state: "refused",
+          valid: false,
+          reason: `activation is spent: the episode for ${singleRunActivation.target_issue_id} ended — ${verifiedEpisode.reason}`,
+          successor: null,
+        };
+      } else {
+        singleRunActivation = {
+          ...singleRunActivation,
+          episode: verifiedEpisode.reason,
+          successor: verifiedEpisode.successor ?? null,
+        };
+      }
+    }
+  }
+  // The authoritative-head pass may have changed ARMED -> REFUSED. Recompute
+  // before lifecycle so a refused activation cannot poll, persist, or launch.
+  dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
 
   // ---- SHU-225: EPISODE-SCOPED CONTINUATION ---------------------------------
   // An ARMED episode whose routing has named a successor may re-admit that ONE
@@ -2038,6 +2097,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       const transition = nextReceiptState(receipt, event, {
         current_head,
+        // A write attempt is expected to move its branch. Bind its callback to
+        // the resulting head, while reviews remain bound to their input head.
+        expected_head: !githubToken || roleForRequestedWorker(receipt.requested_worker) === "review"
+          ? receipt.target_sha
+          : evidence?.result_sha,
         // Fold-time author exclusion (SHU-73): the lineage lets the fold reject
         // a review verdict whose observed session is a lineage author.
         lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
@@ -2209,6 +2273,18 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   if (successor) {
     if (io.stdout) {
       io.stdout(`dispatch: episode successor — ${successor.role} via ${requested_worker} (attempt ${successor.attempt_id}, head ${target_sha}) under the armed activation`);
+    }
+    // Recheck at the write boundary, not merely while deriving selection. Linear
+    // refresh/backfill can take long enough for the branch to move after the first
+    // read. A successor is never RESERVED unless its bound head is still live.
+    if (githubToken) {
+      const live = await resolveLiveHead({ repo, branch, target_sha }, { githubToken, fetchImpl });
+      if (!live.verified || live.head !== target_sha) {
+        if (io.stdout) {
+          io.stdout(`dispatch: ABORTED before reservation — successor head ${target_sha} is not the verified live branch head ${live.head ?? "<unreadable>"}`);
+        }
+        return 2;
+      }
     }
   }
   const linearIssueId = candidate.linearId ?? candidate.id; // UUID for the real API, identifier tolerated by mocks

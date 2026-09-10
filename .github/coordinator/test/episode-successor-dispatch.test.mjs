@@ -465,6 +465,77 @@ const later = routing.nextWorkOrder({ requested: { version: routing.WORK_ORDER_V
 assert.equal(later.order?.actor, "claude-code:session-2", "after the first review, lineage owns routing");`,
     failure: /after the first review, lineage owns routing/,
   },
+  {
+    // M11 — the pure episode candidate never substitutes for a verified head.
+    name: "M11: successor routing ignores the verified live branch head",
+    file: "reconcile.mjs",
+    from: "        authoritativeHead: live.head,",
+    to: "        authoritativeHead: null, // SHU225-MUT-M11",
+    needsHarness: true,
+    assertion: `const h = createEpisodeHarness();
+try {
+  await h.runTick(); const build = h.latestFor("codex-builder");
+  await h.runTick(); h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+  h.completeRun(build.external_run_id); await h.runTick();
+  const t = await h.runTick({ env: { GITHUB_TOKEN: "ghtok" } });
+  assert.equal(h.triggers["claude-code"], 0, "a stale successor is never launched");
+  assert.match(t.text, /FORGED or stale|activation is spent/, "the stale head refusal is visible");
+} finally { h.cleanup(); }`,
+    failure: /a stale successor is never launched|the stale head refusal is visible/,
+  },
+  {
+    // M12 — an unreadable head is a refusal, never an offline-style fallback.
+    name: "M12: an unreadable live head falls through to successor selection",
+    file: "reconcile.mjs",
+    from: "    if (!live.verified) {",
+    to: "    if (false) { // SHU225-MUT-M12",
+    needsHarness: true,
+    assertion: `const h = createEpisodeHarness({ initialBranchHead: null });
+try {
+  await h.runTick(); const build = h.latestFor("codex-builder");
+  await h.runTick(); h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+  h.completeRun(build.external_run_id); await h.runTick();
+  const t = await h.runTick({ env: { GITHUB_TOKEN: "ghtok" } });
+  assert.equal(t.code, 2, "an unreadable live head refuses the activation");
+  assert.equal(h.triggers["claude-code"], 0, "an unreadable live head launches nothing");
+} finally { h.cleanup(); }`,
+    failure: /an unreadable live head refuses the activation|an unreadable live head launches nothing/,
+  },
+  {
+    // M13 — a writer's verified output head, not its input checkout, closes it.
+    name: "M13: async writer fold validates against the stale input head",
+    file: "reconcile.mjs",
+    from: "        expected_head: !githubToken || roleForRequestedWorker(receipt.requested_worker) === \"review\"",
+    to: "        expected_head: true",
+    needsHarness: true,
+    assertion: `const h = createEpisodeHarness({ githubToken: "ghtok" });
+try {
+  await h.runTick(); const build = h.latestFor("codex-builder");
+  await h.runTick(); h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+  h.branchHead.value = SHA_WRITE; h.completeRun(build.external_run_id); await h.runTick();
+  assert.equal(h.receiptFor(build.attempt_id).stage, "COMPLETED", "a genuine builder push folds at its verified output head");
+} finally { h.cleanup(); }`,
+    failure: /a genuine builder push folds at its verified output head/,
+  },
+  {
+    // M14 — close the gap between early derivation and the durable claim write.
+    name: "M14: successor skips the final live-head check before reservation",
+    file: "reconcile.mjs",
+    from: "      if (!live.verified || live.head !== target_sha) {",
+    to: "      if (false) { // SHU225-MUT-M14",
+    needsHarness: true,
+    assertion: `const h = createEpisodeHarness();
+try {
+  await h.runTick(); const build = h.latestFor("codex-builder");
+  await h.runTick(); h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+  h.completeRun(build.external_run_id); await h.runTick();
+  let reads = 0;
+  const fetchImpl = async (url, opts) => { const u = String(url); if (u.includes("api.github.com") && /\\/branches\\//.test(u)) { reads += 1; const sha = reads < 3 ? SHA_WRITE : "c".repeat(40); return { status: 200, ok: true, json: async () => ({ commit: { sha } }) }; } return h.fetchImpl(url, opts); };
+  await reconcile.main(["--activation", h.activationPath], { ENABLE_DISPATCH: "true", LINEAR_API_TOKEN: "tok", GITHUB_TOKEN: "ghtok", DISPATCH_TARGET_SHA: SHA_INPUT }, { configPath: h.configPath, skipActivationPreflight: true, now: () => new Date("2026-09-10T12:00:00.000Z"), gitHead: h.record.coordinator_revision, stdout: () => {}, fetchDurable: true, pollRuns: true, adapterModules: h.adapters, fetchImpl });
+  assert.equal(h.triggers["claude-code"], 0, "a head moved after selection is refused before reservation");
+} finally { h.cleanup(); }`,
+    failure: /a head moved after selection is refused before reservation/,
+  },
 ];
 
 const MUTATION_PRELUDE = `
@@ -496,7 +567,7 @@ const act = await import("./single-run-activation.mjs");
 const { createEpisodeHarness } = await import("./test/fixture/episode-harness.mjs");
 `;
 
-test("SHU-225 MUTATIONS: every invariant has a load-bearing guard (M1..M10)", () => {
+test("SHU-225 MUTATIONS: every invariant and live-head boundary has a load-bearing guard (M1..M14)", () => {
   const root = mkdtempSync(join(tmpdir(), "shu225-mut-"));
   const results = [];
   try {
@@ -530,7 +601,7 @@ test("SHU-225 MUTATIONS: every invariant has a load-bearing guard (M1..M10)", ()
   }
   const survived = results.filter((r) => !r.killed);
   assert.deepEqual(survived, [], `mutations survived:\n${survived.map((r) => `  ${r.name} — ${r.why}`).join("\n")}`);
-  assert.equal(results.length, 10, "all ten mutations from the spec are exercised");
+  assert.equal(results.length, 14, "all ten spec mutations plus four live-head BLOCK mutations are exercised");
 });
 
 function h_node() {
@@ -563,7 +634,9 @@ test("SHU-225 I9: a refused successor path writes nothing (activation refused ->
 // ---------------------------------------------------------------------------
 
 test("SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review -> PASS with NO seeded successor receipts", async () => {
-  const h = createEpisodeHarness();
+  // Production-shaped: coordinator.yml supplies GITHUB_TOKEN, so every fold and
+  // successor launch must agree with the live branch head.
+  const h = createEpisodeHarness({ githubToken: "ghtok" });
   try {
     // 1. The build. One authorization, one slot, no seeded anything.
     let t = await h.runTick();
@@ -576,6 +649,7 @@ test("SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review ->
     // 2. The builder reports BUILD_READY; the poll sees the run finish.
     await h.runTick(); // poll tick: identity
     h.postCallback({ attemptId: build.attempt_id, stage: "BUILD_READY", targetSha: SHA_INPUT, resultSha: SHA_WRITE });
+    h.branchHead.value = SHA_WRITE;
     h.completeRun(build.external_run_id);
     t = await h.runTick();
     assert.equal(t.code, 0, t.text);
@@ -614,9 +688,14 @@ test("SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review ->
     // 6. The revision reports REVISION_READY and moves the branch head.
     await h.runTick();
     h.postCallback({ attemptId: revise.attempt_id, stage: "REVISION_READY", targetSha: SHA_WRITE, resultSha: SHA_REVISED });
+    h.branchHead.value = SHA_REVISED;
     h.completeRun(revise.external_run_id);
-    await h.runTick();
-    assert.equal(h.receiptFor(revise.attempt_id).verdict_stage, "REVISION_READY");
+    t = await h.runTick();
+    assert.equal(
+      h.receiptFor(revise.attempt_id).verdict_stage,
+      "REVISION_READY",
+      `${t.text}\n${JSON.stringify(h.receiptFor(revise.attempt_id))}`,
+    );
 
     // 7. The re-review is routed from LINEAGE (not the record) and launched.
     t = await h.runTick();

@@ -154,7 +154,7 @@ export function latestCoherentTerminal(issueReceipts = []) {
 // routing semantics. Returns { ended, reason, successor? } and NEVER throws: an
 // internal routing failure must surface as "cannot decide" (ongoing), not as a
 // crashed coordinator.
-export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null } = {}) {
+export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null } = {}) {
   const issueReceipts = (receipts ?? []).filter((r) => r && r.issue_id === targetIssueId);
   if (issueReceipts.length === 0) return { ended: false, reason: "no attempt has been dispatched yet" };
 
@@ -185,10 +185,10 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
       evidenceStage: terminal.verdict_stage,
       evidenceResultSha: terminal.result_sha ?? null,
       max_revise: Number.isInteger(config?.max_revise) ? config.max_revise : DEFAULT_MAX_REVISE,
-      // No authoritative branch head is fetched here: this runs before any network
-      // work, on the durable facts alone. The backfill's own forged/stale-head check
-      // still governs whether a successor is actually published.
-      authoritativeHead: null,
+      // main() re-runs this decision with the freshly fetched branch head before a
+      // successor may enter selection. The activation-status call remains pure and
+      // passes null; it can establish shape/spend state but never authorize launch.
+      authoritativeHead,
       // SHU-225: the trusted record's first-review lane, when it declares one. It
       // only ever unlocks a review the lineage could not otherwise name (zero
       // review entries); every later step is routed from real receipts.
