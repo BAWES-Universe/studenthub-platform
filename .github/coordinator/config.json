@@ -2,6 +2,11 @@
   "pilot_repo": "BAWES-Universe/studenthub-platform",
   "max_dispatch": 1,
   "enable_dispatch": false,
+  "dispatch_scope": {
+    "issue_ids": [
+      "SHU-140"
+    ]
+  },
   "adapter_pause_map": {},
   "wake_actor_allowlist": [
     "BAWES"
