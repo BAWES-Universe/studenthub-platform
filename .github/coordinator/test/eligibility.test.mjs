@@ -274,7 +274,7 @@ test("snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 pa
   const { ready, excluded } = computeEligibility({ issues: snap.issues, openPRs: snap.openPRs, config: CONFIG });
   assert.equal(ready.length, 2);
   const readyIds = ready.map((x) => x.id).sort();
-  assert.deepEqual(readyIds, ["SHU-206", "SHU-FIXTURE-001"]);
+  assert.deepEqual(readyIds, ["SHU-140", "SHU-206"]);
   assert.equal(excluded.length, 6);
   const byId = Object.fromEntries(excluded.map((x) => [x.id, x.reason]));
   assert.ok(byId["SHU-201"].includes("In Progress"));
@@ -286,4 +286,46 @@ test("snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 pa
   assert.ok(byId["SHU-207"].includes("children of a canceled parent"));
   // Deterministic ordering of excluded by identifier.
   assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205", "SHU-207"]);
+});
+
+// The snapshot board must stay bound to the LIVE fixture lane: config.json is the
+// single source of truth for the fixture card's identifier and its approved
+// contract ref. If either side drifts, resolveAuthorizationRef falls through to
+// null and dispatch refuses loudly — the fixture dry-run path is silently dead.
+// This was a real finding (Sentry HIGH + CodeRabbit Major on PR #64: the lane id
+// was bound to Linear's minted SHU-140 while the snapshot still carried the
+// pre-mint placeholder id), so the binding is locked by test, not by comment.
+test("fixture lane: the snapshot fixture card IS the configured fixture card and resolves to its approved contract", () => {
+  const snapshot = JSON.parse(
+    fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
+  );
+  const realConfig = JSON.parse(
+    fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"),
+  );
+
+  assert.ok(realConfig.fixture_lane?.id, "config.json must configure a fixture lane id");
+  assert.ok(
+    realConfig.fixture_lane.authorization_ref,
+    "the fixture lane must carry its separately approved contract ref",
+  );
+  assert.equal(realConfig.enable_dispatch, false, "the fixture lane is a lane, never an activation");
+
+  const fixtureCard = snapshot.issues.find((issue) => issue.id === realConfig.fixture_lane.id);
+  assert.ok(
+    fixtureCard,
+    `snapshot fixture card must use the configured fixture lane id "${realConfig.fixture_lane.id}" `
+      + `(snapshot ids: ${snapshot.issues.map((i) => i.id).join(", ")})`,
+  );
+
+  // The fixture card resolves to the APPROVED CONTRACT REF, never to its own
+  // minted Linear identifier and never to a candidate-supplied value.
+  assert.equal(
+    resolveAuthorizationRef(fixtureCard, realConfig),
+    realConfig.fixture_lane.authorization_ref,
+  );
+  assert.equal(
+    resolveAuthorizationRef({ ...fixtureCard, authorization_ref: "SHU-999" }, realConfig),
+    realConfig.fixture_lane.authorization_ref,
+    "a fixture card cannot override its configured contract ref",
+  );
 });

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const COORDINATOR_DIR = fileURLToPath(new URL("..", import.meta.url));
 
@@ -36,7 +36,7 @@ test("SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Pr
     assert.ok(!mutated.includes(newGuard), "new guard removed in the mutant");
 
     const scenario = `
-      import { computeEligibility } from ${JSON.stringify("file://" + join(tmp, "reconcile.mjs"))};
+      import { computeEligibility } from ${JSON.stringify(pathToFileURL(join(tmp, "reconcile.mjs")).href)};
       const card = (over) => ({ id: "SHU-71", title: "child of open epic", state: "Todo",
         priority: "High", labels: [], assignee: null, delegate: null, linkedPRs: [],
         parent: { id: "SHU-66", state: "In Progress" }, blockers: [], repo: "BAWES-Universe/studenthub-platform", ...over });
