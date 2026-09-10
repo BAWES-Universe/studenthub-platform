@@ -55,6 +55,7 @@ function setup() {
         for (const name of fs.readdirSync(root)) {
           const target = path.join(root, name);
           if (!fs.lstatSync(target).isSymbolicLink() && fs.statSync(target).uid === 65534) {
+            execFileSync(switchCommand[0], [...switchCommand.slice(1), "chmod", "-R", "u+w", target]);
             execFileSync(switchCommand[0], [...switchCommand.slice(1), "rm", "-rf", "--", target]);
           }
         }
@@ -163,13 +164,18 @@ test("SHU-227: non-owner service account resolves revision with no global Git tr
   } finally { f.cleanup(); }
 });
 
-function installCliDoubles(f) {
+function installCliDoubles(f, workspaceReady = false) {
   const common = `const fs=require('fs'),cp=require('child_process');const args=process.argv.slice(2); const prompt=args.at(-1); const attempt=/Attempt: ([0-9a-f-]+)/.exec(prompt)[1]; const target=/Bound head: ([0-9a-f]+)/.exec(prompt)[1]; const git=(...a)=>cp.execFileSync('git',a,{encoding:'utf8'}).trim(); if(git('rev-parse','HEAD')!==target)throw Error('wrong input head'); if(process.env.GITHUB_TOKEN||process.env.LINEAR_API_TOKEN||process.env.SHU_PUSH_SSH_COMMAND)throw Error('credential leak');`;
   const writer = common + `
     if(process.getuid()!==65534)throw Error('writer identity not dropped');
     JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema')+1],'utf8'));
     const round=Number(fs.readFileSync('round','utf8'))+1; fs.writeFileSync('round',String(round));
-    git('add','round');git('commit','-m','fixture writer round '+round); const result=git('rev-parse','HEAD');
+    ${workspaceReady ? `
+    if(args[args.indexOf('--model')+1]!=='gpt-5.6-sol')throw Error('wrong builder model');
+    if(args[args.indexOf('--config')+1]!=='sandbox_workspace_write.network_access=false')throw Error('worker network was not disabled');
+    if(git('remote')!=='')throw Error('worker has a remote');
+    try { fs.writeFileSync('.git/index.lock','forbidden'); throw Error('metadata writable'); } catch(e) { if(e.code!=='EACCES')throw e; }
+    const result=null;` : `git('add','round');git('commit','-m','fixture writer round '+round); const result=git('rev-parse','HEAD');`}
     console.log(JSON.stringify({type:'thread.started',thread_id:require('crypto').randomUUID()}));
     const cb={attempt_id:attempt,target_sha:target,result_sha:result,stage:round===1?'BUILD_READY':'REVISION_READY',links:['round fixture at commit '+result],summary:'fixture'};
     console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(cb)}}));
@@ -182,8 +188,8 @@ function installCliDoubles(f) {
   }
 }
 
-test("SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches", { skip: !canSwitch && "requires distinct-uid execution" }, async () => {
-  const f = setup(); installCliDoubles(f);
+for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 227}: empty-root main drives real Git, both real adapters and real broker through four launches`, { skip: !canSwitch && "requires distinct-uid execution" }, async () => {
+  const f = setup(); installCliDoubles(f, workspaceReady);
   const h = createEpisodeHarness({ githubToken: "fake-read-token", initialBranchHead: f.sha });
   try {
     h.record.initial_target_sha=f.sha;
@@ -197,6 +203,16 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
       prepareWorkspace: (options) => {
         assert.ok(h.receipts().some(r => r.attempt_id === options.receipt.attempt_id && r.stage === "LAUNCH_UNKNOWN"), "reservation and launch intent precede preparation");
         const workspace = prepareAttemptWorkspace({ ...options, allowedHost: "file" });
+        if (workspaceReady && options.receipt.requested_worker === "codex-builder") {
+          // Kernel-enforced metadata denial models Codex workspace-write's .git
+          // boundary. Source files stay writable by the distinct worker UID.
+          const metadata = path.join(workspace.cwd, ".git");
+          const protect = dir => { for (const name of fs.readdirSync(dir)) {
+            const p=path.join(dir,name); if(fs.lstatSync(p).isDirectory())protect(p); else fs.chmodSync(p,0o444);
+          } fs.chmodSync(dir,0o555); };
+          if (process.getuid() === 0) protect(metadata);
+          else execFileSync(switchCommand[0],[...switchCommand.slice(1),"chmod","-R","a-w",metadata]);
+        }
         snapshots.push({ ...options.receipt, cwd: workspace.cwd }); return workspace;
       },
       pushBrokerImpl: async options => {

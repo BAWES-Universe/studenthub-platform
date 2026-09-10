@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CALLBACK_SCHEMA,
+  CLAUDE_MODEL,
   buildClaudeArgs,
   buildClaudeEnvironment,
   externalRunId,
@@ -67,9 +68,10 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   const call = execFileImpl.calls[0];
   assert.equal(call.file, "claude");
   assert.equal(call.options.shell, undefined, "execFile arg arrays must not opt into a shell");
-  assert.deepEqual(call.args.slice(0, 3), ["-p", "--output-format", "json"]);
-  assert.equal(call.args[3], "--json-schema");
-  assert.deepEqual(JSON.parse(call.args[4]), CALLBACK_SCHEMA);
+  assert.deepEqual(call.args.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
+  assert.equal(call.args[5], "--json-schema");
+  assert.deepEqual(JSON.parse(call.args[6]), CALLBACK_SCHEMA);
+  assert.equal(CLAUDE_MODEL, "opus", "the verifier must never inherit Fable or another host default");
   assert.ok(call.args.includes("--session-id"));
   assert.ok(call.args.includes(ATTEMPT));
   assert.match(call.args.at(-1), new RegExp(`Bound head: ${SHA}`));

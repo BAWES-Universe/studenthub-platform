@@ -217,8 +217,56 @@ temporary directory (0755/file 0644). Session receipts stay private. This allows
 the distinct worker uid to read the schema without gaining access to session
 authority. The directory is cleaned up after the CLI returns.
 
+### SHU-228: host-created worker results
+
+The Codex launch explicitly selects `gpt-5.6-sol` and sets
+`sandbox_workspace_write.network_access=false`; Claude explicitly selects `opus`.
+These arguments also apply on resume. Confirm the installed CLIs accept these
+options and report the expected model on the host; contract tests inspect the
+arguments but do not spend subscription usage or establish account availability.
+Model aliases/worker labels are not evidence of the model actually used.
+
+The builder edits and tests files, then returns `result_sha: null` with
+`BUILD_READY` or `REVISION_READY`. It must stop writing before returning. The
+host validates the attempt/head callback before invoking the existing broker.
+The broker reads ordinary tracked and non-ignored untracked files without
+following symlinks, stages raw bytes in its own index, and creates a commit with
+one parent: the bound target SHA. It never writes the worker HEAD, index or object
+store. Valid legacy callbacks naming a worker-created commit remain supported.
+
+Commit identity is deterministic: a fixed coordinator author/committer,
+`2000-01-01T00:00:00Z` author/committer dates, an attempt-specific message and the
+exact tree/parent. Use receipt timestamps for run timing, not this synthetic
+commit date. The host fsyncs an immutable `workspace-result-<attempt>.json` binding
+before publication. Retry reconstructs the same SHA; different files, target,
+branch or repository refuse rather than replace the binding. A second snapshot
+detects changes observed between passes. This is bounded consistency checking,
+not a claim that two reads can detect every malicious concurrent writer; the
+published commit always contains only the captured bytes, never later edits.
+
+Current limits: Linux `/proc/self/fd`; 20,000 files; 64 MiB per file and 256 MiB
+total. Symlinks, hardlinks, submodules and alternate/shallow metadata refuse.
+Those repository shapes need an explicitly reviewed extension. Worker Git
+filters, hooks and index are never used to produce the result tree.
+
+The broker rechecks the activation before snapshotting and before push, keeps
+the existing exact-SHA push and remote confirmation, and only then fills the
+callback's result SHA for review routing. Expiry/revocation or broker refusal
+HOLDs. Preserve the result binding, session sidecar, receipts and workspace on
+failure; never delete them to obtain a fresh retry budget. The existing broker
+still HOLDs an ambiguous pre-push record until remote confirmation resolves it.
+
+The distinct-UID integration includes a builder with non-writable Git metadata,
+both real adapters, real Git and the real broker, and must drive all four steps.
+The CLIs are deterministic process doubles. They prove the host integration;
+Hermes still must verify the installed Codex sandbox and worker network policy
+on the actual host for the watched fixture. Do not call this synthetic run a
+live SHU-63 PASS.
+
 Before the next live fixture, run `node --test
-.github/coordinator/test/attempt-workspace.test.mjs` on the reviewed host. The
+.github/coordinator/test/attempt-workspace.test.mjs
+.github/coordinator/test/workspace-result.test.mjs
+.github/coordinator/test/workspace-result-mutations.test.mjs` on the reviewed host. The
 distinct-uid tests must execute there (not skip). The full-loop test uses real Git,
 real adapters and the real broker with local bare repositories and CLI doubles;
 it makes no paid model calls. It is an integration regression, not the live SHU-63

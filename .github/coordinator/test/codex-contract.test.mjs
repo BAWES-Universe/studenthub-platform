@@ -30,6 +30,7 @@ import {
   persistDurableSession,
   readDurableSession,
   CALLBACK_SCHEMA,
+  CODEX_MODEL,
   SUCCESS_CALLBACK_STAGES,
 } from "../adapters/codex-cli.mjs";
 import { adapterNameFor, adapterLaunchOptions, createReceipt, foldLaunchOutcome, nextReceiptState } from "../reconcile.mjs";
@@ -103,6 +104,9 @@ test("launch args match the documented CLI contract: exec --json --sandbox works
   const args = calls[0].args;
   assert.equal(args[0], "exec");
   assert.ok(args.includes("--json"), "--json required for the JSONL event stream");
+  assert.equal(args[args.indexOf("--model") + 1], CODEX_MODEL);
+  assert.equal(CODEX_MODEL, "gpt-5.6-sol", "the builder must never inherit GPT-6 or another host default");
+  assert.equal(args[args.indexOf("--config") + 1], "sandbox_workspace_write.network_access=false", "worker network is disabled at the CLI boundary");
   const sandboxIdx = args.indexOf("--sandbox");
   assert.ok(sandboxIdx !== -1 && args[sandboxIdx + 1] === "workspace-write", "sandbox is workspace-write");
   assert.ok(!args.includes("danger-full-access") && !args.includes("dangerous-full-access"), "never unrestricted host access");

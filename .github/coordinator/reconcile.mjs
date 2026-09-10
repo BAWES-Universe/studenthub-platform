@@ -1867,6 +1867,16 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // before lifecycle so a refused activation cannot poll, persist, or launch.
   dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
 
+  // A worker and snapshot may outlast the approval. The host broker checks
+  // this authority again before snapshotting and before publishing a result.
+  const resultStillAuthorized = (issueId) => {
+    const current = singleRunActivation.requested
+      ? singleRunActivationStatus({ filePath: activationArg.path, config, receipts,
+        dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead,
+        initialTargetSha: env.DISPATCH_TARGET_SHA, io }) : singleRunActivation;
+    return dispatchEnabledFor(env, config, current) && activationAllowsTarget(current, issueId);
+  };
+
   // ---- SHU-225: EPISODE-SCOPED CONTINUATION ---------------------------------
   // An ARMED episode whose routing has named a successor may re-admit that ONE
   // issue (the activation's bound target) to selection for the next step. Two maps
@@ -1993,7 +2003,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
           ...options,
           fetchImpl,
-          io, // hermes-pool lease dir / spawn wiring (SHU-62); ignored by workspace-agents
+          io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },
           env,
         });
       } catch (err) {
@@ -2428,7 +2438,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
     ...options,
     fetchImpl,
-    io, // hermes-pool lease dir + spawn wiring (SHU-62); ignored by workspace-agents
+    io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },
     env,
     });
   }
