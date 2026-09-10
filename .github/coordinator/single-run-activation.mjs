@@ -40,19 +40,46 @@
 //      must equal the revision of the checkout being executed, so an activation
 //      cannot arm a coordinator that was never reviewed against it.
 //
-// WHY "ONE USE" IS ONE EPISODE, NOT ONE CLAIM
+// WHY "ONE USE" IS ONE EPISODE — AND HOW THE EPISODE'S END IS DECIDED
 //
 // The approved run contract is build → exact-head BLOCK → return to the writer →
-// same-branch revision → automatic re-review → PASS. A revision is a later
-// dispatch on the same target under the same authorization, so a rule of "one
-// claim ever" would stall the loop it exists to authorize. One use therefore
-// means one EPISODE for the bound target: from the first claim until that target
-// parks or completes. Attempts inside the episode remain bounded exactly as they
-// already were (max_failed_attempts, max_dispatch=1). Once the episode ends, the
-// activation can never authorize anything again.
+// same-branch revision → automatic re-review → PASS. So "one claim ever" would
+// stall the loop this exists to authorize — and so would spending the activation
+// on ANY terminal receipt, because the loop's own steps produce them:
+//
+//   BUILD_READY    -> COMPLETED
+//   REVISION_READY -> COMPLETED
+//   BLOCKED        -> HOLD
+//   PASS           -> COMPLETED
+//
+// (That mapping is `terminalVerdictCoherent` in reconcile.mjs.) An earlier revision
+// of this module spent the activation on the builder's own COMPLETED and was
+// BLOCKed in review for it: the review step could never be dispatched, and every
+// subsequent tick hard-refused. The episode's END is therefore derived from the
+// ROUTING semantics — never from a receipt stage:
+//
+//   * a routable successor (a review order after BUILD_READY/REVISION_READY, a
+//     revise order after a routable BLOCKED)      -> the episode CONTINUES
+//   * PASS                                         -> the episode ENDED
+//   * revision rounds exhausted                    -> the episode ENDED
+//   * retryable failures at `max_failed_attempts`  -> the episode ENDED
+//   * a terminal verdict the routing refuses to continue (no eligible reviewer, no
+//     active writer, lane mismatch, forged/stale head) -> the episode ENDED
+//
+// The judgement is the routing module's own: this file calls
+// `routeSuccessorFromReceipts()` and `outcomeForEvidenceStage()` directly rather
+// than re-deriving verdict semantics.
+//
+// When the routing cannot decide AT ALL — it has a verdict, but the durable
+// lineage lacks the provenance needed to mint an order — the episode is treated as
+// ONGOING. That asymmetry is deliberate: spending the authorization kills the loop
+// (the defect this rule exists to fix), whereas an over-long-lived authorization is
+// already bounded by expiry, target, revision, one slot and the runtime switch.
+// Failing that way round is the cheaper mistake.
 
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane } from "./review-routing.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -73,9 +100,10 @@ export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
 // An expiry that reaches further than a day is not an expiry, it is a permanence.
 export const MAX_ACTIVATION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-// Receipt stages that mean "this target's episode is over". FAILED is deliberately
-// absent: it is the retryable terminal, and the revision loop depends on it.
-export const SPENT_RECEIPT_STAGES = Object.freeze(["COMPLETED", "HOLD"]);
+// The durable stages a receipt can rest in (mirrors reconcile.mjs TERMINAL_STAGES).
+export const TERMINAL_RECEIPT_STAGES = Object.freeze(["COMPLETED", "FAILED", "HOLD"]);
+export const DEFAULT_MAX_FAILED_ATTEMPTS = 3;
+export const DEFAULT_MAX_REVISE = 3;
 
 // Permission shape accepted for the activation file: no group/world write, and no
 // world access at all. 0600 (operator only) and 0640 (operator + coordinator group)
@@ -83,6 +111,107 @@ export const SPENT_RECEIPT_STAGES = Object.freeze(["COMPLETED", "HOLD"]);
 // the record is a capability declaration, not a secret — what matters is that no
 // other account can edit or read it.
 const FORBIDDEN_MODE_BITS = 0o022 | 0o007;
+
+// ---------------------------------------------------------------------------
+// The episode: when does this target's run chain end?
+// ---------------------------------------------------------------------------
+
+// Mirrors reconcile.mjs `terminalVerdictCoherent`. Duplicated DELIBERATELY: that
+// helper lives in reconcile.mjs, which imports THIS module, so importing it back
+// would make the two circular. test/single-run-activation.test.mjs pins the two
+// definitions to agree across the whole verdict matrix, so they cannot drift apart
+// without a test failing.
+export function coherentTerminal(receipt) {
+  if (!receipt || !TERMINAL_RECEIPT_STAGES.includes(receipt.stage)) return false;
+  const verdict = outcomeForEvidenceStage(receipt.verdict_stage);
+  if (!verdict) return false;
+  if (verdict.outcome === "BLOCKED" || verdict.outcome === "FAILED") return receipt.stage === "HOLD";
+  return receipt.stage === "COMPLETED";
+}
+
+// The attempt whose verdict decides where the loop goes next: the newest
+// verdict-bearing terminal, ordered by last_activity — the same field the durable
+// read uses for its "newest wins" rule — and stable on ties.
+export function latestCoherentTerminal(issueReceipts = []) {
+  const coherent = (issueReceipts ?? []).filter(coherentTerminal);
+  if (coherent.length === 0) return null;
+  return coherent
+    .slice()
+    .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")))
+    .pop();
+}
+
+// Decide whether the bound target's episode has ENDED, using the production
+// routing semantics. Returns { ended, reason, successor? } and NEVER throws: an
+// internal routing failure must surface as "cannot decide" (ongoing), not as a
+// crashed coordinator.
+export function episodeVerdict({ receipts = [], targetIssueId, config = {} } = {}) {
+  const issueReceipts = (receipts ?? []).filter((r) => r && r.issue_id === targetIssueId);
+  if (issueReceipts.length === 0) return { ended: false, reason: "no attempt has been dispatched yet" };
+
+  // Retryable run failures end the episode only at the cap — the same bound the
+  // selector uses to park an issue (reconcile.mjs).
+  const maxFailed = Number.isInteger(config?.max_failed_attempts) ? config.max_failed_attempts : DEFAULT_MAX_FAILED_ATTEMPTS;
+  const failed = issueReceipts.filter((r) => r.stage === "FAILED").length;
+  if (failed >= maxFailed) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` };
+
+  const terminal = latestCoherentTerminal(issueReceipts);
+  if (!terminal) return { ended: false, reason: "mid-episode: no verdict-bearing terminal yet" };
+
+  // A PASS verdict is an ending on its own terms: the loop is complete. It is
+  // decided from the verdict rather than from the routing, because the routing also
+  // needs a usable lineage to name a next actor, and a finished loop has no next
+  // actor to name. The lane must match, though: a builder lane cannot carry a PASS,
+  // and that contradiction is left to the routing to name below.
+  const verdict = outcomeForEvidenceStage(terminal.verdict_stage);
+  if (verdict?.outcome === "PASS" && verdictMatchesLane(terminal.requested_worker, terminal.verdict_stage)) {
+    return { ended: true, reason: "review PASS — the episode is complete" };
+  }
+
+  let routed;
+  try {
+    routed = routeSuccessorFromReceipts({
+      issueReceipts,
+      terminal,
+      evidenceStage: terminal.verdict_stage,
+      evidenceResultSha: terminal.result_sha ?? null,
+      max_revise: Number.isInteger(config?.max_revise) ? config.max_revise : DEFAULT_MAX_REVISE,
+      // No authoritative branch head is fetched here: this runs before any network
+      // work, on the durable facts alone. The backfill's own forged/stale-head check
+      // still governs whether a successor is actually published.
+      authoritativeHead: null,
+    });
+  } catch (err) {
+    return { ended: false, reason: `mid-episode: routing could not decide (${err?.message ?? "error"})` };
+  }
+
+  if (routed.ok && routed.order) {
+    return { ended: false, reason: `mid-episode: ${routed.order.role} successor is routable`, successor: routed.order };
+  }
+  if (routed.ok && routed.terminal) return { ended: true, reason: "review PASS — the episode is complete" };
+
+  // Not every routing refusal means the episode is over, and the difference matters
+  // in one direction only: spending the authorization kills the loop.
+  //
+  //   ENDED (a verdict-level determination, or a contradiction in the durable facts
+  //   that needs a human): revisions exhausted, a forged/stale head, a verdict from
+  //   the wrong lane, an unexpected outcome, a role that cannot be routed.
+  //
+  //   NOT ENDED (the routing could not NAME the next actor — an availability or
+  //   lineage gap, not an ending): no eligible reviewer, no active writer, a
+  //   lineage without provenance, an unknown worker lane. These are reported and
+  //   left to expire rather than allowed to kill a loop that is still in flight.
+  if (routed.exhausted === true) return { ended: true, reason: "revision attempts exhausted — the episode is over" };
+  if (routed.forged === true) return { ended: true, reason: `refused on contradictory facts (${routed.reason})` };
+  if (routed.hold) return { ended: false, reason: `mid-episode: routing holds (${routed.hold}) — no next actor named yet` };
+  if (/no provenance entries/.test(routed.reason ?? "")) {
+    return { ended: false, reason: "mid-episode: a successor is due but the durable lineage lacks provenance to mint its order" };
+  }
+  if (/unknown worker lane/.test(routed.reason ?? "")) {
+    return { ended: false, reason: "mid-episode: the lineage names a worker lane this coordinator cannot route" };
+  }
+  return { ended: true, reason: `no routable successor (${routed.reason ?? "no order"})` };
+}
 
 // ---------------------------------------------------------------------------
 // argv
@@ -161,6 +290,10 @@ function readActivationText(filePath, io = {}) {
   } catch (err) {
     return { ok: false, reason: `activation file does not exist or cannot be read (${err?.code ?? err?.message ?? "error"})` };
   }
+  // Reported explicitly rather than left to the regular-file check below: lstat does
+  // not follow the link, so a symlink trips BOTH checks — and what this guard binds
+  // is the operator-visible diagnosis (pinned by the SYM mutation), not the refusal,
+  // which is doubly guaranteed.
   if (stat.isSymbolicLink()) return { ok: false, reason: "activation file is a symlink" };
   if (!stat.isFile()) return { ok: false, reason: "activation file is not a regular file" };
   if ((stat.mode & FORBIDDEN_MODE_BITS) !== 0) {
@@ -282,11 +415,10 @@ export function singleRunActivationStatus({
   }
 
   // (7) One use — spent once the bound target's episode has ended.
-  const spent = (Array.isArray(receipts) ? receipts : []).filter(
-    (r) => r && r.issue_id === record.target_issue_id && SPENT_RECEIPT_STAGES.includes(r.stage),
-  );
-  if (spent.length > 0) {
-    return refused(`activation is spent: ${record.target_issue_id} already has a ${spent[0].stage} receipt`);
+  //     The episode — not a single step — is the unit of use: see episodeVerdict().
+  const episode = episodeVerdict({ receipts, targetIssueId: record.target_issue_id, config });
+  if (episode.ended) {
+    return refused(`activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`);
   }
 
   return {
@@ -300,6 +432,7 @@ export function singleRunActivationStatus({
     coordinator_revision: record.coordinator_revision,
     slots: record.slots,
     expires_at: record.expires_at,
+    episode: episode.reason,
   };
 }
 

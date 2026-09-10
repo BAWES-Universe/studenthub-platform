@@ -71,17 +71,54 @@ symlink, not a directory), and must not be group/world writable or world readabl
 * **It cannot be replayed.** It expires, and it is spent once the bound target's
   episode ends.
 
-## One use is one *episode*, not one claim
+## One use is one *episode*, and the episode's end is derived, not assumed
 
 The approved run contract is build → exact-head BLOCK → return to the writer →
-same-branch revision → automatic re-review → PASS. A revision is a later dispatch on
-the same target under the same authorization, so "one claim ever" would stall the
-loop it exists to authorize. One use therefore means one **episode** for the bound
-target: from the first claim until that target **parks** (a `COMPLETED` or `HOLD`
-receipt). Attempts inside the episode stay bounded exactly as before
-(`max_failed_attempts`, `max_dispatch`). Once the episode ends, the same activation
-can never arm anything again — the next invocation refuses with
-`activation is spent`.
+same-branch revision → automatic re-review → PASS. So "one claim ever" would stall
+the loop this exists to authorize — and so would spending the activation on **any**
+terminal receipt, because the loop's own steps produce them
+(`terminalVerdictCoherent` in `reconcile.mjs`):
+
+| verdict | durable stage |
+| --- | --- |
+| `BUILD_READY` | `COMPLETED` |
+| `REVISION_READY` | `COMPLETED` |
+| `BLOCKED` | `HOLD` |
+| `PASS` | `COMPLETED` |
+
+One use therefore means one **episode**, and the episode's **end** is decided from
+the existing routing semantics (`routeSuccessorFromReceipts`, `outcomeForEvidenceStage`),
+never from a receipt stage:
+
+**The episode ENDS when**
+
+* a review **PASS** verdict lands — the loop is complete; or
+* **revision rounds are exhausted** (`review_round > max_revise`); or
+* **retryable failures reach `max_failed_attempts`** — the same cap the selector
+  uses to park an issue; or
+* the routing refuses on a **contradiction in the durable facts** that needs a
+  human: a verdict from the wrong lane, an unexpected outcome, a forged/stale head,
+  a role that cannot be routed.
+
+**The episode CONTINUES while**
+
+* a successor is routable: a review order after `BUILD_READY`/`REVISION_READY`, a
+  revise order after a routable `BLOCKED`; or
+* the routing cannot yet *name* the next actor — no eligible reviewer, no active
+  writer, a lineage without provenance, an unknown worker lane. **These do not spend
+  the authorization.** They are availability or lineage gaps, not endings, and
+  spending here would kill a loop that is still in flight. The activation is bounded
+  instead by its expiry, its target, its revision, one slot, and the runtime switch.
+
+Attempts inside the episode stay bounded exactly as before (`max_failed_attempts`,
+`max_dispatch`). Once the episode ends, the same activation can never arm anything
+again — the next invocation refuses with `activation is spent: the episode … ended`.
+
+*Why this is spelled out so precisely:* the first revision of this mechanism spent
+the authorization on any `COMPLETED`/`HOLD` receipt, which is the builder's own
+success — so the review step could never be dispatched and every later tick
+hard-refused. It was caught in independent review, not by the suite, and the
+multi-tick regression below now pins the whole sequence.
 
 ## Fail-closed summary
 
@@ -119,7 +156,8 @@ argument the coordinator behaves exactly as it did before this change.
 
 ## Tests
 
-`test/single-run-activation.test.mjs`:
+`test/single-run-activation.test.mjs` (17 tests). CI runs this file: the
+`fast-checks` job in `.github/workflows/ci.yml` invokes `npm run test:coordinator`.
 
 * the 5-combination committed truth table, re-asserted with the activation absent —
   the default path cannot drift;
@@ -129,17 +167,38 @@ argument the coordinator behaves exactly as it did before this change.
   modes, non-JSON, JSON array, missing key, extra key, bad id, non-canonical target,
   bad and mismatched contract refs, bad and wrong and unresolvable revisions,
   wrong target, `slots` 2 and 0 and mismatched-cap, expired, over-long window,
-  non-timestamp, board-wide config, two-issue scope, inconsistent lane, already
-  spent by `COMPLETED` and by `HOLD`);
-* one-use episode semantics: `FAILED`/`RUNNING`/`RESERVED` do not spend it,
-  `COMPLETED`/`HOLD` do, other issues' receipts are irrelevant;
-* three integration runs through `main()`: inert default, a refused activation
-  exiting 2 with no network, and the **running revision** binding proved end to end
-  against the real checkout;
-* **12 mutations**, each one proving a guard is load-bearing by removing it and
-  asserting the corresponding refusal stops happening — the runtime switch, the
-  committed two-gate path, target, contract ref, revision, slots, expiry wall,
-  expiry window, one-use, file permissions, unknown keys, and the board-wide guard.
+  non-timestamp, board-wide config, two-issue scope, inconsistent lane, and two
+  genuine episode endings — a `PASS` verdict and exhausted retryable failures);
+* **episode semantics** both ways: the loop's own verdict stages
+  (`COMPLETED`/`BUILD_READY`, `HOLD`/`BLOCKED`, `COMPLETED`/`REVISION_READY`) never
+  spend it, a routable successor is never spent early, and the episode does end on
+  `PASS`, on exhausted attempts, and on a verdict-level contradiction;
+* the duplicated coherence predicate is **pinned to `reconcile.mjs`'s** across the
+  whole verdict × stage matrix, so the copy cannot silently drift from the original;
+* four integration runs through `main()`: inert default, a refused activation
+  exiting 2 with no network, the **running revision** binding proved end to end
+  against the real checkout, and the **multi-tick episode regression**;
+* **the multi-tick episode regression** — six real `main()` ticks over a persistent
+  Linear store and the real durable-read branch, with a fixture configuration whose
+  committed flag is **false** (so the activation is the only thing authorizing
+  dispatch): the builder launches, reports `BUILD_READY`; the reviewer `BLOCKED`s;
+  the writer revises; the re-review `PASS`es — and the authorization is ARMED at
+  every step and refuses only after `PASS`, launching nothing further and refusing
+  a plain re-run identically;
+* **13 mutations**, each removing one guard and asserting the corresponding refusal
+  stops happening: the runtime switch, the committed two-gate path, target, contract
+  ref, revision, slots, expiry wall, expiry window, **premature spending on a
+  routable successor**, **premature spending on retryable failures**, the **symlink
+  guard**, file permissions, unknown keys, and the board-wide guard.
 
-The suite fails for the right reason when a guard is removed; a mutation that kills
-the process instead of failing the named assertion is not counted as a kill.
+Two notes on mutation honesty:
+
+* a mutation that crashes the probe instead of failing the *named* assertion is not
+  accepted as a kill. One candidate mutation was rejected and rewritten during
+  development for exactly that reason (it replaced the mandatory-regex check with
+  `false`, which made the probe iterate `undefined` and die with a `TypeError`
+  before reaching the assertion).
+* the symlink guard is *doubly* covered: `lstat` does not follow links, so a symlink
+  also fails the regular-file check. The guard therefore binds the **operator-visible
+  reason** (`activation file is a symlink`) rather than the refusal, and the SYM
+  mutation asserts the reason, not merely the outcome.

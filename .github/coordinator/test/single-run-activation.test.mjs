@@ -27,8 +27,17 @@ import {
   singleRunActivationStatus,
   validateActivationRecord,
   activationAllowsTarget,
+  coherentTerminal,
+  episodeVerdict,
 } from "../single-run-activation.mjs";
-import { dispatchEnabledFor, main } from "../reconcile.mjs";
+import {
+  dispatchEnabledFor,
+  main,
+  terminalVerdictCoherent,
+  createReceipt,
+  parseReceiptsFromComments,
+  receiptCommentBody,
+} from "../reconcile.mjs";
 
 const COORDINATOR_DIR = fileURLToPath(new URL("..", import.meta.url));
 const CONFIG_PATH = join(COORDINATOR_DIR, "config.json");
@@ -84,6 +93,71 @@ function statusOf(over = {}, opts = {}) {
 // The runtime switch, as the operator sets it for the run window.
 const SWITCH_ON = { ENABLE_DISPATCH: "true" };
 const NO_SWITCH = {};
+
+// A durable receipt in the shape the coordinator itself writes. Used both to
+// exercise the episode rule directly and to seed history for the multi-tick walk.
+function mkReceipt({
+  issue_id = TARGET,
+  attempt_id,
+  requested_worker = "codex-builder",
+  stage = "COMPLETED",
+  verdict_stage = null,
+  worker_identity = "session-1",
+  last_activity = null,
+}) {
+  // createReceipt is a validated factory returning {ok, receipt|errors}.
+  const created = createReceipt({
+    issue_id,
+    authorization_ref: CONTRACT,
+    requested_worker,
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: `coordinator/${issue_id}`,
+    target_sha: REVISION,
+    attempt_id: attemptIdFor(attempt_id),
+  });
+  if (!created.ok) throw new Error(`fixture receipt rejected: ${created.errors.join("; ")}`);
+  const receipt = {
+    ...created.receipt,
+    stage,
+    worker_identity,
+    external_run_id: stage === "RESERVED" ? null : `codexrun_${attempt_id}`,
+    adapter_status: stage === "RESERVED" ? null : stage === "FAILED" ? "failed" : "completed",
+    // COMPLETED/HOLD require validated evidence links in the receipt contract.
+    evidence_links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/1"],
+    timestamps: {
+      reserved: "2026-09-10T11:00:00.000Z",
+      launch: stage === "RESERVED" ? null : "2026-09-10T11:00:05.000Z",
+      heartbeat: null,
+      terminal: stage === "RESERVED" || stage === "RUNNING" ? null : "2026-09-10T11:05:00.000Z",
+    },
+    last_activity: last_activity ?? `2026-09-10T11:${String(attemptOrder(attempt_id)).padStart(2, "0")}:00.000Z`,
+  };
+  if (verdict_stage) receipt.verdict_stage = verdict_stage;
+  return receipt;
+}
+
+// Deterministic, ordered last_activity for the seeded steps: the episode rule
+// takes the NEWEST verdict-bearing terminal, so the fixtures must be ordered.
+const STEP_ORDER = new Map();
+function attemptOrder(attempt_id) {
+  if (!STEP_ORDER.has(attempt_id)) STEP_ORDER.set(attempt_id, STEP_ORDER.size);
+  return STEP_ORDER.get(attempt_id);
+}
+
+// The receipt contract requires a UUID attempt id; tests want to name steps. Map
+// each label to a stable, schema-valid UUID (and reuse the same map for the ORDER
+// above, so a step's ordering and its id stay in step).
+const ATTEMPT_IDS = new Map();
+function attemptIdFor(label) {
+  if (!ATTEMPT_IDS.has(label)) {
+    const n = ATTEMPT_IDS.size + 1;
+    ATTEMPT_IDS.set(label, `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
+  }
+  return ATTEMPT_IDS.get(label);
+}
+
+// Convenience: an activation status over a receipt list.
+const statusWith = (receipts) => statusOf({}, { receipts });
 
 // ---------------------------------------------------------------------------
 // The default path is untouched
@@ -222,8 +296,14 @@ test("SHU-63 activation: missing, malformed, stale, replayed, wrong-target, wron
     ["board-wide config (no scope)", () => statusOf({}, { config: { ...COMMITTED, dispatch_scope: undefined } })],
     ["scope of two issues", () => statusOf({}, { config: { ...COMMITTED, dispatch_scope: { issue_ids: [TARGET, OTHER_ISSUE] } } })],
     ["fixture lane inconsistent with scope", () => statusOf({}, { config: { ...COMMITTED, fixture_lane: { id: OTHER_ISSUE, authorization_ref: CONTRACT } } })],
-    ["already spent (COMPLETED)", () => statusOf({}, { receipts: [{ issue_id: TARGET, stage: "COMPLETED" }] })],
-    ["already spent (HOLD)", () => statusOf({}, { receipts: [{ issue_id: TARGET, stage: "HOLD" }] })],
+    ["episode ended (PASS verdict)", () => statusWith([
+      mkReceipt({ attempt_id: "step-pass", requested_worker: "claude-verifier", stage: "COMPLETED", verdict_stage: "PASS" }),
+    ])],
+    ["episode ended (retryable failures exhausted)", () => statusWith([
+      mkReceipt({ attempt_id: "fail-1", stage: "FAILED" }),
+      mkReceipt({ attempt_id: "fail-2", stage: "FAILED" }),
+      mkReceipt({ attempt_id: "fail-3", stage: "FAILED" }),
+    ])],
   ];
 
   for (const [label, run] of cases) {
@@ -241,17 +321,105 @@ test("SHU-63 activation: missing, malformed, stale, replayed, wrong-target, wron
   }
 });
 
-test("SHU-63 activation: one-use is an EPISODE — FAILED does not spend it, COMPLETED/HOLD do", () => {
-  // The approved run contract is build -> BLOCK -> revision -> re-review -> PASS, so
-  // a retryable FAILED attempt inside the episode must not kill the authorization...
-  assert.equal(statusOf({}, { receipts: [{ issue_id: TARGET, stage: "FAILED" }] }).state, "armed");
-  assert.equal(statusOf({}, { receipts: [{ issue_id: TARGET, stage: "RUNNING" }] }).state, "armed");
-  assert.equal(statusOf({}, { receipts: [{ issue_id: TARGET, stage: "RESERVED" }] }).state, "armed");
-  // ...while receipts belonging to another issue are irrelevant to this binding.
-  assert.equal(statusOf({}, { receipts: [{ issue_id: OTHER_ISSUE, stage: "COMPLETED" }] }).state, "armed");
-  // ...and once the episode has ended the activation can never arm again.
-  assert.match(statusOf({}, { receipts: [{ issue_id: TARGET, stage: "COMPLETED" }] }).reason, /spent/);
-  assert.match(statusOf({}, { receipts: [{ issue_id: TARGET, stage: "HOLD" }] }).reason, /spent/);
+test("SHU-63 activation: the loop's OWN verdict stages do not spend it (review BLOCK #1)", () => {
+  // The builder's success persists as COMPLETED and the reviewer's rejection as
+  // HOLD — these ARE the loop's mid-episode stages (terminalVerdictCoherent:
+  // BUILD_READY/REVISION_READY -> COMPLETED, BLOCKED -> HOLD). Spending the
+  // authorization on either one makes the next step undispatachable and every
+  // following tick hard-refuses instead of continuing the loop. That is the defect
+  // Opus blocked; it is pinned here so it cannot return.
+  assert.equal(
+    statusWith([mkReceipt({ attempt_id: "b1", stage: "COMPLETED", verdict_stage: "BUILD_READY" })]).state,
+    "armed",
+    "the review step cannot be dispatched: the builder's own COMPLETED receipt already spent the activation",
+  );
+  assert.equal(
+    statusWith([
+      mkReceipt({ attempt_id: "b1", stage: "COMPLETED", verdict_stage: "BUILD_READY" }),
+      mkReceipt({ attempt_id: "b2", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED" }),
+    ]).state,
+    "armed",
+    "a routable BLOCKED schedules the revision under the SAME authorization",
+  );
+  assert.equal(
+    statusWith([
+      mkReceipt({ attempt_id: "b1", stage: "COMPLETED", verdict_stage: "BUILD_READY" }),
+      mkReceipt({ attempt_id: "b2", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED" }),
+      mkReceipt({ attempt_id: "b3", stage: "COMPLETED", verdict_stage: "REVISION_READY" }),
+    ]).state,
+    "armed",
+    "the re-review after a revision stays inside the same episode",
+  );
+  // A terminal carrying no verdict at all is mid-flight, not an ending.
+  assert.equal(statusWith([mkReceipt({ attempt_id: "n1", stage: "COMPLETED" })]).state, "armed");
+  // Retryable run failures stay inside the episode below the cap...
+  assert.equal(statusWith([mkReceipt({ attempt_id: "f1", stage: "FAILED" })]).state, "armed");
+  assert.equal(
+    statusWith([mkReceipt({ attempt_id: "f1", stage: "FAILED" }), mkReceipt({ attempt_id: "f2", stage: "FAILED" })]).state,
+    "armed",
+  );
+  // ...and another issue's terminal verdict never touches this binding.
+  assert.equal(
+    statusWith([
+      mkReceipt({ issue_id: OTHER_ISSUE, attempt_id: "o1", requested_worker: "claude-verifier", stage: "COMPLETED", verdict_stage: "PASS" }),
+    ]).state,
+    "armed",
+  );
+});
+
+test("SHU-63 activation: the episode ENDS on PASS, exhausted attempts, or a verdict the routing cannot continue", () => {
+  const pass = statusWith([
+    mkReceipt({ attempt_id: "p1", requested_worker: "claude-verifier", stage: "COMPLETED", verdict_stage: "PASS" }),
+  ]);
+  assert.equal(pass.state, "refused");
+  assert.match(pass.reason, /the episode for .* ended/);
+  assert.match(pass.reason, /PASS/);
+
+  const exhausted = statusWith([
+    mkReceipt({ attempt_id: "x1", stage: "FAILED" }),
+    mkReceipt({ attempt_id: "x2", stage: "FAILED" }),
+    mkReceipt({ attempt_id: "x3", stage: "FAILED" }),
+  ]);
+  assert.equal(exhausted.state, "refused", "an exhausted episode is over");
+  assert.match(exhausted.reason, /retryable failures exhausted/);
+
+  // A verdict from the wrong lane is a contradiction in the durable facts, not an
+  // availability gap: a builder lane cannot carry a review PASS.
+  const wrongLane = statusWith([
+    mkReceipt({ attempt_id: "w1", requested_worker: "hermes-box", stage: "COMPLETED", verdict_stage: "PASS" }),
+  ]);
+  assert.equal(wrongLane.state, "refused", "a verdict-level contradiction ends the episode rather than staying armed");
+  assert.match(wrongLane.reason, /no routable successor/);
+});
+
+test("SHU-63 activation: a mid-episode step with a ROUTABLE successor is never spent early", () => {
+  // Exercise the routing path this rule delegates to: a writer lineage plus a
+  // reviewer BLOCK routes a revise order, so the episode continues.
+  const lineage = [
+    mkReceipt({ attempt_id: "a1", stage: "COMPLETED", verdict_stage: "BUILD_READY", worker_identity: "builder-session" }),
+    mkReceipt({ attempt_id: "a2", requested_worker: "claude-verifier", stage: "HOLD", verdict_stage: "BLOCKED", worker_identity: "reviewer-session" }),
+  ];
+  const verdict = episodeVerdict({ receipts: lineage, targetIssueId: TARGET, config: { max_failed_attempts: 3, max_revise: 3 } });
+  assert.equal(verdict.ended, false, verdict.reason);
+  assert.equal(verdict.successor?.role, "revise", "a routable BLOCKED hands the work back to the writer");
+  assert.equal(statusWith(lineage).state, "armed");
+});
+
+test("SHU-63 activation: the duplicated coherence predicate agrees with reconcile's", () => {
+  // coherentTerminal deliberately duplicates terminalVerdictCoherent to avoid an
+  // import cycle. Bind them together across the whole matrix so they cannot drift.
+  const verdictStages = ["BUILD_READY", "REVISION_READY", "PASS", "BLOCKED", "FAILED", null, "garbage"];
+  const receiptStages = ["COMPLETED", "HOLD", "FAILED", "RUNNING", "RESERVED"];
+  for (const verdict_stage of verdictStages) {
+    for (const stage of receiptStages) {
+      const receipt = { stage, verdict_stage };
+      assert.equal(
+        coherentTerminal(receipt),
+        terminalVerdictCoherent(receipt, verdict_stage),
+        `coherence disagreement at ${stage}/${String(verdict_stage)}`,
+      );
+    }
+  }
 });
 
 test("SHU-63 activation: the claim-time target check is narrow by construction", () => {
@@ -356,6 +524,214 @@ test("SHU-63 activation: an invalid flag shape is refused before anything runs",
 });
 
 // ---------------------------------------------------------------------------
+// End-to-end: ONE authorization across the WHOLE episode
+// ---------------------------------------------------------------------------
+
+const TRUSTED_ACTOR = "11111111-2222-4333-8444-555555555555";
+const EPISODE_TRIGGER = "agtch_episode_1";
+
+// A persistent Linear store across ticks: issues from a mutable node list, receipt
+// comments stored per issue, commentCreate requiring the real UUID (as Linear does).
+function episodeStore(issueNodes, commentBodies) {
+  return async (url, opts) => {
+    const { query } = JSON.parse(opts.body);
+    const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
+    if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes: issueNodes } });
+    if (query.includes("CoordinatorIssueComments")) {
+      const issueId = JSON.parse(opts.body).variables.issueId;
+      const known = issueNodes.some((n) => n.id === issueId || n.identifier === issueId);
+      return respond({ issue: { comments: { nodes: known ? [...commentBodies] : [] } } });
+    }
+    if (query.includes("commentCreate")) {
+      const { issueId, body } = JSON.parse(opts.body).variables;
+      if (!issueNodes.some((n) => n.id === issueId)) throw new Error(`non-UUID comment write attempted (${issueId})`);
+      commentBodies.push({ body, createdAt: new Date().toISOString() });
+      return respond({ commentCreate: { success: true, comment: { id: `c${commentBodies.length}` } } });
+    }
+    return respond({});
+  };
+}
+
+// The builder lane transport: counts launches, poll outcome settable by the test.
+function episodeAgent() {
+  let triggers = 0;
+  let poll = { object: "workspace_agent.trigger_run", id: "apirun_episode_1", status: "queued", agent_id: null, error: null };
+  const impl = async (url) => {
+    if (url.includes("/runs/")) return { status: 200, ok: true, json: async () => ({ ...poll }) };
+    triggers += 1;
+    return { status: 202, ok: true, json: async () => ({ conversation_url: "https://chatgpt.com/c/episode", agent_trigger_run_id: "apirun_episode_1" }) };
+  };
+  impl.triggers = () => triggers;
+  impl.setPoll = (body) => { poll = { ...poll, ...body }; };
+  return impl;
+}
+
+const episodeAdapter = (() => {
+  let mod = null;
+  const load = () => (mod ??= import("../adapters/workspace-agents.mjs"));
+  return {
+    launchBuilder: async (o) => (await load()).launchBuilder({ ...o, token: "wa-tok", api_trigger_id: EPISODE_TRIGGER }),
+    monitorRun: async (o) => (await load()).monitorRun({ ...o, token: "wa-tok", api_trigger_id: EPISODE_TRIGGER }),
+  };
+})();
+
+// The PRODUCTION configuration shape for the fixture: the committed flag is FALSE,
+// the board is scoped to the single target, and the activation supplies the missing
+// authorization. If the mechanism is wrong, this is where it shows.
+function episodeConfigPath() {
+  const dir = fs.mkdtempSync(join(tmpdir(), "shu63-episode-cfg-"));
+  const p = join(dir, "config.json");
+  fs.writeFileSync(p, JSON.stringify({
+    pilot_repo: "BAWES-Universe/studenthub-platform",
+    team: "SHU",
+    max_dispatch: 1,
+    enable_dispatch: false,
+    adapter_pause_map: {},
+    wake_actor_allowlist: ["BAWES"],
+    linear_callback_actor_ids: [TRUSTED_ACTOR],
+    max_failed_attempts: 3,
+    dispatch_scope: { issue_ids: [TARGET] },
+    fixture_lane: { id: TARGET, authorization_ref: CONTRACT },
+  }));
+  return p;
+}
+
+function callbackCommentFor(attempt_id, stage) {
+  return {
+    user: { id: TRUSTED_ACTOR, displayName: "Worker" },
+    body: [
+      "<!-- coordinator-callback v1 -->",
+      "coordinator-callback v1",
+      "```json",
+      JSON.stringify({
+        attempt_id,
+        target_sha: REVISION,
+        stage,
+        links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/1"],
+      }),
+      "```",
+    ].join("\n"),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses", async () => {
+  const issueNodes = [{
+    id: "11111111-aaaa-4bbb-8ccc-000000000777",
+    identifier: TARGET,
+    title: "Activation episode target",
+    state: { name: "Todo" },
+    priorityLabel: "High",
+    labels: { nodes: [{ name: "repo:platform" }] },
+    assignee: null,
+    delegate: null,
+    parent: null,
+    relations: { nodes: [] },
+  }];
+  const comments = [];
+  const store = episodeStore(issueNodes, comments);
+  const wa = episodeAgent();
+  const configPath = episodeConfigPath();
+  const { dir, file } = makeFile(record());
+  const env = {
+    ENABLE_DISPATCH: "true",
+    LINEAR_API_TOKEN: "tok",
+    GITHUB_TOKEN: "",
+    WORKSPACE_AGENT_ACCESS_TOKEN: "wa-tok",
+    WORKSPACE_AGENT_TRIGGER_ID: EPISODE_TRIGGER,
+    DISPATCH_TARGET_SHA: REVISION,
+  };
+  // Each tick is a REAL coordinator run over the REAL durable-read branch, with the
+  // activation evaluated by production code. The only things the test plays are the
+  // worker (its callback comment) and the clock's ordering.
+  const tick = async () => {
+    const out = [];
+    const code = await main(["--activation", file], env, {
+      configPath,
+      skipActivationPreflight: true,
+      stdout: (s) => out.push(s),
+      fetchDurable: true,
+      pollRuns: true,
+      gitHead: REVISION,
+      adapterModules: { "codex-cli": episodeAdapter },
+      fetchImpl: async (url, opts) => (url.includes("api.linear.app") ? store(url, opts) : wa(url, opts)),
+    });
+    const text = out.join("\n");
+    return { code, text, armed: /activation=ARMED/.test(text), refused: /single-run activation REFUSED/.test(text) };
+  };
+  // Fixture times are ordered AFTER whatever the live clock stamps on real receipts.
+  const later = (n) => `2026-09-11T0${n}:00:00.000Z`;
+
+  try {
+    // (1) The episode begins: the activation alone authorizes the builder launch —
+    //     the committed flag is false, so nothing else can be doing it.
+    const t0 = await tick();
+    assert.equal(t0.refused, false, `tick 0 must not refuse:\n${t0.text}`);
+    assert.equal(t0.armed, true, `tick 0 must be ARMED:\n${t0.text}`);
+    assert.equal(wa.triggers(), 1, "the activation authorized exactly one builder launch");
+    const launched = parseReceiptsFromComments(comments).find((r) => r.requested_worker === "codex-builder");
+    assert.ok(launched, "the RESERVED receipt is durable before any launch");
+
+    // (2) builder BUILD_READY -> COMPLETED. The loop's first verdict must NOT spend it.
+    comments.push(callbackCommentFor(launched.attempt_id, "BUILD_READY"));
+    wa.setPoll({ status: "completed" });
+    const t1 = await tick();
+    assert.equal(t1.refused, false, `the builder's own COMPLETED spent the authorization:\n${t1.text}`);
+    assert.equal(t1.armed, true, "still ARMED after the builder's terminal receipt");
+    const built = parseReceiptsFromComments(comments).find((r) => r.attempt_id === launched.attempt_id);
+    assert.equal(built.stage, "COMPLETED", "the lifecycle persisted the builder's terminal state");
+    assert.equal(built.verdict_stage, "BUILD_READY");
+
+    // (3) reviewer BLOCKED -> HOLD (the reviewer lane runs in its own lane).
+    comments.push({
+      body: receiptCommentBody(mkReceipt({
+        attempt_id: "episode-review", requested_worker: "claude-verifier", stage: "HOLD",
+        verdict_stage: "BLOCKED", worker_identity: "reviewer-session", last_activity: later(1),
+      })),
+      createdAt: new Date().toISOString(),
+    });
+    const t2 = await tick();
+    assert.equal(t2.refused, false, `a reviewer BLOCK spent the authorization:\n${t2.text}`);
+    assert.equal(t2.armed, true, "still ARMED after a reviewer BLOCK");
+
+    // (4) the writer's revision -> REVISION_READY, then the automatic re-review.
+    comments.push({
+      body: receiptCommentBody(mkReceipt({
+        attempt_id: "episode-revision", stage: "COMPLETED", verdict_stage: "REVISION_READY",
+        worker_identity: "builder-session", last_activity: later(2),
+      })),
+      createdAt: new Date().toISOString(),
+    });
+    const t3 = await tick();
+    assert.equal(t3.refused, false, `the revision spent the authorization:\n${t3.text}`);
+    assert.equal(t3.armed, true, "still ARMED after the revision");
+
+    // (5) re-review PASS -> the episode is over. NOW it is spent, and it stays spent.
+    comments.push({
+      body: receiptCommentBody(mkReceipt({
+        attempt_id: "episode-rereview", requested_worker: "claude-verifier", stage: "COMPLETED",
+        verdict_stage: "PASS", worker_identity: "reviewer-session-2", last_activity: later(3),
+      })),
+      createdAt: new Date().toISOString(),
+    });
+    const t4 = await tick();
+    assert.equal(t4.refused, true, `PASS must spend the authorization:\n${t4.text}`);
+    assert.equal(t4.code, 2, "a spent authorization refuses loudly, it does not quietly do nothing");
+    assert.match(t4.text, /activation is spent: the episode for .* ended/);
+    assert.match(t4.text, /PASS/);
+    const triggersAtEnd = wa.triggers();
+    assert.equal(triggersAtEnd, 1, "no further dispatch is authorized once the episode has ended");
+
+    // (6) ...and it cannot run again: a plain re-run is refused identically.
+    const t5 = await tick();
+    assert.equal(t5.refused, true, "the same authorization cannot start a second run");
+    assert.equal(wa.triggers(), triggersAtEnd, "and it launches nothing");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // MUTATIONS — every guard above must be load-bearing
 // ---------------------------------------------------------------------------
 
@@ -390,6 +766,18 @@ function status(over = {}, opts = {}) {
     now: NOW,
     gitHead: opts.gitHead ?? REV,
   });
+}
+function statusWith(receipts) {
+  return mod.singleRunActivationStatus({ filePath: withFile(rec()), config: COMMITTED, receipts, now: NOW, gitHead: REV });
+}
+function symlinkStatus() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shu63-sym-"));
+  const real = path.join(dir, "real.json");
+  fs.writeFileSync(real, JSON.stringify(rec()));
+  fs.chmodSync(real, 0o600);
+  const link = path.join(dir, "link.json");
+  fs.symlinkSync(real, link);
+  return mod.singleRunActivationStatus({ filePath: link, config: COMMITTED, receipts: [], now: NOW, gitHead: REV });
 }
 const COMMITTED_CONFIG = COMMITTED;
 const ENV_ON = { ENABLE_DISPATCH: "true" };
@@ -471,13 +859,41 @@ test("SHU-63 activation MUTATIONS: every binding, permission, expiry and gate gu
       failure: /an unbounded expiry window is refused/,
     },
     {
-      name: "one-use guard removed (replay allowed)",
+      name: "PREMATURE SPENDING: a routable successor is spent anyway",
       file: "single-run-activation.mjs",
-      from: "  if (spent.length > 0) {",
-      to: "  if (false) { // SHU63-MUTATION-SPENT",
-      assertion: `assert.equal(status({}, { receipts: [{ issue_id: TARGET, stage: "COMPLETED" }] }).state, "refused",
-        "a spent activation cannot be replayed");`,
-      failure: /a spent activation cannot be replayed/,
+      from: "  if (routed.ok && routed.order) {",
+      to: "  if (false) { // SHU63-MUTATION-EARLY-SPEND",
+      assertion: `assert.equal(statusWith([
+          { issue_id: TARGET, attempt_id: "00000000-0000-4000-8000-0000000000a1", stage: "COMPLETED", verdict_stage: "BUILD_READY",
+            requested_worker: "codex-builder", worker_identity: "builder", target_sha: REV, last_activity: "2026-09-10T11:00:00.000Z" },
+          { issue_id: TARGET, attempt_id: "00000000-0000-4000-8000-0000000000a2", stage: "HOLD", verdict_stage: "BLOCKED",
+            requested_worker: "claude-verifier", worker_identity: "reviewer", target_sha: REV, last_activity: "2026-09-10T11:01:00.000Z" },
+        ]).state, "armed",
+        "a routable successor must never be spent early");`,
+      failure: /a routable successor must never be spent early/,
+    },
+    {
+      name: "PREMATURE SPENDING: retryable failures spend the episode",
+      file: "single-run-activation.mjs",
+      from: "  if (failed >= maxFailed) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` };",
+      to: "  if (false) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` }; // SHU63-MUTATION-FAILCAP",
+      assertion: `assert.equal(statusWith([1, 2, 3].map((n) => ({
+          issue_id: TARGET, attempt_id: "00000000-0000-4000-8000-0000000000b" + n, stage: "FAILED",
+          requested_worker: "codex-builder", worker_identity: "builder", target_sha: REV, last_activity: "2026-09-10T11:0" + n + ":00.000Z",
+        }))).state, "refused",
+        "retryable failures at the cap end the episode");`,
+      failure: /retryable failures at the cap end the episode/,
+    },
+    {
+      name: "symlink guard removed (unbound guard, review note)",
+      file: "single-run-activation.mjs",
+      from: "  if (stat.isSymbolicLink()) return { ok: false, reason: \"activation file is a symlink\" };",
+      to: "  if (false) return { ok: false, reason: \"activation file is a symlink\" }; // SHU63-MUTATION-SYM",
+      assertion: `const s = symlinkStatus();
+        assert.equal(s.state, "refused", "a symlinked activation file is refused");
+        assert.match(s.reason, /symlink/,
+          "the refusal must NAME the symlink: the regular-file check would also refuse it, so the operator-visible diagnosis is what this guard binds");`,
+      failure: /the refusal must NAME the symlink/,
     },
     {
       name: "file permission guard removed",
