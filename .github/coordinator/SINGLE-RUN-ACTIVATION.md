@@ -32,7 +32,8 @@ Linear, GitHub, or any card.
 
 ## The record
 
-Exactly these keys. A missing key **and** an unreviewed extra key are both refused —
+The required keys below, plus the reviewed optional `reviewer_lane` and
+`initial_target_sha` keys. A missing required key **and** an unreviewed extra key are both refused —
 a configuration surface nobody reviewed is how scope creep enters security code.
 
 ```json
@@ -54,6 +55,14 @@ a configuration surface nobody reviewed is how scope creep enters security code.
 | `coordinator_revision` | must equal the revision of the checkout **being executed**, resolved from git (never self-declared) | mismatch, or the revision cannot be resolved |
 | `slots` | must be exactly `1` **and** equal the committed `max_dispatch` | it declares more capacity than the committed configuration |
 | `expires_at` | must be in the future and **within 24h** | expired, unparseable, or reaching further than a day |
+| `initial_target_sha` (optional schema key; required for the next watched fixture's approval) | approved original worker input; must equal `DISPATCH_TARGET_SHA` on every tick | malformed, omitted operator input, or mismatch |
+
+Set `initial_target_sha` to the approved seeded-defect commit when preparing the
+next fixture's activation record. The same original value remains the second
+argument to `host-tick.sh` on every tick; never replace it with a builder's output.
+Successor heads come from verified receipts and may advance independently. Records
+without this optional field retain their previous semantics; they do **not** prove
+input approval. A first-dispatch candidate cannot override a supplied binding.
 
 File integrity is part of the binding: the path must be a regular file (not a
 symlink, not a directory), and must not be group/world writable or world readable
@@ -169,12 +178,19 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   during host setup; naming an arbitrary wrapper is not proof it works.
 
 After the existing durable reservation and launch intent, the coordinator fetches
-the bound commit in a fresh host-owned bare repository. It copies objects locally
+the bound commit in a fresh host-owned bare repository, creates a self-contained
+Git bundle and lets the worker clone that data file. This avoids the foreign-owned
+`upload-pack` child whose inherited trust Git 2.43 rejects. No source ownership
+change or protected/global trust configuration is needed. It copies objects locally
 into `<SHU_WORKTREE_ROOT>/<attempt_uuid>` and checks out the exact detached head.
 These are **independent repositories**, not linked worktrees: a builder must not
 be able to edit the coordinator's shared Git metadata. Writer preparation runs
 through the existing privilege-drop wrapper; verifier preparation runs as the
 current verifier adapter's coordinator identity. No worker receives a push remote.
+Opus accepted that verifier identity only for the watched synthetic fixture
+(PR #70, comment 5625184510). It is not a general activation policy: SHU-86 must
+isolate reviewer filesystem access from activation/state/session files and host
+credentials before broad dispatch, including processes run from reviewed code.
 The temporary source contains repository objects (no credentials), is made
 readable for the local copy, and is removed after preparation.
 
@@ -192,6 +208,9 @@ on, then locks the private state directory for the entire tick. Repeat only this
 single driver command; it does not grant activation. Stop the driver on HOLD or
 refusal. Scope, capacity and activation checks remain in `main()`; the script is
 not a second dispatcher. It never changes the host's Git trust configuration.
+Preparation failures record fixed diagnostic codes (ownership refusal, access
+denied, unavailable revision/source, storage full, timeout or generic failure).
+Raw Git/SSH stderr and credential-bearing URLs are never copied into receipts.
 
 The Codex callback schema is static public data in its own coordinator-owned
 temporary directory (0755/file 0644). Session receipts stay private. This allows

@@ -28,7 +28,7 @@ import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS }
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal } from "./single-run-activation.mjs";
 import fs from "node:fs";
-import { prepareAttemptWorkspace } from "./attempt-workspace.mjs";
+import { prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1803,6 +1803,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         now: io.now ? io.now() : new Date(),
         dir: __dirname,
         gitHead: io.gitHead,
+        initialTargetSha: env.DISPATCH_TARGET_SHA,
         io,
       });
   let dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
@@ -2286,6 +2287,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const successor = selection.successor ?? null;
   const requested_worker = successor?.requested_worker ?? candidate.requested_worker;
   const target_sha = successor?.target_sha ?? candidate.target_sha ?? env.DISPATCH_TARGET_SHA ?? null;
+  if (!successor && singleRunActivation.initial_target_sha && target_sha !== singleRunActivation.initial_target_sha) {
+    if (io.stdout) io.stdout("dispatch: initial target differs from the activation — refused before reservation");
+    return 2;
+  }
   if (!target_sha || !TARGET_SHA_RE.test(target_sha)) {
     throw new Error(`dispatch refused: no bound head for ${candidate.id} — target_sha is required (old PASS must never satisfy a changed head)`);
   }
@@ -2397,14 +2402,15 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // the worker; preparation does not extend an activation's lifetime.
     if (singleRunActivation.requested) {
       const currentActivation = singleRunActivationStatus({ filePath: activationArg.path, config,
-        receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, io });
+        receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io });
       if (currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)) throw new Error("activation no longer allows this launch");
     }
-  } catch {
+  } catch (error) {
+    const diagnosis = workspaceFailureCode(error);
     const held = nextReceiptState(launchIntent.receipt, { type: "hold",
-      reason: "attempt workspace preparation or final activation check refused; no worker launched" });
+      reason: `attempt workspace preparation or final activation check refused (${diagnosis}); no worker launched` });
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
-    if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — workspace preparation or final activation check refused`);
+    if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — workspace preparation or final activation check refused (${diagnosis})`);
     return 2;
   }
   if (!launch) {

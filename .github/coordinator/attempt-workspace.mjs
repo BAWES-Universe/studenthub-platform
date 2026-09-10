@@ -20,13 +20,27 @@ function directory(p) {
   return path.resolve(p);
 }
 
+export function workspaceFailureCode(error) {
+  const known = ["GIT_OWNERSHIP_REFUSED", "FILESYSTEM_OR_AUTH_DENIED", "SOURCE_REVISION_UNAVAILABLE", "SOURCE_UNREACHABLE", "STORAGE_FULL", "COMMAND_TIMEOUT", "COMMAND_FAILED"];
+  if (known.includes(error?.workspaceCode)) return error.workspaceCode;
+  const stderr = String(error?.stderr ?? "");
+  if (/detected dubious ownership/.test(stderr)) return "GIT_OWNERSHIP_REFUSED";
+  if (/Permission denied|permission denied/.test(stderr)) return "FILESYSTEM_OR_AUTH_DENIED";
+  if (/not our ref|couldn't find remote ref|not a valid object/.test(stderr)) return "SOURCE_REVISION_UNAVAILABLE";
+  if (/Could not resolve|Could not read from remote|Connection refused/.test(stderr)) return "SOURCE_UNREACHABLE";
+  if (/No space left on device/.test(stderr)) return "STORAGE_FULL";
+  if (error?.code === "ETIMEDOUT") return "COMMAND_TIMEOUT";
+  return "COMMAND_FAILED";
+}
+
 function run(file, args, env, cwd) {
   try {
     return execFileSync(file, args, { cwd, env, encoding: "utf8", timeout: 60_000,
       maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch (error) {
-    // Never expose captured Git/SSH output or a command containing credentials.
-    throw new Error(`workspace command failed (exit ${Number.isInteger(error.status) ? error.status : "unknown"}); inspect host configuration`);
+    // Fixed allowlisted diagnoses, never worker-controlled stderr, paths or URLs.
+    const code = workspaceFailureCode(error);
+    throw Object.assign(new Error(`workspace command failed: ${code} (exit ${Number.isInteger(error.status) ? error.status : "unknown"})`), { workspaceCode: code });
   }
 }
 
@@ -73,9 +87,8 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
     throw new Error("writer checkout requires the configured distinct worker identity");
   }
   const git = (args, at = cwd) => run("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${at}`, ...args], hostEnv, at);
-  const workerGit = (args, at = root, trustedSource = null) => {
-    const argv = [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`,
-      ...(trustedSource ? ["-c", `safe.directory=${trustedSource}`] : []), ...args];
+  const workerGit = (args, at = root) => {
+    const argv = [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args];
     return wrapper.length ? run(wrapper[0], [...wrapper.slice(1), "git", ...argv], workerEnv, at)
       : run("git", argv, workerEnv, at);
   };
@@ -110,8 +123,13 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       if (fetched !== receipt.target_sha) throw new Error("workspace source returned the wrong commit");
       git(["update-ref", "refs/heads/bound", fetched], source);
       git(["symbolic-ref", "HEAD", "refs/heads/bound"], source);
+      // A bundle is read directly, without upload-pack opening a foreign-owned
+      // repository. Git 2.43 rejects clone's inherited safe.directory for that
+      // child. No global trust file, chown privilege or worker remote is needed.
+      const bundle = path.join(source, "bound.bundle");
+      git(["bundle", "create", bundle, "refs/heads/bound"], source);
       publicReadOnlyTree(source);
-      workerGit(["clone", "--no-local", "--no-checkout", "--template=", "--", source, cwd], root, source);
+      workerGit(["clone", "--no-local", "--no-checkout", "--template=", "--", bundle, cwd], root);
       directory(cwd);
       workerGit(["config", "--remove-section", "remote.origin"], cwd);
       workerGit(["config", "user.name", writer ? "Codex worker" : "Independent reviewer"], cwd);

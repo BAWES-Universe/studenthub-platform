@@ -5,8 +5,8 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { prepareAttemptWorkspace } from "../attempt-workspace.mjs";
-import { resolveCoordinatorRevision } from "../single-run-activation.mjs";
+import { prepareAttemptWorkspace, workspaceFailureCode } from "../attempt-workspace.mjs";
+import { resolveCoordinatorRevision, validateActivationRecord } from "../single-run-activation.mjs";
 import { preparedLaunchOptions, foldLaunchOutcome, createReceipt, nextReceiptState } from "../reconcile.mjs";
 import { pushExactSha } from "../push-broker.mjs";
 import * as codex from "../adapters/codex-cli.mjs";
@@ -186,6 +186,8 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
   const f = setup(); installCliDoubles(f);
   const h = createEpisodeHarness({ githubToken: "fake-read-token", initialBranchHead: f.sha });
   try {
+    h.record.initial_target_sha=f.sha;
+    fs.writeFileSync(h.activationPath,JSON.stringify(h.record));
     assert.equal(fs.readdirSync(f.root).length, 0);
     const snapshots = [], brokerPushes = [], adapterResults = [];
     const observedAdapter = mod => ({ ...mod, async launchBuilder(options) {
@@ -232,6 +234,56 @@ test("SHU-227: broker refusal cannot promote a valid worker callback to success"
   assert.equal(result.accepted,true);
   assert.equal(result.receipt.stage,"HOLD");
   assert.ok(!result.receipt.verdict_stage,"unpublished writer result is not routable evidence");
+});
+
+test("SHU-227: optional initial input is validated and mismatch refuses before all writes", async () => {
+  const h=createEpisodeHarness({githubToken:"fake-token"});
+  try {
+    assert.equal(validateActivationRecord(h.record).ok,true,"old record shape remains supported");
+    for(const value of [null,42,[],["a".repeat(40)],{},"main","A".repeat(40),"a".repeat(39)]) {
+      assert.equal(validateActivationRecord({...h.record,initial_target_sha:value}).ok,false);
+    }
+    h.record.initial_target_sha="a".repeat(40);
+    fs.writeFileSync(h.activationPath,JSON.stringify(h.record));
+    for(const supplied of [undefined,"b".repeat(40),"main"]) {
+      const tick=await h.runTick({env:{DISPATCH_TARGET_SHA:supplied}});
+      assert.equal(tick.code,2);assert.match(tick.text,/initial_target_sha/);
+      assert.equal(h.comments.length,0);assert.equal(h.launched.length,0);
+    }
+    assert.equal((await h.runTick({env:{DISPATCH_TARGET_SHA:"a".repeat(40)}})).code,0);
+    assert.equal(h.launched.length,1);
+  } finally {h.cleanup();}
+});
+
+test("SHU-227: approval input changed during preparation refuses the launch", async () => {
+  const h=createEpisodeHarness({githubToken:"fake-token"});
+  try {
+    h.record.initial_target_sha="a".repeat(40);
+    fs.writeFileSync(h.activationPath,JSON.stringify(h.record));
+    const tick=await h.runTick({io:{prepareWorkspace(){
+      fs.writeFileSync(h.activationPath,JSON.stringify({...h.record,initial_target_sha:"b".repeat(40)}));
+      return {cwd:"/unused-test-checkout"};
+    }}});
+    assert.equal(tick.code,2);assert.equal(h.launched.length,0);assert.equal(h.receipts()[0].stage,"HOLD");
+  } finally {h.cleanup();}
+});
+
+test("SHU-227: workspace diagnosis is useful but never includes raw stderr or secrets", async () => {
+  const secret="SENTINEL-never-log-this";
+  for(const [stderr,code] of [["fatal: detected dubious ownership","GIT_OWNERSHIP_REFUSED"],
+    ["Permission denied","FILESYSTEM_OR_AUTH_DENIED"],["not our ref","SOURCE_REVISION_UNAVAILABLE"],
+    ["Could not read from remote","SOURCE_UNREACHABLE"],["No space left on device","STORAGE_FULL"],
+    ["unrecognised failure","COMMAND_FAILED"]]) {
+    assert.equal(workspaceFailureCode({stderr:stderr+secret}),code);
+  }
+  assert.equal(workspaceFailureCode({code:"ETIMEDOUT"}),"COMMAND_TIMEOUT");
+  const h=createEpisodeHarness({githubToken:"fake-token"});
+  try {
+    const tick=await h.runTick({io:{prepareWorkspace(){throw Object.assign(new Error(secret),{workspaceCode:"GIT_OWNERSHIP_REFUSED"});}}});
+    assert.match(tick.text,/GIT_OWNERSHIP_REFUSED/);
+    assert.doesNotMatch(tick.text+JSON.stringify(h.comments),new RegExp(secret));
+    assert.equal(h.launched.length,0);assert.equal(h.receipts()[0].stage,"HOLD");
+  }finally{h.cleanup();}
 });
 
 test("SHU-227: disabled/refused runs never provision; preparation refusal never launches", async () => {
@@ -296,6 +348,8 @@ test("SHU-227: host tick requires an explicit initial head and an already-enable
 
 test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards are bound", () => {
   const mutations = [
+    { file:"single-run-activation.mjs", from:'Object.hasOwn(record, "initial_target_sha") && record.initial_target_sha !== initialTargetSha', to:'false', test:"optional initial input is validated", reason:/AssertionError/ },
+    { file:"single-run-activation.mjs", from:'typeof record.initial_target_sha !== "string" || !REVISION_RE.test(record.initial_target_sha)', to:'false', test:"optional initial input is validated", reason:/AssertionError/ },
     { file:"attempt-workspace.mjs", from:' || root.startsWith(stateRoot + path.sep)', to:'', test:"binding conflicts, symlink paths", reason:/Missing expected exception/ },
     { file:"adapters/codex-cli.mjs", from:'fs.mkdtempSync("/tmp/shu-codex-schema-")', to:'fs.mkdtempSync(path.join(tmpdir(), "shu-codex-schema-"))', test:"generated schema is worker-readable", reason:/AssertionError/ },
     { file:"reconcile.mjs", from:'if (launch.stage === "HOLD" && launch.pause_adapter === true)', to:'if (false)', test:"broker refusal cannot promote", reason:/AssertionError/ },
@@ -308,6 +362,12 @@ test("SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards 
     { file:"adapters/codex-cli.mjs", from:'fs.chmodSync(schemaDir, 0o755);', to:'fs.chmodSync(schemaDir, 0o700);', test:"generated schema is worker-readable", reason:/AssertionError|schema directory is traversable/ },
     { file:"reconcile.mjs", from:'currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)', to:'false', test:"activation expiring during preparation", reason:/AssertionError/ },
   ];
+  // This guard MUST be killed on the compatibility host where the original
+  // directory transfer fails. Newer Git accepting inherited trust is not proof.
+  if (execFileSync("git",["--version"],{encoding:"utf8"}).trim()==="git version 2.43.0" && canSwitch) {
+    mutations.push({file:"attempt-workspace.mjs",from:'"--", bundle, cwd',to:'"--", source, cwd',
+      test:"worker owns its checkout",reason:/GIT_OWNERSHIP_REFUSED/});
+  }
   for (const m of mutations) {
     const dir=fs.mkdtempSync(path.join(tmpdir(),"shu227-mutation-"));
     try {
