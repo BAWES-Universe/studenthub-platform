@@ -169,7 +169,9 @@ function installCliDoubles(f) {
     console.log(JSON.stringify({type:'thread.started',thread_id:require('crypto').randomUUID()}));
     const cb={attempt_id:attempt,target_sha:target,result_sha:result,stage:round===1?'BUILD_READY':'REVISION_READY',links:['round fixture at commit '+result],summary:'fixture'};
     console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(cb)}}));
-    console.log(JSON.stringify({type:'turn.completed'}));`;
+    console.log(JSON.stringify({type:'turn.completed'}));
+    setTimeout(()=>{},200); // let the host capture the real child process identity
+    `;
   const reviewer = common + `
     const round=Number(fs.readFileSync('round','utf8'));console.log(JSON.stringify({type:'result',subtype:'success',session_id:attempt,structured_output:{attempt_id:attempt,target_sha:target,stage:round===1?'BLOCKED':'PASS',links:['https://example.invalid/fixture-evidence']}}));`;
   for (const [name, body] of [["codex", writer], ["claude", reviewer]]) {
@@ -182,8 +184,11 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
   const h = createEpisodeHarness({ githubToken: "fake-read-token", initialBranchHead: f.sha });
   try {
     assert.equal(fs.readdirSync(f.root).length, 0);
-    const snapshots = [], brokerPushes = [];
-    const io = { adapterModules: { "codex-cli": codex, "claude-code": claude }, codexStateDir: f.state,
+    const snapshots = [], brokerPushes = [], adapterResults = [];
+    const observedAdapter = mod => ({ ...mod, async launchBuilder(options) {
+      const result=await mod.launchBuilder(options); adapterResults.push(result); return result;
+    } });
+    const io = { adapterModules: { "codex-cli": observedAdapter(codex), "claude-code": observedAdapter(claude) }, codexStateDir: f.state,
       prepareWorkspace: (options) => {
         assert.ok(h.receipts().some(r => r.attempt_id === options.receipt.attempt_id && r.stage === "LAUNCH_UNKNOWN"), "reservation and launch intent precede preparation");
         const workspace = prepareAttemptWorkspace({ ...options, allowedHost: "file" });
@@ -198,7 +203,7 @@ test("SHU-227: empty-root main drives real Git, both real adapters and real brok
     const env = { ...f.env, GITHUB_TOKEN: "fake-read-token", LINEAR_API_TOKEN: "fake-linear-token", DISPATCH_TARGET_SHA: f.sha };
     for (let i=0; i<4; i++) {
       const tick = await h.runTick({ env, io });
-      assert.equal(tick.code, i===1 ? 2 : 0, tick.text + JSON.stringify(h.receipts()));
+      assert.equal(tick.code, i===1 ? 2 : 0, tick.text + JSON.stringify({receipts:h.receipts(),adapterResults}));
       const latest = h.receipts().at(-1);
       assert.equal(latest.stage, i===1 ? "HOLD" : "COMPLETED", JSON.stringify(latest));
     }
