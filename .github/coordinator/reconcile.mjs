@@ -26,6 +26,7 @@
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
+import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -436,8 +437,17 @@ export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
 // dispatchEnabledFor — dispatch requires BOTH gates in DIFFERENT layers (CodeRabbit):
 // the in-repo config flag (enable_dispatch: false committed by default) AND the
 // workflow environment variable. One gate alone never enables dispatch.
-export function dispatchEnabledFor(env = {}, config = {}) {
-  return config.enable_dispatch === true && (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
+// SHU-63 adds a THIRD, strictly narrower way in, and only for one bounded run: an
+// operator-owned single-run activation (see single-run-activation.mjs). It
+// substitutes for the COMMITTED flag — never for the runtime switch — so the
+// committed `enable_dispatch: false` and its assertions stay exactly as they were,
+// and a forgotten activation file still cannot arm anything on its own. `armed` is
+// only ever produced by singleRunActivationStatus(), which fails closed on every
+// binding (missing, malformed, stale, replayed, wrong target, wrong revision).
+export function dispatchEnabledFor(env = {}, config = {}, activation = null) {
+  const envGate = (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
+  if (config.enable_dispatch === true && envGate) return true; // committed path, unchanged
+  return envGate && activation?.state === "armed";
 }
 
 // resolveAuthorizationRef — a dispatch is only legal against an APPROVED contract:
@@ -1552,7 +1562,7 @@ export function loadSnapshot(file = path.join(__dirname, "test", "fixtures", "sn
   return { issues: raw.issues ?? [], openPRs: raw.openPRs ?? [], meta: raw.meta ?? {} };
 }
 
-function printReport({ config, source, eligibility, selection, dispatchEnabled }) {
+function printReport({ config, source, eligibility, selection, dispatchEnabled, activation = null }) {
   const lines = [];
   lines.push(`coordinator reconcile — ${dispatchEnabled ? "DISPATCH ENABLED" : "DRY-RUN (dispatch disabled, no writes)"}`);
   lines.push(`pilot_repo=${config.pilot_repo}  max_dispatch=${config.max_dispatch}  source=${source}`);
@@ -1560,6 +1570,7 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled }
   lines.push(scope.configured
     ? `dispatch_scope=${scope.valid ? [...scope.issueIds].join(",") : `INVALID (${scope.reason})`}`
     : "dispatch_scope=board-wide");
+  lines.push(renderActivationLine(activation));
   lines.push(`eligible=${eligibility.ready.length}  excluded=${eligibility.excluded.length}`);
   for (const issue of eligibility.ready) {
     lines.push(`  READY    ${issue.id.padEnd(18)} ${issue.priority.padEnd(11)} ${issue.title}`);
@@ -1649,7 +1660,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const config0 = loadConfig(io.configPath);
   const config = { ...config0, adapter_pause_map: { ...(config0.adapter_pause_map ?? {}) } };
   const dispatchScope = resolveDispatchScope(config);
-  const dispatchEnabled = dispatchEnabledFor(env, config);
+  // SHU-63: an operator's --activation declaration is parsed here, but its STATUS is
+  // computed after the durable receipts are read — the one-use binding needs them.
+  const activationArg = parseActivationArgs(argv);
   const linearToken = env.LINEAR_API_TOKEN ?? "";
   const githubToken = env.GITHUB_TOKEN ?? "";
   const fetchImpl = io.fetchImpl ?? fetch;
@@ -1733,6 +1746,26 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
   }
   receipts = [...receiptByAttempt.values()];
+
+  // ---- SHU-63 SINGLE-RUN ACTIVATION ------------------------------------------
+  // Computed here, after the durable receipts are final and immediately before the
+  // lifecycle/dispatch decision it gates, because "one use" is defined against the
+  // bound target's receipt history. A REFUSED activation is not a dry run: it is
+  // reported and exits 2 with zero writes (see the PREVENTED branch below), so an
+  // expired, replayed or mis-bound authorization can never be mistaken for a
+  // quiet, disabled coordinator.
+  const singleRunActivation = activationArg.error
+    ? { requested: true, state: "refused", valid: false, reason: activationArg.error, target_issue_id: null, activation_id: null, expires_at: null }
+    : singleRunActivationStatus({
+        filePath: activationArg.path,
+        config,
+        receipts,
+        now: io.now ? io.now() : new Date(),
+        dir: __dirname,
+        gitHead: io.gitHead,
+        io,
+      });
+  const dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
 
   // ---- LIFECYCLE PASS (GPT lifecycle BLOCK @ f03d445) ----
   // Before selecting new work, poll every active RUNNING receipt through the
@@ -1984,8 +2017,16 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
 
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts });
-  const report = printReport({ config, source, eligibility, selection, dispatchEnabled });
+  const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
 
+  if (singleRunActivation.requested && singleRunActivation.state === "refused") {
+    // An activation was supplied and every binding failed closed. This is NOT a
+    // dry run: report it, refuse loudly, and write nothing.
+    const out = io.stdout ?? ((s) => console.log(s));
+    out(report);
+    out(`dispatch: PREVENTED — single-run activation REFUSED (${singleRunActivation.reason}); no fallback, no writes`);
+    return 2;
+  }
   if (!dispatchEnabled) {
     // DRY-RUN: report only. ZERO writes — no Linear comments, no adapter calls,
     // no receipts, no state files. Exit 0 so CI treats the skeleton as healthy.
@@ -2069,6 +2110,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
     if (!dispatchScopeAllows(dispatchScope, refreshedIssue.id)) {
       if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${refreshedIssue.id} is outside trusted dispatch_scope`);
+      return 2;
+    }
+    if (!activationAllowsTarget(singleRunActivation, refreshedIssue.id)) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before claim — ${refreshedIssue.id} is not the activated target`);
       return 2;
     }
     const refreshedEligibility = computeEligibility({ issues: [refreshedIssue], openPRs: refreshed.openPRs, config });
