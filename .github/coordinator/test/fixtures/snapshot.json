@@ -8,8 +8,8 @@
   "openPRs": [],
   "issues": [
     {
-      "id": "SHU-FIXTURE-001",
-      "title": "Fixture: seeded-defect probe card (Opus acceptance contract pending — fixture_lane placeholder)",
+      "id": "SHU-140",
+      "title": "Fixture: seeded-defect probe card (Linear minted identifier SHU-140 — the configured fixture_lane card for SHU-63)",
       "state": "Todo",
       "priority": "High",
       "labels": ["fixture-safe", "coordinator:pilot", "repo:platform"],
@@ -83,6 +83,32 @@
       "delegate": null,
       "linkedPRs": [],
       "parent": null,
+      "blockers": []
+    },
+    {
+      "id": "SHU-206",
+      "title": "Child of an open (In Progress) parent — dispatchable under Rule 6 (SHU-219)",
+      "state": "Todo",
+      "priority": "Medium",
+      "labels": ["repo:platform"],
+      "repo": "BAWES-Universe/studenthub-platform",
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": { "id": "SHU-66", "state": "In Progress" },
+      "blockers": []
+    },
+    {
+      "id": "SHU-207",
+      "title": "Child of a Canceled parent — excluded under Rule 6 (SHU-219)",
+      "state": "Todo",
+      "priority": "High",
+      "labels": ["repo:platform"],
+      "repo": "BAWES-Universe/studenthub-platform",
+      "assignee": null,
+      "delegate": null,
+      "linkedPRs": [],
+      "parent": { "id": "SHU-99", "state": "Canceled" },
       "blockers": []
     }
   ]
