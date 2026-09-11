@@ -14,7 +14,7 @@
     "build": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && npm run build -w @studenthub/login-contract && npm run build -w @studenthub/source-connection-contract && npm run build -w @studenthub/safe-write-contract && npm run build -w @studenthub/db && tsc -p tsconfig.build.json",
     "start:gateway": "node dist/apps/gateway/src/index.js",
     "start:worker": "node dist/apps/worker/src/index.js",
-    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/packages/contracts/test/authz.test.js dist/packages/login-contract/test/login-contract.test.js dist/packages/source-connection-contract/test/source-connection-contract.test.js dist/packages/safe-write-contract/test/safe-write-contract.test.js dist/packages/search/test/search-adapter.test.js dist/packages/search/test/typesense-indexer.test.js dist/apps/gateway/test/health.test.js dist/apps/gateway/test/authz-middleware.test.js dist/apps/gateway/test/authz-audit.test.js dist/apps/gateway/test/login-application.test.js dist/apps/gateway/test/login-http.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js dist/tools/search-bakeoff/test/search-bakeoff.test.js && npm run test:assertion && npm run test:deployment && npm run test:web",
+    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/packages/contracts/test/authz.test.js dist/packages/login-contract/test/login-contract.test.js dist/packages/source-connection-contract/test/source-connection-contract.test.js dist/packages/safe-write-contract/test/safe-write-contract.test.js dist/packages/search/test/search-adapter.test.js dist/packages/search/test/typesense-indexer.test.js dist/apps/gateway/test/health.test.js dist/apps/gateway/test/authz-middleware.test.js dist/apps/gateway/test/authz-audit.test.js dist/apps/gateway/test/login-application.test.js dist/apps/gateway/test/login-http.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js dist/tools/search-bakeoff/test/search-bakeoff.test.js && npm run test:assertion && npm run test:deployment && npm run test:web && npm run test:documents && npm run test:documents:mutations",
     "test:db": "npm run build && node --test dist/packages/db/test/postgres-authz-store.test.js",
     "benchmark:search": "npm run build && node dist/tools/search-bakeoff/src/run.js",
     "dry-run:import": "npm run build && node dist/tools/legacy-import/src/dry-run.js",
@@ -25,7 +25,9 @@
     "test:search-integration": "npm run build && node --test dist/packages/search/test/typesense-integration.test.js",
     "migrate": "npm run migrate -w @studenthub/db",
     "db:migrate": "npm run migrate -w @studenthub/db",
-    "db:bootstrap:admin": "npm run bootstrap:admin -w @studenthub/db"
+    "db:bootstrap:admin": "npm run bootstrap:admin -w @studenthub/db",
+    "test:documents": "node --test packages/private-documents/test/private-documents.test.mjs",
+    "test:documents:mutations": "node packages/private-documents/test/mutations.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
