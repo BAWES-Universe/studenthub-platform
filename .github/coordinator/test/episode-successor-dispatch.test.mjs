@@ -346,7 +346,7 @@ const MUTATIONS = [
     // M1 — the blast radius. The parking exception must require the episode.
     name: "M1: parking exception applied without an armed activation",
     file: "reconcile.mjs",
-    from: "    if (parkedIssueIds.has(issue.id) && !episodeContinuations.has(issue.id)) {",
+    from: "    if (parkedIssueIds.has(issue.id) && !episodeContinuations.has(issue.id) && !episodeIssueIds.has(issue.id)) {",
     to: "    if (false) { // SHU225-MUT-M1",
     assertion: `const sel = reconcile.selectNextReservation({ ready: [readyIssue(OTHER)], config: { max_dispatch: 1 }, receipts: [receipt({ issue: OTHER })] });
 assert.equal(sel.candidate, null, "parking is unchanged without an armed activation");`,

@@ -107,11 +107,17 @@ export const SINGLE_RUN_ACTIVATION_KEYS = Object.freeze([
 // the routing additionally refuses a lane in the write lane's own family.
 // SHU-227 adds initial_target_sha: the approved worker input, constant across
 // the episode even while the branch advances through review and revision.
-export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha"]);
+// SHU-231: `supersedes_attempt_ids` names the specific retained evidence this
+// approval retires. It is optional like `reviewer_lane` — but nothing else about
+// the exact-key-set rule relaxes: an unreviewed extra key still refuses.
+export const OPTIONAL_ACTIVATION_KEYS = Object.freeze(["reviewer_lane", "initial_target_sha", "supersedes_attempt_ids"]);
 
 export const ACTIVATION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 export const LINEAR_ISSUE_ID_RE = /^SHU-[0-9]+$/;
 export const REVISION_RE = /^[0-9a-f]{40}$/;
+// Canonical attempt-id shape (minted by randomUUID at RESERVED). Version and
+// variant are not restricted: a receipt may carry any real UUID.
+export const ATTEMPT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const AUTHORIZATION_REF_RE = /^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$/;
 
 // An expiry that reaches further than a day is not an expiry, it is a permanence.
@@ -158,19 +164,57 @@ export function latestCoherentTerminal(issueReceipts = []) {
     .pop();
 }
 
+// episodeScopeFor — the ONE place the episode boundary is defined (SHU-231).
+//
+// The episode identity is the existing `activation_id`: already unique, already
+// validated, already stable across restart. `supersedes_attempt_ids` is the
+// explicit, reviewable statement of which RETAINED evidence this approval
+// retires. Retiring evidence is never deletion: no code path here or below
+// removes, archives or rewrites a receipt.
+export function episodeScopeFor(record) {
+  if (!record || typeof record.activation_id !== "string") return null;
+  const supersedes = Array.isArray(record.supersedes_attempt_ids) ? record.supersedes_attempt_ids : [];
+  return { episode_id: record.activation_id, supersedes: new Set(supersedes) };
+}
+
+// receiptInEpisodeScope — may this receipt SPEND this approval, or PARK this
+// issue? Exactly two decisions, nothing else.
+//
+//   * no armed episode        -> true  (global behaviour, byte-for-byte as before)
+//   * same episode            -> true  (tagged with this activation_id)
+//   * another episode         -> false (a previous episode's terminal is not ours)
+//   * untagged legacy receipt -> true UNLESS this approval names it. Untagged and
+//     unnamed still spends: FAIL CLOSED. To retire retained evidence the approver
+//     must name that exact attempt, which is the reviewable statement — an
+//     id-only or date-only edit can therefore never reauthorize a spent approval.
+export function receiptInEpisodeScope(receipt, scope) {
+  if (!scope) return true;
+  if (!receipt || typeof receipt !== "object") return true;
+  if (receipt.episode_id === scope.episode_id) return true;
+  if (receipt.episode_id) return false;
+  return !scope.supersedes.has(receipt.attempt_id);
+}
+
 // Decide whether the bound target's episode has ENDED, using the production
 // routing semantics. Returns { ended, reason, successor? } and NEVER throws: an
 // internal routing failure must surface as "cannot decide" (ongoing), not as a
 // crashed coordinator.
-export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null } = {}) {
+export function episodeVerdict({ receipts = [], targetIssueId, config = {}, bootstrapReviewer = null, authoritativeHead = null, episodeScope = null } = {}) {
   const issueReceipts = (receipts ?? []).filter((r) => r && r.issue_id === targetIssueId);
-  if (issueReceipts.length === 0) return { ended: false, reason: "no attempt has been dispatched yet" };
+  // SHU-231: only the SPEND / TERMINAL / ROUTING inputs are episode-scoped. The
+  // receipt list itself is never filtered for anything else.
+  const scopedReceipts = episodeScope ? issueReceipts.filter((r) => receiptInEpisodeScope(r, episodeScope)) : issueReceipts;
 
   // Retryable run failures end the episode only at the cap — the same bound the
-  // selector uses to park an issue (reconcile.mjs).
+  // selector uses to park an issue (reconcile.mjs). SHU-231: this is evaluated
+  // GLOBALLY, before any episode scoping, because a new episode must NEVER
+  // replenish retries — replenishing a budget needs its own authority and its own
+  // approval, never a side effect of a new activation_id.
   const maxFailed = Number.isInteger(config?.max_failed_attempts) ? config.max_failed_attempts : DEFAULT_MAX_FAILED_ATTEMPTS;
   const failed = issueReceipts.filter((r) => r.stage === "FAILED").length;
   if (failed >= maxFailed) return { ended: true, reason: `retryable failures exhausted (${failed}/${maxFailed})` };
+
+  if (scopedReceipts.length === 0) return { ended: false, reason: "no attempt has been dispatched yet" };
 
   // HOLD is deliberately not retryable. A newer attempt that completed without
   // a coherent, bound verdict requires human review; routing again from an older
@@ -178,7 +222,7 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   // Valid review BLOCKED/FAILED receipts are coherent HOLDs and still route the
   // revision below. Availability holds (no reviewer/writer) are routing results,
   // not receipt stages, and remain armed as adjudicated on PR #68.
-  const latestTerminalReceipt = issueReceipts
+  const latestTerminalReceipt = scopedReceipts
     .filter((r) => r && TERMINAL_RECEIPT_STAGES.includes(r.stage))
     .slice()
     .sort((a, b) => String(a.last_activity ?? "").localeCompare(String(b.last_activity ?? "")))
@@ -190,7 +234,7 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
     };
   }
 
-  const terminal = latestCoherentTerminal(issueReceipts);
+  const terminal = latestCoherentTerminal(scopedReceipts);
   if (!terminal) return { ended: false, reason: "mid-episode: no verdict-bearing terminal yet" };
 
   // A PASS verdict is an ending on its own terms: the loop is complete. It is
@@ -206,7 +250,7 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   let routed;
   try {
     routed = routeSuccessorFromReceipts({
-      issueReceipts,
+      issueReceipts: scopedReceipts,
       terminal,
       evidenceStage: terminal.verdict_stage,
       evidenceResultSha: terminal.result_sha ?? null,
@@ -402,6 +446,22 @@ export function validateActivationRecord(record) {
       return { ok: false, reason: `reviewer_lane must be one of ${REVIEW_LANES.join(", ")} (got ${JSON.stringify(record.reviewer_lane)})` };
     }
   }
+  // SHU-231: the episode boundary. Optional; when present it must be a
+  // non-empty, duplicate-free list of canonical attempt UUIDs. An EMPTY list is
+  // refused rather than ignored, because it reads as "I retired something" while
+  // retiring nothing — the approver must name the evidence being retired.
+  if ("supersedes_attempt_ids" in record) {
+    const ids = record.supersedes_attempt_ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return { ok: false, reason: "supersedes_attempt_ids must be a non-empty array of prior attempt ids" };
+    }
+    if (ids.some((v) => typeof v !== "string" || !ATTEMPT_ID_RE.test(v))) {
+      return { ok: false, reason: "supersedes_attempt_ids must contain only canonical attempt UUIDs" };
+    }
+    if (new Set(ids).size !== ids.length) {
+      return { ok: false, reason: "supersedes_attempt_ids must not repeat an attempt id" };
+    }
+  }
   return { ok: true, reason: null };
 }
 
@@ -494,6 +554,10 @@ export function singleRunActivationStatus({
     receipts,
     targetIssueId: record.target_issue_id,
     config,
+    // SHU-231: spend is decided inside this episode's boundary. The receipt list
+    // itself is untouched — capacity, lifecycle and the failure budget still see
+    // every historical receipt.
+    episodeScope: episodeScopeFor(record),
     // SHU-225: the record's own first-review lane is the ONLY source of a
     // bootstrap reviewer. Card labels and comment text are never consulted.
     bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
@@ -514,6 +578,7 @@ export function singleRunActivationStatus({
     slots: record.slots,
     expires_at: record.expires_at,
     reviewer_lane: record.reviewer_lane ?? null,
+    supersedes_attempt_ids: record.supersedes_attempt_ids ?? [],
     initial_target_sha: record.initial_target_sha ?? null,
     episode: episode.reason,
     // SHU-225: the episode's routable successor, when one exists. This is what
