@@ -239,7 +239,7 @@ test("SHU-232 B6: a real node --test execution at the bound workspace produces d
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
     execFileImpl,
-    validateWrapperImpl: () => {},
+    validateWrapperImpl: (wrapper) => wrapper,
   });
   assert.equal(fs.readFileSync(marker, "utf8"), "ran", "assert on execution, not merely constructed argv");
   assert.equal(result.executed, true);
@@ -384,7 +384,7 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
     tests: { executed: true, exit_code: 0, signal: null, stdout: "TAP version 13\n# pass 1", stderr: "" },
   }), ""));
   const result = await runReviewEvidence({
-    attempt_id: ATTEMPT, target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: () => {},
+    attempt_id: ATTEMPT, target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: (wrapper) => wrapper,
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
@@ -408,7 +408,7 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
       : stat;
   };
   const refused = await runReviewEvidence({
-    attempt_id: "32323232-3232-4232-8232-323232323232", target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: () => {},
+    attempt_id: "32323232-3232-4232-8232-323232323232", target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: (wrapper) => wrapper,
     fsImpl: wrongOwnerFs,
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),

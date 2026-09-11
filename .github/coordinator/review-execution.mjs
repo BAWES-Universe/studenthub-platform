@@ -179,7 +179,7 @@ export async function runReviewEvidence({
       throw new Error("review execution requires a distinct non-root SHU_REVIEW_EXEC_UID");
     }
     const configuredWrapper = reviewWrapper(env);
-    const wrapper = validateWrapperImpl(configuredWrapper, fsImpl) ?? configuredWrapper;
+    const wrapper = validateWrapperImpl(configuredWrapper, fsImpl);
     const childStat = fsImpl.lstatSync(childPath);
     if (!trustedControlPlaneObject(childStat, { ownUid, expectedUid, kind: "file" })) {
       throw new Error("review evidence child must be a root/coordinator-owned, non-writable regular file");

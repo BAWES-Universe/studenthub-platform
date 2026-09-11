@@ -23,6 +23,14 @@ const CASES = [
     pattern: "SHU-237 A1/A2/A5",
   },
   {
+    name: "M2a ignore the validator's canonical argv",
+    file: "review-execution.mjs",
+    from: "    const wrapper = validateWrapperImpl(configuredWrapper, fsImpl);",
+    to: "    validateWrapperImpl(configuredWrapper, fsImpl); const wrapper = configuredWrapper;",
+    testFile: "shu237-portability.test.mjs",
+    pattern: "SHU-237 A1/A2/A5",
+  },
+  {
     name: "M2b pass sudo the unresolved sandbox alias",
     file: "review-execution.mjs",
     from: "    normalized[2] = trustedRootPath(wrapper[2], fsImpl);",
