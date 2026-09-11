@@ -69,6 +69,7 @@ function successfulReport(expectedUid, files = ["bound.test.mjs"]) {
     expected_uid: expectedUid,
     actual_uid: expectedUid,
     filesystem_probe: "DENIED",
+    sibling_workspace_probe: "DENIED",
     workspace_write_probe: "DENIED",
     network_probe: "DENIED",
     forbidden_env_keys: [],
@@ -104,7 +105,8 @@ test("SHU-237 A1/A2/A5: real sudo-rs-style filesystem links resolve to immutable
 
 test("SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets", async (t) => {
   const root = privateTemp("shu237-canonical-");
-  const workspace = path.join(root, "workspace");
+  const attemptId = "23723723-7237-4237-8237-237237237001";
+  const workspace = path.join(root, attemptId);
   const evidence = path.join(root, "evidence");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
@@ -114,7 +116,7 @@ test("SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validate
   const expectedUid = ownUid + 2000;
   const calls = [];
   const result = await runReviewEvidence({
-    attempt_id: "23723723-7237-4237-8237-237237237001",
+    attempt_id: attemptId,
     target_sha: SHA,
     cwd: workspace,
     fsImpl: safeWrapperFs(),
@@ -180,7 +182,8 @@ function alteredStat(stat, overrides) {
 
 async function ownershipRun({ attempt, childUid, childMode = 0o644, workspaceUid, workspaceMode = 0o755 }) {
   const root = privateTemp(`shu237-owner-${attempt}-`);
-  const workspace = path.join(root, "workspace");
+  const attemptId = `23723723-7237-4237-8237-${String(attempt).padStart(12, "0")}`;
+  const workspace = path.join(root, attemptId);
   const evidence = path.join(root, "evidence");
   const child = path.join(root, "review-execution-child.mjs");
   fs.mkdirSync(workspace, { mode: 0o755 });
@@ -203,7 +206,7 @@ async function ownershipRun({ attempt, childUid, childMode = 0o644, workspaceUid
     return stat;
   };
   const result = await runReviewEvidence({
-    attempt_id: `23723723-7237-4237-8237-${String(attempt).padStart(12, "0")}`,
+    attempt_id: attemptId,
     target_sha: SHA,
     cwd: workspace,
     childPath: child,

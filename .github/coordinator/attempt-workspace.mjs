@@ -44,6 +44,12 @@ function run(file, args, env, cwd) {
   }
 }
 
+function privateAttemptDirectory(cwd) {
+  const stat = fs.lstatSync(cwd);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("attempt workspace must remain a real directory");
+  if ((stat.mode & 0o777) !== 0o750) throw new Error("attempt workspace must remain mode 0750");
+}
+
 function publicReadOnlyTree(dir) {
   // This temporary repository contains only public-to-the-worker source objects,
   // never credentials. The different worker uid may read it but cannot edit it.
@@ -64,6 +70,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
     throw new Error("invalid attempt workspace binding");
   }
   const root = directory(env.SHU_WORKTREE_ROOT);
+  const rootStat = fs.statSync(root);
+  if ((rootStat.mode & 0o7777) !== 0o3770) {
+    throw new Error("workspace root must be shared-group sticky/setgid 3770 with no world access");
+  }
   const stateRoot = directory(env.SHU_WORKSPACE_STATE_DIR);
   const stateStat = fs.statSync(stateRoot);
   if ((stateStat.mode & 0o077) !== 0 || stateStat.uid !== process.getuid()) {
@@ -87,11 +97,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
     throw new Error("writer checkout requires the configured distinct worker identity");
   }
   const git = (args, at = cwd) => run("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${at}`, ...args], hostEnv, at);
-  const workerGit = (args, at = root) => {
-    const argv = [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args];
-    return wrapper.length ? run(wrapper[0], [...wrapper.slice(1), "git", ...argv], workerEnv, at)
-      : run("git", argv, workerEnv, at);
-  };
+  const workerRun = (file, args, at = root) => wrapper.length
+    ? run(wrapper[0], [...wrapper.slice(1), file, ...args], workerEnv, at)
+    : run(file, args, workerEnv, at);
+  const workerGit = (args, at = root) => workerRun("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], at);
   let lock;
   try { lock = fs.openSync(lockPath, "wx", 0o600); }
   catch { throw new Error("attempt workspace is locked; no concurrent preparation or automatic takeover"); }
@@ -135,8 +144,14 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       workerGit(["config", "user.name", writer ? "Codex worker" : "Independent reviewer"], cwd);
       workerGit(["config", "user.email", "coordinator-worker@users.noreply.github.com"], cwd);
       workerGit(["checkout", "--detach", receipt.target_sha, "--"], cwd);
+      // The root remains traversable only to the reviewed shared identities.
+      // Each attempt is its own non-world-readable gate; the sandbox grants its
+      // reviewer UID temporary access to only the bound review attempt.
+      if (writer) workerRun("chmod", ["0750", "--", cwd], root);
+      else fs.chmodSync(cwd, 0o750);
     }
     directory(cwd);
+    privateAttemptDirectory(cwd);
     directory(path.join(cwd, ".git"));
     const expectedUid = writer ? Number(env.SHU_WORKER_UID) : process.getuid();
     if (fs.statSync(cwd).uid !== expectedUid || fs.statSync(path.join(cwd, ".git")).uid !== expectedUid) {

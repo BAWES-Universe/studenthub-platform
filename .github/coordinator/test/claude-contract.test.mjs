@@ -78,8 +78,11 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.deepEqual(call.args.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
   assert.equal(call.args[5], "--json-schema");
   assert.deepEqual(JSON.parse(call.args[6]), CALLBACK_SCHEMA);
-  assert.ok(call.args.includes("--bare"), "review ignores builder-controlled project settings and hooks");
+  assert.ok(call.args.includes("--restricted"), "review ignores builder-controlled project settings and hooks without disabling subscription auth");
+  assert.equal(call.args.includes("--bare"), false, "bare mode must not disable the subscription login");
   assert.deepEqual(call.args.slice(call.args.indexOf("--tools"), call.args.indexOf("--tools") + 2), ["--tools", "Read,Glob,Grep"]);
+  assert.deepEqual(call.args.slice(call.args.indexOf("--disallowedTools"), call.args.indexOf("--disallowedTools") + 2), ["--disallowedTools", "mcp__*"]);
+  assert.ok(call.args.includes("--strict-mcp-config"));
   assert.equal(call.args.join(" ").includes("Bash"), false, "Claude's own tool surface cannot execute builder-authored code");
   assert.equal(CLAUDE_MODEL, "opus", "the verifier must never inherit Fable or another host default");
   assert.ok(call.args.includes("--session-id"));

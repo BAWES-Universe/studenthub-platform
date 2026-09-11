@@ -166,8 +166,9 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
 
 * `SHU_WORKTREE_ROOT`: real absolute directory, traversable/writable by the
   coordinator and the configured writer identity. Use a dedicated shared group
-  and sticky directory mode (for example 1770); do not expose the root to unrelated
-  users. The worker launcher must retain the group access this directory needs.
+  and sticky/setgid directory mode (for example 3770); do not expose the root to
+  unrelated users. The worker launcher must retain that shared supplementary
+  group. Every generated attempt directory is mode 0750, never world-readable.
 * `SHU_WORKSPACE_STATE_DIR`: separate real absolute directory owned by the
   coordinator, mode 0700, outside the workspace root. Keep it across ticks.
 * `SHU_PUSH_REMOTE_URL`: the approved repository URL, also used by the host to
@@ -193,6 +194,9 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   group/world writable, with a command-specific sudo rule. Symlinked system
   entrypoints are resolved once; their root-owned, non-writable executable target
   and directory chain are validated, and the canonical target is what executes.
+  Install the host `acl` package: the wrapper grants `shu-reviewer` `r-x` on only
+  the bound attempt for the lifetime of the sandbox and removes that ACL in its
+  exit trap. A pre-existing reviewer ACL is refused rather than silently reused.
 * `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
   For SHU-140 this is
   `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is
@@ -202,13 +206,19 @@ The confinement wrapper is not accepted on configuration alone. In the same
 sandbox invocation that runs `node --test`, a root/coordinator-owned,
 non-writable child checks the effective uid, tries and must fail to read a fresh
 0600 coordinator sentinel,
+tries and must fail to read a fresh readable canary in a sibling workspace,
 tries and must fail to reach a live loopback listener, and rejects any
-credential-bearing environment key. The test process starts only after all four
-checks pass. A missing or ineffective wrapper produces
+credential-bearing environment key. The test process starts only after all five
+checks pass. The wrapper binds systemd's working directory to the canonical
+attempt and masks every sibling in the transient mount namespace. A missing or ineffective wrapper produces
 `REVIEW_EXECUTION_UNAVAILABLE` and HOLD; it can never produce PASS. The report
 records the effective execution uid, workspace-owner uid, exact bound head and
-test output. Claude itself runs with only `Read`, `Glob`, and `Grep` tools in bare
-mode; it receives the confined evidence reference and cannot execute the target.
+test output. Claude itself runs with only `Read`, `Glob`, and `Grep` tools in
+restricted evaluation mode; subscription OAuth remains available, ambient
+settings, CLAUDE.md, hooks, skills, commands, plugins and subagents are disabled,
+and file tools are confined to the exact working directory. Strict MCP
+configuration plus an explicit `mcp__*` denial removes MCP tools. It receives the
+confined evidence reference and cannot execute the target.
 
 After the existing durable reservation and launch intent, the coordinator fetches
 the bound commit in a fresh host-owned bare repository, creates a self-contained

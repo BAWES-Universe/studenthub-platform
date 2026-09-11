@@ -86,9 +86,16 @@ export function buildClaudeArgs(input, { resume = false } = {}) {
     "--model", CLAUDE_MODEL,
     "--output-format", "json",
     "--json-schema", JSON.stringify(CALLBACK_SCHEMA),
-    "--bare",
+    // `--restricted` keeps subscription OAuth available while disabling every
+    // customization source and confining file tools to the exact cwd. `--bare`
+    // must not return: it deliberately ignores the subscription login.
+    "--restricted",
     "--disable-slash-commands",
     "--tools", "Read,Glob,Grep",
+    // --tools constrains built-ins only. MCP tools have their own namespace and
+    // therefore need both an empty strict config and an explicit deny pattern.
+    "--strict-mcp-config",
+    "--disallowedTools", "mcp__*",
     "--permission-mode", "dontAsk",
     sessionFlag, input.attempt_id,
     buildClaudePrompt(input),
