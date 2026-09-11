@@ -9,7 +9,9 @@ transactional-outbox notification.
 
 - Every application mutation (`POST`, `PUT`, `PATCH`, or `DELETE`) supplies
   `Idempotency-Key: v1.<issued-at-unix-ms>.<uuid-v4>`. The client creates it once
-  before the first attempt and keeps the exact value for every retry.
+  before the first attempt and keeps the exact value for every retry. The key is
+  accepted in any case and normalized to lower case before it reaches the
+  uniqueness boundary, so a re-cased retry replays instead of executing again.
 - The server fingerprints the authenticated principal reference, method,
   canonical route template, and a canonical JSON payload containing **all**
   body, path, and query values that can change the operation. Object key order

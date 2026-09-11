@@ -81,6 +81,11 @@ export function createIdempotency(options: IdempotencyOptions): IdempotencyImple
       if (request.key === undefined || request.key.length === 0) return refusal(400, "missing_key");
       const match = KEY_PATTERN.exec(request.key);
       if (!match) return refusal(400, "invalid_key");
+      // The format above is validated case-insensitively, so the key must be
+      // folded to one spelling before it reaches the uniqueness boundary. A
+      // client that re-cases its key on retry would otherwise claim a second
+      // record and execute the mutation a second time.
+      const key = request.key.toLowerCase();
 
       const issuedAtMs = Number(match[1]);
       const nowMs = clock.now().getTime();
@@ -95,7 +100,7 @@ export function createIdempotency(options: IdempotencyOptions): IdempotencyImple
       try {
         outcome = await store.executeAtomic({
           principalRef: request.principalRef,
-          key: request.key,
+          key,
           fingerprint: mutationFingerprint(request),
           expiresAt: new Date(issuedAtMs + retentionMs),
         }, operation);

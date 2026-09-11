@@ -238,6 +238,12 @@ test("SHU-233/parity-contract", async () => {
   assert.ok(transferRetries.every((result) => result.ok &&
     JSON.stringify(result.response) === JSON.stringify(lostAtGateway.response)));
 
+  // A retry that re-cases the key is the same logical request, not a new one.
+  const recased = await implementation.execute(
+    request({ key: TRANSFER_KEY.toUpperCase() }), generateTransfer);
+  assert.ok(recased.ok && recased.replayed, "a re-cased key must replay, not execute");
+  assert.deepEqual(recased.response, lostAtGateway.response);
+
   let decisionCalls = 0;
   const decisionRequest = request({
     key: DECISION_KEY,

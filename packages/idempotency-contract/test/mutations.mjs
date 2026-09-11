@@ -20,6 +20,12 @@ const mutations = [
     from: "options.enforceUniqueRecords ?? true",
     to: "options.enforceUniqueRecords ?? false",
   },
+  {
+    name: "stop normalizing the key casing",
+    file: "idempotency.js",
+    from: "const key = request.key.toLowerCase();",
+    to: "const key = request.key;",
+  },
 ];
 
 for (const mutation of mutations) {
