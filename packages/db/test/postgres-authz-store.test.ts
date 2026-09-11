@@ -12,6 +12,8 @@
 import assert from "node:assert/strict";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import pg from "pg";
+import { createGatewayServer } from "../../../apps/gateway/src/index.js";
+import { createRuntimeLoginFromEnv } from "../../../apps/gateway/src/login-runtime.js";
 
 import {
   createOrganization,
@@ -132,6 +134,54 @@ after(async () => {
 // ---------------------------------------------------------------------------
 // Parity: organization store
 // ---------------------------------------------------------------------------
+
+test("SHU-91: runtime HTTP navigation uses persisted sessions and fresh Postgres grants", async (t) => {
+  const store = makeStore();
+  const sessions = makeLoginStore();
+  await store.registerPrincipal(createPrincipal({ id: "navigation-person", pbuuids: [] }));
+  await store.upsertOrganization(createOrganization({ id: "navigation-a", name: "Navigation A" }));
+  await store.upsertOrganization(createOrganization({ id: "navigation-b", name: "Navigation B" }));
+  await store.grantMany("navigation-person", [
+    { orgId: "navigation-a", role: "candidate" },
+    { orgId: "navigation-a", role: "staff" },
+    { orgId: "navigation-b", role: "recruiter" },
+  ]);
+  const sessionId = "w".repeat(43);
+  await sessions.sessions.put({ id: sessionId, personId: "navigation-person" });
+  const runtime = createRuntimeLoginFromEnv({
+    DATABASE_URL: DB_URL, OIDC_ISSUER: "https://auth.example.invalid/",
+    OIDC_CLIENT_ID: "synthetic-navigation", OIDC_CLIENT_SECRET: "synthetic-unused",
+    OIDC_CALLBACK_URL: "https://studenthub.example.invalid/login/callback",
+    OIDC_AUTHORIZATION_URL: "https://auth.example.invalid/authorize",
+    OIDC_TOKEN_URL: "https://auth.example.invalid/token", OIDC_JWKS_URL: "https://auth.example.invalid/jwks",
+    LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.example.invalid/profile",
+  });
+  assert.ok(runtime);
+  t.after(() => runtime.close());
+  const server = createGatewayServer(undefined, undefined, undefined, runtime.application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const headers = { cookie: `__Host-studenthub_session=${sessionId}` };
+  const get = (query = "") => fetch(`http://127.0.0.1:${address.port}/workspace${query}`, { headers });
+  const picker = await get();
+  assert.equal(picker.status, 200);
+  const data = await picker.json();
+  assert.equal(data.active, null);
+  assert.equal(data.contexts.length, 3);
+  for (const [org, role] of [["navigation-a", "candidate"], ["navigation-a", "staff"], ["navigation-b", "recruiter"]]) {
+    const response = await get(`?org_id=${org}&role=${role}`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).active.role, role);
+  }
+  assert.equal((await get("?org_id=navigation-b&role=staff")).status, 403);
+  await store.revokeMany("navigation-person", [{ orgId: "navigation-a", role: "staff" }]);
+  assert.equal((await get("?org_id=navigation-a&role=staff")).status, 403);
+  assert.equal((await get("?org_id=navigation-b&role=recruiter")).status, 200);
+  await sessions.sessions.delete(sessionId);
+  assert.equal((await get()).status, 401);
+});
 
 test("parity: organizations upsert, update in place, fetch and list", async () => {
   const store = makeStore();

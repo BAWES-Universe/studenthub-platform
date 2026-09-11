@@ -1,6 +1,8 @@
 // Local visual QA only: synthetic people, no database or real identity provider.
 // Never used by start:gateway or either production container entrypoint.
 import { createServer } from "node:http";
+import { InMemoryAuthzStore } from "@studenthub/contracts";
+import { createContextNavigation } from "../../../dist/apps/gateway/src/context-navigation.js";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import { createLoginApplication } from "../../../dist/apps/gateway/src/login-application.js";
 import { createGatewayServer } from "../../../dist/apps/gateway/src/index.js";
@@ -10,7 +12,15 @@ if (process.env.NODE_ENV === "production") throw new Error("Synthetic web previe
 const rig = createSyntheticLoginRig(createLoginApplication);
 const session = "v".repeat(43);
 await rig.sessions.put({ id: session, personId: "person-preview" });
-const login = { ...rig.app, web: {
+const navigationStore = new InMemoryAuthzStore({
+  principals: [{ id: "person-preview", pbuuids: [] }],
+  organizations: [{ id: "preview-company", name: "Example Company" }, { id: "preview-campus", name: "Example Campus" }],
+});
+await navigationStore.grantMany("person-preview", [
+  { orgId: "preview-company", role: "candidate" }, { orgId: "preview-company", role: "staff" },
+  { orgId: "preview-campus", role: "recruiter" },
+]);
+const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, navigationStore), web: {
   origin: "http://terminal.local:4173",
   returnTo: rig.config.allowedReturnUrls[1],
   async readProfile(id) { return { id, displayName: "Noor — synthetic preview", email: "noor@example.invalid" }; },
@@ -33,6 +43,10 @@ const preview = createServer((request, response) => {
   // unless a real session cookie is provided; HTTP tests exercise that boundary.
   if (request.url === "/__preview/profile") {
     request.url = "/profile";
+    request.headers.cookie = `__Host-studenthub_session=${session}`;
+  }
+  if (request.url?.split("?", 1)[0] === "/__preview/workspace") {
+    request.url = request.url.replace("/__preview/workspace", "/workspace");
     request.headers.cookie = `__Host-studenthub_session=${session}`;
   }
   gateway.emit("request", request, response);

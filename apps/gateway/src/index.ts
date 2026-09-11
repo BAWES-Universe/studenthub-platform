@@ -18,7 +18,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, wantsHtml, writeHtml,
+  WEB_CSS, wantsHtml, writeHtml, renderWorkspace,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -147,6 +147,26 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
+      return;
+    }
+
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace") {
+      let result: import("./context-navigation.js").NavigationResult;
+      try {
+        result = login?.navigation
+          ? await login.navigation.open(
+            cookieValue(request.headers.cookie, "__Host-studenthub_session"),
+            new URL(request.url, "http://gateway.invalid").searchParams,
+          )
+          : { status: 503, body: { error: "context_unavailable" } };
+      } catch {
+        result = { status: 503, body: { error: "context_unavailable" } };
+      }
+      if (html) {
+        writeHtml(response, result.status, login ? renderWorkspace(result, login) : renderError(503));
+      } else {
+        writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
+      }
       return;
     }
 

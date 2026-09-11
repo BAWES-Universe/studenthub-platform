@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "dev": "npm run build && node tools/fixtures/src/web-preview.mjs",
-    "test:web": "node --test dist/apps/gateway/test/web-ui.test.js",
+    "test:web": "node --test dist/apps/gateway/test/web-ui.test.js dist/apps/gateway/test/context-navigation.test.js && node apps/gateway/test/context-navigation-mutations.mjs",
     "build": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && npm run build -w @studenthub/login-contract && npm run build -w @studenthub/source-connection-contract && npm run build -w @studenthub/safe-write-contract && npm run build -w @studenthub/db && tsc -p tsconfig.build.json",
     "start:gateway": "node dist/apps/gateway/src/index.js",
     "start:worker": "node dist/apps/worker/src/index.js",
