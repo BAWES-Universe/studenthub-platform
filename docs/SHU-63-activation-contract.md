@@ -101,8 +101,12 @@ export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 
 Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
 above and grant only that fixed command to `shu-coordinator`. The adapter does
-not trust the declaration: before the same child runs real `node --test`, it must
-prove the configured uid is effective, a 0600 coordinator sentinel is unreadable,
+not trust the declaration: symlinked system entrypoints are resolved to a
+root-owned, non-writable executable behind a root-owned, non-writable canonical
+directory chain, and only the validated canonical target executes. The child and
+read-only checkout may be root- or coordinator-owned but never reviewer-owned or
+group/world writable. Before the same child runs real `node --test`, it must prove
+the configured uid is effective, a 0600 coordinator sentinel is unreadable,
 a live loopback listener is unreachable, and credential-bearing environment
 keys are absent. Any failed probe produces the distinct
 `REVIEW_EXECUTION_UNAVAILABLE` HOLD and no Claude launch.

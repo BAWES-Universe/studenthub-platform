@@ -183,21 +183,25 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   falsely claims retention.
 * `SHU_REVIEW_EXEC_UID`: the numeric uid of a distinct, unprivileged
   `shu-reviewer` account. Under selected option **B-ii**, the Claude process and
-  its read-only checkout stay coordinator-owned, while every execution of
-  builder-authored test code crosses this uid boundary.
+  its read-only checkout stay control-plane-owned (root or the coordinator uid,
+  never the reviewer uid), while every execution of builder-authored test code
+  crosses this uid boundary.
 * `SHU_REVIEW_EXEC_WRAPPER_JSON`: a JSON argv array for the root-owned confinement
   wrapper, for example
   `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
   Install the reviewed `reviewer-sandbox.sh` at that path, root-owned and not
-  group/world writable, with a command-specific sudo rule.
+  group/world writable, with a command-specific sudo rule. Symlinked system
+  entrypoints are resolved once; their root-owned, non-writable executable target
+  and directory chain are validated, and the canonical target is what executes.
 * `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
   For SHU-140 this is
   `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is
   used.
 
 The confinement wrapper is not accepted on configuration alone. In the same
-sandbox invocation that runs `node --test`, a coordinator-owned child checks the
-effective uid, tries and must fail to read a fresh 0600 coordinator sentinel,
+sandbox invocation that runs `node --test`, a root/coordinator-owned,
+non-writable child checks the effective uid, tries and must fail to read a fresh
+0600 coordinator sentinel,
 tries and must fail to reach a live loopback listener, and rejects any
 credential-bearing environment key. The test process starts only after all four
 checks pass. A missing or ineffective wrapper produces
