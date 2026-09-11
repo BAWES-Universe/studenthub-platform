@@ -8,7 +8,7 @@
 
 ## 1. What this cluster is
 
-A candidate's profile in production is one wide row (`candidate`, **56 columns by migration history**) plus nine child tables, edited through roughly 45 single-purpose endpoints in the candidate app and viewed or edited by four other apps (staff, admin, company, manager) under different field projections. Documents (personal photo, resume, civil ID front and back, video) are S3 objects whose keys live in profile columns.
+A candidate's profile in production is one wide row (`candidate`, **57 columns by migration history**) plus nine child tables, edited through roughly 45 single-purpose endpoints in the candidate app and viewed or edited by four other apps (staff, admin, company, manager) under different field projections. Documents (personal photo, resume, civil ID front and back, video) are S3 objects whose keys live in profile columns.
 
 The one-app grant model collapses this to **one profile aggregate** and **one set of journeys** whose visible fields and permitted writes are decided by the caller's grant, not by which app they logged into. The matrix in section 6 is written in that shape.
 
@@ -16,9 +16,14 @@ The one-app grant model collapses this to **one profile aggregate** and **one se
 
 ### 2.1 `candidate` (profile columns, grouped)
 
-Created in `console/migrations/m130524_201442_init.php` with **12 columns** (`:58-71`). Counting the up direction only, after stripping comments: **45** executable `addColumn('candidate', …)` calls and **1** up-direction `dropColumn` (`company_id`, `m170227_113509_candidate_company.php:19`), giving **12 + 45 − 1 = 56** distinct surviving column names, with no name added twice.
+Created in `console/migrations/m130524_201442_init.php` with **12 columns** (`:58-71`). Counting the up direction only, after stripping comments: **46** executable `addColumn('candidate', …)` calls and **1** up-direction `dropColumn` (`company_id`, `m170227_113509_candidate_company.php:19`), giving **12 + 46 − 1 = 57** distinct surviving column names, with no name added twice.
 
-An earlier draft said "60+ columns". That was unsupported: the likely source is the model docblock, which carries **66** `@property` entries, of which only **55** are scalar (39 `string`, 11 `integer`, 3 `number`, 1 `float`, 1 `boolean`) and 11 are relation objects (`University`, `Store`, `Note`, `Country`, `Company`, `CandidateToken`, `TransferCandidate`, …). Counting relations as columns produced the inflated figure. The migration-derived 56 and the docblock's 55 scalars agree to within one.
+Two earlier drafts of this section were wrong. Both are recorded, because the method matters more than the number:
+
+- **"60+ columns"** came from the model docblock's **66** `@property` entries, of which only **55** are scalar (39 `string`, 11 `integer`, 3 `number`, 1 `float`, 1 `boolean`); the other 11 are relation objects (`University`, `Store`, `Note`, `Country`, `Company`, `CandidateToken`, `TransferCandidate`, …). Counting relations as columns inflated it.
+- **"56 columns / 45 `addColumn` calls"** came from a bug in this document's own scanner: the pattern required `addColumn(` with no space, so it silently skipped `addColumn ('candidate', 'candidate_preferred_time', …)` in `m211123_120542_candidate_time.php:15`, which is written with a space before the parenthesis. Matching `addColumn\s*\(` yields 46. A count is only as good as the scanner, and a scanner blind to one spelling fails silently rather than loudly — so the pattern is stated here explicitly rather than left implicit.
+
+**The docblock reconciles exactly against 57**, not "to within one": the 55 scalar properties are the 57 columns minus `ip_address` and `enable_two_step_auth`, which the docblock does not declare. Nothing appears in the docblock that is absent from the migrations.
 
 **The live column count remains unestablished** (§11): no schema dump was compared, and migrations are not proof of the deployed table. Appendix A lists the selected field-bearing migrations used for this inventory, not all 35. Groups below are by meaning, not by migration.
 
