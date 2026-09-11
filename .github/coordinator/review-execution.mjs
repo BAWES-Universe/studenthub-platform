@@ -73,21 +73,52 @@ export function buildReviewExecutionEnvironment(_parentEnv = {}) {
   return clean;
 }
 
-function trustedHostFile(file, fsImpl = fs) {
-  const stat = fsImpl.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
-    throw new Error("review execution wrapper must be a root-owned, non-writable regular file");
+function trustedRootPath(file, fsImpl = fs) {
+  let resolved;
+  try {
+    resolved = fsImpl.realpathSync(file);
+  } catch {
+    throw new Error("review execution wrapper path must resolve to a trusted host file");
   }
+  if (!path.isAbsolute(resolved)) {
+    throw new Error("review execution wrapper canonical path must be absolute");
+  }
+  const target = fsImpl.lstatSync(resolved);
+  if (!target.isFile() || target.isSymbolicLink() || target.uid !== 0 || (target.mode & 0o022) !== 0 || (target.mode & 0o111) === 0) {
+    throw new Error("review execution wrapper target must be a root-owned, non-writable executable regular file");
+  }
+  for (let directory = path.dirname(resolved);;) {
+    const stat = fsImpl.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
+      throw new Error("review execution wrapper canonical path must have a root-owned, non-writable directory chain");
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return resolved;
 }
 
 export function validateReviewWrapper(wrapper, fsImpl = fs) {
-  trustedHostFile(wrapper[0], fsImpl);
-  if (path.basename(wrapper[0]) === "sudo") {
-    if (wrapper[1] !== "-n" || !path.isAbsolute(wrapper[2] ?? "")) {
+  const executable = trustedRootPath(wrapper[0], fsImpl);
+  const normalized = [executable, ...wrapper.slice(1)];
+  if (path.basename(wrapper[0]) === "sudo" || path.basename(executable) === "sudo") {
+    if (wrapper.length !== 3 || wrapper[1] !== "-n" || !path.isAbsolute(wrapper[2] ?? "")) {
       throw new Error("sudo review wrapper must be the fixed noninteractive command form");
     }
-    trustedHostFile(wrapper[2], fsImpl);
+    normalized[2] = trustedRootPath(wrapper[2], fsImpl);
   }
+  return normalized;
+}
+
+function trustedControlPlaneObject(stat, { ownUid, expectedUid, kind }) {
+  const trustedOwner = stat.uid === 0 || stat.uid === ownUid;
+  const expectedKind = kind === "file" ? stat.isFile() : stat.isDirectory();
+  return expectedKind
+    && !stat.isSymbolicLink()
+    && trustedOwner
+    && stat.uid !== expectedUid
+    && (stat.mode & 0o022) === 0;
 }
 
 function listenProbe() {
@@ -147,18 +178,19 @@ export async function runReviewEvidence({
     if (!Number.isInteger(expectedUid) || expectedUid <= 0 || expectedUid === ownUid) {
       throw new Error("review execution requires a distinct non-root SHU_REVIEW_EXEC_UID");
     }
-    const wrapper = reviewWrapper(env);
-    validateWrapperImpl(wrapper, fsImpl);
+    const configuredWrapper = reviewWrapper(env);
+    const wrapper = validateWrapperImpl(configuredWrapper, fsImpl);
     const childStat = fsImpl.lstatSync(childPath);
-    if (!childStat.isFile() || childStat.isSymbolicLink() || childStat.uid !== ownUid || (childStat.mode & 0o022) !== 0) {
-      throw new Error("review evidence child must be a coordinator-owned, non-writable regular file");
+    if (!trustedControlPlaneObject(childStat, { ownUid, expectedUid, kind: "file" })) {
+      throw new Error("review evidence child must be a root/coordinator-owned, non-writable regular file");
     }
     const files = reviewTestFiles(env);
     const evidenceDir = privateDirectory(env.SHU_REVIEW_EVIDENCE_DIR, { fsImpl, ownUid });
     const resolvedCwd = fsImpl.realpathSync(cwd);
-    const workspaceUid = fsImpl.statSync(resolvedCwd).uid;
-    if (workspaceUid !== ownUid) {
-      throw new Error("B-ii requires the read-only reviewer workspace to remain coordinator-owned");
+    const workspaceStat = fsImpl.lstatSync(resolvedCwd);
+    const workspaceUid = workspaceStat.uid;
+    if (!trustedControlPlaneObject(workspaceStat, { ownUid, expectedUid, kind: "directory" })) {
+      throw new Error("B-ii requires a root/coordinator-owned, non-writable reviewer workspace");
     }
     if (evidenceDir === resolvedCwd || evidenceDir.startsWith(`${resolvedCwd}${path.sep}`)) {
       throw new Error("review evidence authority must be outside the builder-authored checkout");
