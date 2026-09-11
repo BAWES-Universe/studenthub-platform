@@ -23,7 +23,7 @@ The app shell consumes a server-produced context/navigation manifest with, at mi
 
 ## 2. Navigation contract by grant
 
-Entries are ordered as shown. Child entries appear only when their own expression is satisfied. `capability:*` identifiers below are versioned capability grants owned by the named delivery slice; they do not add members to the closed role union.
+Entries are ordered as shown. Every section 2 row is an authenticated app context and implicitly includes the shared-shell entries Account (`U-03`) then Notifications (`U-04`) after its context-specific entries and before any explicitly listed Messages (`U-05`) or Support (`U-06`); listings of `U-03` or `U-04` inside a row show that same position and do not duplicate the entries. Child entries appear only when their own expression is satisfied. `capability:*` identifiers below are versioned capability grants owned by the named delivery slice; they do not add members to the closed role union.
 
 | Effective grant/context | Primary navigation | Conditional/additive entries | Context-switch effect |
 |---|---|---|---|
@@ -416,7 +416,7 @@ The key `APP-Bnnn` means the nth data row, top to bottom, in section B of the na
 
 The future executable test title is exactly **`SHU-235/parity-contract`**. It is owned by the app-shell/navigation delivery work and must be runnable against the integrated server plus browser path; this documentation card does not implement it.
 
-The fixture matrix contains one principal/context for each row in section 2: candidate (with and without `assignment:active`), org member, owner, recruiter, finance, store manager, each named staff grant, read-only admin plus settled-finance, grant admin, platform admin, and act-as. For each fixture the test:
+The fixture matrix contains one principal/context for each of the 21 rows in section 2: candidate; organization member, owner, recruiter, and finance; store manager; staff self, candidate-admin, recruiter, finance, org-admin, support, marketing, and reporting; staff-context `capability:staff-work-review`; staff-context `capability:candidate-evaluation`; staff-or-admin-context `capability:account-admin`; read-only admin plus settled finance; grant admin; platform admin; and act-as. Candidate has variants with and without `assignment:active`. For each fixture the test:
 
 1. asks the server for the active-context/navigation manifest and asserts exact ordered equality with section 2—no missing and no extra IDs;
 2. opens one representative route for that grant, calls one read endpoint behind it, and for mutation-capable grants completes a harmless fixture write through preview/confirm/receipt;
