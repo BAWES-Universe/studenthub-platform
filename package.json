@@ -14,7 +14,7 @@
     "build": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && npm run build -w @studenthub/login-contract && npm run build -w @studenthub/source-connection-contract && npm run build -w @studenthub/safe-write-contract && npm run build -w @studenthub/idempotency-contract && npm run build -w @studenthub/db && tsc -p tsconfig.build.json",
     "start:gateway": "node dist/apps/gateway/src/index.js",
     "start:worker": "node dist/apps/worker/src/index.js",
-    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/packages/contracts/test/authz.test.js dist/packages/login-contract/test/login-contract.test.js dist/packages/source-connection-contract/test/source-connection-contract.test.js dist/packages/safe-write-contract/test/safe-write-contract.test.js dist/packages/idempotency-contract/test/idempotency-contract.test.js dist/packages/search/test/search-adapter.test.js dist/packages/search/test/typesense-indexer.test.js dist/apps/gateway/test/health.test.js dist/apps/gateway/test/authz-middleware.test.js dist/apps/gateway/test/authz-audit.test.js dist/apps/gateway/test/login-application.test.js dist/apps/gateway/test/login-http.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js dist/tools/search-bakeoff/test/search-bakeoff.test.js && npm run test:idempotency:mutations && npm run test:assertion && npm run test:deployment && npm run test:web && npm run test:documents && npm run test:documents:mutations && npm run test:documents:hardening && npm run test:documents:hardening:mutations",
+    "test": "npm run build && node --test dist/packages/contracts/test/contracts.test.js dist/packages/contracts/test/authz.test.js dist/packages/login-contract/test/login-contract.test.js dist/packages/source-connection-contract/test/source-connection-contract.test.js dist/packages/safe-write-contract/test/safe-write-contract.test.js dist/packages/idempotency-contract/test/idempotency-contract.test.js dist/packages/search/test/search-adapter.test.js dist/packages/search/test/typesense-indexer.test.js dist/apps/gateway/test/health.test.js dist/apps/gateway/test/authz-middleware.test.js dist/apps/gateway/test/authz-audit.test.js dist/apps/gateway/test/login-application.test.js dist/apps/gateway/test/login-http.test.js dist/apps/worker/test/heartbeat.test.js dist/tools/fixtures/test/fixtures.test.js dist/tools/legacy-import/test/import.test.js dist/tools/legacy-import/test/dry-run.test.js dist/tools/reconciliation/test/reconciliation.test.js dist/tools/search-bakeoff/test/search-bakeoff.test.js && npm run test:idempotency:mutations && npm run test:assertion && npm run test:deployment && npm run test:web && npm run test:documents && npm run test:documents:mutations && npm run test:documents:hardening && npm run test:documents:hardening:mutations && npm run test:observability && npm run test:observability:mutations && npm run exercise:observability",
     "test:db": "npm run build && node --test dist/packages/db/test/postgres-authz-store.test.js",
     "benchmark:search": "npm run build && node dist/tools/search-bakeoff/src/run.js",
     "dry-run:import": "npm run build && node dist/tools/legacy-import/src/dry-run.js",
@@ -30,7 +30,10 @@
     "test:documents": "node --test packages/private-documents/test/private-documents.test.mjs",
     "test:documents:mutations": "node packages/private-documents/test/mutations.mjs",
     "test:documents:hardening": "node --test packages/private-documents/test/hardening.test.mjs",
-    "test:documents:hardening:mutations": "node packages/private-documents/test/hardening-mutations.mjs"
+    "test:documents:hardening:mutations": "node packages/private-documents/test/hardening-mutations.mjs",
+    "test:observability": "node --test dist/packages/observability/test/observability.test.js",
+    "test:observability:mutations": "node packages/observability/test/mutations.mjs",
+    "exercise:observability": "node tools/observability/synthetic-exercise.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
@@ -38,5 +41,8 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@sentry/node": "10.74.0"
   }
 }
