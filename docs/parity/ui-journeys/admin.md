@@ -232,7 +232,7 @@ Gate count at `c789b17`: **123 active** `admin_limited_access` conditions in pag
 | Admin-app flow | Replacement grant in the one-app model |
 |---|---|
 | Full admin: every menu item, all CRUD on accounts, reference data, finance, settings | `admin:*` (I1 grant catalogue) split into `admin:identity` (admin/staff/inspector accounts, permission sections, blocked IPs), `admin:orgs` (companies, contacts, brands, reference data), `admin:reference-data` |
-| Limited admin (`admin_limited_access=1`): read everything, no create/edit/delete, transfer money views only after status 3/4, no candidate delete | `admin:read-only` plus `finance:read-settled` — today this is 129 template gates and 2 server checks |
+| Limited admin (`admin_limited_access=1`): read everything, no create/edit/delete, transfer money views only after status 3/4, no candidate delete | `admin:read-only` plus `finance:read-settled` — today this is 123 active template gates (126 raw, 3 inert inside HTML comments) and 2 server checks |
 | Finance operator: transfers, lock/unlock/cancel, mark paid, bank files, imports, payable candidates, invoices/receipts, wallet, Xero | `staff:finance` (F2/F3/F4), with lock-state transitions as server-side capabilities |
 | Candidate approver/reviewer (review queue, approve, delete/restore, reset password) | `staff:candidate-admin` (S6/S9) |
 | Impersonation of candidate/staff/contact/store manager | `admin:act-as` audited (I7) or removed (D2) |
@@ -253,7 +253,7 @@ Gate count at `c789b17`: **123 active** `admin_limited_access` conditions in pag
 
 ## Summary — highest-value frontend-only findings
 
-1. Limited-access admin is a UI convention: 129 `admin_limited_access` template gates vs 2 server checks (`CandidateController.php:372`, `TransferController.php:2227`); every other create/update/delete/status/transfer action is open to a limited bearer token (FO-01..04).
+1. Limited-access admin is a UI convention: 123 active `admin_limited_access` template gates (126 raw, 3 inert inside HTML comments) vs 2 server checks (`CandidateController.php:372`, `TransferController.php:2227`); every other create/update/delete/status/transfer action is open to a limited bearer token (FO-01..04).
 2. Permission sections are administered from the admin app (`assign-permission`, `permission-section-list`) but never consulted by the admin app or any admin controller — SHU-124 F4 confirmed end-to-end (FO-06).
 3. `restrictedAccess()` always returns `true` (`auth.service.ts:562-571`); the salary/suggestion gates that depend on it are dead (FO-05).
 4. Transfer status machine is mirrored in the UI with numeric literals; server validates transitions, but the UI offers Delete on cancelled transfers which the server rejects, and role-dependent relock/unlock (FI-F9) is only visible via hidden buttons (FO-15).
