@@ -1,8 +1,8 @@
 # SHU-97 — production-to-platform data map and isolated test-data plan
 
 Status: **proposed mapping; no data movement authorized; independent exact-head review pending**.
-Author: Codex Work session `3b731a8a2834`. A separate, non-author Codex session must
-verify the final PR head. This document is not a PASS, deployment receipt, schema
+Author: Codex Work session `3b731a8a2834`. A non-author verifier from a different
+model family must verify the final PR head. This document is not a PASS, deployment receipt, schema
 migration, authorization to open the sealed lab, or evidence of live parity.
 
 ## Authority, scope and how to read the map
@@ -374,12 +374,12 @@ calls, raw SQL, data updates, runtime schema discovery or DB connections. Two
 conditional declarations are source possibilities, not proof of application.
 Use the exception ledger and manual source receipts to challenge the instrument.
 
-Independent Codex verifier: review the exact PR head, regenerate the census,
+Independent different-family verifier: review the exact PR head, regenerate the census,
 challenge wallet/source-key namespaces, financial units, computed fields, missing
 attachment types, permission and environment claims. Inspect all unresolved rows
 as HOLD rather than accepting coverage counts as truth. Check that the single PR
 contains no production access, credentials, data, migration/deployment changes
 or dispatch activation. Post **PASS or BLOCK bound to the full head SHA** on the
-PR and SHU-97. The author must not self-PASS. Codex may merge only after that
-independent PASS and green required checks at the same head; a changed head
+PR and SHU-97. The author must not self-PASS. The authorized merger may merge only
+after that independent PASS and green required checks at the same head; a changed head
 requires a new verdict. Approval of a mapping never authorizes executable import.

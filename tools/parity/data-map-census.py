@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SHU-97 static source census. Never imports PHP or connects to a database.
 
-Usage: python tools/parity/data-map-census.py LEGACY_CHECKOUT OUTPUT_DIRECTORY
+Usage: python tools/parity/data-map-census.py LEGACY_CHECKOUT OUTPUT_DIRECTORY [PLATFORM_CHECKOUT]
 The output is evidence for review, not an executable import specification.
 """
 import csv
@@ -13,7 +13,9 @@ import subprocess
 import sys
 
 PIN = 'c2ce255695eabc7e3a0f23b162f5996274234c63'
-root, out = map(pathlib.Path, sys.argv[1:])
+if len(sys.argv) not in (3, 4):
+    raise SystemExit('usage: data-map-census.py LEGACY_CHECKOUT OUTPUT_DIRECTORY [PLATFORM_CHECKOUT]')
+root, out = map(pathlib.Path, sys.argv[1:3])
 if subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip() != PIN:
     raise SystemExit('Wrong source revision')
 if subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'], text=True).strip():
@@ -211,9 +213,24 @@ for p in sorted((root/'console/controllers').glob('*.php')):
         schedules=[f'cron/cronlist:{i+1}' for i,line in enumerate(cron) if not line.lstrip().startswith('#') and (route in line or (route=='algolia/index' and 'yii algolia ' in line))]
         jobs.append([route,receipt(p.relative_to(root).as_posix(),s,m.start()),';'.join(schedules) or 'not in checked cron file','DISABLED in all fixture/import runs; semantic disposition in README'])
 write_csv('jobs.csv',['console_route','source','schedule_receipts','plan'],jobs)
-platform=pathlib.Path(__file__).resolve().parents[2]
+if len(sys.argv) == 4:
+    platform = pathlib.Path(sys.argv[3]).resolve()
+else:
+    try:
+        platform = pathlib.Path(subprocess.check_output(
+            ['git', '-C', str(pathlib.Path(__file__).resolve().parent), 'rev-parse', '--show-toplevel'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip())
+    except subprocess.CalledProcessError as error:
+        raise SystemExit('Cannot locate platform checkout; pass PLATFORM_CHECKOUT explicitly') from error
+appendices = platform / 'docs/parity/ui-journeys'
+required_appendices = {'candidate-web.md', 'candidate-mobile.md', 'staff.md', 'admin.md', 'employer.md'}
+missing_appendices = sorted(name for name in required_appendices if not (appendices / name).is_file())
+if missing_appendices:
+    raise SystemExit('Missing frontend appendices: ' + ', '.join(missing_appendices))
 frontend=[]
-for p in sorted((platform/'docs/parity/ui-journeys').glob('*.md')):
+for p in sorted(appendices.glob('*.md')):
     for i,line in enumerate(p.read_text().splitlines()):
         if not line.startswith('|'):continue
         cells=re.split(r'(?<!\\)\|',line)[1:-1]
@@ -223,6 +240,11 @@ for p in sorted((platform/'docs/parity/ui-journeys').glob('*.md')):
             frontend.append([p.stem,id_,str(p.relative_to(platform))+':'+str(i+1),cells[1].strip() if len(cells)>1 else '',cells[2].strip() if len(cells)>2 else '',
                              'INVENTORY-ONLY unless explicitly reverified in README; no draft claim promoted to fact',
                              'synthetic scenario with fresh server authorization; replace PII/objects; no cached-token or provider-state import'])
+if not frontend:
+    raise SystemExit('Frontend census is empty; refusing a vacuous manifest')
+frontend_keys = [(row[0], row[1]) for row in frontend]
+if len(frontend_keys) != len(set(frontend_keys)):
+    raise SystemExit('Duplicate frontend inventory row ID within one appendix')
 write_csv('frontend-effects.csv',['app','inventory_row','inventory_receipt','reported_area','reported_effect','evidence_status','test_data_plan'],frontend)
 manifest = {'source': PIN, 'method':'lexical literal Yii up/safeUp migration census plus scalar model annotations; no execution',
             'entities':len(tables),'fields':len(rows),'annotation_only':sum(r[3]=='annotation-only' for r in rows),
