@@ -30,6 +30,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | PostgreSQL data layer | `packages/db`, `packages/db/migrations` | ✅ persistent authz, OIDC state, sessions, and issuer/subject bindings |
 | Login contract | `packages/login-contract` | ✅ executable OIDC conformance and mutation harness |
 | Source-connection contract | `packages/source-connection-contract` | ✅ executable Discord/Google import contract; candidates and conflicts only, no I/O |
+| Private documents | `packages/private-documents` | ✅ private synthetic filesystem storage, scoped metadata, signed expiring delivery and opt-in HTTP handler; [contract and limits](docs/contracts/private-documents.md); not mounted in the live gateway |
 | Search adapter | `packages/search` | ✅ Typesense adapter and indexer |
 | Migration tools | `tools/legacy-import`, `tools/fixtures`, `tools/reconciliation` | ✅ |
 | Search benchmark | `tools/search-bakeoff` | ✅ Meilisearch vs Typesense evidence (SHU-47) |
