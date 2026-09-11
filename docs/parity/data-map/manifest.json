@@ -1,5 +1,13 @@
 {
   "source": "c2ce255695eabc7e3a0f23b162f5996274234c63",
+  "platform_source": "9ef9259309505ceab9200a6648bf1036b37e24b6",
+  "platform_frontend_sources": {
+    "docs/parity/ui-journeys/admin.md": "6b9c05bcb72869080f3de7d96cbedadbdfcadd91bffb7ae8c11b3e32b3edd39c",
+    "docs/parity/ui-journeys/candidate-mobile.md": "037bdb21e1784afc7f423af693b365a7daac81bff3e5ad7da53f82c3e559b737",
+    "docs/parity/ui-journeys/candidate-web.md": "f5a00c1eb7b346e2be71942b6766d205dbb07692c7d9d285e4a1bd1c024c9122",
+    "docs/parity/ui-journeys/employer.md": "05c928c591067cbd7e3681104a49d888a8186e8d0be1d7e994c8fd2b61a7f2af",
+    "docs/parity/ui-journeys/staff.md": "735dd37ce7398624452b2b64d19bb444405c5c39c582628474bd2c1232e2c109"
+  },
   "method": "lexical literal Yii up/safeUp migration census plus scalar model annotations; no execution",
   "entities": 133,
   "fields": 1336,

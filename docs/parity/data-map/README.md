@@ -37,6 +37,11 @@ schema: source ambiguity remains explicit rather than filled with assumptions.
 | [jobs.csv](jobs.csv) | All 38 public console `action*` declarations after removing comments, with checked cron-file references. Source schedule presence is not proof a job runs. |
 | [manifest.json](manifest.json) | Counts and SHA-256 digests of the CSV artifacts. No personal-record digests. |
 
+The census binds its five frontend inputs to platform revision
+`9ef9259309505ceab9200a6648bf1036b37e24b6`: each appendix must exist and be
+byte-identical to that commit, and its SHA-256 is recorded in the manifest.
+A different or modified platform checkout fails before a manifest is written.
+
 Evidence states: **SOURCE-VERIFIED** means the stated code/declaration was checked
 at the pin; **PROPOSED** is a new target decision; **ANNOTATION-ONLY**, **DISPUTED**
 and **UNVERIFIED** do not permit automatic import. All live-state claims remain

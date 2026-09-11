@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 PIN = 'c2ce255695eabc7e3a0f23b162f5996274234c63'
+PLATFORM_PIN = '9ef9259309505ceab9200a6648bf1036b37e24b6'
 if len(sys.argv) not in (3, 4):
     raise SystemExit('usage: data-map-census.py LEGACY_CHECKOUT OUTPUT_DIRECTORY [PLATFORM_CHECKOUT]')
 root, out = map(pathlib.Path, sys.argv[1:3])
@@ -20,6 +21,36 @@ if subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=T
     raise SystemExit('Wrong source revision')
 if subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'], text=True).strip():
     raise SystemExit('Source has tracked modifications')
+if len(sys.argv) == 4:
+    platform = pathlib.Path(sys.argv[3]).resolve()
+else:
+    try:
+        platform = pathlib.Path(subprocess.check_output(
+            ['git', '-C', str(pathlib.Path(__file__).resolve().parent), 'rev-parse', '--show-toplevel'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip())
+    except subprocess.CalledProcessError as error:
+        raise SystemExit('Cannot locate platform checkout; pass PLATFORM_CHECKOUT explicitly') from error
+appendices = platform / 'docs/parity/ui-journeys'
+required_appendices = {'candidate-web.md', 'candidate-mobile.md', 'staff.md', 'admin.md', 'employer.md'}
+missing_appendices = sorted(name for name in required_appendices if not (appendices / name).is_file())
+if missing_appendices:
+    raise SystemExit('Missing frontend appendices: ' + ', '.join(missing_appendices))
+platform_sources = {}
+for name in sorted(required_appendices):
+    relative = pathlib.Path('docs/parity/ui-journeys') / name
+    try:
+        pinned = subprocess.check_output(
+            ['git', '-C', str(platform), 'show', f'{PLATFORM_PIN}:{relative.as_posix()}'],
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f'Platform pin or appendix unavailable: {PLATFORM_PIN}:{relative}') from error
+    current = (platform / relative).read_bytes()
+    if current != pinned:
+        raise SystemExit(f'Frontend appendix differs from platform pin: {relative}')
+    platform_sources[relative.as_posix()] = hashlib.sha256(pinned).hexdigest()
 out.mkdir(parents=True, exist_ok=True)
 
 def tokens(s):
@@ -213,22 +244,6 @@ for p in sorted((root/'console/controllers').glob('*.php')):
         schedules=[f'cron/cronlist:{i+1}' for i,line in enumerate(cron) if not line.lstrip().startswith('#') and (route in line or (route=='algolia/index' and 'yii algolia ' in line))]
         jobs.append([route,receipt(p.relative_to(root).as_posix(),s,m.start()),';'.join(schedules) or 'not in checked cron file','DISABLED in all fixture/import runs; semantic disposition in README'])
 write_csv('jobs.csv',['console_route','source','schedule_receipts','plan'],jobs)
-if len(sys.argv) == 4:
-    platform = pathlib.Path(sys.argv[3]).resolve()
-else:
-    try:
-        platform = pathlib.Path(subprocess.check_output(
-            ['git', '-C', str(pathlib.Path(__file__).resolve().parent), 'rev-parse', '--show-toplevel'],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip())
-    except subprocess.CalledProcessError as error:
-        raise SystemExit('Cannot locate platform checkout; pass PLATFORM_CHECKOUT explicitly') from error
-appendices = platform / 'docs/parity/ui-journeys'
-required_appendices = {'candidate-web.md', 'candidate-mobile.md', 'staff.md', 'admin.md', 'employer.md'}
-missing_appendices = sorted(name for name in required_appendices if not (appendices / name).is_file())
-if missing_appendices:
-    raise SystemExit('Missing frontend appendices: ' + ', '.join(missing_appendices))
 frontend=[]
 for p in sorted(appendices.glob('*.md')):
     for i,line in enumerate(p.read_text().splitlines()):
@@ -246,7 +261,8 @@ frontend_keys = [(row[0], row[1]) for row in frontend]
 if len(frontend_keys) != len(set(frontend_keys)):
     raise SystemExit('Duplicate frontend inventory row ID within one appendix')
 write_csv('frontend-effects.csv',['app','inventory_row','inventory_receipt','reported_area','reported_effect','evidence_status','test_data_plan'],frontend)
-manifest = {'source': PIN, 'method':'lexical literal Yii up/safeUp migration census plus scalar model annotations; no execution',
+manifest = {'source': PIN, 'platform_source': PLATFORM_PIN, 'platform_frontend_sources': platform_sources,
+            'method':'lexical literal Yii up/safeUp migration census plus scalar model annotations; no execution',
             'entities':len(tables),'fields':len(rows),'annotation_only':sum(r[3]=='annotation-only' for r in rows),
             'relationship_receipts':len(rels),'source_gaps':len(gaps),'console_actions':len(jobs),'frontend_inventory_rows':len(frontend),
             'unassigned_entities':sorted(set(tables)-set(by_table)),
