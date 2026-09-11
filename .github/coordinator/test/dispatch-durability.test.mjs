@@ -30,7 +30,7 @@ function makeIssueNodes() {
       title: "Fixture: seeded-defect probe card",
       state: { name: "Todo" },
       priorityLabel: "High",
-      labels: { nodes: [{ name: "fixture-safe" }] },
+      labels: { nodes: [{ name: "fixture-safe" }, { name: "repo:platform" }] },
       assignee: null,
       delegate: null,
       parent: null,
@@ -42,7 +42,7 @@ function makeIssueNodes() {
       title: "Second eligible card (proves max_dispatch accounting)",
       state: { name: "Todo" },
       priorityLabel: "High",
-      labels: { nodes: [{ name: "fixture-safe" }] },
+      labels: { nodes: [{ name: "fixture-safe" }, { name: "repo:platform" }] },
       assignee: null,
       delegate: null,
       parent: null,
@@ -137,6 +137,7 @@ async function runMain({ configPath, wa, linear, failComments = false, io = {} }
   };
   const code = await main([], ENV, {
     skipActivationPreflight: true, // subject is dispatch mechanics, not the SHU-63 activation contract
+    openPRsOverride: [],
     configPath,
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => {
@@ -442,4 +443,61 @@ test("impostor receipt injected after reservation ABORTS before launch (fail clo
   assert.equal(wa.calls(), 0, "no worker may launch once durable state self-contradicts");
   assert.match(r.out.join("\n"), /ABORTED before launch/);
   assert.match(r.out.join("\n"), /immutable fields disagree/);
+});
+
+test("SHU-222: authoritative recheck catches a claim race before reservation", async () => {
+  const issueNodes = [makeIssueNodes()[0]];
+  const comments = [];
+  const backingStore = fakeLinearStore(issueNodes, comments);
+  let issueReads = 0;
+  const racingStore = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    if (body.query.includes("CoordinatorIssues")) {
+      issueReads += 1;
+      if (issueReads === 2) issueNodes[0].assignee = { displayName: "another-agent" };
+    }
+    return backingStore(url, opts);
+  };
+  const wa = fakeWorkspaceAgents({ mode: "success" });
+  const result = await runMain({ configPath: tempConfig(), wa, linear: racingStore });
+
+  assert.equal(result.code, 2);
+  assert.equal(wa.calls(), 0, "a newly claimed card must never reach the adapter");
+  assert.equal(parseReceiptsFromComments(comments).length, 0, "the losing coordinator must not write a reservation");
+  assert.match(result.out.join("\n"), /ABORTED before claim.*assigned to another-agent/);
+});
+
+test("SHU-222: authoritative recheck catches a new active receipt before reservation", async () => {
+  const issueNodes = [makeIssueNodes()[0]];
+  const comments = [];
+  const backingStore = fakeLinearStore(issueNodes, comments);
+  const made = createReceipt({
+    issue_id: "SHU-FIXTURE-001",
+    authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    requested_worker: "codex-builder",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: "coordinator/SHU-FIXTURE-001",
+    target_sha: SHA,
+    attempt_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    reserved_at: "2026-09-09T20:00:00.000Z",
+  });
+  assert.equal(made.ok, true);
+  let commentReads = 0;
+  const racingStore = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    if (body.query.includes("CoordinatorIssueComments")) {
+      commentReads += 1;
+      if (commentReads === 2) {
+        comments.push({ body: receiptCommentBody(made.receipt), createdAt: made.receipt.last_activity });
+      }
+    }
+    return backingStore(url, opts);
+  };
+  const wa = fakeWorkspaceAgents({ mode: "success" });
+  const result = await runMain({ configPath: tempConfig(), wa, linear: racingStore });
+
+  assert.equal(result.code, 2);
+  assert.equal(wa.calls(), 0);
+  assert.equal(parseReceiptsFromComments(comments).length, 1, "only the competing reservation exists");
+  assert.match(result.out.join("\n"), /ABORTED before claim.*already has active receipt/);
 });

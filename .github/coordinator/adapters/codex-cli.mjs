@@ -22,12 +22,13 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { hostname as nodeHostname, platform as nodePlatform } from "node:os";
+import { hostname as nodeHostname, platform as nodePlatform, tmpdir } from "node:os";
 import * as nodePath from "node:path";
 import { pushExactSha } from "../push-broker.mjs";
 const path = nodePath;
 
 export const ADAPTER_NAME = "codex-cli";
+export const CODEX_MODEL = "gpt-5.6-sol";
 export const SUCCESS_CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY"]);
 export const CALLBACK_STAGES = Object.freeze(["BUILD_READY", "REVISION_READY", "BLOCKED", "FAILED"]);
 const ATTEMPT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -41,7 +42,7 @@ export const CALLBACK_SCHEMA = Object.freeze({
   properties: {
     attempt_id: { type: "string" },
     target_sha: { type: "string" },
-    result_sha: { type: "string" },
+    result_sha: { type: ["string", "null"] },
     stage: { type: "string", enum: CALLBACK_STAGES },
     links: { type: "array", items: { type: "string" }, minItems: 1 },
     summary: { type: "string" },
@@ -93,16 +94,18 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Attempt: ${attempt_id}`,
     task_context,
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
-    "Implement the change and commit it locally (git add + git commit) so the worktree HEAD holds your exact result. Run the relevant tests. Do NOT push, do NOT open a PR, do NOT touch the network — a separate host-side broker pushes your exact result commit after validation.",
+    "Implement the change and run the relevant tests. Leave the tested changes in the workspace; do NOT git add, commit, modify .git, push, open a PR or touch the network. A separate host broker snapshots your files, creates the result commit and pushes it after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
-    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":"<git rev-parse HEAD after your commit>","stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
-    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. result_sha must be the exact commit you created — a host broker pushes precisely that SHA, never your branch tip or any uncommitted state.",
+    `{"attempt_id":"${attempt_id}","target_sha":"${target_sha}","result_sha":null,"stage":"BUILD_READY|REVISION_READY|BLOCKED|FAILED","links":["<evidence: test names or file paths you touched; you have no network, so a URL is not expected>"],"summary":"<short note>"}`,
+    "Use BUILD_READY for first-time work, REVISION_READY when addressing review findings on the same branch, BLOCKED only for an in-scope blocker you cannot resolve, FAILED for an upstream/run failure. For BUILD_READY or REVISION_READY use result_sha:null to declare that the tested workspace is ready for the host to commit. For BLOCKED or FAILED use the bound head as result_sha. Stop all file writers before returning; the host refuses an unstable workspace.",
   ].filter(Boolean).join("\n");
 }
 
 function buildBaseArgs(input, { schemaFile, cwd }) {
   return [
     "--json",
+    "--model", CODEX_MODEL,
+    "--config", "sandbox_workspace_write.network_access=false",
     "--sandbox", "workspace-write", // GPT: never danger-full-access, never --full-auto
     "-C", cwd,
     "--output-schema", schemaFile,
@@ -201,7 +204,7 @@ function runSpawn(spawnImpl, file, args, options, onStdoutLine, onSpawn = null, 
 }
 
 async function readHead({ cwd, execFileImpl, env }) {
-  const result = await runExecFile(execFileImpl, "git", ["rev-parse", "HEAD"], {
+  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, "rev-parse", "HEAD"], {
     cwd,
     env: buildCodexEnvironment(env),
     encoding: "utf8",
@@ -213,7 +216,7 @@ async function readHead({ cwd, execFileImpl, env }) {
 }
 
 async function headDescendsFromTarget({ cwd, execFileImpl, env, target_sha }) {
-  const result = await runExecFile(execFileImpl, "git", ["merge-base", "--is-ancestor", target_sha, "HEAD"], {
+  const result = await runExecFile(execFileImpl, "git", ["-c", `safe.directory=${cwd}`, "merge-base", "--is-ancestor", target_sha, "HEAD"], {
     cwd,
     env: buildCodexEnvironment(env),
     encoding: "utf8",
@@ -281,7 +284,8 @@ export function brokerOptedOut(io = {}, env = {}) {
 export function callbackValid(callback, { attempt_id, target_sha }) {
   if (!callback || typeof callback !== "object") return false;
   if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
-  if (!SHA_RE.test(callback.result_sha ?? "")) return false;
+  const workspaceReady = callback.result_sha === null && SUCCESS_CALLBACK_STAGES.includes(callback.stage);
+  if (!workspaceReady && !SHA_RE.test(callback.result_sha ?? "")) return false;
   if (!CALLBACK_STAGES.includes(callback.stage)) return false;
   if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
   // Option A removed the worker's ability to produce an http(s) URL: it never
@@ -665,11 +669,24 @@ export async function launchBuilder({
   }
 
   const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo };
-  const schemaPath = schemaFile ?? path.join(durableStateDir, `.callback-schema-${attempt_id}-${randomUUID()}.json`);
+  let schemaPath = schemaFile;
+  let schemaDir = null;
   const ownsSchemaFile = schemaFile === null;
   try {
     if (ownsSchemaFile) fs.mkdirSync(durableStateDir, { recursive: true, mode: 0o700 });
+    if (ownsSchemaFile) {
+      // The schema is public, static data, not session authority. A distinct
+      // worker uid cannot traverse the private 0700 durable-state directory.
+      // Keep that directory private; expose only this schema in a coordinator-
+      // owned, worker-readable temporary directory, removed after the CLI exits.
+      // Do not inherit a coordinator-private TMPDIR: chmod on the child cannot
+      // make a 0700 ancestor traversable by the distinct worker identity.
+      schemaDir = fs.mkdtempSync("/tmp/shu-codex-schema-");
+      fs.chmodSync(schemaDir, 0o755);
+      schemaPath = path.join(schemaDir, "callback.json");
+    }
     writeSchemaFile(schemaPath, CALLBACK_SCHEMA);
+    if (ownsSchemaFile) fs.chmodSync(schemaPath, 0o644);
   } catch {
     return { stage: "FAILED", error_code: "SCHEMA_FILE_UNWRITABLE", ok: false };
   }
@@ -808,9 +825,9 @@ export async function launchBuilder({
     launchError = error;
   } finally {
     if (ownsSchemaFile) {
-      // A leftover schema in the private state directory is not an unrecorded
-      // session. Cleanup failure must not erase a valid terminal result.
+      // Cleanup failure must not erase a valid terminal result.
       try { (io.unlinkSync ?? fs.unlinkSync)(schemaPath); } catch { /* best effort */ }
+      try { fs.rmdirSync(schemaDir); } catch { /* best effort */ }
     }
   }
   // A session that demonstrably exists but was never durably recorded outranks
@@ -865,7 +882,12 @@ export async function launchBuilder({
   // unchanged — nothing launched, so there is nothing to push. In REAL dispatch
   // the broker is MANDATORY and fails closed: a builder result that was never
   // pushed is not a usable COMPLETED, and the sandbox cannot push by itself.
-  if (callback.result_sha && SHA_RE.test(String(callback.result_sha))) {
+  const workspaceReady = callback.result_sha === null;
+  if (workspaceReady && brokerOptedOut(io, env)) {
+    return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+      reason: "workspace-ready requires the host broker", pause_adapter: true, ok: false };
+  }
+  if (workspaceReady || SHA_RE.test(String(callback.result_sha))) {
     // FAIL CLOSED (Opus R3). The broker is the ONLY authorized pusher, so it
     // runs unless a caller EXPLICITLY opts out. Deriving "enabled" from a flag
     // that had to be PRESENT meant an omission produced a COMPLETED with nothing
@@ -887,6 +909,8 @@ export async function launchBuilder({
         stateDir: durableStateDir,
         attempt_id,
         result_sha: callback.result_sha,
+        workspaceReady,
+        beforePublish: io.resultStillAuthorized,
         target_sha,
         branch: input.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${issue_id}`,
         repo: input.repo ?? "BAWES-Universe/studenthub-platform",
@@ -903,11 +927,13 @@ export async function launchBuilder({
         env,
         io,
       });
-      if (push.ok !== true) {
+      if (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? ""))) {
         return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
           callback, evidence_links: callback.links,
           reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, pause_adapter: true, ok: false };
       }
+      // Only a confirmed host result can become routable callback evidence.
+      if (workspaceReady) callback.result_sha = push.remote_head;
       if (!callback.links) callback.links = [];
       callback.links = [...callback.links, `pushed:${push.remote_head ?? callback.result_sha}@${push.stage ?? "PUSHED"}`];
     }

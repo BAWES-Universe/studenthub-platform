@@ -32,6 +32,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
+import { snapshotWorkspaceResult } from "./workspace-result.mjs";
 
 export const SHA_RE = /^[0-9a-f]{40}$/i;
 export const PUSH_STAGES = Object.freeze(["PENDING", "PUSHED", "FAILED"]);
@@ -150,8 +151,11 @@ export function brokerGitEnv(env = {}, { sshCommand = null, indexFile = null } =
 
 // Every broker git invocation goes through here — no exceptions, so a new call
 // site cannot forget the boundary.
-function brokerGit(gitImpl, args, { cwd, env, sshCommand = null, indexFile = null } = {}) {
-  return runGit(gitImpl, [...BROKER_GIT_CONFIG_ARGS, ...args], {
+export function brokerGit(gitImpl, args, { cwd, env, sshCommand = null, indexFile = null } = {}) {
+  // The configured worker deliberately owns its checkout under another UID.
+  // Trust only this invocation's validated directory, never a global wildcard;
+  // retain the hardened config boundary and broker-owned remote repository.
+  return runGit(gitImpl, [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${cwd}`, ...args], {
     cwd,
     env: brokerGitEnv(env, { sshCommand, indexFile }),
   });
@@ -457,9 +461,12 @@ export async function pushExactSha({
   createBrokerRepoImpl = createBrokerRepo,
   hasCommitImpl = brokerRepoHasCommit,
   fsyncDirImpl = null,
+  workspaceReady = false,
+  snapshotImpl = snapshotWorkspaceResult,
+  beforePublish = null,
 }) {
   // --- identity / shape -----------------------------------------------------
-  if (!SHA_RE.test(String(result_sha ?? ""))) {
+  if (!workspaceReady && !SHA_RE.test(String(result_sha ?? ""))) {
     return { stage: "HOLD", reason: "result_sha is not a plausible SHA", pause_adapter: true, ok: false };
   }
   if (!SHA_RE.test(String(target_sha ?? ""))) {
@@ -509,6 +516,16 @@ export async function pushExactSha({
     return { stage: "HOLD", reason, pause_adapter: true, ok: false };
   };
 
+  // SHU-228: the broker owns the index and result objects. The sandboxed
+  // builder supplies files, never authority to write repository metadata.
+  if (workspaceReady) {
+    try {
+      if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
+      result_sha = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
+        attempt_id, stateDir, branch, repo, gitImpl, env });
+    } catch (error) { return held(`workspace result refused: ${error.message}`); }
+  }
+
   // --- ancestry: result_sha must descend from target_sha ----------------------
   //
   // Asked in the BROKER's repository, not the worker's. Ancestry is a question
@@ -541,7 +558,7 @@ export async function pushExactSha({
     }
     head = h.stdout.trim();
   }
-  if (head !== result_sha) {
+  if (head !== (workspaceReady ? target_sha : result_sha)) {
     return held(`worktree HEAD ${head} != result_sha ${result_sha}; worktree moved after build`);
   }
 
@@ -552,6 +569,15 @@ export async function pushExactSha({
     const c = await cleanTreeImpl({ cwd, gitImpl, env });
     cleanOk = c.ok;
     cleanDetail = c.reason ?? "";
+  } else if (workspaceReady) {
+    // A second raw snapshot checks content, paths and modes, independently of
+    // worker attributes/filters and without changing the worker HEAD/index.
+    try {
+      const again = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
+        attempt_id, stateDir, branch, repo, gitImpl, env });
+      cleanOk = again === result_sha;
+      cleanDetail = "workspace changed after snapshot";
+    } catch (error) { cleanOk = false; cleanDetail = error.message; }
   } else {
     // NOT `git status` in the worker worktree: that reads the worker's config
     // and executes its filters. See brokerCleanTree.
@@ -624,6 +650,9 @@ export async function pushExactSha({
   }
 
   // --- durable pre-push record (BEFORE the push, distinguished from after) ----
+  try {
+    if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
+  } catch { return held("result authorization unavailable"); }
   const pre = persistImpl({ stateDir, attempt_id, result_sha, branch, repo, worktree: cwd });
   if (!pre.ok) {
     // A concurrent broker won the reservation (EEXIST) — HOLD, the winner pushes.

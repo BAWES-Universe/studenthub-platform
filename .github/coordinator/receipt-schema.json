@@ -36,6 +36,11 @@
       "description": "Approved contract reference the dispatch is authorized against. Free text is REJECTED — only real Linear issue refs (SHU-NNNN) or seeded FIXTURE refs.",
       "pattern": "^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$"
     },
+    "episode_id": {
+      "type": ["string", "null"],
+      "description": "SHU-231: the activated episode (the activation record's activation_id) this attempt belongs to. Stamped by the coordinator at RESERVED while an episode is armed; null on the disabled/global path and on receipts written before the episode boundary existed. Immutable for a given attempt_id.",
+      "pattern": "^[A-Za-z0-9_-]{0,64}$"
+    },
     "stage": {
       "type": "string",
       "description": "RESERVED is persisted BEFORE any launch is sent. Timeout alone never changes stage and never releases the slot.",
@@ -80,7 +85,7 @@
     "evidence_links": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Validated callback evidence links (GitHub PR / Linear comment) whose attempt_id and target_sha were checked before COMPLETED."
+      "description": "Append-only evidence links. These include validated callback links whose attempt_id and target_sha were checked before COMPLETED, plus coordinator-private raw reviewer envelopes and confined exact-head test reports retained on every terminal outcome."
     },
     "last_activity": { "type": "string" },
     "notes": {
