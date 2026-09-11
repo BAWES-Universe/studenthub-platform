@@ -105,6 +105,7 @@ function mkReceipt({
   verdict_stage = null,
   worker_identity = "session-1",
   last_activity = null,
+  now = NOW,
 }) {
   // createReceipt is a validated factory returning {ok, receipt|errors}.
   const created = createReceipt({
@@ -115,6 +116,7 @@ function mkReceipt({
     branch: `coordinator/${issue_id}`,
     target_sha: REVISION,
     attempt_id: attemptIdFor(attempt_id),
+    reserved_at: new Date(now.getTime() - 3600000).toISOString(),
   });
   if (!created.ok) throw new Error(`fixture receipt rejected: ${created.errors.join("; ")}`);
   const receipt = {
@@ -126,12 +128,12 @@ function mkReceipt({
     // COMPLETED/HOLD require validated evidence links in the receipt contract.
     evidence_links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/1"],
     timestamps: {
-      reserved: "2026-09-10T11:00:00.000Z",
-      launch: stage === "RESERVED" ? null : "2026-09-10T11:00:05.000Z",
+      reserved: created.receipt.timestamps.reserved,
+      launch: stage === "RESERVED" ? null : new Date(now.getTime() - 3595000).toISOString(),
       heartbeat: null,
-      terminal: stage === "RESERVED" || stage === "RUNNING" ? null : "2026-09-10T11:05:00.000Z",
+      terminal: stage === "RESERVED" || stage === "RUNNING" ? null : new Date(now.getTime() - 3300000).toISOString(),
     },
-    last_activity: last_activity ?? `2026-09-10T11:${String(attemptOrder(attempt_id)).padStart(2, "0")}:00.000Z`,
+    last_activity: last_activity ?? new Date(now.getTime() - 3600000 + attemptOrder(attempt_id) * 60000).toISOString(),
   };
   if (verdict_stage) receipt.verdict_stage = verdict_stage;
   return receipt;
@@ -666,7 +668,7 @@ const EPISODE_TRIGGER = "agtch_episode_1";
 
 // A persistent Linear store across ticks: issues from a mutable node list, receipt
 // comments stored per issue, commentCreate requiring the real UUID (as Linear does).
-function episodeStore(issueNodes, commentBodies) {
+function episodeStore(issueNodes, commentBodies, now) {
   return async (url, opts) => {
     const { query } = JSON.parse(opts.body);
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
@@ -679,7 +681,7 @@ function episodeStore(issueNodes, commentBodies) {
     if (query.includes("commentCreate")) {
       const { issueId, body } = JSON.parse(opts.body).variables;
       if (!issueNodes.some((n) => n.id === issueId)) throw new Error(`non-UUID comment write attempted (${issueId})`);
-      commentBodies.push({ body, createdAt: new Date().toISOString() });
+      commentBodies.push({ body, createdAt: now().toISOString() });
       return respond({ commentCreate: { success: true, comment: { id: `c${commentBodies.length}` } } });
     }
     return respond({});
@@ -730,7 +732,7 @@ function episodeConfigPath() {
   return p;
 }
 
-function callbackCommentFor(attempt_id, stage) {
+function callbackCommentFor(attempt_id, stage, at) {
   return {
     user: { id: TRUSTED_ACTOR, displayName: "Worker" },
     body: [
@@ -745,11 +747,12 @@ function callbackCommentFor(attempt_id, stage) {
       }),
       "```",
     ].join("\n"),
-    createdAt: new Date().toISOString(),
+    createdAt: at.toISOString(),
   };
 }
 
-test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses", async () => {
+for (const episodeNow of [NOW, new Date("2020-01-01T12:00:00.000Z"), new Date("2030-01-01T12:00:00.000Z")]) {
+test(`SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses (${episodeNow.getUTCFullYear()})`, async () => {
   const issueNodes = [{
     id: "11111111-aaaa-4bbb-8ccc-000000000777",
     identifier: TARGET,
@@ -763,10 +766,11 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     relations: { nodes: [] },
   }];
   const comments = [];
-  const store = episodeStore(issueNodes, comments);
+  const commentClock = () => new Date(episodeNow.getTime() + comments.length);
+  const store = episodeStore(issueNodes, comments, commentClock);
   const wa = episodeAgent();
   const configPath = episodeConfigPath();
-  const { dir, file } = makeFile(record());
+  const { dir, file } = makeFile(record({ expires_at: new Date(episodeNow.getTime() + 3600000).toISOString() }));
   const env = {
     ENABLE_DISPATCH: "true",
     LINEAR_API_TOKEN: "tok",
@@ -782,12 +786,8 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     const out = [];
     const code = await main(["--activation", file], env, {
       configPath,
-      // The activation's expiry is evaluated against this clock. Without it the
-      // episode test reads the LIVE wall clock, and since the fixture record expires
-      // an hour after NOW, the test was a time bomb that went red at 13:00Z on the
-      // day it was written — while the guard it exercises was behaving correctly.
-      // Every other test in this file already freezes the clock; this one must too.
-      now: () => NOW,
+      // Activation checks and all coordinator receipt stamps share this clock.
+      now: () => episodeNow,
       skipActivationPreflight: true,
       stdout: (s) => out.push(s),
       fetchDurable: true,
@@ -799,8 +799,8 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     const text = out.join("\n");
     return { code, text, armed: /activation=ARMED/.test(text), refused: /single-run activation REFUSED/.test(text) };
   };
-  // Fixture times are ordered AFTER whatever the live clock stamps on real receipts.
-  const later = (n) => `2026-09-11T0${n}:00:00.000Z`;
+  // Synthetic successors are ordered relative to the same fixed epoch.
+  const later = (n) => new Date(episodeNow.getTime() + n * 60000).toISOString();
 
   try {
     // (1) The episode begins: the activation alone authorizes the builder launch —
@@ -809,11 +809,15 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     assert.equal(t0.refused, false, `tick 0 must not refuse:\n${t0.text}`);
     assert.equal(t0.armed, true, `tick 0 must be ARMED:\n${t0.text}`);
     assert.equal(wa.triggers(), 1, "the activation authorized exactly one builder launch");
+    for (const receipt of parseReceiptsFromComments(comments)) {
+      assert.equal(receipt.last_activity, episodeNow.toISOString(), "coordinator receipt must use injected clock");
+      for (const stamp of Object.values(receipt.timestamps).filter(Boolean)) assert.equal(stamp, episodeNow.toISOString(), "receipt timestamps must use injected clock");
+    }
     const launched = parseReceiptsFromComments(comments).find((r) => r.requested_worker === "codex-builder");
     assert.ok(launched, "the RESERVED receipt is durable before any launch");
 
     // (2) builder BUILD_READY -> COMPLETED. The loop's first verdict must NOT spend it.
-    comments.push(callbackCommentFor(launched.attempt_id, "BUILD_READY"));
+    comments.push(callbackCommentFor(launched.attempt_id, "BUILD_READY", commentClock()));
     wa.setPoll({ status: "completed" });
     const t1 = await tick();
     assert.equal(t1.refused, false, `the builder's own COMPLETED spent the authorization:\n${t1.text}`);
@@ -821,14 +825,16 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     const built = parseReceiptsFromComments(comments).find((r) => r.attempt_id === launched.attempt_id);
     assert.equal(built.stage, "COMPLETED", "the lifecycle persisted the builder's terminal state");
     assert.equal(built.verdict_stage, "BUILD_READY");
+    assert.equal(built.timestamps.terminal, episodeNow.toISOString(), "polled completion must use injected clock");
 
     // (3) reviewer BLOCKED -> HOLD (the reviewer lane runs in its own lane).
     comments.push({
       body: receiptCommentBody(mkReceipt({
+        now: episodeNow,
         attempt_id: "episode-review", requested_worker: "claude-verifier", stage: "HOLD",
         verdict_stage: "BLOCKED", worker_identity: "reviewer-session", last_activity: later(1),
       })),
-      createdAt: new Date().toISOString(),
+      createdAt: commentClock().toISOString(),
     });
     const t2 = await tick();
     assert.equal(t2.refused, false, `a reviewer BLOCK spent the authorization:\n${t2.text}`);
@@ -837,10 +843,11 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     // (4) the writer's revision -> REVISION_READY, then the automatic re-review.
     comments.push({
       body: receiptCommentBody(mkReceipt({
+        now: episodeNow,
         attempt_id: "episode-revision", stage: "COMPLETED", verdict_stage: "REVISION_READY",
         worker_identity: "builder-session", last_activity: later(2),
       })),
-      createdAt: new Date().toISOString(),
+      createdAt: commentClock().toISOString(),
     });
     const t3 = await tick();
     assert.equal(t3.refused, false, `the revision spent the authorization:\n${t3.text}`);
@@ -849,10 +856,11 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     // (5) re-review PASS -> the episode is over. NOW it is spent, and it stays spent.
     comments.push({
       body: receiptCommentBody(mkReceipt({
+        now: episodeNow,
         attempt_id: "episode-rereview", requested_worker: "claude-verifier", stage: "COMPLETED",
         verdict_stage: "PASS", worker_identity: "reviewer-session-2", last_activity: later(3),
       })),
-      createdAt: new Date().toISOString(),
+      createdAt: commentClock().toISOString(),
     });
     const t4 = await tick();
     assert.equal(t4.refused, true, `PASS must spend the authorization:\n${t4.text}`);
@@ -870,6 +878,7 @@ test("SHU-63 activation: ONE authorization carries build -> BLOCK -> revision ->
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+}
 
 // ---------------------------------------------------------------------------
 // MUTATIONS — every guard above must be load-bearing
