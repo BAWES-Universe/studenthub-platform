@@ -166,7 +166,7 @@ export class FileDocumentStore implements DocumentStore {
         }
         finally {
             await unlink(temp).catch(() => undefined);
-            await lock.close();
+            await lock.close().catch(() => undefined);
             await unlink(join(this.root, '.lock'));
         }
     }
@@ -192,7 +192,7 @@ export class PrivateDocuments {
     private readonly clock: () => number;
     constructor(private readonly options: PrivateDocumentOptions) {
         const url = new URL(options.origin);
-        if (url.protocol !== 'https:' || url.origin !== options.origin || options.signingKey.byteLength < 32)
+        if (url.protocol !== 'https:' || url.port !== '' || url.origin !== options.origin || options.signingKey.byteLength < 32)
             throw new TypeError('invalid private-document configuration');
         this.origin = url.origin;
         this.key = Buffer.from(options.signingKey);
