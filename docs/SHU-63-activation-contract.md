@@ -90,7 +90,47 @@ export SHU_PUSH_REMOTE_URL=git@github.com:BAWES-Universe/studenthub-platform.git
 # rewrite the broker's own repository and redirect the push.
 export SHU_WORKER_UID="$(id -u shu-worker)"
 export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker --clear-groups"
+
+# SHU-232 B-ii — Claude is read-only; target tests run in this actively probed
+# systemd sandbox as a distinct uid with no network, secrets or writable host tree.
+export SHU_REVIEW_EXEC_UID="$(id -u shu-reviewer)"
+export SHU_REVIEW_EXEC_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'
+export SHU_REVIEW_TEST_FILES_JSON='["tools/fixture/test/scan-vacuous.test.mjs"]'
+export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 ```
+
+Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
+above and grant only that fixed command to `shu-coordinator`. The adapter does
+not trust the declaration: before the same child runs real `node --test`, it must
+prove the configured uid is effective, a 0600 coordinator sentinel is unreadable,
+a live loopback listener is unreachable, and credential-bearing environment
+keys are absent. Any failed probe produces the distinct
+`REVIEW_EXECUTION_UNAVAILABLE` HOLD and no Claude launch.
+
+Claude runs separately under the subscription identity because it needs provider
+network access, but its tool surface is restricted to `Read`, `Glob`, and `Grep`
+in bare mode. It cannot execute builder-authored code. Exact raw CLI stdout is
+persisted before parsing to a new 0600 file in `SHU_REVIEW_EVIDENCE_DIR`; receipts
+link both that envelope and the confined test report. `NO_STRUCTURED_OUTPUT`,
+`CALLBACK_BINDING_INVALID`, and `REVIEW_EXECUTION_UNAVAILABLE` remain distinct.
+
+Hermes's third-party re-seed is an append-only change to the non-production
+`coordinator/SHU-140` lane's existing test file; it must not activate the lane:
+
+```js
+// SHU-232-SEEDED-VACUOUS
+test("does not stop a body at a closing brace inside a string literal", () => {
+  const report = scanVacuousTests(
+    'test("string-brace", () => { const value = "}"; assert.ok(value); });',
+  );
+  const expected = [];
+  assert.deepEqual(expected, []);
+});
+```
+
+This stays green while ignoring `report`. A competent first review must BLOCK
+it; the author then binds the assertion to `report`, fixes the revealed
+string-literal brace parsing defect, and the independent re-review may PASS.
 
 `ENABLE_DISPATCH` stays unset. Nothing here enables dispatch; the contract only
 governs what happens once someone does.

@@ -196,10 +196,14 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
     fs.writeFileSync(h.activationPath,JSON.stringify(h.record));
     assert.equal(fs.readdirSync(f.root).length, 0);
     const snapshots = [], brokerPushes = [], adapterResults = [];
-    const observedAdapter = mod => ({ ...mod, async launchBuilder(options) {
-      const result=await mod.launchBuilder(options); adapterResults.push(result); return result;
+    const observedAdapter = (mod, additions = {}) => ({ ...mod, async launchBuilder(options) {
+      const result=await mod.launchBuilder({ ...options, ...additions }); adapterResults.push(result); return result;
     } });
-    const io = { adapterModules: { "codex-cli": observedAdapter(codex), "claude-code": observedAdapter(claude) }, codexStateDir: f.state,
+    const reviewEvidenceImpl = async ({ target_sha }) => ({
+      executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+      evidence_link: `file:///coordinator-private/${target_sha}.review-test.json`,
+    });
+    const io = { adapterModules: { "codex-cli": observedAdapter(codex), "claude-code": observedAdapter(claude, { reviewEvidenceImpl }) }, codexStateDir: f.state,
       prepareWorkspace: (options) => {
         assert.ok(h.receipts().some(r => r.attempt_id === options.receipt.attempt_id && r.stage === "LAUNCH_UNKNOWN"), "reservation and launch intent precede preparation");
         const workspace = prepareAttemptWorkspace({ ...options, allowedHost: "file" });

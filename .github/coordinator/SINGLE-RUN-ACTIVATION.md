@@ -176,6 +176,35 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   identity. The wrapper must support the noninteractive Git commands used for
   preparation as well as Codex launch. Test its effective uid and directory access
   during host setup; naming an arbitrary wrapper is not proof it works.
+* `SHU_REVIEW_EVIDENCE_DIR`: a durable coordinator-owned directory outside all
+  attempt checkouts, mode 0700. Raw Claude stdout and confined test reports are
+  append-only 0600 artifacts here; terminal receipts carry their `file:`
+  references. A failed write is logged but never destroys a valid verdict or
+  falsely claims retention.
+* `SHU_REVIEW_EXEC_UID`: the numeric uid of a distinct, unprivileged
+  `shu-reviewer` account. Under selected option **B-ii**, the Claude process and
+  its read-only checkout stay coordinator-owned, while every execution of
+  builder-authored test code crosses this uid boundary.
+* `SHU_REVIEW_EXEC_WRAPPER_JSON`: a JSON argv array for the root-owned confinement
+  wrapper, for example
+  `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
+  Install the reviewed `reviewer-sandbox.sh` at that path, root-owned and not
+  group/world writable, with a command-specific sudo rule.
+* `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
+  For SHU-140 this is
+  `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is
+  used.
+
+The confinement wrapper is not accepted on configuration alone. In the same
+sandbox invocation that runs `node --test`, a coordinator-owned child checks the
+effective uid, tries and must fail to read a fresh 0600 coordinator sentinel,
+tries and must fail to reach a live loopback listener, and rejects any
+credential-bearing environment key. The test process starts only after all four
+checks pass. A missing or ineffective wrapper produces
+`REVIEW_EXECUTION_UNAVAILABLE` and HOLD; it can never produce PASS. The report
+records the effective execution uid, workspace-owner uid, exact bound head and
+test output. Claude itself runs with only `Read`, `Glob`, and `Grep` tools in bare
+mode; it receives the confined evidence reference and cannot execute the target.
 
 After the existing durable reservation and launch intent, the coordinator fetches
 the bound commit in a fresh host-owned bare repository, creates a self-contained
@@ -185,12 +214,12 @@ change or protected/global trust configuration is needed. It copies objects loca
 into `<SHU_WORKTREE_ROOT>/<attempt_uuid>` and checks out the exact detached head.
 These are **independent repositories**, not linked worktrees: a builder must not
 be able to edit the coordinator's shared Git metadata. Writer preparation runs
-through the existing privilege-drop wrapper; verifier preparation runs as the
-current verifier adapter's coordinator identity. No worker receives a push remote.
-Opus accepted that verifier identity only for the watched synthetic fixture
-(PR #70, comment 5625184510). It is not a general activation policy: SHU-86 must
-isolate reviewer filesystem access from activation/state/session files and host
-credentials before broad dispatch, including processes run from reviewed code.
+through the existing privilege-drop wrapper. Under SHU-232 B-ii, verifier
+preparation stays coordinator-owned, but the verifier is read-only and
+builder-authored tests run only through the actively probed `shu-reviewer`
+sandbox above. No worker receives a push remote. This closes the watched-fixture
+execution coupling identified after PR #70; SHU-86 still governs broad activation
+and any future expansion of reviewer capabilities.
 The temporary source contains repository objects (no credentials), is made
 readable for the local copy, and is removed after preparation.
 
