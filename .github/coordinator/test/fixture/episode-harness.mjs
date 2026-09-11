@@ -29,6 +29,10 @@ export function createEpisodeHarness({
   expiresInMs = 60 * 60 * 1000,
   reviewerLane = "claude-verifier",
   withReviewerLane = true,
+  // SHU-231: the episode identity is the record's activation_id, and
+  // `supersedes_attempt_ids` names the retained evidence this approval retires.
+  activationId = "shu225fixtureactivation",
+  supersedesAttemptIds = null,
   callbackActor = "linear-worker-test",
   githubToken = "",
   initialBranchHead = SHA_INPUT,
@@ -126,7 +130,7 @@ export function createEpisodeHarness({
   writeFileSync(configPath, JSON.stringify(config, null, 1));
 
   const record = {
-    activation_id: "shu225fixtureactivation",
+    activation_id: activationId,
     target_issue_id: issueId,
     authorization_ref: authorizationRef,
     coordinator_revision: revision,
@@ -134,6 +138,7 @@ export function createEpisodeHarness({
     expires_at: new Date(now.getTime() + expiresInMs).toISOString(),
   };
   if (withReviewerLane) record.reviewer_lane = reviewerLane;
+  if (supersedesAttemptIds) record.supersedes_attempt_ids = supersedesAttemptIds;
   const activationPath = join(dir, "activation.json");
   writeFileSync(activationPath, JSON.stringify(record, null, 1));
   chmodSync(activationPath, 0o600);

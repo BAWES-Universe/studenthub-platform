@@ -26,7 +26,7 @@
 
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
-import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal } from "./single-run-activation.mjs";
+import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import path from "node:path";
@@ -677,6 +677,7 @@ export function createReceipt({
   repo,
   branch,
   target_sha,
+  episode_id = null,
   attempt_id = randomUUID(),
   reserved_at = new Date().toISOString(),
 }) {
@@ -685,6 +686,10 @@ export function createReceipt({
     issue_id,
     attempt_id,
     authorization_ref,
+    // SHU-231: the episode this attempt belongs to (null when no episode is
+    // armed, i.e. the historically-tagged migration state). Untagged legacy
+    // receipts stay readable exactly as before.
+    episode_id,
     stage: "RESERVED",
     requested_worker,
     worker_identity: null,
@@ -1104,7 +1109,7 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
 // caller, exactly like a first dispatch, and the launch still writes RESERVED
 // before anything reaches an adapter. With no armed activation the map is empty
 // and parking behaviour is byte-for-byte unchanged.
-export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map() }) {
+export function selectNextReservation({ ready = [], config = {}, receipts = [], episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set() }) {
   const scope = resolveDispatchScope(config);
   if (!scope.valid) {
     return { candidate: null, adapter: null, skipped: [{ id: "*", reason: `invalid dispatch_scope — ${scope.reason}; no fallback` }] };
@@ -1117,8 +1122,17 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
   // COMPLETED/HOLD (lifecycle policy: only the agreed terminal result releases the
   // SLOT; the ISSUE itself stays parked until a human moves it). FAILED is the
   // retryable terminal (revision loops relaunch after a genuine run failure).
+  // SHU-231: parking is episode-scoped — the second and LAST decision the episode
+  // boundary touches. A terminal receipt from a PREVIOUS episode must not park the
+  // card for a freshly authorized episode; a terminal produced INSIDE the current
+  // episode still parks it; an untagged-and-unnamed legacy terminal still parks it
+  // (fail closed). With no armed episode `episodeScope` is null, every receipt
+  // counts, and parking is byte-for-byte unchanged. Capacity, the retry cap and
+  // lifecycle are computed from the UNFILTERED list below and stay global.
   const parkedIssueIds = new Set(
-    receipts.filter((r) => r && (r.stage === "COMPLETED" || r.stage === "HOLD")).map((r) => r.issue_id),
+    receipts
+      .filter((r) => r && (r.stage === "COMPLETED" || r.stage === "HOLD") && receiptInEpisodeScope(r, episodeScope))
+      .map((r) => r.issue_id),
   );
   const pauseMap = config.adapter_pause_map ?? {};
   const skipped = [];
@@ -1140,7 +1154,13 @@ export function selectNextReservation({ ready = [], config = {}, receipts = [], 
       skipped.push({ id: issue.id, reason: "already has an active receipt" });
       continue;
     }
-    if (parkedIssueIds.has(issue.id) && !episodeContinuations.has(issue.id)) {
+    // SHU-225 keyed this escape on "a successor was routed". SHU-231 adds the
+    // other half: "an episode is authorized". A FRESH episode has no successor
+    // yet, so keying it on a successor alone made a newly approved run
+    // unreachable. Both remain INPUTS to this function — never a bypass — so
+    // scope, capacity, the retry cap, the pause map and the pre-claim recheck all
+    // still apply, and the launch still writes RESERVED before any adapter runs.
+    if (parkedIssueIds.has(issue.id) && !episodeContinuations.has(issue.id) && !episodeIssueIds.has(issue.id)) {
       skipped.push({ id: issue.id, reason: "issue has a terminal COMPLETED/HOLD receipt — parked for human/next-step, not auto-redispatched" });
       continue;
     }
@@ -1362,6 +1382,10 @@ export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
   "repo",
   "branch",
   "target_sha",
+  // SHU-231: the episode a receipt belongs to. Stamped by the coordinator at
+  // RESERVED, so two records claiming one attempt_id under DIFFERENT episodes are
+  // a conflict -> HOLD, never a silent override of a spent approval.
+  "episode_id",
 ]);
 
 export function parseReceiptsFromComments(comments = []) {
@@ -1629,9 +1653,9 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
 
 // reconcileOnce — pure-ish orchestration shared by dry-run and dispatch paths.
 // Returns { report, plan } and performs NO I/O except what the caller injects.
-export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map() }) {
+export function reconcileOnce({ issues, openPRs, config, receipts = [], event = {}, episodeContinuations = new Map(), episodeScope = null, episodeIssueIds = new Set() }) {
   const eligibility = computeEligibility({ issues, openPRs, config });
-  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations });
+  const selection = selectNextReservation({ ready: eligibility.ready, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   return { eligibility, selection };
 }
 
@@ -1806,6 +1830,14 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         initialTargetSha: env.DISPATCH_TARGET_SHA,
         io,
       });
+  // SHU-231: the episode boundary derived from the trusted record. It is non-null
+  // only when the record actually names an episode, and it is APPLIED only where
+  // an armed episode is in force (spend below; parking once armed) — so an absent,
+  // spent or refused activation leaves every decision global and unchanged.
+  const activationEpisodeScope = episodeScopeFor({
+    activation_id: singleRunActivation.activation_id ?? null,
+    supersedes_attempt_ids: singleRunActivation.supersedes_attempt_ids,
+  });
   let dispatchEnabled = dispatchEnabledFor(env, config, singleRunActivation);
 
   // A pure activation-status pass cannot fetch GitHub, so its successor is only a
@@ -1844,6 +1876,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         targetIssueId: singleRunActivation.target_issue_id,
         config,
         bootstrapReviewer: singleRunActivation.reviewer_lane ? { lane: singleRunActivation.reviewer_lane } : null,
+        episodeScope: activationEpisodeScope,
         authoritativeHead: live.head,
       });
       if (verifiedEpisode.ended) {
@@ -1894,7 +1927,22 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // selection + the pre-claim recheck still applies to it.
   const episodeContinuations = new Map();
   const episodeBootstrap = new Map();
+  // SHU-231: an ARMED episode admits its own bound issue to selection through the
+  // existing seam, so a fresh episode can take its FIRST step without inventing a
+  // successor it cannot have yet. Populated only while genuinely armed: a spent,
+  // refused or absent activation contributes nothing here.
+  const episodeIssueIds = new Set();
+  let episodeScope = null;
   if (dispatchEnabled && singleRunActivation.state === "armed" && singleRunActivation.target_issue_id) {
+    episodeScope = activationEpisodeScope;
+    // ...but ONLY for the episode's FIRST step. Once this episode owns any receipt,
+    // the routed successor is the sole way forward (SHU-225): admitting it
+    // unconditionally would let a mid-episode availability hold (no eligible
+    // reviewer, no active writer) re-dispatch the episode's first step forever.
+    const episodeHasStarted = receipts.some(
+      (r) => r && r.issue_id === singleRunActivation.target_issue_id && receiptInEpisodeScope(r, episodeScope),
+    );
+    if (!episodeHasStarted) episodeIssueIds.add(singleRunActivation.target_issue_id);
     if (singleRunActivation.reviewer_lane) {
       episodeBootstrap.set(singleRunActivation.target_issue_id, { lane: singleRunActivation.reviewer_lane });
     }
@@ -2162,7 +2210,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
   }
 
-  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations });
+  const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
 
   if (singleRunActivation.requested && singleRunActivation.state === "refused") {
@@ -2354,6 +2402,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     repo,
     branch,
     target_sha,
+    // SHU-231: stamp the episode on every receipt the coordinator writes. Null when
+    // no episode is armed, so the disabled/global path is unchanged.
+    episode_id: episodeScope?.episode_id ?? null,
     // SHU-225 I7 (idempotency): a successor's attempt id is DERIVED from its
     // predecessor (freshAttempt over the predecessor attempt + role + round), not
     // minted fresh. A restart at any boundary therefore re-derives the SAME
