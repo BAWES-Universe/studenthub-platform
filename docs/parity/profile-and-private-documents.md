@@ -4,6 +4,7 @@
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255` (Yii2 monolith, serving production). Every `path:line` below is at that revision; permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection of models, controllers, routes, components, cron, migrations, fixtures and tests. No database, bucket, or live-host access. No profile contents or credentials appear in this document.
 **Donor note:** `bawes/studenthub-codex` is a failed-donor lessons source, not parity authority. Nothing here is taken from it.
+**Target posture (not revisited here):** object storage on the replacement platform is **R2-only for every new upload**. The AWS/S3, Textract, MediaConvert and Cloudinary material below is **legacy evidence only** — it records what production does today, never what the platform should adopt. A later AWS-to-R2 migration and an AWS sunset are separate, already-agreed work; this inventory neither re-opens that decision nor grants authority to execute it.
 
 ## 1. What this cluster is
 
@@ -33,17 +34,17 @@ Created in `console/migrations/m130524_201442_init.php`; columns were added acro
 
 | Table | Columns (from model docblocks) | Delete convention | DDL location |
 |---|---|---|---|
-| `candidate_education` | `education_uuid` PK, `candidate_id`, `university_id`, `degree_uuid`, `major_uuid`, `graduation_year`, `is_currently_studying`, `education_type` ENUM(standard, custom_university, studying_abroad, not_studying), `custom_institution_name`, `custom_major`, timestamps | **hard delete** (`CandidateEducationController.php:345`) | not in migrations; only in `railway/staging/studenthub.sql` |
+| `candidate_education` | `education_uuid` PK, `candidate_id`, `university_id`, `degree_uuid`, `major_uuid`, `graduation_year`, `is_currently_studying`, `education_type` ENUM(standard, custom_university, studying_abroad, not_studying), `custom_institution_name`, `custom_major`, timestamps | **hard delete** (`CandidateEducationController.php:345`) | `m240523_133605_education.php:1568` |
 | `candidate_experience` | `candidate_experience_id`, `candidate_id`, `experience` (128), `employer` (128), `start_year`, `end_year`, `deleted`, created_at | model has `deleted`; controller **hard deletes** (`:187`); cron bulk `deleteAll` (`CronController.php:505`) | `m200729_094528` |
 | `candidate_skill` | `candidate_skill_id`, `candidate_id`, `skill` (128), `deleted`, created_at | bulk replace via `update-skills` | `m200729_094528` |
-| `candidate_link` | `cl_uuid` PK, `candidate_id`, `title`, `url`, timestamps | **hard delete** (`CandidateLinkController.php:138`) | not in migrations; SQL dump only |
-| `candidate_certificate` | `certificate_uuid` PK, `certificate_type` (0 experience / 1 exam), `candidate_id`, `candidate_work_history_id`, `exam_uuid`, `store_id`, `company_id`, `parent_company_id`, `staff_id`, `start_date`, `end_date`, `is_deleted`, timestamps | `is_deleted` (third convention) | SQL dump only |
+| `candidate_link` | `cl_uuid` PK, `candidate_id`, `title`, `url`, timestamps | **hard delete** (`CandidateLinkController.php:138`) | `m250319_163212_links.php:23` |
+| `candidate_certificate` | `certificate_uuid` PK, `certificate_type` (0 experience / 1 exam), `candidate_id`, `candidate_work_history_id`, `exam_uuid`, `store_id`, `company_id`, `parent_company_id`, `staff_id`, `start_date`, `end_date`, `is_deleted`, timestamps | `is_deleted` (third convention) | `m240808_113636_certificate.php:151` |
 | `candidate_tag` | `candidate_tag_id`, `candidate_id`, `tag`, `reason`, `deleted`, `created_at`, `created_by` (staff) | `deleted` | `m230504_083255`, `m230521_161132` |
 | `candidate_id_card` | `id`, `candidate_id`, `expiry_date`, `deleted`, timestamps | `deleted` | `m170502_143647` |
-| `candidate_id_request` | `cir_uuid`, `candidate_ids` (CSV), `status`, `created_by`, `updated_by`, timestamps | hard delete (`CandidateIdRequestController.php:121`) | SQL dump only |
-| `candidate_video_log` | `candidate_id`, `ip_address`, `created_at` | append-only | `m201105_122925` |
+| `candidate_id_request` | `cir_uuid`, `candidate_ids` (CSV), `status`, `created_by`, `updated_by`, timestamps | hard delete (`CandidateIdRequestController.php:121`) | `m250120_201548_id_request.php:30` |
+| `candidate_video_log` | `video_log_uuid` PK, `candidate_id`, `ip_address`, `created_at` | append-only | `m201105_122925_video_log.php:21` (PK `:28`) |
 
-**Migration finding (for SHU-97/SHU-103):** four of the nine tables have no `createTable` in `console/migrations`. The live database, not the migration history, is the schema authority for this cluster.
+**Migration note (for SHU-97/SHU-103):** all nine child tables have `createTable` DDL in `console/migrations` at the lines above. An earlier draft of this document claimed four had none; that claim was false at `c2ce255` and is withdrawn. The live database remains the authority for *actual* column state and key layout, because columns were added across many later migrations and no schema dump was compared.
 
 ### 2.3 Validation invariants (`common/models/Candidate.php`)
 
@@ -64,7 +65,15 @@ Created in `console/migrations/m130524_201442_init.php`; columns were added acro
 
 ### 2.4 Profile completeness
 
-`isInCompleteProfile()` (`:3405-3480`) marks a profile incomplete if any of: `candidate_uid`, `country_id`, `candidate_name`, `candidate_name_ar`, gender, objective, personal photo, email, phone, birth date, civil ID number, civil expiry, civil front, civil back, driving licence, location (lat/long or area). University is commented out. The missing-field names are persisted as CSV in `candidate_pending_profile` (`:1251`) and surfaced as `pendingField` and `isProfileCompleted` in every API projection (`fields()`, `:~4200`).
+`isInCompleteProfile()` (`:3410-3510`) marks a profile incomplete if any of: `candidate_uid`, `country_id`, `candidate_name`, `candidate_name_ar`, gender, objective, personal photo, email, phone, birth date, civil ID number, civil expiry, civil front, civil back, driving licence, location (lat/long or area). University is commented out, and so is the resume check (`:3491-3493`).
+
+Three further requirements sit at the end of the same method and must not be omitted — S1 inherits the wrong meaning of `isProfileCompleted` without them:
+
+- **Conditional Kuwaiti-mother flag** (`:3480-3489`): if the candidate's area resolves to a country whose nationality name is `Kuwaiti` and the candidate's own nationality is not `Kuwaiti`, then `candidate_mom_kuwaiti` is required.
+- **At least one education row** (`:3500-3502`): `getCandidateEducations()->count() == 0` marks `education` pending.
+- **At least one skill row** (`:3505-3507`): `getCandidateSkills()->count() == 0` marks `skill` pending.
+
+Completeness therefore depends on two child tables, not on `candidate` columns alone. The missing-field names are persisted as CSV in `candidate_pending_profile` (`:1251`) and surfaced as `pendingField` and `isProfileCompleted` in every API projection (`fields()`, `:~4200`).
 
 ## 3. Who sees what: per-role projection
 
@@ -76,10 +85,11 @@ Each app overrides `fields()` on a subclass of `common\models\Candidate`. This i
 | Email, phone | yes | yes | yes | **never** (unset unconditionally `:44-45`) | never |
 | Civil ID number, expiry, `civilExpired` | yes | yes | yes | yes | yes |
 | Civil ID photos (keys) | yes | yes | yes | **only if candidate's `store_id` is one of the employer's managed stores** (`:49-63`) | only for own store |
-| Resume key, lat/long, `ip_address` | yes | yes | yes | only for managed stores | resume hidden always; lat/long as company |
+| Resume key, lat/long, `ip_address` | yes | yes | yes | only for managed stores | **exposed** — `manager/models/Candidate.php:17-68` never unsets `candidate_resume`, `candidate_latitude`, `candidate_longitude` or `ip_address` |
 | Bank (`bank_id`, IBAN, account name), hourly rate | yes | yes | yes | never (`bank` forced to `[]`) | never |
 | `candidate_uid`, `employee_id` | `uid` hidden (`:~4230`) | yes | yes | never | never |
-| `approved`, `deleted`, `candidate_status`, timestamps | hidden | yes | yes (`deleted` re-exposed) | never | never |
+| `approved`, `deleted`, `candidate_status` | **exposed to self** — the candidate subclass unsets only `candidate_auth_key`, `candidate_password_hash`, `candidate_password_reset_token`, `candidate_created_at`, `candidate_updated_at` (`candidate/models/Candidate.php:50-54`); none of these three is removed | yes | yes (`deleted` re-exposed) | never | never |
+| Timestamps (`candidate_created_at`, `candidate_updated_at`) | hidden | yes | yes | never | never |
 | Auth key, password hash, reset token | never | never | never | never | never |
 | Derived extras | `bank_account_needed`, `working_hour_count`, `totalInterviewScheduled` | `candidate_personal_photo_url` | | `is_our_employee` | |
 
@@ -87,7 +97,8 @@ Each app overrides `fields()` on a subclass of `common\models\Candidate`. This i
 
 - Candidate: every own-profile endpoint loads `Candidate::findOne(Yii::$app->user->getId())`; child controllers scope `findModel` to the caller's `candidate_id` (`CandidateEducationController.php:372-384`, `CandidateExperienceController.php:214-226`, `CandidateLinkController.php:167-179`). No cross-person read path found in the candidate app.
 - Company: `GET v1/candidates/<id>` resolves any id (`company/.../CandidateController.php:731-740` via `filterById`, `CandidateQuery.php:293-296`, which adds only `candidate_id = ?`). This is the recruitment marketplace: employers may view any candidate at the projection above. Sensitive keys appear only when the candidate is in a managed store.
-- Manager: `view` and `list` are scoped to the manager's own `store_id` (`manager/.../CandidateController.php:40-47`).
+- **Company search is a separate path and does not use the company projection.** `actionSearch` builds its query as `\staff\models\Candidate::find()` (`company/.../CandidateController.php:49-50`), so every row in employer search results serialises with the **staff** projection, not the company one. The per-store narrowing described above does not apply to that response. This is a disclosure path in its own right and is the reason PD-05 carries decision D1.
+- Manager: `view` and `list` are scoped to the manager's own `store_id` (`manager/.../CandidateController.php:63-78`, store filter at `:72`). The scope is real; the **projection** is not narrowed, so a manager sees resume key, coordinates and `ip_address` for candidates in their own store.
 - Staff and admin: unscoped by design.
 
 ## 4. External effects and jobs
@@ -95,7 +106,7 @@ Each app overrides `fields()` on a subclass of `common\models\Candidate`. This i
 | Effect | Component | Trigger | Data leaving the perimeter |
 |---|---|---|---|
 | Object storage, two buckets | `common/components/S3ResourceManager.php` | every document write | objects written with `ACL: public-read` (`:111`, `:123`, `:147`); URLs from `getObjectUrl(..., $expires=null)` (`:198`) are permanent and unsigned (SHU-54) |
-| Client-side upload credentials | `candidate/.../AwsController.php:64-73` (`GET v1/aws/config`) | any authenticated candidate | **returns the temporary bucket's AWS access key id and secret to the client**, with the comment `//todo: key with expiry`. See finding F1 |
+| Client-side upload credentials | `candidate/.../AwsController.php:64-73` (`GET v1/aws/config`) | **any caller; no authentication** — `behaviors()` removes the inherited authenticator (`:14-15`) and the bearer-auth replacement is commented out (`:34-42`) | **returns the temporary bucket's AWS access key id and secret to the client**, with the comment `//todo: key with expiry`. See finding F1 |
 | Civil ID OCR | `IdExpiryDateExtractor.php` (AWS Textract `:38`, `detectDocumentText` `:55`) | civil photo change; cron | civil ID image sent to Textract |
 | Video transcoding | `MediaConvert.php:153-169` | `POST v1/account/video` | output to `candidate-video/` with `CannedAcl: PUBLIC_READ` (`:165`); completion via unauthenticated `POST video-by-webhook` (`AccountController.php:57`, `:229`) |
 | Image CDN | `CloudinaryManager.php`; legacy `photos/` personal photos served through Cloudinary (`Candidate.php:2798-2810`) | read; one-off cron `resource/s3-to-cloudinary` (`ResourceController.php:18-44`) migrates then deletes the S3 object | profile photos |
@@ -116,15 +127,21 @@ Each app overrides `fields()` on a subclass of `common\models\Candidate`. This i
 
 ## 5. Document lifecycle
 
-1. Client calls `GET v1/aws/config`, receives region, bucket, **access key id and secret** (`AwsController.php:69-72`), and uploads directly to the temporary bucket.
+1. Client calls `GET v1/aws/config` — **an unauthenticated endpoint** (`AwsController.php:14-15`, `:34-42`) — and receives region, bucket, **access key id and secret** (`:69-72`), then uploads directly to the temporary bucket.
 2. Client posts the object key to a profile endpoint. The model's `S3FileExistValidator` rule confirms the key exists in the temporary bucket (`Candidate.php:250-305`).
 3. On save the object is copied to the permanent bucket with `public-read`:
    - personal photo → `candidate-profile-photos/` for new uploads (`:117`), legacy `photos/` (`:120`); promotion at `:2878-2905`
-   - civil ID front/back → `civil-id/<file>` by `_moveTemporaryFilesToPermanentBucket` (`:125-129`, `:1170-1186`), while `normalizeCivilIdPermanentS3Key` (`:2760-2780`) maps `candidate-civil-id/…` and bare names to `photos/…`, and OCR reads `photos/<front>` (`:~445`). **Three prefixes for one document type; the live key layout must be inventoried before migration.**
+   - civil ID front/back → `civil-id/<file>` by `_moveTemporaryFilesToPermanentBucket` (`:125-129`, `:1170-1186`), while `normalizeCivilIdPermanentS3Key` (`:3117-3141`) maps `candidate-civil-id/…` and bare names to `photos/…`, and OCR reads `photos/<front>` (`:~445`). **Three prefixes for one document type; the live key layout must be inventoried before migration.**
    - resume → `candidate-resume/` (`:2361-2380`)
    - video → temporary bucket → MediaConvert → `candidate-video/` (`:2422-2445`)
 4. A thumbnail is generated for photo uploads (`:1183`, `_generateThumbnail :1195`).
-5. Replace or remove: DB commit first, then best-effort S3 delete of the old key with structured error logging (`AccountController.php:418-435`, `:483-500`; resume `Candidate.php:2337`). 
+5. Replace or remove: **object-delete-before-save is the norm, not DB-first.** The ordering differs per document and must not be generalised:
+   - personal photo remove — `deletePersonalPhotoStorageObject()` runs before `save()` (`AccountController.php:356-366`, delete `:360`, save `:366`);
+   - resume replace — `deleteResume()` runs before the new value is validated or saved (`:1286-1317`, delete `:1295`, validation `:1308`);
+   - resume remove — `deleteResume()` before `save()` (`:1334-1345`, delete `:1338`, save `:1344`);
+   - civil photo replace — copy and delete happen inside the model (`Candidate.php:3251-3308`) before the controller saves (`AccountController.php:1388`, `:1440`);
+   - **only** the corrected civil-photo *remove* paths are DB-first, then best-effort object delete with structured error logging (`AccountController.php:382-507`).
+   A failed save after a completed delete therefore leaves the row pointing at an object that no longer exists. Platform S4 must commit metadata first and collect objects afterwards.
 6. Account delete (self or admin) **does not touch objects**: `Candidate` has no `beforeDelete`/`afterDelete` and `deleted=1` triggers no storage call (SHU-54, confirmed at this revision).
 7. Retention: none defined anywhere in the cluster.
 
@@ -140,7 +157,7 @@ Columns: **Actor / grant** in the one-app model; **Legacy route(s)**; **Writes**
 | PD-02 | View own education / experience / skills / links | person, `self` | `GET v1/candidate-educations`, `…-experiences`, `…-links`; skills inline | owner-scoped lists | none | REQUIRED | S3 |
 | PD-03 | Staff views any candidate | staff, `subtree` | `GET v1/candidates/<id>` staff app; `list`, `assigned`, `not-assigned` (`:86`, `:1131`, `:1205`) | staff projection (everything except secrets) | `staff CandidateCest` list/search assert 200 only | REQUIRED | S6 |
 | PD-04 | Admin views / searches / review queue | admin | `search` (`admin/.../CandidateController.php:76`), `report-search :151`, `total-to-review :199`, `view :342` | admin projection incl. `deleted` | `admin CandidateCest` 8 methods, 200 + partial JSON | REQUIRED | S6 |
-| PD-05 | Employer views a candidate | org-owner / recruiter, org scope | `GET v1/candidates/<id>` company app (`:691`), `search :25`, `list :83` | company projection §3; any id | `company RequestCest` etc. 200-only (per GPT's sample) | REQUIRED, with decision D1 | S7 |
+| PD-05 | Employer views a candidate | org-owner / recruiter, org scope | `GET v1/candidates/<id>` company app (`:691`), `search :25`, `list :83` | `view` uses the company projection §3 on any id; **`search` serialises with the staff projection** because it queries `\staff\models\Candidate` (`:49-50`) | `company RequestCest` etc. 200-only (per GPT's sample) | REQUIRED, with decision D1 | S7 |
 | PD-06 | Store manager views own store's candidates | manager, store scope | `manager/.../CandidateController.php:19-48` | manager projection, store-scoped | none | REQUIRED | S7 |
 | PD-07 | Public verification card by QR | anonymous, no authentication | `verification/controllers/SiteController.php:35-60` (`/<candidate_uid>`), `ViewController.php:34-100` (`view/resume/<uid>`, `view/video/<uid>`, `view/telephone/<uid>`; routes `verification/config/main.php:37-40`). QR target `v.studenthub.co/<uid>` is this app (`CandidateIdCardController.php:108`) | Arabic name, personal photo, **civil ID number**, university, company, store, ID-card expiry (`views/site/index.php`); ID hidden if expired or unassigned. Resume and video links redirect to the public-read object URL; telephone redirects to `tel:<candidate_phone>` | `verification/tests/functional/SiteTest.php` | REQUIRED, ADAPT: signed short-lived link, no civil ID number, no phone without consent; see F10 | S8 |
 
@@ -161,8 +178,8 @@ Columns: **Actor / grant** in the one-app model; **Legacy route(s)**; **Writes**
 | PD-20 | Experience CRUD (itemised) | `candidate-experiences` (`:68-226`) | owner-scoped | hard delete | none | REQUIRED, ADAPT | S3 |
 | PD-21 | Links CRUD | `candidate-links` (`:68-179`) | owner-scoped | hard delete | none | REQUIRED, ADAPT | S3 |
 | PD-22 | Personal photo set / remove | `profile-photo :922`, `DELETE remove-photo :356` | `candidate_personal_photo`, `changeProfilePhoto` | temp-bucket existence; promotion §5; thumbnail | `tryUpdateProfilePhoto`, `tryRemovePhoto` | REQUIRED, ADAPT (private storage, scoped upload credential) | S4 |
-| PD-23 | Resume set / remove | `update-resume :1287`, `remove-resume :1335` | `updateResume` | promotion to `candidate-resume/`; old key deleted | `tryUpdateResume` | REQUIRED, ADAPT | S4 |
-| PD-24 | Civil ID photos set / remove | `update-civil-photo-front :1414`, `-back :1362`, `DELETE remove-civil-photo-front :447`, `-back :382` | `updateCivilPhotoFront/Back` | OCR on change (expiry + number extracted); expired rejected; DB-first then best-effort object delete | five tests incl. BH/KW variants (200-only) | REQUIRED, ADAPT | S4 + S5 |
+| PD-23 | Resume set / remove | `update-resume :1287`, `remove-resume :1335` | `updateResume` | promotion to `candidate-resume/`; **old object deleted before the new value is validated or saved** (`:1295`, `:1338`) | `tryUpdateResume` | REQUIRED, ADAPT | S4 |
+| PD-24 | Civil ID photos set / remove | `update-civil-photo-front :1414`, `-back :1362`, `DELETE remove-civil-photo-front :447`, `-back :382` | `updateCivilPhotoFront/Back` | OCR on change (expiry + number extracted); expired rejected; **replace copies and deletes before the controller saves** (`Candidate.php:3251-3308`), while the *remove* paths are DB-first then best-effort object delete (`AccountController.php:382-507`) | five tests incl. BH/KW variants (200-only) | REQUIRED, ADAPT | S4 + S5 |
 | PD-25 | Civil ID number and expiry (manual) | `update-civil-id :1130`, `update-civil-expiry-date :1467`, `update-civil-id-expiry-date :1518` | `updateCivilId` sets `candidate_civil_need_verification`; `updateCivilExpiryDateAndCivilID` | uniqueness; not expired | three tests | REQUIRED | S5 |
 | PD-26 | Video set / remove / status | `video :880`, `remove-video :331`, `GET video-status :216`, webhook `:229` | `tmpVideo`, `changeVideo` | MediaConvert, public output, unauthenticated completion webhook | four tests | EXCLUDE-PENDING-OWNER (D3) | — |
 | PD-27 | Bank details | `update-bank-detail :557` | `updateBankDetail`; syncs open transfers (`Candidate.php:839-856`) | IBAN rules | `tryUpdateBankDetail` | OTHER-CLUSTER (finance, SHU-128) | — |
@@ -183,6 +200,11 @@ Columns: **Actor / grant** in the one-app model; **Legacy route(s)**; **Writes**
 | PD-37 | **Login as candidate** (impersonation) | staff `:1107-1121`, admin `:223-237` | regenerates `candidate_auth_key` as a **4-character** random string (`Candidate.php:1847-1850`), redirects to `candidateAppUrl?auth_key=…`; consumed once by `login-by-key` (`AuthController.php:159-184`), which clears it | none | EXCLUDE-PENDING-OWNER (D2); see F2 | — |
 | PD-38 | ID cards: generate, renew, list expired, view | `CandidateIdCardController.php` generate `:190` (expiry +3 months `:231`, internal note `:250`), renew `:363`, lists `:147`, `:167`, `:342`, `:436`, view `:90` | view is HTML with QR to `v.studenthub.co/<uid>`; authenticated by **bearer token in the URL path** (`:90-93`) | `CandidateIdCardCest` 7 methods, 200-only | REQUIRED, ADAPT (signed short-lived link) | S8 |
 | PD-39 | Certificates (experience / exam) and PDFs | `CertificateController.php` list `:64`, create `:111`, from-work-history `:188`, update `:241`, delete `:274`, PDF `:147`; candidate downloads own appreciation certificate (`candidate/.../CandidateController.php:115-160`, mPDF) | `is_deleted` flag; PDF rendered on demand, not stored | none | REQUIRED; data from work cluster | S8 |
+| PD-08 | Staff issues, updates and lists candidate warnings | `GET candidate-warnings/<id>` (`staff/config/main.php:243`), `POST warn-candidate/<id>` (`:249`), `PATCH update-warning/<id>` (`:250`) → `staff/.../CandidateController.php:1440` (`actionWarnCandidate`), `:1478` (`actionUpdateWarning`), `:1515` (`actionCandidateWarnings`) | staff-authored warning records against a candidate | none | REQUIRED, ADAPT: warnings are an adverse record and need an author, a reason and an audit trail | S6 |
+| PD-09 | Staff ID-request queue: list, view, regenerate, delete | `staff/.../CandidateIdRequestController.php:66` (`actionList`), `:81` (`actionView`), `:92` (`actionRegenerate`), `:117` (`actionDelete`) | `candidate_id_request` rows (§2.2); **hard delete** at `:121`; regenerate re-issues cards for the CSV `candidate_ids` set | none | REQUIRED, ADAPT (soft delete + audit) | S8 |
+
+
+**On identifiers:** `PD-nn` values are stable row identifiers, not an ordering. PD-08 and PD-09 sit in §6.3 because they are staff journeys; they were absent from an earlier draft, which is why the identifier run appeared to skip them.
 
 ## 7. Bounded slices for SHU-106 (each PR-sized; none is a mega-PR)
 
@@ -191,7 +213,7 @@ Columns: **Actor / grant** in the one-app model; **Legacy route(s)**; **Writes**
 | **S1 — Own-profile read projection** (= SHU-92) | Typed projection of the safe field set: names, gender, birth date and age, nationality, university, objective, intro, preferred time, language, location (area), driving licence, job-search status, committed, completeness (`isProfileCompleted`, `pendingField`), employee id, civil-expiry boolean. **Excludes** civil ID number and photos, resume, bank, video. Rendered in the existing `/profile` page. | none | `authzStore.getPrincipal`, web-ui | 3 |
 | S2 — Safe self-edits | PD-10 to PD-15 as preview → confirm → receipt writes with the invariants in §2.3 | S1, SHU-84 | safe-write contract (SHU-82) | 5 |
 | S3 — Education, experience, skills, links | Owner-scoped CRUD with soft delete and audit; reference lists (degree, major) | S1 | safe-write | 5 |
-| S4 — Private documents | Personal photo, resume, civil photos: direct upload with **short-lived, object-scoped credentials** (no static key), private-by-default objects, authorized time-bounded retrieval, replace/remove with object GC | SHU-101 | | 8 |
+| S4 — Private documents | Personal photo, resume, civil photos on **R2 only**: direct upload with **short-lived, object-scoped credentials** (never a static key, and never an unauthenticated credential endpoint — see F1), private-by-default objects, authorized time-bounded retrieval, replace/remove that commits metadata first and collects objects afterwards (§5 step 5) | SHU-101 | | 8 |
 | S5 — Civil ID verification | Async OCR job (Textract or replacement) writing expiry and number with `need_verification`; uniqueness among non-deleted; expiry gate | S4 | | 3 |
 | S6 — Staff and admin on a candidate | PD-03, PD-04, PD-30 to PD-33, PD-36: full projection, `staffUpdate` field set, tags with reason, approve, invitation instead of temporary password | S1, S2, grants `subtree` | authz grants | 5 |
 | S7 — Employer and manager projections | PD-05, PD-06: org- and store-scoped visibility per §3, with decision D1 applied | S1 | authz `org_id` scope | 3 |
@@ -204,14 +226,14 @@ Out of this cluster by decision or ownership: PD-16, PD-28, reset-password (iden
 
 | ID | Finding | Evidence | Severity | Recommended card |
 |---|---|---|---|---|
-| **F1** | `GET v1/aws/config` returns a long-lived AWS access key id and secret to every authenticated candidate, with `//todo: key with expiry`. Whoever holds a candidate login can write to the temporary bucket directly and, depending on the IAM policy attached to that key, possibly more. | `candidate/modules/v1/controllers/AwsController.php:64-73`; route `candidate/config/main.php:43-50` | **High**, legacy, live | New legacy security card, same shape as SHU-54: read-only check of the key's IAM policy first, then decide fix-now vs accept-until-cutover (D7) |
+| **F1** | `GET v1/aws/config` returns a long-lived AWS access key id and secret **to any caller, with no authentication at all**: `behaviors()` removes the inherited authenticator (`:14-15`) and the bearer-auth replacement is commented out (`:34-42`), so no candidate login is required. Anyone who can reach the route can write to the temporary bucket directly and, depending on the IAM policy attached to that key, possibly more. An earlier draft of this document described this as limited to authenticated candidates; that was wrong and understated the exposure. | `candidate/modules/v1/controllers/AwsController.php:14-15`, `:34-42`, `:64-73`; route `candidate/config/main.php:41-51` (`GET config` at `:46`) | **High**, legacy, live | New legacy security card, same shape as SHU-54: read-only check of the key's IAM policy first, then decide fix-now vs accept-until-cutover (D7). The replacement platform does not inherit this pattern at all — new uploads are R2-only with short-lived, object-scoped credentials |
 | F2 | Impersonation uses a 4-character random `auth_key`, passed in a URL query string, exchangeable for a full session by `POST login-by-key` on any non-deleted candidate. Only a `Yii::info` line records it. | `Candidate.php:1847-1850`; `staff/.../CandidateController.php:1107-1121`; `admin/.../CandidateController.php:223-237`; `candidate/.../AuthController.php:159-184` | Medium–High (brute-force space 64^4 if the endpoint is unthrottled; not verified) | Identity cluster (SHU-124); platform replaces with audited act-as or drops (D2) |
 | F3 | Staff bearer token travels in the URL path of the ID card view page | `CandidateIdCardController.php:67`, `:90-93` | Medium | S8 replaces with signed short-lived link |
 | F4 | Cron `remove-duplicate` hard-deletes every experience row of a candidate whose skills equal their experiences | `CronController.php:489-511` | Medium (data loss, no audit) | CONSTRAINT in S9; migration must not run it |
 | F5 | Employers see civil ID photo keys, resume key and coordinates for candidates in their managed stores; with public-read objects (SHU-54) those images are readable by anyone with the key | `company/models/Candidate.php:49-63` | Decision | D1 |
 | F6 | Profile creation sends name, email, age, gender to Segment in prod | `Candidate.php:906-920` | Decision | D5; P4 telemetry (SHU-90/SHU-104) |
-| F7 | Three key prefixes for civil ID photos (`civil-id/`, `candidate-civil-id/`, `photos/`); OCR path assumes `photos/` | `Candidate.php:125-129`, `:1170-1186`, `:2760-2780`, `:~445` | Migration risk | SHU-97 data map must inventory real keys |
-| F8 | Four child tables have no migration DDL | §2.2 | Migration risk | SHU-97 |
+| F7 | Three key prefixes for civil ID photos (`civil-id/`, `candidate-civil-id/`, `photos/`); OCR path assumes `photos/` | `Candidate.php:125-129`, `:1170-1186`, `:3117-3141` (`normalizeCivilIdPermanentS3Key`), `:~445`. Note `:2760` is `personalPhotoS3KeysToProbe`, a different document type, and was miscited in an earlier draft | Migration risk | SHU-97 data map must inventory real keys |
+| F8 | **Withdrawn.** An earlier draft claimed four child tables had no migration DDL. All nine have `createTable` at the lines in §2.2, verified at `c2ce255`. The residual migration risk is real key layout and actual column state, which is covered by F7 and §11, not missing DDL | §2.2 | — | — |
 | F9 | `validateFullName` mis-targets its error | `Candidate.php:540` | Low | do not replicate |
 | **F10** | The QR verification app is public and keyed only by `candidate_uid` (20-character random string printed on the ID card). It renders the **civil ID number**, photo, employer and store, and redirects to the resume, video, and the candidate's **phone number**. Anyone who scans, photographs, or guesses a card gets all of it, with no authentication, expiry, or audit. | `verification/controllers/SiteController.php:35-60`, `ViewController.php:34-100`, `verification/views/site/index.php` | **High**, legacy, live | New legacy card in the SHU-54 shape (decision: keep public verification but drop civil ID number and phone; or gate by signed link). Platform S8 requires a signed short-lived link and no civil ID number on the public card. |
 
@@ -242,19 +264,20 @@ Out of this cluster by decision or ownership: PD-16, PD-28, reset-password (iden
 | D4 | Is the 16–25 age gate still policy? | Keep as configurable rule |
 | D5 | Send profile PII to analytics? | Only with consent and only identifiers, in P4 telemetry work |
 | D6 | Retention after delete: documents, profile rows | Documents purged after a grace period; row soft-deleted and audited |
-| D7 | F1 static AWS credential in the legacy app: fix now or accept until cutover? | Read the key's IAM policy first, then decide, same as SHU-54 |
+| D7 | F1 static AWS credential in the legacy app, reachable **without authentication**: fix now or accept until cutover? | Read the key's IAM policy first, then decide, same as SHU-54. The absence of authentication raises the urgency relative to the earlier draft |
 
 ## 11. Not established
 
 - Live bucket policy and whether objects are actually public (SHU-54 item 1).
-- The IAM policy attached to the credential returned by `v1/aws/config`.
+- The IAM policy attached to the credential returned by `v1/aws/config`, and therefore the true blast radius of F1. What *is* established is that the endpoint requires no authentication.
+- Whether that route is reachable from outside the perimeter in the live deployment. The code imposes no authentication; network-level exposure was not tested.
 - Which candidate UI production users are on, and any behaviour that lives only in those UIs.
 - Real row counts, real key prefixes in the bucket, and any data not reachable from the code.
 - Which of the `verification/` app's rendered fields the live nginx actually serves (the app is in this repository at `verification/`; an earlier draft of this document wrongly called it a separate deployment).
 
 ## Appendix A: selected `candidate` column migrations
 
-`m170219_151757` (name_ar, birth_date, civil fields, hourly_rate), `m170223_132254` (store_id), `m170303_134250` (approved), `m170306_112515` (bank_id, iban), `m170307_121642` (phone, bank_account_name), `m170420_125428` (university_id), `m170425_134445` (country_id), `m170427_123738` (personal_photo), `m170529_071050` (address_line1), `m200722_135609` (language), `m200724_100421` (new_email, email_verification, limit_email; nullable birth/civil/rate/auth_key), `m200729_094528` (driving_license, resume, gender, objective; creates skill and experience tables), `m200807_134023` (job_search), `m200907_135723` / `m201009_153032` / `m201019_103154` (video, processed, job id, webhook), `m200922_070412` (area, lat, long), `m201105_063330` (committed), `m201106_074724` (mom_kuwaiti), `m211123_120542` (pending_profile), `m230406_110939` (profile_url), `m230113_065332` (intro), `m230504_083255` (tags), plus `is_duplicate`, `is_incomplete_profile`, `utm_uuid`, nullable password hash.
+`m170219_055954_missing_candidate_fields` (name_ar, birth_date, civil fields, hourly_rate; an earlier draft cited a nonexistent `m170219_151757`), `m170223_132254` (store_id), `m170303_134250` (approved), `m170306_112515` (bank_id, iban), `m170307_121642` (phone, bank_account_name), `m170420_125428` (university_id), `m170425_134445` (country_id), `m170427_123738` (personal_photo), `m170529_071050` (address_line1), `m200722_135609` (language), `m200724_100421` (new_email, email_verification, limit_email; nullable birth/civil/rate/auth_key), `m200729_094528` (driving_license, resume, gender, objective; creates skill and experience tables), `m200807_134023` (job_search), `m200907_135723` / `m201009_153032` / `m201019_103154` (video, processed, job id, webhook), `m200922_070412` (area, lat, long), `m201105_063330` (committed), `m201106_074724` (mom_kuwaiti), `m211123_120542` (pending_profile), `m230406_110939` (profile_url), `m230113_065332` (intro), `m230504_083255` (tags), plus `is_duplicate`, `is_incomplete_profile`, `utm_uuid`, nullable password hash.
 
 ## Appendix B: legacy test coverage for this cluster
 
