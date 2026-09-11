@@ -43,7 +43,8 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | -- | -- |
 | Full role-aware web/iframe workspace | First server-rendered profile exists; capability panels, context switching and iframe integration are still unbuilt |
 | 7 domain packages (`domain-*`) | none exist |
-| Remaining `packages/` capabilities | domain packages, observability, and UI are not built yet |
+| `packages/observability` | PII-safe gateway/web/worker correlation, local Sentry diagnosis, bounded metrics and isolation; [contract and runbook](docs/observability.md). External ingestion disabled. |
+| Remaining `packages/` capabilities | domain packages and shared UI are not built yet |
 
 Planned layout (target, for orientation):
 
