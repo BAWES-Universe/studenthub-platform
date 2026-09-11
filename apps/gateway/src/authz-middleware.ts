@@ -1,3 +1,4 @@
+import { currentTraceId } from '../../../packages/observability/src/index.js';
 /**
  * Gateway authorization middleware — SHU-49.
  *
@@ -250,7 +251,7 @@ export async function authorizeRequest(
   assertionWire: string | undefined,
   middleware: AuthzMiddleware,
 ): Promise<AuthzRequestDecision> {
-  const requestId = middleware.newRequestId();
+  const requestId = currentTraceId() ?? middleware.newRequestId();
 
   let outcome: AuditableDecision;
   try {
