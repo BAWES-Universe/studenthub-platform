@@ -85,7 +85,7 @@
     "evidence_links": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Validated callback evidence links (GitHub PR / Linear comment) whose attempt_id and target_sha were checked before COMPLETED."
+      "description": "Append-only evidence links. These include validated callback links whose attempt_id and target_sha were checked before COMPLETED, plus coordinator-private raw reviewer envelopes and confined exact-head test reports retained on every terminal outcome."
     },
     "last_activity": { "type": "string" },
     "notes": {

@@ -57,6 +57,13 @@ const launchInput = {
   oauth_token: TOKEN,
   cwd: "/tmp/repo",
   readHeadImpl: async () => SHA,
+  reviewEvidenceImpl: async () => ({
+    executed: true,
+    passed: true,
+    reason_code: "REVIEW_TESTS_PASSED",
+    evidence_link: "file:///srv/shu/review-evidence/test.json",
+  }),
+  persistEnvelopeImpl: () => ({ link: "file:///srv/shu/review-evidence/envelope.stdout" }),
 };
 
 test("official headless contract: execFile claude -p with JSON schema and bound UUID/SHA", async () => {
@@ -71,6 +78,9 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.deepEqual(call.args.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
   assert.equal(call.args[5], "--json-schema");
   assert.deepEqual(JSON.parse(call.args[6]), CALLBACK_SCHEMA);
+  assert.ok(call.args.includes("--bare"), "review ignores builder-controlled project settings and hooks");
+  assert.deepEqual(call.args.slice(call.args.indexOf("--tools"), call.args.indexOf("--tools") + 2), ["--tools", "Read,Glob,Grep"]);
+  assert.equal(call.args.join(" ").includes("Bash"), false, "Claude's own tool surface cannot execute builder-authored code");
   assert.equal(CLAUDE_MODEL, "opus", "the verifier must never inherit Fable or another host default");
   assert.ok(call.args.includes("--session-id"));
   assert.ok(call.args.includes(ATTEMPT));
@@ -162,7 +172,7 @@ test("completed without structured callback -> HOLD, never COMPLETED", async () 
   const execFileImpl = execResult({ stdout: JSON.stringify({ type: "result", is_error: false, session_id: ATTEMPT, result: "looks good" }) });
   const out = await launchBuilder({ ...launchInput, execFileImpl });
   assert.equal(out.stage, "HOLD");
-  assert.match(out.reason, /without a valid/);
+  assert.match(out.reason, /NO_STRUCTURED_OUTPUT/);
 });
 
 test("BLOCKED and FAILED verifier callbacks park on HOLD with evidence", async () => {
