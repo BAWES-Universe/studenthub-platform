@@ -765,6 +765,20 @@ export function nextReceiptState(receipt, event, ctx = {}) {
     next.last_activity = at();
     return next;
   };
+  const appendAdapterAudit = (next) => {
+    const links = Array.isArray(event.audit_evidence_links)
+      ? event.audit_evidence_links.filter((link) => typeof link === "string" && link.length > 0)
+      : [];
+    const notes = Array.isArray(event.audit_notes)
+      ? event.audit_notes.filter((entry) => typeof entry === "string" && entry.length > 0)
+      : [];
+    if (typeof event.reason_code === "string" && event.reason_code.length > 0) {
+      notes.push(`adapter reason code: ${event.reason_code}`);
+    }
+    next.evidence_links = [...next.evidence_links, ...links];
+    next.notes = [...next.notes, ...notes];
+    return next;
+  };
 
   switch (event.type) {
     case "launch": {
@@ -868,7 +882,7 @@ export function nextReceiptState(receipt, event, ctx = {}) {
             next.timestamps.terminal = at();
             return { receipt: next, accepted: true };
           }
-          const next = note("run completed WITH validated callback (attempt + target_sha match)");
+          const next = appendAdapterAudit(note("run completed WITH validated callback (attempt + target_sha match)"));
           next.stage = "COMPLETED";
           next.adapter_status = "completed";
           next.evidence_links = [...next.evidence_links, ...callback.links];
@@ -887,11 +901,13 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.timestamps.terminal = at();
           return { receipt: next, accepted: true };
         }
-        const next = note(
-          callback
-            ? "run completed but callback REJECTED (attempt/target_sha mismatch or stale head) — HOLD"
-            : "run completed WITHOUT validated callback — HOLD (manual review required)",
-        );
+        const next = appendAdapterAudit(note(
+          event.reason_code
+            ? `run completed without an acceptable verifier result — HOLD (${event.reason_code})`
+            : callback
+              ? "run completed but callback REJECTED (attempt/target_sha mismatch or stale head) — HOLD"
+              : "run completed WITHOUT validated callback — HOLD (manual review required)",
+        ));
         next.stage = "HOLD";
         next.adapter_status = "completed";
         // Durable verdict facts on HOLD too: a REVIEW BLOCK/FAIL that reached the
@@ -922,9 +938,9 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         }
         const preAcceptance = receipt.external_run_id === null;
         const quotaOrAccess = error_kind === "quota" || error_kind === "access";
-        const next = note(
+        const next = appendAdapterAudit(note(
           `run failed${preAcceptance ? " (rejected before run acceptance)" : ""}${error_code ? ` (error code ${error_code})` : ""}${quotaOrAccess ? " — QUOTA/ACCESS failure, adapter will be paused" : ""}`,
-        );
+        ));
         next.stage = "FAILED";
         if (!preAcceptance) {
           next.adapter_status = "failed"; // granular upstream status; stays null when no run existed
@@ -956,7 +972,7 @@ export function nextReceiptState(receipt, event, ctx = {}) {
       if (receipt.stage !== "RUNNING" && receipt.stage !== "LAUNCH_UNKNOWN") {
         return unchanged(`hold not applicable from stage ${receipt.stage}`);
       }
-      const next = note(`held: ${event.reason ?? "no reason given"}`);
+      const next = appendAdapterAudit(note(`held: ${event.reason ?? "no reason given"}`));
       next.stage = "HOLD";
       next.timestamps.terminal = at();
       return { receipt: next, accepted: true };
@@ -1064,7 +1080,13 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
   if (launch.stage === "HOLD" && launch.pause_adapter === true) {
     // A broker/setup refusal can carry the worker's otherwise valid callback.
     // That callback cannot override the host's refusal and become COMPLETED.
-    return nextReceiptState(transition.receipt, { type: "hold", reason: launch.reason ?? "adapter refused and paused" }, ctx);
+    return nextReceiptState(transition.receipt, {
+      type: "hold",
+      reason: launch.reason ?? "adapter refused and paused",
+      reason_code: launch.reason_code,
+      audit_evidence_links: launch.audit_evidence_links,
+      audit_notes: launch.audit_notes,
+    }, ctx);
   }
   if (launch.stage === "COMPLETED" || launch.stage === "HOLD") {
     // ctx carries current_head. A synchronous adapter reaches COMPLETED here
@@ -1078,6 +1100,9 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
         status: "completed",
         callback: launch.callback,
         worker_identity: launch.worker_identity,
+        reason_code: launch.reason_code,
+        audit_evidence_links: launch.audit_evidence_links,
+        audit_notes: launch.audit_notes,
       },
       ctx,
     );
@@ -1088,6 +1113,9 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
     error_code: launch.error_code,
     error_kind: launch.error_kind,
     worker_identity: launch.worker_identity,
+    reason_code: launch.reason_code,
+    audit_evidence_links: launch.audit_evidence_links,
+    audit_notes: launch.audit_notes,
   }, ctx);
 }
 

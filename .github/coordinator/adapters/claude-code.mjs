@@ -10,6 +10,10 @@
 // from the child environment even when they exist in the coordinator process.
 
 import { execFile as nodeExecFile } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 
 export const ADAPTER_NAME = "claude-code";
 export const CLAUDE_MODEL = "opus";
@@ -17,6 +21,8 @@ export const SUCCESS_CALLBACK_STAGES = Object.freeze(["PASS"]);
 export const CALLBACK_STAGES = Object.freeze(["PASS", "BLOCKED", "FAILED"]);
 const ATTEMPT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
+const MAX_ENVELOPE_BYTES = 1024 * 1024;
+const TOKEN_SHAPE_RE = /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-(?:ant-)?[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._-]{16,})/;
 
 export const CALLBACK_SCHEMA = Object.freeze({
   type: "object",
@@ -67,8 +73,8 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `Attempt: ${attempt_id}`,
     task_context,
     "Review and test the exact bound head. Do not merge.",
-    "If you find an in-scope defect and have authority, add a failing regression test, implement the fix on this PR branch, push it, and return BLOCKED with the new-head evidence link so verification rotates. Use comments-only BLOCKED only for a decision, authority, access, scope, protected-boundary, or verifier constraint.",
-    "If you change code, you are no longer eligible to PASS that head.",
+    "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the supplied evidence reference; do not execute commands yourself.",
+    "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",
     "Return the required structured callback. PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
   ].filter(Boolean).join("\n");
 }
@@ -80,10 +86,54 @@ export function buildClaudeArgs(input, { resume = false } = {}) {
     "--model", CLAUDE_MODEL,
     "--output-format", "json",
     "--json-schema", JSON.stringify(CALLBACK_SCHEMA),
+    "--bare",
+    "--disable-slash-commands",
+    "--tools", "Read,Glob,Grep",
     "--permission-mode", "dontAsk",
     sessionFlag, input.attempt_id,
     buildClaudePrompt(input),
   ];
+}
+
+function privateEvidenceDirectory(dir, { fsImpl = fs, ownUid = process.getuid?.() } = {}) {
+  if (!path.isAbsolute(dir ?? "")) throw new Error("review evidence directory must be absolute");
+  fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stat = fsImpl.lstatSync(dir);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.uid !== ownUid) {
+    throw new Error("review evidence directory must be coordinator-owned and private (0700)");
+  }
+  const resolved = fsImpl.realpathSync(dir);
+  if (resolved !== path.resolve(dir)) throw new Error("review evidence directory must not resolve through a symlink");
+  return resolved;
+}
+
+function reserveEnvelopePath(dir, attemptId, fsImpl = fs) {
+  for (let sequence = 1; sequence <= 100; sequence += 1) {
+    const candidate = path.join(dir, `${attemptId}.claude-envelope.${sequence}.stdout`);
+    try {
+      return { path: candidate, fd: fsImpl.openSync(candidate, "wx", 0o600) };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+  }
+  throw new Error("review envelope artifact sequence exhausted");
+}
+
+export function persistClaudeEnvelope({ stdout, attempt_id, evidence_dir, env = {}, fsImpl = fs, ownUid = process.getuid?.() }) {
+  const bytes = Buffer.from(String(stdout ?? ""));
+  if (bytes.length > MAX_ENVELOPE_BYTES) throw new Error("review envelope exceeds the size limit");
+  const text = bytes.toString("utf8");
+  if (TOKEN_SHAPE_RE.test(text) || sensitiveEnvironmentValues(env).some((secret) => text.includes(secret))) {
+    throw new Error("review envelope contains credential-shaped or environment-secret material");
+  }
+  const dir = privateEvidenceDirectory(evidence_dir, { fsImpl, ownUid });
+  const reserved = reserveEnvelopePath(dir, attempt_id, fsImpl);
+  try { fsImpl.writeFileSync(reserved.fd, bytes); }
+  finally { fsImpl.closeSync(reserved.fd); }
+  fsImpl.chmodSync(reserved.path, 0o600);
+  const retained = fsImpl.readFileSync(reserved.path);
+  if (!retained.equals(bytes)) throw new Error("review envelope verification failed");
+  return { path: reserved.path, link: pathToFileURL(reserved.path).href, size: bytes.length };
 }
 
 function runExecFile(execFileImpl, file, args, options) {
@@ -116,15 +166,15 @@ function parseJson(text) {
 
 export function parseClaudeCallback(stdout) {
   const envelope = parseJson(stdout);
-  if (!envelope || typeof envelope !== "object") return null;
+  if (!envelope || typeof envelope !== "object") return { envelope: null, callback: null, reason_code: "INVALID_ENVELOPE_JSON" };
   if (envelope.structured_output && typeof envelope.structured_output === "object") {
-    return { envelope, callback: envelope.structured_output };
+    return { envelope, callback: envelope.structured_output, reason_code: null };
   }
   if (typeof envelope.result === "string") {
     const callback = parseJson(envelope.result.trim());
-    if (callback) return { envelope, callback };
+    if (callback) return { envelope, callback, reason_code: null };
   }
-  return { envelope, callback: null };
+  return { envelope, callback: null, reason_code: "NO_STRUCTURED_OUTPUT" };
 }
 
 export function callbackValid(callback, { attempt_id, target_sha }) {
@@ -178,6 +228,9 @@ export async function launchBuilder({
   resume = false,
   execFileImpl = nodeExecFile,
   readHeadImpl = readHead,
+  reviewEvidenceImpl = runReviewEvidence,
+  persistEnvelopeImpl = persistClaudeEnvelope,
+  io = {},
   timeout_ms = 30 * 60 * 1000,
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
@@ -200,7 +253,31 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context };
+  const reviewEvidence = await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env });
+  const auditEvidenceLinks = reviewEvidence?.evidence_link ? [reviewEvidence.evidence_link] : [];
+  if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link) {
+    return {
+      stage: "HOLD",
+      pause_adapter: true,
+      reason_code: "REVIEW_EXECUTION_UNAVAILABLE",
+      reason: "REVIEW_EXECUTION_UNAVAILABLE — confined exact-head test execution was not proven; no reviewer launched",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: ["review execution proof: REVIEW_EXECUTION_UNAVAILABLE"],
+      ok: false,
+    };
+  }
+
+  const input = {
+    issue_id,
+    authorization_ref,
+    attempt_id,
+    target_sha,
+    task_context: [
+      task_context,
+      `Confined exact-head test evidence: ${reviewEvidence.evidence_link}`,
+      `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
+    ].filter(Boolean).join("\n"),
+  };
   const args = buildClaudeArgs(input, { resume });
   let result;
   try {
@@ -215,18 +292,40 @@ export async function launchBuilder({
   } catch (error) {
     return failureFrom(error, "", "");
   }
-  if (result.error) return failureFrom(result.error, result.stdout, result.stderr);
+  let envelope = null;
+  const auditNotes = [`review execution proof: ${reviewEvidence.reason_code}`];
+  try {
+    envelope = persistEnvelopeImpl({
+      stdout: result.stdout,
+      attempt_id,
+      evidence_dir: env.SHU_REVIEW_EVIDENCE_DIR,
+      // The prompt context can contain issue-supplied secrets. Give it a
+      // sensitivity-marked key so the same value scanner that protects host
+      // credentials also rejects prompt material from the retained envelope.
+      env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: oauth_token, SHU_REVIEW_PROMPT_SECRET: task_context },
+    });
+    auditEvidenceLinks.push(envelope.link);
+  } catch (error) {
+    const note = `review envelope retention: ENVELOPE_RETENTION_FAILED (${error?.message ?? "unknown"})`;
+    auditNotes.push(note);
+    if (io.stdout) io.stdout(note);
+  }
+  if (result.error) {
+    return { ...failureFrom(result.error, result.stdout, result.stderr), audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes };
+  }
 
   const parsed = parseClaudeCallback(result.stdout);
   const identity = workerIdentity(attempt_id);
   const runId = externalRunId(attempt_id);
-  if (!parsed || parsed.envelope?.is_error === true) {
+  if (parsed.envelope?.is_error === true || parsed.reason_code === "INVALID_ENVELOPE_JSON") {
     return {
       stage: "FAILED",
       external_run_id: runId,
       worker_identity: identity,
       adapter_status: "failed",
-      error_code: "CLAUDE_INVALID_RESULT",
+      error_code: parsed.reason_code === "INVALID_ENVELOPE_JSON" ? "INVALID_ENVELOPE_JSON" : "CLAUDE_INVALID_RESULT",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: auditNotes,
       ok: false,
     };
   }
@@ -236,7 +335,23 @@ export async function launchBuilder({
       external_run_id: runId,
       worker_identity: identity,
       adapter_status: "completed",
-      reason: "Claude returned a different session id than the bound attempt",
+      reason_code: "CALLBACK_BINDING_INVALID",
+      reason: "CALLBACK_BINDING_INVALID — Claude returned a different session id than the bound attempt",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: auditNotes,
+      ok: false,
+    };
+  }
+  if (parsed.reason_code === "NO_STRUCTURED_OUTPUT") {
+    return {
+      stage: "HOLD",
+      external_run_id: runId,
+      worker_identity: identity,
+      adapter_status: "completed",
+      reason_code: "NO_STRUCTURED_OUTPUT",
+      reason: "NO_STRUCTURED_OUTPUT — Claude completed without structured callback output",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: auditNotes,
       ok: false,
     };
   }
@@ -246,7 +361,10 @@ export async function launchBuilder({
       external_run_id: runId,
       worker_identity: identity,
       adapter_status: "completed",
-      reason: "completed without a valid attempt/SHA-bound callback",
+      reason_code: "CALLBACK_BINDING_INVALID",
+      reason: "CALLBACK_BINDING_INVALID — structured callback failed attempt/head/stage/evidence binding",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: auditNotes,
       ok: false,
     };
   }
@@ -259,6 +377,8 @@ export async function launchBuilder({
       callback: parsed.callback,
       evidence_links: parsed.callback.links,
       reason: `verifier returned ${parsed.callback.stage}`,
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: auditNotes,
       ok: false,
     };
   }
@@ -269,6 +389,8 @@ export async function launchBuilder({
     adapter_status: "completed",
     callback: parsed.callback,
     evidence_links: parsed.callback.links,
+    audit_evidence_links: auditEvidenceLinks,
+    audit_notes: auditNotes,
     ok: true,
   };
 }
