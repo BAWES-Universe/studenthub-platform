@@ -276,8 +276,11 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
   const root = privateTemp("shu232-b7-live-");
   const workspace = path.join(root, "workspace");
   const evidence = path.join(root, "evidence");
+  const wrapperMarker = path.join(root, "unconfined-wrapper-ran");
+  const unconfinedWrapper = path.join(root, "unconfined-wrapper");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
+  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nexec "$@"\n`, { mode: 0o700 });
   fs.writeFileSync(path.join(workspace, "must-not-run.test.mjs"), "throw new Error('unconfined test ran');\n");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ownUid = process.getuid?.() ?? 1000;
@@ -288,11 +291,14 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
     env: {
       PATH: process.env.PATH,
       SHU_REVIEW_EXEC_UID: String(ownUid + 1),
-      SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/usr/bin/env"]),
+      SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify([unconfinedWrapper]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["must-not-run.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
+    validateWrapperImpl: (wrapper) => wrapper,
   });
+  assert.equal(fs.existsSync(wrapperMarker), true, "a test-owned real wrapper reached the active child probe");
+  assert.equal(fs.readFileSync(wrapperMarker, "utf8"), "ran");
   assert.equal(result.executed, false);
   assert.equal(result.reason_code, "REVIEW_EXECUTION_UNAVAILABLE");
   assert.ok(result.evidence_link, "the failed active probe remains inspectable");
@@ -362,7 +368,7 @@ test("SHU-232 B9: production-shaped harness reaches build -> BLOCKED -> revision
   } finally { h.cleanup(); }
 });
 
-test("SHU-232 B10: B-ii binds a coordinator-owned workspace to a distinct effective execution uid", async (t) => {
+test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid", async (t) => {
   const root = privateTemp("shu232-b10-");
   const workspace = path.join(root, "workspace");
   const evidence = path.join(root, "evidence");
@@ -393,11 +399,13 @@ test("SHU-232 B10: B-ii binds a coordinator-owned workspace to a distinct effect
   assert.equal(artifact.actual_uid, expectedUid, "builder-authored code executes as the configured non-coordinator uid");
   assert.notEqual(artifact.actual_uid, artifact.workspace_uid);
 
-  const realStat = fs.statSync;
+  const realStat = fs.lstatSync;
   const wrongOwnerFs = Object.create(fs);
-  wrongOwnerFs.statSync = (candidate) => {
+  wrongOwnerFs.lstatSync = (candidate) => {
     const stat = realStat(candidate);
-    return path.resolve(candidate) === path.resolve(workspace) ? { ...stat, uid: expectedUid } : stat;
+    return path.resolve(candidate) === path.resolve(workspace)
+      ? new Proxy(stat, { get: (target, property, receiver) => property === "uid" ? expectedUid : Reflect.get(target, property, receiver) })
+      : stat;
   };
   const refused = await runReviewEvidence({
     attempt_id: "32323232-3232-4232-8232-323232323232", target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: () => {},

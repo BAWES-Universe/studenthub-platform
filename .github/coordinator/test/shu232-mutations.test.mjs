@@ -72,8 +72,8 @@ const CASES = [
   {
     name: "M9 allow the configured execution identity to own the B-ii workspace",
     file: "review-execution.mjs",
-    from: "    if (workspaceUid !== ownUid) {",
-    to: "    if (false) {",
+    from: "  const trustedOwner = stat.uid === 0 || stat.uid === ownUid;\n  const expectedKind = kind === \"file\" ? stat.isFile() : stat.isDirectory();\n  return expectedKind\n    && !stat.isSymbolicLink()\n    && trustedOwner\n    && stat.uid !== expectedUid",
+    to: "  const trustedOwner = stat.uid === expectedUid || stat.uid === 0 || stat.uid === ownUid;\n  const expectedKind = kind === \"file\" ? stat.isFile() : stat.isDirectory();\n  return expectedKind\n    && !stat.isSymbolicLink()\n    && trustedOwner\n    && true",
     pattern: "SHU-232 B10",
   },
 ];
