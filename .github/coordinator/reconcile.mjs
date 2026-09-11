@@ -730,7 +730,7 @@ export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
   return callbackBindingValid(receipt, evidence, ctx) && SUCCESS_CALLBACK_STAGES.includes(evidence.stage);
 }
 
-const nowIso = (at) => at ?? new Date().toISOString();
+const nowIso = (at) => (at instanceof Date ? at.toISOString() : at) ?? new Date().toISOString();
 
 // nextReceiptState — pure transition. Returns
 //   { receipt, accepted, reason?, pause_adapter?, idempotency_key? }
@@ -753,7 +753,7 @@ export function nextReceiptState(receipt, event, ctx = {}) {
   }
 
   const copy = () => structuredClone(receipt);
-  const at = () => nowIso(event.at);
+  const at = () => nowIso(event.at ?? ctx.now?.());
   const note = (text) => {
     const next = copy();
     next.notes = [...next.notes, text];
@@ -1031,7 +1031,7 @@ export async function verifyActivationTarget(adapter, { repo, target_sha, github
 export function foldLaunchOutcome(receipt, launch, ctx = {}) {
   let transition = receipt.stage === "LAUNCH_UNKNOWN"
     ? { receipt, accepted: true, idempotency_key: launchIdempotencyKey(receipt) }
-    : nextReceiptState(receipt, { type: "launch" });
+    : nextReceiptState(receipt, { type: "launch" }, ctx);
   if (!transition.accepted) return transition;
 
   if (launch.stage === "LAUNCH_UNKNOWN") {
@@ -1041,7 +1041,7 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
           type: "run_discovered",
           external_run_id: launch.external_run_id,
           worker_identity: launch.worker_identity,
-        })
+        }, ctx)
       : transition;
   }
 
@@ -1052,14 +1052,14 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
       external_run_id: launch.external_run_id,
       adapter_status: launch.stage === "RUNNING" ? launch.adapter_status : "in_progress",
       worker_identity: launch.worker_identity,
-    });
+    }, ctx);
     if (!transition.accepted || launch.stage === "RUNNING") return transition;
   }
 
   if (launch.stage === "HOLD" && launch.pause_adapter === true) {
     // A broker/setup refusal can carry the worker's otherwise valid callback.
     // That callback cannot override the host's refusal and become COMPLETED.
-    return nextReceiptState(transition.receipt, { type: "hold", reason: launch.reason ?? "adapter refused and paused" });
+    return nextReceiptState(transition.receipt, { type: "hold", reason: launch.reason ?? "adapter refused and paused" }, ctx);
   }
   if (launch.stage === "COMPLETED" || launch.stage === "HOLD") {
     // ctx carries current_head. A synchronous adapter reaches COMPLETED here
@@ -1083,7 +1083,7 @@ export function foldLaunchOutcome(receipt, launch, ctx = {}) {
     error_code: launch.error_code,
     error_kind: launch.error_kind,
     worker_identity: launch.worker_identity,
-  });
+  }, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -2038,7 +2038,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           };
         }
       }
-      const transition = foldLaunchOutcome(receipt, launch, recoveryCtx);
+      const transition = foldLaunchOutcome(receipt, launch, { ...recoveryCtx, now: io.now });
       if (!transition.accepted) continue;
       const nextReceipt = transition.receipt;
       if (launch.conversation_url && typeof launch.conversation_url === "string") {
@@ -2127,6 +2127,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         continue; // UNCHANGED (transient poll failure or missing credentials) — never touch state, never release the slot
       }
       const transition = nextReceiptState(receipt, event, {
+        now: io.now,
         current_head,
         // A write attempt is expected to move its branch. Bind its callback to
         // the resulting head, while reviews remain bound to their input head.
@@ -2346,6 +2347,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
 
   const { ok: reservedOk, receipt, errors } = createReceipt({
+    reserved_at: nowIso(io.now?.()),
     issue_id: candidate.id,
     authorization_ref,
     requested_worker,
@@ -2396,7 +2398,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
   // known-good and before crossing the adapter boundary. A refused preflight did
   // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
-  const launchIntent = nextReceiptState(receipt, { type: "launch" });
+  const launchIntent = nextReceiptState(receipt, { type: "launch" }, { now: io.now });
   if (!launchIntent.accepted) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
     return 2;
@@ -2418,7 +2420,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   } catch (error) {
     const diagnosis = workspaceFailureCode(error);
     const held = nextReceiptState(launchIntent.receipt, { type: "hold",
-      reason: `attempt workspace preparation or final activation check refused (${diagnosis}); no worker launched` });
+      reason: `attempt workspace preparation or final activation check refused (${diagnosis}); no worker launched` }, { now: io.now });
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
     if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — workspace preparation or final activation check refused (${diagnosis})`);
     return 2;
@@ -2468,7 +2470,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       };
     }
   }
-  const transition = foldLaunchOutcome(launchIntent.receipt, launch, launchCtx);
+  const transition = foldLaunchOutcome(launchIntent.receipt, launch, { ...launchCtx, now: io.now });
   if (!transition.accepted) {
     if (io.stdout) io.stdout(`dispatch: ${candidate.id} transition REJECTED (${transition.reason ?? "unknown reason"}) — state unchanged, slot held`);
     return 2;
