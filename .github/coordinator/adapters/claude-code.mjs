@@ -12,7 +12,8 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 
 export const ADAPTER_NAME = "claude-code";
@@ -73,7 +74,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     `Attempt: ${attempt_id}`,
     task_context,
     "Review and test the exact bound head. Do not merge.",
-    "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the supplied evidence reference; do not execute commands yourself.",
+    "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
     "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",
     "Return the required structured callback. PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
   ].filter(Boolean).join("\n");
@@ -174,29 +175,110 @@ function parseJson(text) {
 export function parseClaudeCallback(stdout) {
   const envelope = parseJson(stdout);
   if (!envelope || typeof envelope !== "object") return { envelope: null, callback: null, reason_code: "INVALID_ENVELOPE_JSON" };
+  const candidates = [];
+  const unavailable = [];
   if (envelope.structured_output && typeof envelope.structured_output === "object") {
-    return { envelope, callback: envelope.structured_output, reason_code: null };
+    candidates.push({ field: "structured_output", callback: envelope.structured_output });
+  } else {
+    unavailable.push("structured_output is missing or is not an object");
   }
   if (typeof envelope.result === "string") {
     const callback = parseJson(envelope.result.trim());
-    if (callback) return { envelope, callback, reason_code: null };
+    if (callback && typeof callback === "object") candidates.push({ field: "result", callback });
+    else unavailable.push("result is not callback JSON");
+  } else {
+    unavailable.push("result is missing or is not a string");
   }
-  return { envelope, callback: null, reason_code: "NO_STRUCTURED_OUTPUT" };
+  if (candidates.length === 0) {
+    return { envelope, callback: null, candidates: [], unavailable, reason_code: "NO_STRUCTURED_OUTPUT" };
+  }
+  return { envelope, callback: candidates[0].callback, candidates, unavailable, reason_code: null };
 }
 
-export function callbackValid(callback, { attempt_id, target_sha }) {
-  if (!callback || typeof callback !== "object") return false;
-  if (callback.attempt_id !== attempt_id || callback.target_sha !== target_sha) return false;
-  if (!CALLBACK_STAGES.includes(callback.stage)) return false;
-  if (!Array.isArray(callback.links) || callback.links.length === 0) return false;
-  return callback.links.every((link) => {
-    if (typeof link !== "string") return false;
-    try {
-      return ["http:", "https:"].includes(new URL(link).protocol);
-    } catch {
-      return false;
-    }
-  });
+function inside(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function canonicalRoot(root, fsImpl) {
+  if (!path.isAbsolute(root ?? "")) return null;
+  try {
+    const stat = fsImpl.lstatSync(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
+    const resolved = fsImpl.realpathSync(root);
+    return resolved === path.resolve(root) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+function allowedFileLink(url, rawLink, { cwd, evidence_dir, fsImpl = fs }) {
+  if (url.protocol !== "file:" || url.host || url.username || url.password || url.port || url.search) return false;
+  if (/\/(?:\.\.|%2e%2e)(?:\/|%2f)/i.test(rawLink)) return false;
+  let decodedPath;
+  try { decodedPath = decodeURIComponent(url.pathname); } catch { return false; }
+  if (decodedPath.split("/").includes("..")) return false;
+  try {
+    const candidate = fileURLToPath(url);
+    if (!path.isAbsolute(candidate)) return false;
+    const stat = fsImpl.lstatSync(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    const declared = path.resolve(candidate);
+    const resolved = fsImpl.realpathSync(candidate);
+    if (declared !== resolved) return false;
+    const roots = [canonicalRoot(cwd, fsImpl), canonicalRoot(evidence_dir, fsImpl)].filter(Boolean);
+    return roots.some((root) => inside(root, resolved));
+  } catch {
+    return false;
+  }
+}
+
+export function validateCallback(callback, { attempt_id, target_sha, cwd, evidence_dir, fsImpl = fs } = {}) {
+  if (!callback || typeof callback !== "object" || Array.isArray(callback)) return { valid: false, field: "callback", detail: "must be an object" };
+  if (callback.attempt_id !== attempt_id) return { valid: false, field: "attempt_id", detail: "does not match the bound attempt" };
+  if (callback.target_sha !== target_sha) return { valid: false, field: "target_sha", detail: "does not match the bound head" };
+  if (!CALLBACK_STAGES.includes(callback.stage)) return { valid: false, field: "stage", detail: "is not an allowed reviewer stage" };
+  if (!Array.isArray(callback.links) || callback.links.length === 0) return { valid: false, field: "links", detail: "must be a non-empty array" };
+  for (const [index, link] of callback.links.entries()) {
+    const field = `links[${index}]`;
+    if (typeof link !== "string") return { valid: false, field, detail: "must be a string" };
+    let url;
+    try { url = new URL(link); } catch { return { valid: false, field, detail: "is not a URL" }; }
+    if (["http:", "https:"].includes(url.protocol)) continue;
+    if (url.protocol === "file:" && allowedFileLink(url, link, { cwd, evidence_dir, fsImpl })) continue;
+    return { valid: false, field, detail: "is not an allowlisted HTTPS or canonical local evidence file" };
+  }
+  return { valid: true, field: null, detail: null };
+}
+
+export function callbackValid(callback, context) {
+  return validateCallback(callback, context).valid;
+}
+
+function selectCallback(parsed, context) {
+  const valid = [];
+  const failures = [];
+  for (const candidate of parsed.candidates ?? []) {
+    const checked = validateCallback(candidate.callback, context);
+    if (checked.valid) valid.push(candidate);
+    else failures.push(`${candidate.field}.${checked.field}: ${checked.detail}`);
+  }
+  if (valid.length === 0) {
+    const detail = [...failures, ...(parsed.unavailable ?? [])].join("; ");
+    return { callback: null, detail: detail || "no callback candidate" };
+  }
+  if (valid.length > 1 && !isDeepStrictEqual(valid[0].callback, valid[1].callback)) {
+    return { callback: null, detail: "structured_output and result contain conflicting valid callbacks" };
+  }
+  return { callback: valid[0].callback, detail: null };
+}
+
+function inlineEvidencePayload(reviewEvidence) {
+  if (!reviewEvidence?.report || typeof reviewEvidence.report !== "object" || Array.isArray(reviewEvidence.report)) {
+    throw new Error("confined review evidence report is missing");
+  }
+  const payload = JSON.stringify(reviewEvidence.report);
+  if (Buffer.byteLength(payload) > MAX_ENVELOPE_BYTES) throw new Error("confined review evidence report exceeds the prompt limit");
+  return payload;
 }
 
 function failureFrom(error, stdout, stderr) {
@@ -262,7 +344,9 @@ export async function launchBuilder({
 
   const reviewEvidence = await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env });
   const auditEvidenceLinks = reviewEvidence?.evidence_link ? [reviewEvidence.evidence_link] : [];
-  if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link) {
+  let inlineEvidence;
+  try { inlineEvidence = inlineEvidencePayload(reviewEvidence); } catch { inlineEvidence = null; }
+  if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link || !inlineEvidence) {
     return {
       stage: "HOLD",
       pause_adapter: true,
@@ -281,8 +365,9 @@ export async function launchBuilder({
     target_sha,
     task_context: [
       task_context,
-      `Confined exact-head test evidence: ${reviewEvidence.evidence_link}`,
+      `Confined exact-head test evidence URI (machine provenance only; do not Read): ${reviewEvidence.evidence_link}`,
       `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
+      `Trusted confined evidence payload (inline): ${inlineEvidence}`,
     ].filter(Boolean).join("\n"),
   };
   const args = buildClaudeArgs(input, { resume });
@@ -356,34 +441,35 @@ export async function launchBuilder({
       worker_identity: identity,
       adapter_status: "completed",
       reason_code: "NO_STRUCTURED_OUTPUT",
-      reason: "NO_STRUCTURED_OUTPUT — Claude completed without structured callback output",
+      reason: `NO_STRUCTURED_OUTPUT — ${parsed.unavailable?.join("; ") || "Claude completed without structured callback output"}`,
       audit_evidence_links: auditEvidenceLinks,
       audit_notes: auditNotes,
       ok: false,
     };
   }
-  if (!callbackValid(parsed.callback, { attempt_id, target_sha })) {
+  const selected = selectCallback(parsed, { attempt_id, target_sha, cwd, evidence_dir: env.SHU_REVIEW_EVIDENCE_DIR });
+  if (!selected.callback) {
     return {
       stage: "HOLD",
       external_run_id: runId,
       worker_identity: identity,
       adapter_status: "completed",
       reason_code: "CALLBACK_BINDING_INVALID",
-      reason: "CALLBACK_BINDING_INVALID — structured callback failed attempt/head/stage/evidence binding",
+      reason: `CALLBACK_BINDING_INVALID — ${selected.detail}`,
       audit_evidence_links: auditEvidenceLinks,
       audit_notes: auditNotes,
       ok: false,
     };
   }
-  if (!SUCCESS_CALLBACK_STAGES.includes(parsed.callback.stage)) {
+  if (!SUCCESS_CALLBACK_STAGES.includes(selected.callback.stage)) {
     return {
       stage: "HOLD",
       external_run_id: runId,
       worker_identity: identity,
       adapter_status: "completed",
-      callback: parsed.callback,
-      evidence_links: parsed.callback.links,
-      reason: `verifier returned ${parsed.callback.stage}`,
+      callback: selected.callback,
+      evidence_links: selected.callback.links,
+      reason: `verifier returned ${selected.callback.stage}`,
       audit_evidence_links: auditEvidenceLinks,
       audit_notes: auditNotes,
       ok: false,
@@ -394,8 +480,8 @@ export async function launchBuilder({
     external_run_id: runId,
     worker_identity: identity,
     adapter_status: "completed",
-    callback: parsed.callback,
-    evidence_links: parsed.callback.links,
+    callback: selected.callback,
+    evidence_links: selected.callback.links,
     audit_evidence_links: auditEvidenceLinks,
     audit_notes: auditNotes,
     ok: true,

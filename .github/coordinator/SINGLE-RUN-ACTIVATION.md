@@ -217,8 +217,13 @@ test output. Claude itself runs with only `Read`, `Glob`, and `Grep` tools in
 restricted evaluation mode; subscription OAuth remains available, ambient
 settings, CLAUDE.md, hooks, skills, commands, plugins and subagents are disabled,
 and file tools are confined to the exact working directory. Strict MCP
-configuration plus an explicit `mcp__*` denial removes MCP tools. It receives the
-confined evidence reference and cannot execute the target.
+configuration plus an explicit `mcp__*` denial removes MCP tools. The private
+evidence URI remains machine provenance only; the coordinator includes the
+credential-scanned confined report inline so restricted mode is never asked to
+read outside the exact checkout. Reviewer callbacks may cite HTTPS evidence or
+canonical existing files only inside that checkout or the private evidence root;
+symlinks, traversal and every other local path fail binding. Claude cannot
+execute the target.
 
 After the existing durable reservation and launch intent, the coordinator fetches
 the bound commit in a fresh host-owned bare repository, creates a self-contained

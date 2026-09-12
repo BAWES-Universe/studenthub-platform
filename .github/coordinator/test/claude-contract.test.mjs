@@ -62,6 +62,13 @@ const launchInput = {
     passed: true,
     reason_code: "REVIEW_TESTS_PASSED",
     evidence_link: "file:///srv/shu/review-evidence/test.json",
+    report: {
+      version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
+      expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
+      sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED",
+      network_probe: "DENIED", forbidden_env_keys: [],
+      tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
+    },
   }),
   persistEnvelopeImpl: () => ({ link: "file:///srv/shu/review-evidence/envelope.stdout" }),
 };

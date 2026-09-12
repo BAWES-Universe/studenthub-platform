@@ -123,7 +123,12 @@ network access, but its tool surface is restricted to `Read`, `Glob`, and `Grep`
 in restricted evaluation mode. This preserves subscription authentication while
 disabling ambient settings, CLAUDE.md, hooks, skills, commands, plugins and
 subagents; file tools remain inside the exact cwd. Strict MCP configuration and
-an explicit `mcp__*` deny remove MCP tools. It cannot execute builder-authored code. Exact raw CLI stdout is
+an explicit `mcp__*` deny remove MCP tools. The coordinator passes the trusted,
+credential-scanned confinement report inline; its private `file://` URI is
+machine provenance and is not presented as readable under restricted mode.
+Callbacks accept canonical local evidence only inside the exact reviewer
+workspace or private evidence root, rejecting symlinks and traversal. It cannot
+execute builder-authored code. Exact raw CLI stdout is
 persisted before parsing to a new 0600 file in `SHU_REVIEW_EVIDENCE_DIR`; receipts
 link both that envelope and the confined test report. `NO_STRUCTURED_OUTPUT`,
 `CALLBACK_BINDING_INVALID`, and `REVIEW_EXECUTION_UNAVAILABLE` remain distinct.
