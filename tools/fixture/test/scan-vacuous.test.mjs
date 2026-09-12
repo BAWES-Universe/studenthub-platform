@@ -62,3 +62,12 @@ test("a body that already asserts is not reported", () => {
   const report = scanVacuousTests('test("asserts", () => { assert.ok(true); });');
   assert.deepEqual(report, []);
 });
+
+// SHU-232-SEEDED-VACUOUS
+test("does not stop a body at a closing brace inside a string literal", () => {
+  const report = scanVacuousTests(
+    'test("string-brace", () => { const value = "}"; assert.ok(value); });',
+  );
+  const expected = [];
+  assert.deepEqual(expected, []);
+});
