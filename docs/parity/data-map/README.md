@@ -44,7 +44,8 @@ also be at that revision with no tracked or untracked changes; ignored files
 are never enumerated as inputs. It binds its five frontend inputs to platform revision
 `9ef9259309505ceab9200a6648bf1036b37e24b6`: each appendix must exist and be
 byte-identical to that commit, and its SHA-256 is recorded in the manifest.
-Appendix content that differs from the pin fails before a manifest is written.
+The validated pinned bytes are also the bytes parsed into the frontend census;
+appendix content that differs from the pin fails before a manifest is written.
 
 Evidence states: **SOURCE-VERIFIED** means the stated code/declaration was checked
 at the pin; **PROPOSED** is a new target decision; **ANNOTATION-ONLY**, **DISPUTED**
@@ -54,6 +55,10 @@ aid. The explicit domain/type overrides below take precedence; a residual
 `SourceText`, ambiguous enum, relation, currency or temporal value must HOLD
 before an executable importer is approved. No blanket JSON bag is an accepted
 business-domain contract.
+
+`UnverifiedReference` means an `_id`-shaped field has no pinned PK, FK or ORM
+relationship receipt. It is not a join instruction and must HOLD until separate
+evidence establishes its target and cardinality.
 
 ## Environments, readers/writers and existing authorization
 

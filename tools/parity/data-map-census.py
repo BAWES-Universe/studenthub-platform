@@ -38,6 +38,7 @@ missing_appendices = sorted(name for name in required_appendices if not (appendi
 if missing_appendices:
     raise SystemExit('Missing frontend appendices: ' + ', '.join(missing_appendices))
 platform_sources = {}
+platform_frontend_text = {}
 for name in sorted(required_appendices):
     relative = pathlib.Path('docs/parity/ui-journeys') / name
     try:
@@ -51,6 +52,7 @@ for name in sorted(required_appendices):
     if current != pinned:
         raise SystemExit(f'Frontend appendix differs from platform pin: {relative}')
     platform_sources[relative.as_posix()] = hashlib.sha256(pinned).hexdigest()
+    platform_frontend_text[relative.as_posix()] = pinned.decode('utf-8')
 
 def pinned_text(relative):
     try:
@@ -68,7 +70,7 @@ def pinned_php(directory):
         text=True,
     ).splitlines()
     return [(name, pinned_text(name)) for name in names
-            if pathlib.PurePosixPath(name).parent.as_posix() == directory and name.endswith('.php')]
+            if name.startswith(directory + '/') and name.endswith('.php')]
 
 migration_sources = pinned_php('console/migrations')
 model_sources = pinned_php('common/models')
@@ -214,6 +216,18 @@ clusters = {
 by_table = {t:c for c, names in clusters.items() for t in names.split()}
 by_table.update({t:'finance' for t in tables if t.startswith('wallet.')})
 
+relationship_keys = set()
+for relation in rels:
+    if relation['kind'] == 'addForeignKey':
+        values = re.findall(r"['\"]([^'\"]+)['\"]", relation['keys'].split('->', 1)[0])
+    elif relation['kind'] in ('hasOne', 'hasMany'):
+        values = re.findall(r"=>\s*['\"]([^'\"]+)['\"]", relation['keys'])
+    elif relation['kind'] == 'addPrimaryKey':
+        values = re.findall(r"['\"]([^'\"]+)['\"]", relation['keys'])
+    else:
+        values = []
+    relationship_keys.update((relation['owner'], value) for value in values)
+
 def mapping(t, f, row):
     c = by_table.get(t, 'UNVERIFIED-cluster')
     ddl, annotation = row.get('ddl',''), row.get('annotation','')
@@ -223,8 +237,10 @@ def mapping(t, f, row):
     sensitive = re.search(r'password|auth_key|access_token|refresh_token|reset_token|secret|verification_token|verification_code|(^|_)otp$', f) or t.endswith('_token') or (t.endswith('_verify_attempt') and f=='code')
     protected_identifier = re.search(r'(^|_)civil_id$', f)
     key = re.search(r'(^id$|_id$|_uuid$|^uuid$|^currency_code$)', f)
+    unverified_id_reference = f.endswith('_id') and 'primaryKey' not in ddl and (t, f) not in relationship_keys
     if sensitive: target, policy = 'ExcludedCredential', 'DROP; synthetic auth only'
     elif protected_identifier: target, policy = 'ProtectedIdentifier', 'replace with dataset-local synthetic value; never use for identity joins or public hashes'
+    elif unverified_id_reference: target, policy = 'UnverifiedReference', 'name-shaped reference only; no PK/FK/ORM evidence; HOLD before joining'
     elif key: target, policy = 'SourceRef', 'namespace by system/table; exact join; no email matching'
     elif f in ('candidateUnreadCount','contactUnreadCount','staffUnreadCount','company_status'): target, policy = 'DerivedValue', 'recompute from target facts; not an imported scalar'
     elif f in ('total_time','total_approved','total_pending','total_rejected') and t.startswith('candidate_working'): target, policy = 'DurationSeconds', 'integer seconds; preserve null/open; recompute aggregates separately'
@@ -233,7 +249,7 @@ def mapping(t, f, row):
     elif f in ('candidate_hourly_rate','company_hourly_rate','staff_hourly_rate','fulltimer_current_salary','fulltimer_expected_salary'): target, policy = 'MoneyDecimal', 'exact rate/amount with explicit currency and effective period'
     elif f in ('total_candidate','no_of_active_requests','no_of_signups','no_of_clicks') or f.endswith('UnreadCount'): target, policy = 'DerivedCount', 'recompute from imported canonical rows; compare to source separately'
     elif re.search(r'photo|resume|licence|license_file|file_path|file_s3_path|pdf_cv|logo|^image$|^file$|^candidate_video$|thumbnail', f): target, policy = 'DocumentReference', 'substitute bytes; private owner/type/version; unsupported type HOLD'
-    elif re.search(r'email|phone|name|iban|address|intro|objective|note|detail|message|description|comment|answer|recording|website|payload|output|ip_|^data$|^from$|^to$|(^|_)url(_|$)', f): target, policy = 'SensitiveText', 'replace; never copy free text or destination; no identity joins'
+    elif re.search(r'email|phone|name|iban|address|intro|objective|note|detail|message|description|comment|answer|recording|website|payload|output|^ip_|^data$|^from$|^to$|(^|_)url(_|$)', f): target, policy = 'SensitiveText', 'replace; never copy free text or destination; no identity joins'
     elif re.search(r'lat|long', f): target, policy = 'Coordinate', 'synthetic coordinates; preserve paired start/end and valid/missing classes'
     elif re.search(r'birth|expiry|^date$|_date$|_on$', f) or 'date()' == typ: target, policy = 'LocalDate', 'preserve relative dates with coherent synthetic calendar; invalid date HOLD'
     elif re.search(r'_at$|datetime|_time$', f) or 'datetime' in typ.lower(): target, policy = 'TemporalValue', 'preserve source unit/zone; zero/ambiguous value HOLD; see time overrides'
@@ -273,7 +289,8 @@ write_csv('jobs.csv',['console_route','source','schedule_receipts','plan'],jobs)
 frontend=[]
 for name in sorted(required_appendices):
     p = appendices / name
-    for i,line in enumerate(p.read_text().splitlines()):
+    relative = p.relative_to(platform).as_posix()
+    for i,line in enumerate(platform_frontend_text[relative].splitlines()):
         if not line.startswith('|'):continue
         cells=re.split(r'(?<!\\)\|',line)[1:-1]
         if not cells:continue
