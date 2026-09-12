@@ -205,6 +205,13 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
     const reviewEvidenceImpl = async ({ target_sha }) => ({
       executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
       evidence_link: `file:///coordinator-private/${target_sha}.review-test.json`,
+      report: {
+        version: "1.0.0", target_sha, test_files: ["fixture.test.mjs"],
+        expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
+        sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED",
+        network_probe: "DENIED", forbidden_env_keys: [],
+        tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
+      },
     });
     const io = { adapterModules: { "codex-cli": observedAdapter(codex), "claude-code": observedAdapter(claude, { reviewEvidenceImpl }) }, codexStateDir: f.state,
       prepareWorkspace: (options) => {
