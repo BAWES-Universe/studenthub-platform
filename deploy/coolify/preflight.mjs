@@ -21,12 +21,38 @@ export function validateDeploymentEnv(env = process.env) {
   if (env.HOST !== "0.0.0.0") {
     throw new Error("HOST must be 0.0.0.0 in the gateway container");
   }
-  const databaseUrl = new URL(env.DATABASE_URL);
+  let databaseUrl;
+  try {
+    databaseUrl = new URL(env.DATABASE_URL);
+  } catch {
+    throw new Error("DATABASE_URL must be a valid URL");
+  }
   if (databaseUrl.protocol !== "postgres:" && databaseUrl.protocol !== "postgresql:") {
     throw new Error("DATABASE_URL must use postgres:// or postgresql://");
   }
   if (!databaseUrl.hostname || !databaseUrl.pathname.slice(1)) {
     throw new Error("DATABASE_URL must name a database host and database");
+  }
+  const platformDatabaseHosts = new Set([
+    "platform-postgres",
+    ...(env.PLATFORM_DATABASE_HOSTS ?? "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
+  ]);
+  if (!platformDatabaseHosts.has(databaseUrl.hostname.toLowerCase())) {
+    throw new Error("DATABASE_URL hostname must identify the dedicated platform database");
+  }
+
+  let profileUrl;
+  try {
+    profileUrl = new URL("/profile", env.OIDC_CALLBACK_URL);
+  } catch {
+    throw new Error("OIDC_CALLBACK_URL must be a valid URL");
+  }
+  const requiredProfileUrl = profileUrl.href;
+  const allowedReturnUrls = env.LOGIN_ALLOWED_RETURN_URLS.split(",").map((url) => url.trim());
+  if (!allowedReturnUrls.includes(requiredProfileUrl)) {
+    profileUrl.username = "";
+    profileUrl.password = "";
+    throw new Error(`LOGIN_ALLOWED_RETURN_URLS must include ${profileUrl.href}`);
   }
 }
 
