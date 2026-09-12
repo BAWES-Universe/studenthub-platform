@@ -19,8 +19,8 @@ if len(sys.argv) not in (3, 4):
 root, out = map(pathlib.Path, sys.argv[1:3])
 if subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip() != PIN:
     raise SystemExit('Wrong source revision')
-if subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'], text=True).strip():
-    raise SystemExit('Source has tracked modifications')
+if subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=all'], text=True).strip():
+    raise SystemExit('Source has modifications or untracked files')
 if len(sys.argv) == 4:
     platform = pathlib.Path(sys.argv[3]).resolve()
 else:
@@ -51,6 +51,29 @@ for name in sorted(required_appendices):
     if current != pinned:
         raise SystemExit(f'Frontend appendix differs from platform pin: {relative}')
     platform_sources[relative.as_posix()] = hashlib.sha256(pinned).hexdigest()
+
+def pinned_text(relative):
+    try:
+        return subprocess.check_output(
+            ['git', '-C', str(root), 'show', f'{PIN}:{relative}'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f'Pinned source file unavailable: {PIN}:{relative}') from error
+
+def pinned_php(directory):
+    names = subprocess.check_output(
+        ['git', '-C', str(root), 'ls-tree', '-r', '--name-only', PIN, '--', directory],
+        text=True,
+    ).splitlines()
+    return [(name, pinned_text(name)) for name in names
+            if pathlib.PurePosixPath(name).parent.as_posix() == directory and name.endswith('.php')]
+
+migration_sources = pinned_php('console/migrations')
+model_sources = pinned_php('common/models')
+controller_sources = pinned_php('console/controllers')
+cron_source = pinned_text('cron/cronlist')
 out.mkdir(parents=True, exist_ok=True)
 
 def tokens(s):
@@ -97,8 +120,8 @@ def receipt(path, s, offset):
 
 tables, gaps, rels, models, history = {}, [], [], {}, []
 ops = 'createTable|addColumn|alterColumn|dropColumn|renameColumn|renameTable|dropTable|addForeignKey|dropForeignKey|addPrimaryKey|dropPrimaryKey|createIndex|dropIndex|execute'
-for p in sorted((root / 'console/migrations').glob('*.php')):
-    raw = p.read_text(); s = tokens(raw); path = p.relative_to(root).as_posix()
+for path, raw in migration_sources:
+    s = tokens(raw)
     for fn in re.finditer(r'function\s+(?:safeUp|up)\s*\([^)]*\)\s*\{', s):
         a = s.index('{', fn.start()); b = end(s, a)
         body = s[a + 1:b]
@@ -151,15 +174,16 @@ for p in sorted((root / 'console/migrations').glob('*.php')):
                 if new: tables[new] = tables.pop(t)
                 else: gaps.append([ref, 'dynamic rename table'])
 
-for p in sorted((root / 'common/models').glob('*.php')):
-    raw = p.read_text(); s = tokens(raw); path = p.relative_to(root).as_posix()
+for path, raw in model_sources:
+    s = tokens(raw)
+    stem = pathlib.PurePosixPath(path).stem
     m = re.search(r'function\s+tableName\s*\([^)]*\)\s*\{\s*return\s+([\'\"][^\'\"]+[\'\"])', s)
     if not m: continue
     t = lit(m[1])
     # These models override getDb(): identical table names are NOT identical entities.
-    if p.stem in ('WalletUser','WalletBank','WalletTransfer','BalanceAccount','BalanceTransaction'):
+    if stem in ('WalletUser','WalletBank','WalletTransfer','BalanceAccount','BalanceTransaction'):
         t = 'wallet.' + t
-    models[p.stem] = t
+    models[stem] = t
     if not t: gaps.append([path, 'dynamic model table']); continue
     table = tables.setdefault(t, {})
     for method in re.finditer(r'function\s+(get[A-Z]\w*|beforeDelete|afterDelete|delete|beforeSave|afterSave)\s*\(', s):
@@ -197,17 +221,19 @@ def mapping(t, f, row):
     literal_type = re.fullmatch(r"['\"]([A-Za-z0-9_(), .]+)['\"]", ddl)
     typ = base[1] + '(' + base[2] + ')' if base else (literal_type[1] if literal_type else 'literal-or-annotation:' + annotation)
     sensitive = re.search(r'password|auth_key|access_token|refresh_token|reset_token|secret|verification_token|verification_code|(^|_)otp$', f) or t.endswith('_token') or (t.endswith('_verify_attempt') and f=='code')
+    protected_identifier = re.search(r'(^|_)civil_id$', f)
     key = re.search(r'(^id$|_id$|_uuid$|^uuid$|^currency_code$)', f)
     if sensitive: target, policy = 'ExcludedCredential', 'DROP; synthetic auth only'
+    elif protected_identifier: target, policy = 'ProtectedIdentifier', 'replace with dataset-local synthetic value; never use for identity joins or public hashes'
     elif key: target, policy = 'SourceRef', 'namespace by system/table; exact join; no email matching'
     elif f in ('candidateUnreadCount','contactUnreadCount','staffUnreadCount','company_status'): target, policy = 'DerivedValue', 'recompute from target facts; not an imported scalar'
     elif f in ('total_time','total_approved','total_pending','total_rejected') and t.startswith('candidate_working'): target, policy = 'DurationSeconds', 'integer seconds; preserve null/open; recompute aggregates separately'
     elif f in ('hours','minutes','seconds') and t=='transfer_candidate': target, policy = 'ExactDecimal', 'preserve original unit; convert to exact duration; no float multiplication'
     elif f in ('candidate_hourly_rate','company_hourly_rate','candidate_total','company_total','transfer_cost','total','amount','balance','sub_total','total_tax','unit_amount','tax_amount','line_amount','candidate_bonus') and by_table.get(t)=='finance': target, policy = 'MoneyDecimal', 'exact coefficient/scale and currency; snapshots immutable; unresolved currency HOLD'
-    elif f in ('candidate_hourly_rate','company_hourly_rate','fulltimer_current_salary','fulltimer_expected_salary'): target, policy = 'MoneyDecimal', 'exact rate/amount with explicit currency and effective period'
+    elif f in ('candidate_hourly_rate','company_hourly_rate','staff_hourly_rate','fulltimer_current_salary','fulltimer_expected_salary'): target, policy = 'MoneyDecimal', 'exact rate/amount with explicit currency and effective period'
     elif f in ('total_candidate','no_of_active_requests','no_of_signups','no_of_clicks') or f.endswith('UnreadCount'): target, policy = 'DerivedCount', 'recompute from imported canonical rows; compare to source separately'
     elif re.search(r'photo|resume|licence|license_file|file_path|file_s3_path|pdf_cv|logo|^image$|^file$|^candidate_video$|thumbnail', f): target, policy = 'DocumentReference', 'substitute bytes; private owner/type/version; unsupported type HOLD'
-    elif re.search(r'email|phone|name|civil_id|iban|address|intro|objective|note|detail|message|description|comment|answer|recording|url|website|payload|output|ip_|^data$|^from$|^to$', f): target, policy = 'SensitiveText', 'replace; never copy free text or destination; no identity joins'
+    elif re.search(r'email|phone|name|iban|address|intro|objective|note|detail|message|description|comment|answer|recording|website|payload|output|ip_|^data$|^from$|^to$|(^|_)url(_|$)', f): target, policy = 'SensitiveText', 'replace; never copy free text or destination; no identity joins'
     elif re.search(r'lat|long', f): target, policy = 'Coordinate', 'synthetic coordinates; preserve paired start/end and valid/missing classes'
     elif re.search(r'birth|expiry|^date$|_date$|_on$', f) or 'date()' == typ: target, policy = 'LocalDate', 'preserve relative dates with coherent synthetic calendar; invalid date HOLD'
     elif re.search(r'_at$|datetime|_time$', f) or 'datetime' in typ.lower(): target, policy = 'TemporalValue', 'preserve source unit/zone; zero/ambiguous value HOLD; see time overrides'
@@ -235,17 +261,18 @@ write_csv('relationships.csv', ['kind','owner','name','target','keys','delete','
 write_csv('source-gaps.csv', ['receipt','limitation'], gaps)
 write_csv('retired-fields.csv', ['entity','field','receipt','operation'], history)
 jobs=[]
-cron=(root/'cron/cronlist').read_text().splitlines()
-for p in sorted((root/'console/controllers').glob('*.php')):
-    s=tokens(p.read_text())
-    controller=p.stem.removesuffix('Controller')
+cron=cron_source.splitlines()
+for path, raw in controller_sources:
+    s=tokens(raw)
+    controller=pathlib.PurePosixPath(path).stem.removesuffix('Controller')
     for m in re.finditer(r'public\s+function\s+(action\w+)\s*\(',s):
         route=re.sub(r'(?<!^)([A-Z])',r'-\1',controller).lower()+'/'+re.sub(r'(?<!^)([A-Z])',r'-\1',m[1][6:]).lower()
         schedules=[f'cron/cronlist:{i+1}' for i,line in enumerate(cron) if not line.lstrip().startswith('#') and (route in line or (route=='algolia/index' and 'yii algolia ' in line))]
-        jobs.append([route,receipt(p.relative_to(root).as_posix(),s,m.start()),';'.join(schedules) or 'not in checked cron file','DISABLED in all fixture/import runs; semantic disposition in README'])
+        jobs.append([route,receipt(path,s,m.start()),';'.join(schedules) or 'not in checked cron file','DISABLED in all fixture/import runs; semantic disposition in README'])
 write_csv('jobs.csv',['console_route','source','schedule_receipts','plan'],jobs)
 frontend=[]
-for p in sorted(appendices.glob('*.md')):
+for name in sorted(required_appendices):
+    p = appendices / name
     for i,line in enumerate(p.read_text().splitlines()):
         if not line.startswith('|'):continue
         cells=re.split(r'(?<!\\)\|',line)[1:-1]
