@@ -263,6 +263,7 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
       // only ever unlocks a review the lineage could not otherwise name (zero
       // review entries); every later step is routed from real receipts.
       bootstrapReviewer,
+      fixtureLane: config.fixture_lane ?? null,
     });
   } catch (err) {
     return { ended: false, reason: `mid-episode: routing could not decide (${err?.message ?? "error"})` };

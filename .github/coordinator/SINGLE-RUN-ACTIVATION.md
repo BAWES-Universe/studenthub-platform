@@ -242,6 +242,43 @@ and any future expansion of reviewer capabilities.
 The temporary source contains repository objects (no credentials), is made
 readable for the local copy, and is removed after preparation.
 
+### SHU-241: scoped builder source and base-preserving publication
+
+The watched SHU-140 builder never receives the review trap's blob. Trusted
+`fixture_lane` configuration pins two exact literal path arrays: the initial
+build paths and a predeclared revision superset. The seeded defect path is
+required to be outside the initial set and inside the revision set; otherwise
+dispatch refuses before reservation. Globs, directories, traversal, `.git`,
+duplicates and non-normalized paths are not scope authority.
+
+For a scoped build, the coordinator first saves the complete exact target as a
+private 0600 base bundle. It then deterministically writes a parentless scoped
+base commit whose tree contains only the authorized ordinary files. The commit
+message binds the authoritative full `target_sha` and the exact ordered path
+manifest, and fixed coordinator identity and timestamps make its
+`scoped_base_sha` independently recomputable. The worker receives only that
+commit through the existing local bundle transport. The bundle origin and
+temporary source are removed before launch, so neither hidden blobs, the full
+target commit, nor hidden path names reach the worker object store.
+
+Publication starts the host-owned index at the complete bound base tree, imports
+that base only from the private bundle, and overlays or deletes only authorized
+paths. Thus hidden paths remain byte-identical base entries instead of
+becoming deletions. Before result binding, pre-push recording or any remote
+operation, the broker recursively inspects the real worktree and refuses any
+materialized path outside the exact allowance with `RESULT_SCOPE_REFUSED`.
+
+The revision superset is unlocked only by an independently validated `BLOCK`
+against the exact builder result on the same branch and routes back to the same
+Codex writer. Failure, stale or wrong-head review, another writer, or another
+branch cannot widen it. The authoritative `target_sha`, derived
+`scoped_base_sha`, scope phase and exact paths are immutable receipt and
+attempt-authority fields; directives carry the full target and exact manifest,
+then the coordinator derives the scoped SHA before reservation. The scoped SHA
+never replaces the full target in routing, review or broker authority. Reviewers
+always receive a complete reconstructed exact-head repository, and scoped
+reviewer launch is refused.
+
 Each successor gets its own checkout at the routed output head. Both adapters
 receive the actual prepared `cwd`; legacy `CODEX_WORKTREE_PATH` and
 `CLAUDE_WORKTREE_PATH` do not select production launch directories anymore.
@@ -314,7 +351,9 @@ live SHU-63 PASS.
 Before the next live fixture, run `node --test
 .github/coordinator/test/attempt-workspace.test.mjs
 .github/coordinator/test/workspace-result.test.mjs
-.github/coordinator/test/workspace-result-mutations.test.mjs` on the reviewed host. The
+.github/coordinator/test/workspace-result-mutations.test.mjs
+.github/coordinator/test/shu241-scoped-build.test.mjs
+.github/coordinator/test/shu241-mutations.test.mjs` on the reviewed host. The
 distinct-uid tests must execute there (not skip). The full-loop test uses real Git,
 real adapters and the real broker with local bare repositories and CLI doubles;
 it makes no paid model calls. It is an integration regression, not the live SHU-63

@@ -19,6 +19,8 @@
 //  - Revision attempts are bounded; exhaustion is a visible HOLD, never a
 //    relaunch storm.
 
+import { fixtureScopeConfigured, successorWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+
 export const WORK_ORDER_VERSION = "1.0.0";
 
 export const ROLES = Object.freeze(["build", "review", "revise"]);
@@ -70,6 +72,10 @@ export function validWorkOrder(order) {
   }
   if (typeof order.target_sha !== "string" || !/^[0-9a-f]{40}$/.test(order.target_sha)) return { ok: false, reason: "missing/invalid target_sha" };
   if (typeof order.authorization_ref !== "string" || order.authorization_ref.length === 0) return { ok: false, reason: "missing authorization_ref" };
+  if (["workspace_scope", "scope_phase", "allowed_paths"].some((field) => Object.hasOwn(order, field))) {
+    const scope = validateWorkspaceScope(order);
+    if (!scope.ok) return { ok: false, reason: `invalid workspace authority: ${scope.reason}` };
+  }
   return { ok: true };
 }
 
@@ -177,7 +183,7 @@ function mintOrder(requested, overrides) {
 }
 
 export function nextWorkOrder(state = {}) {
-  const { requested = null, entries = [], max_revise = 3, review_round = 0, bootstrapReviewer = null } = state;
+  const { requested = null, entries = [], max_revise = 3, review_round = 0, bootstrapReviewer = null, fixtureLane = null } = state;
   if (!requested || typeof requested !== "object") return { ok: false, reason: "no completed work order to route from" };
   const role = requested.role;
 
@@ -205,6 +211,7 @@ export function nextWorkOrder(state = {}) {
             requested_worker: boot.requested_worker,
             target_sha: outputHead,
             attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
+            ...successorWorkspaceScope("review", fixtureLane),
           }),
         };
       }
@@ -222,6 +229,7 @@ export function nextWorkOrder(state = {}) {
         requested_worker: workerForRuntime(reviewer.runtime),
         target_sha: outputHead,
         attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
+        ...successorWorkspaceScope("review", fixtureLane),
       }),
     };
   }
@@ -247,6 +255,7 @@ export function nextWorkOrder(state = {}) {
           // Back to the lane that wrote: the revise is the SAME writer family.
           requested_worker: workerForRuntime(writer.runtime),
           attempt_id: freshAttempt(requested.attempt_id, "revise", review_round + 1),
+          ...successorWorkspaceScope("revise", fixtureLane),
         }),
       };
     }
@@ -306,6 +315,10 @@ export function renderWorkOrderDirective(order) {
         base_sha: order.base_sha ?? null,
         outcome: order.outcome ?? null,
         writer: order.writer ?? null,
+        workspace_scope: order.workspace_scope,
+        scope_phase: order.scope_phase,
+        allowed_paths: order.allowed_paths,
+        scoped_base_sha: order.scoped_base_sha ?? null,
       },
       null,
       2,
@@ -553,9 +566,16 @@ export function routeSuccessorFromReceipts(state = {}) {
     max_revise = 3,
     authoritativeHead = null,
     bootstrapReviewer = null,
+    fixtureLane = null,
   } = state;
   if (!terminal || typeof terminal !== "object") {
     return { ok: false, reason: "no terminal receipt to route from" };
+  }
+  const scopedWriter = issueReceipts.filter((r) => r && ["BUILD_READY", "REVISION_READY"].includes(r.verdict_stage) && r.workspace_scope === "scoped").at(-1);
+  const scopedContractReceipt = fixtureLane?.id === terminal.issue_id && fixtureScopeConfigured(fixtureLane) && Boolean(scopedWriter);
+  if (scopedContractReceipt) {
+    const terminalScope = validateWorkspaceScope(terminal);
+    if (!terminalScope.ok) return { ok: false, reason: `terminal workspace authority invalid: ${terminalScope.reason}` };
   }
   const verdict = outcomeForEvidenceStage(evidenceStage);
   if (!verdict) {
@@ -616,11 +636,24 @@ export function routeSuccessorFromReceipts(state = {}) {
     authorization_ref: terminal.authorization_ref ?? terminal.issue_id,
     review_runtimes: RUNTIMES.filter((r) => RUNTIME_ROLE_SUPPORT[r]?.includes("review")),
     outcome: verdict.outcome,
+    workspace_scope: terminal.workspace_scope ?? (verdict.role === "review" ? "full" : "full"),
+    scope_phase: terminal.scope_phase ?? (verdict.role === "review" ? "review" : "initial"),
+    allowed_paths: Array.isArray(terminal.allowed_paths) ? [...terminal.allowed_paths] : [],
+    scoped_base_sha: terminal.scoped_base_sha ?? null,
   };
   if (!requested.runtime) {
     return { ok: false, reason: `cannot route from unknown worker lane ${String(terminal.requested_worker)}` };
   }
   // review_round: count of completed review attempts already in the lineage.
   const review_round = entries.filter((e) => e.role === "review").length;
-  return nextWorkOrder({ requested, entries, max_revise, review_round, bootstrapReviewer });
+  if (scopedContractReceipt && verdict.role === "review" && evidenceStage !== "BLOCKED" && evidenceStage !== "PASS") {
+    return { ok: false, reason: "fixture revision authority requires a validated BLOCKED verdict" };
+  }
+  if (scopedContractReceipt && evidenceStage === "BLOCKED") {
+    const writer = scopedWriter;
+    if (!writer || writer.requested_worker !== "codex-builder" || writer.branch !== terminal.branch || writer.issue_id !== terminal.issue_id || terminal.target_sha !== writer.result_sha) {
+      return { ok: false, reason: "validated BLOCK does not bind the active same-branch Codex writer and exact reviewed head" };
+    }
+  }
+  return nextWorkOrder({ requested, entries, max_revise, review_round, bootstrapReviewer, fixtureLane });
 }

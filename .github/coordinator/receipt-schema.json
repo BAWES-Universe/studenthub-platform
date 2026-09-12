@@ -62,6 +62,18 @@
       "description": "Head SHA the dispatch is bound to. A PASS against any other SHA is stale and never satisfies this receipt.",
       "pattern": "^[0-9a-f]{40}$"
     },
+    "workspace_scope": { "type": "string", "enum": ["scoped", "full"] },
+    "scope_phase": { "type": "string", "enum": ["initial", "revision", "review"] },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Exact literal paths authorized for a scoped writer attempt; empty only for a full workspace. Immutable for the attempt."
+    },
+    "scoped_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Deterministic parentless worker-input commit derived from target_sha plus allowed_paths. Null for full workspaces; never substitutes for target_sha authority."
+    },
     "external_run_id": {
       "type": ["string", "null"],
       "description": "Provider run id (apirun_..., clauderun_... or codexrun_<thread-uuid>) stored once known. May be present at LAUNCH_UNKNOWN for an exact-id recoverable local session.",

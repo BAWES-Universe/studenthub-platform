@@ -18,6 +18,16 @@
   "fixture_lane": {
     "id": "SHU-140",
     "authorization_ref": "FIXTURE-OPUS-CONTRACT-20260905",
-    "note": "seeded-defect fixture (SHU-63); Linear minted identifier SHU-140 for lane id SHU-FIXTURE-001"
+    "note": "seeded-defect fixture (SHU-63); Linear minted identifier SHU-140 for lane id SHU-FIXTURE-001",
+    "initial_build_paths": [
+      "tools/fixture/scan-vacuous.mjs",
+      "tools/fixture/test/scan-vacuous.test.mjs"
+    ],
+    "revision_paths": [
+      "tools/fixture/scan-vacuous.mjs",
+      "tools/fixture/test/scan-vacuous.test.mjs",
+      "tools/fixture-conformance/scan-vacuous.expectations.mjs"
+    ],
+    "seeded_defect_path": "tools/fixture-conformance/scan-vacuous.expectations.mjs"
   }
 }
