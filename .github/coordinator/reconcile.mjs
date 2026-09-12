@@ -28,7 +28,8 @@ import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS }
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
-import { prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
+import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
+import { initialWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -547,6 +548,16 @@ export function validateReceipt(receipt) {
   expectType("repo", ["string"]);
   expectType("branch", ["string"]);
   expectPattern("target_sha", TARGET_SHA_RE);
+  if (["workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha"].some((field) => Object.hasOwn(receipt, field))) {
+    if (!["workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha"].every((field) => Object.hasOwn(receipt, field))) {
+      errors.push("workspace scope fields must be present together");
+    } else if (!Array.isArray(receipt.allowed_paths) || receipt.allowed_paths.some((x) => typeof x !== "string")) {
+      errors.push('field "allowed_paths" must contain only strings');
+    } else {
+      const scope = validateWorkspaceScope(receipt, { requireScopedBase: true });
+      if (!scope.ok) errors.push(`workspace scope invalid: ${scope.reason}`);
+    }
+  }
   expectType("last_activity", ["string"]);
   for (const [field, allowed] of [
     ["worker_identity", ["string", "null"]],
@@ -677,6 +688,10 @@ export function createReceipt({
   repo,
   branch,
   target_sha,
+  workspace_scope = "full",
+  scope_phase = requested_worker === "claude-verifier" ? "review" : "initial",
+  allowed_paths = [],
+  scoped_base_sha = null,
   episode_id = null,
   attempt_id = randomUUID(),
   reserved_at = new Date().toISOString(),
@@ -696,6 +711,10 @@ export function createReceipt({
     repo,
     branch,
     target_sha,
+    workspace_scope,
+    scope_phase,
+    allowed_paths: [...allowed_paths],
+    scoped_base_sha,
     external_run_id: null,
     adapter_status: null,
     timestamps: { reserved: reserved_at, launch: null, heartbeat: null, terminal: null },
@@ -1410,11 +1429,20 @@ export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
   "repo",
   "branch",
   "target_sha",
+  "workspace_scope",
+  "scope_phase",
+  "allowed_paths",
+  "scoped_base_sha",
   // SHU-231: the episode a receipt belongs to. Stamped by the coordinator at
   // RESERVED, so two records claiming one attempt_id under DIFFERENT episodes are
   // a conflict -> HOLD, never a silent override of a spent approval.
   "episode_id",
 ]);
+
+function immutableFieldEqual(a, b, field) {
+  if (field === "allowed_paths") return JSON.stringify(a?.[field]) === JSON.stringify(b?.[field]);
+  return a?.[field] === b?.[field];
+}
 
 export function parseReceiptsFromComments(comments = []) {
   const byAttempt = new Map(); // attempt_id -> { receipt, createdAt }
@@ -1435,7 +1463,7 @@ export function parseReceiptsFromComments(comments = []) {
       // NEWEST — i.e. the forged one, since Linear comments are writable by
       // anyone with issue access. Keep BOTH so main() sees the disagreement and
       // prevents dispatch. (Opus, exact-head verification of PR #21.)
-      if (RECEIPT_IMMUTABLE_FIELDS.some((field) => prior.receipt[field] !== parsed[field])) {
+      if (RECEIPT_IMMUTABLE_FIELDS.some((field) => !immutableFieldEqual(prior.receipt, parsed, field))) {
         conflicts.push(parsed);
         continue;
       }
@@ -1592,6 +1620,7 @@ export async function backfillSuccessorDirectives({
       // activation is bound to. Any other card's lineage routes exactly as it did
       // before this change — a bootstrap is never board-wide.
       bootstrapReviewer: bootstrapByIssue.get(issueId) ?? null,
+      fixtureLane: config.fixture_lane ?? null,
     });
     if (!routed.ok || !routed.order) {
       // PASS / no eligible reviewer / exhaustion / lane mismatch / forged — nothing to post.
@@ -1827,7 +1856,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     const previous = receiptByAttempt.get(receipt.attempt_id);
     if (
       previous &&
-      RECEIPT_IMMUTABLE_FIELDS.some((field) => previous[field] !== receipt[field])
+      RECEIPT_IMMUTABLE_FIELDS.some((field) => !immutableFieldEqual(previous, receipt, field))
     ) {
       durableReadFailed = true;
       if (io.stdout) io.stdout(`durable receipt conflict for attempt ${receipt.attempt_id} — immutable fields disagree; DISPATCH PREVENTED (fail closed)`);
@@ -2374,6 +2403,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const successor = selection.successor ?? null;
   const requested_worker = successor?.requested_worker ?? candidate.requested_worker;
   const target_sha = successor?.target_sha ?? candidate.target_sha ?? env.DISPATCH_TARGET_SHA ?? null;
+  let workspaceScope;
+  try {
+    workspaceScope = successor
+      ? { workspace_scope: successor.workspace_scope, scope_phase: successor.scope_phase, allowed_paths: successor.allowed_paths, scoped_base_sha: successor.scoped_base_sha ?? null }
+      : initialWorkspaceScope({ issueId: candidate.id, requestedWorker: requested_worker, fixtureLane: config.fixture_lane });
+    const scopeCheck = validateWorkspaceScope(workspaceScope);
+    if (!scopeCheck.ok) throw new Error(scopeCheck.reason);
+  } catch (error) {
+    if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — workspace scope refused (${error.message})`);
+    return 2;
+  }
   if (!successor && singleRunActivation.initial_target_sha && target_sha !== singleRunActivation.initial_target_sha) {
     if (io.stdout) io.stdout("dispatch: initial target differs from the activation — refused before reservation");
     return 2;
@@ -2421,6 +2461,18 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
     return 2;
   }
+  if (workspaceScope.workspace_scope === "scoped") {
+    try {
+      const derive = io.deriveScopedBaseSha ?? deriveScopedBaseShaFromRemote;
+      workspaceScope.scoped_base_sha = await derive({ target_sha, allowed_paths: workspaceScope.allowed_paths,
+        remoteUrl: env.SHU_PUSH_REMOTE_URL, allowedRepo: repo, allowedHost: env.SHU_PUSH_ALLOWED_HOST ?? "github.com", env });
+      const boundScope = validateWorkspaceScope(workspaceScope, { requireScopedBase: true });
+      if (!boundScope.ok) throw new Error(boundScope.reason);
+    } catch (error) {
+      if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — scoped base derivation refused (${error.message})`);
+      return 2;
+    }
+  }
 
   const { ok: reservedOk, receipt, errors } = createReceipt({
     reserved_at: nowIso(io.now?.()),
@@ -2430,6 +2482,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     repo,
     branch,
     target_sha,
+    ...workspaceScope,
     // SHU-231: stamp the episode on every receipt the coordinator writes. Null when
     // no episode is armed, so the disabled/global path is unchanged.
     episode_id: episodeScope?.episode_id ?? null,
@@ -2459,7 +2512,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // run. A check that only the initial read applies is a TOCTOU hole — the
   // forgery window is exactly between that read and this one.
   const impostor = durable.find(
-    (r) => r.attempt_id === receipt.attempt_id && RECEIPT_IMMUTABLE_FIELDS.some((f) => r[f] !== receipt[f]),
+    (r) => r.attempt_id === receipt.attempt_id && RECEIPT_IMMUTABLE_FIELDS.some((f) => !immutableFieldEqual(r, receipt, f)),
   );
   if (impostor) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — durable receipt conflict for attempt ${receipt.attempt_id}, immutable fields disagree; slot held`);
@@ -2516,6 +2569,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     authorization_ref: receipt.authorization_ref,
     attempt_id: receipt.attempt_id,
     target_sha: receipt.target_sha,
+    workspace_scope: receipt.workspace_scope,
+    scope_phase: receipt.scope_phase,
+    allowed_paths: [...receipt.allowed_paths],
+    scoped_base_sha: receipt.scoped_base_sha,
     task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
     ...options,
     fetchImpl,

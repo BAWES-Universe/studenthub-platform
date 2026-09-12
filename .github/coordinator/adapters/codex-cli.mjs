@@ -85,7 +85,7 @@ export function buildCodexEnvironment(parentEnv = {}) {
   return childEnv;
 }
 
-export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context }) {
+export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, workspace_scope = "full", scope_phase = "initial", allowed_paths = [], scoped_base_sha = null }) {
   return [
     "You are the authorized BUILDER for one StudentHub change in an isolated git worktree.",
     `Issue: ${issue_id}`,
@@ -93,6 +93,9 @@ export function buildCodexPrompt({ issue_id, authorization_ref, attempt_id, targ
     `Bound head: ${target_sha}`,
     `Attempt: ${attempt_id}`,
     task_context,
+    `Workspace authority: ${workspace_scope} (${scope_phase}).`,
+    `Local checkout head: ${scoped_base_sha ?? target_sha}. The authoritative full target remains ${target_sha}.`,
+    ...(workspace_scope === "scoped" ? [`You may create, modify, or delete only these exact paths: ${allowed_paths.join(", ")}. Files outside this set are deliberately unavailable and the host broker refuses any outside result.`] : []),
     "The checkout is at the exact bound head. Do NOT merge. Do NOT touch anything outside this worktree.",
     "Implement the change and run the relevant tests. Leave the tested changes in the workspace; do NOT git add, commit, modify .git, push, open a PR or touch the network. A separate host broker snapshots your files, creates the result commit and pushes it after validation.",
     "When finished, your FINAL message must be EXACTLY ONE JSON object matching the provided schema:",
@@ -565,6 +568,10 @@ export async function launchBuilder({
   attempt_id,
   target_sha,
   task_context,
+  workspace_scope = "full",
+  scope_phase = "initial",
+  allowed_paths = [],
+  scoped_base_sha = null,
   cwd = process.cwd(),
   env = process.env,
   resume = false,
@@ -656,10 +663,11 @@ export async function launchBuilder({
   } catch {
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_UNREADABLE", ok: false };
   }
-  let checkoutIsBound = checkoutHead === target_sha;
+  const localCheckoutHead = workspace_scope === "scoped" ? scoped_base_sha : target_sha;
+  let checkoutIsBound = checkoutHead === localCheckoutHead;
   if (!checkoutIsBound && resume) {
     try {
-      checkoutIsBound = await verifyDescendantImpl({ cwd, execFileImpl: execImpl, env, target_sha });
+      checkoutIsBound = await verifyDescendantImpl({ cwd, execFileImpl: execImpl, env, target_sha: localCheckoutHead });
     } catch {
       checkoutIsBound = false;
     }
@@ -668,7 +676,8 @@ export async function launchBuilder({
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
 
-  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo };
+  const input = { issue_id, authorization_ref, attempt_id, target_sha, task_context, branch, repo,
+    workspace_scope, scope_phase, allowed_paths: [...allowed_paths], scoped_base_sha };
   let schemaPath = schemaFile;
   let schemaDir = null;
   const ownsSchemaFile = schemaFile === null;
@@ -918,6 +927,10 @@ export async function launchBuilder({
         allowedRoot,
         branchPrefix,
         remoteUrl,
+        workspace_scope: input.workspace_scope ?? "full",
+        scope_phase: input.scope_phase ?? "initial",
+        allowed_paths: input.allowed_paths ?? [],
+        scoped_base_sha: input.scoped_base_sha ?? null,
         // `gitImpl` was undefined here: a ReferenceError crashed the configured
         // success path instead of returning a controlled result (Codex R3).
         // It must be the REAL git executor — NOT execFileImpl, which tests
@@ -928,9 +941,11 @@ export async function launchBuilder({
         io,
       });
       if (push.ok !== true || (workspaceReady && !SHA_RE.test(push.remote_head ?? ""))) {
+        const reasonCode = /\bRESULT_SCOPE_REFUSED\b/.test(String(push.reason ?? "")) ? "RESULT_SCOPE_REFUSED" : undefined;
         return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
           callback, evidence_links: callback.links,
-          reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, pause_adapter: true, ok: false };
+          reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, reason_code: reasonCode,
+          pause_adapter: true, ok: false };
       }
       // Only a confirmed host result can become routable callback evidence.
       if (workspaceReady) callback.result_sha = push.remote_head;

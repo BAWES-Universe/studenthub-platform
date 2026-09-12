@@ -311,6 +311,10 @@ export async function launchBuilder({
   attempt_id,
   target_sha,
   task_context,
+  workspace_scope = "full",
+  scope_phase = "review",
+  allowed_paths = [],
+  scoped_base_sha = null,
   oauth_token,
   cwd = process.cwd(),
   env = process.env,
@@ -324,6 +328,9 @@ export async function launchBuilder({
 }) {
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
+  }
+  if (workspace_scope !== "full" || scope_phase !== "review" || !Array.isArray(allowed_paths) || allowed_paths.length !== 0 || scoped_base_sha !== null) {
+    return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: "reviewer checkout must be complete and unscoped", pause_adapter: true, ok: false };
   }
   if (!oauth_token) {
     if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {

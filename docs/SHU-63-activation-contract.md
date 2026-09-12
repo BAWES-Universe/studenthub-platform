@@ -151,6 +151,28 @@ This stays green while ignoring `report`. A competent first review must BLOCK
 it; the author then binds the assertion to `report`, fixes the revealed
 string-literal brace parsing defect, and the independent re-review may PASS.
 
+The initial builder is additionally constrained by the exact trusted
+`fixture_lane.initial_build_paths` list. The trap path is pinned outside that
+list by a non-vacuity guard. From the authoritative full `target_sha`, the
+coordinator deterministically creates a parentless `scoped_base_sha` containing
+only the exact allowed files and delivers it through a local bundle. Hidden
+blobs, the full target commit and hidden path names are absent from the worker's
+repository. Receipts bind both SHAs and the exact ordered manifest so a verifier
+can recompute the scoped input. The coordinator separately retains a private
+full base bundle so the host snapshot begins with the complete target tree and
+overlays only authorized files. It rejects any real out-of-scope worktree path
+before result binding or network publication; hidden base paths can never be
+translated into deletions.
+
+Only a validated independent `BLOCK` bound to that exact builder result, writer
+and branch unlocks the predeclared `revision_paths` superset containing the trap.
+The reviewer always receives the complete reconstructed exact-head repository.
+The scoped SHA never substitutes for the full target in review, routing or broker
+authority. Workspace scope, phase, exact paths and both SHA bindings are
+immutable in receipts and local attempt authority; work-order directives carry
+the full target and manifest for host derivation. No worker or reviewer prose can
+widen them.
+
 `ENABLE_DISPATCH` stays unset. Nothing here enables dispatch; the contract only
 governs what happens once someone does.
 

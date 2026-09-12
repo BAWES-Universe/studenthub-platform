@@ -462,6 +462,10 @@ export async function pushExactSha({
   hasCommitImpl = brokerRepoHasCommit,
   fsyncDirImpl = null,
   workspaceReady = false,
+  workspace_scope = "full",
+  scope_phase = "initial",
+  allowed_paths = [],
+  scoped_base_sha = null,
   snapshotImpl = snapshotWorkspaceResult,
   beforePublish = null,
 }) {
@@ -522,7 +526,7 @@ export async function pushExactSha({
     try {
       if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
       result_sha = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
-        attempt_id, stateDir, branch, repo, gitImpl, env });
+        attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
     } catch (error) { return held(`workspace result refused: ${error.message}`); }
   }
 
@@ -558,8 +562,11 @@ export async function pushExactSha({
     }
     head = h.stdout.trim();
   }
-  if (head !== (workspaceReady ? target_sha : result_sha)) {
-    return held(`worktree HEAD ${head} != result_sha ${result_sha}; worktree moved after build`);
+  const expectedWorktreeHead = workspaceReady
+    ? (workspace_scope === "scoped" ? scoped_base_sha : target_sha)
+    : result_sha;
+  if (head !== expectedWorktreeHead) {
+    return held(`worktree HEAD ${head} != bound input ${expectedWorktreeHead}; worktree moved after build`);
   }
 
   // --- clean tree (no uncommitted / untracked changes) -------------------------
@@ -574,7 +581,7 @@ export async function pushExactSha({
     // worker attributes/filters and without changing the worker HEAD/index.
     try {
       const again = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
-        attempt_id, stateDir, branch, repo, gitImpl, env });
+        attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
       cleanOk = again === result_sha;
       cleanDetail = "workspace changed after snapshot";
     } catch (error) { cleanOk = false; cleanDetail = error.message; }

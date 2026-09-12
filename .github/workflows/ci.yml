@@ -45,8 +45,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Real Git and distinct-UID episode, including mutation of bundle transfer
-        run: node --test .github/coordinator/test/attempt-workspace.test.mjs .github/coordinator/test/workspace-result.test.mjs .github/coordinator/test/workspace-result-mutations.test.mjs
+      - name: Real Git and distinct-UID episode, including scoped bundle transport
+        run: node --test .github/coordinator/test/attempt-workspace.test.mjs .github/coordinator/test/workspace-result.test.mjs .github/coordinator/test/workspace-result-mutations.test.mjs .github/coordinator/test/shu241-scoped-build.test.mjs .github/coordinator/test/shu241-mutations.test.mjs
   fast-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
