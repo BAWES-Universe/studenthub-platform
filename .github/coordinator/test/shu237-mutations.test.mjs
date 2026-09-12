@@ -137,7 +137,7 @@ const CASES = [
   {
     name: "M11 stop the B7 wrapper before the active child probe",
     file: "test/reviewer-evidence.test.mjs",
-    from: "exec \"$@\"\\n`, { mode: 0o700 });",
+    from: "shift 5\\nexec \"$@\"\\n`, { mode: 0o700 });",
     to: "exit 70\\n`, { mode: 0o700 });",
     testFile: "reviewer-evidence.test.mjs",
     pattern: "SHU-232 B7: an actual",

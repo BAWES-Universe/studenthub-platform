@@ -205,7 +205,7 @@ test("SHU-232 B5: envelope is stdout-only, secret-free, token-scanned, and size-
 
 test("SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence", async (t) => {
   const root = privateTemp("shu232-b6-");
-  const workspace = path.join(root, "workspace");
+  const workspace = path.join(root, ATTEMPT);
   const evidence = path.join(root, "evidence");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
@@ -215,14 +215,14 @@ test("SHU-232 B6: a real node --test execution at the bound workspace produces d
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const expectedUid = (process.getuid?.() ?? 1000) + 1000;
   const execFileImpl = (_file, args, options, callback) => {
-    const split = args.indexOf("--");
+    const split = args.lastIndexOf("--");
     const files = args.slice(split + 1);
     const actual = spawnSync(process.execPath, ["--test", ...files], {
       cwd: options.cwd, env: options.env, encoding: "utf8",
     });
     const report = {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"], expected_uid: expectedUid, actual_uid: expectedUid,
-      filesystem_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
+      filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
       tests: { executed: true, exit_code: actual.status, signal: actual.signal, stdout: actual.stdout, stderr: actual.stderr },
     };
     queueMicrotask(() => callback(null, JSON.stringify(report), ""));
@@ -253,7 +253,7 @@ test("SHU-232 B6: worst-case escaped stdout and stderr stay inside the 1 MiB evi
   const worstCase = "\0".repeat(MAX_CAPTURE_BYTES + 1);
   const report = {
     version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
-    expected_uid: 65534, actual_uid: 65534, filesystem_probe: "DENIED",
+    expected_uid: 65534, actual_uid: 65534, filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED",
     workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
     tests: { executed: true, exit_code: 0, signal: null, stdout: bounded(worstCase), stderr: bounded(worstCase) },
   };
@@ -274,18 +274,19 @@ test("SHU-232 B7: no confined execution evidence fails closed and can never PASS
 
 test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests", async (t) => {
   const root = privateTemp("shu232-b7-live-");
-  const workspace = path.join(root, "workspace");
+  const attemptId = "72727272-7272-4272-8272-727272727272";
+  const workspace = path.join(root, attemptId);
   const evidence = path.join(root, "evidence");
   const wrapperMarker = path.join(root, "unconfined-wrapper-ran");
   const unconfinedWrapper = path.join(root, "unconfined-wrapper");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
-  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nexec "$@"\n`, { mode: 0o700 });
+  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nshift 5\nexec "$@"\n`, { mode: 0o700 });
   fs.writeFileSync(path.join(workspace, "must-not-run.test.mjs"), "throw new Error('unconfined test ran');\n");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ownUid = process.getuid?.() ?? 1000;
   const result = await runReviewEvidence({
-    attempt_id: "72727272-7272-4272-8272-727272727272",
+    attempt_id: attemptId,
     target_sha: SHA,
     cwd: workspace,
     env: {
@@ -304,6 +305,7 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
   assert.ok(result.evidence_link, "the failed active probe remains inspectable");
   const artifact = JSON.parse(fs.readFileSync(new URL(result.evidence_link), "utf8"));
   assert.equal(artifact.tests.executed, false, "target tests never start outside confinement");
+  assert.equal(artifact.sibling_workspace_probe, "REACHABLE", "the real unconfined process concretely reaches the sibling canary");
   assert.ok(
     artifact.actual_uid !== artifact.expected_uid || artifact.filesystem_probe === "REACHABLE" || artifact.network_probe === "REACHABLE",
     "the refusal records a concrete failed boundary rather than trusting a flag",
@@ -370,7 +372,7 @@ test("SHU-232 B9: production-shaped harness reaches build -> BLOCKED -> revision
 
 test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid", async (t) => {
   const root = privateTemp("shu232-b10-");
-  const workspace = path.join(root, "workspace");
+  const workspace = path.join(root, ATTEMPT);
   const evidence = path.join(root, "evidence");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
@@ -380,7 +382,7 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
   const expectedUid = ownUid + 2000;
   const execFileImpl = (_file, _args, _options, callback) => queueMicrotask(() => callback(null, JSON.stringify({
     version: "1.0.0", target_sha: SHA, test_files: ["uid.test.mjs"], expected_uid: expectedUid, actual_uid: expectedUid,
-    filesystem_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
+    filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
     tests: { executed: true, exit_code: 0, signal: null, stdout: "TAP version 13\n# pass 1", stderr: "" },
   }), ""));
   const result = await runReviewEvidence({
@@ -408,7 +410,7 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
       : stat;
   };
   const refused = await runReviewEvidence({
-    attempt_id: "32323232-3232-4232-8232-323232323232", target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: (wrapper) => wrapper,
+    attempt_id: ATTEMPT, target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: (wrapper) => wrapper,
     fsImpl: wrongOwnerFs,
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),

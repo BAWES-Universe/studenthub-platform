@@ -81,7 +81,7 @@ unset CODEX_GIT_PUSH_READY                    # 3 — the worker holds no push c
 # 3b — the host broker is the only pusher; the deploy key lives HERE, not in the
 # worker's worktree or environment.
 export SHU_PUSH_BROKER_ENABLED=true
-export SHU_WORKTREE_ROOT=/srv/shu/worktrees   # approved root; worktrees are confined to it
+export SHU_WORKTREE_ROOT=/srv/shu/worktrees   # shared-group 3770 root; attempt dirs are 0750
 export SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces # coordinator-owned 0700; outside worker root
 export SHU_PUSH_REMOTE_URL=git@github.com:BAWES-Universe/studenthub-platform.git
 # export SHU_PUSH_SSH_COMMAND=...             # optional: only this selects the ssh program
@@ -89,7 +89,7 @@ export SHU_PUSH_REMOTE_URL=git@github.com:BAWES-Universe/studenthub-platform.git
 # 3c — the builder must NOT share the coordinator's OS identity, or it can
 # rewrite the broker's own repository and redirect the push.
 export SHU_WORKER_UID="$(id -u shu-worker)"
-export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker --clear-groups"
+export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker --groups=shu-workspace"
 
 # SHU-232 B-ii — Claude is read-only; target tests run in this actively probed
 # systemd sandbox as a distinct uid with no network, secrets or writable host tree.
@@ -100,7 +100,8 @@ export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 ```
 
 Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
-above and grant only that fixed command to `shu-coordinator`. The adapter does
+above, install the host `acl` package, and grant only that fixed command to
+`shu-coordinator`. The adapter does
 not trust the declaration: symlinked system entrypoints are resolved to a
 root-owned, non-writable executable behind a root-owned, non-writable canonical
 directory chain, and only the validated canonical target executes. The child and
@@ -111,9 +112,18 @@ a live loopback listener is unreachable, and credential-bearing environment
 keys are absent. Any failed probe produces the distinct
 `REVIEW_EXECUTION_UNAVAILABLE` HOLD and no Claude launch.
 
+Each attempt directory is mode 0750. The wrapper grants the locked reviewer uid
+`r-x` on only the exact bound attempt for one invocation, masks every sibling in
+the systemd mount namespace, and removes the ACL on exit. A fresh sibling canary
+must be unreadable in the same report that proves the other confinement probes.
+This keeps the root's traverse-only ACL without exposing retained attempts.
+
 Claude runs separately under the subscription identity because it needs provider
 network access, but its tool surface is restricted to `Read`, `Glob`, and `Grep`
-in bare mode. It cannot execute builder-authored code. Exact raw CLI stdout is
+in restricted evaluation mode. This preserves subscription authentication while
+disabling ambient settings, CLAUDE.md, hooks, skills, commands, plugins and
+subagents; file tools remain inside the exact cwd. Strict MCP configuration and
+an explicit `mcp__*` deny remove MCP tools. It cannot execute builder-authored code. Exact raw CLI stdout is
 persisted before parsing to a new 0600 file in `SHU_REVIEW_EVIDENCE_DIR`; receipts
 link both that envelope and the confined test report. `NO_STRUCTURED_OUTPUT`,
 `CALLBACK_BINDING_INVALID`, and `REVIEW_EXECUTION_UNAVAILABLE` remain distinct.

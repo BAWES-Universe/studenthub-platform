@@ -18,7 +18,7 @@ const git = (cwd, ...args) => execFileSync("git", ["-c", `safe.directory=${cwd}`
   cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
   env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
 }).trim();
-const wrapper = `${process.getuid() === 0 ? "" : "sudo -n --preserve-env=PATH "}setpriv --reuid=65534 --regid=65534 --clear-groups`;
+const wrapper = `${process.getuid() === 0 ? "" : "sudo -n --preserve-env=PATH "}setpriv --reuid=65534 --regid=65534 --groups=${process.getgid?.() ?? 0}`;
 const switchCommand = wrapper.split(" ");
 const canSwitch = spawnSync(switchCommand[0], [...switchCommand.slice(1), "id", "-u"], { timeout: 2000 }).status === 0;
 const nodeBin = process.execPath;
@@ -42,7 +42,7 @@ function setup() {
   const sha = git(seed, "rev-parse", "HEAD");
   git(seed, "push", remote, "HEAD:refs/heads/coordinator/SHU-140");
   const root = path.join(dir, "workspaces"), state = path.join(dir, "state"), bin = path.join(dir, "bin");
-  fs.mkdirSync(root); fs.chmodSync(root, 0o1777); fs.mkdirSync(state, { mode: 0o700 }); fs.mkdirSync(bin);
+  fs.mkdirSync(root); fs.chmodSync(root, 0o3770); fs.mkdirSync(state, { mode: 0o700 }); fs.mkdirSync(bin);
   const env = { ...process.env, SHU_WORKTREE_ROOT: root, SHU_WORKSPACE_STATE_DIR: state,
     SHU_PUSH_REMOTE_URL: `file://${remote}`, SHU_WORKER_UID: "65534", SHU_WORKER_LAUNCH_WRAPPER: wrapper,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir, SHU_PUSH_BROKER_ENABLED: "true" };
@@ -69,13 +69,16 @@ test("SHU-227: empty root provisions an independent exact-head reviewer checkout
     const r = f.receipt(); const { cwd } = f.prepare(r);
     assert.equal(git(cwd, "rev-parse", "HEAD"), f.sha);
     assert.equal(git(cwd, "status", "--porcelain"), "");
+    assert.equal(fs.statSync(cwd).mode & 0o777, 0o750, "SHU-239: every attempt is non-world-readable");
     assert.ok(fs.lstatSync(path.join(cwd, ".git")).isDirectory(), "no shared linked-worktree metadata");
     assert.equal(fs.existsSync(path.join(cwd, ".git/objects/info/alternates")), false);
     assert.equal(git(cwd, "remote"), "", "worker checkout has no push remote");
     assert.doesNotThrow(() => codex.persistDurableSession({ stateDir:f.state,attempt_id:r.attempt_id,
       target_sha:r.target_sha,thread_id:randomUUID() }), "workspace metadata must not collide with the Codex session sidecar");
     assert.equal(f.prepare(r).cwd, cwd, "replay reuses its own checkout");
-    assert.notEqual(f.prepare(f.receipt()).cwd, cwd, "another attempt gets another checkout");
+    const sibling = f.prepare(f.receipt()).cwd;
+    assert.notEqual(sibling, cwd, "another attempt gets another checkout");
+    assert.equal(fs.statSync(sibling).mode & 0o777, 0o750, "SHU-239: sibling attempts are not generally readable");
     assert.equal(git(f.seed, "rev-parse", "HEAD"), f.sha, "source checkout untouched");
   } finally { f.cleanup(); }
 });
@@ -94,7 +97,7 @@ test("SHU-227: binding conflicts, symlink paths, missing resume and invalid sour
     assert.throws(() => f.prepare(symlink), /path already exists/);
     const alias = path.join(f.dir, "alias"); fs.symlinkSync(f.dir, alias);
     assert.throws(() => f.prepare(f.receipt(), { env: { ...f.env, SHU_WORKTREE_ROOT: path.join(alias,"workspaces") } }), /symlink/);
-    const nested=path.join(f.state,"nested");fs.mkdirSync(nested);
+    const nested=path.join(f.state,"nested");fs.mkdirSync(nested);fs.chmodSync(nested,0o3770);
     assert.throws(() => f.prepare(f.receipt(), { env: { ...f.env, SHU_WORKTREE_ROOT:nested } }), /authority must be outside/);
     assert.equal(fs.readFileSync(path.join(cwd, "uncommitted"), "utf8"), "preserve me");
     git(cwd, "add", "."); git(cwd, "commit", "-m", "changed reviewer tree");

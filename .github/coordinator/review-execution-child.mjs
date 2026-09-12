@@ -72,15 +72,17 @@ async function main() {
   const cwd = values.get("cwd");
   const expectedUid = Number(values.get("expected-uid"));
   const protectedPath = values.get("protected-path");
+  const siblingProbePath = values.get("sibling-probe-path");
   const probePort = values.get("probe-port");
   const targetSha = values.get("target-sha");
   const actualUid = typeof process.getuid === "function" ? process.getuid() : null;
   const forbiddenEnvKeys = Object.keys(process.env).filter((key) => FORBIDDEN_ENV.test(key));
   const filesystemDenied = protectedFileDenied(protectedPath);
+  const siblingWorkspaceDenied = protectedFileDenied(siblingProbePath);
   const workspaceWriteBlocked = workspaceWriteDenied(cwd);
   const noNetwork = await networkDenied(probePort);
   const probeOk = Number.isInteger(expectedUid) && expectedUid > 0 && actualUid === expectedUid
-    && filesystemDenied && workspaceWriteBlocked && noNetwork && forbiddenEnvKeys.length === 0;
+    && filesystemDenied && siblingWorkspaceDenied && workspaceWriteBlocked && noNetwork && forbiddenEnvKeys.length === 0;
 
   const report = {
     version: "1.0.0",
@@ -89,6 +91,7 @@ async function main() {
     expected_uid: expectedUid,
     actual_uid: actualUid,
     filesystem_probe: filesystemDenied ? "DENIED" : "REACHABLE",
+    sibling_workspace_probe: siblingWorkspaceDenied ? "DENIED" : "REACHABLE",
     workspace_write_probe: workspaceWriteBlocked ? "DENIED" : "WRITABLE",
     network_probe: noNetwork ? "DENIED" : "REACHABLE",
     forbidden_env_keys: forbiddenEnvKeys,

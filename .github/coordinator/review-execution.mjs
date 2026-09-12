@@ -170,6 +170,7 @@ export async function runReviewEvidence({
 } = {}) {
   let server;
   let protectedPath;
+  let siblingProbeDir;
   try {
     if (!UUID.test(attempt_id ?? "") || !SHA.test(target_sha ?? "") || !path.isAbsolute(cwd ?? "")) {
       throw new Error("invalid review evidence binding");
@@ -187,6 +188,13 @@ export async function runReviewEvidence({
     const files = reviewTestFiles(env);
     const evidenceDir = privateDirectory(env.SHU_REVIEW_EVIDENCE_DIR, { fsImpl, ownUid });
     const resolvedCwd = fsImpl.realpathSync(cwd);
+    if (path.basename(resolvedCwd) !== attempt_id) {
+      throw new Error("review workspace path must be bound to the exact attempt id");
+    }
+    const workspaceRoot = fsImpl.realpathSync(path.dirname(resolvedCwd));
+    if (path.dirname(resolvedCwd) !== workspaceRoot) {
+      throw new Error("review workspace root must not resolve through a symlink");
+    }
     const workspaceStat = fsImpl.lstatSync(resolvedCwd);
     const workspaceUid = workspaceStat.uid;
     if (!trustedControlPlaneObject(workspaceStat, { ownUid, expectedUid, kind: "directory" })) {
@@ -197,16 +205,24 @@ export async function runReviewEvidence({
     }
     protectedPath = path.join(evidenceDir, `${attempt_id}.confinement-sentinel`);
     fsImpl.writeFileSync(protectedPath, "coordinator-private", { flag: "wx", mode: 0o600 });
+    siblingProbeDir = fsImpl.mkdtempSync(path.join(workspaceRoot, ".shu-review-sibling-probe-"));
+    fsImpl.chmodSync(siblingProbeDir, 0o755);
+    const siblingProbePath = path.join(siblingProbeDir, "must-not-be-readable");
+    fsImpl.writeFileSync(siblingProbePath, "sibling-private", { mode: 0o644 });
     server = await listenProbe();
     const port = server.address().port;
     const safeEnv = buildReviewExecutionEnvironment(env);
     const result = await runExecFile(execFileImpl, wrapper[0], [
       ...wrapper.slice(1),
+      "--workspace-root", workspaceRoot,
+      "--workspace", resolvedCwd,
+      "--",
       process.execPath,
       childPath,
       "--cwd", resolvedCwd,
       "--expected-uid", String(expectedUid),
       "--protected-path", protectedPath,
+      "--sibling-probe-path", siblingProbePath,
       "--probe-port", String(port),
       "--target-sha", target_sha,
       "--",
@@ -231,6 +247,7 @@ export async function runReviewEvidence({
       && report?.actual_uid === expectedUid
       && report?.expected_uid === expectedUid
       && report?.filesystem_probe === "DENIED"
+      && report?.sibling_workspace_probe === "DENIED"
       && report?.workspace_write_probe === "DENIED"
       && report?.network_probe === "DENIED"
       && Array.isArray(report?.forbidden_env_keys)
@@ -261,6 +278,9 @@ export async function runReviewEvidence({
     if (server) await new Promise((resolve) => server.close(resolve));
     if (protectedPath) {
       try { fsImpl.unlinkSync(protectedPath); } catch { /* evidence write failures never mask the outcome */ }
+    }
+    if (siblingProbeDir) {
+      try { fsImpl.rmSync(siblingProbeDir, { recursive: true, force: true }); } catch { /* probe cleanup never masks the outcome */ }
     }
   }
 }
