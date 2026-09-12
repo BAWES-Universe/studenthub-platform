@@ -12,7 +12,12 @@ Required variables are `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
 `OIDC_TOKEN_URL`, `OIDC_JWKS_URL`, and comma-separated exact
 `LOGIN_ALLOWED_RETURN_URLS`. All OIDC/browser URLs must be HTTPS. Partial
 configuration fails startup; absent configuration leaves every login route
-disabled. Tokens and client secrets never enter browser responses.
+disabled. Deployment preflight requires `LOGIN_ALLOWED_RETURN_URLS` to contain
+the exact `/profile` URL derived from `OIDC_CALLBACK_URL`. It also requires the
+`DATABASE_URL` hostname to be `platform-postgres`, or to appear in the optional
+comma-separated `PLATFORM_DATABASE_HOSTS` allowlist for dedicated platform
+database hosts. Validation errors never include credentials or secrets. Tokens
+and client secrets never enter browser responses.
 
 The StudentHub platform is a **planned** modular monolith: web/iframe panels, HTTP API, MCP gateway, worker, domain packages, and a PostgreSQL schema. This README separates what **exists** at the current commit from what is **planned** — every row in the table below is checkable against the tree.
 
