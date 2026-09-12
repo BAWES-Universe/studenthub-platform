@@ -23,7 +23,7 @@ const CASES = [
   {
     name: "M3 collapse binding failures into NO_STRUCTURED_OUTPUT",
     file: "adapters/claude-code.mjs",
-    from: "      reason_code: \"CALLBACK_BINDING_INVALID\",\n      reason: \"CALLBACK_BINDING_INVALID — structured callback failed attempt/head/stage/evidence binding\"",
+    from: "      reason_code: \"CALLBACK_BINDING_INVALID\",\n      reason: `CALLBACK_BINDING_INVALID — ${selected.detail}`",
     to: "      reason_code: \"NO_STRUCTURED_OUTPUT\",\n      reason: \"NO_STRUCTURED_OUTPUT — collapsed mutation\"",
     pattern: "SHU-232 B3",
   },
@@ -58,7 +58,7 @@ const CASES = [
   {
     name: "M7 allow PASS without a confined-execution evidence link",
     file: "adapters/claude-code.mjs",
-    from: "  if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link) {",
+    from: "  if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link || !inlineEvidence) {",
     to: "  if (false) {",
     pattern: "SHU-232 B7",
   },
