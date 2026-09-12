@@ -112,8 +112,9 @@ and `fwrite` (E03–E07). It specifies neither character transcoding nor escapin
 BOM, platform-independent line endings, timezone, maximum field length or
 provider byte limits. Our text fixtures select **UTF-8, no BOM, LF, UTC frozen clock**
 as synthetic construction choices, not bank requirements. Arabic round-trip proves
-fixture bytes only. Comma/newline/semicolon inputs deliberately demonstrate broken
-legacy framing; no invented CSV quoting repair is represented as historical output.
+fixture bytes only. Comma/newline inputs for comma-delimited serializers and
+comma/newline/semicolon inputs for FHR/APO deliberately demonstrate broken legacy
+framing; no invented CSV quoting repair is represented as historical output.
 
 The 17 ABK workbook attributes are: `DEBIT ACCOUNT`, `Name`,
 `candidate.candidate_iban`, `BENEFICIARY BANK ADDRESS`, `BENEFICIARY BANK NAME`,

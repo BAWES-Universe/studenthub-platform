@@ -45,7 +45,12 @@ def main():
     doc = (HERE/'README.md').read_text()
     require(set(re.findall(r'\bE\d{2}\b', doc)) <= set(ids), 'unresolved document citation')
     pack = json.loads((HERE/'fixtures.json').read_text())
-    require(pack['synthetic_only'] is True and pack['source_data_copied'] is False, 'fixture provenance')
+    require(
+        pack['synthetic_only'] is True
+        and pack['source_data_copied'] is False
+        and pack['bank_formats_invented'] is False,
+        'fixture provenance',
+    )
     formats = {f['id']: f for f in pack['formats']}
     require(set(formats) == {'legacy-s123','legacy-hdt-advice','legacy-abk-fhr-apo','legacy-abk-workbook','aub-results','kfh-results','bank-statement','manual-results'}, 'format scope drift')
     lines = pack['input_lines']
@@ -61,7 +66,9 @@ def main():
             require(not data.startswith(b'\xef\xbb\xbf') and b'\r' not in data, 'fixture BOM/EOL changed')
             require(len(f['rows']) == f['record_count'] == 2, 'text row count')
             require(all(len(row)==len(f['fields']) for row in f['rows']), 'text field width')
-            raw = data.decode('utf-8').splitlines()
+            text = data.decode('utf-8')
+            require(not any(c in text for c in ('\v','\f','\x1c','\x1d','\x1e','\x85','\u2028','\u2029')), 'fixture non-LF separator')
+            raw = text.removesuffix('\n').split('\n')
             if f['id'] == 'legacy-s123':
                 require(len(raw)==4 and len(f['fields'])==33, 'S123 framing')
                 require(raw[0]=='S1,00000000,,MXD,M,,29/02/2028,29022028-01', 'S1 date/envelope')

@@ -903,14 +903,6 @@
       "bank_rejection": "UNKNOWN"
     },
     {
-      "id": "legacy-s123-semicolon",
-      "format": "legacy-s123",
-      "input_field": "SYNTHETIC;Broken",
-      "output": "S1,00000000,,MXD,M,,29/02/2028,29022028-01\nS2,LCL,10.125,KWD,,,,00000000,XX00ABKK0000000000000000000011,920001,910001,Internship 2 Hours,,,,SYNTHETIC;Broken,SYNTHETIC Bank A,,SYNTHETIC Bank A,SYNTHETIC Address A,,,TESTKW00,,,,,,,B,,,XX00ABKK0000000000000000000011,\nS2,TRF,20.005,KWD,,,,00000000,XX00TEST0000000000000000000012,920001,910002,Internship 3 Hours,,,,SYNTHETIC Current Beta,SYNTHETIC Bank B,,SYNTHETIC Bank B,SYNTHETIC Address B,,,FAKEKW00,,,,,,,B,,,XX00TEST0000000000000000000012,\nS3,2,30.130",
-      "proposed": "HOLD_UNESCAPED_DELIMITER",
-      "bank_rejection": "UNKNOWN"
-    },
-    {
       "id": "legacy-hdt-advice-comma",
       "format": "legacy-hdt-advice",
       "input_field": "SYNTHETIC,Broken",
@@ -923,14 +915,6 @@
       "format": "legacy-hdt-advice",
       "input_field": "SYNTHETIC\nBroken",
       "output": "H,T900001V1,1835395200\nD,920001,SYNTHETIC\nBroken,29022028,910001,KWD,10.125,\nD,920001,beta@example.invalid,29022028,910002,KWD,20.005,\nT,2,30.130",
-      "proposed": "HOLD_UNESCAPED_DELIMITER",
-      "bank_rejection": "UNKNOWN"
-    },
-    {
-      "id": "legacy-hdt-advice-semicolon",
-      "format": "legacy-hdt-advice",
-      "input_field": "SYNTHETIC;Broken",
-      "output": "H,T900001V1,1835395200\nD,920001,SYNTHETIC;Broken,29022028,910001,KWD,10.125,\nD,920001,beta@example.invalid,29022028,910002,KWD,20.005,\nT,2,30.130",
       "proposed": "HOLD_UNESCAPED_DELIMITER",
       "bank_rejection": "UNKNOWN"
     },
