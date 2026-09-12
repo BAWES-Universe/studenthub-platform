@@ -12,6 +12,8 @@ This Compose application packages the StudentHub gateway with a dedicated Postgr
 
 The nine login variables are the application's existing all-or-nothing runtime contract. Use the Authentik endpoints and client created by the SHU-50 blueprint work; do not copy secrets into this file.
 
+The build workflow verifies `deployment-env-manifest.json` against the target Coolify application before building or pushing an image. Configure the `COOLIFY_READ_TOKEN` repository secret with read access limited to that application; keep the existing deploy-capable `COOLIFY_TOKEN` separate. Pull requests execute only the trusted base checker and treat the proposed JSON manifest as data, so PR-controlled code never receives either Coolify token.
+
 ## Failure and rollback
 
 - A missing variable, invalid source revision, loopback-only bind, unreachable database, or failed migration stops the gateway before it can serve traffic.
