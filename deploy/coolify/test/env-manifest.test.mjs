@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -126,6 +128,30 @@ test("SHU-243 output never leaks values or token material", async () => {
   assert.doesNotMatch(apiFailure, new RegExp(value));
 });
 
+test("SHU-243 fork manifest cannot choose keys for the credential-bearing probe", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "shu243-untrusted-manifest-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const attackerManifest = join(root, "deployment-env-manifest.json");
+  writeFileSync(attackerManifest, JSON.stringify({
+    schemaVersion: 1,
+    application: "studenthub-gateway",
+    required: ["ATTACKER_GUESS"],
+  }));
+  const output = [];
+  const result = await runFromEnv({
+    env: {
+      COOLIFY_BASE: "https://coolify.example.test",
+      COOLIFY_READ_TOKEN: "read-token",
+      COOLIFY_STUDENTHUB_GATEWAY_UUID: "gateway-uuid",
+      DEPLOYMENT_ENV_MANIFEST_PATH: attackerManifest,
+    },
+    fetchImplementation: async () => response(requiredEntries),
+    stdout: { write(chunk) { output.push(chunk); } },
+  });
+  assert.equal(result.checked, DEPLOYMENT_ENV_MANIFEST.required.length);
+  assert.doesNotMatch(output.join(""), /ATTACKER_GUESS/);
+});
+
 test("SHU-243 workflow gates image build and push on the env-store check", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/build.yml`, "utf8");
   const check = workflow.indexOf("node deploy/coolify/check-env-manifest.mjs");
@@ -141,4 +167,7 @@ test("SHU-243 workflow gates image build and push on the env-store check", () =>
   assert.match(workflow, /if: \$\{\{ github\.event_name != 'pull_request_target' \}\}/);
   assert.match(workflow, /build-push:\n    if:.*\n    needs: env-manifest/);
   assert.match(workflow, /deploy:\n    if: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' \}\}/);
+  assert.doesNotMatch(workflow, /DEPLOYMENT_ENV_MANIFEST_PATH:/);
+  assert.match(workflow, /Validate proposed manifest as untrusted data/);
+  assert.match(workflow, /Verify trusted Coolify deployment environment/);
 });

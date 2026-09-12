@@ -3,7 +3,6 @@ import { pathToFileURL } from "node:url";
 import {
   assertManifestMatchesRuntime,
   DEPLOYMENT_ENV_MANIFEST,
-  loadDeploymentEnvManifest,
 } from "./deployment-env-manifest.mjs";
 
 function requiredSetting(env, name) {
@@ -93,17 +92,13 @@ export async function runFromEnv({
   fetchImplementation = fetch,
   stdout = process.stdout,
 } = {}) {
-  const proposedManifestPath = env.DEPLOYMENT_ENV_MANIFEST_PATH?.trim();
-  const manifest = proposedManifestPath
-    ? loadDeploymentEnvManifest(proposedManifestPath)
-    : DEPLOYMENT_ENV_MANIFEST;
-  if (!proposedManifestPath) assertManifestMatchesRuntime(manifest);
+  assertManifestMatchesRuntime(DEPLOYMENT_ENV_MANIFEST);
   const result = await checkCoolifyEnv({
     baseUrl: requiredSetting(env, "COOLIFY_BASE"),
     token: requiredSetting(env, "COOLIFY_READ_TOKEN"),
     applicationUuid: requiredSetting(env, "COOLIFY_STUDENTHUB_GATEWAY_UUID"),
     fetchImplementation,
-    manifest,
+    manifest: DEPLOYMENT_ENV_MANIFEST,
   });
   stdout.write(`Coolify deployment environment verified for ${result.application} application ${result.applicationUuid}: ${result.checked} required keys are present and non-empty.\n`);
   return result;

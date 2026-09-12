@@ -45,11 +45,23 @@ jobs:
             --output "${RUNNER_TEMP}/deployment-env-manifest.json"
 
       - name: Verify required Coolify deployment environment
+        if: ${{ github.event_name != 'pull_request_target' }}
         env:
           COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
           COOLIFY_READ_TOKEN: ${{ secrets.COOLIFY_READ_TOKEN }}
           COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
-          DEPLOYMENT_ENV_MANIFEST_PATH: ${{ github.event_name == 'pull_request_target' && format('{0}/deployment-env-manifest.json', runner.temp) || '' }}
+        run: node deploy/coolify/check-env-manifest.mjs
+
+      - name: Validate proposed manifest as untrusted data
+        if: ${{ github.event_name == 'pull_request_target' }}
+        run: node deploy/coolify/deployment-env-manifest.mjs "${RUNNER_TEMP}/deployment-env-manifest.json"
+
+      - name: Verify trusted Coolify deployment environment
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_READ_TOKEN: ${{ secrets.COOLIFY_READ_TOKEN }}
+          COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
         run: node deploy/coolify/check-env-manifest.mjs
 
   build-push:

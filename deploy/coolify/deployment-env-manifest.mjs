@@ -44,5 +44,14 @@ export function assertManifestMatchesRuntime(manifest = DEPLOYMENT_ENV_MANIFEST)
 
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
 if (entrypoint === import.meta.url) {
-  process.stdout.write(`${JSON.stringify(DEPLOYMENT_ENV_MANIFEST)}\n`);
+  if (process.argv[2]) {
+    const proposed = loadDeploymentEnvManifest(process.argv[2]);
+    const trusted = new Set(DEPLOYMENT_ENV_MANIFEST.required);
+    const candidate = new Set(proposed.required);
+    const added = proposed.required.filter((key) => !trusted.has(key));
+    const removed = DEPLOYMENT_ENV_MANIFEST.required.filter((key) => !candidate.has(key));
+    process.stdout.write(`Proposed deployment manifest is valid JSON (added: ${added.join(", ") || "none"}; removed: ${removed.join(", ") || "none"}).\n`);
+  } else {
+    process.stdout.write(`${JSON.stringify(DEPLOYMENT_ENV_MANIFEST)}\n`);
+  }
 }
