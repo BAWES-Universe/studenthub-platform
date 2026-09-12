@@ -8,7 +8,8 @@ import { randomUUID } from "node:crypto";
 import { deriveScopedBaseCommit, deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, REMOTE_RETIRE_ARGS, workspaceBindingConflicts } from "../attempt-workspace.mjs";
 import { pushExactSha } from "../push-broker.mjs";
 import { validateScopedResultDiff } from "../workspace-result.mjs";
-import { callbackBindingValid, createReceipt, foldLaunchOutcome, nextReceiptState, validateReceipt } from "../reconcile.mjs";
+import { callbackBindingValid, createReceipt, foldLaunchOutcome, nextReceiptState, preparedLaunchOptions, receiptCommentBody, validateReceipt } from "../reconcile.mjs";
+import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import * as claude from "../adapters/claude-code.mjs";
 import { parseWorkOrderDirective, renderWorkOrderDirective, routeSuccessorFromReceipts } from "../review-routing.mjs";
 import {
@@ -226,7 +227,7 @@ test("SHU-241 A6: receipts and directives carry immutable scope; reviewer launch
     f.prepare(full);
     const authority = path.join(f.state, `${full.attempt_id}.workspace.json`);
     const forged = JSON.parse(fs.readFileSync(authority, "utf8")); forged.allowed_paths = ["README.md"]; fs.writeFileSync(authority, JSON.stringify(forged));
-    assert.throws(() => f.prepare(full), /immutable path binding/, "attempt authority cannot be widened after reservation");
+    assert.throws(() => f.prepare(full), /workspace authority scope invalid|immutable path binding/, "attempt authority cannot be widened after reservation");
   } finally { f.cleanup(); }
   let reads = 0;
   const refused = await claude.launchBuilder({ issue_id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
@@ -250,4 +251,54 @@ test("SHU-241 A7: reviewer preparation is always a complete exact-head repositor
     fs.unlinkSync(path.join(cwd, ".git/objects/pack", pack));
     assert.throws(() => f.prepare(r), /workspace command failed/, "reviewer preparation refuses missing reachable objects before launch");
   } finally { f.cleanup(); }
+});
+
+test("SHU-241 A8: LAUNCH_UNKNOWN recovery retains the exact scoped input without widening to the full target", async () => {
+  const h = createEpisodeHarness({ configOverrides: { fixture_lane: {
+    id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    initial_build_paths: [...SHU140_INITIAL_BUILD_PATHS], revision_paths: [...SHU140_REVISION_PATHS], seeded_defect_path: SHU140_TRAP_PATH,
+  } } });
+  try {
+    const target_sha = "a".repeat(40), scoped_base_sha = "d".repeat(40);
+    const made = createReceipt({ issue_id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905", requested_worker: "codex-builder",
+      repo: REPO, branch: BRANCH, target_sha, episode_id: h.record.activation_id,
+      workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha });
+    assert.equal(made.ok, true, made.errors);
+    const unknown = nextReceiptState(made.receipt, { type: "launch" }).receipt;
+    h.comments.push({ body: receiptCommentBody(unknown), createdAt: unknown.last_activity });
+    const prepared = [];
+    const tick = await h.runTick({ io: { prepareWorkspace: async ({ receipt, resume }) => {
+      prepared.push({ receipt, resume }); return { cwd: "/scoped-recovery" };
+    } } });
+    assert.equal(tick.code, 0, tick.text);
+    assert.equal(prepared.length, 1, "the retained LAUNCH_UNKNOWN attempt is prepared exactly once for resume");
+    assert.equal(prepared[0].resume, true);
+    assert.equal(h.launched.length, 1, "recovery crosses the adapter boundary exactly once");
+    assert.deepEqual(h.launched[0], {
+      lane: "codex-cli", attempt_id: unknown.attempt_id, target_sha, run_id: `codexrun_${unknown.attempt_id.slice(0, 8)}_1`,
+      cwd: "/scoped-recovery", workspace_scope: "scoped", scope_phase: "initial",
+      allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha,
+    });
+    assert.notEqual(h.launched[0].scoped_base_sha, h.launched[0].target_sha, "recovery must not silently relaunch from the full target");
+  } finally { h.cleanup(); }
+});
+
+test("SHU-241 A9: partial scope metadata fails closed while a wholly legacy receipt alone receives full scope", async () => {
+  const base = { attempt_id: randomUUID(), issue_id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+    requested_worker: "codex-builder", repo: REPO, branch: BRANCH, target_sha: "a".repeat(40) };
+  const fields = { workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha: "d".repeat(40) };
+  const names = Object.keys(fields);
+  for (let mask = 1; mask < (1 << names.length) - 1; mask++) {
+    const partial = { ...base };
+    names.forEach((name, index) => { if (mask & (1 << index)) partial[name] = fields[name]; });
+    await assert.rejects(preparedLaunchOptions("codex-cli", partial, {}, { adapterModules: { "codex-cli": {} } }, { resume: true }),
+      /scope metadata is partially present/, `partial mask ${mask.toString(2)} must not gain legacy full-workspace authority`);
+    assert.throws(() => prepareAttemptWorkspace({ receipt: partial, env: {} }), /scope metadata is partially present/,
+      `workspace preparation must reject partial mask ${mask.toString(2)}`);
+  }
+  const legacy = await preparedLaunchOptions("codex-cli", base, {}, { adapterModules: { "codex-cli": {} } }, { resume: true });
+  assert.deepEqual({ workspace_scope: legacy.workspace_scope, scope_phase: legacy.scope_phase, allowed_paths: legacy.allowed_paths, scoped_base_sha: legacy.scoped_base_sha },
+    { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null }, "only a receipt with none of the four fields gets legacy fallback");
+  const complete = await preparedLaunchOptions("codex-cli", { ...base, ...fields }, {}, { adapterModules: { "codex-cli": {} } }, { resume: true });
+  assert.deepEqual(complete.allowed_paths, fields.allowed_paths, "complete scoped authority remains exact rather than widening");
 });

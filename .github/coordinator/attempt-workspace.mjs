@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, validateRepoUrl } from "./push-broker.mjs";
-import { validateWorkspaceScope } from "./workspace-scope.mjs";
+import { normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -127,15 +127,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       receipt?.repo !== allowedRepo || !["codex-builder", "claude-verifier"].includes(receipt?.requested_worker)) {
     throw new Error("invalid attempt workspace binding");
   }
-  const normalizedReceipt = Object.hasOwn(receipt, "workspace_scope") ? receipt : {
-    ...receipt,
-    workspace_scope: "full",
-    scope_phase: receipt.requested_worker === "claude-verifier" ? "review" : "initial",
-    allowed_paths: [],
-    scoped_base_sha: null,
-  };
+  const normalized = normalizeReceiptWorkspaceScope(receipt);
+  if (!normalized.ok) throw new Error(`invalid attempt workspace scope: ${normalized.reason}`);
+  const normalizedReceipt = { ...receipt, ...normalized.scope };
   const scope = validateWorkspaceScope(normalizedReceipt, { requireScopedBase: true });
-  if (!scope.ok) throw new Error(`invalid attempt workspace scope: ${scope.reason}`);
   if (receipt.requested_worker === "claude-verifier" && (normalizedReceipt.workspace_scope !== "full" || normalizedReceipt.scope_phase !== "review")) {
     throw new Error("reviewer checkout must be complete and unscoped");
   }
@@ -182,10 +177,10 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
       if (!st.isFile() || st.isSymbolicLink() || (st.mode & 0o077) !== 0) throw new Error("invalid workspace authority file");
       record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
     } catch (err) { if (err.code !== "ENOENT") throw err; }
-    if (record && !Object.hasOwn(record, "workspace_scope")) {
-      record = { ...record, workspace_scope: normalizedReceipt.workspace_scope,
-        scope_phase: normalizedReceipt.scope_phase, allowed_paths: normalizedReceipt.allowed_paths,
-        scoped_base_sha: normalizedReceipt.scoped_base_sha };
+    if (record) {
+      const normalizedRecord = normalizeReceiptWorkspaceScope(record);
+      if (!normalizedRecord.ok) throw new Error(`workspace authority scope invalid: ${normalizedRecord.reason}`);
+      record = { ...record, ...normalizedRecord.scope };
     }
     if (record && workspaceBindingConflicts(record, binding)) throw new Error("workspace immutable path binding conflict");
     if (record && record.status !== "ready") throw new Error("workspace preparation interrupted; preserve evidence for inspection");

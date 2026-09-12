@@ -2,6 +2,7 @@ import path from "node:path";
 
 export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full"]);
 export const SCOPE_PHASES = Object.freeze(["initial", "revision", "review"]);
+export const WORKSPACE_SCOPE_FIELDS = Object.freeze(["workspace_scope", "scope_phase", "allowed_paths", "scoped_base_sha"]);
 const SHA = /^[0-9a-f]{40}$/;
 
 export const SHU140_INITIAL_BUILD_PATHS = Object.freeze([
@@ -78,6 +79,24 @@ export function validateWorkspaceScope({ workspace_scope, scope_phase, allowed_p
     return { ok: true, paths: [] };
   }
   return validateAllowedPaths(allowed_paths);
+}
+
+export function normalizeReceiptWorkspaceScope(receipt = {}) {
+  const present = WORKSPACE_SCOPE_FIELDS.filter((field) => Object.hasOwn(receipt, field));
+  if (present.length === 0) {
+    return { ok: true, scope: {
+      workspace_scope: "full",
+      scope_phase: receipt.requested_worker === "claude-verifier" ? "review" : "initial",
+      allowed_paths: [],
+      scoped_base_sha: null,
+    } };
+  }
+  if (present.length !== WORKSPACE_SCOPE_FIELDS.length) {
+    return { ok: false, reason: "workspace scope metadata is partially present" };
+  }
+  const candidate = Object.fromEntries(WORKSPACE_SCOPE_FIELDS.map((field) => [field, receipt[field]]));
+  const checked = validateWorkspaceScope(candidate, { requireScopedBase: true });
+  return checked.ok ? { ok: true, scope: { ...candidate, allowed_paths: [...candidate.allowed_paths] } } : checked;
 }
 
 export function initialWorkspaceScope({ issueId, requestedWorker, fixtureLane } = {}) {

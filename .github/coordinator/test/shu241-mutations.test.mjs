@@ -28,6 +28,8 @@ const cases = [
   ["M20 full target omitted from scoped derivation", "attempt-workspace.mjs", 'target_sha ${target_sha}', 'target_sha fixed', "SHU-241 A2:"],
   ["M21 exact path order omitted from scoped derivation", "attempt-workspace.mjs", 'allowed_paths ${JSON.stringify(allowed_paths)}', 'allowed_paths ${JSON.stringify([...allowed_paths].sort())}', "SHU-241 A2:"],
   ["M22 full-tree path membership disabled", "workspace-result.mjs", 'const outside = paths.find((name) => !allowed.has(name));', 'const outside = undefined;', "SHU-241 A4"],
+  ["M23 recovery launch drops retained scope", "reconcile.mjs", 'const options = { ...adapterLaunchOptions(adapter, env, { resume }), ...normalized.scope };', 'const options = adapterLaunchOptions(adapter, env, { resume });', "SHU-241 A8"],
+  ["M24 partial scope metadata receives legacy fallback", "workspace-scope.mjs", '  if (present.length === 0) {', '  if (present.length < WORKSPACE_SCOPE_FIELDS.length) {', "SHU-241 A9"],
 ];
 
 for (const [name, file, from, to, pattern] of cases) test(`SHU-241 mutation: ${name}`, () => {

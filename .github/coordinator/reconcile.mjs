@@ -29,7 +29,7 @@ import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDir
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
-import { initialWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import { initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -440,7 +440,9 @@ export function adapterLaunchOptions(adapter, env, { resume = false } = {}) {
 // durable. Injected adapters remain the seam for tests of unrelated properties;
 // real local adapters always provision and validate an attempt-specific checkout.
 export async function preparedLaunchOptions(adapter, receipt, env, io = {}, { resume = false } = {}) {
-  const options = adapterLaunchOptions(adapter, env, { resume });
+  const normalized = normalizeReceiptWorkspaceScope(receipt);
+  if (!normalized.ok) throw new Error(`launch scope refused: ${normalized.reason}`);
+  const options = { ...adapterLaunchOptions(adapter, env, { resume }), ...normalized.scope };
   if (!["codex-cli", "claude-code"].includes(adapter)) return options;
   const prepare = io.prepareWorkspace ?? (io.adapterModules?.[adapter] ? null : prepareAttemptWorkspace);
   if (!prepare) return options;
