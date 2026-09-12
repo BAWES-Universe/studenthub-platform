@@ -8,7 +8,7 @@ import test from "node:test";
 import {
   checkCoolifyEnv,
   failureMessage,
-  missingOrEmptyRequiredEnv,
+  missingRequiredEnv,
   runFromEnv,
 } from "../check-env-manifest.mjs";
 import { DEPLOYMENT_ENV_MANIFEST, REQUIRED_COOLIFY_ENV } from "../deployment-env-manifest.mjs";
@@ -56,18 +56,27 @@ test("SHU-243 missing key fails with an actionable application-scoped message", 
   );
 });
 
-test("SHU-243 present-but-empty key fails", () => {
+test("SHU-243 redacted values still satisfy the key-presence check", () => {
   const entries = requiredEntries.map((entry) => entry.key === "PLATFORM_DATABASE_HOSTS"
-    ? { ...entry, value: "", real_value: "   " }
+    ? { ...entry, value: null, real_value: null }
     : entry);
-  assert.deepEqual(missingOrEmptyRequiredEnv(entries), ["PLATFORM_DATABASE_HOSTS"]);
+  assert.deepEqual(missingRequiredEnv(entries), []);
+});
+
+test("SHU-243 key-presence check never reads sensitive value fields", () => {
+  const entries = requiredEntries.map(({ value: _value, real_value: _realValue, ...entry }) =>
+    Object.defineProperties(entry, {
+      value: { get() { throw new Error("value must remain unread"); } },
+      real_value: { get() { throw new Error("real_value must remain unread"); } },
+    }));
+  assert.deepEqual(missingRequiredEnv(entries), []);
 });
 
 test("SHU-243 preview-only or build-only keys do not satisfy the runtime manifest", () => {
   const entries = requiredEntries.map((entry) => entry.key === "HOST"
     ? { ...entry, is_preview: true }
     : entry.key === "DATABASE_URL" ? { ...entry, is_runtime: false } : entry);
-  assert.deepEqual(missingOrEmptyRequiredEnv(entries), ["HOST", "DATABASE_URL"]);
+  assert.deepEqual(missingRequiredEnv(entries), ["HOST", "DATABASE_URL"]);
 });
 
 test("SHU-243 present keys pass and use the read-only Coolify endpoint", async () => {

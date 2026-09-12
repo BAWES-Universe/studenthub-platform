@@ -18,16 +18,16 @@ const cases = [
   {
     name: "remove missing-key comparison",
     file: "check-env-manifest.mjs",
-    from: "  const missing = missingOrEmptyRequiredEnv(entries, manifest.required);",
+    from: "  const missing = missingRequiredEnv(entries, manifest.required);",
     to: "  const missing = [];",
     pattern: "SHU-243 missing key fails",
   },
   {
-    name: "treat empty as present",
+    name: "accept preview-only keys",
     file: "check-env-manifest.mjs",
-    from: "return required.filter((key) => !deployed.has(key) || deployed.get(key).trim().length === 0);",
-    to: "return required.filter((key) => !deployed.has(key));",
-    pattern: "SHU-243 present-but-empty key fails",
+    from: "      || entry.is_preview === true\n",
+    to: "",
+    pattern: "SHU-243 preview-only or build-only keys",
   },
 ];
 

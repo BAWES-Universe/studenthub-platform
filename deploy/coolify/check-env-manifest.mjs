@@ -13,12 +13,12 @@ function requiredSetting(env, name) {
   return value.trim();
 }
 
-export function missingOrEmptyRequiredEnv(entries, required = DEPLOYMENT_ENV_MANIFEST.required) {
+export function missingRequiredEnv(entries, required = DEPLOYMENT_ENV_MANIFEST.required) {
   if (!Array.isArray(entries)) {
     throw new Error("Coolify returned an invalid environment-variable list");
   }
 
-  const deployed = new Map();
+  const deployed = new Set();
   for (const entry of entries) {
     if (
       !entry
@@ -27,19 +27,15 @@ export function missingOrEmptyRequiredEnv(entries, required = DEPLOYMENT_ENV_MAN
       || entry.is_runtime === false
       || typeof entry.key !== "string"
     ) continue;
-    const key = entry.key.trim();
-    const value = typeof entry.real_value === "string"
-      ? entry.real_value
-      : typeof entry.value === "string" ? entry.value : "";
-    if (!deployed.has(key) || value.trim().length > 0) deployed.set(key, value);
+    deployed.add(entry.key.trim());
   }
 
-  return required.filter((key) => !deployed.has(key) || deployed.get(key).trim().length === 0);
+  return required.filter((key) => !deployed.has(key));
 }
 
 export function failureMessage({ application, applicationUuid, missing }) {
   const keys = missing.join(", ");
-  return `Coolify deployment environment check failed for ${application} application ${applicationUuid}: missing or empty required variables: ${keys}. Set ${keys} on Coolify application ${applicationUuid} before retrying this workflow.`;
+  return `Coolify deployment environment check failed for ${application} application ${applicationUuid}: missing required variables: ${keys}. Set ${keys} on Coolify application ${applicationUuid} before retrying this workflow.`;
 }
 
 export async function checkCoolifyEnv({
@@ -76,7 +72,7 @@ export async function checkCoolifyEnv({
   } catch {
     throw new Error(`Coolify deployment environment check received invalid JSON for application ${applicationUuid}`);
   }
-  const missing = missingOrEmptyRequiredEnv(entries, manifest.required);
+  const missing = missingRequiredEnv(entries, manifest.required);
   if (missing.length > 0) {
     throw new Error(failureMessage({
       application: manifest.application,
@@ -100,7 +96,7 @@ export async function runFromEnv({
     fetchImplementation,
     manifest: DEPLOYMENT_ENV_MANIFEST,
   });
-  stdout.write(`Coolify deployment environment verified for ${result.application} application ${result.applicationUuid}: ${result.checked} required keys are present and non-empty.\n`);
+  stdout.write(`Coolify deployment environment verified for ${result.application} application ${result.applicationUuid}: ${result.checked} required runtime keys are present.\n`);
   return result;
 }
 
