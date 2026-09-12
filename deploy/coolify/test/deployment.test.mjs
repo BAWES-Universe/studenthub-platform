@@ -7,7 +7,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { checkReadiness } from "../healthcheck.mjs";
-import { runPreflight, validateApplicationEnv, validateDeploymentEnv, validateImageRevision } from "../preflight.mjs";
+import {
+  REQUIRED_DEPLOYMENT_ENV,
+  runPreflight,
+  validateApplicationEnv,
+  validateDeploymentEnv,
+  validateImageRevision,
+} from "../preflight.mjs";
 
 const validEnv = {
   HOST: "0.0.0.0",
@@ -51,7 +57,7 @@ test("the container preflight CLI cannot bypass real gateway validation", () => 
 });
 
 test("deployment preflight fails closed on missing configuration", () => {
-  for (const name of ["DATABASE_URL", "OIDC_CLIENT_SECRET"]) {
+  for (const name of REQUIRED_DEPLOYMENT_ENV) {
     const env = { ...validEnv };
     delete env[name];
     assert.throws(() => validateDeploymentEnv(env), new RegExp(name));
