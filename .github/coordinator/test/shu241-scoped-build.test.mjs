@@ -195,6 +195,42 @@ test("SHU-244 A11: unavailable or divergent bundle authority refuses before bind
   } finally { f.cleanup(); }
 });
 
+test("SHU-244 A12: launch-time base-bundle refusal persists its typed code and configured paths before any worker launch", async () => {
+  const h = createEpisodeHarness({
+    githubToken: "github-test-token",
+    configOverrides: { fixture_lane: {
+      id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+      initial_build_paths: [...SHU140_INITIAL_BUILD_PATHS], revision_paths: [...SHU140_REVISION_PATHS], seeded_defect_path: SHU140_TRAP_PATH,
+    } },
+  });
+  try {
+    const configuredRoot = "/srv/shu/state/workspaces";
+    let attemptedBundle;
+    const tick = await h.runTick({
+      env: { SHU_WORKSPACE_STATE_DIR: configuredRoot },
+      io: {
+        deriveScopedBaseSha: async () => "d".repeat(40),
+        prepareWorkspace: async ({ receipt }) => {
+          attemptedBundle = path.join(configuredRoot, `${receipt.attempt_id}.base.bundle`);
+          throw new BaseBundleUnavailableError(configuredRoot, attemptedBundle, new Error("bundle creation denied"));
+        },
+      },
+    });
+    assert.equal(tick.code, 2, tick.text);
+    assert.equal(h.launched.length, 0, "typed preparation refusal must stop before the adapter boundary");
+    const held = h.latestFor("codex-builder");
+    assert.equal(held.stage, "HOLD", "the durable launch intent becomes a terminal HOLD");
+    assert.ok(held.notes.includes("adapter reason code: BASE_BUNDLE_UNAVAILABLE"), "HOLD preserves the stable refusal code");
+    const refusal = held.notes.find((note) => note.startsWith("held: attempt workspace preparation"));
+    assert.ok(refusal, "HOLD retains an actionable preparation refusal");
+    assert.ok(refusal.includes(`SHU_WORKSPACE_STATE_DIR=${JSON.stringify(configuredRoot)}`), "receipt names the configured workspace root");
+    assert.ok(refusal.includes(`bundle=${JSON.stringify(attemptedBundle)}`), "receipt names the exact attempted bundle path");
+    assert.deepEqual({ workspace_scope: held.workspace_scope, scope_phase: held.scope_phase, allowed_paths: held.allowed_paths, scoped_base_sha: held.scoped_base_sha }, {
+      workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha: "d".repeat(40),
+    }, "diagnostic HOLD cannot widen or discard the immutable scoped authority");
+  } finally { h.cleanup(); }
+});
+
 test("SHU-241 A4: new, mode-only, and renamed out-of-scope content is refused before binding or publication", async () => {
   for (const raw of ["A\0outside.txt\0", "D\0outside.txt\0", "M\0outside.txt\0", "R100\0outside.txt\0tools/fixture/scan-vacuous.mjs\0", "R100\0tools/fixture/scan-vacuous.mjs\0outside.txt\0"]) {
     assert.equal(validateScopedResultDiff(raw, [...SHU140_INITIAL_BUILD_PATHS]).ok, false, `full-tree diff must refuse every outside source or destination: ${JSON.stringify(raw)}`);

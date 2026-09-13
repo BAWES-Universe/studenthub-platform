@@ -33,7 +33,7 @@ function directory(p) {
 }
 
 export function workspaceFailureCode(error) {
-  const known = ["GIT_OWNERSHIP_REFUSED", "FILESYSTEM_OR_AUTH_DENIED", "SOURCE_REVISION_UNAVAILABLE", "SOURCE_UNREACHABLE", "STORAGE_FULL", "COMMAND_TIMEOUT", "COMMAND_FAILED"];
+  const known = ["BASE_BUNDLE_UNAVAILABLE", "GIT_OWNERSHIP_REFUSED", "FILESYSTEM_OR_AUTH_DENIED", "SOURCE_REVISION_UNAVAILABLE", "SOURCE_UNREACHABLE", "STORAGE_FULL", "COMMAND_TIMEOUT", "COMMAND_FAILED"];
   if (known.includes(error?.workspaceCode)) return error.workspaceCode;
   const stderr = String(error?.stderr ?? "");
   if (/detected dubious ownership/.test(stderr)) return "GIT_OWNERSHIP_REFUSED";
