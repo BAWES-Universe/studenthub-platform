@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Assert service verification prerequisites
+        run: systemd-analyze --version && test -x /usr/bin/flock
       - name: Entire coordinator suite with wall clock advanced 365 days
         env:
           SHU_TEST_CLOCK_OFFSET_MS: '31536000000'
@@ -82,6 +84,8 @@ jobs:
       - run: npm run typecheck
       # Deterministic coordinator dry-run package (dispatch disabled): pure JS,
       # no build step — runs directly via node --test.
+      - name: Assert service verification prerequisites
+        run: systemd-analyze --version && test -x /usr/bin/flock
       - run: npm run test:coordinator
       # npm test is the no-external-dependencies suite; the db suite needs the
       # postgres service above, so it runs as its own explicit step (test:db).
