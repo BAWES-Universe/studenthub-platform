@@ -47,4 +47,9 @@ export const EXPECTATIONS = Object.freeze([
     src: 'test("stub", () => { const s = "assert.equal(1, 2)"; });',
     expected: ["stub"],
   },
+  {
+    name: "a body whose assertion is mentioned only inside a template literal",
+    src: "test(\"tpl\", () => { const s = `assert.equal(1, 2)`; });",
+    expected: [],
+  },
 ]);
