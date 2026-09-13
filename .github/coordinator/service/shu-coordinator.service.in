@@ -1,6 +1,7 @@
 [Unit]
 Description=StudentHub single coordinator writer
 After=shu-supervisor.service
+Requires=shu-supervisor.service
 StartLimitIntervalSec=60
 StartLimitBurst=3
 
@@ -8,6 +9,8 @@ StartLimitBurst=3
 Type=oneshot
 WorkingDirectory=@WORKDIR@
 Environment=ENABLE_DISPATCH=false
+Environment=SHU_SUPERVISOR_SOCKET=@SUPERVISOR_SOCKET@
+Environment=SHU_WORKSPACE_STATE_DIR=@WORKSPACE_STATE_DIR@
 UMask=0077
 ExecStart=@COORDINATOR_EXEC@
 Restart=on-failure

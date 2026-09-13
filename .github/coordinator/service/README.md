@@ -1,141 +1,168 @@
-# SHU-251: interface-independent service staging
+# SHU-251 service staging and supervisor integration
 
-This directory adds host systemd templates, a **temporary-directory staging
-installer**, rollback, and local verification. It changes no coordinator code.
-Nothing here calls systemctl, installs host services, enables dispatch, contacts
-production, or supplies a guessed SHU-250 supervisor socket/CLI. This is a partial
-SHU-251 implementation, not its running-system acceptance proof.
+This package supplies systemd templates, a temporary-directory staging installer,
+exact file rollback, and lifecycle composition of the merged SHU-250 supervisor.
+Nothing installs, enables or starts host services. All executed verification uses
+local temporary fixtures. Running-system acceptance remains a host-only step.
 
-## Render and stage locally
+## Local verification and required CI
 
-Requirements: Linux, Node.js, `/usr/bin/flock`, and `systemd-analyze`. From the
-repository root:
+Requirements: Linux, Node.js, `/usr/bin/flock`, `/usr/bin/systemd-notify` for an
+actual service, and `systemd-analyze` for syntax verification. From the repo root:
 
 ```sh
 chmod -R go-w .github/coordinator
-node .github/coordinator/service/verify.mjs
 node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs
+node .github/coordinator/service/verify.mjs
 ```
 
-For reviewable unit artifacts, create an owned private directory under the
-system temporary directory (`mktemp -d`). Supply a JSON parameters file:
+`npm run test:coordinator` runs both globs. The required `fast-checks` job invokes
+that command without failure suppression and checks `systemd-analyze` and flock
+first. The future-clock job also runs both globs with these prerequisites. The
+bare Git 2.43 container retains its targeted Git tests; it does not run service
+syntax tests. Branch protection is not modified by this package.
 
-```json
-{
-  "workdir": "/absolute/reviewed/clone",
-  "supervisor": ["/absolute/reviewed/supervisor-entry", "reviewed-argument"],
-  "coordinator": ["/absolute/reviewed/tick-entry", "reviewed-argument"],
-  "writerLock": "/absolute/private/state/host-tick.lock"
-}
-```
+`systemd-analyze verify` updates the mtime of
+`/run/systemd/systemd-units-load`, a read-only unit-cache marker in tmpfs. Record
+this verifier side effect separately in state-diff audits; it is not durable
+supervisor/workspace state and does not justify excluding any such state.
 
-These are placeholders, not an approved SHU-250 interface. The executable files
-must exist for syntax validation. `fixtureParameters()` uses `/usr/bin/true`
-only for local syntax testing; those fixture commands do not run a coordinator
-or supervisor and must never be promoted to the host.
+## Render and stage
+
+Create an owned private directory under the system temporary directory. The
+`serviceParameters()` export in `units.mjs` builds concrete argv against this
+clone: Node runs `service/supervisor-service.mjs` and `reconcile.mjs` directly.
+Inputs are `workdir`, `workspaceStateDir`, and optional `supervisorStateDir`,
+`supervisorSocket`, and absolute Node executable `node`. Defaults place supervisor
+state in `workspaceStateDir/supervisor` and its socket in
+`workspaceStateDir/supervisor.sock`. Serialize the returned object to parameters.json:
 
 ```sh
 node .github/coordinator/service/install.mjs stage "$stage_dir" parameters.json
 node .github/coordinator/service/install.mjs rollback "$stage_dir"
 ```
 
-The installer accepts only an existing, caller-owned, non-group/world-writable,
-real directory below the temporary directory. It refuses symlink unit targets,
-serializes operations with a directory lock, validates all units before writes,
-and backs up exact bytes, permission modes and prior absence in
-`.shu251-backup.json` (0600). Each unit replacement is atomic. Repeating an
-identical stage preserves the original backup and unit mtimes. Drift or changed
-parameters require rollback first. A handled write failure restores prior files;
-rollback is itself repeatable and removes files that were previously absent.
-Unrelated files are untouched. This is file rollback, not service-manager rollback.
+The lower-level `render()` also accepts explicit `supervisor` and `coordinator`
+argv arrays. `fixtureParameters()` uses `/usr/bin/true` solely for syntax testing;
+these commands cannot signal readiness and must not be promoted to a host.
+The real entry point needs the same at-least-32-byte `SHU_SUPERVISOR_SECRET` as
+coordinator transport. Units provide the shared socket path, workspace state
+path and supervisor state path. Credentials, service identity, activation file,
+`DISPATCH_TARGET_SHA`, and other adapter/workspace settings require reviewed host
+configuration. No secret is rendered into staged units. The generated coordinator
+argv does not arm an activation; an authorized deployment must supply its reviewed
+arguments and environment. Dispatch remains false in both staged units.
 
-A process crash can leave a lock, backup, temporary files, or a partial set of
-units. Do not promote such a directory. After confirming the staging process is
-gone, remove only `.shu251-operation`, run rollback, and discard remaining
-`*.new`/`.verify-*` artifacts. Keep the backup if recovery fails. There is no
-claim of power-loss transactional durability, ownership/ACL restoration, or
-preservation of original timestamps; bytes, modes and absence are the contract.
+The installer requires an existing, caller-owned, non-group/world-writable real
+directory below the temporary directory. Missing destinations fail with
+`SHU251_DESTINATION`. Symlink unit targets are refused. A directory lock serializes
+staging, syntax is checked before writes, and `.shu251-backup.json` (0600) preserves
+exact bytes, modes and prior absence. Atomic replacement, idempotent re-staging,
+drift refusal and handled partial-write rollback are tested. Rollback restores
+bytes/modes/absence, not timestamps, ownership, ACLs or service-manager state.
 
-## Wake, restart and one writer
+A crash can leave partial staging, a lock or temporary files. Confirm the staging
+process is gone before removing `.shu251-operation`, run rollback, and discard
+remaining `*.new`/`.verify-*` artifacts. Preserve the backup if recovery fails.
 
-`shu-coordinator.timer` addresses exactly `shu-coordinator.service` on the host.
-Its first wake is after 60 seconds; subsequent wakes follow completion by 60
-seconds. The oneshot invokes the parameterised command and exits. Systemd does
-not overlap activations of the same service. A shared nonblocking `flock`
-also excludes concurrent reviewed manual drivers; its path **must equal** the
-existing `SHU_WORKSPACE_STATE_DIR/host-tick.lock`. All writers must use that same
-path and inode. Do not delete the lock file while any writer could hold it.
+## Writer exclusion and timer behavior
 
-The coordinator argv must enter the reviewed tick directly: do not pass
-`host-tick.sh` here, since that wrapper would acquire the same lock again.
-Selecting the eventual tick arguments, activation and supervisor integration is
-left to the integration review. Manual runs through the existing host-tick
-wrapper use the common lock. Other workflows/drivers must be disabled or routed
-through this lock before host activation; a local flock cannot exclude remote
-writers. There is no assertion that arbitrary bypassing processes are excluded.
+The timer targets the single oneshot coordinator service. Wakes occur 60 seconds
+after boot and 60 seconds after completion. Systemd does not overlap activations.
+The writer also holds a nonblocking flock. Rendering and policy validation enforce
+`SHU251_WRITER_LOCK`: the lock must equal
+`SHU_WORKSPACE_STATE_DIR/host-tick.lock`, with the state directory explicitly
+rendered into the coordinator environment. Canonical and foreign-path tests cover
+both directions. Deployment must preserve that environment and path identity:
+all manual drivers must use the same state directory and inode. Do not delete a
+lock file that a writer may hold. Do not pass `host-tick.sh` as the coordinator
+command: it would recursively acquire the lock. Remote or bypassing writers still
+require an operational audit before activation.
 
-Both services have `Restart=on-failure`, bounded retries and a restart delay.
-Exit 2 is a successful coordinator refusal (including lock contention), so it
-waits for the next timer wake instead of retrying immediately. Supervisor
-`KillMode=process` preserves workers across routine supervisor restart, as the
-existing supervisor contract requires. `After` orders starts when both are
-scheduled; it does not establish readiness or automatically start the
-supervisor. SHU-250 must supply that readiness/lifecycle integration. The local
-flock test proves exclusion and release after exit; unit validation and mutation
-tests prove configured restart policy, **not actual systemd restart behaviour**.
+`TimeoutStartSec=infinity` avoids killing a tick midway through durable work, but
+a hung tick never times out and blocks all future timer wakes. There is no watchdog.
+The operator must stop the timer, inspect the writer and durable evidence, terminate
+the stuck coordinator through the service manager when appropriate, reconcile
+ambiguous work, verify the lock is released, and only then resume the timer.
+Never delete the lock to get another writer running.
 
-## Kill switch verification and separately gated host step
+Both services restart on failure with bounded retries and a delay. Exit 2 is a
+successful coordinator refusal, including lock contention, so it waits for the
+next timer wake. Local flock tests prove exclusion and release; template tests do
+not prove actual systemd restart behavior.
 
-The local harness calls the reviewed `main()` via the existing episode test
-fixture, with the config gate false and runtime `ENABLE_DISPATCH=false`. It seeds
-a valid RUNNING receipt without dispatching, then executes two disabled ticks.
-Injected transport and adapters use local state only. Assertions cover adapter
-calls, remote mutation requests, full fake remote state, and local file hashes,
-modes, mtimes and ctimes. Empty state diffs and zero counters prove quiet fixture
-ticks. A separate staged-unit round trip proves rollback, including prior absent
-units. No actual worker or persistent supervisor runs in this harness.
+## Supervisor startup, readiness and shutdown
 
-Future host installation is **separately gated and has not been attempted**.
-After SHU-250 lands, review concrete argv, environment, service identity, state
-permissions, common lock path, readiness, credentials, existing unit/drop-in
-backups and existing enabled/active state before requesting that gate. The
-host-copy/service-manager installer is deliberately omitted here: promoting
-staged units alone cannot safely claim installation or rollback of a running
-service plane. Once explicitly authorised, host work must include daemon reload,
-supervisor activation/readiness, timer activation, one-writer audit, and controlled
-crash/restart evidence showing worker preservation and no duplicate writer.
+`supervisor-service.mjs` composes the actual `DurableSupervisor`,
+`createSupervisorSpawner` and `listenSupervisor` APIs. It recovers durable state
+before listening and calls `systemd-notify --ready` only after the private socket
+is listening. `Type=notify`, `NotifyAccess=all` (the notifier is a child), and a
+30-second startup timeout make readiness part of systemd activation. The
+coordinator has both `Requires=shu-supervisor.service` and
+`After=shu-supervisor.service`: starting it pulls in the supervisor and waits for
+readiness; supervisor startup failure prevents the writer from starting. Stopping
+the supervisor also stops its dependent coordinator. Timer wakes may subsequently
+start the dependency again, so stop the timer first for maintenance.
 
-The future running-system kill-switch sequence is:
+SIGTERM/SIGINT close admission, cancel pending launches logically, close IPC, and
+call `shutdown({ terminateChildren: false })`. `KillMode=process` preserves worker
+processes on routine service restart. Recovery probes Linux process-start tokens;
+unknown identities HOLD instead of spawning duplicates. Disabled runtime dispatch
+blocks both recovered queued launches and new submissions; authenticated status
+remains available. This does not stop already running workers or prove quiet
+recovery (recovery may update durable HOLD/completion evidence).
 
-1. Record the active system and authoritative state. Turn off the committed
-   config gate and runtime dispatch gate through the reviewed deployment path;
-   stop the timer and quiesce the writer, checking that no tick remains in flight.
-2. Use SHU-250's reviewed shutdown/admission controls to account for queued work
-   and existing workers. Changing coordinator gates alone does not prove the
-   supervisor or surviving workers cannot write or launch.
-3. Once quiescent, record the post-switch baseline (including the pre-existing
-   lock file, remote comments/receipts/pauses, durable supervisor/workspace state
-   and process launch counters). Run the reviewed disabled tick repeatedly and
-   observe across at least two wake intervals. Require zero new launches, zero
-   write requests and an empty authoritative state diff. Exclude only explicitly
-   documented operational logs, never receipt/workspace state.
-4. Keep gates off and services quiescent during rollback. Restore backed-up host
-   files and modes, remove newly introduced files, reload the manager and verify
-   file and service-state diffs. Do not restore prior active/enabled settings that
-   would resume work without separate authorisation. Preserve evidence.
+The exported `stop({ terminateChildren: true })` records HOLD before signaling
+owned children, using the merged shutdown API. It is an explicit in-process control,
+not a new unauthenticated remote operation. After restart, recovered workers are
+not in the new daemon's owned-child map: operator quiescence must account for them
+separately. Existing worker authorization is rechecked by the merged wrapper before
+launch/publication; coordinator gates alone do not quiesce surviving workers.
 
-This sequence is documentation, not an executed demonstration. Concrete shutdown,
-admission, readiness, durable-state enumeration and restart/recovery proofs depend
-on SHU-250. Actual installation, crash tests and running-system kill-switch proof
-also require host access expressly excluded from this task.
+An existing/stale socket fails closed before recovery. Routine shutdown removes
+the socket through Node's server close. After an unclean crash, bounded retries can
+fail until an operator confirms the prior daemon is gone, inspects workers/state,
+and removes only its stale socket. There is deliberately no automatic deletion of
+an occupied socket. Deployment must also ensure only one supervisor owns a state
+root; filesystem claim safety is not a substitute for that service ownership.
 
-## Deterministic tests and mutation scope
+## Authoritative state and kill-switch evidence
 
-`test/service.test.mjs` contains the local harness, parameter escaping and syntax,
-idempotency/backup, drift/symlink rejection, destination/transaction exclusion,
-validation-before-write, real local flock exclusion/release, and partial-write
-rollback tests. Ten negative controls assert named `AssertionError` messages:
-six mutations of rendered unit policies, three mutations of collected evidence,
-and one source mutation omitting rollback restoration. These do not claim mutation
-coverage of SHU-250 or the existing coordinator. No existing source is mutated;
-the rollback source mutation executes from a temporary copy.
+`supervisorState(stateDir)` is read-only and recursively enumerates **all** entries,
+including branches, orders, runs, launches, completions, orphan launch records,
+unknown files and temporary files. It records bytes, modes, file mtimes and ctimes;
+missing durable trees, symlinks and special files fail with
+`SHU251_SUPERVISOR_STATE`. It does not construct `SupervisorStore`, whose constructor
+changes permissions. Compare inventories only while quiescent. Snapshots include
+sensitive work orders/completion tokens; keep them in private evidence storage.
+The socket lives outside this durable tree. Combine this inventory with workspace
+state, remote receipts/comments/pauses, process identities and launch/write counts
+for any eventual authoritative host audit.
+
+The local kill-switch harness seeds a RUNNING receipt and executes two ticks with
+runtime `ENABLE_DISPATCH=false` and committed config false. A tick with both fixture gates enabled, and a separate runtime-enabled/config-false
+tick through the same real coordinator harness, throw `SHU251_ZERO_LAUNCH`, proving
+adapter-call discrimination. The fixture's write and state channels are observation
+checks only: this scenario does not establish positive discrimination for
+`SHU251_ZERO_WRITE` or `SHU251_STATE_DIFF`. Synthetic evidence mutations test those
+assertions, not a live write-producing gate control. Do not claim a full
+running-system kill-switch proof from this fixture.
+
+The committed config gate is **not an independent kill switch**. Runtime
+`ENABLE_DISPATCH=true` can allow an authorized activation despite config false.
+There is no defence-in-depth claim for those two settings. Use the runtime gate,
+stop the timer and quiesce in-flight coordinator/supervisor/worker activity through
+the reviewed operational path. Keep both staged service gates false.
+
+## Host-only work excluded
+
+Host installation, credential delivery, service identity/permissions, unit/drop-in
+and enabled/active-state backups, daemon reload, activation, crash/restart proof,
+and running-system one-writer/kill-switch/rollback evidence require host access
+and remain unexecuted by design. No SHU-250 interface work remains deferred here.
+Before a future host audit, stop the timer, disable runtime admission and account
+for all existing workers; then baseline remote, workspace and supervisor state.
+Observe repeated disabled ticks across at least two wake intervals, requiring
+zero launches/writes and no authoritative durable changes. Preserve only the
+explicit unit-cache marker exception above. File staging rollback does not claim
+rollback of running services, and must never implicitly re-enable dispatch.

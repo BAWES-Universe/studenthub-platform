@@ -10,7 +10,9 @@ import { names, render, assertPolicy, verifySyntax } from './units.mjs';
 function rootCheck(root) {
   root = resolve(root);
   const temp = fs.realpathSync(tmpdir());
-  assert.ok(root.startsWith(temp + sep) && fs.realpathSync(root) === root && fs.lstatSync(root).isDirectory(), 'SHU251_DESTINATION: existing real temporary staging directory required');
+  let real;
+  try { real = fs.realpathSync(root); } catch { /* named destination refusal below */ }
+  assert.ok(root.startsWith(temp + sep) && real === root && fs.lstatSync(root).isDirectory(), 'SHU251_DESTINATION: existing real temporary staging directory required');
   assert.equal(fs.statSync(root).uid, process.getuid(), 'SHU251_OWNER: staging directory must be owned by caller');
   assert.equal(fs.statSync(root).mode & 0o022, 0, 'SHU251_PRIVATE: staging directory must not be group/world writable');
   return root;

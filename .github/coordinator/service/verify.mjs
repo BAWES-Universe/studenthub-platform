@@ -21,8 +21,8 @@ export function assertQuiet(before, after, launches, writes) {
   assert.equal(writes, 0, 'SHU251_ZERO_WRITE: disabled tick must make zero remote mutations');
   assert.deepEqual(after, before, 'SHU251_STATE_DIFF: disabled tick must preserve all fixture state');
 }
-export async function verifyKillSwitch() {
-  const h = createEpisodeHarness();
+export async function verifyKillSwitch({ enabled = false, configEnabled = enabled } = {}) {
+  const h = createEpisodeHarness({ configOverrides: { enable_dispatch: configEnabled } });
   try {
     // Seed durable RUNNING state without ever enabling dispatch or spawning.
     const made = createReceipt({ issue_id: h.issueId, authorization_ref: 'FIXTURE-OPUS-CONTRACT-20260905',
@@ -41,9 +41,9 @@ export async function verifyKillSwitch() {
     }
     const capture = () => structuredClone({ files: tree(h.dir), comments: h.comments, pauses: h.pauses, triggers: h.triggers, launched: h.launched });
     const before = capture();
-    assert.equal(h.config.enable_dispatch, false, 'SHU251_GATE: fixture config gate must be off');
-    for (let i = 0; i < 2; i++) {
-      const result = await h.runTick({ env: { ENABLE_DISPATCH: 'false' }, io: {
+    assert.equal(h.config.enable_dispatch, configEnabled, 'SHU251_GATE: fixture config must match requested control');
+    for (let i = 0; i < (enabled ? 1 : 2); i++) {
+      const result = await h.runTick({ env: { ENABLE_DISPATCH: enabled ? 'true' : 'false' }, io: {
         fetchImpl: async (url, options) => {
           const body = JSON.parse(options.body);
           if (/\bmutation\b/.test(body.query)) writes++;
@@ -58,7 +58,7 @@ export async function verifyKillSwitch() {
 }
 export function fixtureParameters(root) {
   // Syntax-only executables. These are not supervisor interface implementations.
-  return { workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], writerLock: join(root, 'host-tick.lock') };
+  return { workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], workspaceStateDir: root, writerLock: join(root, 'host-tick.lock') };
 }
 export async function verify() {
   const root = fs.mkdtempSync(join(tmpdir(), 'shu251-verify-'));

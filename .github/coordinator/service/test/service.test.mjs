@@ -143,3 +143,57 @@ test('SHU251 partial staging failure restores prior state', t => {
   assert.deepEqual(snapshot(root), prior, 'SHU251_ROLLBACK: prior bytes, modes and absence must be restored');
   assert.deepEqual(fs.readdirSync(root), [names[0]]);
 });
+
+test('SHU251 canonical writer lock accepted and foreign parameter refused', t => {
+  const params = fixtureParameters(fixture(t));
+  assertPolicy(render(params));
+  named(() => render({ ...params, writerLock: '/tmp/foreign.lock' }), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
+});
+test('SHU251 mutation: rendered foreign writer lock', t => {
+  const params = fixtureParameters(fixture(t)), units = render(params);
+  units[names[1]] = units[names[1]].replace(params.writerLock, '/tmp/foreign.lock');
+  named(() => assertPolicy(units), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
+});
+test('SHU251 nonexistent destination has named refusal', t => {
+  const root = fixture(t);
+  named(() => install(join(root, 'missing'), fixtureParameters(root)), 'SHU251_DESTINATION: existing real temporary staging directory required');
+});
+test('SHU251 mutation: unresolved timer placeholder', t => {
+  const units = render(fixtureParameters(fixture(t)));
+  units[names[2]] += '\n@UNRESOLVED@\n';
+  named(() => assertPolicy(units), 'SHU251_PARAMETER: unresolved template');
+});
+test('SHU251 mutation: enabled tick trips real kill-switch harness', async () => {
+  const { verifyKillSwitch } = await import('../verify.mjs');
+  await assert.rejects(() => verifyKillSwitch({ enabled: true }), error => error.name === 'AssertionError'
+    && error.message.includes('SHU251_ZERO_LAUNCH: disabled tick must make zero adapter calls'));
+});
+for (const [label, from, to, unit, message] of [
+  ['supervisor dependency removed', 'Requires=shu-supervisor.service', '', names[1], 'SHU251_DEPENDENCY: coordinator must require supervisor'],
+  ['supervisor readiness bypassed', 'Type=notify', 'Type=simple', names[0], 'SHU251_READINESS: supervisor must notify after recovery and listen'],
+]) test(`SHU251 mutation: ${label}`, t => {
+  const units = render(fixtureParameters(fixture(t)));
+  units[unit] = units[unit].replace(from, to);
+  named(() => assertPolicy(units), message);
+});
+test('SHU251 required CI runs both globs with service prerequisites', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../../../../package.json', import.meta.url)));
+  assert.equal(pkg.scripts['test:coordinator'], 'node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs', 'SHU251_CI: standard coordinator command must include both globs');
+  const ci = fs.readFileSync(new URL('../../../workflows/ci.yml', import.meta.url), 'utf8').split('  fast-checks:')[1];
+  assert.ok(ci.includes('run: npm run test:coordinator') && ci.includes('systemd-analyze --version && test -x /usr/bin/flock') && !ci.includes('continue-on-error:'), 'SHU251_CI: required fast-checks must enforce service tests and prerequisites');
+});
+
+test('SHU251 documentation scopes gates, timeout, verifier side effect and non-root baseline', () => {
+  const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  for (const text of ['not an independent kill switch', 'hung tick never times out', '/run/systemd/systemd-units-load', 'does not establish positive discrimination', 'Requires=shu-supervisor.service']) {
+    assert.ok(readme.includes(text), `SHU251_DOCUMENTATION: required operational qualification missing: ${text}`);
+  }
+  const baseline = fs.readFileSync(new URL('../../SHU-250-VALIDATION.md', import.meta.url), 'utf8');
+  assert.ok(baseline.includes('**non-root**') && baseline.includes('758 pass / 0 skipped'), 'SHU251_BASELINE: document non-root and root suite counts');
+});
+
+test('SHU251 runtime override trips harness even with committed config gate false', async () => {
+  const { verifyKillSwitch } = await import('../verify.mjs');
+  await assert.rejects(() => verifyKillSwitch({ enabled: true, configEnabled: false }), error => error.name === 'AssertionError'
+    && error.message.includes('SHU251_ZERO_LAUNCH: disabled tick must make zero adapter calls'));
+});
