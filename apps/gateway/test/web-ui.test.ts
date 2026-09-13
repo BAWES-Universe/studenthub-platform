@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import {
+  InMemoryApprovedProfileAdapter,
+  OwnProfileRepository,
+  PROFILE_PARITY_REVISION,
+  SYNTHETIC_PROFILE_FIXTURES,
+} from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createRuntimeLoginFromEnv } from "../src/login-runtime.js";
 import { PostgresAuthzStore } from "@studenthub/db";
@@ -11,18 +18,45 @@ const OTHER_SESSION = "t".repeat(43);
 const ORIGIN = "https://studenthub.test.invalid";
 const BROWSER = { accept: "text/html", cookie: `__Host-studenthub_session=${SESSION}` };
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, options: {
+  readonly links?: readonly { readonly principalId: string; readonly candidateRef: string }[];
+} = {}) {
   const rig = createSyntheticLoginRig(createLoginApplication);
   await rig.sessions.put({ id: SESSION, personId: "person-1" });
   await rig.sessions.put({ id: OTHER_SESSION, personId: "person-2" });
   const reads: string[] = [];
-  const people = new Map([
-    ["person-1", { id: "person-1", displayName: "Synthetic Noor", email: "noor@example.invalid" }],
-    ["person-2", { id: "person-2", displayName: "Other Person", email: "other@example.invalid" }],
+  const authz = new InMemoryAuthzStore({ principals: [
+    createPrincipal({ id: "person-1", pbuuids: ["pbuuid-1"], displayName: "Registry Name", email: "registry@example.invalid" }),
+    createPrincipal({ id: "person-2", pbuuids: ["pbuuid-2"] }),
+  ] });
+  await authz.grantMany("person-1", [
+    { orgId: "candidate:person-1", role: "candidate", scope: "self" },
+    { orgId: "company:synthetic", role: "recruiter", scope: "subtree" },
   ]);
+  const rows = new Map<string, unknown>([
+    ["candidate-1", SYNTHETIC_PROFILE_FIXTURES.populated],
+    ["candidate-2", { ...SYNTHETIC_PROFILE_FIXTURES.partial, candidate_id: 232, candidate_name: "Other Person" }],
+  ]);
+  const repository = new OwnProfileRepository({
+    principals: authz,
+    source: new InMemoryApprovedProfileAdapter({
+      links: options.links ?? [
+        { principalId: "person-1", candidateRef: "candidate-1" },
+        { principalId: "person-2", candidateRef: "candidate-2" },
+      ],
+      rows,
+    }),
+    today: () => "2026-09-13",
+  });
+  const profiles = {
+    async readOwn(request: Parameters<typeof repository.readOwn>[0]) {
+      reads.push(request.targetPersonId);
+      return repository.readOwn(request);
+    },
+  };
   const login: BrowserLoginApplication = { ...rig.app, web: {
     origin: ORIGIN, returnTo: rig.config.allowedReturnUrls[1],
-    async readProfile(id) { reads.push(id); return people.get(id); },
+    profiles,
   } };
   const server = createGatewayServer(undefined, undefined, undefined, login);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -30,7 +64,7 @@ async function fixture(t: TestContext) {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const url = `http://127.0.0.1:${address.port}`;
-  return { rig, login, people, reads, url };
+  return { rig, login, rows, profiles, reads, url };
 }
 
 test("HTML negotiation is opt-in and preserves JSON defaults and preferences", () => {
@@ -60,25 +94,30 @@ test("landing is public HTML with an exact configured login link and no profile 
   assert.match(await css.text(), /@media\(max-width:480px\)/);
 });
 
-test("real login application renders only the session owner's profile and leaves JSON unchanged", async (t) => {
+test("real login application serves the same typed projection to HTML and JSON with multiple grants", async (t) => {
   const f = await fixture(t);
   const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
   const body = await response.text();
   assert.equal(response.status, 200);
-  assert.match(body, /Synthetic Noor/);
-  assert.match(body, /noor@example.invalid/);
-  assert.match(body, /person-1/);
-  assert.doesNotMatch(body, /Other Person|other@example|person-2|synthetic-secret|candidate|admin/);
+  assert.match(body, /Noor Al-Sabah/);
+  assert.match(body, /C00231/);
+  assert.match(body, /Open to offers/);
+  assert.doesNotMatch(body, /Other Person|registry@example|person-1|person-2|SENSITIVE-|candidate_civil_id|candidate_resume/);
   assert.deepEqual(f.reads, ["person-1"]);
   assert.match(body, /method="post"/);
   assert.match(body, /editing isn’t enabled/);
   for (const accept of ["application/json", "*/*", "text/html;q=0, application/json"]) {
     const api = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, accept } });
-    assert.deepEqual(await api.json(), { personId: "person-1", role: "candidate" });
+    const projection = await api.json();
+    assert.equal(projection.version, "studenthub.own-profile.v1");
+    assert.equal(projection.fields.displayName.value, "Noor Al-Sabah");
+    assert.equal(projection.fields.age.value, 23);
+    assert.equal(projection.fields.civilExpired.value, false);
+    assert.ok(!JSON.stringify(projection).includes("SENSITIVE-"));
     assert.equal(api.headers.get("cache-control"), "no-store");
     assert.equal(api.headers.get("vary"), "Accept");
   }
-  assert.deepEqual(f.reads, ["person-1"], "JSON never reads browser-only fields");
+  assert.deepEqual(f.reads, ["person-1", "person-1", "person-1", "person-1"]);
 });
 
 test("private HTML is non-cacheable, has a restrictive CSP and loads no remote assets", async (t) => {
@@ -103,7 +142,7 @@ test("foreign person query, missing session and expired session never read priva
   ] as const) {
     const response = await fetch(f.url + path, { headers });
     assert.equal(response.status, status);
-    assert.doesNotMatch(await response.text(), /noor@example|Other Person|person-2|Synthetic Noor/);
+    assert.doesNotMatch(await response.text(), /registry@example|Other Person|person-2|Noor Al-Sabah/);
     assert.equal(response.headers.get("cache-control"), "no-store");
   }
   assert.deepEqual(f.reads, []);
@@ -112,30 +151,65 @@ test("foreign person query, missing session and expired session never read priva
   assert.deepEqual(f.reads, ["person-2"]);
 });
 
-test("a misbound private-profile adapter fails closed instead of displaying another person's details", async (t) => {
-  const f = await fixture(t);
-  f.people.set("person-1", f.people.get("person-2")!);
-  const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
-  assert.equal(response.status, 503);
-  assert.doesNotMatch(await response.text(), /Other Person|other@example|person-2/);
+test("missing and conflicted approved linkage return the same closed not_found response", async (t) => {
+  const cases = [
+    [] as const,
+    [
+      { principalId: "person-1", candidateRef: "candidate-1" },
+      { principalId: "person-1", candidateRef: "candidate-2" },
+    ] as const,
+    [
+      { principalId: "person-1", candidateRef: "candidate-1" },
+      { principalId: "person-2", candidateRef: "candidate-1" },
+    ] as const,
+  ];
+  for (const links of cases) {
+    const f = await fixture(t, { links });
+    const response = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, accept: "application/json" } });
+    assert.equal(response.status, 404);
+    const body = await response.text();
+    assert.equal(body, JSON.stringify({ error: "profile_not_found" }));
+    assert.doesNotMatch(body, /candidate-|person-|registry|SENSITIVE/);
+  }
 });
 
-test("HTML escapes hostile stored values and shows absent fields honestly", async (t) => {
+test("a malformed approved profile fails closed instead of exposing imported values", async (t) => {
   const f = await fixture(t);
-  f.people.set("person-1", { id: "person-1", displayName: '<img src=x onerror="alert(1)"> & name', email: '<script>alert("private")</script>' });
+  f.rows.set("candidate-1", {
+    ...SYNTHETIC_PROFILE_FIXTURES.populated,
+    candidate_gender: "SENSITIVE-MALFORMED-GENDER",
+    candidate_civil_id: "SENSITIVE-CIVIL-SENTINEL",
+  });
+  const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
+  assert.equal(response.status, 503);
+  assert.doesNotMatch(await response.text(), /SENSITIVE|Noor Al-Sabah/);
+  const json = await fetch(`${f.url}/profile`, { headers: { ...BROWSER, accept: "application/json" } });
+  assert.equal(json.status, 503);
+  assert.deepEqual(await json.json(), { error: "profile_unavailable" });
+});
+
+test("HTML escapes hostile imported values and renders unavailable fields explicitly", async (t) => {
+  const f = await fixture(t);
+  f.rows.set("candidate-1", {
+    ...SYNTHETIC_PROFILE_FIXTURES.partial,
+    candidate_id: 1,
+    candidate_name: '<img src=x onerror="alert(1)"> & name',
+    candidate_intro: '<script>alert("private")</script>',
+  });
   const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
   const body = await response.text();
   assert.match(body, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp; name/);
   assert.match(body, /&lt;script&gt;/);
   assert.doesNotMatch(body, /<img|<script/);
-  f.people.set("person-1", { id: "person-1", displayName: "", email: "" });
+  f.rows.set("candidate-1", SYNTHETIC_PROFILE_FIXTURES.unavailable);
   const empty = await fetch(`${f.url}/profile`, { headers: BROWSER });
-  assert.equal((await empty.text()).match(/Not available yet/g)?.length, 2);
+  assert.equal((await empty.text()).match(/data-state="unavailable"/g)?.length, 19);
+  assert.match(await (await fetch(`${f.url}/profile`, { headers: BROWSER })).text(), /Unavailable means/);
 });
 
 test("unavailable profile dependencies render a safe retry state without killing the gateway", async (t) => {
   const f = await fixture(t);
-  f.login.web!.readProfile = async () => { throw new Error("database password=do-not-display"); };
+  f.profiles.readOwn = async () => { throw new Error("database password=do-not-display"); };
   const response = await fetch(`${f.url}/profile`, { headers: BROWSER });
   assert.equal(response.status, 503);
   const body = await response.text();
@@ -237,7 +311,7 @@ test("browser start/callback reuse real OIDC state, PKCE and session creation", 
   }
 });
 
-test("runtime wires the browser reader to the authorized principal and uses only the exact same-origin profile return", async (t) => {
+test("runtime wires the approved-data repository to the authorized principal and exact same-origin return", async (t) => {
   const env = {
     DATABASE_URL: "postgres://synthetic:synthetic@127.0.0.1:1/synthetic", OIDC_ISSUER: "https://identity.test.invalid/",
     OIDC_CLIENT_ID: "synthetic", OIDC_CLIENT_SECRET: "synthetic", OIDC_CALLBACK_URL: `${ORIGIN}/login/callback`,
@@ -248,15 +322,26 @@ test("runtime wires the browser reader to the authorized principal and uses only
   t.mock.method(PostgresAuthzStore.prototype, "getPrincipal", async (id: string) => {
     seen.push(id); return { id, displayName: "Stored Name", email: "stored@example.invalid", pbuuids: [] };
   });
-  const runtime = createRuntimeLoginFromEnv(env)!;
+  const approved = new InMemoryApprovedProfileAdapter({
+    links: [{ principalId: "authorized-person", candidateRef: "candidate-authorized" }],
+    rows: new Map([["candidate-authorized", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+  });
+  const runtime = createRuntimeLoginFromEnv(env, approved)!;
   t.after(() => runtime.close());
   assert.equal(runtime.application.web?.origin, ORIGIN);
   assert.equal(runtime.application.web?.returnTo, `${ORIGIN}/profile`);
-  assert.equal((await runtime.application.web?.readProfile("authorized-person"))?.displayName, "Stored Name");
+  const profile = await runtime.application.web?.profiles.readOwn({
+    requesterPrincipalId: "authorized-person", targetPersonId: "authorized-person",
+  });
+  assert.equal(profile?.kind, "found");
+  if (profile?.kind === "found") assert.equal(profile.profile.fields.displayName.state === "available" && profile.profile.fields.displayName.value, "Noor Al-Sabah");
   assert.deepEqual(seen, ["authorized-person"]);
   const other = createRuntimeLoginFromEnv({ ...env, LOGIN_ALLOWED_RETURN_URLS: "https://other.test.invalid/profile" })!;
   t.after(() => other.close());
   assert.equal(other.application.web?.returnTo, undefined);
+  assert.deepEqual(await other.application.web?.profiles.readOwn({
+    requesterPrincipalId: "unknown", targetPersonId: "unknown",
+  }), { kind: "not_found" });
 });
 
 test("unconfigured browser login gives a truthful unavailable page and leaves machine routes disabled", async (t) => {
