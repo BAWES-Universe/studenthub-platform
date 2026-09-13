@@ -85,7 +85,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
-import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, REVIEW_LANES } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane } from "./review-routing.mjs";
+// SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
+// the activation record's accepted lanes and the routing module's review
+// capability can never drift apart.
+import { REVIEW_LANES } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
