@@ -3,6 +3,7 @@
 // Linux dirfds plus O_NOFOLLOW keep every file read inside its pinned directory.
 import fs from "node:fs";
 import path from "node:path";
+import { baseBundlePath } from "./base-bundle.mjs";
 import { randomUUID } from "node:crypto";
 import { brokerGit } from "./push-broker.mjs";
 import { validateWorkspaceScope } from "./workspace-scope.mjs";
@@ -136,11 +137,7 @@ export async function snapshotWorkspaceResult({ dir, worktree, target_sha, attem
     return r.stdout;
   };
   if (workspace_scope === "scoped") {
-    const baseBundle = path.join(stateDir, `${attempt_id}.base.bundle`);
-    const bundleStat = fs.lstatSync(baseBundle);
-    if (!bundleStat.isFile() || bundleStat.isSymbolicLink() || bundleStat.uid !== process.getuid() || (bundleStat.mode & 0o077)) {
-      throw Object.assign(new Error("RESULT_SCOPE_REFUSED: private bound-base bundle is unavailable"), { workspaceCode: "RESULT_SCOPE_REFUSED" });
-    }
+    const baseBundle = baseBundlePath(env, attempt_id, { mustExist: true });
     // Fetch while the worker alternate is temporarily detached. Otherwise Git
     // may treat partial-clone objects reachable through that alternate as
     // already present and omit hidden base blobs from the broker repository.

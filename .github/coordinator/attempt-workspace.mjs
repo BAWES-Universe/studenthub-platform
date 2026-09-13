@@ -7,6 +7,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv, validateRepoUrl } from "./push-broker.mjs";
 import { normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import { baseBundlePath } from "./base-bundle.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -210,7 +211,7 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
         // Preserve the complete authoritative base before deriving the worker's
         // parentless scoped base. The broker later reconstructs against this
         // full target; the scoped SHA is never publication or review authority.
-        const baseBundle = path.join(stateRoot, `${receipt.attempt_id}.base.bundle`);
+        const baseBundle = baseBundlePath(env, receipt.attempt_id);
         if (fs.existsSync(baseBundle)) throw new Error("unowned scoped base bundle already exists; refusing overwrite");
         git(["bundle", "create", baseBundle, "refs/heads/bound"], source);
         fs.chmodSync(baseBundle, 0o600);

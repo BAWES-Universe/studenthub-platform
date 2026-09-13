@@ -527,7 +527,10 @@ export async function pushExactSha({
       if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
       result_sha = await snapshotImpl({ dir: remoteCwd, worktree: cwd, target_sha,
         attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
-    } catch (error) { return held(`workspace result refused: ${error.message}`); }
+    } catch (error) {
+      return { ...held(`workspace result refused: ${error.message}`),
+        ...(error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE" ? { reason_code: error.workspaceCode } : {}) };
+    }
   }
 
   // --- ancestry: result_sha must descend from target_sha ----------------------
@@ -584,7 +587,12 @@ export async function pushExactSha({
         attempt_id, stateDir, branch, repo, gitImpl, env, workspace_scope, scope_phase, allowed_paths, scoped_base_sha });
       cleanOk = again === result_sha;
       cleanDetail = "workspace changed after snapshot";
-    } catch (error) { cleanOk = false; cleanDetail = error.message; }
+    } catch (error) {
+      if (error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE") {
+        return { ...held(error.message), reason_code: error.workspaceCode };
+      }
+      cleanOk = false; cleanDetail = error.message;
+    }
   } else {
     // NOT `git status` in the worker worktree: that reads the worker's config
     // and executes its filters. See brokerCleanTree.

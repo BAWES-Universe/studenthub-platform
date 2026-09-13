@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const cases = [
+  ["SHU-244 M25 reader reverts to adapter root", "workspace-result.mjs", 'const baseBundle = baseBundlePath(env, attempt_id, { mustExist: true });', 'const baseBundle = path.join(stateDir, `${attempt_id}.base.bundle`);', "SHU-244 A10"],
+  ["SHU-244 M26 broker drops typed bundle refusal", "push-broker.mjs", 'error.workspaceCode === "BASE_BUNDLE_UNAVAILABLE" ? { reason_code: error.workspaceCode } : {}', 'false ? { reason_code: error.workspaceCode } : {}', "SHU-244 A11"],
+  ["SHU-244 M27 adapter drops bundle refusal code", "adapters/codex-cli.mjs", 'push.reason_code === "BASE_BUNDLE_UNAVAILABLE" ? push.reason_code : reasonCode', 'reasonCode', "SHU-241 A4"],
   ["M1 trap admitted initially", "config.json", '      "tools/fixture/test/scan-vacuous.test.mjs"\n', '      "tools/fixture/test/scan-vacuous.test.mjs",\n      "tools/fixture-conformance/scan-vacuous.expectations.mjs"\n', "SHU-241 A1"],
   ["M2 literal-path guard removed", "workspace-scope.mjs", '        path.posix.normalize(entry) !== entry || /[*?[\\]{}!]/.test(entry)) {', '        path.posix.normalize(entry) !== entry) {', "SHU-241 A1"],
   ["M3 full tree bundled instead of scoped tree", "attempt-workspace.mjs", 'git(["read-tree", "--empty"]);', 'git(["read-tree", target_sha]);', "SHU-241 A2:"],
