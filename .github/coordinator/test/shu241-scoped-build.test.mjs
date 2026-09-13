@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { deriveScopedBaseCommit, deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, REMOTE_RETIRE_ARGS, workspaceBindingConflicts } from "../attempt-workspace.mjs";
 import { pushExactSha } from "../push-broker.mjs";
 import { validateScopedResultDiff } from "../workspace-result.mjs";
+import { baseBundlePath, BaseBundleUnavailableError } from "../base-bundle.mjs";
 import { callbackBindingValid, createReceipt, foldLaunchOutcome, nextReceiptState, preparedLaunchOptions, receiptCommentBody, validateReceipt } from "../reconcile.mjs";
 import { createEpisodeHarness } from "./fixture/episode-harness.mjs";
 import * as claude from "../adapters/claude-code.mjs";
@@ -128,7 +129,7 @@ test("SHU-241 A3: base-preserving scoped snapshot changes only an allowed path a
   const f = fixture(); try {
     const r = f.receipt(); const { cwd } = scopedWorkspace(f, r.attempt_id);
     fs.writeFileSync(path.join(cwd, SHU140_INITIAL_BUILD_PATHS[0]), "export const value = 3;\n");
-    const result = await pushExactSha({ stateDir: f.state, attempt_id: r.attempt_id, result_sha: null, target_sha: f.sha, branch: BRANCH, repo: REPO,
+    const result = await pushExactSha({ env: f.env, stateDir: f.state, attempt_id: r.attempt_id, result_sha: null, target_sha: f.sha, branch: BRANCH, repo: REPO,
       worktree: cwd, allowedRoot: f.root, remoteUrl: `file://${f.remote}`, allowedHost: "file", workspaceReady: true,
       workspace_scope: r.workspace_scope, scope_phase: r.scope_phase, allowed_paths: r.allowed_paths, scoped_base_sha: r.scoped_base_sha });
     assert.equal(result.ok, true, result.reason);
@@ -137,6 +138,97 @@ test("SHU-241 A3: base-preserving scoped snapshot changes only an allowed path a
     assert.equal(git(f.remote, "show", `${result.remote_head}:${SHU140_TRAP_PATH}`), "SHU241_HIDDEN_SENTINEL", "hidden base entry is preserved, not deleted");
     assert.equal(git(f.remote, "rev-parse", `${result.remote_head}^`), f.sha, "scoped and full flows retain the exact bound parent");
   } finally { f.cleanup(); }
+});
+
+for (const realWorkspace of [false, true]) test(`SHU-244 A10: distinct-root scoped handoff ${realWorkspace ? "production workspace" : "bundle regression"}`, { skip: realWorkspace && !canSwitch && "host cannot switch worker uid" }, async () => {
+  const f = fixture(); try {
+    const adapterState = path.join(f.dir, "coordinator-runs"); fs.mkdirSync(adapterState, { mode: 0o700 });
+    const r = f.receipt();
+    const { cwd } = realWorkspace ? f.prepare(r) : scopedWorkspace(f, r.attempt_id);
+    assert.equal(fs.existsSync(path.join(cwd, SHU140_TRAP_PATH)), false);
+    fs.writeFileSync(path.join(cwd, SHU140_INITIAL_BUILD_PATHS[0]), "export const value = 244;\n");
+    const result = await pushExactSha({ env: f.env, stateDir: adapterState, attempt_id: r.attempt_id, result_sha: null, target_sha: f.sha, branch: BRANCH, repo: REPO,
+      worktree: cwd, allowedRoot: f.root, remoteUrl: `file://${f.remote}`, allowedHost: "file", workspaceReady: true,
+      workspace_scope: r.workspace_scope, scope_phase: r.scope_phase, allowed_paths: r.allowed_paths, scoped_base_sha: r.scoped_base_sha });
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(git(f.remote, "rev-parse", `refs/heads/${BRANCH}`), result.remote_head);
+    assert.equal(git(f.remote, "rev-parse", `${result.remote_head}^`), f.sha);
+    assert.equal(git(f.remote, "show", `${result.remote_head}:${SHU140_TRAP_PATH}`), "SHU241_HIDDEN_SENTINEL");
+    assert.equal(git(f.remote, "diff", "--name-only", f.sha, result.remote_head), SHU140_INITIAL_BUILD_PATHS[0]);
+    const binding = JSON.parse(fs.readFileSync(path.join(adapterState, `workspace-result-${r.attempt_id}.json`)));
+    assert.equal(binding.result_sha, result.remote_head);
+    assert.equal(fs.existsSync(path.join(adapterState, `${r.attempt_id}.base.bundle`)), false);
+  } finally { f.cleanup(); }
+});
+
+test("SHU-244 A11: unavailable or divergent bundle authority refuses before binding and push with actionable code", async () => {
+  const f = fixture(); try {
+    const adapterState = path.join(f.dir, "coordinator-runs"); fs.mkdirSync(adapterState, { mode: 0o700 });
+    const r = f.receipt(); const { cwd } = scopedWorkspace(f, r.attempt_id);
+    fs.writeFileSync(path.join(cwd, SHU140_INITIAL_BUILD_PATHS[0]), "export const value = 244;\n");
+    const correct = path.join(f.state, `${r.attempt_id}.base.bundle`);
+    assert.equal(baseBundlePath(f.env, r.attempt_id, { mustExist: true }), correct);
+    for (const root of [undefined, "relative", adapterState]) {
+      const env = { ...f.env, SHU_WORKSPACE_STATE_DIR: root };
+      assert.throws(() => baseBundlePath(env, r.attempt_id, { mustExist: true }), (error) => {
+        assert.ok(error instanceof BaseBundleUnavailableError);
+        assert.equal(error.code, "BASE_BUNDLE_UNAVAILABLE");
+        assert.ok(error.message.includes(JSON.stringify(root ?? null)));
+        return true;
+      });
+      const result = await pushExactSha({ env, stateDir: adapterState, attempt_id: r.attempt_id, result_sha: null, target_sha: f.sha, branch: BRANCH, repo: REPO,
+        worktree: cwd, allowedRoot: f.root, remoteUrl: `file://${f.remote}`, allowedHost: "file", workspaceReady: true,
+        workspace_scope: r.workspace_scope, scope_phase: r.scope_phase, allowed_paths: r.allowed_paths, scoped_base_sha: r.scoped_base_sha });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason_code, "BASE_BUNDLE_UNAVAILABLE");
+      assert.match(result.reason, /SHU_WORKSPACE_STATE_DIR=.*bundle=/);
+      assert.equal(git(f.remote, "rev-parse", `refs/heads/${BRANCH}`), f.sha);
+      assert.equal(fs.existsSync(path.join(adapterState, `workspace-result-${r.attempt_id}.json`)), false);
+      assert.equal(fs.existsSync(path.join(adapterState, `push-${r.attempt_id}.json`)), false);
+    }
+    const saved = `${correct}.saved`; fs.renameSync(correct, saved);
+    assert.throws(() => baseBundlePath(f.env, r.attempt_id, { mustExist: true }), BaseBundleUnavailableError);
+    fs.symlinkSync(saved, correct);
+    assert.throws(() => baseBundlePath(f.env, r.attempt_id, { mustExist: true }), BaseBundleUnavailableError);
+    fs.unlinkSync(correct); fs.renameSync(saved, correct); fs.chmodSync(correct, 0o644);
+    assert.throws(() => baseBundlePath(f.env, r.attempt_id, { mustExist: true }), BaseBundleUnavailableError);
+  } finally { f.cleanup(); }
+});
+
+test("SHU-244 A12: launch-time base-bundle refusal persists its typed code and configured paths before any worker launch", async () => {
+  const h = createEpisodeHarness({
+    githubToken: "github-test-token",
+    configOverrides: { fixture_lane: {
+      id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
+      initial_build_paths: [...SHU140_INITIAL_BUILD_PATHS], revision_paths: [...SHU140_REVISION_PATHS], seeded_defect_path: SHU140_TRAP_PATH,
+    } },
+  });
+  try {
+    const configuredRoot = "/srv/shu/state/workspaces";
+    let attemptedBundle;
+    const tick = await h.runTick({
+      env: { SHU_WORKSPACE_STATE_DIR: configuredRoot },
+      io: {
+        deriveScopedBaseSha: async () => "d".repeat(40),
+        prepareWorkspace: async ({ receipt }) => {
+          attemptedBundle = path.join(configuredRoot, `${receipt.attempt_id}.base.bundle`);
+          throw new BaseBundleUnavailableError(configuredRoot, attemptedBundle, new Error("bundle creation denied"));
+        },
+      },
+    });
+    assert.equal(tick.code, 2, tick.text);
+    assert.equal(h.launched.length, 0, "typed preparation refusal must stop before the adapter boundary");
+    const held = h.latestFor("codex-builder");
+    assert.equal(held.stage, "HOLD", "the durable launch intent becomes a terminal HOLD");
+    assert.ok(held.notes.includes("adapter reason code: BASE_BUNDLE_UNAVAILABLE"), "HOLD preserves the stable refusal code");
+    const refusal = held.notes.find((note) => note.startsWith("held: attempt workspace preparation"));
+    assert.ok(refusal, "HOLD retains an actionable preparation refusal");
+    assert.ok(refusal.includes(`SHU_WORKSPACE_STATE_DIR=${JSON.stringify(configuredRoot)}`), "receipt names the configured workspace root");
+    assert.ok(refusal.includes(`bundle=${JSON.stringify(attemptedBundle)}`), "receipt names the exact attempted bundle path");
+    assert.deepEqual({ workspace_scope: held.workspace_scope, scope_phase: held.scope_phase, allowed_paths: held.allowed_paths, scoped_base_sha: held.scoped_base_sha }, {
+      workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha: "d".repeat(40),
+    }, "diagnostic HOLD cannot widen or discard the immutable scoped authority");
+  } finally { h.cleanup(); }
 });
 
 test("SHU-241 A4: new, mode-only, and renamed out-of-scope content is refused before binding or publication", async () => {
@@ -154,7 +246,7 @@ test("SHU-241 A4: new, mode-only, and renamed out-of-scope content is refused be
     const f = fixture(); try {
     const r = f.receipt(); const { cwd } = scopedWorkspace(f, r.attempt_id); attack(f, cwd);
     const before = git(f.remote, "rev-parse", `refs/heads/${BRANCH}`);
-    const result = await pushExactSha({ stateDir: f.state, attempt_id: r.attempt_id, result_sha: null, target_sha: f.sha, branch: BRANCH, repo: REPO,
+    const result = await pushExactSha({ env: f.env, stateDir: f.state, attempt_id: r.attempt_id, result_sha: null, target_sha: f.sha, branch: BRANCH, repo: REPO,
       worktree: cwd, allowedRoot: f.root, remoteUrl: `file://${f.remote}`, allowedHost: "file", workspaceReady: true,
       workspace_scope: r.workspace_scope, scope_phase: r.scope_phase, allowed_paths: r.allowed_paths, scoped_base_sha: r.scoped_base_sha });
     assert.equal(result.ok, false, `${name} unexpectedly published`); assert.match(result.reason, /RESULT_SCOPE_REFUSED/);
@@ -170,16 +262,19 @@ test("SHU-241 A4: new, mode-only, and renamed out-of-scope content is refused be
   const callback = { attempt_id, target_sha, result_sha: null, stage: "BUILD_READY", links: ["focused scope probe"] };
   const stdout = [JSON.stringify({ type: "thread.started", thread_id: randomUUID() }), JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(callback) } })].join("\n");
   const state = fs.mkdtempSync(path.join(tmpdir(), "shu241-adapter-"));
+  for (const expectedCode of ["RESULT_SCOPE_REFUSED", "BASE_BUNDLE_UNAVAILABLE"]) {
   const held = await (await import("../adapters/codex-cli.mjs")).launchBuilder({ issue_id: "SHU-140", authorization_ref: receipt.authorization_ref,
     attempt_id, target_sha, task_context: "scope refusal", branch: BRANCH, repo: REPO, cwd: "/repo", schemaFile: path.join(state, "schema.json"),
     workspace_scope: "scoped", scope_phase: "initial", allowed_paths: [...SHU140_INITIAL_BUILD_PATHS], scoped_base_sha: "d".repeat(40), readHeadImpl: async () => "d".repeat(40),
     env: { PATH: "/usr/bin", HOME: "/root", CODEX_HOME: "/root/.codex", SHU_WORKER_LAUNCH_WRAPPER: "setpriv --reuid=worker", SHU_WORKTREE_ROOT: "/repo", SHU_PUSH_REMOTE_URL: "git@github.com:BAWES-Universe/studenthub-platform.git" },
     execFileImpl: (_f, _a, _o, cb) => queueMicrotask(() => cb(null, stdout, "")),
-    io: { codexStateDir: state, pushBrokerImpl: async () => ({ ok: false, stage: "HOLD", reason: "workspace result refused: RESULT_SCOPE_REFUSED" }) } });
-  assert.equal(held.reason_code, "RESULT_SCOPE_REFUSED", "adapter exposes the stable scope refusal code");
+    io: { codexStateDir: state, pushBrokerImpl: async () => ({ ok: false, stage: "HOLD", reason: `workspace result refused: ${expectedCode}`, reason_code: expectedCode === "BASE_BUNDLE_UNAVAILABLE" ? expectedCode : undefined }) } });
+  assert.equal(held.reason_code, expectedCode, "adapter exposes the stable refusal code");
   const folded = foldLaunchOutcome(launched.receipt, held);
   assert.equal(folded.receipt.stage, "HOLD");
-  assert.ok(folded.receipt.notes.includes("adapter reason code: RESULT_SCOPE_REFUSED"), "append-only receipt records the scope refusal code");
+  assert.ok(folded.receipt.notes.includes(`adapter reason code: ${expectedCode}`), "append-only receipt records the refusal code");
+  fs.rmSync(state, { recursive: true, force: true }); fs.mkdirSync(state, { mode: 0o700 });
+  }
   fs.rmSync(state, { recursive: true, force: true });
 });
 

@@ -944,7 +944,7 @@ export async function launchBuilder({
         const reasonCode = /\bRESULT_SCOPE_REFUSED\b/.test(String(push.reason ?? "")) ? "RESULT_SCOPE_REFUSED" : undefined;
         return { stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
           callback, evidence_links: callback.links,
-          reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, reason_code: reasonCode,
+          reason: `push broker did not confirm result commit: ${push.reason ?? "unknown"}`, reason_code: push.reason_code === "BASE_BUNDLE_UNAVAILABLE" ? push.reason_code : reasonCode,
           pause_adapter: true, ok: false };
       }
       // Only a confirmed host result can become routable callback evidence.

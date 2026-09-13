@@ -2553,8 +2553,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
   } catch (error) {
     const diagnosis = workspaceFailureCode(error);
+    const bundleDetail = diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? `; ${error.message}` : "";
     const held = nextReceiptState(launchIntent.receipt, { type: "hold",
-      reason: `attempt workspace preparation or final activation check refused (${diagnosis}); no worker launched` }, { now: io.now });
+      reason: `attempt workspace preparation or final activation check refused (${diagnosis})${bundleDetail}; no worker launched`,
+      ...(diagnosis === "BASE_BUNDLE_UNAVAILABLE" ? { reason_code: diagnosis } : {}) }, { now: io.now });
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(held.receipt) }, linearToken, fetchImpl);
     if (io.stdout) io.stdout(`dispatch: ${candidate.id} HOLD before worker launch — workspace preparation or final activation check refused (${diagnosis})`);
     return 2;
