@@ -1504,6 +1504,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0002_enforce_single_root_admin",
           "0003_create_login_tables",
           "0004_create_authorization_mutation_audit",
+          "0145_candidate_private_documents",
         ],
         "each migration is recorded exactly once",
       );
@@ -1551,6 +1552,7 @@ test(
             "0002_enforce_single_root_admin",
             "0003_create_login_tables",
             "0004_create_authorization_mutation_audit",
+            "0145_candidate_private_documents",
           ],
         );
       } finally {
