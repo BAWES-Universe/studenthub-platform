@@ -91,7 +91,7 @@ test("signed work order binds attempt, repository, branch, and exact head", () =
 test("durable acknowledgement returns before worker completion and does not serialize submissions", async () => {
   const { instance, children, schedules } = supervisor();
   const first = await instance.submit(signedSupervisorRequest(order(), SECRET));
-  const secondOrder = order({ attempt_id: "22222222-2222-4333-8444-555555555555", issue_id: "SHU-70" });
+  const secondOrder = order({ attempt_id: "22222222-2222-4333-8444-555555555555", issue_id: "SHU-70", branch: "feat/independent-shu-70" });
   const second = await instance.submit(signedSupervisorRequest(secondOrder, SECRET));
   assert.equal(first.stage, "ACCEPTED");
   assert.equal(second.stage, "ACCEPTED");

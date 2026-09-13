@@ -29,6 +29,7 @@ import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS }
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
+import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import path from "node:path";
@@ -403,6 +404,11 @@ export async function loadAdapterModule(adapter, io = {}) {
 }
 
 // Resolve the adapter for a receipt or a selection candidate.
+export async function dispatchModuleFor(adapter, receipt, env, io = {}) {
+  if (io.adapterModules?.[adapter] && !io.supervisorTransport) return io.adapterModules[adapter];
+  return supervisorAdapter(receipt, env, io);
+}
+
 export async function adapterModuleFor(receiptOrCandidate, io = {}) {
   return loadAdapterModule(adapterNameFor(receiptOrCandidate?.requested_worker), io);
 }
@@ -2072,7 +2078,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — Workspace Agents credentials unavailable; slot held`);
         continue;
       }
-      const adapterModule = await loadAdapterModule(adapter, io);
+      const adapterModule = await dispatchModuleFor(adapter, receipt, env, io);
       const conflicting = receipts.find(
         (other) =>
           other.issue_id === receipt.issue_id &&
@@ -2178,10 +2184,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
       const adapter = adapterNameFor(receipt.requested_worker);
-      const adapterModule = await loadAdapterModule(adapter, io);
+      const adapterModule = await dispatchModuleFor(adapter, receipt, env, io);
       // Callback evidence from the durable issue thread (same attempt_id bound);
       // selection is deterministic by newest createdAt (GPT BLOCK #2).
-      const evidence = parseEvidenceFromComments(
+      let evidence = parseEvidenceFromComments(
         commentsByIssue.get(receipt.issue_id) ?? [],
         receipt.attempt_id,
         config.linear_callback_actor_ids,
@@ -2215,6 +2221,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           target_sha: receipt.target_sha,
           evidence,
           current_head: headVerified ? current_head : undefined,
+          headVerified: headVerified && Boolean(githubToken),
           ...adapterLaunchOptions(adapter, env),
           fetchImpl,
           io, // hermes-pool lease reads (SHU-62); ignored by workspace-agents
@@ -2224,9 +2231,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (io.stdout) io.stdout(`lifecycle: poll failed for ${receipt.issue_id} ${receipt.external_run_id}: ${err.message} — state unchanged, slot held`);
         continue;
       }
+      if (adapterModule.supervised) evidence = outcome.callback;
       let event = null;
       if (outcome.stage === "RUNNING") {
-        event = { type: "run_status", status: outcome.adapter_status, worker_identity: outcome.worker_identity ?? null };
+        if (adapterModule.supervised && !outcome.heartbeat) continue;
+        event = { type: "run_status", status: outcome.adapter_status, worker_identity: outcome.worker_identity ?? null,
+          ...(adapterModule.supervised ? { at: outcome.heartbeat } : {}) };
       } else if (outcome.stage === "COMPLETED") {
         if (!headVerified) {
           // Completed upstream but the live head could not be verified — HOLD,
@@ -2236,18 +2246,31 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           event = {
             type: "run_status",
             status: "completed",
-            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
+            callback: adapterModule.supervised ? outcome.callback : { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
             worker_identity: outcome.worker_identity ?? null,
           };
         }
       } else if (outcome.stage === "HOLD") {
-        event = { type: "run_status", status: "completed" }; // completed without validated callback → machine HOLDs
+        event = { type: "run_status", status: "completed",
+          ...(adapterModule.supervised ? { callback: outcome.callback, worker_identity: outcome.worker_identity } : {}) }; // absent or invalid callback → machine HOLDs
       } else if (outcome.stage === "FAILED") {
         event = { type: "run_status", status: "failed", error_code: outcome.error_code, error_kind: outcome.error_kind, worker_identity: outcome.worker_identity ?? null };
       } else {
         continue; // UNCHANGED (transient poll failure or missing credentials) — never touch state, never release the slot
       }
-      const transition = nextReceiptState(receipt, event, {
+      let observedReceipt = receipt;
+      if (adapterModule.supervised && outcome.worker_identity && outcome.worker_identity !== receipt.worker_identity) {
+        // Persist adapter-observed identity before verdict folding, just as a
+        // synchronous launch acknowledges its session before its terminal result.
+        const observed = nextReceiptState(receipt, { type: "worker_ack", external_run_id: receipt.external_run_id,
+          worker_identity: outcome.worker_identity, adapter_status: "in_progress" }, { now: io.now });
+        const issueId = resolveLinearIssueId(receipt, "supervisor session acknowledgement");
+        if (!observed.accepted || !issueId) continue;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId, body: receiptCommentBody(observed.receipt) }, linearToken, fetchImpl);
+        observedReceipt = observed.receipt;
+        lifecyclePersisted = true;
+      }
+      const transition = nextReceiptState(observedReceipt, event, {
         now: io.now,
         current_head,
         // A write attempt is expected to move its branch. Bind its callback to
@@ -2255,6 +2278,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         expected_head: !githubToken || roleForRequestedWorker(receipt.requested_worker) === "review"
           ? receipt.target_sha
           : evidence?.result_sha,
+        ...(adapterModule.supervised ? { expected_head: isWriterRole(roleForReceipt(receipt))
+          ? evidence?.result_sha : receipt.target_sha } : {}),
         // Fold-time author exclusion (SHU-73): the lineage lets the fold reject
         // a review verdict whose observed session is a lineage author.
         lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
@@ -2267,7 +2292,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const changed =
         nextReceipt.stage !== receipt.stage ||
         nextReceipt.adapter_status !== receipt.adapter_status ||
-        nextReceipt.worker_identity !== receipt.worker_identity;
+        nextReceipt.worker_identity !== receipt.worker_identity ||
+        (adapterModule.supervised && nextReceipt.timestamps.heartbeat !== receipt.timestamps.heartbeat);
       if (!changed) continue;
       const linearIssueId = resolveLinearIssueId(receipt, "receipt persistence");
       if (!linearIssueId) continue; // fail closed: never write to a wrong/unresolved issue
@@ -2549,6 +2575,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
   // known-good and before crossing the adapter boundary. A refused preflight did
   // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
+  if (!io.adapterModules?.[adapter] || io.supervisorTransport) {
+    receipt.notes = [...receipt.notes, SUPERVISOR_DISPATCH_NOTE];
+  }
   const launchIntent = nextReceiptState(receipt, { type: "launch" }, { now: io.now });
   if (!launchIntent.accepted) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
@@ -2556,7 +2585,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
 
-  const dispatchAdapterModule = await loadAdapterModule(adapter, io);
+  const dispatchAdapterModule = await dispatchModuleFor(adapter, receipt, env, io);
   let launch;
   let options;
   try {
