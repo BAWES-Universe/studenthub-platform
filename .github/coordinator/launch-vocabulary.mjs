@@ -109,7 +109,7 @@ function laneDefinition(runtime, role, roles) {
   return Object.freeze({ runtime, role, roles: Object.freeze(roles), family: RUNTIME_FAMILY[runtime] });
 }
 
-export const LANES = Object.freeze({
+export const LANES = Object.freeze(Object.assign(Object.create(null), {
   // The three deployed lanes. Names, roles, runtimes and families are unchanged.
   "codex-builder": laneDefinition("codex-cli", ROLE_BUILD, [ROLE_BUILD, ROLE_REVISE]),
   "claude-verifier": laneDefinition("claude-code", ROLE_REVIEW, [ROLE_REVIEW]),
@@ -120,7 +120,7 @@ export const LANES = Object.freeze({
   "codex-verifier": laneDefinition("codex-cli", ROLE_REVIEW, [ROLE_REVIEW]),
   "claude-builder": laneDefinition("claude-code", ROLE_BUILD, [ROLE_BUILD, ROLE_REVISE]),
   "hermes-verifier": laneDefinition("hermes-pool", ROLE_REVIEW, [ROLE_REVIEW]),
-});
+}));
 
 export const LANE_NAMES = Object.freeze(Object.keys(LANES));
 
@@ -192,6 +192,8 @@ export function workerForRuntime(runtime) {
   return role ? laneForRuntimeRole(runtime, role) : null;
 }
 
+export const LEGACY_LANE_NAMES = Object.freeze(RUNTIMES.map(workerForRuntime));
+
 // Lanes that may perform review, in requested_worker vocabulary. Derived from
 // the capability matrix (this is what the deployed coordinator already computes,
 // now sourced from the vocabulary instead of a locally rebuilt table).
@@ -247,7 +249,8 @@ export function resolveReceiptRoleAuthority(receipt = {}) {
   const hasRuntime = receipt.runtime !== undefined && receipt.runtime !== null;
 
   if (version === RECEIPT_VERSION_LEGACY) {
-    if (hasRole || hasRuntime) {
+    if (!LEGACY_LANE_NAMES.includes(laneName)) return { ok: false, reason: "role-reversal lanes require authoritative role/runtime at receipt_version 1.1.0" };
+    if (Object.hasOwn(receipt, "role") || Object.hasOwn(receipt, "runtime")) {
       return { ok: false, reason: `receipt_version ${RECEIPT_VERSION_LEGACY} is lane-derived and must not declare a role or runtime` };
     }
     return { ok: true, role: definition.role, runtime: definition.runtime, source: "lane" };

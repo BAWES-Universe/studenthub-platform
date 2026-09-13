@@ -545,6 +545,10 @@ export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
     return { ok: false, reason: "reviewed lineage carries no readable provenance — authorship ambiguous" };
   }
   const authors = authorSet(entries);
+  if (receipt.receipt_version === "1.1.0" && entries.some((entry) =>
+    authors.has(entry.actor) && entry.runtime === authority.runtime)) {
+    return { ok: false, reason: "review runtime is an author family of the reviewed lineage — not independent" };
+  }
   if (authors.has(receipt.worker_identity)) {
     return { ok: false, reason: `verifier session ${receipt.worker_identity} is an author of the reviewed lineage — not independent` };
   }
@@ -593,6 +597,10 @@ export function routeSuccessorFromReceipts(state = {}) {
   const terminalAuthority = resolveReceiptRoleAuthority(terminal);
   if (!terminalAuthority.ok) {
     return { ok: false, hold: "role_authority_invalid", reason: `terminal receipt has no resolvable launch role — ${terminalAuthority.reason}` };
+  }
+  if (terminalAuthority.role === "review") {
+    const independent = reviewVerdictProvenanceValid(terminal, issueReceipts);
+    if (!independent.ok) return { ...independent, hold: "author_exclusion" };
   }
   const scopedWriter = issueReceipts.filter((r) => r && ["BUILD_READY", "REVISION_READY"].includes(r.verdict_stage) && r.workspace_scope === "scoped").at(-1);
   const scopedContractReceipt = fixtureLane?.id === terminal.issue_id && fixtureScopeConfigured(fixtureLane) && Boolean(scopedWriter);
@@ -674,7 +682,12 @@ export function routeSuccessorFromReceipts(state = {}) {
   }
   if (scopedContractReceipt && evidenceStage === "BLOCKED") {
     const writer = scopedWriter;
-    if (!writer || writer.requested_worker !== "codex-builder" || writer.branch !== terminal.branch || writer.issue_id !== terminal.issue_id || terminal.target_sha !== writer.result_sha) {
+    if (writer?.receipt_version === "1.1.0") {
+      const writerAuthority = resolveReceiptRoleAuthority(writer);
+      if (!writerAuthority.ok || !["build", "revise"].includes(writerAuthority.role) || terminal.branch !== writer.branch || terminal.issue_id !== writer.issue_id || writer.result_sha !== terminal.target_sha) {
+        return { ok: false, reason: "validated BLOCK does not bind the active writer role and exact reviewed head" };
+      }
+    } else if (!writer || writer.requested_worker !== "codex-builder" || writer.branch !== terminal.branch || writer.issue_id !== terminal.issue_id || terminal.target_sha !== writer.result_sha) {
       return { ok: false, reason: "validated BLOCK does not bind the active same-branch Codex writer and exact reviewed head" };
     }
   }
