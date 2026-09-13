@@ -19,6 +19,8 @@
 //  - Revision attempts are bounded; exhaustion is a visible HOLD, never a
 //    relaunch storm.
 
+import { fixtureScopeConfigured, successorWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+
 export const WORK_ORDER_VERSION = "1.0.0";
 
 export const ROLES = Object.freeze(["build", "review", "revise"]);
@@ -70,6 +72,10 @@ export function validWorkOrder(order) {
   }
   if (typeof order.target_sha !== "string" || !/^[0-9a-f]{40}$/.test(order.target_sha)) return { ok: false, reason: "missing/invalid target_sha" };
   if (typeof order.authorization_ref !== "string" || order.authorization_ref.length === 0) return { ok: false, reason: "missing authorization_ref" };
+  if (["workspace_scope", "scope_phase", "allowed_paths"].some((field) => Object.hasOwn(order, field))) {
+    const scope = validateWorkspaceScope(order);
+    if (!scope.ok) return { ok: false, reason: `invalid workspace authority: ${scope.reason}` };
+  }
   return { ok: true };
 }
 
@@ -177,27 +183,53 @@ function mintOrder(requested, overrides) {
 }
 
 export function nextWorkOrder(state = {}) {
-  const { requested = null, entries = [], max_revise = 3, review_round = 0 } = state;
+  const { requested = null, entries = [], max_revise = 3, review_round = 0, bootstrapReviewer = null, fixtureLane = null } = state;
   if (!requested || typeof requested !== "object") return { ok: false, reason: "no completed work order to route from" };
   const role = requested.role;
 
   if (role === "build" || role === "revise") {
     const eligible = eligibleReviewers(entries, { candidateRuntimes: requested.review_runtimes ?? RUNTIMES });
-    if (eligible.length === 0) {
-      return { ok: false, reason: "no eligible non-author reviewer — visible HOLD until a fresh session is available", exhausted: false, hold: "no_eligible_reviewer" };
-    }
-    const reviewer = eligible[0];
     // The review binds the WRITE's output head (result_sha) when the completed
     // build/revise moved the branch — never the stale input target_sha.
     const outputHead = latestResultSha(entries, requested.attempt_id) ?? requested.target_sha;
+    if (eligible.length === 0) {
+      // SHU-225 first-review bootstrap: a brand-new episode has no review-role
+      // entry, so the HOLD below would be permanent and the loop could never take
+      // its first review step. The trusted activation record may name ONE reviewer
+      // lane for that first review; every guard lives in bootstrapReviewerFor, and
+      // a refused bootstrap falls through to the same visible HOLD as before.
+      const boot = bootstrapReviewerFor({ requested, entries, bootstrapReviewer });
+      if (boot) {
+        return {
+          ok: true,
+          bootstrapped: true,
+          reason: `first review bootstrapped from the trusted activation record (lane ${boot.requested_worker})`,
+          order: mintOrder(requested, {
+            role: "review",
+            runtime: boot.runtime,
+            actor: boot.actor,
+            requested_worker: boot.requested_worker,
+            target_sha: outputHead,
+            attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
+            ...successorWorkspaceScope("review", fixtureLane),
+          }),
+        };
+      }
+      return { ok: false, reason: "no eligible non-author reviewer — visible HOLD until a fresh session is available", exhausted: false, hold: "no_eligible_reviewer" };
+    }
+    const reviewer = eligible[0];
     return {
       ok: true,
       order: mintOrder(requested, {
         role: "review",
         runtime: reviewer.runtime,
         actor: reviewer.actor,
+        // The successor is launched through the same claim path as a first
+        // dispatch, so it carries a requested_worker lane like any other.
+        requested_worker: workerForRuntime(reviewer.runtime),
         target_sha: outputHead,
         attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
+        ...successorWorkspaceScope("review", fixtureLane),
       }),
     };
   }
@@ -220,7 +252,10 @@ export function nextWorkOrder(state = {}) {
           role: "revise",
           runtime: writer.runtime,
           actor: writer.actor,
+          // Back to the lane that wrote: the revise is the SAME writer family.
+          requested_worker: workerForRuntime(writer.runtime),
           attempt_id: freshAttempt(requested.attempt_id, "revise", review_round + 1),
+          ...successorWorkspaceScope("revise", fixtureLane),
         }),
       };
     }
@@ -280,6 +315,10 @@ export function renderWorkOrderDirective(order) {
         base_sha: order.base_sha ?? null,
         outcome: order.outcome ?? null,
         writer: order.writer ?? null,
+        workspace_scope: order.workspace_scope,
+        scope_phase: order.scope_phase,
+        allowed_paths: order.allowed_paths,
+        scoped_base_sha: order.scoped_base_sha ?? null,
       },
       null,
       2,
@@ -337,6 +376,71 @@ export function runtimeForRequestedWorker(requestedWorker) {
   if (requestedWorker === "codex-builder") return "codex-cli";
   if (requestedWorker === "hermes-box") return "hermes-pool";
   return null;
+}
+
+// Inverse: the lane that owns a runtime. Used when routing has a runtime (the
+// eligible reviewer, or the active writer) and the LAUNCH needs the lane name —
+// the successor is dispatched through the same claim path as a first dispatch,
+// so it must carry a requested_worker exactly as one.
+export function workerForRuntime(runtime) {
+  if (runtime === "codex-cli") return "codex-builder";
+  if (runtime === "claude-code") return "claude-verifier";
+  if (runtime === "hermes-pool") return "hermes-box";
+  return null;
+}
+
+// Families (SHU-225). Independence is a FAMILY property, not a string
+// difference: two lanes of the same family are the same verifier, so a
+// first-review bootstrap that names the write lane's own family is self-review.
+export const RUNTIME_FAMILY = Object.freeze({
+  "codex-cli": "codex",
+  "claude-code": "claude",
+  "hermes-pool": "hermes",
+});
+
+export const WORKER_FAMILY = Object.freeze({
+  "codex-builder": "codex",
+  "claude-verifier": "claude",
+  "hermes-box": "hermes",
+});
+
+export function runtimeFamily(runtime) {
+  return RUNTIME_FAMILY[runtime] ?? null;
+}
+
+export function workerFamily(requestedWorker) {
+  return WORKER_FAMILY[requestedWorker] ?? null;
+}
+
+// Lanes that may perform review, in the requested_worker vocabulary.
+export const REVIEW_LANES = Object.freeze(
+  Object.keys(WORKER_FAMILY).filter((w) => RUNTIME_ROLE_SUPPORT[runtimeForRequestedWorker(w)]?.includes("review")),
+);
+
+// bootstrapReviewerFor — the TRUSTED first-review bootstrap (SHU-225, Option A as
+// amended on SHU-63). A brand-new episode's lineage holds no review-role entry, so
+// no reviewer is eligible and the first review order can never be minted: the loop
+// stalls permanently on its first step. The operator-owned single-run activation
+// record may name exactly ONE reviewer lane to bootstrap that first review.
+//
+// It is deliberately narrow, and every narrowing is a refusal rather than a guess:
+//   * only when the lineage holds ZERO review-role entries — once a real review
+//     receipt exists, durable lineage owns routing and this returns null (inert);
+//   * the lane must be a known reviewer-capable worker (unknown -> null -> HOLD);
+//   * independence is CHECKED, not declared: the lane's family must differ from
+//     the family of the write lane that just completed, and both families must be
+//     known. A same-family lane is self-verification, never review.
+// The lane is not a fabricated session: the order's `actor` is the LANE identity,
+// while the receipt records whatever session the adapter actually launches.
+export function bootstrapReviewerFor({ requested = {}, entries = [], bootstrapReviewer = null } = {}) {
+  if (!bootstrapReviewer || typeof bootstrapReviewer !== "object") return null;
+  const lane = bootstrapReviewer.lane;
+  if (typeof lane !== "string" || !REVIEW_LANES.includes(lane)) return null;
+  if ((entries ?? []).some((e) => e && e.role === "review")) return null;
+  const writeFamily = workerFamily(requested?.requested_worker);
+  const reviewFamily = workerFamily(lane);
+  if (!writeFamily || !reviewFamily || writeFamily === reviewFamily) return null;
+  return { lane, requested_worker: lane, runtime: runtimeForRequestedWorker(lane), actor: lane, bootstrapped: true };
 }
 
 // Collapse a durable launch receipt to the identity facts routing needs.
@@ -461,9 +565,17 @@ export function routeSuccessorFromReceipts(state = {}) {
     evidenceResultSha = null,
     max_revise = 3,
     authoritativeHead = null,
+    bootstrapReviewer = null,
+    fixtureLane = null,
   } = state;
   if (!terminal || typeof terminal !== "object") {
     return { ok: false, reason: "no terminal receipt to route from" };
+  }
+  const scopedWriter = issueReceipts.filter((r) => r && ["BUILD_READY", "REVISION_READY"].includes(r.verdict_stage) && r.workspace_scope === "scoped").at(-1);
+  const scopedContractReceipt = fixtureLane?.id === terminal.issue_id && fixtureScopeConfigured(fixtureLane) && Boolean(scopedWriter);
+  if (scopedContractReceipt) {
+    const terminalScope = validateWorkspaceScope(terminal);
+    if (!terminalScope.ok) return { ok: false, reason: `terminal workspace authority invalid: ${terminalScope.reason}` };
   }
   const verdict = outcomeForEvidenceStage(evidenceStage);
   if (!verdict) {
@@ -514,17 +626,34 @@ export function routeSuccessorFromReceipts(state = {}) {
     version: WORK_ORDER_VERSION,
     role: verdict.role,
     runtime: runtimeForRequestedWorker(terminal.requested_worker),
+    // The completed order's own lane. Routing uses it for two things: the
+    // revise goes back to the WRITER's lane, and the first-review bootstrap
+    // checks independence against the family of the lane that just wrote.
+    requested_worker: terminal.requested_worker,
     issue_id: terminal.issue_id,
     attempt_id: terminal.attempt_id,
     target_sha: terminal.target_sha,
     authorization_ref: terminal.authorization_ref ?? terminal.issue_id,
     review_runtimes: RUNTIMES.filter((r) => RUNTIME_ROLE_SUPPORT[r]?.includes("review")),
     outcome: verdict.outcome,
+    workspace_scope: terminal.workspace_scope ?? (verdict.role === "review" ? "full" : "full"),
+    scope_phase: terminal.scope_phase ?? (verdict.role === "review" ? "review" : "initial"),
+    allowed_paths: Array.isArray(terminal.allowed_paths) ? [...terminal.allowed_paths] : [],
+    scoped_base_sha: terminal.scoped_base_sha ?? null,
   };
   if (!requested.runtime) {
     return { ok: false, reason: `cannot route from unknown worker lane ${String(terminal.requested_worker)}` };
   }
   // review_round: count of completed review attempts already in the lineage.
   const review_round = entries.filter((e) => e.role === "review").length;
-  return nextWorkOrder({ requested, entries, max_revise, review_round });
+  if (scopedContractReceipt && verdict.role === "review" && evidenceStage !== "BLOCKED" && evidenceStage !== "PASS") {
+    return { ok: false, reason: "fixture revision authority requires a validated BLOCKED verdict" };
+  }
+  if (scopedContractReceipt && evidenceStage === "BLOCKED") {
+    const writer = scopedWriter;
+    if (!writer || writer.requested_worker !== "codex-builder" || writer.branch !== terminal.branch || writer.issue_id !== terminal.issue_id || terminal.target_sha !== writer.result_sha) {
+      return { ok: false, reason: "validated BLOCK does not bind the active same-branch Codex writer and exact reviewed head" };
+    }
+  }
+  return nextWorkOrder({ requested, entries, max_revise, review_round, bootstrapReviewer, fixtureLane });
 }

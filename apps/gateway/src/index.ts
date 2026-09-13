@@ -1,4 +1,5 @@
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
+import { Telemetry, disabledTelemetry, telemetryMode, newSpan, inSpan, classifyJourney, type Fault } from '../../../packages/observability/src/index.js';
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -121,13 +122,34 @@ export function createGatewayServer(
   authz: AuthzMiddleware = createDenyAllAuthzMiddleware(),
   login?: BrowserLoginApplication,
   sourceRevision: string | null = readImageSourceRevision(),
+  telemetry: Telemetry = disabledTelemetry,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
   }
 
-  return createServer(async (request, response) => {
+  return createServer((request, response) => {
+    const span = newSpan(); // Ignore incoming request/trace IDs: they can contain PII.
+    const started = performance.now();
+    const journey = classifyJourney(request.url);
     const html = wantsHtml(request.headers.accept);
+    const webSpan = html ? newSpan(span) : undefined;
+    let fault: Fault = 'none';
+    let completed = false;
+    response.setHeader('x-request-id', span.traceId);
+    const complete = (aborted: boolean) => {
+      if (completed) return;
+      completed = true;
+      const outcome = aborted ? 'aborted' : response.statusCode >= 500 ? 'failure'
+        : response.statusCode >= 400 ? 'refused' : 'success';
+      const reason = aborted ? 'response_aborted' : fault === 'none' && response.statusCode >= 500 ? 'dependency_unavailable' : fault;
+      telemetry.record(span, 'gateway', journey, outcome, reason, performance.now() - started);
+      if (webSpan) telemetry.record(webSpan, 'web', journey, outcome, reason, performance.now() - started);
+    };
+    response.once('finish', () => complete(false));
+    response.once('close', () => complete(!response.writableFinished));
+    void inSpan(webSpan ?? span, async () => {
+    try {
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;
@@ -164,6 +186,7 @@ export function createGatewayServer(
       try {
         result = await login.start({ browserSessionId, returnTo });
       } catch {
+        fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
       if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
@@ -187,6 +210,7 @@ export function createGatewayServer(
       try {
         result = await login.callback({ browserSessionId, state, code });
       } catch {
+        fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
       if (html && result.status >= 400) { writeHtml(response, result.status, renderError(result.status, login)); return; }
@@ -203,6 +227,7 @@ export function createGatewayServer(
           personId: url.searchParams.get("person_id") ?? undefined,
         });
       } catch {
+        fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
       if (html) {
@@ -210,6 +235,7 @@ export function createGatewayServer(
           const page = await profileDocument(result, login);
           writeHtml(response, page.status, page.html);
         } catch {
+          fault = 'render_failure';
           writeHtml(response, 503, renderError(503, login));
         }
         return;
@@ -236,6 +262,7 @@ export function createGatewayServer(
       try {
         result = await login.logout(cookieValue(request.headers.cookie, "__Host-studenthub_session"));
       } catch {
+        fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
       if (html) {
@@ -267,6 +294,7 @@ export function createGatewayServer(
         try {
           decision = await authorizeRequest(assertionWire, authz);
         } catch {
+          fault = 'dependency_unavailable';
           response.writeHead(503, { "content-type": "application/json" });
           response.end(JSON.stringify({ ok: false, error: "authz_unavailable" }));
           return;
@@ -310,10 +338,12 @@ export function createGatewayServer(
       try {
         const call = parsed;
         const result = await adapter.callTool(call);
+        if (!result.ok) fault = 'adapter_failure';
         const status = result.ok ? 200 : adapter instanceof UnconfiguredMcpAdapter ? 501 : 502;
         response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(result));
       } catch {
+        fault = 'adapter_failure';
         response.writeHead(502, { "content-type": "application/json" });
         response.end(JSON.stringify({ ok: false, error: "adapter_failure" }));
       }
@@ -322,6 +352,14 @@ export function createGatewayServer(
 
     response.writeHead(404, { "content-type": "application/json" });
     response.end(JSON.stringify({ ok: false, error: "not_found" }));
+    } catch {
+      fault = 'unhandled_failure';
+      if (!response.headersSent && !response.destroyed) {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ ok: false, error: 'service_unavailable' }));
+      } else response.destroy();
+    }
+    });
   });
 }
 
@@ -372,13 +410,16 @@ if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
   const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
+  const telemetry = new Telemetry(telemetryMode(process.env));
   const server = createGatewayServer(
     new UnconfiguredMcpAdapter(),
     DEFAULT_MCP_REQUEST_LIMIT_BYTES,
     createDenyAllAuthzMiddleware(),
     runtimeLogin?.application,
+    readImageSourceRevision(),
+    telemetry,
   );
-  server.once("close", () => { void runtimeLogin?.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });

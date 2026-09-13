@@ -7,7 +7,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { checkReadiness } from "../healthcheck.mjs";
-import { runPreflight, validateApplicationEnv, validateDeploymentEnv, validateImageRevision } from "../preflight.mjs";
+import {
+  REQUIRED_DEPLOYMENT_ENV,
+  runPreflight,
+  validateApplicationEnv,
+  validateDeploymentEnv,
+  validateImageRevision,
+} from "../preflight.mjs";
 
 const validEnv = {
   HOST: "0.0.0.0",
@@ -19,7 +25,7 @@ const validEnv = {
   OIDC_AUTHORIZATION_URL: "https://auth.example.test/application/o/authorize/",
   OIDC_TOKEN_URL: "https://auth.example.test/application/o/token/",
   OIDC_JWKS_URL: "https://auth.example.test/application/o/studenthub/jwks/",
-  LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.example.test/",
+  LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.example.test/profile",
 };
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -39,14 +45,19 @@ test("the container preflight CLI cannot bypass real gateway validation", () => 
   const result = spawnSync(process.execPath, ["deploy/coolify/preflight.mjs"], {
     cwd: repositoryRoot,
     encoding: "utf8",
-    env: { ...process.env, ...validEnv, OIDC_CALLBACK_URL: "http://studenthub.example.test/login/callback" },
+    env: {
+      ...process.env,
+      ...validEnv,
+      OIDC_CALLBACK_URL: "http://studenthub.example.test/login/callback",
+      LOGIN_ALLOWED_RETURN_URLS: "http://studenthub.example.test/profile",
+    },
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /OIDC_CALLBACK_URL must use https/);
 });
 
 test("deployment preflight fails closed on missing configuration", () => {
-  for (const name of ["DATABASE_URL", "OIDC_CLIENT_SECRET"]) {
+  for (const name of REQUIRED_DEPLOYMENT_ENV) {
     const env = { ...validEnv };
     delete env[name];
     assert.throws(() => validateDeploymentEnv(env), new RegExp(name));
@@ -55,6 +66,46 @@ test("deployment preflight fails closed on missing configuration", () => {
 
 test("deployment preflight rejects a loopback bind", () => {
   assert.throws(() => validateDeploymentEnv({ ...validEnv, HOST: "127.0.0.1" }), /HOST must be 0\.0\.0\.0/);
+});
+
+test("deployment preflight requires the callback origin's exact profile return URL", () => {
+  const credential = "return-url-secret";
+  assert.throws(
+    () => validateDeploymentEnv({
+      ...validEnv,
+      OIDC_CALLBACK_URL: `https://operator:${credential}@studenthub.example.test/login/callback`,
+      LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.example.test/",
+    }),
+    (error) => {
+      assert.match(error.message, /LOGIN_ALLOWED_RETURN_URLS must include https:\/\/studenthub\.example\.test\/profile/);
+      assert.doesNotMatch(error.message, new RegExp(credential));
+      return true;
+    },
+  );
+  assert.doesNotThrow(() => validateDeploymentEnv({
+    ...validEnv,
+    LOGIN_ALLOWED_RETURN_URLS: "https://other.example.test/profile, https://studenthub.example.test/profile",
+  }));
+});
+
+test("deployment preflight restricts DATABASE_URL to a platform database hostname", () => {
+  const credential = "database-secret";
+  assert.throws(
+    () => validateDeploymentEnv({
+      ...validEnv,
+      DATABASE_URL: `postgresql://studenthub:${credential}@legacy-postgres:5432/studenthub`,
+    }),
+    (error) => {
+      assert.match(error.message, /DATABASE_URL hostname must identify the dedicated platform database/);
+      assert.doesNotMatch(error.message, new RegExp(credential));
+      return true;
+    },
+  );
+  assert.doesNotThrow(() => validateDeploymentEnv({
+    ...validEnv,
+    DATABASE_URL: "postgresql://studenthub:secret@isolated-platform-db:5432/studenthub",
+    PLATFORM_DATABASE_HOSTS: "reporting-db, isolated-platform-db",
+  }));
 });
 
 test("deployment preflight validates the immutable image revision artifact", () => {
@@ -87,6 +138,11 @@ test("Docker image stores revision outside runtime environment authority", () =>
   const dockerfile = readFileSync(join(repositoryRoot, "Dockerfile"), "utf8");
   assert.match(dockerfile, /> \/image-source-revision/);
   assert.doesNotMatch(dockerfile, /^ENV SOURCE_REVISION=/m);
+});
+
+test("Compose passes the optional platform database host allowlist to preflight", () => {
+  const compose = readFileSync(join(repositoryRoot, "deploy/coolify/compose.yaml"), "utf8");
+  assert.match(compose, /^      PLATFORM_DATABASE_HOSTS: \$\{PLATFORM_DATABASE_HOSTS:-\}$/m);
 });
 
 function database(overrides = {}) {

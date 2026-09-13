@@ -81,18 +81,106 @@ unset CODEX_GIT_PUSH_READY                    # 3 — the worker holds no push c
 # 3b — the host broker is the only pusher; the deploy key lives HERE, not in the
 # worker's worktree or environment.
 export SHU_PUSH_BROKER_ENABLED=true
-export SHU_WORKTREE_ROOT=/srv/shu/worktrees   # approved root; worktrees are confined to it
+export SHU_WORKTREE_ROOT=/srv/shu/worktrees   # shared-group 3770 root; attempt dirs are 0750
+export SHU_WORKSPACE_STATE_DIR=/srv/shu/state/workspaces # coordinator-owned 0700; outside worker root
 export SHU_PUSH_REMOTE_URL=git@github.com:BAWES-Universe/studenthub-platform.git
 # export SHU_PUSH_SSH_COMMAND=...             # optional: only this selects the ssh program
 
 # 3c — the builder must NOT share the coordinator's OS identity, or it can
 # rewrite the broker's own repository and redirect the push.
 export SHU_WORKER_UID="$(id -u shu-worker)"
-export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker --clear-groups"
+export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker --groups=shu-workspace"
+
+# SHU-232 B-ii — Claude is read-only; target tests run in this actively probed
+# systemd sandbox as a distinct uid with no network, secrets or writable host tree.
+export SHU_REVIEW_EXEC_UID="$(id -u shu-reviewer)"
+export SHU_REVIEW_EXEC_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'
+export SHU_REVIEW_TEST_FILES_JSON='["tools/fixture/test/scan-vacuous.test.mjs"]'
+export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 ```
+
+Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
+above, install the host `acl` package, and grant only that fixed command to
+`shu-coordinator`. The adapter does
+not trust the declaration: symlinked system entrypoints are resolved to a
+root-owned, non-writable executable behind a root-owned, non-writable canonical
+directory chain, and only the validated canonical target executes. The child and
+read-only checkout may be root- or coordinator-owned but never reviewer-owned or
+group/world writable. Before the same child runs real `node --test`, it must prove
+the configured uid is effective, a 0600 coordinator sentinel is unreadable,
+a live loopback listener is unreachable, and credential-bearing environment
+keys are absent. Any failed probe produces the distinct
+`REVIEW_EXECUTION_UNAVAILABLE` HOLD and no Claude launch.
+
+Each attempt directory is mode 0750. The wrapper grants the locked reviewer uid
+`r-x` on only the exact bound attempt for one invocation, masks every sibling in
+the systemd mount namespace, and removes the ACL on exit. A fresh sibling canary
+must be unreadable in the same report that proves the other confinement probes.
+This keeps the root's traverse-only ACL without exposing retained attempts.
+
+Claude runs separately under the subscription identity because it needs provider
+network access, but its tool surface is restricted to `Read`, `Glob`, and `Grep`
+in restricted evaluation mode. This preserves subscription authentication while
+disabling ambient settings, CLAUDE.md, hooks, skills, commands, plugins and
+subagents; file tools remain inside the exact cwd. Strict MCP configuration and
+an explicit `mcp__*` deny remove MCP tools. The coordinator passes the trusted,
+credential-scanned confinement report inline; its private `file://` URI is
+machine provenance and is not presented as readable under restricted mode.
+Callbacks accept canonical local evidence only inside the exact reviewer
+workspace or private evidence root, rejecting symlinks and traversal. It cannot
+execute builder-authored code. Exact raw CLI stdout is
+persisted before parsing to a new 0600 file in `SHU_REVIEW_EVIDENCE_DIR`; receipts
+link both that envelope and the confined test report. `NO_STRUCTURED_OUTPUT`,
+`CALLBACK_BINDING_INVALID`, and `REVIEW_EXECUTION_UNAVAILABLE` remain distinct.
+
+Hermes's third-party re-seed is an append-only change to the non-production
+`coordinator/SHU-140` lane's existing test file; it must not activate the lane:
+
+```js
+// SHU-232-SEEDED-VACUOUS
+test("does not stop a body at a closing brace inside a string literal", () => {
+  const report = scanVacuousTests(
+    'test("string-brace", () => { const value = "}"; assert.ok(value); });',
+  );
+  const expected = [];
+  assert.deepEqual(expected, []);
+});
+```
+
+This stays green while ignoring `report`. A competent first review must BLOCK
+it; the author then binds the assertion to `report`, fixes the revealed
+string-literal brace parsing defect, and the independent re-review may PASS.
+
+The initial builder is additionally constrained by the exact trusted
+`fixture_lane.initial_build_paths` list. The trap path is pinned outside that
+list by a non-vacuity guard. From the authoritative full `target_sha`, the
+coordinator deterministically creates a parentless `scoped_base_sha` containing
+only the exact allowed files and delivers it through a local bundle. Hidden
+blobs, the full target commit and hidden path names are absent from the worker's
+repository. Receipts bind both SHAs and the exact ordered manifest so a verifier
+can recompute the scoped input. The coordinator separately retains a private
+full base bundle so the host snapshot begins with the complete target tree and
+overlays only authorized files. It rejects any real out-of-scope worktree path
+before result binding or network publication; hidden base paths can never be
+translated into deletions.
+
+Only a validated independent `BLOCK` bound to that exact builder result, writer
+and branch unlocks the predeclared `revision_paths` superset containing the trap.
+The reviewer always receives the complete reconstructed exact-head repository.
+The scoped SHA never substitutes for the full target in review, routing or broker
+authority. Workspace scope, phase, exact paths and both SHA bindings are
+immutable in receipts and local attempt authority; work-order directives carry
+the full target and manifest for host derivation. No worker or reviewer prose can
+widen them.
 
 `ENABLE_DISPATCH` stays unset. Nothing here enables dispatch; the contract only
 governs what happens once someone does.
+
+See `.github/coordinator/SINGLE-RUN-ACTIVATION.md` for the attempt checkout
+provisioning and `host-tick.sh` launch procedure. The initial
+`DISPATCH_TARGET_SHA` is the verified seeded lane head, distinct from the approved
+coordinator revision. Both local lanes prepare their own exact-head checkout;
+neither requires an operator to make a checkout before dispatch.
 
 ## Test seam
 

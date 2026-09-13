@@ -91,14 +91,15 @@ test("LAUNCH_UNKNOWN and ambiguous HOLD retain capacity", () => {
 });
 
 test("resource-scoped quota pause blocks one account while unrelated work continues", () => {
-  let now = Date.parse("2026-09-08T12:00:00Z");
+  let now = Date.now();
   const scheduler = new CapacityScheduler({ stateDir: stateDir(), policy: policy(), now: () => now });
-  scheduler.pauseResource({ scope: "account", id: "anthropic_shared", reason: "quota", until: "2026-09-08T13:00:00Z" });
+  const until = new Date(now + 3600000).toISOString();
+  scheduler.pauseResource({ scope: "account", id: "anthropic_shared", reason: "quota", until });
   const paused = scheduler.reserve(task("paused", { fallback_runtimes: [] }));
   assert.equal(paused.code, "RESOURCE_PAUSED");
-  assert.equal(paused.next_automatic_action, "retry_after:2026-09-08T13:00:00Z");
+  assert.equal(paused.next_automatic_action, `retry_after:${until}`);
   assert.equal(scheduler.reserve(task("unrelated", { account: "openai_shared", runtime: "codex-cli" })).status, "reserved");
-  now = Date.parse("2026-09-08T13:00:01Z");
+  now += 3601000;
   assert.equal(scheduler.reserve(task("after-backoff")).status, "reserved", "expired pause clears automatically");
 });
 
@@ -149,7 +150,7 @@ test("deadlines, retries, revisions and total spending are bounded", () => {
 });
 
 test("reserved acknowledgement expires, but running/unknown work never releases by age", () => {
-  let now = Date.parse("2026-09-08T12:00:00Z");
+  let now = Date.now();
   const scheduler = new CapacityScheduler({ stateDir: stateDir(), policy: policy({ accounts: { anthropic_shared: 1, openai_shared: 2 }, reservation_ttl_ms: 10 }), now: () => now });
   scheduler.reserve(task("reserved"));
   now += 11;
@@ -333,6 +334,8 @@ test("persisted reservation estimated cost must remain an integer", () => {
 test("four concurrent processes cannot oversubscribe a two-slot ledger", async () => {
   const root = stateDir();
   const gate = join(root, "start");
+  // Every process, including the final reader, observes one test clock.
+  const now = Date.now();
   const moduleUrl = pathToFileURL(join(process.cwd(), ".github/coordinator/capacity-scheduler.mjs")).href;
   const concurrentPolicy = policy({ global_limit: 2, review_reserve: 0, hosts: { brick: 4, studenthub: 4 }, accounts: { anthropic_shared: 4, openai_shared: 4 } });
   const serializedPolicy = JSON.stringify(concurrentPolicy);
@@ -341,7 +344,7 @@ test("four concurrent processes cannot oversubscribe a two-slot ledger", async (
     import { CapacityScheduler } from ${JSON.stringify(moduleUrl)};
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     while (!existsSync(process.env.GATE)) await sleep(2);
-    const scheduler = new CapacityScheduler({ stateDir: process.env.STATE, policy: JSON.parse(process.env.POLICY) });
+    const scheduler = new CapacityScheduler({ stateDir: process.env.STATE, policy: JSON.parse(process.env.POLICY), now: () => Number(process.env.TEST_NOW) });
     const task = JSON.parse(process.env.TASK);
     let result;
     for (let i = 0; i < 100; i += 1) {
@@ -354,6 +357,7 @@ test("four concurrent processes cannot oversubscribe a two-slot ledger", async (
   const children = Array.from({ length: 4 }, (_, index) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
       env: {
+        TEST_NOW: String(now),
         STATE: root,
         GATE: gate,
         POLICY: serializedPolicy,
@@ -373,6 +377,6 @@ test("four concurrent processes cannot oversubscribe a two-slot ledger", async (
   const results = await Promise.all(children);
   assert.equal(results.filter((result) => result.status === "reserved").length, 2);
   assert.equal(results.filter((result) => result.code === "GLOBAL_CAPACITY").length, 2);
-  const final = new CapacityScheduler({ stateDir: root, policy: concurrentPolicy });
-  assert.equal(Object.values(final.snapshot().reservations).filter((r) => r.status === "reserved").length, 2);
+  const final = new CapacityScheduler({ stateDir: root, policy: concurrentPolicy, now: () => now });
+  assert.equal(Object.values(final.snapshot().reservations).filter((r) => r.status === "reserved").length, 2, "shared clock must preserve both reservations");
 });

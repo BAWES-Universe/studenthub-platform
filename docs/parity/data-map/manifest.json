@@ -1,0 +1,39 @@
+{
+  "source": "c2ce255695eabc7e3a0f23b162f5996274234c63",
+  "platform_source": "9ef9259309505ceab9200a6648bf1036b37e24b6",
+  "platform_frontend_sources": {
+    "docs/parity/ui-journeys/admin.md": "6b9c05bcb72869080f3de7d96cbedadbdfcadd91bffb7ae8c11b3e32b3edd39c",
+    "docs/parity/ui-journeys/candidate-mobile.md": "037bdb21e1784afc7f423af693b365a7daac81bff3e5ad7da53f82c3e559b737",
+    "docs/parity/ui-journeys/candidate-web.md": "f5a00c1eb7b346e2be71942b6766d205dbb07692c7d9d285e4a1bd1c024c9122",
+    "docs/parity/ui-journeys/employer.md": "05c928c591067cbd7e3681104a49d888a8186e8d0be1d7e994c8fd2b61a7f2af",
+    "docs/parity/ui-journeys/staff.md": "735dd37ce7398624452b2b64d19bb444405c5c39c582628474bd2c1232e2c109"
+  },
+  "method": "lexical literal Yii up/safeUp migration census plus scalar model annotations; no execution",
+  "entities": 133,
+  "fields": 1336,
+  "annotation_only": 58,
+  "relationship_receipts": 1116,
+  "source_gaps": 299,
+  "console_actions": 38,
+  "frontend_inventory_rows": 226,
+  "unassigned_entities": [],
+  "cluster_fields": {
+    "communication": 174,
+    "finance": 300,
+    "identity": 176,
+    "operations": 18,
+    "organizations": 150,
+    "profile": 169,
+    "recruitment": 232,
+    "reporting": 12,
+    "work": 105
+  },
+  "files": {
+    "fields.csv": "cb717a0e59d037ec08d2405c26e50ec41ef8e872fcf26721c3e36fc4dec4e1f0",
+    "frontend-effects.csv": "7c585f4744abca28ec8c6dd701f99022de70fb3238f7f7f46f4eb602bbe29f4e",
+    "jobs.csv": "3aff22b6e984abddf670a82b909576f307919f6e933f20abfae41e7bc69c0102",
+    "relationships.csv": "8af661e94bf0a64734f1559990f9336b017376156a0d30bad07de5984c9c3da3",
+    "retired-fields.csv": "686ec759a8a383a1bfc114e54dc2d2906ffc492eb9ae331ba2ed6198f1256a69",
+    "source-gaps.csv": "099fd26f0248f8fa307ba62560603e1d782e78f74d69471e54550f4e27fd09c4"
+  }
+}

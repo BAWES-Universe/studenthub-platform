@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
-  group: build-gateway-${{ github.ref }}
+  group: build-gateway-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -15,7 +17,56 @@ env:
   IMAGE_NAME: studenthub-gateway
 
 jobs:
+  env-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # pull_request_target exposes secrets, so this job executes only the
+      # trusted base revision. It downloads the PR's declarative JSON manifest
+      # as data and never checks out or executes PR-controlled code.
+      - name: Checkout trusted deployment checker
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Read proposed manifest without executing pull-request code
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_REF: ${{ github.event.pull_request.head.sha }}
+        run: |
+          curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/deploy/coolify/deployment-env-manifest.json?ref=${MANIFEST_REF}" \
+            --output "${RUNNER_TEMP}/deployment-env-manifest.json"
+
+      - name: Verify required Coolify deployment environment
+        if: ${{ github.event_name != 'pull_request_target' }}
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_READ_TOKEN: ${{ secrets.COOLIFY_READ_TOKEN }}
+          COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
+        run: node deploy/coolify/check-env-manifest.mjs
+
+      - name: Validate proposed manifest as untrusted data
+        if: ${{ github.event_name == 'pull_request_target' }}
+        run: node deploy/coolify/deployment-env-manifest.mjs "${RUNNER_TEMP}/deployment-env-manifest.json"
+
+      - name: Verify trusted Coolify deployment environment
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_READ_TOKEN: ${{ secrets.COOLIFY_READ_TOKEN }}
+          COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
+        run: node deploy/coolify/check-env-manifest.mjs
+
   build-push:
+    if: ${{ github.event_name != 'pull_request_target' }}
+    needs: env-manifest
     runs-on: ubuntu-latest
     permissions:
       contents: read

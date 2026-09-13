@@ -145,9 +145,13 @@ for (const [name, owner] of [
     const f = fixture(t);
     await launchBuilder({ ...base, io: { poolDir: f.poolDir } });
     fs.writeFileSync(f.claim, typeof owner === 'string' ? owner : JSON.stringify({ attempt_id: base.attempt_id, phase: 'pre_spawn', ...owner }));
+    // Date preloads do not shift the kernel filesystem clock. This claim is
+    // fresh by construction; give its mtime the same time base as the reader.
+    const freshClaimTime = new Date(Date.now());
+    fs.utimesSync(f.claim, freshClaimTime, freshClaimTime);
     let spawns = 0;
     const out = await launchBuilder({ ...base, io: { poolDir: f.poolDir, hostname: () => 'local', spawn: () => { spawns++; } } });
-    assert.equal(out.stage, 'LAUNCH_UNKNOWN');
+    assert.equal(out.stage, 'LAUNCH_UNKNOWN', 'fresh ambiguous claim must remain pending');
     assert.equal(spawns, 0);
     assert.equal(fs.existsSync(f.claim), true);
   });
@@ -256,7 +260,7 @@ test('CR-1: a takeover cannot double-launch when the previous owner died after s
   await launchBuilder({ ...base, io: { poolDir: f.poolDir } }); // queued lease, no claim
   fs.writeFileSync(f.claim, JSON.stringify({
     attempt_id: base.attempt_id, owner_pid: 999999, owner_host: 'gone',
-    phase: 'pre_spawn', claimed_at: '2026-09-05T00:00:00.000Z',
+    phase: 'pre_spawn', claimed_at: new Date(Date.now() - 6 * 3600000).toISOString(),
   }));
 
   const original = fs.writeFileSync;
@@ -301,7 +305,7 @@ test('CR-1b: a takeover aborts if the claim was reclaimed while we waited', asyn
   await launchBuilder({ ...base, io: { poolDir: f.poolDir } });
   fs.writeFileSync(f.claim, JSON.stringify({
     attempt_id: base.attempt_id, owner_pid: 999999, owner_host: 'gone',
-    phase: 'pre_spawn', claimed_at: '2026-09-05T00:00:00.000Z',
+    phase: 'pre_spawn', claimed_at: new Date(Date.now() - 6 * 3600000).toISOString(),
   }));
 
   const original = fs.writeFileSync;
