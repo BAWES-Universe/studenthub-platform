@@ -1,0 +1,17 @@
+[Unit]
+Description=StudentHub persistent supervisor
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKDIR@
+Environment=ENABLE_DISPATCH=false
+UMask=0077
+ExecStart=@SUPERVISOR_EXEC@
+Restart=on-failure
+RestartSec=5s
+KillMode=process
+
+[Install]
+WantedBy=default.target
