@@ -1,4 +1,8 @@
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
+// Bound every service test, including regressions that leave asynchronous work pending.
+const test = (name, options, fn) => typeof options === 'function'
+  ? nodeTest(name, { timeout: 10000 }, options)
+  : nodeTest(name, { timeout: 10000, ...options }, fn);
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -235,4 +239,36 @@ test('SHU251 mutation: explicit override warning removed', t => {
   const units = render(params);
   units[names[1]] = units[names[1]].split('\n').slice(1).join('\n');
   named(() => assertPolicy(units, params), 'SHU251_WRITER_LOCK: explicit override must carry the two-writer hazard warning');
+});
+
+function assertDeployedWorkspaceState(value) {
+  assert.equal(value, '/srv/shu/state/workspaces', 'SHU251_WRITER_LOCK: WORKSPACE_STATE_DIR must equal literal deployed /srv/shu/state/workspaces');
+  const contract = fs.readFileSync(new URL('../../../../docs/SHU-63-activation-contract.md', import.meta.url), 'utf8');
+  const declarations = [...contract.matchAll(/^export SHU_WORKSPACE_STATE_DIR=([^\s#]+).*$/gm)];
+  assert.equal(declarations.length, 1, 'SHU251_WRITER_LOCK: activation contract must declare one workspace state directory');
+  assert.equal(value, declarations[0][1], 'SHU251_WRITER_LOCK: WORKSPACE_STATE_DIR must agree with activation contract');
+}
+test('SHU251 canonical workspace constant matches literal deployment and activation contract', () => {
+  assertDeployedWorkspaceState(WORKSPACE_STATE_DIR);
+});
+test('SHU251 mutation: canonical workspace constant repointed', async t => {
+  const file = join(fixture(t), 'units-mutant.mjs');
+  const source = fs.readFileSync(new URL('../units.mjs', import.meta.url), 'utf8');
+  const declaration = "export const WORKSPACE_STATE_DIR = '/srv/shu/state/workspaces';";
+  assert.ok(source.includes(declaration));
+  fs.writeFileSync(file, source.replace(declaration, "export const WORKSPACE_STATE_DIR = '/tmp/elsewhere';"));
+  const mutant = await import(pathToFileURL(file));
+  named(() => assertDeployedWorkspaceState(mutant.WORKSPACE_STATE_DIR), 'SHU251_WRITER_LOCK: WORKSPACE_STATE_DIR must equal literal deployed /srv/shu/state/workspaces');
+});
+test('SHU251 non-string workspace state directory has named fail-closed refusal', t => {
+  const root = fixture(t), params = fixtureParameters(root);
+  let coerced = false;
+  for (const workspaceStateDir of [null, 42, { toString() { coerced = true; return WORKSPACE_STATE_DIR; } }]) {
+    const invalid = { ...params, workspaceStateDir, allowWorkspaceStateDirOverride: true };
+    for (const operation of [serviceParameters, render, p => install(root, p)]) {
+      named(() => operation(invalid), 'SHU251_WRITER_LOCK: canonical workspace state directory required');
+      assert.deepEqual(fs.readdirSync(root), []);
+    }
+  }
+  assert.equal(coerced, false, 'SHU251_WRITER_LOCK: non-string workspace state directory must not be coerced');
 });

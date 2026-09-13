@@ -1,11 +1,12 @@
 # SHU-251 correction validation
 
-Base HEAD was verified as `3ea21881c5aaa4714228f8b4eb13cc86610e5d1c` before edits,
+Focused-fix base HEAD was verified as `aa9892f9c0fd661aefc8b17888c68b88455f8b47` before edits,
 on `feat/shu-251-host-service-plane`, in `/home/bawes/work/shu251`, with a clean tree.
 The final commit SHA and exact base-to-commit diff stat accompany this report in
 the delivery response (a commit cannot embed its own hash).
 
-Both measurements ran from the repository root, following `chmod -R go-w .github/coordinator`:
+Both focused-fix measurements ran from the repository root with `umask 0002`,
+following `chmod -R go-w .github/coordinator`:
 
 ```sh
 node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs
@@ -13,14 +14,37 @@ node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test
 
 | Measurement | Tests | Passed | Failed | Skipped | Suites |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Before | 776 | 770 | 0 | 6 | 0 |
-| After | 798 | 792 | 0 | 6 | 0 |
+| Delivered head aa9892f9 / before focused fix | 803 | 797 | 0 | 6 | 0 |
+| After focused fix | 807 | 801 | 0 | 6 | 0 |
 
-All prior passing test names remain passing. The service suite grows from 18 to
-40 tests. All 22 new tests pass. No tests were removed. `verify.mjs` also passes:
-syntax valid, two disabled ticks, zero adapter calls, zero writes, empty fixture
-state diff, and exact rollback. `git diff --check` passes. Required GitHub CI itself
-was not remotely run: pushing and PR interaction are prohibited.
+The table records a **non-root** run (801 pass / 6 skipped at final).
+The equivalent root run would be 807 pass / 0 skipped; the six tests require root.
+Root execution was not performed in this round.
+
+All 803 prior tests are retained. The service suite grows from 45 to 49 tests in
+this round (18 before the earlier corrections): 27 earlier additions plus four
+focused-fix additions, all passing. `git diff --check` passes. Required GitHub CI
+itself was not remotely run: pushing and PR interaction are prohibited.
+
+## Focused verification gaps
+
+- **G-1 closed:** readiness requires `ok === true`, a string server `version`, and
+  HOLD. Moving notification before listen in a temporary source copy fails the
+  named success assertion rather than accepting a connection-failure HOLD.
+- **G-2 closed:** the workspace constant is pinned to its literal deployed value
+  and compared with the declaration parsed from `docs/SHU-63-activation-contract.md`.
+  A temporary source mutant repointing it to `/tmp/elsewhere` fails the literal pin.
+- **G-3 closed:** counts reflect the delivered 803-test head and this fix; the five
+  earlier F3 tests are listed below, with the non-root qualification above.
+- **G-5 closed:** both service test files apply a default 10-second per-test timeout
+  (the existing flock test retains its 5-second bound). Lifecycle tests register
+  service cleanup before subsequent assertions so failures release listening sockets.
+  A separate temporary coordinator copy with recovery removed exited 1 in 305 ms
+  (13 tests: 9 pass, 4 fail, 0 cancelled), including the named SHU251_RECOVERY
+  AssertionError; a 30-second outer guard did not fire.
+- **G-6 closed:** render derives default paths only after workspace validation;
+  serviceParameters validates before joining. Null, numeric and coercible object
+  inputs receive named refusals, without coercion or staging writes, even with override.
 
 ## All ten required items
 
@@ -53,7 +77,7 @@ No push, PR creation/comment, deployed checkout, coordinator/SHU-140 branch,
 config.json gate change, production contact, or /srv access was performed.
 Systemd syntax verification has the documented /run cache-marker side effect.
 
-## Every new test (exact names)
+## Every new test since the original correction base (exact names)
 
 1. `SHU251 canonical writer lock accepted and foreign parameter refused`
 2. `SHU251 mutation: rendered foreign writer lock`
@@ -77,6 +101,23 @@ Systemd syntax verification has the documented /run cache-marker side effect.
 20. `SHU251 process identity probe distinguishes current and stale process tokens`
 21. `SHU251 shutdown cancels queued launches before spawn`
 22. `SHU251 occupied socket refuses startup before recovery`
+
+23. `SHU251 deployed workspace state directory accepted by installer`
+24. `SHU251 foreign workspace state directory refused before staging`
+25. `SHU251 explicit workspace override stages a visible two-writer hazard`
+26. `SHU251 mutation: matching foreign environment and writer lock`
+27. `SHU251 mutation: explicit override warning removed`
+28. `SHU251 mutation: notification before listen`
+29. `SHU251 canonical workspace constant matches literal deployment and activation contract`
+30. `SHU251 mutation: canonical workspace constant repointed`
+31. `SHU251 non-string workspace state directory has named fail-closed refusal`
+
+Tests 23–27 are the five F3 tests delivered at aa9892f9 that the prior report omitted.
+Tests 28–31 are new in this round. The existing
+`SHU251 recovery precedes readiness and authenticated status is available` test
+now requires a genuine server response; its recovery-omission mutation shares
+those assertions. All service tests gain a default timeout, and lifecycle tests
+that retain a started service gain cleanup hooks.
 
 ## Mutation and negative-control AssertionErrors
 
@@ -110,8 +151,20 @@ synthetic write/state evidence is not claimed as a real positive write scenario.
 | durable launches directory removed | `SHU251_SUPERVISOR_STATE: missing durable launches directory` |
 | durable launches directory symlinked | `SHU251_SUPERVISOR_STATE: only real directories and regular durable files allowed` |
 | occupied socket startup | `SHU251_SUPERVISOR_SOCKET: occupied or stale socket requires operator inspection` |
+| notification before listen (temporary source copy) | `SHU251_READINESS: authenticated status must succeed before notification` |
+| canonical workspace constant repointed (temporary source copy) | `SHU251_WRITER_LOCK: WORKSPACE_STATE_DIR must equal literal deployed /srv/shu/state/workspaces` |
+| non-string workspace state directory | `SHU251_WRITER_LOCK: canonical workspace state directory required` |
 
-## Every changed file and reason
+## Files changed in this focused round
+
+- `service/units.mjs` — Validate workspace input before deriving paths.
+- `service/test/service.test.mjs` — Pin deployment and contract, reject non-string inputs, add constant mutation and default timeout.
+- `service/test/supervisor-service.test.mjs` — Require a real readiness response, add ordering mutation, timeout and failure cleanup.
+- `service/SHU-251-VALIDATION.md` — Update counts, omitted F3 tests and focused-fix evidence.
+
+Paths above are relative to `.github/coordinator`.
+
+## Earlier correction files and reasons (historical)
 
 - `.github/coordinator/SHU-250-VALIDATION.md` — Label the non-root measurement and explain the root result.
 - `.github/coordinator/service/README.md` — Correct operational claims and document concrete lifecycle, inventory, and host-only limits.

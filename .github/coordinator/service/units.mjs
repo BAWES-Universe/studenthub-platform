@@ -23,12 +23,14 @@ function command(argv) {
   assert.ok(Array.isArray(argv) && argv.length > 0 && argv[0].startsWith('/'), 'SHU251_COMMAND: absolute executable argv required');
   return argv.map(quote).join(' ');
 }
-export function render({ workdir, supervisor, coordinator, writerLock, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir = join(workspaceStateDir ?? '/', 'supervisor'), supervisorSocket = join(workspaceStateDir ?? '/', 'supervisor.sock') }) {
+export function render({ workdir, supervisor, coordinator, writerLock, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket }) {
   assert.ok(workdir?.startsWith('/') && writerLock?.startsWith('/'), 'SHU251_PATH: absolute workdir and shared writer lock required');
   // Use the SAME lock as host-tick.sh. The supplied coordinator command must
   // invoke the reviewed tick directly, not recursively acquire this lock.
   assert.match(workdir, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: workdir must use plain absolute path characters');
   workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
+  if (supervisorStateDir === undefined) supervisorStateDir = join(workspaceStateDir, 'supervisor');
+  if (supervisorSocket === undefined) supervisorSocket = join(workspaceStateDir, 'supervisor.sock');
   assert.equal(writerLock, `${workspaceStateDir}/host-tick.lock`, 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
   for (const path of [supervisorStateDir, supervisorSocket]) assert.match(path, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
   command(coordinator);
@@ -68,6 +70,7 @@ export function verifySyntax(directory) {
 
 // Concrete merged interface; secrets and activation are supplied separately at deployment.
 export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, node = process.execPath }) {
+  workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
   return { workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket,
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
