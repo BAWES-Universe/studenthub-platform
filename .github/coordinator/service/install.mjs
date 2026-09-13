@@ -45,7 +45,7 @@ function restore(root, prior) {
 export function install(root, options) {
   root = rootCheck(root);
   const units = render(options);
-  assertPolicy(units);
+  assertPolicy(units, options);
   const lock = join(root, '.shu251-operation');
   fs.mkdirSync(lock, { mode: 0o700 });
   try {

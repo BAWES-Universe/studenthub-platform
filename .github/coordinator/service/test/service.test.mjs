@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
-import { render, assertPolicy, verifySyntax, names } from '../units.mjs';
+import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters } from '../units.mjs';
 import { install, rollback, snapshot } from '../install.mjs';
 import { verify, fixtureParameters, assertQuiet } from '../verify.mjs';
 
@@ -196,4 +196,43 @@ test('SHU251 runtime override trips harness even with committed config gate fals
   const { verifyKillSwitch } = await import('../verify.mjs');
   await assert.rejects(() => verifyKillSwitch({ enabled: true, configEnabled: false }), error => error.name === 'AssertionError'
     && error.message.includes('SHU251_ZERO_LAUNCH: disabled tick must make zero adapter calls'));
+});
+
+
+test('SHU251 deployed workspace state directory accepted by installer', t => {
+  const root = fixture(t), params = fixtureParameters(root);
+  assert.equal(serviceParameters({ workdir: root }).workspaceStateDir, WORKSPACE_STATE_DIR);
+  assert.equal(params.workspaceStateDir, WORKSPACE_STATE_DIR);
+  assert.equal(install(root, params).changed, true);
+  const writer = fs.readFileSync(join(root, names[1]), 'utf8');
+  assert.ok(writer.includes(`Environment=SHU_WORKSPACE_STATE_DIR=${WORKSPACE_STATE_DIR}\n`));
+  assert.ok(writer.includes(`ExecStart="/usr/bin/flock" "--nonblock" "--conflict-exit-code" "2" "${WORKSPACE_STATE_DIR}/host-tick.lock" `));
+});
+test('SHU251 foreign workspace state directory refused before staging', t => {
+  const root = fixture(t), params = { ...fixtureParameters(root), workspaceStateDir: root, writerLock: join(root, 'host-tick.lock') };
+  for (const allowWorkspaceStateDirOverride of [undefined, false, 'true']) {
+    named(() => install(root, { ...params, allowWorkspaceStateDirOverride }), 'SHU251_WRITER_LOCK: foreign workspace state directory requires allowWorkspaceStateDirOverride=true');
+    assert.deepEqual(fs.readdirSync(root), []);
+  }
+});
+test('SHU251 explicit workspace override stages a visible two-writer hazard', t => {
+  const root = fixture(t), params = { ...fixtureParameters(root), workspaceStateDir: root, writerLock: join(root, 'host-tick.lock'), allowWorkspaceStateDirOverride: true };
+  assert.equal(install(root, params).changed, true);
+  const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(join(root, name), 'utf8')]));
+  assert.ok(units[names[1]].includes(`Environment=SHU_WORKSPACE_STATE_DIR=${root}\n`));
+  assert.ok(units[names[1]].includes(`"${root}/host-tick.lock"`));
+  assert.ok(units[names[1]].includes('two-writer hazard'));
+  assertPolicy(units, params);
+  named(() => assertPolicy(units), 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
+});
+test('SHU251 mutation: matching foreign environment and writer lock', t => {
+  const units = render(fixtureParameters(fixture(t)));
+  units[names[1]] = units[names[1]].replaceAll(WORKSPACE_STATE_DIR, '/tmp/foreign-state');
+  named(() => assertPolicy(units), 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
+});
+test('SHU251 mutation: explicit override warning removed', t => {
+  const root = fixture(t), params = { ...fixtureParameters(root), workspaceStateDir: root, writerLock: join(root, 'host-tick.lock'), allowWorkspaceStateDirOverride: true };
+  const units = render(params);
+  units[names[1]] = units[names[1]].split('\n').slice(1).join('\n');
+  named(() => assertPolicy(units, params), 'SHU251_WRITER_LOCK: explicit override must carry the two-writer hazard warning');
 });

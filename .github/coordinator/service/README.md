@@ -32,7 +32,8 @@ supervisor/workspace state and does not justify excluding any such state.
 Create an owned private directory under the system temporary directory. The
 `serviceParameters()` export in `units.mjs` builds concrete argv against this
 clone: Node runs `service/supervisor-service.mjs` and `reconcile.mjs` directly.
-Inputs are `workdir`, `workspaceStateDir`, and optional `supervisorStateDir`,
+Inputs are `workdir`, optional `workspaceStateDir` (defaults to the exported
+`WORKSPACE_STATE_DIR`), and optional `supervisorStateDir`,
 `supervisorSocket`, and absolute Node executable `node`. Defaults place supervisor
 state in `workspaceStateDir/supervisor` and its socket in
 `workspaceStateDir/supervisor.sock`. Serialize the returned object to parameters.json:
@@ -70,10 +71,25 @@ remaining `*.new`/`.verify-*` artifacts. Preserve the backup if recovery fails.
 The timer targets the single oneshot coordinator service. Wakes occur 60 seconds
 after boot and 60 seconds after completion. Systemd does not overlap activations.
 The writer also holds a nonblocking flock. Rendering and policy validation enforce
-`SHU251_WRITER_LOCK`: the lock must equal
-`SHU_WORKSPACE_STATE_DIR/host-tick.lock`, with the state directory explicitly
-rendered into the coordinator environment. Canonical and foreign-path tests cover
-both directions. Deployment must preserve that environment and path identity:
+`SHU251_WRITER_LOCK`: the rendered `Environment=SHU_WORKSPACE_STATE_DIR` must
+equal `WORKSPACE_STATE_DIR`, and `ExecStart` must hold
+`<WORKSPACE_STATE_DIR>/host-tick.lock`. The single named constant exported from
+`units.mjs` is the service source of truth for the deployed value
+`/srv/shu/state/workspaces`, recorded in `docs/SHU-63-activation-contract.md`.
+Canonical and foreign-path tests cover both directions, including a mutation
+that changes both the environment and lock to the same foreign directory.
+
+The installer refuses a different `workspaceStateDir` unless parameters.json
+explicitly contains `"allowWorkspaceStateDirOverride": true` (a JSON boolean).
+This option is also accepted by `serviceParameters()` and `render()`; pass the
+same explicit options to `assertPolicy(units, options)` for override validation.
+An override renders the chosen directory and matching lock into the unit, plus
+`# SHU251_WRITER_LOCK: workspace state directory override; two-writer hazard`.
+This is a **two-writer hazard**: deployed `host-tick.sh` still locks its required
+`SHU_WORKSPACE_STATE_DIR/host-tick.lock`, so a service using another directory can
+run concurrently with it. The override does not reconfigure the deployed driver.
+
+Deployment must preserve that environment and path identity:
 all manual drivers must use the same state directory and inode. Do not delete a
 lock file that a writer may hold. Do not pass `host-tick.sh` as the coordinator
 command: it would recursively acquire the lock. Remote or bypassing writers still

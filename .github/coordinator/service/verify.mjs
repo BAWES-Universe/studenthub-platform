@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createEpisodeHarness } from '../test/fixture/episode-harness.mjs';
 import { createReceipt, nextReceiptState } from '../reconcile.mjs';
+import { WORKSPACE_STATE_DIR } from './units.mjs';
 import { install, rollback, snapshot } from './install.mjs';
 
 export function tree(root) {
@@ -58,7 +59,7 @@ export async function verifyKillSwitch({ enabled = false, configEnabled = enable
 }
 export function fixtureParameters(root) {
   // Syntax-only executables. These are not supervisor interface implementations.
-  return { workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], workspaceStateDir: root, writerLock: join(root, 'host-tick.lock') };
+  return { workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], workspaceStateDir: WORKSPACE_STATE_DIR, writerLock: join(WORKSPACE_STATE_DIR, 'host-tick.lock') };
 }
 export async function verify() {
   const root = fs.mkdtempSync(join(tmpdir(), 'shu251-verify-'));

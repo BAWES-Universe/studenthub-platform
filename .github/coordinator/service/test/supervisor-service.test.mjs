@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { startSupervisor, supervisorState, probeProcess } from '../supervisor-service.mjs';
@@ -101,7 +101,7 @@ test('SHU251 mutation: durable inventory directory missing or symlinked', t => {
 });
 test('SHU251 concrete merged service argv renders valid units', t => {
   const params = fixture(t), workdir = process.cwd();
-  const units = render(serviceParameters({ workdir, workspaceStateDir: dirname(params.stateDir), supervisorStateDir: params.stateDir, supervisorSocket: params.socketPath }));
+  const units = render(serviceParameters({ workdir, supervisorStateDir: params.stateDir, supervisorSocket: params.socketPath }));
   assertPolicy(units);
   for (const name of names) fs.writeFileSync(join(params.stateDir, '..', name), units[name]);
   verifySyntax(join(params.stateDir, '..'));
