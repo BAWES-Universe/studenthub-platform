@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { prepareAttemptWorkspace, workspaceFailureCode } from "../attempt-workspace.mjs";
@@ -43,7 +44,7 @@ function setup() {
   git(seed, "push", remote, "HEAD:refs/heads/coordinator/SHU-140");
   const root = path.join(dir, "workspaces"), state = path.join(dir, "state"), bin = path.join(dir, "bin");
   fs.mkdirSync(root); fs.chmodSync(root, 0o3770); fs.mkdirSync(state, { mode: 0o700 }); fs.mkdirSync(bin);
-  const env = { ...process.env, SHU_WORKTREE_ROOT: root, SHU_WORKSPACE_STATE_DIR: state,
+  const env = { ...process.env, SHU_WORKTREE_ROOT: root, SHU_WORKSPACE_STATE_DIR: state, SHU_REVIEW_EVIDENCE_DIR: state,
     SHU_PUSH_REMOTE_URL: `file://${remote}`, SHU_WORKER_UID: "65534", SHU_WORKER_LAUNCH_WRAPPER: wrapper,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir, SHU_PUSH_BROKER_ENABLED: "true" };
   const receipt = (over = {}) => ({ attempt_id: randomUUID(), issue_id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905",
@@ -185,7 +186,8 @@ function installCliDoubles(f, workspaceReady = false) {
     console.log(JSON.stringify({type:'turn.completed'}));
     `;
   const reviewer = common + `
-    const round=Number(fs.readFileSync('round','utf8'));console.log(JSON.stringify({type:'result',subtype:'success',session_id:attempt,structured_output:{attempt_id:attempt,target_sha:target,stage:round===1?'BLOCKED':'PASS',links:['https://example.invalid/fixture-evidence']}}));`;
+    const evidence=/Confined exact-head test evidence URI \\(machine provenance only; do not Read\\): (file:\\/\\/\\/[^\\s]+)/.exec(prompt)[1];
+    const round=Number(fs.readFileSync('round','utf8'));console.log(JSON.stringify({type:'result',subtype:'success',session_id:attempt,structured_output:{attempt_id:attempt,target_sha:target,stage:round===1?'BLOCKED':'PASS',links:[evidence,'https://example.invalid/fixture-evidence']}}));`;
   for (const [name, body] of [["codex", writer], ["claude", reviewer]]) {
     fs.writeFileSync(path.join(f.bin, name), `#!${nodeBin}\n${body}\n`, { mode: 0o755 });
   }
@@ -202,17 +204,21 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
     const observedAdapter = (mod, additions = {}) => ({ ...mod, async launchBuilder(options) {
       const result=await mod.launchBuilder({ ...options, ...additions }); adapterResults.push(result); return result;
     } });
-    const reviewEvidenceImpl = async ({ target_sha }) => ({
-      executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
-      evidence_link: `file:///coordinator-private/${target_sha}.review-test.json`,
-      report: {
+    const reviewEvidenceImpl = async ({ target_sha }) => {
+      const evidencePath = path.join(f.state, `${target_sha}.review-test.json`);
+      fs.writeFileSync(evidencePath, "{}", { mode: 0o600 });
+      return {
+        executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+        evidence_link: pathToFileURL(evidencePath).href,
+        report: {
         version: "1.0.0", target_sha, test_files: ["fixture.test.mjs"],
         expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
         sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED",
         network_probe: "DENIED", forbidden_env_keys: [],
         tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
-      },
-    });
+        },
+      };
+    };
     const io = { adapterModules: { "codex-cli": observedAdapter(codex), "claude-code": observedAdapter(claude, { reviewEvidenceImpl }) }, codexStateDir: f.state,
       prepareWorkspace: (options) => {
         assert.ok(h.receipts().some(r => r.attempt_id === options.receipt.attempt_id && r.stage === "LAUNCH_UNKNOWN"), "reservation and launch intent precede preparation");
