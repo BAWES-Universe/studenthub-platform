@@ -492,6 +492,8 @@ export function outcomeForEvidenceStage(stage) {
 // BLOCKED has NOT completed a review: that is an in-scope blocker → machine
 // HOLD, never a revise order. Conversely a verifier (review lane) reporting
 // BUILD_READY is incoherent. Mismatched verdicts fail closed (no route).
+// Lane-name keying is valid only while each lane carries exactly one role.
+// A future two-role lane must switch this check to the order's role.
 export function verdictMatchesLane(requestedWorker, evidenceStage) {
   const verdict = outcomeForEvidenceStage(evidenceStage);
   if (!verdict) return false;
