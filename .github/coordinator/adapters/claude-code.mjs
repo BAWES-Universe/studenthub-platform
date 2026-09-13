@@ -76,6 +76,7 @@ export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, tar
     "Review and test the exact bound head. Do not merge.",
     "The coordinator already executed the bound test command through its confined reviewer evidence runner. Inspect the trusted evidence payload included in this prompt; the private file URI is machine provenance only and is not readable under restricted mode. Do not execute commands yourself.",
     "You are read-only. If you find an in-scope defect, return BLOCKED with exact diagnostics and evidence so the independent author can revise it. Do not edit, commit, or push.",
+    "Include the supplied file: evidence URI in links. Source citations may use repo-relative path@bound-head-sha; never cite another head or an unsafe path.",
     "Return the required structured callback. PASS is allowed only with evidence links at this exact head; otherwise return BLOCKED or FAILED.",
   ].filter(Boolean).join("\n");
 }
@@ -232,21 +233,57 @@ function allowedFileLink(url, rawLink, { cwd, evidence_dir, fsImpl = fs }) {
   }
 }
 
+function allowedSourceCitation(rawLink, { target_sha, cwd, fsImpl = fs }) {
+  const separator = rawLink.lastIndexOf("@");
+  if (separator <= 0) return false;
+  const sourcePath = rawLink.slice(0, separator);
+  const citedSha = rawLink.slice(separator + 1);
+  if (!SHA_RE.test(citedSha) || citedSha !== target_sha) return false;
+  if (
+    path.posix.isAbsolute(sourcePath)
+    || sourcePath.includes("\\")
+    || /[\u0000-\u001f\u007f]/.test(sourcePath)
+    || /%(?:2e|2f|5c)/i.test(sourcePath)
+  ) return false;
+  const parts = sourcePath.split("/");
+  if (parts.some((part) => !part || part === "." || part === ".." || part === ".git")) return false;
+  if (path.posix.normalize(sourcePath) !== sourcePath) return false;
+  const root = canonicalRoot(cwd, fsImpl);
+  if (!root) return false;
+  try {
+    const candidate = path.resolve(root, ...parts);
+    const stat = fsImpl.lstatSync(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    const resolved = fsImpl.realpathSync(candidate);
+    return candidate === resolved && inside(root, resolved);
+  } catch {
+    return false;
+  }
+}
+
 export function validateCallback(callback, { attempt_id, target_sha, cwd, evidence_dir, fsImpl = fs } = {}) {
   if (!callback || typeof callback !== "object" || Array.isArray(callback)) return { valid: false, field: "callback", detail: "must be an object" };
   if (callback.attempt_id !== attempt_id) return { valid: false, field: "attempt_id", detail: "does not match the bound attempt" };
   if (callback.target_sha !== target_sha) return { valid: false, field: "target_sha", detail: "does not match the bound head" };
   if (!CALLBACK_STAGES.includes(callback.stage)) return { valid: false, field: "stage", detail: "is not an allowed reviewer stage" };
   if (!Array.isArray(callback.links) || callback.links.length === 0) return { valid: false, field: "links", detail: "must be a non-empty array" };
+  let hasFileEvidence = false;
   for (const [index, link] of callback.links.entries()) {
     const field = `links[${index}]`;
     if (typeof link !== "string") return { valid: false, field, detail: "must be a string" };
+    if (allowedSourceCitation(link, { target_sha, cwd, fsImpl })) continue;
     let url;
-    try { url = new URL(link); } catch { return { valid: false, field, detail: "is not a URL" }; }
+    try { url = new URL(link); } catch {
+      return { valid: false, field, detail: "is not an allowlisted URL or exact-head source citation" };
+    }
     if (["http:", "https:"].includes(url.protocol)) continue;
-    if (url.protocol === "file:" && allowedFileLink(url, link, { cwd, evidence_dir, fsImpl })) continue;
+    if (url.protocol === "file:" && allowedFileLink(url, link, { cwd, evidence_dir, fsImpl })) {
+      hasFileEvidence = true;
+      continue;
+    }
     return { valid: false, field, detail: "is not an allowlisted HTTPS or canonical local evidence file" };
   }
+  if (!hasFileEvidence) return { valid: false, field: "links", detail: "must include canonical local machine evidence" };
   return { valid: true, field: null, detail: null };
 }
 

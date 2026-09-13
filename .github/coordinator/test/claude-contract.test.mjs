@@ -1,5 +1,9 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   CALLBACK_SCHEMA,
   CLAUDE_MODEL,
@@ -20,6 +24,14 @@ import {
 const ATTEMPT = "11111111-2222-4333-8444-555555555555";
 const SHA = "d".repeat(40);
 const TOKEN = "oauth-test-fixture";
+const CONTRACT_ROOT = mkdtempSync(join(tmpdir(), "claude-contract-"));
+const CONTRACT_WORKSPACE = join(CONTRACT_ROOT, "workspace");
+const CONTRACT_EVIDENCE = join(CONTRACT_WORKSPACE, ".review-evidence");
+const CONTRACT_REPORT = join(CONTRACT_EVIDENCE, `${ATTEMPT}.review-test.1.json`);
+mkdirSync(CONTRACT_WORKSPACE, { mode: 0o700 });
+mkdirSync(CONTRACT_EVIDENCE, { mode: 0o700 });
+writeFileSync(CONTRACT_REPORT, "{}", { mode: 0o600 });
+after(() => rmSync(CONTRACT_ROOT, { recursive: true, force: true }));
 
 function execResult({ stdout = "", stderr = "", error = null } = {}) {
   const calls = [];
@@ -42,7 +54,7 @@ function successOutput(stage = "PASS", overrides = {}) {
       attempt_id: ATTEMPT,
       target_sha: SHA,
       stage,
-      links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/99"],
+      links: [pathToFileURL(CONTRACT_REPORT).href, "https://github.com/BAWES-Universe/studenthub-platform/pull/99"],
       ...overrides,
     },
   });
@@ -55,13 +67,13 @@ const launchInput = {
   target_sha: SHA,
   task_context: "Verify the exact-head change.",
   oauth_token: TOKEN,
-  cwd: "/tmp/repo",
+  cwd: CONTRACT_WORKSPACE,
   readHeadImpl: async () => SHA,
   reviewEvidenceImpl: async () => ({
     executed: true,
     passed: true,
     reason_code: "REVIEW_TESTS_PASSED",
-    evidence_link: "file:///srv/shu/review-evidence/test.json",
+    evidence_link: pathToFileURL(CONTRACT_REPORT).href,
     report: {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
       expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
@@ -70,7 +82,7 @@ const launchInput = {
       tests: { executed: true, exit_code: 0, signal: null, stdout: "pass", stderr: "" },
     },
   }),
-  persistEnvelopeImpl: () => ({ link: "file:///srv/shu/review-evidence/envelope.stdout" }),
+  persistEnvelopeImpl: () => ({ link: pathToFileURL(join(CONTRACT_EVIDENCE, "envelope.stdout")).href }),
 };
 
 test("official headless contract: execFile claude -p with JSON schema and bound UUID/SHA", async () => {
@@ -96,6 +108,7 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.ok(call.args.includes(ATTEMPT));
   assert.match(call.args.at(-1), new RegExp(`Bound head: ${SHA}`));
   assert.match(call.args.at(-1), new RegExp(`Attempt: ${ATTEMPT}`));
+  assert.match(call.args.at(-1), /repo-relative path@bound-head-sha/);
 });
 
 test("subscription OAuth is the only Claude credential passed to the child", async () => {
@@ -190,7 +203,8 @@ test("BLOCKED and FAILED verifier callbacks park on HOLD with evidence", async (
     const out = await launchBuilder({ ...launchInput, execFileImpl: execResult({ stdout: successOutput(stage) }) });
     assert.equal(out.stage, "HOLD");
     assert.equal(out.callback.stage, stage);
-    assert.equal(out.evidence_links.length, 1);
+    assert.equal(out.evidence_links.length, 2);
+    assert.equal(out.evidence_links[0], pathToFileURL(CONTRACT_REPORT).href);
   }
 });
 
@@ -291,10 +305,6 @@ test("environment builder removes every metered/alternate API route", () => {
 // Found by Opus during exact-head verification of 4157bce.
 // ---------------------------------------------------------------------------
 import { main, parseReceiptsFromComments } from "../reconcile.mjs";
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 const MOVED_HEAD = "e".repeat(40);
 const VERIFIER_NODE = {
   id: "11111111-aaaa-4bbb-8ccc-000000000001",

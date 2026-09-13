@@ -8,8 +8,8 @@ import { spawnSync } from "node:child_process";
 const CASES = [
   {
     name: "M1 restore HTTP-only callback links",
-    from: '    if (url.protocol === "file:" && allowedFileLink(url, link, { cwd, evidence_dir, fsImpl })) continue;',
-    to: "    if (false) continue;",
+    from: '    if (url.protocol === "file:" && allowedFileLink(url, link, { cwd, evidence_dir, fsImpl })) {',
+    to: '    if (url.protocol === "file:" && false) {',
     pattern: "SHU-240 A1",
   },
   {

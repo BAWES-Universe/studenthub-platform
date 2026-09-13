@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   launchBuilder,
@@ -24,7 +25,13 @@ function privateTemp(prefix) {
   return dir;
 }
 
-function output(stage = "PASS", over = {}) {
+function output(stage = "PASS", over = {}, evidenceDir = null) {
+  const links = ["https://github.com/BAWES-Universe/studenthub-platform/pull/232"];
+  if (evidenceDir) {
+    const evidencePath = path.join(evidenceDir, "callback-review-test.json");
+    fs.writeFileSync(evidencePath, "{}", { mode: 0o600 });
+    links.unshift(pathToFileURL(evidencePath).href);
+  }
   return JSON.stringify({
     type: "result",
     is_error: false,
@@ -33,7 +40,7 @@ function output(stage = "PASS", over = {}) {
       attempt_id: ATTEMPT,
       target_sha: SHA,
       stage,
-      links: ["https://github.com/BAWES-Universe/studenthub-platform/pull/232"],
+      links,
       ...over,
     },
   });
@@ -105,7 +112,7 @@ function fold(out) {
 test("SHU-232 B1: valid callback retains byte-identical 0600 envelope and the receipt links it", async (t) => {
   const dir = privateTemp("shu232-b1-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const raw = output();
+  const raw = output("PASS", {}, dir);
   const out = await launchBuilder(launchArgs(dir, raw));
   assert.equal(out.stage, "COMPLETED");
   const envelopeLink = out.audit_evidence_links.find((link) => link.includes("claude-envelope"));
@@ -134,7 +141,7 @@ test("SHU-232 B2: prose-only result retains its envelope and names NO_STRUCTURED
 test("SHU-232 B3: structured but unbound callback names CALLBACK_BINDING_INVALID, never B2's code", async (t) => {
   const dir = privateTemp("shu232-b3-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const raw = output("PASS", { target_sha: "3".repeat(40) });
+  const raw = output("PASS", { target_sha: "3".repeat(40) }, dir);
   const out = await launchBuilder(launchArgs(dir, raw));
   assert.equal(out.stage, "HOLD");
   assert.equal(out.reason_code, "CALLBACK_BINDING_INVALID");
@@ -145,9 +152,11 @@ test("SHU-232 B3: structured but unbound callback names CALLBACK_BINDING_INVALID
   assert.ok(fold(out).notes.some((note) => note.includes("CALLBACK_BINDING_INVALID")));
 });
 
-test("SHU-232 B4: envelope write failure is logged, nonfatal, and never claimed as retained", async () => {
+test("SHU-232 B4: envelope write failure is logged, nonfatal, and never claimed as retained", async (t) => {
+  const dir = privateTemp("shu232-b4-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const logs = [];
-  const out = await launchBuilder(launchArgs("/tmp", output(), {
+  const out = await launchBuilder(launchArgs(dir, output("PASS", {}, dir), {
     persistEnvelopeImpl: () => { throw Object.assign(new Error("disk full"), { code: "ENOSPC" }); },
     io: { stdout: (line) => logs.push(line) },
   }));
@@ -160,7 +169,7 @@ test("SHU-232 B4: envelope write failure is logged, nonfatal, and never claimed 
 test("SHU-232 B5: envelope is stdout-only, secret-free, token-scanned, and size-bounded", async (t) => {
   const dir = privateTemp("shu232-b5-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const raw = output();
+  const raw = output("PASS", {}, dir);
   const args = launchArgs(dir, raw);
   const out = await launchBuilder(args);
   const envelopeLink = out.audit_evidence_links.find((link) => link.includes("claude-envelope"));
