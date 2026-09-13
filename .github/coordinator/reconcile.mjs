@@ -922,12 +922,22 @@ export function nextReceiptState(receipt, event, ctx = {}) {
           next.timestamps.terminal = at();
           return { receipt: next, accepted: true };
         }
+        // A bound BLOCKED/FAILED verdict is valid durable routing evidence even
+        // though it must never authorize COMPLETED. Classify it once and use
+        // that same fact for both the audit note and persisted verdict fields,
+        // so the receipt cannot claim rejection while retaining the verdict.
+        const heldVerdictStage = callbackBindingValid(receipt, callback, ctx)
+          && (callback.stage === "BLOCKED" || callback.stage === "FAILED")
+          ? callback.stage
+          : null;
         const next = appendAdapterAudit(note(
-          event.reason_code
-            ? `run completed without an acceptable verifier result — HOLD (${event.reason_code})`
+          heldVerdictStage
+            ? `run completed WITH validated callback (attempt + target_sha match); ${heldVerdictStage} verdict recorded — HOLD`
             : callback
               ? "run completed but callback REJECTED (attempt/target_sha mismatch or stale head) — HOLD"
-              : "run completed WITHOUT validated callback — HOLD (manual review required)",
+              : event.reason_code
+                ? `run completed without an acceptable verifier result — HOLD (${event.reason_code})`
+                : "run completed WITHOUT validated callback — HOLD (manual review required)",
         ));
         next.stage = "HOLD";
         next.adapter_status = "completed";
@@ -937,8 +947,8 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         // callback's stage + output head whenever the callback is attempt-bound
         // (BLOCKED/FAILED never authorize COMPLETED — GPT lifecycle BLOCK — but
         // they ARE durable routing input). Unbound/no callback -> no verdict.
-        if (callbackBindingValid(receipt, callback, ctx) && (callback.stage === "BLOCKED" || callback.stage === "FAILED")) {
-          next.verdict_stage = callback.stage;
+        if (heldVerdictStage) {
+          next.verdict_stage = heldVerdictStage;
           if (typeof callback.result_sha === "string" && /^[0-9a-f]{40}$/.test(callback.result_sha)) {
             next.result_sha = callback.result_sha;
           }
