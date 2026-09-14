@@ -16,6 +16,9 @@ node --test .github/coordinator/test/*.test.mjs
 | Final | 758 | 752 | 0 | 6 |
 | New tests, focused verification | 27 | 27 | 0 | 0 |
 
+The table records a **non-root** run (752 pass / 6 skipped at final).
+The equivalent root run is 758 pass / 0 skipped; the six tests require root.
+
 The six baseline skips remain unchanged. The final full run measured 17.0 ms
 for submission and 1.5 ms for a later real reconcile tick while the deterministic
 child double remained running. The enforced bound is 1000 ms. Mutating dispatch
