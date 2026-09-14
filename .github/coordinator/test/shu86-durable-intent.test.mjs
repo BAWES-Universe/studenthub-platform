@@ -197,17 +197,18 @@ test('SHU-86: legacy accepted recovery creates safe intent and never reelects a 
 test('SHU-86: pre-spawn hash is durable and failed spawn reports UNLAUNCHED', async t => {
   const f = fixture(t), supervisor = f.make(() => {});
   await supervisor.submit(signedSupervisorRequest(order, secret));
-  let attempted = 0;
+  let attempted = 0, marker;
   supervisor.spawnWorker = () => {
     attempted++;
-    const marker = supervisor.store.readLaunch(order.attempt_id);
-    assert.equal(marker.attempt_id, order.attempt_id);
-    assert.equal(marker.phase, 'spawn_attempted', 'SHU250_PRESPAWN: durable spawn_attempted must precede process creation');
-    assert.match(marker.completion_token_hash, /^[0-9a-f]{64}$/);
+    marker = supervisor.store.readLaunch(order.attempt_id);
     throw new Error('synthetic spawn failure');
   };
   await supervisor.launch(order.attempt_id);
   assert.equal(attempted, 1);
+  // Assert the captured pre-spawn evidence outside the intentional spawn catch.
+  assert.equal(marker.attempt_id, order.attempt_id);
+  assert.equal(marker.phase, 'spawn_attempted', 'SHU250_PRESPAWN: durable spawn_attempted must precede process creation');
+  assert.match(marker.completion_token_hash, /^[0-9a-f]{64}$/);
   const run = supervisor.store.readRun(order.attempt_id);
   assert.equal(run.status, 'failed');
   assert.equal(run.error_code, 'SPAWN_FAILED');
