@@ -25,6 +25,7 @@ export function assertSelectedApplication(application, selection) {
 
 export async function triggerSelected(selection, env = process.env, request = fetch, {
   timeoutMs = 300_000, intervalMs = 5_000, now = Date.now,
+  assertApplication = assertSelectedApplication, allowHttp = false, verifyFeatures = async () => {},
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   for (const key of ['COOLIFY_BASE', 'COOLIFY_TOKEN', 'COOLIFY_STUDENTHUB_GATEWAY_UUID']) {
@@ -34,7 +35,7 @@ export async function triggerSelected(selection, env = process.env, request = fe
   try { base = new URL(env.COOLIFY_BASE); } catch {
     throw outcome('PRECONDITION_NOT_MET', 'invalid Coolify base URL');
   }
-  if (base.protocol !== 'https:' || base.username || base.password) {
+  if ((!allowHttp && base.protocol !== 'https:') || !['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
     throw outcome('PRECONDITION_NOT_MET', 'Coolify requires an HTTPS base URL without credentials');
   }
   const uuid = encodeURIComponent(env.COOLIFY_STUDENTHUB_GATEWAY_UUID);
@@ -55,7 +56,7 @@ export async function triggerSelected(selection, env = process.env, request = fe
       throw outcome('DEPLOYMENT_UNKNOWN', 'request timed out, response lost or unreadable; inspect history before retrying');
     }
   };
-  assertSelectedApplication(await call(`/api/v1/applications/${uuid}`, 'GET'), selection);
+  assertApplication(await call(`/api/v1/applications/${uuid}`, 'GET'), selection);
   const result = await call(`/api/v1/deploy?uuid=${uuid}`, 'POST');
   if (!Array.isArray(result?.deployments) || !result.deployments.length
     || result.deployments.some((item) => typeof item?.deployment_uuid !== 'string'
@@ -83,13 +84,17 @@ export async function triggerSelected(selection, env = process.env, request = fe
       }
       if (finished) {
         const application = await call(`/api/v1/applications/${uuid}`, 'GET');
-        try { assertSelectedApplication(application, selection); } catch {
+        try { assertApplication(application, selection); } catch {
           throw outcome('DEPLOYMENT_UNKNOWN', 'application pin changed after triggering');
         }
         if (application.status === 'running:healthy') {
           const health = await call('https://staging.studenthub.co/health', 'GET', false);
           if (health?.status === 'ok' && health.component === 'gateway' && health.revision === selection.revision
-            && now() < deadline) return { ...receipt, outcome: 'DEPLOYMENT_SUCCEEDED' };
+            && now() < deadline) {
+            await verifyFeatures(selection);
+            if (now() >= deadline) throw outcome('DEPLOYMENT_UNKNOWN', 'feature verification exceeded deadline');
+            return { ...receipt, outcome: 'DEPLOYMENT_SUCCEEDED' };
+          }
         }
       }
       await sleep(Math.max(0, Math.min(intervalMs, deadline - now())));

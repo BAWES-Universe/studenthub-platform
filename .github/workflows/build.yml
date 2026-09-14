@@ -3,24 +3,13 @@ name: Build, push and deploy gateway
 on:
   push:
     branches: [main]
-  # Push publishes only. A main-branch manual dispatch records an operator's
-  # revision + expected digest; Coolify must already be pinned. See deploy/coolify/DEPLOY-FLOW.md.
-  workflow_dispatch:
-    inputs:
-      revision:
-        description: Full main commit SHA of an already published artifact
-        required: true
-        type: string
-      digest:
-        description: Expected sha256 digest from the publication record
-        required: true
-        type: string
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: build-gateway-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.ref) }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  # Serialize publication, tag promotion, verification and rollback.
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -28,7 +17,49 @@ env:
   IMAGE_NAME: studenthub-gateway
 
 jobs:
+  runtime-scope:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.fingerprint.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node deploy/coolify/runtime-change.mjs
+
+      - uses: actions/setup-node@v4
+        if: ${{ steps.scope.outputs.changed == 'true' }}
+        with:
+          node-version: 22
+      - name: Compare actual runtime closure across the push
+        id: fingerprint
+        if: ${{ steps.scope.outputs.changed == 'true' }}
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          node deploy/coolify/runtime-fingerprint.mjs . > "${RUNNER_TEMP}/runtime-after"
+          git worktree add --detach "${RUNNER_TEMP}/runtime-before" "$BEFORE_SHA"
+          npm ci --ignore-scripts --prefix "${RUNNER_TEMP}/runtime-before"
+          npm run build --prefix "${RUNNER_TEMP}/runtime-before"
+          node deploy/coolify/runtime-fingerprint.mjs "${RUNNER_TEMP}/runtime-before" > "${RUNNER_TEMP}/runtime-before-hash"
+          if cmp -s "${RUNNER_TEMP}/runtime-after" "${RUNNER_TEMP}/runtime-before-hash"; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
   env-manifest:
+    needs: runtime-scope
+    if: ${{ always() && (github.event_name == 'pull_request_target' || needs.runtime-scope.outputs.changed == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -79,6 +110,20 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     needs: env-manifest
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     permissions:
       contents: read
       packages: write
@@ -106,7 +151,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,prefix={{branch}}-,format=long
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         id: build
@@ -120,6 +164,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke-test the exact published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          DATABASE_URL: postgres://postgres@localhost:55432/studenthub_authz
+        run: bash deploy/coolify/image-smoke.sh "${REGISTRY}/${IMAGE_PREFIX}/${IMAGE_NAME}@${DIGEST}"
 
       - name: Record published artifact
         id: record
@@ -145,55 +195,86 @@ jobs:
           if-no-files-found: error
 
   deploy:
-    # Never deploy on push or pull_request_target. Inputs and actor remain in run history.
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
-    needs: env-manifest
+    # Only runtime main pushes whose exact published digest passed image smoke.
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: build-push
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    outputs:
+      outcome: ${{ steps.rollout.outputs.outcome }}
     permissions:
       contents: read
-      packages: read
+      packages: write
+      issues: write
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Select and record immutable artifact
+      - name: Record smoke-tested artifact
         env:
-          REVISION: ${{ inputs.revision }}
-          EXPECTED_DIGEST: ${{ inputs.digest }}
+          DIGEST: ${{ needs.build-push.outputs.digest }}
         run: |
           node --input-type=module <<'JS'
-          import { execFileSync } from 'node:child_process';
-          import { writeFileSync, appendFileSync } from 'node:fs';
+          import { writeFileSync } from 'node:fs';
           import { selectArtifact } from './deploy/coolify/select-artifact.mjs';
-          const selection = selectArtifact(process.env.REVISION);
-          execFileSync('git', ['merge-base', '--is-ancestor', selection.revision, process.env.GITHUB_SHA]);
-          if (selection.digest !== process.env.EXPECTED_DIGEST) throw new Error('published digest does not match operator selection');
-          const record = { ...selection, actor: process.env.GITHUB_ACTOR, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT };
-          writeFileSync('selected-artifact.json', JSON.stringify(record) + '\n');
-          appendFileSync(process.env.GITHUB_STEP_SUMMARY, JSON.stringify(record) + '\n');
+          const selection = selectArtifact(process.env.GITHUB_SHA);
+          if (selection.digest !== process.env.DIGEST) throw new Error('artifact differs from smoke-tested digest');
+          writeFileSync('selected-artifact.json', JSON.stringify(selection) + '\n');
           JS
-      # Upload must succeed before any deployment request is possible.
       - uses: actions/upload-artifact@v4
         with:
           name: selected-artifact-${{ github.run_id }}-${{ github.run_attempt }}
           path: selected-artifact.json
           if-no-files-found: error
-      - name: Verify existing digest pin and trigger Coolify
+      - name: Automatically deploy and verify staging with rollback and freeze
+        id: rollout
         env:
           COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_STUDENTHUB_GATEWAY_UUID: ${{ secrets.COOLIFY_STUDENTHUB_GATEWAY_UUID }}
-        run: node deploy/coolify/trigger-selected.mjs selected-artifact.json
+          GH_TOKEN: ${{ github.token }}
+          DATABASE_URL: postgres://postgres@localhost:55432/studenthub_authz
+        run: node deploy/coolify/automatic-staging.mjs
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: deployment-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: deployment-receipt.json
-          if-no-files-found: error
+          if-no-files-found: warn
+
+  staging-stop:
+    needs: [runtime-scope, env-manifest, build-push, deploy]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Retain staging freeze and notify through GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ needs.env-manifest.result == 'failure' && 'PRECONDITION_NOT_MET' || needs.deploy.outputs.outcome }}
+        run: node deploy/coolify/report-staging-stop.mjs
