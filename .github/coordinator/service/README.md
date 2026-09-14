@@ -242,3 +242,14 @@ Observe repeated disabled ticks across at least two wake intervals, requiring
 zero launches/writes and no authoritative durable changes. Preserve only the
 explicit unit-cache marker exception above. File staging rollback does not claim
 rollback of running services, and must never implicitly re-enable dispatch.
+
+## Residual acceptance harness
+
+The [SHU-251 residual validation runbook](../../../deploy/coolify/SHU-251-RESIDUAL-VALIDATION.md)
+adds a same-tick gate-off/on positive control, a real-process routine restart
+exercise, and the explicit authenticated status schema with receipt checks.
+Run `node --test .github/coordinator/service/test/residual.test.mjs` from the root.
+These are sandbox proofs; installed-service acceptance remains host-pending.
+For a window that prohibits all systemd interaction, export `SHU251_NO_SYSTEMD=1`
+before the full coordinator test command. Eleven existing syntax/staging tests
+then report explicit skips; do not count those as successful validations.

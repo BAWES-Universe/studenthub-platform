@@ -165,3 +165,55 @@ for (const [name, file, before, after, pattern, named] of mutations) {
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 }
+
+test('SHU-86: admitted holds survive submit recovery and stale launch callbacks', async t => {
+  for (const code of ['BLOCKED_BY_APPROVED_WINDOW', 'AWAITING_VERDICT', 'BRANCH_OCCUPIED']) {
+    const f = fixture(t), supervisor = f.make(() => {});
+    await supervisor.submit(signedSupervisorRequest(order, secret));
+    supervisor.store.holdIntent(order, code);
+    await f.make().submit(signedSupervisorRequest(order, secret));
+    for (let i = 0; i < 3; i++) { f.make().recover(); await idle(); }
+    await supervisor.launch(order.attempt_id);
+    assert.equal(f.children.length, 0);
+    assert.equal(supervisor.store.announce(order).hold_code, code);
+  }
+});
+
+test('SHU-86: legacy accepted recovery creates safe intent and never reelects a marker', async t => {
+  for (const phase of [null, 'reserved', 'spawn_attempted']) {
+    const f = fixture(t), supervisor = f.make(() => {});
+    await supervisor.submit(signedSupervisorRequest(order, secret));
+    fs.unlinkSync(supervisor.store.intentPath(order));
+    if (phase) supervisor.store.claimLaunch(order.attempt_id, { attempt_id: order.attempt_id, phase });
+    for (let i = 0; i < 3; i++) { f.make().recover(); await idle(); }
+    assert.equal(f.children.length, phase ? 0 : 1);
+    if (phase) {
+      assert.equal(supervisor.store.readLaunch(order.attempt_id).phase, phase);
+      assert.equal(supervisor.store.announce(order).hold_code, 'AMBIGUOUS_LAUNCH');
+    } else assert.equal(supervisor.store.announce(order).status, 'RUNNING');
+  }
+});
+
+test('SHU-86: pre-spawn hash is durable and failed spawn reports UNLAUNCHED', async t => {
+  const f = fixture(t), supervisor = f.make(() => {});
+  await supervisor.submit(signedSupervisorRequest(order, secret));
+  let attempted = 0;
+  supervisor.spawnWorker = () => {
+    attempted++;
+    const marker = supervisor.store.readLaunch(order.attempt_id);
+    assert.equal(marker.attempt_id, order.attempt_id);
+    assert.equal(marker.phase, 'spawn_attempted', 'SHU250_PRESPAWN: durable spawn_attempted must precede process creation');
+    assert.match(marker.completion_token_hash, /^[0-9a-f]{64}$/);
+    throw new Error('synthetic spawn failure');
+  };
+  await supervisor.launch(order.attempt_id);
+  assert.equal(attempted, 1);
+  const run = supervisor.store.readRun(order.attempt_id);
+  assert.equal(run.status, 'failed');
+  assert.equal(run.error_code, 'SPAWN_FAILED');
+  assert.deepEqual(supervisor.status(signedSupervisorRequest(order, secret, 'status')),
+    { ok: false, stage: 'UNLAUNCHED', reason: 'launch receipt missing or invalid' });
+  assert.equal(supervisor.store.announce(order).status, 'UNLAUNCHED');
+  supervisor.recover(); await supervisor.launch(order.attempt_id);
+  assert.equal(attempted, 1);
+});

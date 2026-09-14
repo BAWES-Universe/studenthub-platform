@@ -128,3 +128,12 @@ journal to the configured fixture. Never delete a retained journal to bypass
 recovery. General board selection does not unassign human-owned cards: this
 procedure is restricted to the approved fixture. Tests use an in-memory card and
 local temporary journals; no Linear updates or host actions are performed.
+
+The authenticated status response schema and the SHU-251 acceptance commands are
+pinned in [SHU-251 residual validation](../../deploy/coolify/SHU-251-RESIDUAL-VALIDATION.md#3-explicit-status-schema-and-launch-evidence).
+A RUNNING, COMPLETED or FAILED status requires a matching durable confirmed-spawn
+receipt, including phase `launched`, issue/attempt/SHA bindings, positive PID and
+64-hex completion token hash. A run record alone returns UNLAUNCHED/refusal
+(`ok: false`, reason `launch receipt missing or invalid`). ACCEPTED is queued
+admission; announcement remains UNLAUNCHED until confirmed spawn. Failed spawn
+retains internal failed/SPAWN_FAILED evidence without claiming execution.

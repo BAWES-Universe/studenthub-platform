@@ -1,5 +1,6 @@
 import { test as nodeTest } from 'node:test';
 // Bound every service test, including regressions that leave asynchronous work pending.
+const noSystemd = { skip: process.env.SHU251_NO_SYSTEMD === '1' ? 'SHU251_NO_SYSTEMD: systemd interaction prohibited in this window' : false };
 const test = (name, options, fn) => typeof options === 'function'
   ? nodeTest(name, { timeout: 10000 }, options)
   : nodeTest(name, { timeout: 10000, ...options }, fn);
@@ -23,10 +24,10 @@ function named(fn, message) {
   assert.throws(fn, error => error.name === 'AssertionError' && error.message.includes(message));
 }
 
-test('SHU251 local kill-switch, syntax and rollback harness', async () => {
+test('SHU251 local kill-switch, syntax and rollback harness', noSystemd, async () => {
   assert.equal((await verify()).writes, 0);
 });
-test('SHU251 parameterised argv and unit syntax', t => {
+test('SHU251 parameterised argv and unit syntax', noSystemd, t => {
   const root = fixture(t), params = fixtureParameters(root);
   params.supervisor.push('literal $TOKEN %i "quote" \\ slash');
   const units = render(params);
@@ -38,7 +39,7 @@ test('SHU251 parameterised argv and unit syntax', t => {
   named(() => render({ ...params, coordinator: ['relative'] }), 'SHU251_COMMAND');
   named(() => render({ ...params, supervisor: ['/usr/bin/true', 'bad\nRestart=no'] }), 'SHU251_PARAMETER');
 });
-test('SHU251 staging is idempotent and preserves original backup', t => {
+test('SHU251 staging is idempotent and preserves original backup', noSystemd, t => {
   const root = fixture(t), params = fixtureParameters(root);
   fs.writeFileSync(join(root, names[0]), 'old\n', { mode: 0o640 });
   const before = snapshot(root);
@@ -52,7 +53,7 @@ test('SHU251 staging is idempotent and preserves original backup', t => {
   assert.deepEqual(snapshot(root), before, 'SHU251_ROLLBACK: prior bytes, modes and absence must be restored');
   assert.equal(rollback(root).changed, false);
 });
-test('SHU251 drift requires rollback and symlinks are refused', t => {
+test('SHU251 drift requires rollback and symlinks are refused', noSystemd, t => {
   const root = fixture(t), params = fixtureParameters(root);
   install(root, params);
   fs.writeFileSync(join(root, names[1]), 'drift');
@@ -71,7 +72,7 @@ test('SHU251 refuses unsafe destination and concurrent transaction', t => {
   assert.throws(() => install(root, params), { code: 'EEXIST' });
   assert.equal(fs.existsSync(join(root, '.shu251-backup.json')), false);
 });
-test('SHU251 invalid executable fails syntax before staging changes', t => {
+test('SHU251 invalid executable fails syntax before staging changes', noSystemd, t => {
   const root = fixture(t), params = fixtureParameters(root), before = snapshot(root);
   params.supervisor = [join(root, 'missing-executable')];
   named(() => install(root, params), 'SHU251_SYNTAX');
@@ -113,7 +114,7 @@ for (const [label, after, launches, writes, message] of [
   ['durable state changed', { receipt: 'changed' }, 0, 0, 'SHU251_STATE_DIFF: disabled tick must preserve all fixture state'],
 ]) test(`SHU251 mutation: ${label}`, () => named(() => assertQuiet({}, after, launches, writes), message));
 
-test('SHU251 mutation: rollback restore omitted', async t => {
+test('SHU251 mutation: rollback restore omitted', noSystemd, async t => {
   const root = fixture(t), moduleRoot = fixture(t);
   const source = fs.readFileSync(new URL('../install.mjs', import.meta.url), 'utf8');
   const target = 'else atomic(join(root, name), Buffer.from(item.data, \'base64\'), item.mode);';
@@ -129,7 +130,7 @@ test('SHU251 mutation: rollback restore omitted', async t => {
 });
 
 
-test('SHU251 partial staging failure restores prior state', t => {
+test('SHU251 partial staging failure restores prior state', noSystemd, t => {
   const root = fixture(t), params = fixtureParameters(root);
   fs.writeFileSync(join(root, names[0]), 'old supervisor', { mode: 0o600 });
   const prior = snapshot(root), rename = fs.renameSync;
@@ -203,7 +204,7 @@ test('SHU251 runtime override trips harness even with committed config gate fals
 });
 
 
-test('SHU251 deployed workspace state directory accepted by installer', t => {
+test('SHU251 deployed workspace state directory accepted by installer', noSystemd, t => {
   const root = fixture(t), params = fixtureParameters(root);
   assert.equal(serviceParameters({ workdir: root }).workspaceStateDir, WORKSPACE_STATE_DIR);
   assert.equal(params.workspaceStateDir, WORKSPACE_STATE_DIR);
@@ -219,7 +220,7 @@ test('SHU251 foreign workspace state directory refused before staging', t => {
     assert.deepEqual(fs.readdirSync(root), []);
   }
 });
-test('SHU251 explicit workspace override stages a visible two-writer hazard', t => {
+test('SHU251 explicit workspace override stages a visible two-writer hazard', noSystemd, t => {
   const root = fixture(t), params = { ...fixtureParameters(root), workspaceStateDir: root, writerLock: join(root, 'host-tick.lock'), allowWorkspaceStateDirOverride: true };
   assert.equal(install(root, params).changed, true);
   const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(join(root, name), 'utf8')]));
@@ -273,7 +274,7 @@ test('SHU251 non-string workspace state directory has named fail-closed refusal'
   assert.equal(coerced, false, 'SHU251_WRITER_LOCK: non-string workspace state directory must not be coerced');
 });
 
-test('SHU251 configured identity and external secret file survive staging', t => {
+test('SHU251 configured identity and external secret file survive staging', noSystemd, t => {
   const root = fixture(t);
   const params = serviceParameters({ workdir: root, serviceUser: 'fixture-coordinator', serviceGroup: 'fixture-state', secretEnvironmentFile: '/etc/fixture/supervisor.env' });
   // Syntax-only commands permit staging without a host account or secret file.

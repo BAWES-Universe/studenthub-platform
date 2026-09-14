@@ -12,5 +12,6 @@ export function requireHoldCode(code) {
 export function hasLaunchReceipt(receipt, order) {
   return receipt?.phase === 'launched' && receipt.attempt_id === order.attempt_id
     && receipt.issue_id === order.issue_id && receipt.target_sha === order.target_sha
-    && Number.isInteger(receipt.pid) && receipt.pid > 0;
+    && Number.isInteger(receipt.pid) && receipt.pid > 0
+    && typeof receipt.completion_token_hash === 'string' && /^[0-9a-f]{64}$/.test(receipt.completion_token_hash);
 }

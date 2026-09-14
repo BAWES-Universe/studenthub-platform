@@ -43,11 +43,13 @@ test('deploy refuses latest, wrong digest, wrong image and non-staging target wi
 
 test('verified digest deployment records Coolify deployment ID', async () => {
   const methods = [];
-  const receipt = await triggerSelected(selection, env, async (_url, options) => {
+  const receipt = await triggerSelected(selection, env, async (url, options) => {
     methods.push(options.method);
-    return Response.json(options.method === 'GET' ? application : { deployments: [{ deployment_uuid: 'deploy-1' }] });
+    if (url.pathname === '/health') return Response.json({ status: 'ok', component: 'gateway', revision: revision });
+    if (url.pathname === '/api/v1/deployments/deploy-1') return Response.json({ deployment_uuid: 'deploy-1', status: 'finished' });
+    return Response.json(options.method === 'GET' ? { ...application, status: 'running:healthy' } : { deployments: [{ deployment_uuid: 'deploy-1' }] });
   });
-  assert.deepEqual(methods, ['GET', 'POST']);
+  assert.deepEqual(methods, ['GET', 'POST', 'GET', 'GET', 'GET']);
   assert.deepEqual(receipt.deploymentUuids, ['deploy-1']);
   assert.equal(receipt.pin, selection.pin);
 });

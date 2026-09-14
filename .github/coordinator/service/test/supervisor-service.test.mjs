@@ -123,7 +123,7 @@ test('SHU251 mutation: durable inventory directory missing or symlinked', t => {
   fs.symlinkSync(join(params.stateDir, 'orders'), join(params.stateDir, 'launches'));
   assert.throws(() => supervisorState(params.stateDir), { name: 'AssertionError', message: 'SHU251_SUPERVISOR_STATE: only real directories and regular durable files allowed' });
 });
-test('SHU251 concrete merged service argv renders valid units', t => {
+test('SHU251 concrete merged service argv renders valid units', { skip: process.env.SHU251_NO_SYSTEMD === '1' ? 'SHU251_NO_SYSTEMD: systemd interaction prohibited in this window' : false }, t => {
   const params = fixture(t), workdir = process.cwd();
   const units = render(serviceParameters({ workdir, supervisorStateDir: params.stateDir, supervisorSocket: params.socketPath }));
   assertPolicy(units);

@@ -473,15 +473,27 @@ export class DurableSupervisor {
         if (order[key] !== request.order[key]) return { ok: false, stage: "HOLD", reason: "status binding mismatch" };
       }
       const run = this.store.readRun(order.attempt_id);
-      const report = this.store.reportIntent(order);
-      if (report.status === 'UNLAUNCHED') return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
-        attempt_id: order.attempt_id, target_sha: order.target_sha, stage: run.status === 'hold' ? 'HOLD' : 'UNLAUNCHED', hold_code: run.hold_code ?? report.hold_code };
+      // Validate storage before either admission or execution projection.
+      if (!["accepted", "running", "hold", "completed", "failed"].includes(run.status)) {
+        return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
+      }
       const terminal = this.store.hasCompletion(order.attempt_id) ? this.store.validatedCompletion(order.attempt_id) : null;
       if (terminal && !terminal.ok) return { ok: false, stage: "HOLD", reason: terminal.reason };
+      const stage = run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase();
+      if (!["ACCEPTED", "RUNNING", "HOLD", "COMPLETED", "FAILED"].includes(stage)) {
+        return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
+      }
+      const report = this.store.reportIntent(order);
+      const execution = ["RUNNING", "COMPLETED", "FAILED"].includes(stage);
+      if (execution && !hasLaunchReceipt(report.launch_receipt, order)) {
+        return { ok: false, stage: "UNLAUNCHED", reason: "launch receipt missing or invalid" };
+      }
+      // ACCEPTED is queue admission; announce() independently remains UNLAUNCHED.
       return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
-        attempt_id: order.attempt_id, target_sha: order.target_sha,
-        stage: run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase(),
-        launch_receipt: report.launch_receipt, result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
+        attempt_id: order.attempt_id, target_sha: order.target_sha, stage,
+        ...(execution ? { launch_receipt: report.launch_receipt }
+          : { hold_code: requireHoldCode(run.hold_code ?? report.hold_code ?? 'AWAITING_LAUNCH') }),
+        result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
     } catch (error) {
       if (error.code === 'ERR_ASSERTION') throw error;
       return { ok: false, stage: "HOLD", hold_code: requireHoldCode('MISSING_CLAIM'), reason: "supervisor attempt unavailable" };
@@ -495,7 +507,8 @@ export class DurableSupervisor {
     const accepted = this.store.accept(request.order, this.now());
     if (!accepted.ok) return accepted;
     const run = accepted.run;
-    if (run.status === "accepted" && !this.store.hasLaunch(request.order.attempt_id)) {
+    if (run.status === "accepted" && !this.store.hasLaunch(request.order.attempt_id)
+        && this.store.reportIntent(request.order).hold_code === 'AWAITING_LAUNCH') {
       this.schedule(() => void this.launch(request.order.attempt_id));
     }
     return {
@@ -513,6 +526,8 @@ export class DurableSupervisor {
   async launch(attemptId) {
     const run = this.store.readRun(attemptId);
     if (run.status !== "accepted") return run;
+    if (this.store.reportIntent(this.store.readOrder(attemptId)).hold_code !== 'AWAITING_LAUNCH'
+        && !this.store.hasLaunch(attemptId)) return run;
     const claimed = this.store.claimLaunch(attemptId, {
       attempt_id: attemptId,
       phase: "reserved",
@@ -673,7 +688,9 @@ export class DurableSupervisor {
       }
       if (run.status === "accepted") {
         if (this.store.hasLaunch(attemptId)) {
-          this.store.holdIntent(this.store.readOrder(attemptId), 'AMBIGUOUS_LAUNCH');
+          const order = this.store.readOrder(attemptId);
+          this.store.intend(order, this.now(), 'AMBIGUOUS_LAUNCH');
+          this.store.holdIntent(order, 'AMBIGUOUS_LAUNCH');
           results.push(this.store.writeRun(attemptId, {
             ...run,
             status: "hold",
@@ -683,7 +700,8 @@ export class DurableSupervisor {
             reason: "launch was attempted before restart; refusing duplicate spawn",
           }));
         } else {
-          this.schedule(() => void this.launch(attemptId));
+          const intent = this.store.intend(this.store.readOrder(attemptId), this.now(), 'AWAITING_LAUNCH');
+          if (intent.hold_code === 'AWAITING_LAUNCH') this.schedule(() => void this.launch(attemptId));
           results.push(run);
         }
       } else if (run.status === "running") {
