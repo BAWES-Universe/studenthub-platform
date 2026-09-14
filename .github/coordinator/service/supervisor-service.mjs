@@ -26,6 +26,8 @@ export async function startSupervisor({ stateDir, socketPath, secret, env = proc
   assert.ok(!fs.existsSync(socketPath), 'SHU251_SUPERVISOR_SOCKET: occupied or stale socket requires operator inspection');
   const parent = fs.lstatSync(dirname(socketPath));
   assert.ok(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid() && !(parent.mode & 0o077), 'SHU251_SUPERVISOR_PATH: private owned socket parent required');
+  assert.ok((typeof secret === 'string' || Buffer.isBuffer(secret)) && Buffer.byteLength(secret) >= 32,
+    'SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes');
   let stopping = false;
   const supervisor = new DurableSupervisor({ stateDir, secret, spawnWorker, probeProcess });
   const launch = supervisor.launch.bind(supervisor);
