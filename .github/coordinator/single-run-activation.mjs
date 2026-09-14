@@ -81,6 +81,8 @@
 // already bounded by expiry, target, revision, one slot and the runtime switch.
 // Failing that way round is the cheaper mistake.
 
+import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
+import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
 import { resolveFixtureLane } from "./workspace-scope.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -495,8 +497,43 @@ export function singleRunActivationStatus({
   gitHead,
   initialTargetSha,
   io = {},
+  env = {},
+  issues = [],
 } = {}) {
   if (!filePath) return { requested: false, state: "absent", valid: true, reason: null, target_issue_id: null, activation_id: null, expires_at: null };
+
+  // Explicit versioned extension; legacy records keep their original checks.
+  const envelope = readActivationText(filePath, io);
+  let pairRecord;
+  try { pairRecord = envelope.ok ? JSON.parse(envelope.text) : null; } catch { /* legacy diagnosis below */ }
+  if (config.dispatch_scope?.issue_ids?.length === 2 && !pairRecord?.target_issue_id && pairRecord?.kind !== "two-fixture-v1") {
+    return { ...refused(`ACT_MALFORMED: ${envelope.ok ? "missing or invalid two-fixture record kind" : envelope.reason}`), code: "ACT_MALFORMED", kind: "two-fixture-v1" };
+  }
+  if (pairRecord?.kind === "two-fixture-v1") {
+    const readRef = (ref) => {
+      try {
+        return execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-C", dir, "rev-parse", "--verify", ref], {
+          env: brokerGitEnv(process.env), encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch { return null; }
+    };
+    const evidence = io.fixtureHeadResolver
+      ? { heads: Object.fromEntries(["SHU-140", "SHU-254"].map(id => [`coordinator/${id}`, io.fixtureHeadResolver(`coordinator/${id}`)])), issues }
+      : readTwoFixtureEvidence(config, env);
+    const status = validateTwoFixtureActivation({ record: pairRecord, config,
+      revision: resolveCoordinatorRevision({ dir, gitHead, io }),
+      mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now });
+    if (!status.valid || status.state !== "armed") return status;
+    const episodes = status.fixtures.map(fixture => ({ fixture, episode: episodeVerdict({ receipts,
+      targetIssueId: fixture.issue_id, config, episodeScope: episodeScopeFor(status) }) }));
+    const ongoing = episodes.filter(entry => !entry.episode.ended);
+    if (!ongoing.length) return refused("activation is spent: both fixture episodes ended");
+    const selected = ongoing.find(entry => !receipts.some(r => r.issue_id === entry.fixture.issue_id && !TERMINAL_RECEIPT_STAGES.includes(r.stage))) ?? ongoing[0];
+    return { ...status, target_issue_id: selected.fixture.issue_id,
+      authorization_ref: selected.fixture.lane.authorization_ref, initial_target_sha: selected.fixture.seed_head,
+      successor: selected.episode.successor ?? null, episode: selected.episode.reason,
+      target_issue_ids: ongoing.map(entry => entry.fixture.issue_id) };
+  }
 
   // (1) Target binding — must be the single committed dispatch_scope issue.
   const scopeIds = config?.dispatch_scope?.issue_ids;
@@ -603,6 +640,7 @@ export function singleRunActivationStatus({
 // under a live activation.
 export function activationAllowsTarget(activation, issueId) {
   if (!activation || activation.state !== "armed") return true;
+  if (activation.kind === "two-fixture-v1") return activation.target_issue_ids.includes(issueId);
   return activation.target_issue_id === issueId;
 }
 

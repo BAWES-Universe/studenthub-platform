@@ -34,9 +34,14 @@ uses `tools/fixture-2/` and `tools/fixture-2-conformance/`. Exact manifests and
 receipt checks prevent cross-lane path substitution. See
 [SINGLE-RUN-ACTIVATION.md](SINGLE-RUN-ACTIVATION.md#shu-241-scoped-builder-source-and-base-preserving-publication).
 
-This is configuration only, not approval or activation. Arming still requires
-explicit operator approval and both dispatch gates: the committed enable flag
-and runtime `ENABLE_DISPATCH=true`. The existing separately approved single-run
-record can substitute for the committed gate only under its original
-single-issue, one-slot constraints; it rejects this two-issue configuration.
-No concurrent activation capability or activation record is introduced here.
+This is configuration only, not approval or activation. For this exact pair,
+arming is permitted only through the reviewed `two-fixture-v1` path documented
+in [SINGLE-RUN-ACTIVATION.md](SINGLE-RUN-ACTIVATION.md#reviewed-two-fixture-extension-dispatch-remains-disabled).
+It binds both complete lane definitions, both seed SHAs, coordinator/main SHA,
+capacity two, expiry, stop-before-merge and both signed gate states. Both gates
+must be set through the reviewed operation, never by hand. The committed flag
+stays false; manually flipping it cannot bypass the pair's reviewed validation.
+The legacy single-issue record still rejects this two-issue configuration.
+No operational activation record, signing key, gate setter or live service is
+introduced. See the activation document for the required API evidence, trust anchor and
+strict seed-head checks before any separately reviewed live proof.

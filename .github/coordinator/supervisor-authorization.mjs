@@ -14,7 +14,7 @@ export function authorizeWorkOrder(order) {
     const scope = resolveDispatchScope(config);
     if (!scope.valid || (scope.issueIds && !scope.issueIds.has(order.issue_id)) || config.adapter_pause_map?.[order.runtime]) return false;
     const filePath = process.env.SHU_SUPERVISOR_ACTIVATION_FILE;
-    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts: [], dir,
+    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts: [], dir, env: process.env,
       initialTargetSha: process.env.DISPATCH_TARGET_SHA }) : null;
     if (!dispatchEnabledFor(process.env, config, activation)) return false;
     if (activation && !activationAllowsTarget(activation, order.issue_id)) return false;

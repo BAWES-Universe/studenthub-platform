@@ -475,6 +475,7 @@ export async function preparedLaunchOptions(adapter, receipt, env, io = {}, { re
 // only ever produced by singleRunActivationStatus(), which fails closed on every
 // binding (missing, malformed, stale, replayed, wrong target, wrong revision).
 export function dispatchEnabledFor(env = {}, config = {}, activation = null) {
+  if (config.dispatch_scope?.issue_ids?.length === 2 || activation?.kind === "two-fixture-v1") return activation?.kind === "two-fixture-v1" && activation.state === "armed" && config.enable_dispatch === false && env.ENABLE_DISPATCH === "true";
   const envGate = (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
   if (config.enable_dispatch === true && envGate) return true; // committed path, unchanged
   return envGate && activation?.state === "armed";
@@ -1904,7 +1905,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     ? { requested: true, state: "refused", valid: false, reason: activationArg.error, target_issue_id: null, activation_id: null, expires_at: null }
     : singleRunActivationStatus({
         filePath: activationArg.path,
-        config,
+        env, issues, config,
         receipts,
         now: io.now ? io.now() : new Date(),
         dir: __dirname,
@@ -1986,7 +1987,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // this authority again before snapshotting and before publishing a result.
   const resultStillAuthorized = (issueId) => {
     const current = singleRunActivation.requested
-      ? singleRunActivationStatus({ filePath: activationArg.path, config, receipts,
+      ? singleRunActivationStatus({ filePath: activationArg.path, env, issues, config, receipts,
         dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead,
         initialTargetSha: env.DISPATCH_TARGET_SHA, io }) : singleRunActivation;
     return dispatchEnabledFor(env, config, current) && activationAllowsTarget(current, issueId);
@@ -2447,7 +2448,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // the launch-intent write, the pre-claim recheck above) applies unchanged.
   const successor = selection.successor ?? null;
   const requested_worker = successor?.requested_worker ?? candidate.requested_worker;
-  const target_sha = successor?.target_sha ?? candidate.target_sha ?? env.DISPATCH_TARGET_SHA ?? null;
+  const target_sha = successor?.target_sha ?? candidate.target_sha ?? (singleRunActivation.kind === "two-fixture-v1" ? singleRunActivation.fixtures.find(f => f.issue_id === candidate.id)?.seed_head : env.DISPATCH_TARGET_SHA) ?? null;
   let workspaceScope;
   try {
     workspaceScope = successor
@@ -2461,7 +2462,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — workspace scope refused (${error.message})`);
     return 2;
   }
-  if (!successor && singleRunActivation.initial_target_sha && target_sha !== singleRunActivation.initial_target_sha) {
+  if (!successor && singleRunActivation.initial_target_sha && target_sha !== (singleRunActivation.kind === "two-fixture-v1" ? singleRunActivation.fixtures.find(f => f.issue_id === candidate.id)?.seed_head : singleRunActivation.initial_target_sha)) {
     if (io.stdout) io.stdout("dispatch: initial target differs from the activation — refused before reservation");
     return 2;
   }
@@ -2598,7 +2599,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // Fetching/cloning can outlast the approval. Recheck before crossing into
     // the worker; preparation does not extend an activation's lifetime.
     if (singleRunActivation.requested) {
-      const currentActivation = singleRunActivationStatus({ filePath: activationArg.path, config,
+      const currentActivation = singleRunActivationStatus({ filePath: activationArg.path, env, issues, config,
         receipts, dir: __dirname, now: io.now?.() ?? new Date(), gitHead: io.gitHead, initialTargetSha: env.DISPATCH_TARGET_SHA, io });
       if (currentActivation.state !== "armed" || !activationAllowsTarget(currentActivation, receipt.issue_id)) throw new Error("activation no longer allows this launch");
     }
