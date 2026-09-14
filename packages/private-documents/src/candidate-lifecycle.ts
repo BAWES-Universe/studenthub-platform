@@ -69,6 +69,8 @@ export class CandidateDocuments {
     return rows[0];
   }
   private bound(s: DocumentState): PrivateDocuments {
+    // The lifecycle owns durable success auditing, including reads; suppress only
+    // the primitive operational callback to avoid duplicate mutation telemetry.
     return new PrivateDocuments({ ...this.options, audit: undefined, store: { transaction: fn => fn(s) } });
   }
   private enqueue(s: DocumentState, d: Metadata): void {
@@ -148,7 +150,8 @@ export class CandidateDocuments {
     }, (s, principalId) => {
       const t = this.ticket(s, principalId, id); this.live(t);
       const expected = this.token(t);
-      if (objectKey !== t.objectKey || uploadCredential.length !== expected.length || !timingSafeEqual(Buffer.from(uploadCredential),Buffer.from(expected))) return deny();
+      const suppliedBytes = Buffer.from(uploadCredential), expectedBytes = Buffer.from(expected);
+      if (objectKey !== t.objectKey || suppliedBytes.length !== expectedBytes.length || !timingSafeEqual(suppliedBytes,expectedBytes)) return deny();
     });
   }
   finalize(credential: unknown, key: string | undefined, input: unknown): Promise<StoredResponse> {
@@ -172,6 +175,10 @@ export class CandidateDocuments {
       const metadata = previous ? await primitive.replace(credential,previous.id,data) : await primitive.upload(credential,data);
       if (previous) this.enqueue(s,previous);
       t.committed = true;
+      // The committed document now owns these exact bytes in this transaction.
+      // Release only its superseded journal duplicate, never retained/abandoned
+      // bytes or R2 objects (their held reservations remain; D6 forbids purge).
+      delete t.data; delete t.digest;
       s.lifecycle!.audit.push({id:randomUUID(),operation:'finalize',principalRef:hash(principalId),at:this.now()});
       return {status:200,body:{metadata:{...metadata}}};
     });
@@ -191,11 +198,17 @@ export class CandidateDocuments {
     const d = s.documents.find(d => d.id === id);
     if (!d || d.scope.personId !== principalId || d.scope.orgId !== this.options.orgId || !CANDIDATE_DOCUMENT_TYPES.includes(d.type as CandidateDocumentType)) deny();
   }
+  private auditRead(s: DocumentState, principalId: string, operation: 'list'|'issueDelivery'|'deliver'): void {
+    s.lifecycle ??= emptyLifecycleState();
+    s.lifecycle.audit.push({id:randomUUID(),operation,principalRef:hash(principalId),at:this.now()});
+  }
   async issueDelivery(credential: unknown, id: unknown): Promise<{url:string;expiresAt:number}> {
     const principalId = await this.principal(credential);
     return this.options.store.transaction(async s => {
       this.own(s, principalId, id);
-      return this.bound(s).issueDelivery(credential, id);
+      const result = await this.bound(s).issueDelivery(credential, id);
+      this.auditRead(s, principalId, 'issueDelivery');
+      return result;
     });
   }
   async deliver(credential: unknown, link: string): Promise<{bytes:Buffer;headers:Record<string,string>}> {
@@ -206,6 +219,7 @@ export class CandidateDocuments {
       const payload = new URL(link).searchParams.get('t')!.split('.')[0]!;
       const claim = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {id:string};
       this.own(s, principalId, claim.id);
+      this.auditRead(s, principalId, 'deliver');
       return result;
     });
   }
@@ -217,12 +231,15 @@ export class CandidateDocuments {
         const d = this.current(s,principalId,type);
         if (d) result.push(await this.bound(s).metadata(credential,d.id));
       }
+      this.auditRead(s, principalId, 'list');
       return result;
     });
   }
   /** Operator-only inspection. No purge capability exists while D6 is unresolved.
+   * Each staged body (including legacy committed duplicates) is another held copy.
+   * Empty tickets are not bytes; expiry never releases a body.
    * Queue entries are durable and unique; a hold is never interpreted as permission. */
   async cleanup(): Promise<{held:number;deleted:0}> {
-    return this.options.store.transaction(async s => ({held:s.lifecycle?.cleanup.filter(c => c.status === 'held').length ?? 0,deleted:0}));
+    return this.options.store.transaction(async s => ({held:(s.lifecycle?.cleanup.filter(c => c.status === 'held').length ?? 0) + (s.lifecycle?.uploads.filter(t => t.data !== undefined).length ?? 0),deleted:0}));
   }
 }

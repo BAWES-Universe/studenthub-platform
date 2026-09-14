@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {deflateSync} from 'node:zlib';
 import {createGatewayServer} from '../../../dist/apps/gateway/src/index.js';
 import {createCandidateDocuments,createRuntimeCandidateDocumentsFromEnv} from '../../../dist/apps/gateway/src/candidate-documents-runtime.js';
@@ -50,7 +50,7 @@ test('SHU-145/AC-01 mounted authenticated lifecycle covers all four document slo
   const download=await f.request(link.body.url.slice(origin.length),{method:'GET'});assert.equal(download.status,200);assert.deepEqual(download.bytes,bytes);assert.equal(download.headers.get('content-disposition'),'attachment');
  }
  assert.equal((await f.request('/candidate-documents',{method:'GET'})).body.documents.length,4);
- const s=await f.state();assert.ok(s.documents.every(d=>d.acl==='private'));assert.equal(s.lifecycle.audit.length,4);
+ const s=await f.state();assert.ok(s.documents.every(d=>d.acl==='private'));assert.equal(s.lifecycle.audit.length,13);assert.equal(s.lifecycle.audit.filter(a=>a.operation==='finalize').length,4);
 });
 
 test('SHU-145/AC-02 sibling-key upload is refused by the real handler',async t=>{
@@ -92,7 +92,7 @@ test('SHU-145/AC-05 replacement and removal queue idempotent held cleanup',async
  assert.equal((await f.request('/candidate-documents/remove',{body,idempotency:removeKey})).status,200);
  assert.equal((await f.request('/candidate-documents/remove',{body,idempotency:removeKey})).status,200);
  for(let i=0;i<3;i++)assert.deepEqual(await f.service.cleanup(),{held:2,deleted:0});
- const s=await f.state();assert.equal(s.documents.length,0);assert.equal(s.retired.length,2);assert.equal(s.lifecycle.cleanup.length,2);assert.equal(s.lifecycle.audit.length,3);
+ const s=await f.state();assert.equal(s.documents.length,0);assert.equal(s.retired.length,2);assert.equal(s.lifecycle.cleanup.length,2);assert.equal(s.lifecycle.audit.length,4);assert.equal(s.lifecycle.audit.filter(a=>['finalize','remove'].includes(a.operation)).length,3);
  assert.ok(s.lifecycle.cleanup.every(c=>c.status==='held')); // Includes unresolved policy and every possible legal hold: no purge authority.
 });
 
@@ -263,4 +263,66 @@ test('SHU-145/NC-PRIMITIVE-AUDIT async audit rejection cannot break primitive de
  const link=await f.service.primitive.issueDelivery(f.tokens.alice,d.id);
  assert.deepEqual((await f.service.primitive.deliver(f.tokens.alice,link.url)).bytes,png());
  await new Promise(r=>setImmediate(r));
+});
+
+test('SHU-145/NC-RETENTION staged bodies remain held across expiry and removal',async t=>{
+ const f=await fixture(t),ticket=await f.upload('civil-id-front'),d=(await f.finalize(ticket)).body.metadata;
+ await f.upload('resume',pdf());await f.upload('civil-id-back');await f.authorize();
+ f.advance(60001);
+ assert.equal((await f.request('/candidate-documents/remove',{body:{type:'civil-id-front',expectedVersion:d.version}})).status,200);
+ const before=await f.state();
+ for(let i=0;i<3;i++)assert.deepEqual(await f.service.cleanup(),{held:3,deleted:0},'NC-RETENTION: cleanup must count every staged body plus retired copies');
+ assert.deepEqual(await f.state(),before,'NC-RETENTION: inspection must preserve all retained bytes');
+ assert.deepEqual(before.lifecycle.uploads.filter(t=>t.data!==undefined).map(t=>Buffer.from(t.data,'base64')),[pdf(),png()]);
+ // Existing journals may contain committed duplicates. Count them without purging.
+ await f.disk.transaction(async s=>{const t=s.lifecycle.uploads[0];t.data=s.retired[0].data;t.digest=createHash('sha256').update(Buffer.from(t.data,'base64')).digest('hex');});
+ assert.deepEqual(await f.service.cleanup(),{held:4,deleted:0},'NC-RETENTION: legacy committed staged copies must also count');
+});
+
+test('SHU-145/NC-DUPLICATE finalize releases only the superseded staged journal copy',async t=>{
+ const f=await fixture(t),ticket=await f.upload(),key=f.key();f.fail();
+ assert.equal((await f.finalize(ticket,{idempotency:key})).status,503);
+ assert.equal((await f.state()).lifecycle.uploads[0].data,png().toString('base64'),'NC-DUPLICATE: failed finalization must retain staged bytes');
+ assert.equal((await f.finalize(ticket,{idempotency:key})).status,200);
+ const s=await f.state();
+ assert.equal(s.lifecycle.uploads[0].data,undefined,'NC-DUPLICATE: successful finalize must release the superseded staged body');
+ assert.equal(s.lifecycle.uploads[0].digest,undefined);
+ assert.equal(s.lifecycle.uploads[0].committed,true);
+ assert.equal(s.documents[0].data,png().toString('base64'));
+ assert.equal((await f.finalize(ticket,{idempotency:key})).status,200);
+ assert.deepEqual(await f.service.cleanup(),{held:0,deleted:0});
+});
+
+test('SHU-145/NC-READ-AUDIT civil ID issuance redemption and list commit durable audit',async t=>{
+ const f=await fixture(t),d=(await f.finalize(await f.upload('civil-id-front'))).body.metadata;
+ const before=(await f.state()).lifecycle.audit.length;
+ const link=await f.request('/candidate-documents/delivery',{body:{documentId:d.id}});assert.equal(link.status,200);
+ assert.equal((await f.request(link.body.url.slice(origin.length),{method:'GET'})).status,200);
+ assert.equal((await f.request('/candidate-documents',{method:'GET'})).status,200);
+ const rows=(await f.state()).lifecycle.audit.slice(before);
+ assert.deepEqual(rows.map(r=>r.operation),['issueDelivery','deliver','list'],'NC-READ-AUDIT: successful private reads must commit durable audit rows');
+ for(const row of rows){assert.deepEqual(Object.keys(row).sort(),['at','id','operation','principalRef']);assert.match(row.principalRef,/^[0-9a-f]{64}$/);}
+ assert.equal(new Set(rows.map(r=>r.id)).size,3);
+ assert.equal((await f.request(link.body.url.slice(origin.length),{actor:'bob',method:'GET'})).status,403);
+ assert.equal((await f.state()).lifecycle.audit.length,before+3);
+ // Reopen the file store: an in-memory callback alone is insufficient evidence.
+ const reopened=await FileDocumentStore.open(f.root);
+ assert.deepEqual(await reopened.transaction(async s=>s.lifecycle.audit.slice(before)),rows);
+ const original=f.service.options.store;
+ f.service.options.store={transaction:fn=>original.transaction(async s=>{await fn(s);throw new Error('audit commit failed');})};
+ assert.equal((await f.request('/candidate-documents/delivery',{body:{documentId:d.id}})).status,503);
+ assert.equal((await f.request(link.body.url.slice(origin.length),{method:'GET'})).status,503);
+ assert.equal((await f.request('/candidate-documents',{method:'GET'})).status,503);
+ f.service.options.store=original;
+ assert.equal((await f.state()).lifecycle.audit.length,before+3);
+});
+
+test('SHU-145/NC-MULTIBYTE wrong upload credential is a denial',async t=>{
+ const f=await fixture(t),ticket=(await f.authorize()).body;
+ for(const credential of ['é'.repeat(ticket.credential.length),'x'.repeat(ticket.credential.length),'forged']){
+  const r=await f.put(ticket,png(),{headers:{'x-upload-credential':credential}});
+  assert.equal(r.status,403,'NC-MULTIBYTE: wrong upload credential must return 403, never 503');
+  assert.equal((await f.state()).lifecycle.uploads[0].data,undefined);
+ }
+ assert.equal((await f.put(ticket)).status,204);
 });

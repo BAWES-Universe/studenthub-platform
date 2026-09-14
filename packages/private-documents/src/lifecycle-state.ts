@@ -13,7 +13,7 @@ export interface LifecycleState {
   uploads: UploadTicket[];
   receipts: { principalRef: string; key: string; fingerprint: string; expiresAt: number; response: StoredResponse }[];
   cleanup: { id: string; documentId: string; version: string; retiredAt: number; status: 'held' | 'deleted' }[];
-  audit: { id: string; operation: 'finalize' | 'remove'; principalRef: string; at: number }[];
+  audit: { id: string; operation: 'finalize' | 'remove' | 'list' | 'issueDelivery' | 'deliver'; principalRef: string; at: number }[];
 }
 export const emptyLifecycleState = (): LifecycleState => ({ format: 1, uploads: [], receipts: [], cleanup: [], audit: [] });
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -67,5 +67,5 @@ export function validateLifecycleState(value: unknown): asserts value is Lifecyc
     cleanup.add(c.id);
   }
   for (const a of value.audit) requireValid(object(a) && keys(a, ['id','operation','principalRef','at']) && uuid.test(a.id)
-    && ['finalize','remove'].includes(a.operation) && reference.test(a.principalRef) && instant(a.at));
+    && ['finalize','remove','list','issueDelivery','deliver'].includes(a.operation) && reference.test(a.principalRef) && instant(a.at));
 }

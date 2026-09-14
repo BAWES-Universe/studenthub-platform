@@ -98,7 +98,8 @@ test('SHU-145/R2-02 all four slots finalize through real gateway, primitive and 
   const response=await f.req(link.url.slice(origin.length),undefined,{method:'GET'});assert.equal(response.status,200);assert.deepEqual(response.bytes,bytes);
  }
  const snapshot=f.snapshot();assert.equal(snapshot.state.documents.length,4);
- for(const row of [...snapshot.state.documents,...snapshot.state.lifecycle.uploads])assert.ok(row.data.startsWith('r2:'),'SQL must retain references, not bytes');
+ for(const row of snapshot.state.documents)assert.ok(row.data.startsWith('r2:'),'SQL must retain references, not bytes');
+ for(const ticket of snapshot.state.lifecycle.uploads)assert.equal(ticket.data,undefined,'NC-DUPLICATE: R2 finalization must release the staged journal copy');
  assert.ok(!JSON.stringify(snapshot).includes(pdf().toString('base64')));
  assert.ok(f.requests.every(r=>['PUT','GET'].includes(r.method)));
 });

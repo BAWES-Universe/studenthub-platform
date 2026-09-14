@@ -143,12 +143,29 @@ that lose the version comparison return conflict and must reload metadata.
 **Physical deletion is deliberately unavailable.** SHU-202/D6 is still undecided;
 no grace period, legal-hold release or deletion authority is inferred. Every
 cleanup entry is `held`, and repeated operator-only `cleanup()` inspections return
-counts without deleting bytes. This preserves unresolved retention and every
-legal hold. Staged/abandoned uploads and receipts are retained too; no expiry-driven
+counts without deleting bytes. `held` counts each retired-version cleanup entry
+plus each staged `uploads[].data` body, even expired/abandoned uploads and legacy
+committed duplicates; empty tickets do not count. Finalization atomically releases
+only the superseded staged journal copy after creating the committed copy. A failed
+commit retains the staged body. No R2 object is deleted, and existing held object
+reservations remain; these separately account for cloud staging/rollback orphans.
+This preserves unresolved retention and every legal hold. Staged/abandoned uploads and receipts are retained too; no expiry-driven
 physical purge, automatic lock stealing or background cleanup loop is introduced.
 Approval of retention/hold rules and an independently verified purge worker are
 required before that posture can change. The reference snapshot's 256 MiB cap
 remains a hard capacity boundary, not a production sizing recommendation.
+
+**Reachable capacity/availability limit:** one authenticated candidate can reach
+the 256 MiB journal boundary in roughly 16–21 ordinary uploads. Independent R3
+verification measured **254 MiB after 21 abandoned cycles**, with a list call
+slowing from **~3 ms to 1672 ms**. In R2 mode the **192 MiB hydration cap is crossed
+at about 16 cycles**, after which **EVERY route, including read-only delivery,
+fails unavailable for EVERY candidate** sharing the aggregate. These are measured
+workload-dependent limits, not a per-candidate quota or an isolation guarantee.
+Releasing finalized duplicates does not address abandoned uploads or the shared
+aggregate limit; read-audit rows also consume journal capacity. **No remediation
+path exists until SHU-202/D6 decides** retention and deletion authority. This slice
+adds no purge, expiry sweep, or operator bypass to recover exhausted capacity.
 
 `PostgresDocumentSnapshot` locks one private metadata row with `FOR UPDATE` and
 commits references, receipts and audit together. `R2DocumentStore` hydrates bytes
@@ -167,7 +184,18 @@ provider requests to 10 seconds and SQL lock waits to 5 seconds. Capacity/latenc
 backup/restore, retention and scanner evidence remain operational acceptance
 work before real user data or broad use.
 
-Durable write-audit rows contain only server-generated id, operation,
+**Read-audit decision:** successful list (including empty lists), delivery issuance,
+and delivery redemption now commit durable `list`, `issueDelivery`, and `deliver`
+rows in the same transaction as authorization and access. A commit failure returns
+unavailable without returning a link or bytes. This explicitly closes the prior
+R3 observation that one civil-ID-class issuance plus redemption produced zero
+events and zero durable rows. Denied/failed reads do not produce success rows;
+this is a successful-access ledger, not a complete denied-attempt audit trail.
+The primitive's `audit: undefined` suppresses its operational callback because
+the lifecycle owns durable auditing; it no longer silently suppresses read records.
+No raw document identifiers or URLs are added to the audit payload.
+
+Durable mutation and read-audit rows contain only server-generated id, operation,
 SHA-256 principal reference and time. Operational callbacks contain exactly
 `{operation, code}`; thrown, rejecting or hanging callbacks cannot alter a
 committed result. Errors use a closed generic vocabulary and never serialize

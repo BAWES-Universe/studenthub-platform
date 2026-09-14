@@ -8,6 +8,18 @@ import assert from 'node:assert/strict';
 // monkeypatched test implementation and no syntax/import/process failures count.
 const root=resolve(new URL('../../../',import.meta.url).pathname);
 const mutations=[
+ ['M17 staged retention omitted','SHU-145/NC-RETENTION','candidate-lifecycle.js',
+  " + (s.lifecycle?.uploads.filter(t => t.data !== undefined).length ?? 0)", '', undefined,
+  'NC-RETENTION: cleanup must count every staged body plus retired copies'],
+ ['M18 finalized duplicate retained','SHU-145/NC-DUPLICATE','candidate-lifecycle.js',
+  'delete t.data;\n            delete t.digest;', '', undefined,
+  'NC-DUPLICATE: successful finalize must release the superseded staged body'],
+ ['M19 read audit omitted','SHU-145/NC-READ-AUDIT','candidate-lifecycle.js',
+  'auditRead(s, principalId, operation) {', 'auditRead(s, principalId, operation) { return;', undefined,
+  'NC-READ-AUDIT: successful private reads must commit durable audit rows'],
+ ['M20 character length credential comparison','SHU-145/NC-MULTIBYTE','candidate-lifecycle.js',
+  'suppliedBytes.length !== expectedBytes.length', 'uploadCredential.length !== expected.length', undefined,
+  'NC-MULTIBYTE: wrong upload credential must return 403, never 503'],
  ['M1 bucket-prefix credential','SHU-145/AC-02','candidate-lifecycle.js','objectKey !== t.objectKey',"!objectKey.startsWith('uploads/')"],
  ['M2 public ACL write','SHU-145/AC-01','index.js',"data: bytes.toString('base64'), acl: 'private'","data: bytes.toString('base64'), acl: 'public-read'"],
  ['M3 delivery expiry removed','SHU-145/AC-03','index.js','Number(claim.exp) <= now','false'],
@@ -50,7 +62,7 @@ try {
   await cp(join(root,'packages',name),join(sandbox,'packages',name),{recursive:true});
  }
  await writeFile(join(sandbox,'package.json'),'{"type":"module"}');
- for(const [label,named,file,from,to,test='candidate-lifecycle.test.mjs'] of mutations){
+ for(const [label,named,file,from,to,test='candidate-lifecycle.test.mjs',assertionText] of mutations){
   const target=join(sandbox,'dist/packages/private-documents/src',file),original=await readFile(target,'utf8');
   assert.equal(original.split(from).length-1,1,`${label}: unique source anchor`);
   try {
@@ -63,7 +75,8 @@ try {
    assert.match(output,new RegExp(`not ok \\d+ - ${named} `),`${label}: named assertion absent\n${output}`);
    assert.match(output,/AssertionError|ERR_ASSERTION/,`${label}: no assertion failure\n${output}`);
    assert.doesNotMatch(output,/SyntaxError|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/,`${label}: harness crash`);
-   console.log(`KILLED ${label} -> ${named}`);
+   if(assertionText)assert.ok(output.includes(assertionText),`${label}: exact AssertionError text absent\n${output}`);
+   console.log(`KILLED ${label} -> ${named}${assertionText ? `: AssertionError: ${assertionText}` : ''}`);
   } finally {await writeFile(target,original);}
  }
  console.log(`${mutations.length}/${mutations.length} named assertion kills`);
