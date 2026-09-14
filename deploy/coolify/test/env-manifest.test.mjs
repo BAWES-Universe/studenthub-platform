@@ -187,3 +187,123 @@ test("SHU-243 workflow gates image build and push on the env-store check", () =>
   assert.match(workflow, /Validate proposed manifest as untrusted data/);
   assert.match(workflow, /Verify trusted Coolify deployment environment/);
 });
+
+const probeOptions = {
+  baseUrl: "https://coolify.example.test",
+  token: "test-read-token",
+  applicationUuid: "gateway-uuid",
+};
+
+for (const code of ["EAI_AGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "TimeoutError"]) {
+  test(`env read recovers from ${code} with bounded backoff and fresh timeouts`, async () => {
+    const signals = [];
+    const waits = [];
+    const logs = [];
+    const result = await checkCoolifyEnv({
+      ...probeOptions,
+      sleep: async (ms) => waits.push(ms),
+      stderr: { write: (line) => logs.push(line) },
+      fetchImplementation: async (_url, options) => {
+        signals.push(options.signal);
+        if (signals.length < 3) {
+          if (code === "TimeoutError") throw new DOMException("private details", code);
+          throw new TypeError("private details", { cause: { code } });
+        }
+        return response(requiredEntries);
+      },
+    });
+    assert.equal(result.checked, 11);
+    assert.deepEqual(waits, [1000, 2000]);
+    assert.equal(new Set(signals).size, 3);
+    assert.equal(logs.length, 2);
+    assert.ok(logs.every((line) => line.includes(code)));
+    assert.doesNotMatch(logs.join(""), /private details|test-read-token/);
+  });
+}
+
+test("env read exhausts three attempts and fails without exposing exception data", async () => {
+  let calls = 0;
+  const logs = [];
+  await assert.rejects(checkCoolifyEnv({
+    ...probeOptions,
+    sleep: async () => {},
+    stderr: { write: (line) => logs.push(line) },
+    fetchImplementation: async () => {
+      calls += 1;
+      throw new TypeError("private details", { cause: { code: "ECONNRESET", message: "private details" } });
+    },
+  }), { message: "Coolify deployment environment check could not read application gateway-uuid (ECONNRESET; attempt 3/3)" });
+  assert.equal(calls, 3);
+  assert.equal(logs.length, 2);
+  assert.doesNotMatch(logs.join(""), /private details/);
+});
+
+for (const code of ["ENOTFOUND", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID", "private-details"]) {
+  test(`env read keeps ${code} terminal and only logs allowlisted labels`, async () => {
+    let calls = 0;
+    const label = code === "private-details" ? "UNCLASSIFIED_FETCH_ERROR" : code;
+    await assert.rejects(checkCoolifyEnv({
+      ...probeOptions,
+      sleep: async () => assert.fail("must not retry"),
+      fetchImplementation: async () => {
+        calls += 1;
+        throw new TypeError("private details", { cause: { code } });
+      },
+    }), { message: `Coolify deployment environment check could not read application gateway-uuid (${label}; attempt 1/3)` });
+    assert.equal(calls, 1);
+  });
+}
+
+for (const key of DEPLOYMENT_ENV_MANIFEST.required) {
+  test(`env read recovery still fails closed for missing ${key}`, async () => {
+    let calls = 0;
+    await assert.rejects(checkCoolifyEnv({
+      ...probeOptions,
+      sleep: async () => {},
+      stderr: { write() {} },
+      fetchImplementation: async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error(), { code: "ECONNRESET" });
+        return response(requiredEntries.filter((entry) => entry.key !== key));
+      },
+    }), { message: failureMessage({ application: "studenthub-gateway", applicationUuid: "gateway-uuid", missing: [key] }) });
+    assert.equal(calls, 2, "missing runtime keys must fail immediately after a successful read");
+  });
+}
+
+for (const status of [401, 403, 404, 429, 500, 503]) {
+  test(`env read HTTP ${status} remains fail-closed without parsing the response`, async () => {
+    await assert.rejects(checkCoolifyEnv({
+      ...probeOptions,
+      sleep: async () => assert.fail("must not retry"),
+      fetchImplementation: async () => ({ ok: false, status, json() { assert.fail("must not read response body"); } }),
+    }), new RegExp(`HTTP ${status}`));
+  });
+}
+
+for (const malformed of [null, {}, "private details"]) {
+  test(`env read rejects malformed environment lists (${typeof malformed})`, async () => {
+    await assert.rejects(checkCoolifyEnv({
+      ...probeOptions,
+      fetchImplementation: async () => response(malformed),
+    }), /invalid environment-variable list/);
+  });
+}
+
+test("env read rejects invalid JSON", async () => {
+  await assert.rejects(checkCoolifyEnv({
+    ...probeOptions,
+    fetchImplementation: async () => ({ ok: true, async json() { throw new Error("private details"); } }),
+  }), { message: "Coolify deployment environment check received invalid JSON for application gateway-uuid" });
+});
+
+for (const name of ["COOLIFY_BASE", "COOLIFY_READ_TOKEN", "COOLIFY_STUDENTHUB_GATEWAY_UUID"]) {
+  test(`env check rejects absent ${name} before any request`, async () => {
+    const env = { COOLIFY_BASE: probeOptions.baseUrl, COOLIFY_READ_TOKEN: probeOptions.token, COOLIFY_STUDENTHUB_GATEWAY_UUID: probeOptions.applicationUuid };
+    delete env[name];
+    await assert.rejects(runFromEnv({
+      env,
+      fetchImplementation: async () => assert.fail("must not contact Coolify"),
+    }), { message: `deployment environment check configuration is missing ${name}` });
+  });
+}

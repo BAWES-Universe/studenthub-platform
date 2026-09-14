@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   assertManifestMatchesRuntime,
@@ -38,27 +39,56 @@ export function failureMessage({ application, applicationUuid, missing }) {
   return `Coolify deployment environment check failed for ${application} application ${applicationUuid}: missing required variables: ${keys}. Set ${keys} on Coolify application ${applicationUuid} before retrying this workflow.`;
 }
 
+// Only fixed labels may reach logs: fetch messages/causes can contain URLs,
+// credentials, or response data. Unknown failures remain terminal.
+const retryableReadErrors = new Set([
+  "EAI_AGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET", "TimeoutError",
+]);
+const terminalReadErrors = new Set([
+  "ENOTFOUND", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+function readErrorCode(error) {
+  for (const code of [error?.cause?.code, error?.code, error?.name]) {
+    if (retryableReadErrors.has(code) || terminalReadErrors.has(code)) return code;
+  }
+  return "UNCLASSIFIED_FETCH_ERROR";
+}
+
 export async function checkCoolifyEnv({
   baseUrl,
   token,
   applicationUuid,
   fetchImplementation = fetch,
   manifest = DEPLOYMENT_ENV_MANIFEST,
+  sleep = delay,
+  stderr = process.stderr,
 }) {
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/v1/applications/${encodeURIComponent(applicationUuid)}/envs`;
   let response;
-  try {
-    response = await fetchImplementation(endpoint, {
-      method: "GET",
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-    });
-  } catch {
-    throw new Error(`Coolify deployment environment check could not read application ${applicationUuid}`);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await fetchImplementation(endpoint, {
+        method: "GET",
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      break;
+    } catch (error) {
+      const code = readErrorCode(error);
+      if (!retryableReadErrors.has(code) || attempt === 3) {
+        throw new Error(`Coolify deployment environment check could not read application ${applicationUuid} (${code}; attempt ${attempt}/3)`);
+      }
+      stderr.write(`Coolify deployment environment read failed (${code}; attempt ${attempt}/3); retrying.\n`);
+      await sleep(attempt * 1_000);
+    }
   }
 
   if (!response?.ok) {
