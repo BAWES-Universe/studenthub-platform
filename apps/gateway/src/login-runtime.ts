@@ -17,6 +17,7 @@ import {
 } from "@studenthub/profile";
 
 import { createLoginApplication } from "./login-application.js";
+import { createContextNavigation } from "./context-navigation.js";
 import type { BrowserLoginApplication } from "./web-ui.js";
 
 interface JwksDocument {
@@ -223,6 +224,7 @@ export function createRuntimeLoginFromEnv(
   return {
     application: {
       ...application,
+      navigation: createContextNavigation(loginStore.sessions, authzStore),
       web: {
         origin: new URL(callbackUrl).origin,
         // Keep the existing exact return allowlist. No Host-derived redirect,
