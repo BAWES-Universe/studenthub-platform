@@ -272,3 +272,53 @@ test('SHU251 non-string workspace state directory has named fail-closed refusal'
   }
   assert.equal(coerced, false, 'SHU251_WRITER_LOCK: non-string workspace state directory must not be coerced');
 });
+
+test('SHU251 configured identity and external secret file survive staging', t => {
+  const root = fixture(t);
+  const params = serviceParameters({ workdir: root, serviceUser: 'fixture-coordinator', serviceGroup: 'fixture-state', secretEnvironmentFile: '/etc/fixture/supervisor.env' });
+  // Syntax-only commands permit staging without a host account or secret file.
+  Object.assign(params, { supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'] });
+  install(root, params);
+  const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(join(root, name), 'utf8')]));
+  assertPolicy(units, params);
+  for (const name of names.filter(name => name.endsWith('.service'))) {
+    assert.match(units[name], /^User=fixture-coordinator$/m);
+    assert.match(units[name], /^Group=fixture-state$/m);
+    assert.match(units[name], /^EnvironmentFile=\/etc\/fixture\/supervisor.env$/m);
+  }
+  for (const name of names) assert.doesNotMatch(units[name], /SHU_SUPERVISOR_SECRET\s*=/);
+  rollback(root);
+});
+for (const name of names.filter(name => name.endsWith('.service'))) {
+  for (const directive of ['User', 'Group']) {
+    test(`SHU251 mutation: ${name} ${directive} removed`, t => {
+      const units = render(fixtureParameters(fixture(t)));
+      units[name] = units[name].replace(`${directive}=shu-coordinator\n`, '');
+      named(() => assertPolicy(units), `SHU251_IDENTITY: ${name} must run with configured ${directive}`);
+    });
+  }
+  test(`SHU251 mutation: ${name} secret file removed or optional`, t => {
+    for (const replacement of ['', 'EnvironmentFile=-/etc/shu/supervisor.env']) {
+      const units = render(fixtureParameters(fixture(t)));
+      units[name] = units[name].replace('EnvironmentFile=/etc/shu/supervisor.env', replacement);
+      named(() => assertPolicy(units), 'SHU251_SECRET_FILE: services must require the shared secret environment file');
+    }
+  });
+}
+test('SHU251 mutation: embedded secret in any unit refused', t => {
+  for (const name of names) {
+    const units = render(fixtureParameters(fixture(t)));
+    units[name] += '\nEnvironment="SHU_SUPERVISOR_SECRET=fixture-only-mutation-secret-value"\n';
+    named(() => assertPolicy(units), 'SHU251_SECRET_LITERAL: units must not embed supervisor secrets');
+  }
+});
+test('SHU251 unsafe identity and secret file parameters fail before staging', t => {
+  const root = fixture(t), params = fixtureParameters(root);
+  for (const change of [{ serviceUser: 'root' }, { serviceGroup: 'root' }, { serviceUser: 'bad\nUser=root' }, { serviceUser: 0 }]) {
+    named(() => install(root, { ...params, ...change }), 'SHU251_IDENTITY: non-root service user and group names required');
+  }
+  for (const secretEnvironmentFile of ['relative', '-/etc/shu/secret', '/etc/../secret', '/etc/secret\nEnvironment=bad', null]) {
+    named(() => install(root, { ...params, secretEnvironmentFile }), 'SHU251_SECRET_FILE: plain absolute environment file path required');
+  }
+  assert.deepEqual(fs.readdirSync(root), []);
+});
