@@ -17,7 +17,10 @@ before(async () => {
 });
 beforeEach(async () => {
   await pool.query("TRUNCATE catalogue_submissions, catalogue_items, organizations CASCADE");
-  await pool.query("INSERT INTO organizations(id,name) VALUES ($1,'Synthetic catalogue test')", [actor.orgId]);
+  await pool.query(
+    "INSERT INTO organizations(id,name) VALUES ($1,'Synthetic catalogue staff'),($2,'Synthetic catalogue candidate')",
+    [actor.orgId, candidate.orgId],
+  );
 });
 after(async () => { await pool.end(); });
 
