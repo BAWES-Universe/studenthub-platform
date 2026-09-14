@@ -44,6 +44,7 @@ function fixture() {
   const env = {
     SHU_REVIEW_EXEC_UID: String(expectedUid),
     SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/reviewer-wrapper"]),
+    SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/reviewer-wrapper"]),
     SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
     SHU_REVIEW_EVIDENCE_DIR: evidence,
   };
@@ -113,8 +114,8 @@ test("SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and s
         queueMicrotask(() => callback(null, JSON.stringify(successfulReport(f.expectedUid)), ""));
       } });
     assert.equal(result.executed, true, result.detail);
-    const prelude = calls[0].args.slice(0, 5);
-    assert.deepEqual(prelude, ["--workspace-root", f.root, "--workspace", f.workspace, "--"], "wrapper is bound to one exact direct-child attempt");
+    const prelude = calls[0].args.slice(0, 7);
+    assert.deepEqual(prelude, ["--profile", "test", "--workspace-root", f.root, "--workspace", f.workspace, "--"], "wrapper is bound to one exact direct-child attempt and test profile");
     assert.equal(calls[0].options.cwd, f.workspace, "process cwd is the same canonical attempt");
 
     const refused = await runReviewEvidence({ attempt_id: ATTEMPT, target_sha: SHA, cwd: f.workspace, env: f.env,

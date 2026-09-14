@@ -80,6 +80,7 @@ test("SHU-245 A1: Run #5 file evidence plus exact path@sha citations produces th
     readHeadImpl: async () => SHA,
     reviewEvidenceImpl: async () => ({
       executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+      isolation_wrapper: ["/test/reviewer-model-wrapper"],
       evidence_link: pathToFileURL(f.reportPath).href, report: f.report,
     }),
     persistEnvelopeImpl: () => ({ link: pathToFileURL(path.join(f.evidence, "envelope.stdout")).href }),

@@ -24,13 +24,78 @@ function parseArgs(argv) {
   return { values, testFiles: argv.slice(split + 1) };
 }
 
-function protectedFileDenied(file) {
+export function protectedFileDenied(file) {
+  let descriptor;
   try {
-    fs.readFileSync(file);
+    // Reachability is enough for the isolation assertion. Open and close only:
+    // even a failed sandbox must never copy credential bytes into this process.
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY);
+    fs.closeSync(descriptor);
     return false;
   } catch (error) {
+    if (descriptor !== undefined) { try { fs.closeSync(descriptor); } catch {} }
     return ["EACCES", "EPERM"].includes(error?.code);
   }
+}
+
+export function inheritedDescriptorDenied(canary, { fsImpl = fs, pid = process.pid } = {}) {
+  if (!canary) return true;
+  let descriptors = [];
+  try { descriptors = fsImpl.readdirSync(`/proc/${pid}/fd`); } catch { return false; }
+  for (const descriptor of descriptors) {
+    if (!/^\d+$/.test(descriptor) || Number(descriptor) <= 2) continue;
+    try {
+      if (fsImpl.readFileSync(`/proc/${pid}/fd/${descriptor}`, "utf8").includes(canary)) return false;
+    } catch { /* unreadable/non-regular descriptors do not expose the canary */ }
+  }
+  return true;
+}
+
+export function environmentValueDenied(canary, env = process.env) {
+  return !canary || !Object.values(env).some((value) => String(value).includes(canary));
+}
+
+export function processInspectionDenied(canary, { fsImpl = fs, pid = process.pid } = {}) {
+  if (!canary) return true;
+  let entries = [];
+  try { entries = fsImpl.readdirSync("/proc"); } catch { return false; }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry) || Number(entry) === pid) continue;
+    for (const name of ["cmdline", "environ"]) {
+      try {
+        if (fsImpl.readFileSync(`/proc/${entry}/${name}`, "utf8").includes(canary)) return false;
+      } catch { /* invisible processes are the intended result */ }
+    }
+  }
+  return true;
+}
+
+export function protectedProbes(raw) {
+  if (!raw) return { ok: true, classes: {}, symlink: "NOT_REQUESTED", traversal: "NOT_REQUESTED" };
+  let probes;
+  try { probes = JSON.parse(raw); } catch { return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" }; }
+  if (!Array.isArray(probes) || probes.length === 0 || probes.length > 16) {
+    return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" };
+  }
+  const classes = {};
+  let symlink = true;
+  let traversal = true;
+  for (const probe of probes) {
+    if (!probe || typeof probe !== "object" || !/^[a-z][a-z0-9_]+$/.test(probe.class ?? "")
+      || typeof probe.path !== "string" || !probe.path.startsWith("/") || Object.hasOwn(classes, probe.class)) {
+      return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" };
+    }
+    const denied = protectedFileDenied(probe.path);
+    classes[probe.class] = denied ? "DENIED" : "REACHABLE";
+    if (probe.symlink_path) symlink &&= protectedFileDenied(probe.symlink_path);
+    if (probe.traversal_path) traversal &&= protectedFileDenied(probe.traversal_path);
+  }
+  return {
+    ok: Object.values(classes).every((value) => value === "DENIED") && symlink && traversal,
+    classes,
+    symlink: symlink ? "DENIED" : "REACHABLE",
+    traversal: traversal ? "DENIED" : "REACHABLE",
+  };
 }
 
 function workspaceWriteDenied(cwd) {
@@ -75,6 +140,10 @@ async function main() {
   const siblingProbePath = values.get("sibling-probe-path");
   const probePort = values.get("probe-port");
   const targetSha = values.get("target-sha");
+  const isolation = protectedProbes(values.get("protected-paths-json"));
+  const fdDenied = inheritedDescriptorDenied(values.get("fd-canary"));
+  const environmentDenied = environmentValueDenied(values.get("env-canary"));
+  const processDenied = processInspectionDenied(values.get("process-canary"));
   const actualUid = typeof process.getuid === "function" ? process.getuid() : null;
   const forbiddenEnvKeys = Object.keys(process.env).filter((key) => FORBIDDEN_ENV.test(key));
   const filesystemDenied = protectedFileDenied(protectedPath);
@@ -82,7 +151,8 @@ async function main() {
   const workspaceWriteBlocked = workspaceWriteDenied(cwd);
   const noNetwork = await networkDenied(probePort);
   const probeOk = Number.isInteger(expectedUid) && expectedUid > 0 && actualUid === expectedUid
-    && filesystemDenied && siblingWorkspaceDenied && workspaceWriteBlocked && noNetwork && forbiddenEnvKeys.length === 0;
+    && filesystemDenied && siblingWorkspaceDenied && workspaceWriteBlocked && noNetwork && forbiddenEnvKeys.length === 0
+    && isolation.ok && fdDenied && environmentDenied && processDenied;
 
   const report = {
     version: "1.0.0",
@@ -90,11 +160,18 @@ async function main() {
     test_files: testFiles,
     expected_uid: expectedUid,
     actual_uid: actualUid,
+    workspace_uid: (() => { try { return fs.statSync(cwd).uid; } catch { return null; } })(),
     filesystem_probe: filesystemDenied ? "DENIED" : "REACHABLE",
     sibling_workspace_probe: siblingWorkspaceDenied ? "DENIED" : "REACHABLE",
     workspace_write_probe: workspaceWriteBlocked ? "DENIED" : "WRITABLE",
     network_probe: noNetwork ? "DENIED" : "REACHABLE",
     forbidden_env_keys: forbiddenEnvKeys,
+    protected_class_probes: isolation.classes,
+    symlink_probe: isolation.symlink,
+    traversal_probe: isolation.traversal,
+    inherited_descriptor_probe: fdDenied ? "DENIED" : "REACHABLE",
+    environment_value_probe: environmentDenied ? "DENIED" : "REACHABLE",
+    process_inspection_probe: processDenied ? "DENIED" : "REACHABLE",
     tests: { executed: false, exit_code: null, signal: null, stdout: "", stderr: "" },
   };
 
