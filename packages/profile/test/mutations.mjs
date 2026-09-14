@@ -32,6 +32,17 @@ const mutations = [
     "const value = raw;",
   ],
   [
+    "relax date shape widths and end anchor", "PROFILE-PARSER",
+    String.raw`/^\d{4}-\d{2}-\d{2}$/`, String.raw`/^\d{4}-\d{1,2}-\d{1,2}/`,
+    "PROFILE-PARSER candidate_birth_date rejects malformed imported value",
+  ],
+  [
+    "echo malformed enum input in thrown error", "PROFILE-ERROR",
+    'if (!mapping.has(value))\n            throw new TypeError("malformed approved profile value");',
+    'if (!mapping.has(value))\n            throw new TypeError("malformed approved profile value: " + String(value));',
+    "PROFILE-ERROR candidate_gender uses constant error message",
+  ],
+  [
     "swap gender mapping", "PROFILE-ENUM",
     '[1, "male"], [2, "female"]', '[1, "female"], [2, "male"]',
     "PROFILE-ENUM gender 2 positive fixture mapping",

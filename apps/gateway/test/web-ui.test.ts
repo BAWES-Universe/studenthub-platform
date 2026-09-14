@@ -5,6 +5,7 @@ import { createSyntheticLoginRig } from "@studenthub/login-contract";
 import {
   InMemoryApprovedProfileAdapter,
   OwnProfileRepository,
+  OWN_PROFILE_FIELD_NAMES,
   PROFILE_PARITY_REVISION,
   SYNTHETIC_PROFILE_FIXTURES,
 } from "@studenthub/profile";
@@ -339,9 +340,19 @@ test("runtime wires the approved-data repository to the authorized principal and
   const other = createRuntimeLoginFromEnv({ ...env, LOGIN_ALLOWED_RETURN_URLS: "https://other.test.invalid/profile" })!;
   t.after(() => other.close());
   assert.equal(other.application.web?.returnTo, undefined);
-  assert.deepEqual(await other.application.web?.profiles.readOwn({
-    requesterPrincipalId: "unknown", targetPersonId: "unknown",
-  }), { kind: "not_found" });
+  const unconfigured = await other.application.web?.profiles.readOwn({
+    requesterPrincipalId: "authorized-person", targetPersonId: "authorized-person",
+  });
+  assert.ok(unconfigured?.kind === "found", "runtime unconfigured profile must be found");
+  assert.equal(Object.keys(unconfigured.profile.fields).length, 19);
+  assert.deepEqual(Object.keys(unconfigured.profile.fields), OWN_PROFILE_FIELD_NAMES);
+  for (const [name, field] of Object.entries(unconfigured.profile.fields)) {
+    assert.equal(field.state, "unavailable", `runtime unconfigured ${name} must be unavailable`);
+    if (field.state === "unavailable") assert.equal(field.reason, "not_imported");
+    assert.equal(Object.hasOwn(field, "value"), false);
+    assert.deepEqual(field.freshness, { kind: "not_imported", observedAt: "" });
+  }
+  assert.doesNotMatch(JSON.stringify(unconfigured.profile), /Stored Name|stored@example|Noor/);
 });
 
 test("unconfigured browser login gives a truthful unavailable page and leaves machine routes disabled", async (t) => {

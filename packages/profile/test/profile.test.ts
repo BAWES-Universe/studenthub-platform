@@ -156,6 +156,7 @@ test("PROFILE-PARSER malformed imported values fail closed without echoing input
   const malformedValues: readonly [string, unknown][] = [
     ["candidate_gender", 9],
     ["candidate_birth_date", "2001-02-30"],
+    ["candidate_birth_date", "2025-1-01"],
     ["candidate_language_pref", "fr"],
     ["candidate_driving_license", "yes"],
     ["candidate_pending_profile", "civil id,unknown-private-field"],
@@ -168,8 +169,30 @@ test("PROFILE-PARSER malformed imported values fail closed without echoing input
     const result = await repository({ rows: new Map([["candidate-populated", row]]) }).readOwn({
       requesterPrincipalId: "person-populated", targetPersonId: "person-populated",
     });
-    assert.deepEqual(result, { kind: "unavailable" }, key);
+    assert.deepEqual(result, { kind: "unavailable" }, `PROFILE-PARSER ${key} rejects malformed imported value`);
     assert.ok(!JSON.stringify(result).includes("SENSITIVE-ERROR-SENTINEL"));
+  }
+});
+
+test("PROFILE-ERROR direct projection errors never echo malformed input", () => {
+  const cases = [
+    ["candidate_gender", 9, "malformed approved profile value"],
+    ["candidate_name", "PRIVATE-NAME-".repeat(100), "malformed approved profile value"],
+    ["candidate_birth_date", "2025-1-01", "malformed approved profile value"],
+    ["candidate_birth_date", "2001-02-30", "malformed approved profile value"],
+    ["candidate_pending_profile", "PRIVATE-UNKNOWN-FIELD", "malformed approved profile value"],
+    ["candidate_id", "PRIVATE-ID", "malformed approved profile value"],
+    ["imported_at", "PRIVATE-TIMESTAMP", "malformed approved profile snapshot"],
+    ["source_revision", "PRIVATE-REVISION", "unapproved profile source revision"],
+  ] as const;
+  for (const [key, value, message] of cases) {
+    assert.throws(() => projectApprovedProfile({
+      ...SYNTHETIC_PROFILE_FIXTURES.populated, [key]: value,
+    }, "2026-09-13"), (error: unknown) => {
+      assert.ok(error instanceof TypeError, `PROFILE-ERROR ${key} throws TypeError`);
+      assert.equal(error.message, message, `PROFILE-ERROR ${key} uses constant error message`);
+      return true;
+    }, `PROFILE-ERROR ${key} must reject malformed input`);
   }
 });
 
