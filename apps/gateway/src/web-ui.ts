@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
+import type { ContextNavigation, NavigationResult, WorkspaceContext } from "./context-navigation.js";
 import {
   OWN_PROFILE_FIELD_CONTRACT,
   OWN_PROFILE_FIELD_NAMES,
@@ -12,6 +13,7 @@ import {
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
+  readonly navigation?: ContextNavigation;
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
@@ -55,22 +57,61 @@ const securityHeaders = {
 };
 
 export function writeHtml(response: ServerResponse, status: number, html: string,
-  headers: Readonly<Record<string, string>> = {}): void {
-  response.writeHead(status, { ...headers, ...securityHeaders, "content-type": "text/html; charset=utf-8" });
+  headers: Readonly<Record<string, string>> = {}, workspaceHistory = false): void {
+  response.writeHead(status, { ...headers, ...securityHeaders,
+    ...(workspaceHistory ? { "content-security-policy": `${securityHeaders["content-security-policy"]}; script-src 'self'` } : {}),
+    "content-type": "text/html; charset=utf-8" });
   response.end(html);
 }
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 
-function document(title: string, content: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css"></head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
+function document(title: string, content: string, workspaceHistory = false): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css">${workspaceHistory ? '<script src="/assets/workspace-history.js" defer></script>' : ""}</head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
 }
+
+// A back/forward-cache restoration may not issue a request even with no-store.
+// Conceal the outgoing snapshot, then re-resolve grants before showing it again.
+// This script never stores grants, chooses a context or authorizes an operation.
+export const WORKSPACE_HISTORY_JS = `
+addEventListener('pagehide', () => { document.documentElement.hidden = true; });
+addEventListener('pageshow', event => {
+  if (event.persisted) location.reload();
+  else document.documentElement.hidden = false;
+});
+`;
 
 function signIn(login?: BrowserLoginApplication): string {
   const returnTo = login?.web?.returnTo;
   if (!returnTo) return `<div class="notice" role="status"><strong>Sign-in is temporarily unavailable</strong><p>Please try again later.</p></div>`;
   // This URL is supplied by validated runtime configuration, never Host or a query.
   return `<a class="button primary" href="/login/universe?return_to=${escapeHtml(encodeURIComponent(returnTo))}">Continue with Universe <span aria-hidden="true">↗</span></a>`;
+}
+
+const roleNames: Record<WorkspaceContext["role"], string> = {
+  candidate: "Candidate", staff: "Staff", admin: "Administrator",
+  "org-owner": "Organization owner", recruiter: "Recruiter", finance: "Finance",
+};
+
+const workspaceDocument = (title: string, content: string) => document(title, content, true);
+
+/** Native links preserve selections across refresh/back without storing authority. */
+export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication): string {
+  if (result.status !== 200) {
+    if (result.status !== 403 && result.status !== 400) return renderError(result.status, login);
+    return workspaceDocument("Workspace unavailable", `<header class="topbar">${brand}<a href="/profile">My profile</a></header><main id="main" class="error-page"><h1>This workspace isn’t available.</h1><p>Your access may have changed. Choose one of your current workspaces to continue.</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
+  }
+  const { contexts, active } = result.body;
+  const links = contexts.map((context) => {
+    const current = active?.orgId === context.orgId && active.role === context.role;
+    const href = `/workspace?${new URLSearchParams({ org_id: context.orgId, role: context.role })}`;
+    return `<a class="context-option${current ? " active" : ""}" href="${escapeHtml(href)}"${current ? ' aria-current="page"' : ""}><span>${escapeHtml(context.organizationName)}</span><strong>${roleNames[context.role]}</strong><span aria-hidden="true">→</span></a>`;
+  }).join("");
+  const title = active ? `${roleNames[active.role]} workspace` : "Your workspaces";
+  const intro = active
+    ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
+    : "Choose the organization and role you want to use. You can switch without signing in again.";
+  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a></nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderLanding(login?: BrowserLoginApplication): string {
@@ -134,7 +175,7 @@ export async function profileDocument(result: BrowserResponse, login: BrowserLog
   const name = displayName.state === "available" ? displayName.value : undefined;
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
   const rows = OWN_PROFILE_FIELD_NAMES.map((field) => fieldRow(profile, field)).join("");
-  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a></nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
+  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 
 export const WEB_CSS = `
@@ -143,5 +184,6 @@ export const WEB_CSS = `
 @media(max-width:800px){.entry-grid{gap:2.5rem;grid-template-columns:1fr;padding:2.5rem 0}.intro h1{font-size:3.5rem}.intro-foot{margin-top:1.5rem}.sign-in{max-width:none}.entry-footer{flex-direction:column;gap:.4rem}.workspace{grid-template-columns:1fr}.sidebar{padding:1rem 1.25rem;border-right:0;border-bottom:1px solid var(--border)}.sidebar>.eyebrow,.sidebar-note{display:none}.sidebar nav{margin:0}.nav-item{display:inline-flex}.profile-main{padding-top:2rem}.identity{padding:1.5rem}.identity-label{width:100%;margin-left:4.5rem}.profile-fields{padding:0 1.5rem}.privacy-note{padding:1.25rem 1.5rem}.profile-heading{align-items:flex-start}.badge{margin-top:.5rem}}
 @media(max-width:480px){.entry-header>.eyebrow{display:none}.intro h1{font-size:3rem}.topbar{padding:1rem}.brand{font-size:1.4rem}.profile-fields{grid-template-columns:1fr}.profile-fields>div,.profile-fields>div:nth-child(even){padding-left:0;padding-right:0}.profile-fields>div:nth-last-child(2){border-bottom:1px solid var(--border)}.profile-heading{flex-wrap:wrap}.identity-label{margin-left:0}.sign-out span{display:none}.error-page{margin-top:3rem}}
 .topbar{flex-wrap:wrap}body{overflow-wrap:anywhere}.entry-grid>*{min-width:0}
+.context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
 @media(prefers-reduced-motion:no-preference){.button,.sign-out{transition:background-color .15s ease}}
 `;
