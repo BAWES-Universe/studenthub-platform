@@ -79,6 +79,17 @@ UNKNOWN/typed HOLD; it cannot persist into an inaccessible store. HOLDs do not
 authorize automatic policy bypasses. No live wake/launch/merge is demonstrated:
 gates remain off and all execution proofs use injected synthetic adapters.
 
+## Bounded wake answer
+
+The integrated `main` service contract includes `shu-coordinator.timer`, with
+`OnBootSec=60s` and `OnUnitInactiveSec=60s`, targeting the one serialized
+`shu-coordinator.service`. Once that reviewed unit is installed and enabled on a
+host, systemd supplies the recurring host-level wake; it is not operator- or
+prompt-driven. `shu-supervisor.service` is a required dependency and preserves
+worker lifecycle state, but it is not the wake source. This integration proves
+the unit wiring and its existing tests, not that any production host currently
+has the timer installed, enabled, or running.
+
 ## Synthetic tests first
 
 Before implementation, `landing-verdict-consumed-exactly-once` failed with the
