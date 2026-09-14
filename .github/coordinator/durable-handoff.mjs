@@ -4,11 +4,13 @@ import { routeSuccessorFromReceipts, validWorkOrder } from './review-routing.mjs
 import { requireHoldCode, HOLD_CODES } from './intended-work.mjs';
 import { validateReceipt, terminalVerdictCoherent, receiptsWithinDispatchScope,
   receiptCommentBody, parseReceiptsFromComments, RECEIPT_IMMUTABLE_FIELDS,
-  sendLinear, LINEAR_COMMENT_CREATE_MUTATION, fetchBranchHead, fetchIssueComments } from './reconcile.mjs';
+  receiptCommentActorId, sendLinear, LINEAR_COMMENT_CREATE_MUTATION, fetchBranchHead, fetchIssueComments } from './reconcile.mjs';
 
 const findings = r => ({ notes: [...(r.notes ?? [])], evidence_links: [...(r.evidence_links ?? [])] });
 const same = (a, b) => RECEIPT_IMMUTABLE_FIELDS.every(k => JSON.stringify(a[k]) === JSON.stringify(b[k]));
 const hold = (code, reason) => ({ action: 'HOLD', hold_code: requireHoldCode(code), reason });
+const trustedReceipt = (receipt, allowedActorIds) => Array.isArray(allowedActorIds) && allowedActorIds.length > 0 &&
+  allowedActorIds.includes(receiptCommentActorId(receipt));
 
 export function durableHandoffStatus(terminal, receipts = []) {
   const unknown = { stage: 'UNKNOWN', hold_code: requireHoldCode('MISSING_LAUNCH_RECEIPT') };
@@ -31,16 +33,21 @@ export function durableHandoffStatus(terminal, receipts = []) {
 export async function consumeDurableHandoffs({ receipts = [], commentsByIssue = new Map(), dispatchEnabled = false,
   linearToken = '', githubToken = '', linearIdFor = new Map(), config = {}, fetchImpl = fetch, stdout = () => {} }) {
   if (!dispatchEnabled || !linearToken) return 0;
+  const allowedActorIds = config.linear_receipt_actor_ids;
+  if (!Array.isArray(allowedActorIds) || allowedActorIds.length === 0) {
+    stdout('handoff: UNKNOWN HOLD=MISSING_AUTHORITY — trusted Linear receipt actors are not configured');
+    return 0;
+  }
   let writes = 0;
   const scoped = receiptsWithinDispatchScope(receipts, config);
   for (const supplied of scoped) {
     if (!['COMPLETED', 'HOLD'].includes(supplied.stage)) continue;
     const comments = commentsByIssue.get(supplied.issue_id) ?? [];
-    const durable = parseReceiptsFromComments(comments);
+    const durable = parseReceiptsFromComments(comments, allowedActorIds);
     const terminal = durable.find(r => r.attempt_id === supplied.attempt_id && same(r, supplied));
     if (!terminal) { stdout(`handoff: ${supplied.issue_id} UNKNOWN HOLD=MISSING_LAUNCH_RECEIPT`); continue; }
     if (terminal.handoff) continue;
-    const lineage = receipts.filter(r => r.issue_id === terminal.issue_id && r.repo === terminal.repo && r.branch === terminal.branch);
+    const lineage = durable.filter(r => r.issue_id === terminal.issue_id && r.repo === terminal.repo && r.branch === terminal.branch);
     // A later durable lane already supersedes this completion. Never revive an
     // older build or verdict when replaying the entire append-only history.
     if (lineage.at(-1)?.attempt_id !== terminal.attempt_id) continue;
@@ -89,9 +96,10 @@ export async function consumeDurableHandoffs({ receipts = [], commentsByIssue = 
   return writes;
 }
 
-export function handoffContinuations(receipts) {
+export function handoffContinuations(receipts, allowedActorIds = []) {
   const result = new Map();
   for (const r of receipts) {
+    if (!trustedReceipt(r, allowedActorIds)) continue;
     if (receipts.filter(other => other.repo === r.repo && other.branch === r.branch).at(-1) !== r) continue;
     const status = durableHandoffStatus(r, receipts);
     if (status.action !== 'work-order' || !status.order || r.handoff.claim_attempt_id) continue;

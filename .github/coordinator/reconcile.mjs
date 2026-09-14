@@ -1444,6 +1444,15 @@ export function parseReceiptCommentBody(body) {
   }
 }
 
+const RECEIPT_COMMENT_ACTOR = Symbol("coordinatorReceiptCommentActor");
+
+// Receipt JSON intentionally contains no transport identity. Keep the immutable
+// Linear actor ID as non-serialized parser metadata so consumers can authenticate
+// the comment without widening the receipt schema or trusting a mutable name.
+export function receiptCommentActorId(receipt) {
+  return receipt?.[RECEIPT_COMMENT_ACTOR] ?? null;
+}
+
 // PAUSE_MARKER_RE — durable adapter-pause notice written as a Linear comment on the
 // issue whose dispatch hit the wall (quota/access). Read back on every reconcile so
 // a paused adapter never auto-launches a doomed attempt after a workflow restart
@@ -1483,12 +1492,15 @@ function immutableFieldEqual(a, b, field) {
   return a?.[field] === b?.[field];
 }
 
-export function parseReceiptsFromComments(comments = []) {
+export function parseReceiptsFromComments(comments = [], allowedActorIds = null) {
+  const allowed = Array.isArray(allowedActorIds) ? new Set(allowedActorIds.filter((id) => typeof id === "string" && id.length)) : null;
   const byAttempt = new Map(); // attempt_id -> { receipt, createdAt }
   const conflicts = []; // records held back so main()'s conflict check can fire
   for (const comment of comments ?? []) {
+    if (allowed && !allowed.has(comment?.user?.id)) continue;
     const parsed = parseReceiptCommentBody(comment?.body);
     if (parsed && typeof parsed === "object" && RECEIPT_VERSIONS.includes(parsed.receipt_version) && parsed.attempt_id) {
+      Object.defineProperty(parsed, RECEIPT_COMMENT_ACTOR, { value: comment?.user?.id ?? null });
       const prior = byAttempt.get(parsed.attempt_id);
       const createdAt = typeof comment?.createdAt === "string" ? comment.createdAt : null;
       if (!prior) {
@@ -2336,12 +2348,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
 
   if (!singleRunActivation.requested) {
-    for (const [id, continuation] of handoffContinuations(receipts)) episodeContinuations.set(id, continuation);
+    for (const [id, continuation] of handoffContinuations(receipts, config.linear_receipt_actor_ids)) episodeContinuations.set(id, continuation);
   }
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
   if (!singleRunActivation.requested) {
-    for (const receipt of receipts.filter(r => r.handoff)) {
+    const trustedReceiptActors = new Set(config.linear_receipt_actor_ids ?? []);
+    for (const receipt of receipts.filter(r => r.handoff && trustedReceiptActors.has(receiptCommentActorId(r)))) {
       const status = durableHandoffStatus(receipt, receipts);
       io.stdout?.(`handoff: ${receipt.issue_id} ${status.stage} HOLD=${status.hold_code}`);
     }

@@ -6,6 +6,9 @@ or dispatcher is added. Existing service serialization and the reservation /
 LAUNCH_UNKNOWN / adapter idempotency path remain responsible for execution.
 The committed dispatch flag remains false. Activation-requested ticks retain the
 existing activation/backfill path; consumption does not supply activation authority.
+Receipt and handoff comments are accepted for this path only when Linear supplies
+an immutable actor ID present in `linear_receipt_actor_ids`; mutable display names
+and structurally valid comments from any other actor are ignored.
 
 ## Record and action
 
@@ -90,11 +93,13 @@ AssertionError messages:
 | duplicate-consumption | `HANDOFF_CONSUMED_TWICE: two ticks and a reconstructed session must produce exactly one action` |
 | unbacked-claim | `HANDOFF_RECORD_REQUIRED: missing durable work must never be reported as running or complete` |
 | resume-after-termination | `RESUME_WITHOUT_PROMPT: a fresh coordinator tick must consume the queued completion without a human prompt` |
+| handoff-author-authentication | `HANDOFF_AUTHOR_REQUIRED: an untrusted Linear commenter must never create launchable work` |
 
-The sixth test, `durable-handoff named mutation controls`, copies the coordinator
-into a temporary directory and applies five source mutations: replace PASS's
+The seventh test, `durable-handoff named mutation controls`, copies the coordinator
+into a temporary directory and applies six source mutations: replace PASS's
 action, remove findings, remove the consumed guard, fabricate RUNNING for absent
-records, and suppress consumption. Each child must fail with its corresponding
+records, suppress consumption, and remove the trusted-comment author gate. Each
+child must fail with its corresponding
 named AssertionError; syntax/import failures and surviving mutants fail the
 control. Its control assertions are `mutation anchor <name>`, `<name> mutation
 survived`, and `<name> must die by named AssertionError: <child output>`.
