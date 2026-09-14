@@ -28,6 +28,8 @@ const INCIDENT_IDENTIFIER = "SHU-900";
 const ORIGINAL = "SHU-140";
 const HEAD = "a".repeat(40);
 const MERGE = "b".repeat(40);
+const BRANCH = "coordinator/SHU-901";
+const TRUSTED_RECEIPT_ACTOR = "linear-coordinator-test";
 const NOW = new Date("2026-09-15T00:00:00.000Z");
 const TRIAGE_SOURCE = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../incident-triage.mjs"), "utf8");
 
@@ -48,6 +50,9 @@ function receipt({ n, worker, stage = "COMPLETED", verdict = null, target = HEAD
     attempt_id: `${String(n).padStart(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`,
     requested_worker: worker,
     stage,
+    issue_id: "SHU-901",
+    repo: "BAWES-Universe/studenthub-platform",
+    branch: BRANCH,
     target_sha: target,
     worker_identity: identity,
   };
@@ -56,8 +61,8 @@ function receipt({ n, worker, stage = "COMPLETED", verdict = null, target = HEAD
   return value;
 }
 
-function receiptComment(value) {
-  return { body: ["<!-- coordinator-receipt v1 (dry-run pilot) -->", "```json", JSON.stringify(value), "```"].join("\n"), createdAt: NOW.toISOString() };
+function receiptComment(value, actor = TRUSTED_RECEIPT_ACTOR) {
+  return { body: ["<!-- coordinator-receipt v1 (dry-run pilot) -->", "```json", JSON.stringify(value), "```"].join("\n"), createdAt: NOW.toISOString(), user: { id: actor } };
 }
 
 function fakeStore({ missingIncidentEvidence = false, lostCreate = false, dependencyState = "Done" } = {}) {
@@ -175,7 +180,7 @@ function fakeStore({ missingIncidentEvidence = false, lostCreate = false, depend
         html_url: "https://github.com/BAWES-Universe/studenthub-platform/pull/123",
         merged_at: "2026-09-15T01:00:00.000Z",
         merge_commit_sha: MERGE,
-        head: { sha: HEAD, repo: { full_name: "BAWES-Universe/studenthub-platform" } },
+        head: { sha: HEAD, ref: BRANCH, repo: { full_name: "BAWES-Universe/studenthub-platform" } },
       }),
     };
   };
@@ -188,6 +193,7 @@ function fakeStore({ missingIncidentEvidence = false, lostCreate = false, depend
     fetchImpl,
     sendLinear,
     commentMutation: COMMENT_MUTATION,
+    receiptActorIds: [TRUSTED_RECEIPT_ACTOR],
     now: NOW,
     timeoutMs: 25,
     ...overrides,
@@ -361,6 +367,11 @@ test("SHU-260 durable incident→repair→PR→verdict→merge lineage and no pr
   store.markDone({ attachments: [attachment], comments: [receiptComment(author), receiptComment(staleReview)] });
   assert.equal((await store.run()).status, "WAITING_FOR_LANDED_LINEAGE", "a stale verdict cannot clear the breaker");
   const exactReview = receipt({ n: 3, worker: "claude-verifier", verdict: "PASS", identity: "claude:reviewer" });
+  const sameIdentityReview = receipt({ n: 3, worker: "claude-verifier", verdict: "PASS", identity: "codex:author" });
+  store.markDone({ attachments: [attachment], comments: [receiptComment(author), receiptComment(sameIdentityReview)] });
+  assert.equal((await store.run()).status, "WAITING_FOR_LANDED_LINEAGE", "author and verifier identities must be distinct");
+  store.markDone({ attachments: [attachment], comments: [receiptComment(author), receiptComment(exactReview, "untrusted-linear-user")] });
+  assert.equal((await store.run()).status, "WAITING_FOR_LANDED_LINEAGE", "untrusted comment authors cannot forge a verdict receipt");
   store.markDone({ attachments: [attachment], comments: [receiptComment(author), receiptComment(exactReview)] });
   const landed = await store.run();
   assert.equal(landed.status, "LANDED");

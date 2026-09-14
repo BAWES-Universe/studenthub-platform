@@ -230,6 +230,7 @@ export function createEpisodeHarness({
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
     linear_callback_actor_ids: [callbackActor],
+    linear_receipt_actor_ids: [callbackActor],
     max_failed_attempts: 3,
     dispatch_scope: { issue_ids: [issueId] },
     fixture_lane: { id: issueId, authorization_ref: authorizationRef },

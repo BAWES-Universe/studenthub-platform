@@ -2133,6 +2133,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           fetchImpl,
           sendLinear,
           commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
+          receiptActorIds: config.linear_receipt_actor_ids,
           now: io.now?.() ?? new Date(),
           stdout: io.stdout,
           timeoutMs: io.incidentTimeoutMs,

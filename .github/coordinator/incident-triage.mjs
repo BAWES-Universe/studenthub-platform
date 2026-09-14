@@ -92,7 +92,7 @@ export const LINEAR_TRIAGE_QUERY = `
       assignee { id }
       delegate { id }
       relations { nodes { type relatedIssue { id identifier state { name } } } }
-      comments(last: 250, orderBy: createdAt) { nodes { body createdAt } }
+      comments(last: 250, orderBy: createdAt) { nodes { body createdAt user { id } } }
     }
     repair: issue(id: $repairId) {
       id identifier title description
@@ -103,7 +103,7 @@ export const LINEAR_TRIAGE_QUERY = `
       delegate { id }
       relations { nodes { type relatedIssue { id identifier state { name } } } }
       attachments { nodes { url title } }
-      comments(last: 250, orderBy: createdAt) { nodes { body createdAt } }
+      comments(last: 250, orderBy: createdAt) { nodes { body createdAt user { id } } }
     }
     teams(filter: { key: { eq: "SHU" } }, first: 2) {
       nodes {
@@ -272,9 +272,11 @@ function repairEligible(issue, event, identity, policy) {
   return repairBound(issue, event, identity, policy) && issue.state?.name === REPAIR_STATE_NAME && issue.assignee === null && issue.delegate === null;
 }
 
-function parseReceiptComments(comments = []) {
+function parseReceiptComments(comments = [], allowedActorIds = []) {
+  const allowed = new Set(Array.isArray(allowedActorIds) ? allowedActorIds.filter((id) => typeof id === "string" && id.length) : []);
   const receipts = [];
   for (const comment of comments ?? []) {
+    if (!allowed.has(comment?.user?.id)) continue;
     const body = typeof comment?.body === "string" ? comment.body : "";
     if (!body.includes("<!-- coordinator-receipt v1")) continue;
     const match = /```json\s*([\s\S]*?)\s*```/.exec(body);
@@ -305,12 +307,13 @@ function receiptFamily(receipt) {
   try { return familyForLane(receipt.requested_worker); } catch { return null; }
 }
 
-function lineageVerdict(repair, pr, policy) {
-  const receipts = parseReceiptComments(repair?.comments?.nodes ?? []);
+function lineageVerdict(repair, pr, policy, receiptActorIds) {
+  const receipts = parseReceiptComments(repair?.comments?.nodes ?? [], receiptActorIds);
   const writerFamily = familyForLane(policy.worker_lane);
   const verifierFamily = VERIFIER_FAMILY[policy.verifier_name];
-  const author = receipts.find((receipt) => isWriterRole(roleForReceipt(receipt)) && receipt.stage === "COMPLETED" && receipt.result_sha === pr.head.sha && receiptFamily(receipt) === writerFamily);
-  const verdict = receipts.find((receipt) => roleForReceipt(receipt) === "review" && receipt.stage === "COMPLETED" && receipt.verdict_stage === "PASS" && receipt.target_sha === pr.head.sha && receiptFamily(receipt) === verifierFamily);
+  const bound = (receipt) => receipt.issue_id === repair.identifier && receipt.repo === policy.repository && receipt.branch === pr.head.ref;
+  const author = receipts.find((receipt) => bound(receipt) && isWriterRole(roleForReceipt(receipt)) && receipt.stage === "COMPLETED" && receipt.result_sha === pr.head.sha && receiptFamily(receipt) === writerFamily);
+  const verdict = receipts.find((receipt) => bound(receipt) && roleForReceipt(receipt) === "review" && receipt.stage === "COMPLETED" && receipt.verdict_stage === "PASS" && receipt.target_sha === pr.head.sha && receiptFamily(receipt) === verifierFamily);
   if (!author || !verdict || !author.worker_identity || !verdict.worker_identity || author.worker_identity === verdict.worker_identity) return null;
   if (writerFamily === verifierFamily) return null;
   return { author, verdict };
@@ -369,7 +372,7 @@ async function fetchTriageState(args, identity) {
   return boundedCall(() => args.sendLinear(LINEAR_TRIAGE_QUERY, { incidentId: args.event.issue_uuid, repairId: identity.issue_uuid }, args.token, args.fetchImpl), args.timeoutMs, args.timeoutImpl);
 }
 
-async function completedLineage({ state, event, identity, policy, githubToken, fetchImpl, timeoutMs, timeoutImpl }) {
+async function completedLineage({ state, event, identity, policy, receiptActorIds, githubToken, fetchImpl, timeoutMs, timeoutImpl }) {
   const repair = state?.repair;
   if (!repairBound(repair, event, identity, policy) || repair.state?.name !== "Done") return null;
   const attachment = exactPrAttachment(repair, policy);
@@ -379,9 +382,9 @@ async function completedLineage({ state, event, identity, policy, githubToken, f
   }), timeoutMs, timeoutImpl);
   if (!response?.ok) return null;
   const pr = await response.json().catch(() => null);
-  if (!pr || pr.html_url !== attachment.url || !pr.merged_at || !SHA_RE.test(pr.merge_commit_sha ?? "") || !SHA_RE.test(pr.head?.sha ?? "")) return null;
+  if (!pr || pr.html_url !== attachment.url || !pr.merged_at || !SHA_RE.test(pr.merge_commit_sha ?? "") || !SHA_RE.test(pr.head?.sha ?? "") || typeof pr.head?.ref !== "string" || !pr.head.ref.length) return null;
   if (pr.head?.repo?.full_name !== policy.repository) return null;
-  const proof = lineageVerdict(repair, pr, policy);
+  const proof = lineageVerdict(repair, pr, policy, receiptActorIds);
   return proof ? { attachment, pr, proof } : null;
 }
 
@@ -393,6 +396,7 @@ export async function triageCoordinatorIncident({
   fetchImpl,
   sendLinear,
   commentMutation,
+  receiptActorIds = [],
   now = new Date(),
   stdout = () => {},
   timeoutMs = REPAIR_CALL_TIMEOUT_MS,
@@ -447,7 +451,7 @@ export async function triageCoordinatorIncident({
 
   if (state.repair?.state?.name === "Done") {
     let landed = null;
-    try { landed = await completedLineage({ state, event, identity, policy, githubToken, fetchImpl, timeoutMs, timeoutImpl }); } catch { landed = null; }
+    try { landed = await completedLineage({ state, event, identity, policy, receiptActorIds, githubToken, fetchImpl, timeoutMs, timeoutImpl }); } catch { landed = null; }
     if (!landed) return { status: "WAITING_FOR_LANDED_LINEAGE", resume: TRIAGE_RESUME_AUTHORITY };
     const values = {
       repair_id: state.repair.id,
