@@ -13,13 +13,10 @@ function files(root) {
   });
 }
 
-// Fixed point, seeded only by the processes in gateway-entrypoint.sh. Lockfile
-// links discover workspace identities, never grant runtime membership. For each
-// reached workspace follow dependencies (not devDependencies), then parse emitted
-// JS imports/exports, literal import()/require(), and new URL(..., import.meta.url)
-// worker references. Relative edges discover workspaces omitted from manifests
-// and non-workspace code (observability). Type-only imports have already vanished.
-// Keep iterating both queues until neither grows; sort the result for repeatability.
+// Start with the two processes run by gateway-entrypoint.sh. Read lockfile links
+// only to discover workspace identities/paths, and manifests only to resolve the
+// selected package export/main. Membership comes exclusively from reached built
+// files, never dependencies/devDependencies or unselected public entrypoints.
 export function runtimeClosure(root, entries = ['dist/apps/gateway/src/index.js', 'packages/db/dist/migrate.js']) {
   const lock = json(resolve(root, 'package-lock.json'));
   const workspaces = new Map();
@@ -34,25 +31,36 @@ export function runtimeClosure(root, entries = ['dist/apps/gateway/src/index.js'
   function include(name) {
     if (packages.has(name) || !workspaces.has(name)) return;
     packages.add(name);
+  }
+  function packageEntry(value, mode) {
+    const name = value.startsWith('@') ? value.split('/').slice(0, 2).join('/') : value.split('/')[0];
+    if (!workspaces.has(name)) return; // External dependencies remain npm-managed.
     const { path, manifest } = workspaces.get(name);
-    for (const dependency of Object.keys(manifest.dependencies ?? {})) include(dependency);
-    // Only public runtime entrypoints grant further authority, not arbitrary
-    // unused modules emitted alongside them (e.g. a maintenance CLI).
-    function exports(value) {
-      if (typeof value === 'string') {
-        if (value.includes('*')) throw new Error(`unsupported runtime export pattern: ${name} ${value}`);
-        pending.push(relative(root, resolve(root, path, value)));
-      } else if (value && typeof value === 'object') {
-        for (const [condition, target] of Object.entries(value)) {
-          if (!['types', 'browser', 'development'].includes(condition)) exports(target);
+    const subpath = value === name ? '.' : `.${value.slice(name.length)}`;
+    function select(target) {
+      if (typeof target === 'string') return target;
+      if (target && !Array.isArray(target) && typeof target === 'object') {
+        for (const [condition, choice] of Object.entries(target)) {
+          if (['node', mode, 'default', 'node-addons'].includes(condition)) {
+            const selected = select(choice);
+            if (selected !== undefined) return selected;
+          }
         }
       }
+      if (Array.isArray(target)) throw new Error(`unsupported runtime export array: ${value}`);
+      return undefined;
     }
-    if (manifest.exports) exports(manifest.exports);
-    else if (manifest.main) exports(manifest.main);
-    else if (existsSync(resolve(root, path, 'index.js'))) exports('./index.js');
+    let target;
+    if (manifest.exports !== undefined) {
+      const exports = manifest.exports;
+      target = select(exports && typeof exports === 'object' && Object.keys(exports).some(key => key.startsWith('.'))
+        ? exports[subpath] : subpath === '.' ? exports : undefined);
+      if (!target || !target.startsWith('./') || target.includes('*')) throw new Error(`unsupported runtime export: ${value} (${mode})`);
+    } else target = subpath === '.' ? manifest.main ?? './index.js' : subpath;
+    const file = relative(root, resolve(root, path, target));
+    if (!file.startsWith(`${path}/`)) throw new Error(`runtime export escapes workspace: ${value}`);
+    pending.push(file);
   }
-  include(json(resolve(root, 'apps/gateway/package.json')).name);
   while (pending.length) {
     const file = pending.pop();
     if (code.has(file)) continue;
@@ -62,15 +70,15 @@ export function runtimeClosure(root, entries = ['dist/apps/gateway/src/index.js'
       if (file.startsWith(`${path}/`) || file.startsWith(`dist/${path}/`)) include(name);
     }
     const source = ts.createSourceFile(file, readFileSync(resolve(root, file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-    function edge(value) {
+    function edge(value, mode = 'import') {
       if (value.startsWith('.')) pending.push(relative(root, resolve(root, dirname(file), value)));
-      else include(value.startsWith('@') ? value.split('/').slice(0, 2).join('/') : value.split('/')[0]);
+      else packageEntry(value, mode);
     }
     function visit(node) {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) edge(node.moduleSpecifier.text);
       if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || node.expression.getText(source) === 'require')) {
         if (!node.arguments[0] || !ts.isStringLiteralLike(node.arguments[0])) throw new Error(`nonliteral runtime import in ${file}`);
-        edge(node.arguments[0].text);
+        edge(node.arguments[0].text, node.expression.kind === ts.SyntaxKind.ImportKeyword ? 'import' : 'require');
       }
       if (ts.isNewExpression(node) && node.expression.getText(source) === 'URL' && node.arguments?.[1]?.getText(source) === 'import.meta.url') {
         if (!ts.isStringLiteralLike(node.arguments[0])) throw new Error(`nonliteral runtime URL in ${file}`);
