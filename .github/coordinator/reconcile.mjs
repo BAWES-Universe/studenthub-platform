@@ -1601,6 +1601,7 @@ export async function backfillSuccessorDirectives({
   fetchImpl = fetch,
   stdout = null,
   bootstrapByIssue = new Map(),
+  episodeScope = null,
 }) {
   const out = stdout ?? ((s) => console.log(s));
   // Defense in depth: this is the only helper that publishes successor
@@ -1613,7 +1614,12 @@ export async function backfillSuccessorDirectives({
   let considered = 0;
   // Durable, terminal, verdict-bearing receipts across all issues. Older-infra
   // FAILED receipts carry no verdict_stage and are skipped (never route).
+  // SHU-246: an armed fixture episode may only replay its own terminals. This is
+  // a read-time boundary over the append-only history; no receipt is rewritten
+  // or removed. With no armed episode receiptInEpisodeScope() returns true, so
+  // non-activation behaviour is unchanged.
   const eligible = receiptsWithinDispatchScope(receipts, config)
+    .filter((r) => receiptInEpisodeScope(r, episodeScope))
     .filter((r) => terminalVerdictCoherent(r, r.verdict_stage));
   for (const terminal of eligible) {
     considered += 1;
@@ -1622,7 +1628,13 @@ export async function backfillSuccessorDirectives({
     const linearIssueId = linearIdFor.get(issueId) ?? terminal.linearId ?? null;
     // Existing directives on THIS card, dedup keyed by successor attempt_id.
     const existing = parseWorkOrderDirectiveFromComments(comments);
-    const lineage = (receipts ?? []).filter((r) => r && r.issue_id === issueId);
+    // Route review-round budgets and scoped-writer selection over the same
+    // episode-scoped world as activation. Filtering at the consumer boundary is
+    // intentional: routeSuccessorFromReceipts remains correct for every caller
+    // and cannot silently reinterpret a lineage its caller supplied.
+    const lineage = (receipts ?? []).filter(
+      (r) => r && r.issue_id === issueId && receiptInEpisodeScope(r, episodeScope),
+    );
     // Authoritative head binding (Codex BLOCK #1): when a githubToken + branch
     // are present, fetch the LIVE branch head and bind routing to it — an
     // attacker/volatile result_sha that differs fails closed. If a live head is
@@ -2397,6 +2409,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     fetchImpl,
     stdout: io.stdout,
     bootstrapByIssue: episodeBootstrap,
+    episodeScope,
   });
   if (io.stdout) io.stdout(`dispatch: backfill complete — ${backfilled} directive(s) considered`);
   let { candidate } = selection;
