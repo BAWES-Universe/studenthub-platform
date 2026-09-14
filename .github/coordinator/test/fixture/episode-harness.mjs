@@ -55,6 +55,9 @@ export function createEpisodeHarness({
   const nodes = [node, ...extraNodes];
   const comments = [];
   const pauses = [];
+  const incidentIssues = new Map();
+  const incidentRelations = new Map();
+  const incidentCreatePlan = [];
   const triggers = { "codex-cli": 0, "claude-code": 0, "hermes-pool": 0 };
   const polls = new Map();
   const launched = [];
@@ -64,6 +67,50 @@ export function createEpisodeHarness({
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
     const { query, variables } = JSON.parse(opts.body);
     if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes } });
+    if (query.includes("CoordinatorIncidentComments")) {
+      return respond({ issue: { comments: { nodes: [...comments] } } });
+    }
+    if (query.includes("CoordinatorIncidentLookup")) {
+      const issue = incidentIssues.get(variables.issueId) ?? null;
+      if (!issue) return respond({ issue: null });
+      const relations = [...incidentRelations.values()]
+        .filter((relation) => relation.issueId === issue.id)
+        .map(() => ({ type: "related", relatedIssue: { id: nodeId, identifier: issueId } }));
+      return respond({ issue: { ...issue, relations: { nodes: relations } } });
+    }
+    if (query.includes("CoordinatorIncidentMetadata")) {
+      return respond({ teams: { nodes: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        key: "SHU",
+        states: { nodes: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Triage", type: "triage" }] },
+        labels: { nodes: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "repo:platform" }] },
+      }] } });
+    }
+    if (query.includes("CoordinatorIncidentCreate")) {
+      const input = variables.input;
+      const planned = incidentCreatePlan.shift() ?? "success";
+      if (planned === "never") return new Promise(() => {});
+      if (planned === "503") return { status: 503, ok: false, json: async () => ({ errors: [{ message: "sentinel-http-body" }] }) };
+      if (planned === "429") return { status: 429, ok: false, json: async () => ({ errors: [{ message: "sentinel-rate-limit-body" }] }) };
+      if (incidentIssues.has(input.id)) return { status: 200, ok: true, json: async () => ({ errors: [{ message: "duplicate id" }] }) };
+      const issue = {
+        id: input.id,
+        identifier: `SHU-${900 + incidentIssues.size}`,
+        title: input.title,
+        description: input.description,
+        team: { id: input.teamId, key: "SHU" },
+        state: { id: input.stateId, name: "Triage", type: "triage" },
+        labels: { nodes: [{ id: input.labelIds[0], name: "repo:platform" }] },
+        assignee: null,
+      };
+      incidentIssues.set(input.id, issue);
+      if (planned === "lost") throw new Error("sentinel-lost-response-body");
+      return respond({ issueCreate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
+    }
+    if (query.includes("CoordinatorIncidentRelate")) {
+      incidentRelations.set(variables.input.id, variables.input);
+      return respond({ issueRelationCreate: { success: true, issueRelation: { id: variables.input.id } } });
+    }
     if (query.includes("CoordinatorIssueComments")) {
       const known = nodes.some((n) => n.id === variables.issueId || n.identifier === variables.issueId);
       return respond({ issue: { comments: { nodes: known ? [...comments] : [] } } });
@@ -187,6 +234,7 @@ export function createEpisodeHarness({
   const completeRun = (runId) => polls.set(runId, "completed");
   const failRun = (runId) => polls.set(runId, "failed");
   const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  const planIncidentCreates = (...plan) => incidentCreatePlan.push(...plan);
 
   return {
     dir,
@@ -195,6 +243,8 @@ export function createEpisodeHarness({
     nodes,
     comments,
     pauses,
+    incidentIssues,
+    incidentRelations,
     triggers,
     launched,
     adapters,
@@ -211,6 +261,7 @@ export function createEpisodeHarness({
     postCallback,
     completeRun,
     failRun,
+    planIncidentCreates,
     cleanup,
   };
 }

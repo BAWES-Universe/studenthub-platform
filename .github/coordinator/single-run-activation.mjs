@@ -383,8 +383,36 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
 // The record
 // ---------------------------------------------------------------------------
 
-function refused(reason) {
-  return { requested: true, state: "refused", valid: false, reason, target_issue_id: null, activation_id: null, expires_at: null };
+function refused(reason, reporting = null) {
+  const safe = reporting &&
+    typeof reporting.activation_id === "string" && ACTIVATION_ID_RE.test(reporting.activation_id) &&
+    typeof reporting.target_issue_id === "string" && LINEAR_ISSUE_ID_RE.test(reporting.target_issue_id) &&
+    typeof reporting.coordinator_revision === "string" && REVISION_RE.test(reporting.coordinator_revision) &&
+    typeof reporting.expires_at === "string" && Number.isFinite(Date.parse(reporting.expires_at)) &&
+    ["expired", "spent"].includes(reporting.reporting_exception)
+      ? reporting
+      : null;
+  return {
+    requested: true,
+    state: "refused",
+    valid: false,
+    reason,
+    target_issue_id: safe?.target_issue_id ?? null,
+    activation_id: safe?.activation_id ?? null,
+    coordinator_revision: safe?.coordinator_revision ?? null,
+    expires_at: safe?.expires_at ?? null,
+    reporting_exception: safe?.reporting_exception ?? null,
+  };
+}
+
+function reportingRefusal(record, reporting_exception) {
+  return {
+    activation_id: record.activation_id,
+    target_issue_id: record.target_issue_id,
+    coordinator_revision: record.coordinator_revision,
+    expires_at: record.expires_at,
+    reporting_exception,
+  };
 }
 
 function readActivationText(filePath, io = {}) {
@@ -590,7 +618,7 @@ export function singleRunActivationStatus({
   const expiry = new Date(record.expires_at).getTime();
   const at = now instanceof Date ? now.getTime() : Date.parse(now);
   if (!Number.isFinite(at)) return refused("current time could not be resolved (fail closed)");
-  if (expiry <= at) return refused(`activation expired at ${record.expires_at}`);
+  if (expiry <= at) return refused(`activation expired at ${record.expires_at}`, reportingRefusal(record, "expired"));
   if (expiry - at > MAX_ACTIVATION_WINDOW_MS) {
     return refused(`activation expiry is more than ${MAX_ACTIVATION_WINDOW_MS / 3600000}h away — the window is not bounded`);
   }
@@ -610,7 +638,10 @@ export function singleRunActivationStatus({
     bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
   });
   if (episode.ended) {
-    return refused(`activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`);
+    return refused(
+      `activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`,
+      reportingRefusal(record, "spent"),
+    );
   }
 
   return {
