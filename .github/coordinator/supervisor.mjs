@@ -412,9 +412,21 @@ export class DurableSupervisor {
       const run = this.store.readRun(order.attempt_id);
       const terminal = this.store.hasCompletion(order.attempt_id) ? this.store.validatedCompletion(order.attempt_id) : null;
       if (terminal && !terminal.ok) return { ok: false, stage: "HOLD", reason: terminal.reason };
+      // A run file alone is not evidence that spawn was attempted (SHU-86).
+      const stage = run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase();
+      if (!["ACCEPTED", "RUNNING", "HOLD", "COMPLETED", "FAILED"].includes(stage)) {
+        return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
+      }
+      if (["RUNNING", "COMPLETED", "FAILED"].includes(stage)) {
+        const launch = this.store.hasLaunch(order.attempt_id) ? this.store.readLaunch(order.attempt_id) : null;
+        if (launch?.attempt_id !== order.attempt_id || launch.phase !== "spawn_attempted"
+            || !/^[0-9a-f]{64}$/.test(launch.completion_token_hash)) {
+          return { ok: false, stage: "HOLD", reason: "launch receipt missing or invalid" };
+        }
+      }
       return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
         attempt_id: order.attempt_id, target_sha: order.target_sha,
-        stage: run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase(),
+        stage,
         result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
     } catch { return { ok: false, stage: "HOLD", reason: "supervisor attempt unavailable" }; }
   }
