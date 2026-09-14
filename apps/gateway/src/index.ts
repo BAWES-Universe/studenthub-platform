@@ -235,6 +235,26 @@ export function createGatewayServer(
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
       }
+      if (result.status === 200 && login.web) {
+        try {
+          const requesterPrincipalId = result.body?.personId;
+          if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
+            throw new Error("invalid authorized profile");
+          }
+          const profile = await login.web.profiles.readOwn({
+            requesterPrincipalId,
+            targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
+          });
+          result = profile.kind === "found"
+            ? { status: 200, body: profile.profile }
+            : profile.kind === "not_found"
+              ? { status: 404, body: { error: "profile_not_found" } }
+              : { status: 503, body: { error: "profile_unavailable" } };
+        } catch {
+          fault = 'dependency_unavailable';
+          result = { status: 503, body: { error: "profile_unavailable" } };
+        }
+      }
       if (html) {
         try {
           const page = await profileDocument(result, login);

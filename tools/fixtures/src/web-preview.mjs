@@ -2,6 +2,7 @@
 // Never used by start:gateway or either production container entrypoint.
 import { createServer } from "node:http";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
 import { createLoginApplication } from "../../../dist/apps/gateway/src/login-application.js";
 import { createGatewayServer } from "../../../dist/apps/gateway/src/index.js";
 import { profileDocument, renderLanding } from "../../../dist/apps/gateway/src/web-ui.js";
@@ -10,13 +11,23 @@ if (process.env.NODE_ENV === "production") throw new Error("Synthetic web previe
 const rig = createSyntheticLoginRig(createLoginApplication);
 const session = "v".repeat(43);
 await rig.sessions.put({ id: session, personId: "person-preview" });
+const profiles = new OwnProfileRepository({
+  principals: { async getPrincipal(id) { return id === "person-preview" ? { id, pbuuids: [] } : undefined; } },
+  source: new InMemoryApprovedProfileAdapter({
+    links: [{ principalId: "person-preview", candidateRef: "candidate-preview" }],
+    rows: new Map([["candidate-preview", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+  }),
+  today: () => "2026-09-13",
+});
 const login = { ...rig.app, web: {
   origin: "http://terminal.local:4173",
   returnTo: rig.config.allowedReturnUrls[1],
-  async readProfile(id) { return { id, displayName: "Noor — synthetic preview", email: "noor@example.invalid" }; },
+  profiles,
 } };
 const gateway = createGatewayServer(undefined, undefined, undefined, login);
-const ownPage = await profileDocument(await login.profile({ sessionId: session }), login);
+const own = await profiles.readOwn({ requesterPrincipalId: "person-preview", targetPersonId: "person-preview" });
+if (own.kind !== "found") throw new Error("synthetic profile fixture is unavailable");
+const ownPage = await profileDocument({ status: 200, body: own.profile }, login);
 const attribute = (html) => html.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const preview = createServer((request, response) => {
   if (request.url === "/__preview/responsive") {

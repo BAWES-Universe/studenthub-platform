@@ -34,6 +34,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
 | PostgreSQL data layer | `packages/db`, `packages/db/migrations` | ✅ persistent authz, OIDC state, sessions, and issuer/subject bindings |
 | Login contract | `packages/login-contract` | ✅ executable OIDC conformance and mutation harness |
+| Own-profile projection | `packages/profile` | ✅ typed, owner-scoped, production-grounded read model with explicit unavailable values and approved-data adapter seam; runtime has no approved data source yet |
 | Source-connection contract | `packages/source-connection-contract` | ✅ executable Discord/Google import contract; candidates and conflicts only, no I/O |
 | Private documents | `packages/private-documents` | ✅ private synthetic filesystem storage plus configured candidate upload/finalize/replace/remove and signed delivery routes; [lifecycle and cloud limitations](docs/contracts/candidate-document-lifecycle.md); no live cloud acceptance |
 | Search adapter | `packages/search` | ✅ Typesense adapter and indexer |
@@ -71,11 +72,16 @@ same-origin `/profile` URL only when it is already present in
 shows an unavailable message; this change does not expand the login allowlist.
 
 `GET /profile` renders HTML only when `Accept` explicitly prefers `text/html`.
-JSON, wildcard and missing Accept headers preserve the existing JSON body.
+JSON, wildcard and missing Accept headers return the same typed projection
+without HTML rendering.
 The HTML path first calls the existing login application's session-bound profile
-authorization, then reads that exact principal's stored display name/email.
-A mismatched/missing principal fails closed. This is **not legacy-data parity**:
-applications, work history, documents and editing are not provided by this slice.
+authorization, then the typed own-profile repository independently enforces the
+same principal boundary and resolves only an approved immutable profile link.
+It never falls back to registry or OIDC name/email. Missing or conflicted links
+fail closed. The JSON response and HTML page use the same closed projection;
+missing field values render explicitly as unavailable. Applications, work
+history, documents, bank data, civil ID number and editing are not provided by
+this slice.
 The `self` profile access marker is not presented as a business role/grant.
 
 HTML has `no-store`, `Vary: Accept`, a restrictive CSP and no external assets.
