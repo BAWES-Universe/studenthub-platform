@@ -1,5 +1,7 @@
 import { consumeDurableHandoffs, durableHandoffStatus, handoffContinuations, validHandoff } from './durable-handoff.mjs';
+import { consumeMergeReadiness, routineMergeEnabledFor } from './merge-readiness.mjs';
 export { consumeDurableHandoffs, durableHandoffStatus };
+export { consumeMergeReadiness, routineMergeEnabledFor };
 // Coordinator — deterministic dry-run skeleton (BAWES-Universe/studenthub-platform).
 //
 // WHY THIS FILE IS SHAPED THIS WAY:
@@ -2367,6 +2369,27 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     out(report);
     out(`dispatch: PREVENTED — single-run activation REFUSED (${singleRunActivation.reason}); no fallback, no writes`);
     return 2;
+  }
+  // SHU-259 is a separate, doubly gated authority. It is never implied by
+  // worker dispatch or by a single-run activation. The committed gate remains
+  // false; tests inject an enabled policy and synthetic I/O. One durable merge
+  // decision consumes the tick so it cannot compound with a worker launch.
+  if (routineMergeEnabledFor(env, config) && !singleRunActivation.requested) {
+    if (durableReadFailed) {
+      io.stdout?.('merge-readiness: PREVENTED — durable receipt state could not be fully read');
+      return 2;
+    }
+    if (lifecyclePersisted) {
+      io.stdout?.('merge-readiness: DEFERRED — lifecycle transition was persisted this tick');
+      return 0;
+    }
+    const consumed = await consumeMergeReadiness({ receipts, issues, linearToken, githubToken, config, env,
+      fetchImpl, stdout: io.stdout, now: io.now });
+    if (consumed.error) {
+      io.stdout?.(`merge-readiness: PREVENTED — ${consumed.error}`);
+      return 2;
+    }
+    if (consumed.writes > 0 || consumed.merges > 0) return 0;
   }
   if (!dispatchEnabled) {
     // DRY-RUN: report only. ZERO writes — no Linear comments, no adapter calls,
