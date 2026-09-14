@@ -30,6 +30,11 @@ import {
   principalAuditRef,
   requestAuditRef,
 } from "@studenthub/db";
+import {
+  InMemoryApprovedProfileAdapter,
+  OWN_PROFILE_VERSION,
+  SYNTHETIC_PROFILE_FIXTURES,
+} from "@studenthub/profile";
 
 // DATABASE_URL is REQUIRED: the suite runs against a scratch Postgres that
 // must never be a default in the repo. CI injects it (postgres service in
@@ -213,7 +218,7 @@ test("parity: organizations upsert, update in place, fetch and list", async () =
 // Parity: principal store
 // ---------------------------------------------------------------------------
 
-test("browser runtime reads only the session-bound stored principal through the real PostgreSQL gateway", async (context) => {
+test("browser runtime resolves only the session-bound principal's approved profile through the real PostgreSQL gateway", async (context) => {
   const { createGatewayServer } = await import("../../../apps/gateway/src/index.js");
   const { createRuntimeLoginFromEnv } = await import("../../../apps/gateway/src/login-runtime.js");
   const store = makeStore();
@@ -221,13 +226,17 @@ test("browser runtime reads only the session-bound stored principal through the 
   await store.registerPrincipal(createPrincipal({ id: "web-other", displayName: "Private Other Person", email: "other@example.invalid" }));
   const session = "w".repeat(43);
   await makeLoginStore().sessions.put({ id: session, personId: "web-owner" });
+  const approvedProfiles = new InMemoryApprovedProfileAdapter({
+    links: [{ principalId: "web-owner", candidateRef: "candidate-web-owner" }],
+    rows: new Map([["candidate-web-owner", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+  });
   const runtime = createRuntimeLoginFromEnv({
     DATABASE_URL: DB_URL,
     OIDC_ISSUER: "https://identity.test.invalid/", OIDC_CLIENT_ID: "synthetic", OIDC_CLIENT_SECRET: "synthetic",
     OIDC_CALLBACK_URL: "https://studenthub.test.invalid/login/callback",
     OIDC_AUTHORIZATION_URL: "https://identity.test.invalid/authorize", OIDC_TOKEN_URL: "https://identity.test.invalid/token",
     OIDC_JWKS_URL: "https://identity.test.invalid/jwks", LOGIN_ALLOWED_RETURN_URLS: "https://studenthub.test.invalid/profile",
-  })!;
+  }, approvedProfiles)!;
   const server = createGatewayServer(undefined, undefined, undefined, runtime.application);
   context.after(async () => { server.closeAllConnections(); server.close(); await runtime.close(); });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -237,14 +246,18 @@ test("browser runtime reads only the session-bound stored principal through the 
   const own = await fetch(`${url}/profile`, { headers });
   assert.equal(own.status, 200);
   const html = await own.text();
-  assert.match(html, /Stored Web Owner/);
-  assert.match(html, /owner@example.invalid/);
+  assert.match(html, /Noor Al-Sabah/);
+  assert.doesNotMatch(html, /Stored Web Owner|owner@example.invalid/);
   assert.doesNotMatch(html, /Private Other Person|other@example.invalid/);
   const other = await fetch(`${url}/profile?person_id=web-other`, { headers });
   assert.equal(other.status, 404);
   assert.doesNotMatch(await other.text(), /Private Other Person|other@example.invalid/);
   const json = await fetch(`${url}/profile`, { headers: { cookie: headers.cookie } });
-  assert.deepEqual(await json.json(), { personId: "web-owner", role: "self" });
+  assert.equal(json.status, 200);
+  const projection = await json.json();
+  assert.equal(projection.version, OWN_PROFILE_VERSION);
+  assert.equal(projection.fields.displayName.value, "Noor Al-Sabah");
+  assert.ok(!JSON.stringify(projection).includes("owner@example.invalid"));
 });
 
 test("parity: principals register, list, and resolve by pbuuid", async () => {
@@ -1554,6 +1567,7 @@ test("migrations: concurrent first-run migrations serialize via the advisory loc
           "0002_enforce_single_root_admin",
           "0003_create_login_tables",
           "0004_create_authorization_mutation_audit",
+          "0145_candidate_private_documents",
         ],
         "each migration is recorded exactly once",
       );
@@ -1601,6 +1615,7 @@ test(
             "0002_enforce_single_root_admin",
             "0003_create_login_tables",
             "0004_create_authorization_mutation_audit",
+            "0145_candidate_private_documents",
           ],
         );
       } finally {

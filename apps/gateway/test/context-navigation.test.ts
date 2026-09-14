@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { runInNewContext } from "node:vm";
 import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
 import { createGatewayServer, createLoginApplication } from "../src/index.js";
 import { createContextNavigation } from "../src/context-navigation.js";
 import type { BrowserLoginApplication } from "../src/web-ui.js";
@@ -29,7 +31,10 @@ async function fixture(t: TestContext) {
   const login: BrowserLoginApplication = { ...rig.app,
     navigation: createContextNavigation(rig.sessions, store),
     web: { origin: "https://studenthub.example.invalid", returnTo: rig.config.allowedReturnUrls[1],
-      readProfile: (id) => store.getPrincipal(id) },
+      profiles: new OwnProfileRepository({ principals: store, source: new InMemoryApprovedProfileAdapter({
+        links: [{ principalId: "person-1", candidateRef: "candidate-navigation" }],
+        rows: new Map([["candidate-navigation", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+      }), today: () => "2026-09-13" }) },
   };
   const server = createGatewayServer(undefined, undefined, undefined, login);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -53,7 +58,11 @@ test("workspace lists only this session's granted contexts and never defaults to
   ]);
   assert.doesNotMatch(JSON.stringify(body), /Secret|org-private|person-2|one@example|org-child/);
   const profile = await f.get("/profile", { accept: "text/html" });
-  assert.match(await profile.text(), /href="\/workspace"/);
+  const profileHtml = await profile.text();
+  assert.match(profileHtml, /href="\/workspace"/);
+  assert.match(profileHtml, /Approved imported snapshot/);
+  assert.match(profileHtml, /StudentHub snapshot/);
+  assert.doesNotMatch(profileHtml, /one@example.invalid|Email address|StudentHub account ID/);
 });
 
 test("one session switches between candidate, staff and recruiter across two organizations", async (t) => {
@@ -95,9 +104,28 @@ test("revocation denies the very next bookmarked request while unrelated grants 
   assert.equal((await f.get(path)).status, 200);
   await f.store.revokeMany("person-1", [{ orgId: "org-a", role: "staff" }]);
   assert.equal((await f.get(path)).status, 403);
+  const deniedPage = await f.get(path, { accept: "text/html" });
+  assert.equal(deniedPage.status, 403);
+  const deniedHtml = await deniedPage.text();
+  assert.match(deniedHtml, /Choose a workspace/);
+  assert.doesNotMatch(deniedHtml, /Organization A|Staff workspace|context-option/);
   const body = await (await f.get()).json();
   assert.equal(body.contexts.some((c: { role: string }) => c.role === "staff"), false);
   assert.equal((await f.get("/workspace?org_id=org-b&role=recruiter")).status, 200);
+});
+
+test("navigation cannot confer private-document authority or replace its runtime route", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.get("/workspace?org_id=org-b&role=recruiter")).status, 200);
+  // The existing route must still be mounted and fail closed until configured.
+  const documents = await f.get("/candidate-documents");
+  assert.equal(documents.status, 503, "SHU91_DOCUMENT_ROUTE: preserve the private-document handler");
+  assert.deepEqual(await documents.json(), { error: "unavailable" });
+  const profile = await f.get("/profile");
+  const body = await profile.json();
+  assert.equal(body.version, "studenthub.own-profile.v1");
+  assert.ok(body.fields.displayName, "SHU91_PROFILE: retain typed own-profile fields");
+  assert.equal(body.fields.organizationName, undefined, "workspace selection must not contaminate own profile");
 });
 
 test("subtree selection follows existing grant semantics and revocation", async (t) => {
@@ -158,7 +186,7 @@ test("missing runtime navigation fails closed for both HTML and JSON", async (t)
   }
 });
 
-test("HTML escapes labels, preserves URL selections, and is private without executable scripts", async (t) => {
+test("HTML escapes labels, preserves URL selections, and allows only the external history guard", async (t) => {
   const f = await fixture(t);
   await f.store.upsertOrganization({ id: "org-a", name: '<script>alert("org")</script>' });
   const response = await f.get("/workspace?org_id=org-a&role=staff", { accept: "text/html" });
@@ -168,8 +196,40 @@ test("HTML escapes labels, preserves URL selections, and is private without exec
   assert.match(html, /href="\/workspace\?org_id=org-a&amp;role=staff" aria-current="page"/);
   assert.match(html, /href="\/workspace\?org_id=org-b&amp;role=recruiter"/);
   assert.match(html, /href="\/profile"/);
-  assert.doesNotMatch(html, /<script|Secret Organization|person-2|one@example/);
+  assert.equal((html.match(/<script\b/g) ?? []).length, 1);
+  assert.match(html, /<script src="\/assets\/workspace-history.js" defer><\/script>/);
+  assert.doesNotMatch(html, /<script>alert|Secret Organization|person-2|one@example/);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("vary"), "Accept");
   assert.match(response.headers.get("content-security-policy")!, /default-src 'none'/);
+  assert.match(response.headers.get("content-security-policy")!, /script-src 'self'/);
+  assert.doesNotMatch(response.headers.get("content-security-policy")!, /unsafe-inline|unsafe-eval/);
+});
+
+test("SHU91_HISTORY: cached history hides the old context and revalidates before display", async (t) => {
+  const f = await fixture(t);
+  const page = await f.get("/workspace?org_id=org-a&role=staff", { accept: "text/html" });
+  assert.match(await page.text(), /src="\/assets\/workspace-history.js"/, "SHU91_HISTORY: history guard must be loaded");
+  const response = await f.get("/assets/workspace-history.js");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type")!, /text\/javascript/);
+  const events = new Map<string, (event?: { persisted: boolean }) => void>();
+  const document = { documentElement: { hidden: false } };
+  let reloads = 0;
+  runInNewContext(await response.text(), {
+    addEventListener: (name: string, callback: (event?: { persisted: boolean }) => void) => events.set(name, callback),
+    document, location: { reload() { reloads++; } },
+  }, { timeout: 1000 });
+  events.get("pageshow")!({ persisted: false });
+  assert.equal(document.documentElement.hidden, false);
+  assert.equal(reloads, 0, "ordinary requests must not reload in a loop");
+  events.get("pagehide")!();
+  assert.equal(document.documentElement.hidden, true, "SHU91_HISTORY: outgoing protected snapshot must be concealed");
+  await f.store.revokeMany("person-1", [{ orgId: "org-a", role: "staff" }]);
+  events.get("pageshow")!({ persisted: true });
+  assert.equal(reloads, 1, "SHU91_HISTORY: restored snapshot must request fresh authorization");
+  assert.equal(document.documentElement.hidden, true, "old snapshot must stay concealed until replacement");
+  assert.equal((await f.get("/workspace?org_id=org-a&role=staff")).status, 403);
+  const profile = await f.get("/profile", { accept: "text/html" });
+  assert.doesNotMatch(profile.headers.get("content-security-policy")!, /script-src/, "profile CSP remains unchanged");
 });

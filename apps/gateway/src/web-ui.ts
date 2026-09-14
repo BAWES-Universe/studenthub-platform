@@ -1,6 +1,15 @@
 import type { ServerResponse } from "node:http";
 import type { BrowserResponse, LoginApplication } from "@studenthub/login-contract";
 import type { ContextNavigation, NavigationResult, WorkspaceContext } from "./context-navigation.js";
+import {
+  OWN_PROFILE_FIELD_CONTRACT,
+  OWN_PROFILE_FIELD_NAMES,
+  OWN_PROFILE_VERSION,
+  type OwnProfileFieldName,
+  type OwnProfileProjection,
+  type OwnProfileReader,
+  type ProfileField,
+} from "@studenthub/profile";
 
 /** Browser-only projection; the JSON login contract stays unchanged. */
 export interface BrowserLoginApplication extends LoginApplication {
@@ -8,11 +17,7 @@ export interface BrowserLoginApplication extends LoginApplication {
   readonly web?: {
     readonly origin: string;
     readonly returnTo?: string;
-    readProfile(personId: string): Promise<{
-      readonly id: string;
-      readonly displayName?: string;
-      readonly email?: string;
-    } | undefined>;
+    readonly profiles: OwnProfileReader;
   };
 }
 
@@ -52,16 +57,29 @@ const securityHeaders = {
 };
 
 export function writeHtml(response: ServerResponse, status: number, html: string,
-  headers: Readonly<Record<string, string>> = {}): void {
-  response.writeHead(status, { ...headers, ...securityHeaders, "content-type": "text/html; charset=utf-8" });
+  headers: Readonly<Record<string, string>> = {}, workspaceHistory = false): void {
+  response.writeHead(status, { ...headers, ...securityHeaders,
+    ...(workspaceHistory ? { "content-security-policy": `${securityHeaders["content-security-policy"]}; script-src 'self'` } : {}),
+    "content-type": "text/html; charset=utf-8" });
   response.end(html);
 }
 
 const brand = `<a class="brand" href="/" aria-label="StudentHub home"><span class="brand-mark" aria-hidden="true">s</span>studenthub<span class="brand-dot" aria-hidden="true">.</span></a>`;
 
-function document(title: string, content: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css"></head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
+function document(title: string, content: string, workspaceHistory = false): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>${escapeHtml(title)} · StudentHub</title><link rel="stylesheet" href="/assets/studenthub.css">${workspaceHistory ? '<script src="/assets/workspace-history.js" defer></script>' : ""}</head><body><a class="skip" href="#main">Skip to content</a>${content}</body></html>`;
 }
+
+// A back/forward-cache restoration may not issue a request even with no-store.
+// Conceal the outgoing snapshot, then re-resolve grants before showing it again.
+// This script never stores grants, chooses a context or authorizes an operation.
+export const WORKSPACE_HISTORY_JS = `
+addEventListener('pagehide', () => { document.documentElement.hidden = true; });
+addEventListener('pageshow', event => {
+  if (event.persisted) location.reload();
+  else document.documentElement.hidden = false;
+});
+`;
 
 function signIn(login?: BrowserLoginApplication): string {
   const returnTo = login?.web?.returnTo;
@@ -75,11 +93,13 @@ const roleNames: Record<WorkspaceContext["role"], string> = {
   "org-owner": "Organization owner", recruiter: "Recruiter", finance: "Finance",
 };
 
+const workspaceDocument = (title: string, content: string) => document(title, content, true);
+
 /** Native links preserve selections across refresh/back without storing authority. */
 export function renderWorkspace(result: NavigationResult, login: BrowserLoginApplication): string {
   if (result.status !== 200) {
     if (result.status !== 403 && result.status !== 400) return renderError(result.status, login);
-    return document("Workspace unavailable", `<header class="topbar">${brand}<a href="/profile">My profile</a></header><main id="main" class="error-page"><h1>This workspace isn’t available.</h1><p>Your access may have changed. Choose one of your current workspaces to continue.</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
+    return workspaceDocument("Workspace unavailable", `<header class="topbar">${brand}<a href="/profile">My profile</a></header><main id="main" class="error-page"><h1>This workspace isn’t available.</h1><p>Your access may have changed. Choose one of your current workspaces to continue.</p><a class="button primary" href="/workspace">Choose a workspace</a></main>`);
   }
   const { contexts, active } = result.body;
   const links = contexts.map((context) => {
@@ -91,7 +111,7 @@ export function renderWorkspace(result: NavigationResult, login: BrowserLoginApp
   const intro = active
     ? `You’re viewing StudentHub as ${escapeHtml(roleNames[active.role].toLowerCase())} at ${escapeHtml(active.organizationName)}.`
     : "Choose the organization and role you want to use. You can switch without signing in again.";
-  return document(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a></nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
+  return workspaceDocument(title, `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item" href="/profile">My profile</a><a class="nav-item active" href="/workspace"${active ? "" : ' aria-current="page"'}>Workspaces</a></nav><p class="sidebar-note">One Universe account.<br>Switch between your roles.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">ONE ACCOUNT, EVERY ROLE</div><h1>${escapeHtml(title)}<span class="accent">.</span></h1><p>${intro}</p></div></div>${active ? `<section class="notice context-notice"><strong>${escapeHtml(active.organizationName)} · ${roleNames[active.role]}</strong><p>This workspace is selected. Applications, scheduling and other work tools will appear here as they become available.</p></section>` : ""}<section aria-labelledby="context-title"><h2 id="context-title">${contexts.length ? (active ? "Switch workspace" : "Choose a workspace") : "No workspaces assigned"}</h2>${contexts.length ? `<nav class="context-list" aria-label="Available roles and organizations">${links}</nav>` : '<p class="empty-contexts">Your personal profile is available. An organization will appear here when you’re given access.</p><a class="text-link" href="/profile">Open my profile →</a>'}</section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`);
 }
 
 export function renderLanding(login?: BrowserLoginApplication): string {
@@ -109,25 +129,60 @@ export function renderError(status: number, login?: BrowserLoginApplication): st
   return document("Account access", `<header class="topbar">${brand}<a class="text-link" href="/">Back to StudentHub</a></header><main id="main" class="error-page"><div class="eyebrow">STUDENTHUB ACCOUNT</div><h1>${title}</h1><p>${message}</p>${status === 401 ? signIn(login) : '<a class="button primary" href="/profile">Try my profile again <span aria-hidden="true">→</span></a>'}</main>`);
 }
 
+function projectionFrom(result: BrowserResponse): OwnProfileProjection {
+  const projection = result.body as Partial<OwnProfileProjection> | undefined;
+  if (!projection || projection.version !== OWN_PROFILE_VERSION || typeof projection.fields !== "object"
+    || projection.fields === null || Array.isArray(projection.fields)) {
+    throw new Error("invalid authorized profile");
+  }
+  const keys = Object.keys(projection.fields);
+  if (keys.length !== OWN_PROFILE_FIELD_NAMES.length
+    || OWN_PROFILE_FIELD_NAMES.some((name) => !Object.hasOwn(projection.fields!, name))) {
+    throw new Error("invalid authorized profile");
+  }
+  return projection as OwnProfileProjection;
+}
+
+function fieldText(field: ProfileField<unknown>, format: (value: unknown) => string = String): string {
+  if (field.state === "unavailable") return '<span class="missing" data-state="unavailable">Unavailable</span>';
+  return escapeHtml(format(field.value));
+}
+
+const fieldFormatters: Readonly<Partial<Record<OwnProfileFieldName, (value: unknown) => string>>> = {
+  gender: (value) => ({ male: "Male", female: "Female", other: "Other" })[String(value)] ?? String(value),
+  age: (value) => `${String(value)} years`,
+  language: (value) => String(value).toUpperCase(),
+  drivingLicence: (value) => value ? "Yes" : "No",
+  jobSearchStatus: (value) => ({ not_looking: "Not looking", active: "Actively looking", open_to_offers: "Open to offers" })[String(value)] ?? String(value),
+  committed: (value) => value ? "Yes" : "No",
+  isProfileCompleted: (value) => value ? "Complete" : "Incomplete",
+  pendingFields: (value) => Array.isArray(value) && value.length > 0
+    ? value.map((item) => String(item).replaceAll("_", " ")).join(", ") : "None",
+  civilExpired: (value) => value ? "Expired" : "Not expired",
+};
+
+function fieldRow(profile: OwnProfileProjection, name: OwnProfileFieldName): string {
+  const field = profile.fields[name] as ProfileField<unknown>;
+  const contract = OWN_PROFILE_FIELD_CONTRACT[name];
+  const observed = field.freshness.observedAt.slice(0, 10);
+  return `<div><dt>${escapeHtml(contract.label)}</dt><dd>${fieldText(field, fieldFormatters[name])}</dd><small class="field-meta">StudentHub snapshot · ${escapeHtml(observed)}</small></div>`;
+}
+
 export async function profileDocument(result: BrowserResponse, login: BrowserLoginApplication): Promise<{ status: number; html: string }> {
   if (result.status !== 200) return { status: result.status, html: renderError(result.status, login) };
-  const personId = result.body?.personId;
-  if (typeof personId !== "string" || !personId) throw new Error("invalid authorized profile");
-  const profile = await login.web?.readProfile(personId);
-  // A broken adapter may not substitute another principal's private fields.
-  if (login.web && (!profile || profile.id !== personId)) throw new Error("profile binding mismatch");
-  const name = typeof profile?.displayName === "string" && profile.displayName.trim() ? profile.displayName : undefined;
-  const email = typeof profile?.email === "string" && profile.email.trim() ? profile.email : undefined;
+  const profile = projectionFrom(result);
+  const displayName = profile.fields.displayName;
+  const name = displayName.state === "available" ? displayName.value : undefined;
   const initial = name ? Array.from(name.trim())[0]!.toUpperCase() : "S";
-  const value = (text?: string) => text ? escapeHtml(text) : '<span class="missing">Not available yet</span>';
-  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your Universe-linked StudentHub account.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Connected with Universe</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields"><div><dt>Display name</dt><dd>${value(name)}</dd></div><div><dt>Email address</dt><dd>${value(email)}</dd></div><div class="full"><dt>StudentHub account ID</dt><dd class="account-id">${escapeHtml(personId)}</dd></div></dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This is your own profile. Your account details are not shared on the public welcome page.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">A starting point, not your full record.</h2><p>Only details currently available in this StudentHub account are shown. Your previous applications, work history and documents aren’t available here yet.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
+  const rows = OWN_PROFILE_FIELD_NAMES.map((field) => fieldRow(profile, field)).join("");
+  return { status: 200, html: document("My profile", `<header class="topbar">${brand}<form action="/logout" method="post"><button class="sign-out" type="submit">Sign out <span aria-hidden="true">↗</span></button></form></header><div class="workspace"><aside class="sidebar"><div class="eyebrow">YOUR WORKSPACE</div><nav aria-label="Workspace"><a class="nav-item active" href="/profile" aria-current="page"><span aria-hidden="true">◉</span> My profile</a>${login.navigation ? '<a class="nav-item" href="/workspace">Workspaces</a>' : ""}</nav><p class="sidebar-note">One Universe account.<br>Your StudentHub space.</p></aside><main id="main" class="profile-main"><div class="profile-heading"><div><div class="eyebrow">YOUR ACCOUNT</div><h1>My profile<span class="accent">.</span></h1><p>Your approved StudentHub profile, connected through Universe.</p></div><span class="badge">Read-only</span></div><section class="profile-card" aria-labelledby="profile-details"><div class="identity"><div class="avatar" aria-hidden="true">${escapeHtml(initial)}</div><div><h2 id="profile-details">${name ? escapeHtml(name) : "Your StudentHub profile"}</h2><p>Approved imported snapshot</p></div><span class="identity-label">PERSONAL ACCOUNT</span></div><dl class="profile-fields">${rows}</dl><div class="privacy-note"><span class="privacy-symbol" aria-hidden="true">↳</span><p>This projection is limited to your own safe profile fields. Documents, civil ID number, bank details and staff-only data are excluded.</p></div></section><section class="next-note" aria-labelledby="next-title"><div class="eyebrow">ABOUT THIS PROFILE</div><h2 id="next-title">Unavailable means we do not have an approved value.</h2><p>Missing details stay visibly unavailable. They are never replaced with blank or invented values.</p><p>You can view this profile, but editing isn’t enabled yet.</p></section><footer class="profile-footer">StudentHub · Connected by Universe</footer></main></div>`) };
 }
 
 export const WEB_CSS = `
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172433;background:#f7f9fc;font-synthesis:none;line-height:1.5;font-size:16px;--blue:#2256e8;--muted:#566579;--border:#dfe5ef}
-*{box-sizing:border-box}body{margin:0}a{color:inherit}button{font:inherit}a,button{-webkit-tap-highlight-color:transparent}a:focus-visible,button:focus-visible{outline:3px solid #a74400;outline-offset:5px}p,h1,h2{margin:0}p{color:var(--muted)}button,a{touch-action:manipulation}.skip{position:absolute;left:1rem;top:-8rem;background:white;padding:1rem;z-index:5}.skip:focus{top:1rem}.brand{display:inline-flex;align-items:center;text-decoration:none;font-weight:800;font-size:1.6rem;letter-spacing:-.07em;white-space:nowrap}.brand-mark{display:grid;place-items:center;width:2.25rem;height:2.25rem;background:var(--blue);color:white;border-radius:.65rem;margin-right:.65rem;font-size:1.8rem;line-height:1;letter-spacing:0}.brand-dot,.accent{color:var(--blue)}.eyebrow{font-size:.75rem;letter-spacing:.12em;font-weight:750;color:#4e6075}.entry{max-width:1440px;margin:auto;padding:0 5.5vw;min-height:100svh;display:flex;flex-direction:column}.entry-header{display:flex;align-items:center;justify-content:space-between;padding:2rem 0;border-bottom:1px solid var(--border);gap:1rem}.entry-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:7vw;align-items:center;flex:1;padding:4rem 0}.intro h1{font-size:clamp(3rem,5.7vw,5.5rem);line-height:1.05;letter-spacing:-.065em;margin:1.5rem 0 1.75rem;font-weight:750}.intro-copy{font-size:1.25rem;line-height:1.7}.intro-foot{display:flex;align-items:center;gap:1rem;margin-top:3rem;font-size:.875rem;color:var(--muted)}.line{height:2px;width:2rem;background:var(--blue)}.sign-in{background:white;border:1px solid var(--border);border-radius:1.5rem;padding:clamp(1.5rem,4vw,3.5rem);box-shadow:0 18px 60px #182b4b08;max-width:33rem;width:100%}.section-number{font-family:ui-monospace,monospace;font-size:.75rem;letter-spacing:.12em;color:var(--blue);margin-bottom:2rem}.sign-in h2{font-size:2.25rem;line-height:1.15;letter-spacing:-.045em;margin-bottom:1rem}.sign-in>p{margin-bottom:1.5rem}.button{min-height:3.4rem;display:flex;justify-content:space-between;align-items:center;gap:1.5rem;padding:.95rem 1.25rem;border-radius:.65rem;text-decoration:none;font-weight:650}.primary{background:var(--blue);color:white}.primary:hover{background:#1641be}.button span{font-size:1.4rem}.sign-in .small{font-size:.875rem;margin:1.5rem 0 .2rem}.text-link{font-weight:650;font-size:.9375rem;text-underline-offset:4px}.sign-in-note{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.875rem}.sign-in-note p{margin-top:.3rem}.entry-footer{display:flex;justify-content:space-between;gap:1rem;padding:1.5rem 0;border-top:1px solid var(--border);font-size:.8125rem;color:var(--muted)}.notice{padding:1rem;border:1px solid #ccd7ea;border-radius:.65rem;background:#f7f9ff}.notice p{margin-top:.35rem}.topbar{background:white;border-bottom:1px solid var(--border);min-height:5.5rem;padding:1.4rem 4vw;display:flex;align-items:center;justify-content:space-between;gap:1.5rem}.sign-out{border:1px solid var(--border);border-radius:.6rem;background:white;padding:.65rem 1rem;min-height:2.75rem;cursor:pointer;color:#253e5a;font-size:.9375rem}.sign-out:hover{background:#f0f4fc}.workspace{max-width:1440px;margin:auto;display:grid;grid-template-columns:15rem minmax(0,1fr);min-height:calc(100svh - 5.5rem)}.sidebar{padding:2.5rem 1.75rem;border-right:1px solid var(--border);display:flex;flex-direction:column}.sidebar nav{margin-top:1.5rem}.nav-item{display:flex;align-items:center;gap:.75rem;text-decoration:none;font-weight:650;font-size:.9375rem;padding:.85rem 1rem;border-radius:.65rem}.active{background:#e8eeff;color:#1d46b8}.sidebar-note{font-size:.8125rem;line-height:1.7;margin-top:auto;padding-top:3rem}.profile-main{max-width:1050px;width:100%;padding:3rem clamp(1.25rem,5vw,5rem)}.profile-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:2.25rem}.profile-heading h1{font-size:clamp(2.5rem,4vw,3.5rem);letter-spacing:-.065em;line-height:1.2;margin:.4rem 0 .6rem}.badge{font-size:.8125rem;border:1px solid #cbd5e4;border-radius:2rem;padding:.4rem .8rem;color:#475a72;white-space:nowrap;background:white}.profile-card{background:white;border:1px solid var(--border);border-radius:1rem;overflow:hidden}.identity{display:flex;gap:1rem;align-items:center;padding:2rem;border-bottom:1px solid var(--border);flex-wrap:wrap}.avatar{width:3.5rem;height:3.5rem;border-radius:1rem;display:grid;place-items:center;flex-shrink:0;background:#e9efff;color:#234ebd;font-size:1.5rem;font-weight:750}.identity h2{font-size:1.3rem;letter-spacing:-.025em;overflow-wrap:anywhere}.identity p{font-size:.875rem;margin-top:.25rem}.identity-label{font-size:.75rem;letter-spacing:.07em;color:#57677b;margin-left:auto}.profile-fields{display:grid;grid-template-columns:1fr 1fr;margin:0;padding:0 2rem}.profile-fields>div{padding:1.6rem 0;border-bottom:1px solid var(--border);min-width:0}.profile-fields>div:first-child{padding-right:1rem}.profile-fields .full{grid-column:1/-1;border-bottom:0}dt{font-size:.875rem;color:var(--muted);margin-bottom:.45rem}dd{margin:0;font-size:1rem;font-weight:550;overflow-wrap:anywhere}.missing{font-weight:400;color:#66758a}.account-id{font-family:ui-monospace,SFMono-Regular,monospace;font-size:.875rem}.privacy-note{display:flex;align-items:flex-start;gap:1rem;padding:1.25rem 2rem;background:#f5f8ff;font-size:.875rem}.privacy-symbol{color:var(--blue);font-size:1.4rem;line-height:1}.next-note{margin-top:2rem;padding:1.5rem 0}.next-note h2{font-size:1.125rem;letter-spacing:-.015em;margin:.65rem 0}.next-note p{font-size:.9375rem;margin-top:.5rem;max-width:42rem;line-height:1.7}.profile-footer{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.8125rem;color:var(--muted)}.error-page{max-width:44rem;margin:6rem auto;padding:0 1.5rem}.error-page h1{font-size:clamp(2rem,5vw,3.5rem);letter-spacing:-.05em;line-height:1.15;margin:1rem 0}.error-page p{line-height:1.7}.error-page .button,.error-page .notice{margin-top:2rem;max-width:26rem}
+*{box-sizing:border-box}body{margin:0}a{color:inherit}button{font:inherit}a,button{-webkit-tap-highlight-color:transparent}a:focus-visible,button:focus-visible{outline:3px solid #a74400;outline-offset:5px}p,h1,h2{margin:0}p{color:var(--muted)}button,a{touch-action:manipulation}.skip{position:absolute;left:1rem;top:-8rem;background:white;padding:1rem;z-index:5}.skip:focus{top:1rem}.brand{display:inline-flex;align-items:center;text-decoration:none;font-weight:800;font-size:1.6rem;letter-spacing:-.07em;white-space:nowrap}.brand-mark{display:grid;place-items:center;width:2.25rem;height:2.25rem;background:var(--blue);color:white;border-radius:.65rem;margin-right:.65rem;font-size:1.8rem;line-height:1;letter-spacing:0}.brand-dot,.accent{color:var(--blue)}.eyebrow{font-size:.75rem;letter-spacing:.12em;font-weight:750;color:#4e6075}.entry{max-width:1440px;margin:auto;padding:0 5.5vw;min-height:100svh;display:flex;flex-direction:column}.entry-header{display:flex;align-items:center;justify-content:space-between;padding:2rem 0;border-bottom:1px solid var(--border);gap:1rem}.entry-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:7vw;align-items:center;flex:1;padding:4rem 0}.intro h1{font-size:clamp(3rem,5.7vw,5.5rem);line-height:1.05;letter-spacing:-.065em;margin:1.5rem 0 1.75rem;font-weight:750}.intro-copy{font-size:1.25rem;line-height:1.7}.intro-foot{display:flex;align-items:center;gap:1rem;margin-top:3rem;font-size:.875rem;color:var(--muted)}.line{height:2px;width:2rem;background:var(--blue)}.sign-in{background:white;border:1px solid var(--border);border-radius:1.5rem;padding:clamp(1.5rem,4vw,3.5rem);box-shadow:0 18px 60px #182b4b08;max-width:33rem;width:100%}.section-number{font-family:ui-monospace,monospace;font-size:.75rem;letter-spacing:.12em;color:var(--blue);margin-bottom:2rem}.sign-in h2{font-size:2.25rem;line-height:1.15;letter-spacing:-.045em;margin-bottom:1rem}.sign-in>p{margin-bottom:1.5rem}.button{min-height:3.4rem;display:flex;justify-content:space-between;align-items:center;gap:1.5rem;padding:.95rem 1.25rem;border-radius:.65rem;text-decoration:none;font-weight:650}.primary{background:var(--blue);color:white}.primary:hover{background:#1641be}.button span{font-size:1.4rem}.sign-in .small{font-size:.875rem;margin:1.5rem 0 .2rem}.text-link{font-weight:650;font-size:.9375rem;text-underline-offset:4px}.sign-in-note{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.875rem}.sign-in-note p{margin-top:.3rem}.entry-footer{display:flex;justify-content:space-between;gap:1rem;padding:1.5rem 0;border-top:1px solid var(--border);font-size:.8125rem;color:var(--muted)}.notice{padding:1rem;border:1px solid #ccd7ea;border-radius:.65rem;background:#f7f9ff}.notice p{margin-top:.35rem}.topbar{background:white;border-bottom:1px solid var(--border);min-height:5.5rem;padding:1.4rem 4vw;display:flex;align-items:center;justify-content:space-between;gap:1.5rem}.sign-out{border:1px solid var(--border);border-radius:.6rem;background:white;padding:.65rem 1rem;min-height:2.75rem;cursor:pointer;color:#253e5a;font-size:.9375rem}.sign-out:hover{background:#f0f4fc}.workspace{max-width:1440px;margin:auto;display:grid;grid-template-columns:15rem minmax(0,1fr);min-height:calc(100svh - 5.5rem)}.sidebar{padding:2.5rem 1.75rem;border-right:1px solid var(--border);display:flex;flex-direction:column}.sidebar nav{margin-top:1.5rem}.nav-item{display:flex;align-items:center;gap:.75rem;text-decoration:none;font-weight:650;font-size:.9375rem;padding:.85rem 1rem;border-radius:.65rem}.active{background:#e8eeff;color:#1d46b8}.sidebar-note{font-size:.8125rem;line-height:1.7;margin-top:auto;padding-top:3rem}.profile-main{max-width:1050px;width:100%;padding:3rem clamp(1.25rem,5vw,5rem)}.profile-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:2.25rem}.profile-heading h1{font-size:clamp(2.5rem,4vw,3.5rem);letter-spacing:-.065em;line-height:1.2;margin:.4rem 0 .6rem}.badge{font-size:.8125rem;border:1px solid #cbd5e4;border-radius:2rem;padding:.4rem .8rem;color:#475a72;white-space:nowrap;background:white}.profile-card{background:white;border:1px solid var(--border);border-radius:1rem;overflow:hidden}.identity{display:flex;gap:1rem;align-items:center;padding:2rem;border-bottom:1px solid var(--border);flex-wrap:wrap}.avatar{width:3.5rem;height:3.5rem;border-radius:1rem;display:grid;place-items:center;flex-shrink:0;background:#e9efff;color:#234ebd;font-size:1.5rem;font-weight:750}.identity h2{font-size:1.3rem;letter-spacing:-.025em;overflow-wrap:anywhere}.identity p{font-size:.875rem;margin-top:.25rem}.identity-label{font-size:.75rem;letter-spacing:.07em;color:#57677b;margin-left:auto}.profile-fields{display:grid;grid-template-columns:1fr 1fr;margin:0;padding:0 2rem}.profile-fields>div{padding:1.25rem 1rem 1.25rem 0;border-bottom:1px solid var(--border);min-width:0}.profile-fields>div:nth-child(even){padding-left:1rem;padding-right:0}.profile-fields>div:nth-last-child(-n+2){border-bottom:0}dt{font-size:.875rem;color:var(--muted);margin-bottom:.35rem}dd{margin:0;font-size:1rem;font-weight:550;overflow-wrap:anywhere}.field-meta{display:block;color:#718096;font-size:.72rem;margin-top:.4rem}.missing{font-weight:550;color:#5d6c80}.privacy-note{display:flex;align-items:flex-start;gap:1rem;padding:1.25rem 2rem;background:#f5f8ff;font-size:.875rem}.privacy-symbol{color:var(--blue);font-size:1.4rem;line-height:1}.next-note{margin-top:2rem;padding:1.5rem 0}.next-note h2{font-size:1.125rem;letter-spacing:-.015em;margin:.65rem 0}.next-note p{font-size:.9375rem;margin-top:.5rem;max-width:42rem;line-height:1.7}.profile-footer{margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.8125rem;color:var(--muted)}.error-page{max-width:44rem;margin:6rem auto;padding:0 1.5rem}.error-page h1{font-size:clamp(2rem,5vw,3.5rem);letter-spacing:-.05em;line-height:1.15;margin:1rem 0}.error-page p{line-height:1.7}.error-page .button,.error-page .notice{margin-top:2rem;max-width:26rem}
 @media(max-width:800px){.entry-grid{gap:2.5rem;grid-template-columns:1fr;padding:2.5rem 0}.intro h1{font-size:3.5rem}.intro-foot{margin-top:1.5rem}.sign-in{max-width:none}.entry-footer{flex-direction:column;gap:.4rem}.workspace{grid-template-columns:1fr}.sidebar{padding:1rem 1.25rem;border-right:0;border-bottom:1px solid var(--border)}.sidebar>.eyebrow,.sidebar-note{display:none}.sidebar nav{margin:0}.nav-item{display:inline-flex}.profile-main{padding-top:2rem}.identity{padding:1.5rem}.identity-label{width:100%;margin-left:4.5rem}.profile-fields{padding:0 1.5rem}.privacy-note{padding:1.25rem 1.5rem}.profile-heading{align-items:flex-start}.badge{margin-top:.5rem}}
-@media(max-width:480px){.entry-header>.eyebrow{display:none}.intro h1{font-size:3rem}.topbar{padding:1rem}.brand{font-size:1.4rem}.profile-fields{grid-template-columns:1fr}.profile-fields>div:first-child{padding-right:0}.profile-heading{flex-wrap:wrap}.identity-label{margin-left:0}.sign-out span{display:none}.error-page{margin-top:3rem}}
+@media(max-width:480px){.entry-header>.eyebrow{display:none}.intro h1{font-size:3rem}.topbar{padding:1rem}.brand{font-size:1.4rem}.profile-fields{grid-template-columns:1fr}.profile-fields>div,.profile-fields>div:nth-child(even){padding-left:0;padding-right:0}.profile-fields>div:nth-last-child(2){border-bottom:1px solid var(--border)}.profile-heading{flex-wrap:wrap}.identity-label{margin-left:0}.sign-out span{display:none}.error-page{margin-top:3rem}}
 .topbar{flex-wrap:wrap}body{overflow-wrap:anywhere}.entry-grid>*{min-width:0}
 .context-list{display:grid;gap:.75rem;margin-top:1.25rem}.context-option{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:1rem;align-items:center;padding:1.2rem 1.4rem;border:1px solid var(--border);border-radius:.75rem;background:white;text-decoration:none}.context-option.active{background:#e8eeff;border-color:#2256e8}.context-option:hover{border-color:#2256e8}.context-option strong{font-size:.875rem}.context-notice{margin-bottom:2rem}.empty-contexts{margin:1rem 0}.context-option span{overflow-wrap:anywhere}@media(max-width:480px){.context-option{grid-template-columns:minmax(0,1fr) auto}.context-option strong{grid-column:1;grid-row:2}.context-option>span:last-child{grid-column:2;grid-row:1/3}}
 @media(prefers-reduced-motion:no-preference){.button,.sign-out{transition:background-color .15s ease}}

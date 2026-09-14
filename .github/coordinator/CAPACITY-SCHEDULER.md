@@ -19,6 +19,9 @@ The policy enforces:
 - global, host, shared-account, and optional runtime limits;
 - one active writer per repository branch and one owner per worktree;
 - dependency and declared-overlap exclusion;
+- eligibility Rule 6 (SHU-219): children of open or Done parents are
+  dispatchable — only children of terminal-canceled parents
+  (`Canceled`/`Duplicate`) are excluded; parent state never deadlocks a slice;
 - a global reviewer reserve so builders cannot starve verification;
 - resource-scoped pauses and expiring quota backoff;
 - explicit spending, deadline, retry, and revision bounds;

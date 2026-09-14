@@ -1,0 +1,82 @@
+{
+  "mode": "local-only",
+  "externalIngestion": false,
+  "failures": 5,
+  "recoveryStatus": 200,
+  "auditCorrelation": "6/6",
+  "gatewayWorkerCorrelation": "6/6",
+  "privateSentinelAbsent": true,
+  "alerts": [
+    {
+      "code": "journey_failures",
+      "owner": "platform-on-call",
+      "runbook": "docs/observability.md"
+    }
+  ],
+  "counters": {
+    "accepted": 12,
+    "dropped": 0,
+    "unavailable": 0
+  },
+  "capturedSentryEvents": 12,
+  "metrics": {
+    "worker:job:failure": {
+      "count": 5,
+      "durationMs": 1,
+      "buckets": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "gateway:mcp_call:failure": {
+      "count": 5,
+      "durationMs": 11,
+      "buckets": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "worker:job:success": {
+      "count": 1,
+      "durationMs": 0,
+      "buckets": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "gateway:mcp_call:success": {
+      "count": 1,
+      "durationMs": 1,
+      "buckets": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "command": "npm run build && npm run exercise:observability",
+  "scope": "Synthetic loopback exercise; no production or external ingestion acceptance."
+}

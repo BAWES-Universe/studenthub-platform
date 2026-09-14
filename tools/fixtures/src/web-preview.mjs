@@ -4,11 +4,15 @@ import { createServer } from "node:http";
 import { InMemoryAuthzStore } from "@studenthub/contracts";
 import { createContextNavigation } from "../../../dist/apps/gateway/src/context-navigation.js";
 import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import { InMemoryApprovedProfileAdapter, OwnProfileRepository, SYNTHETIC_PROFILE_FIXTURES } from "@studenthub/profile";
 import { createLoginApplication } from "../../../dist/apps/gateway/src/login-application.js";
 import { createGatewayServer } from "../../../dist/apps/gateway/src/index.js";
 import { profileDocument, renderLanding } from "../../../dist/apps/gateway/src/web-ui.js";
 
 if (process.env.NODE_ENV === "production") throw new Error("Synthetic web preview is forbidden in production");
+// Explicitly opt in to a synthetic signed-in journey across the real routes.
+// This wrapper is never the gateway entrypoint and supplies no real identity.
+const navigationJourney = process.argv.includes("--navigation-journey");
 const rig = createSyntheticLoginRig(createLoginApplication);
 const session = "v".repeat(43);
 await rig.sessions.put({ id: session, personId: "person-preview" });
@@ -20,15 +24,37 @@ await navigationStore.grantMany("person-preview", [
   { orgId: "preview-company", role: "candidate" }, { orgId: "preview-company", role: "staff" },
   { orgId: "preview-campus", role: "recruiter" },
 ]);
+const profiles = new OwnProfileRepository({
+  principals: { async getPrincipal(id) { return id === "person-preview" ? { id, pbuuids: [] } : undefined; } },
+  source: new InMemoryApprovedProfileAdapter({
+    links: [{ principalId: "person-preview", candidateRef: "candidate-preview" }],
+    rows: new Map([["candidate-preview", SYNTHETIC_PROFILE_FIXTURES.populated]]),
+  }),
+  today: () => "2026-09-13",
+});
 const login = { ...rig.app, navigation: createContextNavigation(rig.sessions, navigationStore), web: {
   origin: "http://terminal.local:4173",
   returnTo: rig.config.allowedReturnUrls[1],
-  async readProfile(id) { return { id, displayName: "Noor — synthetic preview", email: "noor@example.invalid" }; },
+  profiles,
 } };
 const gateway = createGatewayServer(undefined, undefined, undefined, login);
-const ownPage = await profileDocument(await login.profile({ sessionId: session }), login);
+const own = await profiles.readOwn({ requesterPrincipalId: "person-preview", targetPersonId: "person-preview" });
+if (own.kind !== "found") throw new Error("synthetic profile fixture is unavailable");
+const ownPage = await profileDocument({ status: 200, body: own.profile }, login);
 const attribute = (html) => html.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-const preview = createServer((request, response) => {
+const preview = createServer(async (request, response) => {
+  if (navigationJourney && request.url === "/__preview/controls") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end('<!doctype html><html lang="en"><title>Synthetic navigation controls</title><h1>Synthetic navigation controls</h1><p>Local fixture only. No real identity or database.</p><form action="/__preview/revoke-staff" method="post"><button>Revoke synthetic staff grant</button></form><a href="/workspace">Open workspaces</a></html>');
+    return;
+  }
+  if (navigationJourney && request.method === "POST" && request.url === "/__preview/revoke-staff") {
+    await navigationStore.revokeMany("person-preview", [{ orgId: "preview-company", role: "staff" }]);
+    response.writeHead(303, { location: "/__preview/controls", "cache-control": "no-store" });
+    response.end();
+    return;
+  }
+  if (navigationJourney) request.headers.cookie = `__Host-studenthub_session=${session}`;
   if (request.url === "/__preview/responsive") {
     // Isolated iframe viewports exercise the unchanged production stylesheet.
     // This is a layout lab, not mobile-device or secure-cookie/OIDC evidence.

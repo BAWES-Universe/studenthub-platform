@@ -10,6 +10,11 @@ import type {
   TokenRequest,
   TokenResponse,
 } from "@studenthub/login-contract";
+import {
+  OwnProfileRepository,
+  UnconfiguredApprovedProfileAdapter,
+  type ApprovedProfileAdapter,
+} from "@studenthub/profile";
 
 import { createLoginApplication } from "./login-application.js";
 import { createContextNavigation } from "./context-navigation.js";
@@ -149,7 +154,10 @@ export interface RuntimeLogin {
 }
 
 /** Build the real login stack only when the complete explicit env contract is present. */
-export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeLogin | undefined {
+export function createRuntimeLoginFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  approvedProfiles: ApprovedProfileAdapter = new UnconfiguredApprovedProfileAdapter(),
+): RuntimeLogin | undefined {
   const names = [
     "DATABASE_URL",
     "OIDC_ISSUER",
@@ -187,6 +195,7 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
 
   const loginStore = new PostgresLoginStore({ connectionString: value("DATABASE_URL") });
   const authzStore = new PostgresAuthzStore({ connectionString: value("DATABASE_URL") });
+  const profiles = new OwnProfileRepository({ principals: authzStore, source: approvedProfiles });
   const application = createLoginApplication({
     oidc: new HttpOidcTransport(issuer, authorizationUrl, tokenUrl),
     clock: { nowEpochSeconds: () => Math.floor(Date.now() / 1000) },
@@ -222,8 +231,9 @@ export function createRuntimeLoginFromEnv(env: NodeJS.ProcessEnv = process.env):
         // new IdP configuration, or implicit expansion of approved targets.
         returnTo: allowedReturnUrls.includes(new URL("/profile", callbackUrl).href)
           ? new URL("/profile", callbackUrl).href : undefined,
-        // Called only after application.profile establishes session ownership.
-        readProfile: (personId) => authzStore.getPrincipal(personId),
+        // Called only after application.profile establishes session ownership;
+        // the repository independently re-enforces the same owner boundary.
+        profiles,
       },
     },
     async close() {
