@@ -244,6 +244,20 @@ export class OwnProfileRepository {
       const principal = await this.#principals.getPrincipal(request.requesterPrincipalId);
       if (!principal || principal.id !== request.requesterPrincipalId) return { kind: "not_found" };
       const link = await this.#source.resolveLink(request.requesterPrincipalId);
+      if (link.kind === "unconfigured") {
+        const today = this.#today();
+        dateOnly(today);
+        // No snapshot exists: expose the field contract without inventing values or an import time.
+        const fields = Object.fromEntries(OWN_PROFILE_FIELD_NAMES.map((name) => [name, Object.freeze({
+          state: "unavailable",
+          reason: "not_imported",
+          provenance: provenance(PROFILE_FIELD_SPECS[name].sourceField),
+          freshness: Object.freeze({ kind: "not_imported", observedAt: "" }),
+        })])) as unknown as OwnProfileFields;
+        return { kind: "found", profile: Object.freeze({
+          version: OWN_PROFILE_VERSION, asOfDate: today, fields: Object.freeze(fields),
+        }) };
+      }
       if (link.kind !== "linked") return { kind: "not_found" };
       const row = await this.#source.readCandidate(link.candidateRef);
       if (row === undefined) return { kind: "unavailable" };

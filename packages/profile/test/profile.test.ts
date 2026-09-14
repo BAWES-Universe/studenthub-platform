@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { createSyntheticLoginRig } from "@studenthub/login-contract";
+import { createGatewayServer, createLoginApplication } from "../../../apps/gateway/src/index.js";
 
 import { InMemoryAuthzStore, createPrincipal } from "@studenthub/contracts";
 import {
   InMemoryApprovedProfileAdapter,
+  UnconfiguredApprovedProfileAdapter,
   OWN_PROFILE_FIELD_CONTRACT,
   OWN_PROFILE_FIELD_NAMES,
   PROFILE_PARITY_REVISION,
@@ -173,4 +176,98 @@ test("PROFILE-PARSER malformed imported values fail closed without echoing input
 test("read projection does not recreate the historical 16-25 eligibility rule", () => {
   const older = projectApprovedProfile({ ...SYNTHETIC_PROFILE_FIXTURES.populated, candidate_birth_date: "1980-09-13" }, "2026-09-13");
   assert.equal(older.fields.age.state === "available" && older.fields.age.value, 46);
+});
+
+
+test("PROFILE-ENUM positive fixture mappings preserve every production enum value", () => {
+  const cases = [
+    ["gender", "candidate_gender", [[1, "male"], [2, "female"], [3, "other"]]],
+    ["drivingLicence", "candidate_driving_license", [[1, true], [2, false]]],
+    ["language", "candidate_language_pref", [["en", "en"], ["ar", "ar"]]],
+    ["jobSearchStatus", "candidate_job_search_status", [[0, "not_looking"], [1, "active"], [2, "open_to_offers"]]],
+    ["committed", "candidate_committed", [[0, false], [1, true]]],
+    ["isProfileCompleted", "is_incomplete_profile", [[0, true], [1, false]]],
+  ] as const;
+  for (const fixture of [SYNTHETIC_PROFILE_FIXTURES.populated, SYNTHETIC_PROFILE_FIXTURES.partial]) {
+    const original = projectApprovedProfile(fixture, "2026-09-13");
+    for (const [field, sourceKey, mappings] of cases) {
+      const expected = mappings.find(([input]) => input === fixture[sourceKey])![1];
+      assert.deepEqual(original.fields[field].state === "available" && original.fields[field].value,
+        expected, `PROFILE-ENUM ${field} ${fixture[sourceKey]} positive fixture mapping`);
+      for (const [input, output] of mappings) {
+        const row = { ...fixture, [sourceKey]: input,
+          ...(field === "isProfileCompleted" ? { candidate_pending_profile: input === 0 ? "" : "education" } : {}),
+        };
+        const projected = projectApprovedProfile(row, "2026-09-13").fields[field];
+        assert.equal(projected.state, "available", `PROFILE-ENUM ${field} ${input} available`);
+        assert.deepEqual(projected.state === "available" && projected.value, output,
+          `PROFILE-ENUM ${field} ${input} positive mapping`);
+      }
+    }
+  }
+});
+
+function unconfiguredRepository() {
+  const source = new UnconfiguredApprovedProfileAdapter();
+  source.readCandidate = async () => { assert.fail("PROFILE-DEFAULT must never read a candidate"); };
+  return new OwnProfileRepository({
+    principals: new InMemoryAuthzStore({ principals: PEOPLE }), source, today: () => "2026-09-13",
+  });
+}
+
+test("PROFILE-DEFAULT-OWNER unconfigured adapter still rejects another or unknown person", async () => {
+  const profiles = unconfiguredRepository();
+  for (const [requesterPrincipalId, targetPersonId] of [
+    ["person-populated", "person-other"], ["unknown", "unknown"],
+  ]) {
+    assert.deepEqual(await profiles.readOwn({ requesterPrincipalId: requesterPrincipalId!, targetPersonId: targetPersonId! }),
+      { kind: "not_found" });
+  }
+});
+
+async function unconfiguredServer(t: TestContext) {
+  const rig = createSyntheticLoginRig(createLoginApplication);
+  const session = "s".repeat(43);
+  await rig.sessions.put({ id: session, personId: "person-populated" });
+  const server = createGatewayServer(undefined, undefined, undefined, { ...rig.app, web: {
+    origin: "https://studenthub.test.invalid", returnTo: rig.config.allowedReturnUrls[1],
+    profiles: unconfiguredRepository(),
+  } });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  return { url: `http://127.0.0.1:${address.port}/profile`, cookie: `__Host-studenthub_session=${session}` };
+}
+
+test("PROFILE-DEFAULT-JSON unconfigured adapter serves 200 with all 19 fields unavailable", async (t) => {
+  const { url, cookie } = await unconfiguredServer(t);
+  const response = await fetch(url, { headers: { cookie, accept: "application/json" } });
+  assert.equal(response.status, 200, "PROFILE-DEFAULT-JSON unconfigured profile must render instead of 404");
+  const profile = await response.json();
+  assert.equal(Object.keys(profile.fields).length, 19);
+  assert.deepEqual(Object.keys(profile.fields), OWN_PROFILE_FIELD_NAMES);
+  for (const field of Object.values(profile.fields) as Record<string, unknown>[]) {
+    assert.equal(field.state, "unavailable");
+    assert.equal(field.reason, "not_imported");
+    assert.equal(Object.hasOwn(field, "value"), false);
+    assert.deepEqual(field.freshness, { kind: "not_imported", observedAt: "" });
+  }
+  assert.doesNotMatch(JSON.stringify(profile), /Registry must not win|registry@example|Synthetic|noor@example|profile_not_found/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+});
+
+test("PROFILE-DEFAULT-HTML unconfigured adapter renders 200 with all 19 fields unavailable", async (t) => {
+  const { url, cookie } = await unconfiguredServer(t);
+  const response = await fetch(url, { headers: { cookie, accept: "text/html" } });
+  assert.equal(response.status, 200, "PROFILE-DEFAULT-HTML unconfigured profile must render instead of 404");
+  const html = await response.text();
+  assert.match(response.headers.get("content-type")!, /^text\/html/);
+  assert.equal((html.match(/data-state="unavailable"/g) ?? []).length, 19);
+  assert.equal((html.match(/<dt>/g) ?? []).length, 19);
+  for (const contract of Object.values(OWN_PROFILE_FIELD_CONTRACT)) assert.ok(html.includes(`<dt>${contract.label}</dt>`));
+  assert.match(html, /Read-only/);
+  assert.match(html, /editing isn’t enabled/);
+  assert.doesNotMatch(html, /Registry must not win|registry@example|Synthetic|noor@example|This profile isn’t available/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 });

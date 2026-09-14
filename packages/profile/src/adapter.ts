@@ -37,7 +37,7 @@ export class InMemoryApprovedProfileAdapter implements ApprovedProfileAdapter {
 /** Runtime default until an approved source is configured. Always fails closed. */
 export class UnconfiguredApprovedProfileAdapter implements ApprovedProfileAdapter {
   async resolveLink(): Promise<ApprovedProfileLink> {
-    return { kind: "missing" };
+    return { kind: "unconfigured" };
   }
 
   async readCandidate(): Promise<undefined> {

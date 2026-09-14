@@ -48,7 +48,7 @@ export interface UnavailableProfileField {
   readonly state: "unavailable";
   readonly reason: "not_imported" | "not_recorded";
   readonly provenance: FieldProvenance;
-  readonly freshness: FieldFreshness;
+  readonly freshness: FieldFreshness | { readonly kind: "not_imported"; readonly observedAt: "" };
 }
 
 export type ProfileField<T> = AvailableProfileField<T> | UnavailableProfileField;
@@ -94,6 +94,7 @@ export interface OwnProfileFieldContract {
 
 export type ApprovedProfileLink =
   | { readonly kind: "linked"; readonly candidateRef: string }
+  | { readonly kind: "unconfigured" }
   | { readonly kind: "missing" }
   | { readonly kind: "conflict" };
 
