@@ -31,7 +31,7 @@ import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget,
 import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
-import { initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -64,9 +64,8 @@ export function authorizationRefValid(ref) {
 }
 
 // A dispatch scope is trusted operator configuration, never card or environment
-// input. SHU-224 deliberately supports exactly one canonical Linear identifier:
-// the fixture needs one issue, and accepting an empty or ambiguous allowlist
-// would make its safety boundary harder to inspect. An absent key preserves the
+// input. Retain single-issue scopes and admit only the reviewed fixture pair.
+// Empty, duplicate, or other multi-issue lists remain invalid. An absent key preserves the
 // board-wide production behavior; a present-but-invalid key denies all work.
 export function resolveDispatchScope(config = {}) {
   if (!Object.prototype.hasOwnProperty.call(config, "dispatch_scope")) {
@@ -80,8 +79,12 @@ export function resolveDispatchScope(config = {}) {
   if (keys.length !== 1 || keys[0] !== "issue_ids") {
     return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope must contain only issue_ids" };
   }
+  if (Array.isArray(raw.issue_ids) && raw.issue_ids.length === 2 &&
+      raw.issue_ids.includes("SHU-140") && raw.issue_ids.includes("SHU-254")) {
+    return { configured: true, valid: true, issueIds: new Set(raw.issue_ids), reason: null };
+  }
   if (!Array.isArray(raw.issue_ids) || raw.issue_ids.length !== 1) {
-    return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope.issue_ids must contain exactly one issue" };
+    return { configured: true, valid: false, issueIds: new Set(), reason: "dispatch_scope.issue_ids must contain one issue or exactly SHU-140 and SHU-254" };
   }
   const [issueId] = raw.issue_ids;
   if (typeof issueId !== "string" || !LINEAR_ISSUE_ID_RE.test(issueId)) {
@@ -486,7 +489,7 @@ export function dispatchEnabledFor(env = {}, config = {}, activation = null) {
 // the fixture must stay pinned to its separately approved contract.
 // Anything else resolves to null and the dispatch is REFUSED loudly.
 export function resolveAuthorizationRef(candidate, config = {}) {
-  const fixtureLane = config.fixture_lane ?? {};
+  const fixtureLane = resolveFixtureLane(config, candidate.id) ?? {};
   if (fixtureLane.id && candidate.id === fixtureLane.id) {
     if (fixtureLane.authorization_ref && authorizationRefValid(fixtureLane.authorization_ref)) return fixtureLane.authorization_ref;
     return null; // fixture lane misconfigured — refuse loudly, never guess
@@ -1642,7 +1645,7 @@ export async function backfillSuccessorDirectives({
       // activation is bound to. Any other card's lineage routes exactly as it did
       // before this change — a bootstrap is never board-wide.
       bootstrapReviewer: bootstrapByIssue.get(issueId) ?? null,
-      fixtureLane: config.fixture_lane ?? null,
+      fixtureLane: resolveFixtureLane(config, issueId),
     });
     if (!routed.ok || !routed.order) {
       // PASS / no eligible reviewer / exhaustion / lane mismatch / forged — nothing to post.
@@ -2449,9 +2452,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   try {
     workspaceScope = successor
       ? { workspace_scope: successor.workspace_scope, scope_phase: successor.scope_phase, allowed_paths: successor.allowed_paths, scoped_base_sha: successor.scoped_base_sha ?? null }
-      : initialWorkspaceScope({ issueId: candidate.id, requestedWorker: requested_worker, fixtureLane: config.fixture_lane, legacy: LEGACY_LANE_NAMES.includes(requested_worker) });
+      : initialWorkspaceScope({ issueId: candidate.id, requestedWorker: requested_worker, fixtureLane: resolveFixtureLane(config, candidate.id), legacy: LEGACY_LANE_NAMES.includes(requested_worker) });
     const scopeCheck = validateWorkspaceScope(workspaceScope);
     if (!scopeCheck.ok) throw new Error(scopeCheck.reason);
+    const laneCheck = validateFixtureAttemptScope({ issue_id: candidate.id, ...workspaceScope });
+    if (!laneCheck.ok) throw new Error(laneCheck.reason);
   } catch (error) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — workspace scope refused (${error.message})`);
     return 2;

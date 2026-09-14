@@ -244,9 +244,31 @@ readable for the local copy, and is removed after preparation.
 
 ### SHU-241: scoped builder source and base-preserving publication
 
-The watched SHU-140 builder never receives the review trap's blob. Trusted
-`fixture_lane` configuration pins two exact literal path arrays: the initial
-build paths and a predeclared revision superset. The seeded defect path is
+Each fixture builder's initial checkout excludes its review trap's blob. The
+legacy `fixture_lane` object continues to define SHU-140 with unchanged paths.
+The optional `fixture_lanes` array adds lane definitions with the same fields;
+it currently contains SHU-254. IDs must be unique across both surfaces, and the
+coordinator resolves the lane by the issue it is acting on, never by list order.
+
+| Issue | Initial build paths | Additional revision path / seeded defect |
+| --- | --- | --- |
+| SHU-140 | `tools/fixture/scan-vacuous.mjs`, `tools/fixture/test/scan-vacuous.test.mjs` | `tools/fixture-conformance/scan-vacuous.expectations.mjs` |
+| SHU-254 | `tools/fixture-2/scan-unawaited.mjs`, `tools/fixture-2/test/scan-unawaited.test.mjs` | `tools/fixture-2-conformance/scan-unawaited.expectations.mjs` |
+
+Each definition pins `initial_build_paths`, `revision_paths` (the initial paths
+plus that lane's trap), and `seeded_defect_path`. SHU-140 retains its existing
+`authorization_ref`; SHU-254 uses its canonical card reference `SHU-254`.
+Neither reference is an activation approval. Scoped receipt recovery and
+workspace preparation reject another lane's manifest with `LANE_MISMATCH`.
+
+The committed dispatch scope is exactly `["SHU-140", "SHU-254"]` with
+`max_dispatch: 2` and `enable_dispatch: false`. Live arming still requires
+explicit approval and both dispatch gates. The single-run record documented
+above remains constrained to one issue and one slot and therefore refuses the
+committed two-lane configuration; this change does not extend activation.
+
+Trusted lane configuration pins the initial build paths and a predeclared
+revision superset. The seeded defect path is
 required to be outside the initial set and inside the revision set; otherwise
 dispatch refuses before reservation. Globs, directories, traversal, `.git`,
 duplicates and non-normalized paths are not scope authority.

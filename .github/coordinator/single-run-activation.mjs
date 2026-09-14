@@ -81,6 +81,7 @@
 // already bounded by expiry, target, revision, one slot and the runtime switch.
 // Failing that way round is the cheaper mistake.
 
+import { resolveFixtureLane } from "./workspace-scope.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -271,7 +272,7 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
       // only ever unlocks a review the lineage could not otherwise name (zero
       // review entries); every later step is routed from real receipts.
       bootstrapReviewer,
-      fixtureLane: config.fixture_lane ?? null,
+      fixtureLane: resolveFixtureLane(config, terminal.issue_id),
     });
   } catch (err) {
     return { ended: false, reason: `mid-episode: routing could not decide (${err?.message ?? "error"})` };
@@ -503,7 +504,7 @@ export function singleRunActivationStatus({
     return refused("a single-run activation requires a committed single-issue dispatch_scope; this configuration is board-wide");
   }
   const [scopeIssue] = scopeIds;
-  const fixtureLane = config?.fixture_lane ?? {};
+  const fixtureLane = resolveFixtureLane(config, scopeIssue) ?? config?.fixture_lane ?? {};
   if (fixtureLane.id && fixtureLane.id !== scopeIssue) {
     return refused(`committed configuration is inconsistent: fixture_lane.id ${fixtureLane.id} is not the scoped issue ${scopeIssue}`);
   }
