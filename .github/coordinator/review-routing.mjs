@@ -592,6 +592,9 @@ export function routeSuccessorFromReceipts(state = {}) {
   if (!terminal || typeof terminal !== "object") {
     return { ok: false, reason: "no terminal receipt to route from" };
   }
+  if (fixtureLane && fixtureLane.id !== terminal.issue_id) {
+    return { ok: false, reason: "LANE_MISMATCH: successor fixture does not match terminal issue" };
+  }
   // SHU-249: the terminal receipt's role/runtime come from the TRUSTED field
   // when it declares one. A receipt whose authority cannot be resolved (unknown
   // lane, missing authoritative role, or a trusted role contradicting the lane)

@@ -211,10 +211,10 @@ test("SHU-224: invalid trusted scope prevents dispatch before any mutation", asy
   }
 });
 
-test("SHU-224: committed scope is pinned to SHU-140 while dispatch stays disabled", () => {
+test("SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled", () => {
   const config = JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"));
   assert.equal(config.enable_dispatch, false);
-  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-140"] });
+  assert.deepEqual(config.dispatch_scope, { issue_ids: ["SHU-140", "SHU-254"] });
 });
 
 test("SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed", () => {

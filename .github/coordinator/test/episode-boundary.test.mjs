@@ -31,7 +31,9 @@ const COORD = join(HERE, "..");
 const TARGET = "SHU-140";
 const CONTRACT = "FIXTURE-OPUS-CONTRACT-20260905";
 const NOW = new Date("2026-09-10T12:00:00.000Z");
-const COMMITTED = JSON.parse(fs.readFileSync(join(COORD, "config.json"), "utf8"));
+// Preserve the single-run activation fixture as committed selection grows.
+const COMMITTED = { ...JSON.parse(fs.readFileSync(join(COORD, "config.json"), "utf8")),
+  max_dispatch: 1, dispatch_scope: { issue_ids: ["SHU-140"] } };
 const NEW_EPISODE = "shu63fixture0003";
 const SPENT_EPISODE = "shu63fixture0002";
 // The REAL retained attempt from the 2026-09-10 fixture run (RESERVED ->
@@ -385,7 +387,8 @@ import { createEpisodeHarness, SHA_INPUT, SHA_WRITE, REVISION } from "./test/fix
 const TARGET = "SHU-140";
 const CONTRACT = "FIXTURE-OPUS-CONTRACT-20260905";
 const NOW = new Date("2026-09-10T12:00:00.000Z");
-const COMMITTED = JSON.parse(fs.readFileSync("./config.json", "utf8"));
+const COMMITTED = { ...JSON.parse(fs.readFileSync("./config.json", "utf8")),
+  max_dispatch: 1, dispatch_scope: { issue_ids: ["SHU-140"] } };
 const NEW_EPISODE = "shu63fixture0003";
 const SPENT_EPISODE = "shu63fixture0002";
 const PRIOR = "8dd0526b-8e5b-4505-930a-97d272bfa346";

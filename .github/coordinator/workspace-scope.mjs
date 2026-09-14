@@ -16,6 +16,44 @@ export const SHU140_REVISION_PATHS = Object.freeze([
 ]);
 export const SHU140_TRAP_PATH = "tools/fixture-conformance/scan-vacuous.expectations.mjs";
 
+export const SHU254_INITIAL_BUILD_PATHS = Object.freeze([
+  "tools/fixture-2/scan-unawaited.mjs",
+  "tools/fixture-2/test/scan-unawaited.test.mjs",
+]);
+export const SHU254_TRAP_PATH = "tools/fixture-2-conformance/scan-unawaited.expectations.mjs";
+export const SHU254_REVISION_PATHS = Object.freeze([...SHU254_INITIAL_BUILD_PATHS, SHU254_TRAP_PATH]);
+
+const FIXTURE_CONTRACTS = Object.freeze({
+  "SHU-140": { initial_build_paths: SHU140_INITIAL_BUILD_PATHS, revision_paths: SHU140_REVISION_PATHS, seeded_defect_path: SHU140_TRAP_PATH },
+  "SHU-254": { initial_build_paths: SHU254_INITIAL_BUILD_PATHS, revision_paths: SHU254_REVISION_PATHS, seeded_defect_path: SHU254_TRAP_PATH },
+});
+
+// The legacy object remains supported; additional lanes must have unique IDs.
+export function resolveFixtureLane(config = {}, issueId) {
+  const extra = config.fixture_lanes ?? [];
+  if (!Array.isArray(extra)) throw new Error("fixture_lanes must be an array");
+  const lanes = [...(config.fixture_lane ? [config.fixture_lane] : []), ...extra];
+  const ids = new Set();
+  for (const lane of lanes) {
+    if (!lane || typeof lane.id !== "string" || !lane.id || ids.has(lane.id)) {
+      throw new Error("fixture lanes require unique issue ids");
+    }
+    ids.add(lane.id);
+  }
+  return lanes.find((lane) => lane.id === issueId) ?? null;
+}
+
+// Check issue binding again on durable receipts, including recovery, before I/O.
+export function validateFixtureAttemptScope(receipt = {}) {
+  const contract = FIXTURE_CONTRACTS[receipt.issue_id];
+  if (!contract || receipt.workspace_scope !== "scoped") return { ok: true };
+  const expected = receipt.scope_phase === "revision" ? contract.revision_paths : contract.initial_build_paths;
+  if (JSON.stringify(receipt.allowed_paths) !== JSON.stringify(expected)) {
+    return { ok: false, reason: `LANE_MISMATCH: ${receipt.issue_id} ${receipt.scope_phase} paths differ from its fixture contract` };
+  }
+  return { ok: true };
+}
+
 export function fixtureScopeConfigured(fixture = {}) {
   return ["initial_build_paths", "revision_paths", "seeded_defect_path"].some((key) => Object.hasOwn(fixture, key));
 }
@@ -39,12 +77,14 @@ export function validateAllowedPaths(value, { name = "allowed_paths", allowEmpty
 }
 
 export function validateFixtureScopePolicy(fixture = {}) {
+  const contract = FIXTURE_CONTRACTS[fixture.id];
+  if (!contract) return { ok: false, reason: "unknown fixture scope issue id" };
   const initial = validateAllowedPaths(fixture.initial_build_paths, { name: "fixture_lane.initial_build_paths" });
   if (!initial.ok) return initial;
   const revision = validateAllowedPaths(fixture.revision_paths, { name: "fixture_lane.revision_paths" });
   if (!revision.ok) return revision;
-  if (fixture.seeded_defect_path !== SHU140_TRAP_PATH) {
-    return { ok: false, reason: "fixture_lane.seeded_defect_path must pin the reviewed SHU-140 trap" };
+  if (fixture.seeded_defect_path !== contract.seeded_defect_path) {
+    return { ok: false, reason: `fixture_lane.seeded_defect_path must pin the reviewed ${fixture.id} trap` };
   }
   if (initial.paths.includes(fixture.seeded_defect_path)) {
     return { ok: false, reason: "BLOCK is unreachable: seeded defect path is inside initial_build_paths" };
@@ -52,9 +92,9 @@ export function validateFixtureScopePolicy(fixture = {}) {
   if (!revision.paths.includes(fixture.seeded_defect_path)) {
     return { ok: false, reason: "revision_paths must authorize the seeded defect path after BLOCK" };
   }
-  if (JSON.stringify(initial.paths) !== JSON.stringify(SHU140_INITIAL_BUILD_PATHS) ||
-      JSON.stringify(revision.paths) !== JSON.stringify(SHU140_REVISION_PATHS)) {
-    return { ok: false, reason: "fixture scope paths differ from the reviewed exact SHU-140 contract" };
+  if (JSON.stringify(initial.paths) !== JSON.stringify(contract.initial_build_paths) ||
+      JSON.stringify(revision.paths) !== JSON.stringify(contract.revision_paths)) {
+    return { ok: false, reason: `fixture scope paths differ from the reviewed exact ${fixture.id} contract` };
   }
   return { ok: true, initial_build_paths: initial.paths, revision_paths: revision.paths, seeded_defect_path: fixture.seeded_defect_path };
 }
@@ -99,12 +139,17 @@ export function normalizeReceiptWorkspaceScope(receipt = {}) {
   }
   const candidate = Object.fromEntries(WORKSPACE_SCOPE_FIELDS.map((field) => [field, receipt[field]]));
   const checked = validateWorkspaceScope(candidate, { requireScopedBase: true });
+  if (checked.ok) {
+    const laneCheck = validateFixtureAttemptScope(receipt);
+    if (!laneCheck.ok) return laneCheck;
+  }
   return checked.ok ? { ok: true, scope: { ...candidate, allowed_paths: [...candidate.allowed_paths] } } : checked;
 }
 
 export function initialWorkspaceScope({ issueId, requestedWorker, role = roleForLane(requestedWorker), fixtureLane, allowedPaths = [], legacy = false } = {}) {
   if (!role || role !== roleForLane(requestedWorker) && role !== "revise") throw new Error("invalid initial workspace role");
   if (role === "review") return { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null };
+  if (fixtureLane && fixtureLane.id !== issueId) throw new Error(`LANE_MISMATCH: fixture lane does not match ${issueId}`);
   if (fixtureLane && fixtureLane.id === issueId) {
     if (!fixtureScopeConfigured(fixtureLane) && legacy) {
       return { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
