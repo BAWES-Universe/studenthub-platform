@@ -8,6 +8,13 @@ import assert from 'node:assert/strict';
 // monkeypatched test implementation and no syntax/import/process failures count.
 const root=resolve(new URL('../../../',import.meta.url).pathname);
 const mutations=[
+ ['M21 finalized sibling staging purged','SHU-145/NC-RETENTION','candidate-lifecycle.js',
+  'delete t.data;\n            delete t.digest;',
+  'delete t.data;\n            delete t.digest;\n            for (const sibling of s.lifecycle.uploads) { if (sibling !== t) { delete sibling.data; delete sibling.digest; } }', undefined,
+  'NC-RETENTION: successful finalize must preserve sibling staged bodies'],
+ ['M22 empty list audit omitted','SHU-145/NC-EMPTY-LIST-AUDIT','candidate-lifecycle.js',
+  "this.auditRead(s, principalId, 'list');", "if (result.length) this.auditRead(s, principalId, 'list');", undefined,
+  'NC-EMPTY-LIST-AUDIT: successful empty list must commit a durable audit row'],
  ['M17 staged retention omitted','SHU-145/NC-RETENTION','candidate-lifecycle.js',
   " + (s.lifecycle?.uploads.filter(t => t.data !== undefined).length ?? 0)", '', undefined,
   'NC-RETENTION: cleanup must count every staged body plus retired copies'],

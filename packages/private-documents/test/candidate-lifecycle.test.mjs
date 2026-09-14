@@ -266,8 +266,12 @@ test('SHU-145/NC-PRIMITIVE-AUDIT async audit rejection cannot break primitive de
 });
 
 test('SHU-145/NC-RETENTION staged bodies remain held across expiry and removal',async t=>{
- const f=await fixture(t),ticket=await f.upload('civil-id-front'),d=(await f.finalize(ticket)).body.metadata;
+ const f=await fixture(t),ticket=await f.upload('civil-id-front');
  await f.upload('resume',pdf());await f.upload('civil-id-back');await f.authorize();
+ assert.deepEqual(await f.service.cleanup(),{held:3,deleted:0},'NC-RETENTION: cleanup must count every staged body plus retired copies');
+ const finalized=await f.finalize(ticket);assert.equal(finalized.status,200);
+ const d=finalized.body.metadata;
+ assert.deepEqual(await f.service.cleanup(),{held:2,deleted:0},'NC-RETENTION: successful finalize must preserve sibling staged bodies');
  f.advance(60001);
  assert.equal((await f.request('/candidate-documents/remove',{body:{type:'civil-id-front',expectedVersion:d.version}})).status,200);
  const before=await f.state();
@@ -315,6 +319,17 @@ test('SHU-145/NC-READ-AUDIT civil ID issuance redemption and list commit durable
  assert.equal((await f.request('/candidate-documents',{method:'GET'})).status,503);
  f.service.options.store=original;
  assert.equal((await f.state()).lifecycle.audit.length,before+3);
+});
+
+test('SHU-145/NC-EMPTY-LIST-AUDIT empty list commits durable audit',async t=>{
+ const f=await fixture(t);
+ const result=await f.request('/candidate-documents',{method:'GET'});
+ assert.equal(result.status,200);assert.deepEqual(result.body,{documents:[]});
+ const reopened=await FileDocumentStore.open(f.root);
+ const rows=await reopened.transaction(async s=>s.lifecycle?.audit ?? []);
+ assert.deepEqual(rows.map(r=>r.operation),['list'],'NC-EMPTY-LIST-AUDIT: successful empty list must commit a durable audit row');
+ assert.deepEqual(Object.keys(rows[0]).sort(),['at','id','operation','principalRef']);
+ assert.equal(rows[0].principalRef,createHash('sha256').update('alice').digest('hex'));
 });
 
 test('SHU-145/NC-MULTIBYTE wrong upload credential is a denial',async t=>{

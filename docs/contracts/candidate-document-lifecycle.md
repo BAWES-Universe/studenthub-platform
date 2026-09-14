@@ -195,6 +195,18 @@ The primitive's `audit: undefined` suppresses its operational callback because
 the lifecycle owns durable auditing; it no longer silently suppresses read records.
 No raw document identifiers or URLs are added to the audit payload.
 
+**Read-audit operational cost:** private reads were previously pure reads; now
+every `list` / `issueDelivery` / `deliver` performs a full-journal durable write.
+In `PostgresDocumentSnapshot`, every candidate GET therefore issues a
+whole-snapshot `jsonb` UPDATE under the singleton `FOR UPDATE` lock. Independent
+R3-PERF measurements at `641d4ed694556608bad854c23ab4e613e3d79d2d`, using the same
+store with audit enabled versus runtime-disabled, measured list latency of
+**5.68 ms vs 1.49 ms (3.8x)** for a **5 KiB** journal and **404.7 ms vs 301.7 ms
+(1.3x)** for a **50.8 MiB** journal. Writing is inherent to durable read auditing;
+the dominant cost at scale remains the pre-existing full-journal hydration.
+This is an operational cost, with capacity/latency acceptance still required
+before real user data or broad use.
+
 Durable mutation and read-audit rows contain only server-generated id, operation,
 SHA-256 principal reference and time. Operational callbacks contain exactly
 `{operation, code}`; thrown, rejecting or hanging callbacks cannot alter a
