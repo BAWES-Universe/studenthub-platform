@@ -24,10 +24,12 @@
 //
 // Linear API token names only — no secrets live in this repository.
 
+import { LEGACY_LANE_NAMES, LANE_NAMES, RECEIPT_VERSIONS, RECEIPT_VERSION_ROLE_AUTHORITY, resolveReceiptRoleAuthority, roleForReceipt, roleForLane, runtimeForLane, adapterNameForLane, isWriterRole, familyForLane } from "./launch-vocabulary.mjs";
 import { preflightActivation, describeUnmetActivation, ACTIVATION_REQUIREMENTS } from "./activation.mjs";
 import { routeSuccessorFromReceipts, renderWorkOrderDirective, parseWorkOrderDirective, outcomeForEvidenceStage, roleForRequestedWorker, reviewVerdictProvenanceValid } from "./review-routing.mjs";
 import { parseActivationArgs, singleRunActivationStatus, activationAllowsTarget, renderActivationLine, episodeVerdict, latestCoherentTerminal, episodeScopeFor, receiptInEpisodeScope } from "./single-run-activation.mjs";
 import fs from "node:fs";
+import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import path from "node:path";
@@ -41,7 +43,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 
 export const STAGES = Object.freeze(["RESERVED", "LAUNCH_UNKNOWN", "RUNNING", "COMPLETED", "FAILED", "HOLD"]);
-export const REQUESTED_WORKERS = Object.freeze(["codex-builder", "claude-verifier", "hermes-box"]);
+export const REQUESTED_WORKERS = LANE_NAMES;
 export const ADAPTER_STATUSES = Object.freeze(["queued", "in_progress", "suspended", "completed", "failed"]);
 export const TERMINAL_STAGES = Object.freeze(["COMPLETED", "FAILED", "HOLD"]);
 
@@ -161,7 +163,7 @@ const NEEDS_DECISION_RE = /^needs:decision$/i;
 // Worker families the coordinator recognizes. SAME_FAMILY_VERIFIERS must cover
 // every one of them — a coordinator test enforces that, so a new worker family
 // cannot be added without an explicit verifier-independence decision.
-export const WORKER_FAMILIES = Object.freeze(["codex-builder", "claude-verifier", "hermes-box"]);
+export const WORKER_FAMILIES = LANE_NAMES;
 const WORKER_LABEL_RE = new RegExp(`^worker:(${WORKER_FAMILIES.join("|")})$`);
 // Rule 6 (SHU-219): a sub-issue completes BEFORE its parent, so only a parent
 // that is terminal-canceled (Canceled/Duplicate) makes a child ineligible.
@@ -228,11 +230,14 @@ function namedVerifier(issue) {
 // WORKER_FAMILIES: previously claude-verifier fell through to "no conflict", so a
 // Claude-family worker could name verifier:claude or verifier:opus even though
 // ELIGIBILITY.md said an implementation worker cannot be its own verifier.
-export const SAME_FAMILY_VERIFIERS = Object.freeze({
-  "codex-builder": Object.freeze(["codex", "gpt", "gpt-6"]),
-  "claude-verifier": Object.freeze(["claude", "opus", "sonnet", "haiku", "fable"]),
-  "hermes-box": Object.freeze(["hermes"]),
+const FAMILY_VERIFIERS = Object.freeze({
+  codex: Object.freeze(["codex", "gpt", "gpt-6"]),
+  claude: Object.freeze(["claude", "opus", "sonnet", "haiku", "fable"]),
+  hermes: Object.freeze(["hermes"]),
 });
+export const SAME_FAMILY_VERIFIERS = Object.freeze(Object.fromEntries(
+  LANE_NAMES.map((lane) => [lane, FAMILY_VERIFIERS[familyForLane(lane)]]),
+));
 
 function verifierConflictsWithImplementationWorker(issue, verifier) {
   if (!verifier || !hasLabel(issue, /^type:implementation$/i)) return false;
@@ -384,10 +389,7 @@ export function requestedWorkerFor(issue) {
 // Workspace Agents, hermes-box routes to the Hermes pool (SHU-62), and
 // claude-verifier routes to the Claude Code subscription adapter (SHU-61).
 export function adapterNameFor(requestedWorker) {
-  if (requestedWorker === "hermes-box") return "hermes-pool";
-  if (requestedWorker === "claude-verifier") return "claude-code";
-  if (requestedWorker === "codex-builder") return "codex-cli"; // SHU-63 pivot: local Codex CLI (personal ChatGPT), WA inert
-  return "codex-cli";
+  return adapterNameForLane(requestedWorker);
 }
 
 // ONE loader for every lane. io.adapterModules is the injection seam the
@@ -402,6 +404,11 @@ export async function loadAdapterModule(adapter, io = {}) {
 }
 
 // Resolve the adapter for a receipt or a selection candidate.
+export async function dispatchModuleFor(adapter, receipt, env, io = {}) {
+  if (io.adapterModules?.[adapter] && !io.supervisorTransport) return io.adapterModules[adapter];
+  return supervisorAdapter(receipt, env, io);
+}
+
 export async function adapterModuleFor(receiptOrCandidate, io = {}) {
   return loadAdapterModule(adapterNameFor(receiptOrCandidate?.requested_worker), io);
 }
@@ -443,6 +450,9 @@ export async function preparedLaunchOptions(adapter, receipt, env, io = {}, { re
   const normalized = normalizeReceiptWorkspaceScope(receipt);
   if (!normalized.ok) throw new Error(`launch scope refused: ${normalized.reason}`);
   const options = { ...adapterLaunchOptions(adapter, env, { resume }), ...normalized.scope };
+  const authority = resolveReceiptRoleAuthority(receipt);
+  if (!authority.ok) throw new Error(authority.reason);
+  Object.assign(options, { role: authority.role, runtime: authority.runtime });
   if (!["codex-cli", "claude-code"].includes(adapter)) return options;
   const prepare = io.prepareWorkspace ?? (io.adapterModules?.[adapter] ? null : prepareAttemptWorkspace);
   if (!prepare) return options;
@@ -538,7 +548,9 @@ export function validateReceipt(receipt) {
     }
   };
 
-  if (receipt.receipt_version !== "1.0.0") errors.push(`receipt_version must be "1.0.0"`);
+  expectEnum("receipt_version", RECEIPT_VERSIONS);
+  const authority = resolveReceiptRoleAuthority(receipt);
+  if (!authority.ok) errors.push(authority.reason);
   expectType("issue_id", ["string"]);
   expectPattern("attempt_id", UUID_RE);
   expectType("authorization_ref", ["string"]);
@@ -690,8 +702,11 @@ export function createReceipt({
   repo,
   branch,
   target_sha,
+  receipt_version = "1.0.0",
+  role = receipt_version === "1.0.0" ? roleForLane(requested_worker) : undefined,
+  runtime = receipt_version === "1.0.0" ? runtimeForLane(requested_worker) : undefined,
   workspace_scope = "full",
-  scope_phase = requested_worker === "claude-verifier" ? "review" : "initial",
+  scope_phase = role === "review" ? "review" : "initial",
   allowed_paths = [],
   scoped_base_sha = null,
   episode_id = null,
@@ -699,7 +714,8 @@ export function createReceipt({
   reserved_at = new Date().toISOString(),
 }) {
   const candidate = {
-    receipt_version: "1.0.0",
+    receipt_version,
+    ...(receipt_version === RECEIPT_VERSION_ROLE_AUTHORITY ? { role, runtime } : {}),
     issue_id,
     attempt_id,
     authorization_ref,
@@ -753,6 +769,10 @@ export function callbackBindingValid(receipt, evidence, ctx = {}) {
 }
 
 export function callbackEvidenceValid(receipt, evidence, ctx = {}) {
+  if (receipt?.receipt_version === RECEIPT_VERSION_ROLE_AUTHORITY) {
+    const authority = resolveReceiptRoleAuthority(receipt);
+    if (!authority.ok || outcomeForEvidenceStage(evidence?.stage)?.role !== authority.role) return false;
+  }
   return callbackBindingValid(receipt, evidence, ctx) && SUCCESS_CALLBACK_STAGES.includes(evidence.stage);
 }
 
@@ -884,13 +904,12 @@ export function nextReceiptState(receipt, event, ctx = {}) {
         // Completed WITHOUT a validated callback is HOLD — never COMPLETED. Only
         // evidence bound to the same attempt_id + target_sha (+ current head) counts.
         if (callback && callbackEvidenceValid(receipt, callback, ctx)) {
-          const isReviewLane = roleForRequestedWorker(receipt.requested_worker) === "review";
           // Fold-time provenance gate (SHU-73): require an adapter-observed
           // review session and refuse a supplied lineage that cannot be read.
           // Current one-slot independence is established structurally when the
           // build/review lanes are routed. Cross-role actor identity is a SHU-71
           // acceptance concern and is not claimed by this receipt-level check.
-          const provenance = isReviewLane ? reviewVerdictProvenanceValid(receipt, ctx.lineage ?? []) : { ok: true };
+          const provenance = reviewVerdictProvenanceValid(receipt, ctx.lineage ?? []);
           if (!provenance.ok) {
             const next = note(`run completed but review provenance is not closable — HOLD (${provenance.reason})`);
             next.stage = "HOLD";
@@ -1425,6 +1444,7 @@ export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
 // the SAME rule — a control that only one layer enforces is unreachable if the
 // other collapses its inputs first.
 export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
+  "receipt_version", "role", "runtime",
   "issue_id",
   "authorization_ref",
   "requested_worker",
@@ -1451,7 +1471,7 @@ export function parseReceiptsFromComments(comments = []) {
   const conflicts = []; // records held back so main()'s conflict check can fire
   for (const comment of comments ?? []) {
     const parsed = parseReceiptCommentBody(comment?.body);
-    if (parsed && typeof parsed === "object" && parsed.receipt_version === "1.0.0" && parsed.attempt_id) {
+    if (parsed && typeof parsed === "object" && RECEIPT_VERSIONS.includes(parsed.receipt_version) && parsed.attempt_id) {
       const prior = byAttempt.get(parsed.attempt_id);
       const createdAt = typeof comment?.createdAt === "string" ? comment.createdAt : null;
       if (!prior) {
@@ -2058,7 +2078,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (io.stdout) io.stdout(`lifecycle: launch reconciliation for ${receipt.issue_id} SKIPPED — Workspace Agents credentials unavailable; slot held`);
         continue;
       }
-      const adapterModule = await loadAdapterModule(adapter, io);
+      const adapterModule = await dispatchModuleFor(adapter, receipt, env, io);
       const conflicting = receipts.find(
         (other) =>
           other.issue_id === receipt.issue_id &&
@@ -2133,7 +2153,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           // A builder starts at target_sha and is expected to move its work
           // branch. Its callback binds the resulting commit separately; using
           // target_sha here would reject every successful builder as stale.
-          const expectedHead = receipt.requested_worker === "codex-builder"
+          const expectedHead = (receipt.receipt_version === "1.1.0" ? isWriterRole(roleForReceipt(receipt)) : receipt.requested_worker === "codex-builder")
             ? launch.callback?.result_sha
             : receipt.target_sha;
           recoveryCtx = {
@@ -2164,10 +2184,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
 
     for (const receipt of lifecycleStartReceipts.filter((r) => r.stage === "RUNNING" && typeof r.external_run_id === "string" && r.external_run_id.length)) {
       const adapter = adapterNameFor(receipt.requested_worker);
-      const adapterModule = await loadAdapterModule(adapter, io);
+      const adapterModule = await dispatchModuleFor(adapter, receipt, env, io);
       // Callback evidence from the durable issue thread (same attempt_id bound);
       // selection is deterministic by newest createdAt (GPT BLOCK #2).
-      const evidence = parseEvidenceFromComments(
+      let evidence = parseEvidenceFromComments(
         commentsByIssue.get(receipt.issue_id) ?? [],
         receipt.attempt_id,
         config.linear_callback_actor_ids,
@@ -2201,6 +2221,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           target_sha: receipt.target_sha,
           evidence,
           current_head: headVerified ? current_head : undefined,
+          headVerified: headVerified && Boolean(githubToken),
           ...adapterLaunchOptions(adapter, env),
           fetchImpl,
           io, // hermes-pool lease reads (SHU-62); ignored by workspace-agents
@@ -2210,9 +2231,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (io.stdout) io.stdout(`lifecycle: poll failed for ${receipt.issue_id} ${receipt.external_run_id}: ${err.message} — state unchanged, slot held`);
         continue;
       }
+      if (adapterModule.supervised) evidence = outcome.callback;
       let event = null;
       if (outcome.stage === "RUNNING") {
-        event = { type: "run_status", status: outcome.adapter_status, worker_identity: outcome.worker_identity ?? null };
+        if (adapterModule.supervised && !outcome.heartbeat) continue;
+        event = { type: "run_status", status: outcome.adapter_status, worker_identity: outcome.worker_identity ?? null,
+          ...(adapterModule.supervised ? { at: outcome.heartbeat } : {}) };
       } else if (outcome.stage === "COMPLETED") {
         if (!headVerified) {
           // Completed upstream but the live head could not be verified — HOLD,
@@ -2222,18 +2246,31 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           event = {
             type: "run_status",
             status: "completed",
-            callback: { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
+            callback: adapterModule.supervised ? outcome.callback : { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
             worker_identity: outcome.worker_identity ?? null,
           };
         }
       } else if (outcome.stage === "HOLD") {
-        event = { type: "run_status", status: "completed" }; // completed without validated callback → machine HOLDs
+        event = { type: "run_status", status: "completed",
+          ...(adapterModule.supervised ? { callback: outcome.callback, worker_identity: outcome.worker_identity } : {}) }; // absent or invalid callback → machine HOLDs
       } else if (outcome.stage === "FAILED") {
         event = { type: "run_status", status: "failed", error_code: outcome.error_code, error_kind: outcome.error_kind, worker_identity: outcome.worker_identity ?? null };
       } else {
         continue; // UNCHANGED (transient poll failure or missing credentials) — never touch state, never release the slot
       }
-      const transition = nextReceiptState(receipt, event, {
+      let observedReceipt = receipt;
+      if (adapterModule.supervised && outcome.worker_identity && outcome.worker_identity !== receipt.worker_identity) {
+        // Persist adapter-observed identity before verdict folding, just as a
+        // synchronous launch acknowledges its session before its terminal result.
+        const observed = nextReceiptState(receipt, { type: "worker_ack", external_run_id: receipt.external_run_id,
+          worker_identity: outcome.worker_identity, adapter_status: "in_progress" }, { now: io.now });
+        const issueId = resolveLinearIssueId(receipt, "supervisor session acknowledgement");
+        if (!observed.accepted || !issueId) continue;
+        await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId, body: receiptCommentBody(observed.receipt) }, linearToken, fetchImpl);
+        observedReceipt = observed.receipt;
+        lifecyclePersisted = true;
+      }
+      const transition = nextReceiptState(observedReceipt, event, {
         now: io.now,
         current_head,
         // A write attempt is expected to move its branch. Bind its callback to
@@ -2241,6 +2278,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         expected_head: !githubToken || roleForRequestedWorker(receipt.requested_worker) === "review"
           ? receipt.target_sha
           : evidence?.result_sha,
+        ...(adapterModule.supervised ? { expected_head: isWriterRole(roleForReceipt(receipt))
+          ? evidence?.result_sha : receipt.target_sha } : {}),
         // Fold-time author exclusion (SHU-73): the lineage lets the fold reject
         // a review verdict whose observed session is a lineage author.
         lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
@@ -2253,7 +2292,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       const changed =
         nextReceipt.stage !== receipt.stage ||
         nextReceipt.adapter_status !== receipt.adapter_status ||
-        nextReceipt.worker_identity !== receipt.worker_identity;
+        nextReceipt.worker_identity !== receipt.worker_identity ||
+        (adapterModule.supervised && nextReceipt.timestamps.heartbeat !== receipt.timestamps.heartbeat);
       if (!changed) continue;
       const linearIssueId = resolveLinearIssueId(receipt, "receipt persistence");
       if (!linearIssueId) continue; // fail closed: never write to a wrong/unresolved issue
@@ -2409,7 +2449,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   try {
     workspaceScope = successor
       ? { workspace_scope: successor.workspace_scope, scope_phase: successor.scope_phase, allowed_paths: successor.allowed_paths, scoped_base_sha: successor.scoped_base_sha ?? null }
-      : initialWorkspaceScope({ issueId: candidate.id, requestedWorker: requested_worker, fixtureLane: config.fixture_lane });
+      : initialWorkspaceScope({ issueId: candidate.id, requestedWorker: requested_worker, fixtureLane: config.fixture_lane, legacy: LEGACY_LANE_NAMES.includes(requested_worker) });
     const scopeCheck = validateWorkspaceScope(workspaceScope);
     if (!scopeCheck.ok) throw new Error(scopeCheck.reason);
   } catch (error) {
@@ -2477,6 +2517,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
 
   const { ok: reservedOk, receipt, errors } = createReceipt({
+    receipt_version: successor || !LEGACY_LANE_NAMES.includes(requested_worker) ? RECEIPT_VERSION_ROLE_AUTHORITY : "1.0.0",
     reserved_at: nowIso(io.now?.()),
     issue_id: candidate.id,
     authorization_ref,
@@ -2485,6 +2526,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     branch,
     target_sha,
     ...workspaceScope,
+    role: successor?.role ?? roleForLane(requested_worker),
+    runtime: successor?.runtime ?? runtimeForLane(requested_worker),
     // SHU-231: stamp the episode on every receipt the coordinator writes. Null when
     // no episode is armed, so the disabled/global path is unchanged.
     episode_id: episodeScope?.episode_id ?? null,
@@ -2532,6 +2575,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // Write-ahead launch intent: persist LAUNCH_UNKNOWN only after activation is
   // known-good and before crossing the adapter boundary. A refused preflight did
   // not send a launch, so recording LAUNCH_UNKNOWN there would be false history.
+  if (!io.adapterModules?.[adapter] || io.supervisorTransport) {
+    receipt.notes = [...receipt.notes, SUPERVISOR_DISPATCH_NOTE];
+  }
   const launchIntent = nextReceiptState(receipt, { type: "launch" }, { now: io.now });
   if (!launchIntent.accepted) {
     if (io.stdout) io.stdout(`dispatch: ABORTED before launch — could not persist launch intent for ${candidate.id}`);
@@ -2539,7 +2585,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(launchIntent.receipt) }, linearToken, fetchImpl);
 
-  const dispatchAdapterModule = await loadAdapterModule(adapter, io);
+  const dispatchAdapterModule = await dispatchModuleFor(adapter, receipt, env, io);
   let launch;
   let options;
   try {
@@ -2599,7 +2645,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (!resolved.verified) {
       launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
     } else {
-      const expectedHead = receipt.requested_worker === "codex-builder"
+      const expectedHead = (receipt.receipt_version === "1.1.0" ? isWriterRole(roleForReceipt(receipt)) : receipt.requested_worker === "codex-builder")
         ? launch.callback?.result_sha
         : receipt.target_sha;
       launchCtx = {

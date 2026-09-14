@@ -20,12 +20,18 @@
 //    relaunch storm.
 
 import { fixtureScopeConfigured, successorWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import {
+  ROLES, RUNTIMES, RUNTIME_ROLE_SUPPORT, RUNTIME_FAMILY, LANES, LANE_NAMES,
+  REVIEW_LANES, familyForLane, laneForRuntimeRole, roleForLane, runtimeForLane,
+  resolveReceiptRoleAuthority, workerForRuntime as laneForRuntimeDefault,
+} from "./launch-vocabulary.mjs";
 
 export const WORK_ORDER_VERSION = "1.0.0";
 
-export const ROLES = Object.freeze(["build", "review", "revise"]);
-
-export const RUNTIMES = Object.freeze(["codex-cli", "claude-code", "hermes-pool"]);
+// The role/runtime/lane vocabulary is SINGLE-SOURCED in launch-vocabulary.mjs
+// (SHU-249). These names stay exported here because they are this module's
+// public surface, but they are derived, never re-declared.
+export { ROLES, RUNTIMES, RUNTIME_ROLE_SUPPORT, RUNTIME_FAMILY, REVIEW_LANES };
 
 // Capabilities each role requires. build/revise are WRITE roles; review is
 // READ-ONLY (no commit/push authority).
@@ -33,14 +39,6 @@ export const ROLE_CAPABILITIES = Object.freeze({
   build: ["worktree-write", "commit", "test"],
   revise: ["worktree-write", "commit", "test"],
   review: ["read", "test"],
-});
-
-// Which roles each runtime may perform. Unsupported combos fail at validation,
-// before any launch side effect.
-export const RUNTIME_ROLE_SUPPORT = Object.freeze({
-  "codex-cli": ["build", "revise", "review"],
-  "claude-code": ["review", "build", "revise"],
-  "hermes-pool": ["build", "revise", "review"],
 });
 
 // Maps a role to the name of the callback stage that signals SUCCESS for that
@@ -86,8 +84,11 @@ export function capabilitiesFor(order) {
 
 // One trusted launch receipt collapsed to the identity facts routing needs.
 // `actor` is the immutable worker session identity from the receipt.
-export function provenanceEntry({ attempt_id, actor, role, runtime, target_sha, result_sha = null, kind = "launch" }) {
-  return { attempt_id, actor, role, runtime, target_sha, result_sha, kind };
+// `requested_worker` is carried for auditability only: authorship is decided
+// from the trusted ROLE, never from the lane name (SHU-249). Keeping the lane on
+// the entry is what lets a mutation test prove that distinction is load-bearing.
+export function provenanceEntry({ attempt_id, actor, role, runtime, requested_worker = null, target_sha, result_sha = null, kind = "launch" }) {
+  return { attempt_id, actor, role, runtime, requested_worker, target_sha, result_sha, kind };
 }
 
 // Actors who have TOUCHED the change under review. build/revise launch actors
@@ -218,6 +219,15 @@ export function nextWorkOrder(state = {}) {
       return { ok: false, reason: "no eligible non-author reviewer — visible HOLD until a fresh session is available", exhausted: false, hold: "no_eligible_reviewer" };
     }
     const reviewer = eligible[0];
+    // SHU-249: the successor lane is chosen by ROLE, not by the runtime's legacy
+    // default lane. A review minted for a Codex runtime must launch on the
+    // Codex REVIEW lane (codex-verifier); reusing the builder lane here would
+    // make the successor receipt's trusted role disagree with its lane, which
+    // the role-authority resolver then HOLDs.
+    const reviewLane = laneForRuntimeRole(reviewer.runtime, "review");
+    if (!reviewLane) {
+      return { ok: false, reason: `no review lane exists for runtime ${String(reviewer.runtime)} — visible HOLD`, exhausted: false, hold: "no_review_lane" };
+    }
     return {
       ok: true,
       order: mintOrder(requested, {
@@ -226,7 +236,7 @@ export function nextWorkOrder(state = {}) {
         actor: reviewer.actor,
         // The successor is launched through the same claim path as a first
         // dispatch, so it carries a requested_worker lane like any other.
-        requested_worker: workerForRuntime(reviewer.runtime),
+        requested_worker: reviewLane,
         target_sha: outputHead,
         attempt_id: freshAttempt(requested.attempt_id, "review", review_round + 1),
         ...successorWorkspaceScope("review", fixtureLane),
@@ -246,6 +256,10 @@ export function nextWorkOrder(state = {}) {
       }
       const writer = activeWriter(entries);
       if (!writer) return { ok: false, reason: "no active writer to route the revision to — HOLD", exhausted: false, hold: "no_active_writer" };
+      const writerLane = laneForRuntimeRole(writer.runtime, "revise");
+      if (!writerLane) {
+        return { ok: false, reason: `no writer lane exists for runtime ${String(writer.runtime)} — visible HOLD`, exhausted: false, hold: "no_writer_lane" };
+      }
       return {
         ok: true,
         order: mintOrder(requested, {
@@ -253,7 +267,7 @@ export function nextWorkOrder(state = {}) {
           runtime: writer.runtime,
           actor: writer.actor,
           // Back to the lane that wrote: the revise is the SAME writer family.
-          requested_worker: workerForRuntime(writer.runtime),
+          requested_worker: writerLane,
           attempt_id: freshAttempt(requested.attempt_id, "revise", review_round + 1),
           ...successorWorkspaceScope("revise", fixtureLane),
         }),
@@ -360,62 +374,47 @@ export function parseWorkOrderDirective(body) {
 //   * A verdict only routes when its stage is a real review/write outcome.
 
 // Work order role for a launched receipt, by requested worker lane.
-// A "codex-builder" receipt is a build (first write) — later writes on the
-// same issue are revise orders minted by routing, so they carry role revise
-// from the directive, not from the worker label.
+//
+// SHU-249: this is the LEGACY, lane-derived role and it exists for two things
+// only — reading retained receipts at the legacy receipt_version (byte-for-byte
+// as deployed), and acting as the disagreement baseline for an authoritative
+// receipt. It is NOT how a new receipt's role is decided: that is
+// resolveReceiptRoleAuthority() in launch-vocabulary.mjs, which refuses rather
+// than falling back to this mapping. Both mappings are table lookups over the
+// one vocabulary.
 export function roleForRequestedWorker(requestedWorker) {
-  if (requestedWorker === "claude-verifier") return "review";
-  if (requestedWorker === "codex-builder") return "build";
-  if (requestedWorker === "hermes-box") return "build";
-  return null;
+  return roleForLane(requestedWorker);
 }
 
 // Runtime name for a requested worker lane (matches RUNTIMES vocabulary).
 export function runtimeForRequestedWorker(requestedWorker) {
-  if (requestedWorker === "claude-verifier") return "claude-code";
-  if (requestedWorker === "codex-builder") return "codex-cli";
-  if (requestedWorker === "hermes-box") return "hermes-pool";
-  return null;
+  return runtimeForLane(requestedWorker);
 }
 
 // Inverse: the lane that owns a runtime. Used when routing has a runtime (the
 // eligible reviewer, or the active writer) and the LAUNCH needs the lane name —
 // the successor is dispatched through the same claim path as a first dispatch,
-// so it must carry a requested_worker exactly as one.
+// so it must carry a requested_worker exactly as one. The legacy inverse is
+// preserved (codex-builder / claude-verifier / hermes-box).
 export function workerForRuntime(runtime) {
-  if (runtime === "codex-cli") return "codex-builder";
-  if (runtime === "claude-code") return "claude-verifier";
-  if (runtime === "hermes-pool") return "hermes-box";
-  return null;
+  return laneForRuntimeDefault(runtime);
 }
 
 // Families (SHU-225). Independence is a FAMILY property, not a string
 // difference: two lanes of the same family are the same verifier, so a
 // first-review bootstrap that names the write lane's own family is self-review.
-export const RUNTIME_FAMILY = Object.freeze({
-  "codex-cli": "codex",
-  "claude-code": "claude",
-  "hermes-pool": "hermes",
-});
-
-export const WORKER_FAMILY = Object.freeze({
-  "codex-builder": "codex",
-  "claude-verifier": "claude",
-  "hermes-box": "hermes",
-});
+// Both maps are derived from the one lane table in launch-vocabulary.mjs.
+export const WORKER_FAMILY = Object.freeze(Object.fromEntries(
+  LANE_NAMES.map((lane) => [lane, LANES[lane].family]),
+));
 
 export function runtimeFamily(runtime) {
   return RUNTIME_FAMILY[runtime] ?? null;
 }
 
 export function workerFamily(requestedWorker) {
-  return WORKER_FAMILY[requestedWorker] ?? null;
+  return familyForLane(requestedWorker);
 }
-
-// Lanes that may perform review, in the requested_worker vocabulary.
-export const REVIEW_LANES = Object.freeze(
-  Object.keys(WORKER_FAMILY).filter((w) => RUNTIME_ROLE_SUPPORT[runtimeForRequestedWorker(w)]?.includes("review")),
-);
 
 // bootstrapReviewerFor — the TRUSTED first-review bootstrap (SHU-225, Option A as
 // amended on SHU-63). A brand-new episode's lineage holds no review-role entry, so
@@ -448,19 +447,25 @@ export function bootstrapReviewerFor({ requested = {}, entries = [], bootstrapRe
 // code (reconcile does not fabricate it from links alone).
 export function provenanceFromReceipt(receipt, { kind = "launch" } = {}) {
   if (!receipt || typeof receipt !== "object") return null;
-  const role = roleForRequestedWorker(receipt.requested_worker);
-  const runtime = runtimeForRequestedWorker(receipt.requested_worker);
+  // SHU-249: the receipt's role comes from the TRUSTED field when the receipt
+  // declares one (role-authority version) and from the lane only for the legacy
+  // version. A receipt whose authority cannot be resolved yields NO provenance
+  // entry: ambiguous authorship must never mint an order, and it must never be
+  // silently re-read through the lane name.
+  const authority = resolveReceiptRoleAuthority(receipt);
+  if (!authority.ok) return null;
+  const { role, runtime } = authority;
   // A worker_identity is REQUIRED for routing: an anonymous launch receipt
   // proves nothing about who acted, so it can neither exclude an author nor
   // qualify as an eligible fresh reviewer (ambiguous provenance -> HOLD).
   if (typeof receipt.worker_identity !== "string" || receipt.worker_identity.length === 0) return null;
-  if (!role || !runtime) return null;
   if (typeof receipt.target_sha !== "string" || !/^[0-9a-f]{40}$/.test(receipt.target_sha)) return null;
   return provenanceEntry({
     attempt_id: receipt.attempt_id,
     actor: receipt.worker_identity,
     role,
     runtime,
+    requested_worker: receipt.requested_worker ?? null,
     target_sha: receipt.target_sha,
     result_sha: typeof receipt.result_sha === "string" && /^[0-9a-f]{40}$/.test(receipt.result_sha) ? receipt.result_sha : null,
     kind,
@@ -487,6 +492,8 @@ export function outcomeForEvidenceStage(stage) {
 // BLOCKED has NOT completed a review: that is an in-scope blocker → machine
 // HOLD, never a revise order. Conversely a verifier (review lane) reporting
 // BUILD_READY is incoherent. Mismatched verdicts fail closed (no route).
+// Lane-name keying is valid only while each lane carries exactly one role.
+// A future two-role lane must switch this check to the order's role.
 export function verdictMatchesLane(requestedWorker, evidenceStage) {
   const verdict = outcomeForEvidenceStage(evidenceStage);
   if (!verdict) return false;
@@ -517,7 +524,17 @@ export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
   if (!receipt || typeof receipt !== "object") return { ok: false, reason: "no receipt to evaluate" };
   // Writer (build/revise) verdicts are not independence claims — the rule only
   // constrains REVIEW verdicts.
-  if (roleForRequestedWorker(receipt.requested_worker) !== "review") return { ok: true };
+  //
+  // SHU-249: the verdict's role is read from the TRUSTED authority, not from
+  // roleForRequestedWorker(). Under role reversal the lane name is exactly what
+  // is being flipped, so reading it here would let a reversed-role receipt
+  // relabel itself out of the gate. A receipt whose role authority cannot be
+  // resolved is refused rather than assumed non-review.
+  const authority = resolveReceiptRoleAuthority(receipt);
+  if (!authority.ok) {
+    return { ok: false, reason: `review verdict has no resolvable launch role — ${authority.reason}` };
+  }
+  if (authority.role !== "review") return { ok: true };
   // An observed verifier session is REQUIRED. worker_identity is only ever set
   // from an adapter ack/poll (never fabricated, never self-declared), so its
   // absence means the verdict cannot be attributed to a distinct reviewer.
@@ -530,6 +547,10 @@ export function reviewVerdictProvenanceValid(receipt, lineageReceipts = []) {
     return { ok: false, reason: "reviewed lineage carries no readable provenance — authorship ambiguous" };
   }
   const authors = authorSet(entries);
+  if (receipt.receipt_version === "1.1.0" && entries.some((entry) =>
+    authors.has(entry.actor) && entry.runtime === authority.runtime)) {
+    return { ok: false, reason: "review runtime is an author family of the reviewed lineage — not independent" };
+  }
   if (authors.has(receipt.worker_identity)) {
     return { ok: false, reason: `verifier session ${receipt.worker_identity} is an author of the reviewed lineage — not independent` };
   }
@@ -570,6 +591,18 @@ export function routeSuccessorFromReceipts(state = {}) {
   } = state;
   if (!terminal || typeof terminal !== "object") {
     return { ok: false, reason: "no terminal receipt to route from" };
+  }
+  // SHU-249: the terminal receipt's role/runtime come from the TRUSTED field
+  // when it declares one. A receipt whose authority cannot be resolved (unknown
+  // lane, missing authoritative role, or a trusted role contradicting the lane)
+  // is refused here — it never routes on the lane-derived role instead.
+  const terminalAuthority = resolveReceiptRoleAuthority(terminal);
+  if (!terminalAuthority.ok) {
+    return { ok: false, hold: "role_authority_invalid", reason: `terminal receipt has no resolvable launch role — ${terminalAuthority.reason}` };
+  }
+  if (terminalAuthority.role === "review") {
+    const independent = reviewVerdictProvenanceValid(terminal, issueReceipts);
+    if (!independent.ok) return { ...independent, hold: "author_exclusion" };
   }
   const scopedWriter = issueReceipts.filter((r) => r && ["BUILD_READY", "REVISION_READY"].includes(r.verdict_stage) && r.workspace_scope === "scoped").at(-1);
   const scopedContractReceipt = fixtureLane?.id === terminal.issue_id && fixtureScopeConfigured(fixtureLane) && Boolean(scopedWriter);
@@ -625,7 +658,7 @@ export function routeSuccessorFromReceipts(state = {}) {
   const requested = {
     version: WORK_ORDER_VERSION,
     role: verdict.role,
-    runtime: runtimeForRequestedWorker(terminal.requested_worker),
+    runtime: terminalAuthority.runtime,
     // The completed order's own lane. Routing uses it for two things: the
     // revise goes back to the WRITER's lane, and the first-review bootstrap
     // checks independence against the family of the lane that just wrote.
@@ -651,7 +684,12 @@ export function routeSuccessorFromReceipts(state = {}) {
   }
   if (scopedContractReceipt && evidenceStage === "BLOCKED") {
     const writer = scopedWriter;
-    if (!writer || writer.requested_worker !== "codex-builder" || writer.branch !== terminal.branch || writer.issue_id !== terminal.issue_id || terminal.target_sha !== writer.result_sha) {
+    if (writer?.receipt_version === "1.1.0") {
+      const writerAuthority = resolveReceiptRoleAuthority(writer);
+      if (!writerAuthority.ok || !["build", "revise"].includes(writerAuthority.role) || terminal.branch !== writer.branch || terminal.issue_id !== writer.issue_id || writer.result_sha !== terminal.target_sha) {
+        return { ok: false, reason: "validated BLOCK does not bind the active writer role and exact reviewed head" };
+      }
+    } else if (!writer || writer.requested_worker !== "codex-builder" || writer.branch !== terminal.branch || writer.issue_id !== terminal.issue_id || terminal.target_sha !== writer.result_sha) {
       return { ok: false, reason: "validated BLOCK does not bind the active same-branch Codex writer and exact reviewed head" };
     }
   }

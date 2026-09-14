@@ -1,3 +1,4 @@
+import { resolveReceiptRoleAuthority, roleForLane } from "./launch-vocabulary.mjs";
 import path from "node:path";
 
 export const WORKSPACE_SCOPES = Object.freeze(["scoped", "full"]);
@@ -82,11 +83,13 @@ export function validateWorkspaceScope({ workspace_scope, scope_phase, allowed_p
 }
 
 export function normalizeReceiptWorkspaceScope(receipt = {}) {
+  const authority = resolveReceiptRoleAuthority(receipt);
+  if (!authority.ok) return authority;
   const present = WORKSPACE_SCOPE_FIELDS.filter((field) => Object.hasOwn(receipt, field));
   if (present.length === 0) {
     return { ok: true, scope: {
       workspace_scope: "full",
-      scope_phase: receipt.requested_worker === "claude-verifier" ? "review" : "initial",
+      scope_phase: authority.role === "review" ? "review" : "initial",
       allowed_paths: [],
       scoped_base_sha: null,
     } };
@@ -99,17 +102,21 @@ export function normalizeReceiptWorkspaceScope(receipt = {}) {
   return checked.ok ? { ok: true, scope: { ...candidate, allowed_paths: [...candidate.allowed_paths] } } : checked;
 }
 
-export function initialWorkspaceScope({ issueId, requestedWorker, fixtureLane } = {}) {
-  if (requestedWorker === "claude-verifier") return { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null };
-  if (fixtureLane?.id === issueId) {
-    if (!fixtureScopeConfigured(fixtureLane)) {
+export function initialWorkspaceScope({ issueId, requestedWorker, role = roleForLane(requestedWorker), fixtureLane, allowedPaths = [], legacy = false } = {}) {
+  if (!role || role !== roleForLane(requestedWorker) && role !== "revise") throw new Error("invalid initial workspace role");
+  if (role === "review") return { workspace_scope: "full", scope_phase: "review", allowed_paths: [], scoped_base_sha: null };
+  if (fixtureLane && fixtureLane.id === issueId) {
+    if (!fixtureScopeConfigured(fixtureLane) && legacy) {
       return { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
     }
     const policy = validateFixtureScopePolicy(fixtureLane);
     if (!policy.ok) throw new Error(policy.reason);
     return { workspace_scope: "scoped", scope_phase: "initial", allowed_paths: policy.initial_build_paths, scoped_base_sha: null };
   }
-  return { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
+  if (legacy) return { workspace_scope: "full", scope_phase: "initial", allowed_paths: [], scoped_base_sha: null };
+  const paths = validateAllowedPaths(allowedPaths);
+  if (!paths.ok) throw new Error(`initial writer scope requires approved literal paths: ${paths.reason}`);
+  return { workspace_scope: "scoped", scope_phase: "initial", allowed_paths: paths.paths, scoped_base_sha: null };
 }
 
 export function successorWorkspaceScope(role, fixtureLane) {

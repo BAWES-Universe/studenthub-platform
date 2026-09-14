@@ -23,13 +23,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+// SHU-249: the role vocabulary is single-sourced. This set used to be an
+// independent literal copy of the routing module's ROLES, so a new role could
+// exist in routing and be silently rejected by the capacity ledger.
+import { ROLES as VOCABULARY_ROLES, WRITER_ROLES as VOCABULARY_WRITER_ROLES } from "./launch-vocabulary.mjs";
 
 export const CAPACITY_LEDGER_VERSION = "1.0.0";
 export const ACTIVE_CAPACITY_STATUSES = Object.freeze(["reserved", "dispatching", "running", "launch_unknown", "hold"]);
 export const TERMINAL_CAPACITY_STATUSES = Object.freeze(["completed", "failed", "expired", "canceled"]);
 const CAPACITY_STATUSES = new Set([...ACTIVE_CAPACITY_STATUSES, ...TERMINAL_CAPACITY_STATUSES]);
-const ROLES = new Set(["build", "review", "revise"]);
-const WRITER_ROLES = new Set(["build", "revise"]);
+const ROLES = new Set(VOCABULARY_ROLES);
+const WRITER_ROLES = new Set(VOCABULARY_WRITER_ROLES);
 const RESOURCES = new Set(["global", "host", "account", "runtime"]);
 const PAUSE_REASONS = new Set(["quota", "authentication", "access", "maintenance", "operator_hold"]);
 const SAFE_ID = /^[A-Za-z0-9._:/-]{1,255}$/;

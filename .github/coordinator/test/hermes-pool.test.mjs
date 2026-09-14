@@ -265,6 +265,7 @@ function runMain({ comments, poolDir, spawnCalls }) {
   const store = fakeLinearStore(comments);
   const out = [];
   return main([], ENV, {
+    adapterModules: { "hermes-pool": { launchBuilder, monitorRun } },
     configPath: tempConfig(),
     openPRsOverride: [],
     stdout: (s) => out.push(s),
@@ -648,6 +649,7 @@ test("F6: hermes-box LAUNCH_UNKNOWN recovery runs without Workspace Agents crede
   const store = fakeLinearStore(comments);
   const runWith = (io) =>
     main([], noWaEnv, {
+      adapterModules: { "hermes-pool": { launchBuilder, monitorRun } },
       configPath: tempConfig(),
       openPRsOverride: [],
       stdout: () => {},
