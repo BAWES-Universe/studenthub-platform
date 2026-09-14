@@ -1,5 +1,107 @@
 # SHU-251 correction validation
 
+Earlier correction measurements below are historical; the host-acceptance
+correction and current-main measurements are recorded first.
+
+
+## Host-acceptance correction — 2026-09-14
+
+Clone: `/home/bawes/work/shu251units`; branch:
+`fix/shu251-service-user-and-secret`. Clean starting HEAD and local current main
+both resolved to `0bb9b7b1c25dbe9aa2d2263fd262673a70bc4c2b`.
+
+The coordinator-reported approved host window **failed startup**. With no
+`User=`/`Group=`, systemd ran the supervisor as root against the canonical
+`/srv/shu/state/workspaces` owned by shu-coordinator, mode 0700. It refused with
+`AssertionError: SHU251_SUPERVISOR_PATH: private owned socket parent required`.
+An ownership-bypassed diagnostic attempt then refused with
+`Error: supervisor secret must be at least 32 bytes`. This is a reported host
+finding, not a host operation performed or reproduced in this correction.
+
+Both service templates now render `User=` and `Group=` from `serviceUser` and
+`serviceGroup`, defaulting to shu-coordinator and the selected user respectively.
+The existing socket-parent assertion is unchanged. Policy checks require exactly
+one matching identity directive on each service and reject root configuration.
+
+Both templates now require the same external `EnvironmentFile=`, parameterized by
+`secretEnvironmentFile`, default `/etc/shu/supervisor.env`. The temporary installer
+renders and validates the reference without reading or generating a host secret.
+README supplies explicit account, state ownership and private 0600 root/coordinator
+file requirements plus a non-overwriting random-secret provisioning example for
+the later host window. No secret value is embedded in a unit.
+
+Exact sourcing: systemd loads `SHU_SUPERVISOR_SECRET` from that environment file
+into both processes. The supervisor entry point passes
+`process.env.SHU_SUPERVISOR_SECRET` to `startSupervisor`, then `DurableSupervisor`.
+The new service assertion requires a string/Buffer containing at least 32 bytes
+before durable state, recovery, socket creation or readiness. Existing
+`supervisor.mjs` validation still converts strings with `Buffer.from(secret ?? "")`
+and checks 32 bytes; HMAC-SHA256 uses those bytes without trimming/hex decoding.
+The coordinator signer reads `env.SHU_SUPERVISOR_SECRET` in
+`supervisor-dispatch.mjs`. A missing environment file is a systemd startup failure;
+a missing/short variable gets the named service AssertionError below.
+
+Both full measurements ran from the repo root under `umask 0002` after
+`chmod -R go-w .github/coordinator`, using both globs:
+
+```sh
+node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs
+```
+
+| Measurement | Tests | Passed | Failed | Skipped | Suites |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Current main / before host-acceptance fix | 851 | 844 | 0 | 7 | 0 |
+| After host-acceptance fix | 862 | 855 | 0 | 7 | 0 |
+
+All prior tests are retained. Service tests increased from 49 to 60, all passing.
+Seven full-suite skips are unchanged: six require distinct-UID execution and one
+has no undeclared runtime/role pair in the production vocabulary. No root run was
+performed. The standalone `service/verify.mjs` also passed syntax, exact rollback,
+and two disabled ticks with zero launches, zero writes and empty state diff.
+`git diff --check` passed.
+
+### Every new test (exact names)
+
+1. `SHU251 configured identity and external secret file survive staging`
+2. `SHU251 mutation: shu-supervisor.service User removed`
+3. `SHU251 mutation: shu-supervisor.service Group removed`
+4. `SHU251 mutation: shu-supervisor.service secret file removed or optional`
+5. `SHU251 mutation: shu-coordinator.service User removed`
+6. `SHU251 mutation: shu-coordinator.service Group removed`
+7. `SHU251 mutation: shu-coordinator.service secret file removed or optional`
+8. `SHU251 mutation: embedded secret in any unit refused`
+9. `SHU251 unsafe identity and secret file parameters fail before staging`
+10. `SHU251 mutation: missing or short secret refuses startup before state and readiness`
+11. `SHU251 service entry point fails closed when secret environment is missing`
+
+### New mutation and negative-control AssertionErrors
+
+Each mutation checks AssertionError identity and the following named text.
+Deep equality assertions may append Node actual/expected diagnostics.
+
+| Mutation / negative control | Named AssertionError text |
+| --- | --- |
+| supervisor User removed | `SHU251_IDENTITY: shu-supervisor.service must run with configured User` |
+| supervisor Group removed | `SHU251_IDENTITY: shu-supervisor.service must run with configured Group` |
+| coordinator User removed | `SHU251_IDENTITY: shu-coordinator.service must run with configured User` |
+| coordinator Group removed | `SHU251_IDENTITY: shu-coordinator.service must run with configured Group` |
+| secret file removed or made optional, either service | `SHU251_SECRET_FILE: services must require the shared secret environment file` |
+| secret literal added, any of the three units | `SHU251_SECRET_LITERAL: units must not embed supervisor secrets` |
+| invalid/root identity parameter | `SHU251_IDENTITY: non-root service user and group names required` |
+| invalid secret file parameter | `SHU251_SECRET_FILE: plain absolute environment file path required` |
+| missing/short secret, including missing environment in real entry point | `SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes` |
+
+All changes are within `.github/coordinator/service`: units, renderer, lifecycle
+entry point, tests and documentation. No assertion was weakened; config.json and
+production code outside the service plane were untouched. No push, PR interaction,
+host service action or /srv access occurred. No repository defect remains unfixed.
+Actual host provisioning, account/ownership verification and systemd startup
+acceptance remain for the later coordinator-controlled host window. Local syntax
+verification carries the already documented /run cache-marker side effect.
+The delivery response records the commit SHA and exact diff stat against base.
+
+## Historical focused correction
+
 Focused-fix base HEAD was verified as `aa9892f9c0fd661aefc8b17888c68b88455f8b47` before edits,
 on `feat/shu-251-host-service-plane`, in `/home/bawes/work/shu251`, with a clean tree.
 The final commit SHA and exact base-to-commit diff stat accompany this report in
