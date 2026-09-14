@@ -1,5 +1,93 @@
 # Single-run host activation (SHU-63)
 
+
+## Reviewed two-fixture extension (dispatch remains disabled)
+
+The versioned `two-fixture-v1` envelope is the only accepted two-fixture
+activation shape. Legacy records below retain their one-issue, one-slot
+semantics; a legacy record still refuses a two-issue configuration.
+
+No command in this change arms, installs or launches anything. The verifier is
+read-only: it cannot create a record, change a gate, modify a card, or merge.
+Arming is permitted only through the reviewed path, with **both gates bound
+and set through that reviewed operation**, never by hand-editing the record,
+card state, committed flag or environment. There is no arming command in this
+patch. The committed flag remains false. A signed reviewed gate substitutes
+for that flag for this pair only; the separate runtime gate is still required.
+The ordinary two-boolean committed path cannot bypass review for a pair scope.
+
+The exact required top-level keys are:
+
+| Field | Required binding |
+| --- | --- |
+| `kind` | Literal `two-fixture-v1` |
+| `activation_id` | Unique reviewed episode identity, 8–64 ASCII letters, digits, underscore or hyphen |
+| `coordinator_revision` | Exact 40-character lowercase SHA of both the executing checkout and its `refs/heads/main` |
+| `slots` | Integer 2, equal to committed `max_dispatch` |
+| `expires_at` | UTC ISO timestamp, future and at most 24 hours away |
+| `stop_before_merge` | Literal `true`; no merge authority is granted |
+| `fixtures` | Exactly two entries, one SHU-140 and one SHU-254 |
+| `gates` | Exactly boolean `reviewed` and `runtime`, with equal values |
+| `signature` | Base64 Ed25519 signature of the complete canonical envelope excluding this field |
+
+Each fixture entry contains exactly `issue_id`, `branch`, `seed_head`, and
+`lane`. The branch must be `coordinator/<issue_id>`. `seed_head` is that lane's
+own exact 40-character lowercase SHA. `lane` is the **complete committed lane
+object**, including ID, authorization reference, note, initial paths, revision
+paths and seeded defect path. Both lane objects must also satisfy the existing
+hard-coded fixture scope policy. The signature binds all of these fields,
+including both gate values. Object keys are recursively sorted; array ordering
+is preserved, as implemented by `reviewedActivationBytes()`.
+
+Review authentication uses the Ed25519 SPKI PEM public key in reviewed
+configuration field `two_fixture_activation_public_key`. This patch supplies
+no operational key or record. Missing or invalid trust configuration refuses;
+a signature or boolean inside a record cannot appoint its own trusted key.
+Private-key custody and the operation that sets the runtime gate remain part
+of separately reviewed deployment. They are not exposed by the validator.
+
+| Named refusal | Condition |
+| --- | --- |
+| `ACT_MISSING_FIXTURE` | Record binds fewer than two fixtures |
+| `ACT_EXTRA_FIXTURE` | Record binds more than two fixtures |
+| `ACT_LANE_CROSS` | Wrong pair, crossed paths, changed lane definition, wrong lane ID or branch |
+| `ACT_DUPLICATE_LANE` | Repeated issue or lane in the record, or duplicate configured lane |
+| `ACT_CAPACITY_DRIFT` | Record concurrency is not two, or committed capacity disagrees |
+| `ACT_STALE_SEED_HEAD` | Either lane head is unresolved or differs from its seed SHA |
+| `ACT_MALFORMED` | Missing/extra/invalid fields, invalid SHA, missing/expired/overlong expiry, false stop-before-merge, or coordinator/main revision mismatch |
+| `ACT_PARTIAL_ARMING` | Only one signed gate is set, either fixture lacks a resolvable Linear identity, or either configured lane is missing |
+| `ACT_MANUAL_GATE_BYPASS` | Missing/invalid signature or trusted key, changed signed payload, manually enabled committed gate, or runtime gate differs from the signed review |
+
+Checks are ordered; multiple faults report the first refusal. All refusals stop
+dispatch. Both signed gates false with runtime off is a valid **disabled**
+review, not an armed status. Both signed gates true require matching runtime
+state and every other binding. This evaluation does not set either gate.
+
+The existing `--activation` status path recognizes this schema and projects one
+unfinished fixture at a time into the existing episode machinery. A running
+fixture leaves the next idle fixture selectable; each tick still reserves at
+most once. Both issue IDs remain claim boundaries. Each first build uses its
+own bound seed head. Episode spending, author exclusion, per-card writer locks,
+receipt persistence and successor routing retain their existing implementations.
+
+Head verification reads both GitHub branch heads and resolves both Linear
+identities with bounded read-only API requests on every validation, including
+supervisor child authorization. Missing credentials, API errors and unresolved
+heads or identities fail closed. Tests inject evidence without network access.
+The coordinator/main revision comes from the executing checkout. Strict seed
+equality is checked on every validation: advancing either fixture branch
+refuses the authorization. No reseeding or manual ref repair is authorized.
+This strict rule is intentionally narrower than the legacy single-fixture
+same-branch continuation: a later changed head requires a separately reviewed
+authorization. No live two-fixture proof is claimed by these offline tests.
+
+`test/two-fixture-activation.test.mjs` exercises each named refusal with positive
+controls, nine removed-check mutations killed by their named AssertionErrors,
+required-field coverage, signature tampering, in-memory status integration, and
+an actual gates-off coordinator tick. No activation file is created by these tests.
+
+## Legacy single-fixture mechanism
+
 Dispatch has always required two gates in different layers:
 
 1. the **committed** flag — `config.json` → `enable_dispatch` (false by default, and
@@ -244,9 +332,31 @@ readable for the local copy, and is removed after preparation.
 
 ### SHU-241: scoped builder source and base-preserving publication
 
-The watched SHU-140 builder never receives the review trap's blob. Trusted
-`fixture_lane` configuration pins two exact literal path arrays: the initial
-build paths and a predeclared revision superset. The seeded defect path is
+Each fixture builder's initial checkout excludes its review trap's blob. The
+legacy `fixture_lane` object continues to define SHU-140 with unchanged paths.
+The optional `fixture_lanes` array adds lane definitions with the same fields;
+it currently contains SHU-254. IDs must be unique across both surfaces, and the
+coordinator resolves the lane by the issue it is acting on, never by list order.
+
+| Issue | Initial build paths | Additional revision path / seeded defect |
+| --- | --- | --- |
+| SHU-140 | `tools/fixture/scan-vacuous.mjs`, `tools/fixture/test/scan-vacuous.test.mjs` | `tools/fixture-conformance/scan-vacuous.expectations.mjs` |
+| SHU-254 | `tools/fixture-2/scan-unawaited.mjs`, `tools/fixture-2/test/scan-unawaited.test.mjs` | `tools/fixture-2-conformance/scan-unawaited.expectations.mjs` |
+
+Each definition pins `initial_build_paths`, `revision_paths` (the initial paths
+plus that lane's trap), and `seeded_defect_path`. SHU-140 retains its existing
+`authorization_ref`; SHU-254 uses its canonical card reference `SHU-254`.
+Neither reference is an activation approval. Scoped receipt recovery and
+workspace preparation reject another lane's manifest with `LANE_MISMATCH`.
+
+The committed dispatch scope is exactly `["SHU-140", "SHU-254"]` with
+`max_dispatch: 2` and `enable_dispatch: false`. Live arming still requires
+explicit approval and both dispatch gates. The single-run record documented
+above remains constrained to one issue and one slot and therefore refuses the
+committed two-lane configuration; this change does not extend activation.
+
+Trusted lane configuration pins the initial build paths and a predeclared
+revision superset. The seeded defect path is
 required to be outside the initial set and inside the revision set; otherwise
 dispatch refuses before reservation. Globs, directories, traversal, `.git`,
 duplicates and non-normalized paths are not scope authority.

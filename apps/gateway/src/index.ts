@@ -1,3 +1,6 @@
+import { handleCandidateDocuments } from './candidate-documents-http.js';
+import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-runtime.js';
+import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
 import { Telemetry, disabledTelemetry, telemetryMode, newSpan, inSpan, classifyJourney, type Fault } from '../../../packages/observability/src/index.js';
 import { randomBytes } from "node:crypto";
@@ -123,6 +126,7 @@ export function createGatewayServer(
   login?: BrowserLoginApplication,
   sourceRevision: string | null = readImageSourceRevision(),
   telemetry: Telemetry = disabledTelemetry,
+  documents?: CandidateDocuments,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -150,6 +154,7 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
+    if (await handleCandidateDocuments(request, response, documents)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;
@@ -229,6 +234,26 @@ export function createGatewayServer(
       } catch {
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      if (result.status === 200 && login.web) {
+        try {
+          const requesterPrincipalId = result.body?.personId;
+          if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
+            throw new Error("invalid authorized profile");
+          }
+          const profile = await login.web.profiles.readOwn({
+            requesterPrincipalId,
+            targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
+          });
+          result = profile.kind === "found"
+            ? { status: 200, body: profile.profile }
+            : profile.kind === "not_found"
+              ? { status: 404, body: { error: "profile_not_found" } }
+              : { status: 503, body: { error: "profile_unavailable" } };
+        } catch {
+          fault = 'dependency_unavailable';
+          result = { status: 503, body: { error: "profile_unavailable" } };
+        }
       }
       if (html) {
         try {
@@ -410,6 +435,7 @@ if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
   const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
+  const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
   const telemetry = new Telemetry(telemetryMode(process.env));
   const server = createGatewayServer(
     new UnconfiguredMcpAdapter(),
@@ -418,8 +444,9 @@ if (entrypoint === import.meta.url) {
     runtimeLogin?.application,
     readImageSourceRevision(),
     telemetry,
+    runtimeDocuments?.service,
   );
-  server.once("close", () => { void runtimeLogin?.close(); void telemetry.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });

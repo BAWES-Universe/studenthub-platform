@@ -175,7 +175,14 @@ test("SHU-243 workflow gates image build and push on the env-store check", () =>
   assert.match(workflow, /application\/vnd\.github\.raw\+json/);
   assert.match(workflow, /if: \$\{\{ github\.event_name != 'pull_request_target' \}\}/);
   assert.match(workflow, /build-push:\n    if:.*\n    needs: env-manifest/);
-  assert.match(workflow, /deploy:\n    if: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' \}\}/);
+  assert.match(workflow, /deploy:\n(?:    #.*\n)*    if: \$\{\{ github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main' \}\}\n    needs: env-manifest/,
+    "MANUAL_DEPLOY_ONLY: deployment must require main dispatch and the environment gate");
+  const deploy = workflow.slice(workflow.indexOf("\n  deploy:"));
+  assert.doesNotMatch(deploy, /github\.event_name == 'push'/,
+    "NO_MERGE_DEPLOY: push must never authorize deployment");
+  const recorded = deploy.indexOf('path: selected-artifact.json');
+  assert.ok(recorded >= 0 && recorded < deploy.indexOf('run: node deploy/coolify/trigger-selected.mjs'),
+    "RECORD_BEFORE_TRIGGER: selection upload must precede deployment");
   assert.doesNotMatch(workflow, /DEPLOYMENT_ENV_MANIFEST_PATH:/);
   assert.match(workflow, /Validate proposed manifest as untrusted data/);
   assert.match(workflow, /Verify trusted Coolify deployment environment/);

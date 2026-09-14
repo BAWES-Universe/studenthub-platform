@@ -109,7 +109,7 @@ test('gateway: concurrent web, audit and worker failures share only the minted c
   const login: BrowserLoginApplication = {
     start: async () => { throw new Error(JSON.stringify(secrets)); }, callback: async () => { throw new Error(JSON.stringify(secrets)); },
     profile: async () => ({ status: 200, body: { personId: 'synthetic-person' } }), logout: async () => ({ status: 204 }),
-    web: { origin: 'https://synthetic.invalid', readProfile: async () => { throw new Error(JSON.stringify(secrets)); } },
+    web: { origin: 'https://synthetic.invalid', profiles: { readOwn: async () => { throw new Error(JSON.stringify(secrets)); } } },
   };
   const server = createGatewayServer({ callTool: async () => observedJob(async () => { throw new Error(JSON.stringify(secrets)); }, telemetry) }, undefined, fixture.middleware, login, null, telemetry);
   const origin = await listen(server);
@@ -128,7 +128,7 @@ test('gateway: concurrent web, audit and worker failures share only the minted c
     assert.equal(gateway.contexts.trace.trace_id, trace); assert.equal(worker.contexts.trace.trace_id, trace);
     assert.equal(worker.contexts.trace.parent_span_id, gateway.contexts.trace.span_id);
     const webEvent = events.find(e => e.tags.component === 'web');
-    assert.equal(webEvent.tags.fault, 'render_failure'); assert.equal(webEvent.contexts.trace.trace_id, web.headers.get('x-request-id'));
+    assert.equal(webEvent.tags.fault, 'dependency_unavailable'); assert.equal(webEvent.contexts.trace.trace_id, web.headers.get('x-request-id'));
     assert.equal(snapshot.metrics['gateway:mcp_call:failure'].count, 1); assert.equal(snapshot.metrics['web:profile_read:failure'].count, 1);
   } finally { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await telemetry.close(); }
 });
