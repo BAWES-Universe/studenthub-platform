@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { IMAGE } from './select-artifact.mjs';
+import { previous, rollbackIO } from './rollback-artifact.mjs';
 import { DeploymentOutcome, triggerSelected, diagnostic } from './trigger-selected.mjs';
 
 const STAGING = 'https://staging.studenthub.co';
@@ -105,20 +106,7 @@ function liveIO(env) {
       if (!response.ok) fail('PRECONDITION_NOT_MET', 'staging target could not be verified');
       assertStagingTag(await response.json(), selection);
     },
-    previous: async () => {
-      const digest = inspect(`${IMAGE}:latest`);
-      if (!/^sha256:[a-f0-9]{64}$/.test(digest ?? '')) fail('PRECONDITION_NOT_MET', 'rollback digest unavailable');
-      const pin = `${IMAGE}@${digest}`;
-      // Read the baked revision, and smoke-test the rollback artifact as well.
-      execute('docker', ['pull', pin]);
-      const revision = execute('docker', ['run', '--rm', '--entrypoint', 'cat', pin, '/image-source-revision']).trim();
-      if (!/^[a-f0-9]{40}$/.test(revision)) fail('PRECONDITION_NOT_MET', 'rollback revision unavailable');
-      const response = await fetch(`${STAGING}/health`, { redirect: 'error', signal: AbortSignal.timeout(15_000) });
-      const health = await response.json();
-      if (!response.ok || health.status !== 'ok' || health.component !== 'gateway' || health.revision !== revision) fail('PRECONDITION_NOT_MET', 'rollback artifact is not the healthy running revision');
-      execute('bash', ['deploy/coolify/image-smoke.sh', pin]);
-      return { image: IMAGE, digest, pin, revision };
-    },
+    previous: () => previous(rollbackIO(env)),
     freeze: (selected, previous) => gh([issuePath, '-X', 'POST', '-f', `title=${FREEZE_TITLE}`, '-f', `body=Staging deployment in progress. This issue gates further staging deployments until verification succeeds. If interrupted or failed, retain the freeze for owner review.\nRun: https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}\nSelected: ${selected.pin} (${selected.revision})\nRollback: ${previous.pin} (${previous.revision})`]).number,
     promote: (selection) => execute('docker', ['buildx', 'imagetools', 'create', '--prefer-index=false', '--tag', `${IMAGE}:latest`, selection.pin]),
     assertDigest,
