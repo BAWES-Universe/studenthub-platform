@@ -146,10 +146,10 @@ of the exact state-specific shapes below. This schema covers status, not submiss
 | `result` | JSON object or null; adapter payload, whose callback authority is validated separately |
 | `heartbeat` | parseable timestamp string or null |
 
-Every success retains all eight base fields above. ACCEPTED and HOLD additionally
+Every success retains all eight base fields above. ACCEPTED and receiptless HOLD additionally
 require exactly one `hold_code` from `intended-work.mjs`'s enumerated HOLD_CODES.
-ACCEPTED has null result and heartbeat. RUNNING/COMPLETED/FAILED instead require
-exactly one `launch_receipt`, equal to the durable confirmed-spawn receipt. No
+ACCEPTED has null result and heartbeat. RUNNING/COMPLETED/FAILED and confirmed-spawn
+operational HOLD instead require exactly one `launch_receipt`, equal to the durable confirmed-spawn receipt. No
 other fields are accepted; fields cannot be removed or renamed.
 
 Ordinary refusals have exactly `ok: false`, `stage: "HOLD"`, and string `reason`.

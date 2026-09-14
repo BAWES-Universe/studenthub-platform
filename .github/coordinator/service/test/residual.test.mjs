@@ -199,6 +199,9 @@ test('SHU251_STATUS_SHAPE exact variants reject removed renamed and extra fields
     if (['running', 'completed', 'failed'].includes(state)) store.markLaunch(order.attempt_id, confirmedReceipt());
     variants.push(supervisor.status(request));
   }
+  store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'hold' });
+  variants.push(supervisor.status(request)); // Confirmed spawn with operational HOLD retains its receipt.
+  store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'failed' });
   fs.unlinkSync(store.paths(order.attempt_id).launch);
   variants.push(supervisor.status(request));
   store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'unknown' });
@@ -214,8 +217,8 @@ test('SHU251_STATUS_SHAPE exact variants reject removed renamed and extra fields
     for (const key of Object.keys(status)) {
       const removed = { ...status }; delete removed[key];
       // Receipt identity remains a named RECEIPT failure, never a silent pass.
-      const failure = status.ok && ['RUNNING', 'COMPLETED', 'FAILED'].includes(status.stage)
-        && ['attempt_id', 'target_sha', 'launch_receipt'].includes(key) ? RECEIPT : SHAPE;
+      const failure = status.ok && Object.hasOwn(status, 'launch_receipt')
+        && ['attempt_id', 'target_sha', 'launch_receipt'].includes(key) && !(status.stage === 'HOLD' && key === 'launch_receipt') ? RECEIPT : SHAPE;
       assert.throws(() => assertStatusShape(removed, context), named(failure));
       assert.throws(() => assertStatusShape({ ...removed, [`renamed_${key}`]: status[key] }, context), named(failure));
     }

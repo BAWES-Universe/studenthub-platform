@@ -38,8 +38,9 @@ export function assertStatusShape(status, { store, attemptId } = {}) {
   assert.ok(status && typeof status === 'object' && !Array.isArray(status), SHAPE);
   assert.equal(typeof status.ok, 'boolean', SHAPE);
   const execution = ['RUNNING', 'COMPLETED', 'FAILED'].includes(status.stage);
+  const receipted = execution || (status.stage === 'HOLD' && Object.hasOwn(status, 'launch_receipt'));
   // Receipt failures must remain distinguishable even on a forged admission shape.
-  if (status.ok && execution) {
+  if (status.ok && receipted) {
     assert.ok(store && attemptId === status.attempt_id && store.hasLaunch(attemptId), RECEIPT);
     const launch = store.readLaunch(attemptId), order = store.readOrder(attemptId);
     assert.ok(launch.attempt_id === attemptId && launch.phase === 'launched' && /^[0-9a-f]{64}$/.test(launch.completion_token_hash), RECEIPT);
@@ -48,7 +49,7 @@ export function assertStatusShape(status, { store, attemptId } = {}) {
     assert.deepEqual(status.launch_receipt, launch, RECEIPT);
   }
   const keys = status.ok
-    ? ['version', 'ok', 'durable', 'attempt_id', 'target_sha', 'stage', 'result', 'heartbeat', execution ? 'launch_receipt' : 'hold_code']
+    ? ['version', 'ok', 'durable', 'attempt_id', 'target_sha', 'stage', 'result', 'heartbeat', receipted ? 'launch_receipt' : 'hold_code']
     : ['ok', 'stage', 'reason', ...(status.reason === 'supervisor attempt unavailable' ? ['hold_code'] : [])];
   assert.deepEqual(Object.keys(status).sort(), keys.sort(), SHAPE);
   if (!status.ok) {
@@ -66,7 +67,7 @@ export function assertStatusShape(status, { store, attemptId } = {}) {
   assert.ok(['ACCEPTED', 'RUNNING', 'HOLD', 'COMPLETED', 'FAILED'].includes(status.stage), SHAPE);
   assert.ok(status.result === null || (typeof status.result === 'object' && !Array.isArray(status.result)), SHAPE);
   assert.ok(status.heartbeat === null || (typeof status.heartbeat === 'string' && Number.isFinite(Date.parse(status.heartbeat))), SHAPE);
-  if (!execution) assert.ok(HOLD_CODES.includes(status.hold_code), SHAPE);
+  if (!receipted) assert.ok(HOLD_CODES.includes(status.hold_code), SHAPE);
   if (status.stage === 'ACCEPTED') {
     assert.equal(status.result, null, SHAPE);
     assert.equal(status.heartbeat, null, SHAPE);

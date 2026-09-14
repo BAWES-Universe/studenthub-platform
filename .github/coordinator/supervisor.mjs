@@ -491,7 +491,7 @@ export class DurableSupervisor {
       // ACCEPTED is queue admission; announce() independently remains UNLAUNCHED.
       return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
         attempt_id: order.attempt_id, target_sha: order.target_sha, stage,
-        ...(execution ? { launch_receipt: report.launch_receipt }
+        ...((execution || hasLaunchReceipt(report.launch_receipt, order)) ? { launch_receipt: report.launch_receipt }
           : { hold_code: requireHoldCode(run.hold_code ?? report.hold_code ?? 'AWAITING_LAUNCH') }),
         result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
     } catch (error) {

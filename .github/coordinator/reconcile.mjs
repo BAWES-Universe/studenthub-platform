@@ -1728,6 +1728,7 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
   lines.push(`adapter_pause_map=${JSON.stringify(config.adapter_pause_map ?? {})}`);
   if (selection.candidate) {
     lines.push(`UNLAUNCHED ${selection.candidate.id} via ${selection.adapter}; HOLD=${dispatchEnabled ? 'MISSING_CLAIM' : 'MISSING_AUTHORITY'}`);
+    if (!dispatchEnabled) lines.push(`next reservation (if dispatch were on): ${selection.candidate.id} via ${selection.adapter}`);
   } else {
     lines.push(`HOLD=${eligibility.ready.length ? "CAPACITY_FULL" : "NO_ELIGIBLE_WORK"}; no launch` + (selection.skipped.length ? ` — ${selection.skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}` : ""));
   }
