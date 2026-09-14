@@ -5,8 +5,12 @@ WORKDIR /app
 # npm must see every workspace before installing, including newly added packages.
 COPY . .
 RUN npm ci --ignore-scripts
-RUN npm run build && npm prune --omit=dev
+RUN npm run build
+# The closure parser uses build-only TypeScript before production pruning.
 RUN node deploy/coolify/stage-workspaces.mjs /runtime-workspaces
+RUN npm prune --omit=dev
+# npm prune may recreate workspace links; retain only the derived closure.
+RUN node deploy/coolify/prune-workspace-links.mjs /runtime-workspaces/runtime-closure.json
 
 FROM node:22.19.0-bookworm-slim AS runtime
 
@@ -27,10 +31,9 @@ WORKDIR /app
 
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-# Generated from npm's workspace links; no per-package allowlist to go stale.
+# Only the mechanically derived runtime closure and bounded assets.
 COPY --from=build /runtime-workspaces/ ./
-COPY deploy/coolify ./deploy/coolify
+COPY deploy/coolify/gateway-entrypoint.sh deploy/coolify/preflight.mjs deploy/coolify/assert-image-content.mjs ./deploy/coolify/
 
 RUN chmod 0555 deploy/coolify/gateway-entrypoint.sh
 USER node

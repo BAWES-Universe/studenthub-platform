@@ -38,6 +38,8 @@ while (( SECONDS < deadline )); do
     --write-out '%{http_code}' --max-time 2 http://127.0.0.1:3000/health) || code=000
   if [[ "$code" == 200 ]]; then
     echo "PASS: $assertion"
+    assertion="IMAGE_CONTENT: bounded runtime closure and no dangling workspace links"
+    docker exec "$container" node deploy/coolify/assert-image-content.mjs
     exit 0
   fi
   sleep 1
