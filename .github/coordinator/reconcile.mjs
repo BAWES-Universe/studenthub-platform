@@ -33,6 +33,7 @@ import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispat
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
 import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
+import { triageCoordinatorIncident } from "./incident-triage.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -2091,7 +2092,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       episodeScope: reportScope,
     });
     const event = deriveIncidentEvent({ activation: singleRunActivation, receipts: reportReceipts, config, episodeDecision });
-    return reportCoordinatorIncident({
+    const incident = await reportCoordinatorIncident({
       event,
       authorized: Boolean(event) && !reportingExceptionAllowsLaunch(singleRunActivation),
       targetLinearId: linearIdFor.get(targetIssueId),
@@ -2105,6 +2106,26 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       timeoutMs: io.incidentTimeoutMs,
       timeoutImpl: io.incidentTimeout,
     });
+    if (incident.status === "confirmed" && event) {
+      try {
+        await triageCoordinatorIncident({
+          event,
+          confirmed: true,
+          token: linearToken,
+          githubToken,
+          fetchImpl,
+          sendLinear,
+          commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
+          now: io.now?.() ?? new Date(),
+          stdout: io.stdout,
+          timeoutMs: io.incidentTimeoutMs,
+          timeoutImpl: io.incidentTimeout,
+        });
+      } catch {
+        if (io.stdout) io.stdout(`incident-triage: ${event.event_id} STATE_UNREADABLE; episode remains stopped`);
+      }
+    }
+    return incident;
   };
 
   let lifecyclePersisted = false; // a lifecycle transition was durably written this run
