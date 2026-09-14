@@ -5,11 +5,18 @@ made no deployment, dispatch, or Coolify configuration change. The two operator
 reported dispatches (34834697047 and 34835669797 at 43c6d923) both failed; they
 are not evidence of a successful rollout.
 
-**Separate tracked operator item: replace staging's mutable `latest` pin.** The
-application is currently pinned to `latest` according to the supplied operational
-evidence (not re-read in this lane). This code fix does not change that pin and
-cannot make a dispatch succeed until the separately authorized operator completes
-step 2 below. No external tracking issue was created by this lane.
+**These failures do not justify changing the live staging pin.** The first run
+failed the digest comparison. The second emitted a generic catch message whose
+underlying exception was not retained; the valid archived selection and masked
+settings do not establish a pin-check failure. See the timestamped evidence and
+remaining limits in [TRIGGER-DIAGNOSIS.md](TRIGGER-DIAGNOSIS.md). Do not change a
+pin or redispatch as a remedy inferred from these runs.
+
+For a separately authorized future deployment, an immutable digest pin is still
+required by `assertSelectedApplication` before POST. This is a deployment contract,
+not the established cause of either historical failure, and satisfying it does
+not guarantee a dispatch will succeed. The steps below describe that future
+operation; this correction performs no live configuration changes.
 
 A push to main runs the unchanged environment-manifest gate, then builds/pushes
 `ghcr.io/bawes-universe/studenthub-gateway:main-<full-40-character-sha>` and
