@@ -1,9 +1,22 @@
 # Publish, select, deploy (SHU-256)
 
-Implementation only: no workflow has been pushed, no deployment dispatched, and
-no Coolify configuration changed. The merge freeze remains in force. This clone
-started at local main 50db30ee3c48b9fe4a056a253cd13992cfaba772; no remote refresh
-was performed.
+This document describes the deployment contract. The focused diagnosis/fix lane
+made no deployment, dispatch, or Coolify configuration change. The two operator
+reported dispatches (34834697047 and 34835669797 at 43c6d923) both failed; they
+are not evidence of a successful rollout.
+
+**These failures do not justify changing the live staging pin.** The first run
+failed the digest comparison. The second emitted a generic catch message whose
+underlying exception was not retained; the valid archived selection and masked
+settings do not establish a pin-check failure. See the timestamped evidence and
+remaining limits in [TRIGGER-DIAGNOSIS.md](TRIGGER-DIAGNOSIS.md). Do not change a
+pin or redispatch as a remedy inferred from these runs.
+
+For a separately authorized future deployment, an immutable digest pin is still
+required by `assertSelectedApplication` before POST. This is a deployment contract,
+not the established cause of either historical failure, and satisfying it does
+not guarantee a dispatch will succeed. The steps below describe that future
+operation; this correction performs no live configuration changes.
 
 A push to main runs the unchanged environment-manifest gate, then builds/pushes
 `ghcr.io/bawes-universe/studenthub-gateway:main-<full-40-character-sha>` and
@@ -30,7 +43,19 @@ After the freeze is lifted and this change is separately approved for rollout:
    emitted `coolifyTag` (`sha256-<64-hex>`). Do not select Redeploy in the UI.
    This representation is documented in the
    [Coolify Docker Image guide](https://coolify.io/docs/applications/deployments/docker-image).
-   Confirm the installed version exposes this value through the application API;
+   Verify with a separately authorized read of
+   `GET /api/v1/applications/<gateway-application-uuid>`: `build_pack` must be
+   `dockerimage`, `docker_registry_image_name` must be the repository above,
+   `docker_registry_image_tag` must exactly equal the emitted `coolifyTag`, and
+   `fqdn` must be `https://staging.studenthub.co`. Inspect only these fields;
+   do not print tokens, environment values or the complete application response.
+   For the measured selection, revision is
+   `43c6d923f2f66b303f4851c2f01fa43a86566c75`, digest is
+   `sha256:80851c284177581f2d4c9bbed5f24cab5665c54a3efec5f39463081203b1ae72`,
+   and the exact Docker Image Tag or Hash must be
+   `sha256-80851c284177581f2d4c9bbed5f24cab5665c54a3efec5f39463081203b1ae72`.
+   Neither `latest` nor `main-43c6d923f2f66b303f4851c2f01fa43a86566c75`
+   meets this digest-pin precondition. Confirm the installed version exposes this value through the application API;
    an unsupported representation fails closed. Configuration is never PATCHed by
    this workflow. Serialize operator configuration changes through completion of
    deployment: the GET-to-trigger check is not a transactional lock on Coolify.
@@ -43,14 +68,40 @@ After the freeze is lifted and this change is separately approved for rollout:
 4. The deploy job reads the application's metadata, requiring Docker Image mode,
    the expected repository, exact digest and `https://staging.studenthub.co`.
    `latest`, another digest, or another target fails before POST. The job then
-   requests deployment and uploads `deployment-receipt.json` with deployment
-   UUIDs. A trigger/receipt failure fails the job; no error is swallowed. A lost
-   response can mean deployment was accepted: inspect history before retrying.
-5. Confirm the selected digest in the deployment log and the revision in gateway
-   health through a separately authorized staging verification. A trigger receipt
-   alone does not prove successful deployment. Roll back by selecting a previous
+   requests deployment once and reads each returned UUID using
+   `GET /api/v1/deployments/<deployment-uuid>` (not the global deployment list).
+   The [deploy response](https://coolify.io/docs/api/endpoints/deployments/deploy-by-tag-or-uuid)
+   supplies UUIDs, not completion status; the
+   [deployment lookup](https://coolify.io/docs/api/endpoints/deployments/get-deployment-by-uuid)
+   supplies status. All returned deployments must reach `finished`; the app must
+   retain its pin and report `running:healthy`; the unauthenticated staging
+   `/health` must return `status: ok`, `component: gateway`, and the selected
+   `revision`. Only then is `DEPLOYMENT_SUCCEEDED` recorded and the receipt
+   uploaded. The Coolify credential is never sent to the health endpoint.
+   Ensure the runner can read these endpoints and the gateway's Docker readiness
+   check is enabled; serialize all other deployment/configuration paths through
+   verification. The total script deadline is five minutes, with five-second
+   polling and requests bounded to fifteen seconds or the remaining deadline.
+5. Treat the following nonzero outcomes distinctly:
+   - `PRECONDITION_NOT_MET`: local configuration or the saved app pin/target is
+     wrong; no POST was sent for a failed pin check. Complete the precondition.
+   - `TRIGGER_REJECTED`: POST explicitly refused with HTTP 400, 401, 403, 404,
+     405, 422 or 429. This is not a failed deployment.
+   - `DEPLOYMENT_FAILED`: a returned, matching deployment UUID has status
+     `failed`, `cancelled` or `cancelled-by-user`.
+   - `DEPLOYMENT_UNKNOWN`: missing/empty/malformed receipt, lost response,
+     ambiguous server error, unavailable lookup, wrong UUID, unfamiliar status,
+     changed pin or deadline without verified health. Inspect history before
+     retrying; POST is never automatically retried. No deployment created is
+     not evidence of deployment failure.
+   Known UUIDs are retained in a local receipt on verification failure. With the
+   unchanged workflow gates, the following upload step runs only on success;
+   failure diagnostics remain in the job log. Runner/job cancellation can prevent
+   script diagnostics or receipt writes and does not prove deployment failure.
+6. Preserve the receipt and publication record. Roll back by selecting a previous
    recorded digest and repeating this explicit flow, subject to migration
-   compatibility; never restore `latest` as rollback authority.
+   compatibility; never restore `latest` as rollback authority. Successful
+   verification is a point-in-time observation, not a guarantee of future uptime.
 
 PR `pull_request_target` types, trusted-base checkout, proposed-manifest-as-data,
 secret handling and environment checks are unchanged. No PR code is run by a new
@@ -71,8 +122,8 @@ node deploy/coolify/deployment-watch.mjs --repo <owner/repo> --run <run-id> --si
 Use the actual repository slug. `gh` must already
 have read access. The script calls `gh api` once and verifies the run's workflow
 path; it makes no Coolify calls. Schedule polls while that run is active. A failed
-build/env gate is also a gateway workflow failure. A successful trigger run cannot
-detect a later Coolify failure; for those, a separately provisioned read-only
+build/env gate is also a gateway workflow failure. A successfully verified run cannot
+detect a subsequent runtime failure; for those, a separately provisioned read-only
 collector must supply normalized Coolify events:
 
 ```sh
