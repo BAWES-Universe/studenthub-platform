@@ -15,6 +15,9 @@
   "linear_callback_actor_ids": [
     "48918d3d-f843-483f-bb23-2ba6c7ace499"
   ],
+  "linear_receipt_actor_ids": [
+    "48918d3d-f843-483f-bb23-2ba6c7ace499"
+  ],
   "max_failed_attempts": 3,
   "fixture_lane": {
     "id": "SHU-140",
