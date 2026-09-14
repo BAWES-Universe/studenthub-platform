@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { startSupervisor, supervisorState, probeProcess } from '../supervisor-service.mjs';
@@ -155,4 +156,30 @@ test('SHU251 occupied socket refuses startup before recovery', async t => {
       name: 'AssertionError', message: 'SHU251_SUPERVISOR_SOCKET: occupied or stale socket requires operator inspection',
     });
   } finally { await service.stop(); }
+});
+
+test('SHU251 mutation: missing or short secret refuses startup before state and readiness', async t => {
+  for (const invalid of [undefined, '', 'short', Buffer.alloc(31)]) {
+    const params = fixture(t);
+    let ready = false, spawned = false;
+    await assert.rejects(() => startSupervisor({ ...params, secret: invalid,
+      ready: () => { ready = true; }, spawnWorker: () => { spawned = true; return child(); } }), {
+      name: 'AssertionError', message: 'SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes',
+    });
+    assert.equal(ready, false);
+    assert.equal(spawned, false);
+    assert.equal(fs.existsSync(params.stateDir), false);
+    assert.equal(fs.existsSync(params.socketPath), false);
+  }
+});
+test('SHU251 service entry point fails closed when secret environment is missing', t => {
+  const params = fixture(t);
+  const result = spawnSync(process.execPath, [new URL('../supervisor-service.mjs', import.meta.url).pathname], {
+    env: { PATH: process.env.PATH, SHU_SUPERVISOR_STATE_DIR: params.stateDir, SHU_SUPERVISOR_SOCKET: params.socketPath },
+    encoding: 'utf8', timeout: 5000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /AssertionError \[ERR_ASSERTION\]: SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes/);
+  assert.equal(fs.existsSync(params.stateDir), false);
+  assert.equal(fs.existsSync(params.socketPath), false);
 });

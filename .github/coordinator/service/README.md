@@ -5,6 +5,65 @@ exact file rollback, and lifecycle composition of the merged SHU-250 supervisor.
 Nothing installs, enables or starts host services. All executed verification uses
 local temporary fixtures. Running-system acceptance remains a host-only step.
 
+## Host startup requirements
+
+The host-acceptance run could not start: the units ran as root against the
+coordinator-owned 0700 socket parent, then an ownership-bypassed diagnostic run
+found an unprovisioned secret. Neither assertion may be bypassed in deployment.
+Before the coordinator-controlled host re-run, the operator must provide:
+
+- An existing coordinator account and group. Both system services render
+  `User=shu-coordinator` and `Group=shu-coordinator` by default. Set `serviceUser`
+  and optionally `serviceGroup` (defaults to `serviceUser`) to the actual owner.
+  Root identities are refused. The account must be able to traverse this checkout
+  and execute the configured Node binary and reviewed service commands.
+- The canonical `/srv/shu/state/workspaces` directory owned by that service user,
+  mode **0700**, as required by `docs/SHU-63-activation-contract.md`. The socket
+  parent must be a real, non-symlink directory owned by the running UID with no
+  group/other permission bits; preserve the existing assertion. Supervisor state
+  must also be accessible to that user. Ownership changes are a host operation.
+- A separately provisioned **0600 regular environment file**, owned by root or
+  the coordinator, in a private directory owned by root or the coordinator.
+  Both units require `EnvironmentFile=/etc/shu/supervisor.env`; customize the
+  absolute path with `secretEnvironmentFile`. There is no optional `-` prefix:
+  systemd refuses startup when the file is missing. Do not put secret values in
+  parameters.json, units, drop-ins, argv, version control, or staging backups.
+  The installer stages only the reference and does not create or read secrets.
+- One shared, random `SHU_SUPERVISOR_SECRET` value of at least 32 bytes in that
+  file. Systemd loads it into both processes. Do not include dispatch gates or
+  other settings in this secret-only file. Retain the reviewed activation and
+  adapter configuration separately; provisioning a secret does not enable work.
+
+For the **later authorized host window only**, the following root-run example
+creates a new private file without printing its secret or overwriting an existing
+one (adapt the location to `secretEnvironmentFile`). These commands are not part
+of local staging or verification:
+
+```sh
+sudo python3 - <<'PY_SECRET'
+import os, secrets
+os.umask(0o077)
+os.makedirs('/etc/shu', mode=0o700, exist_ok=True)
+# For an existing directory, verify root/coordinator ownership and 0700 first.
+with open('/etc/shu/supervisor.env', 'x', encoding='ascii') as output:
+    output.write('SHU_SUPERVISOR_SECRET=' + secrets.token_hex(32) + '\n')
+PY_SECRET
+```
+
+The example writes 32 random bytes encoded as 64 ASCII hex characters. The code
+uses those **64 UTF-8 bytes directly**, without hex decoding or trimming:
+`supervisor-service.mjs` reads `process.env.SHU_SUPERVISOR_SECRET` and passes it as
+`secret` to `startSupervisor`, then `DurableSupervisor`. `supervisor.mjs` accepts
+a Buffer or converts the string with `Buffer.from(secret ?? "")`, requires at
+least 32 bytes, and uses it as the HMAC-SHA256 key. Coordinator transport reads
+`env.SHU_SUPERVISOR_SECRET` in `supervisor-dispatch.mjs` for the same signer.
+The service now refuses missing/short values before durable state, recovery,
+listening or readiness with `AssertionError`:
+`SHU251_SUPERVISOR_SECRET: SHU_SUPERVISOR_SECRET must contain at least 32 bytes`.
+The underlying supervisor validation remains intact. Rotate only under a
+coordinator-controlled quiescent window and restart both processes with the same
+file value. Never use the test fixture secret on a host.
+
 ## Local verification and required CI
 
 Requirements: Linux, Node.js, `/usr/bin/flock`, `/usr/bin/systemd-notify` for an
@@ -34,7 +93,8 @@ Create an owned private directory under the system temporary directory. The
 clone: Node runs `service/supervisor-service.mjs` and `reconcile.mjs` directly.
 Inputs are `workdir`, optional `workspaceStateDir` (defaults to the exported
 `WORKSPACE_STATE_DIR`), and optional `supervisorStateDir`,
-`supervisorSocket`, and absolute Node executable `node`. Defaults place supervisor
+`supervisorSocket`, absolute Node executable `node`, `serviceUser`, `serviceGroup`,
+and `secretEnvironmentFile` (defaults and requirements above). Defaults place supervisor
 state in `workspaceStateDir/supervisor` and its socket in
 `workspaceStateDir/supervisor.sock`. Serialize the returned object to parameters.json:
 
@@ -48,7 +108,7 @@ argv arrays. `fixtureParameters()` uses `/usr/bin/true` solely for syntax testin
 these commands cannot signal readiness and must not be promoted to a host.
 The real entry point needs the same at-least-32-byte `SHU_SUPERVISOR_SECRET` as
 coordinator transport. Units provide the shared socket path, workspace state
-path and supervisor state path. Credentials, service identity, activation file,
+path and supervisor state path. The external secret file, configured service account, activation file,
 `DISPATCH_TARGET_SHA`, and other adapter/workspace settings require reviewed host
 configuration. No secret is rendered into staged units. The generated coordinator
 argv does not arm an activation; an authorized deployment must supply its reviewed
