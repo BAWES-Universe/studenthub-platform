@@ -33,6 +33,17 @@ export function assertImageContent(root = '/app') {
   }
   walk(root);
   assert.deepEqual(inventory, { typescript: 0, maps: 0, tests: 0, sourceDirectoriesOutsideBuiltOutput: 0, danglingWorkspaceLinks: 0 }, 'IMAGE_CONTENT_CLASSES: no TypeScript, source maps, tests, source trees or dangling workspace links');
+  // Derive membership independently of closure.packages: a workspace must own a
+  // reached built file. This catches a forged/over-inclusive package inventory.
+  for (const { name, path } of closure.workspaces) {
+    const reached = closure.code.some(file => file.startsWith(`${path}/`) || file.startsWith(`dist/${path}/`));
+    const staged = existsSync(resolve(root, path, 'package.json'));
+    assert.ok(!staged || reached, `CLOSURE_DECLARED_BUT_UNIMPORTED: staged workspace is not reachable: ${name}`);
+    assert.ok(!reached || staged, `CLOSURE_REACHABLE_NOT_STAGED: IMAGE_CONTENT_COMPLETE: reachable workspace is not staged: ${name}`);
+    const link = resolve(root, 'node_modules', name);
+    assert.ok(!staged || existsSync(link), `CLOSURE_STAGED_NOT_LINKED: staged workspace has no resolution path: ${name}`);
+    assert.ok(!existsSync(link) || reached, `CLOSURE_LINKED_NOT_REFERENCED: linked workspace is not reachable: ${name}`);
+  }
   for (const file of allowed) assert.ok(existsSync(resolve(root, file)), `IMAGE_CONTENT_COMPLETE: missing ${file}`);
   for (const { name, path } of closure.workspaces) {
     const included = closure.packages.some(pkg => pkg.name === name);

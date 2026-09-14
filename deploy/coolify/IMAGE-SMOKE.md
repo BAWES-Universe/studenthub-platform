@@ -28,23 +28,24 @@ workspace names and paths from lockfile links, validated by `npm ci`. Those link
 are candidates, not permission to ship a workspace. The only application process
 is the gateway; its entrypoint also runs the DB migration executable.
 
-The algorithm is a fixed-point traversal seeded by the gateway manifest and the
-emitted gateway and migration entrypoints. For each reached workspace it follows
-`package.json` **dependencies**, never `devDependencies`, transitively. It follows
-that package's runtime exports/main entrypoints and parses emitted imports, re-exports, literal
-`import()`/`require()` calls, and `new URL(..., import.meta.url)` worker references
-with the build-only TypeScript parser. Relative edges are followed recursively;
-paths under a locked workspace grant that workspace membership. This captures
-private-documents and idempotency-contract despite their relative imports, plus
-observability (which is not an npm workspace). Type-only imports disappeared in
-compilation and confer no membership. Nonliteral imports/worker URLs fail the
-build rather than silently omitting code. Unsupported wildcard exports fail explicitly; adding one requires extending the resolver.
-Unreferenced emitted modules cannot grant additional workspace authority.
+The algorithm traverses built JavaScript from exactly
+`dist/apps/gateway/src/index.js` and `packages/db/dist/migrate.js`, following
+relative imports/re-exports, literal `import()`/`require()` and
+`new URL(..., import.meta.url)` worker edges until no new files remain.
+It reads `package-lock.json` workspace links and each linked workspace's
+`package.json` for identity/path discovery and selected `exports`/`main`
+resolution only: neither dependencies nor devDependencies grants membership.
+The TypeScript parser reads only reached emitted JavaScript; source TypeScript,
+manifest `files`, unrelated output and unselected public exports cannot add edges.
+Package subpaths select their exact export and the first matching Node
+import/require/default condition; unsupported exports and nonliteral references
+fail closed. Relative paths grant membership to their owning locked workspace,
+including private-documents and idempotency-contract; observability has no
+workspace manifest and contributes reached code only.
 Results are sorted and serialized to
 `/app/runtime-closure.json`. There is no package-name allowlist.
 
-A newly referenced workspace enters automatically through a production dependency
-or emitted import; removing its last runtime edge excludes it. The staging tree
+A newly referenced workspace enters automatically through an emitted import; removing its last runtime edge excludes it. The staging tree
 contains only closure manifests, emitted `.js`/`.mjs`/`.cjs` output, and DB SQL
 migrations. The one asset rule is explicit: `migrate.js` reads
 `packages/db/migrations/*.sql` at startup; unknown migration file classes fail the
@@ -53,8 +54,10 @@ TypeScript (including declarations), map, test suite, docs, tools, credentials,
 or unrelated root build output is copied. Only the entrypoint, preflight, and
 content assertion are copied from deployment tooling.
 
-After staging, npm prunes development dependencies. Unused workspace links are
-removed again because npm can recreate them during prune. Every retained link
+After staging, npm prunes development dependencies. All workspace links are
+reconciled again because npm can recreate or omit them during prune. Reached
+workspaces receive relative links under their exact manifest name/scope, and
+unreached workspaces lose their links. Every retained link
 must resolve to its matching closure manifest; excluded workspaces have neither
 a manifest nor a link. Third-party production packages retain their runtime
 files, with TypeScript, maps, tests, fixtures directories, docs and tools removed.
@@ -73,8 +76,8 @@ named `src` anywhere would be false. No `.ts` files remain even in these paths.
 profile's public `index.js` unconditionally re-exports it, so Node must load it
 when the gateway imports profile. It contains synthetic profile data. Removing
 it requires an application/export change, outside this packaging fix. No fixture
-suite or fixture directory is staged. Other exported built modules (for example
-login-contract conformance) remain part of their package's built output.
+suite or fixture directory is staged. Only exports selected by reached imports are traversed; login-contract is
+declared but unimported and is excluded.
 
 ### Current closure and file classes
 
@@ -84,14 +87,17 @@ login-contract conformance) remain part of their package's built output.
 | `@studenthub/contracts` | package.json; package-local dist JavaScript; reached root dist JavaScript |
 | `@studenthub/db` | package.json; package-local dist JavaScript; migration SQL |
 | `@studenthub/gateway` | package.json; reached root dist JavaScript |
-| `@studenthub/idempotency-contract` | package.json; package-local dist JavaScript; reached root dist JavaScript |
-| `@studenthub/login-contract` | package.json; package-local dist JavaScript |
+| `@studenthub/idempotency-contract` | package.json; reached root dist JavaScript |
 | `@studenthub/private-documents` | package.json; reached root dist JavaScript |
 | `@studenthub/profile` | package.json; package-local dist JavaScript, including the required fixtures.js export |
 
 Observability contributes only reached root dist JavaScript, including the
 telemetry worker. The worker application, search, safe-write-contract,
-source-connection-contract and all four tool workspaces are excluded.
+source-connection-contract, login-contract and all four tool workspaces are excluded.
+In this clone, gateway authz-middleware/login-runtime import `@bawes/actor-assertion`,
+so it remains reachable and receives that exact scoped link. This differs from
+the established deployed-image counterexample; it does not justify staging a
+package that is merely declared.
 
 ### Assertions and mutation coverage
 
@@ -110,7 +116,15 @@ and the image gate wiring. Algorithm mutants must throw named `AssertionError`s:
 Content mutations inject TypeScript/maps/tests, source trees, unused packages,
 missing manifests and dangling links; each must fail the relevant
 `IMAGE_CONTENT_CLASSES`, `IMAGE_CONTENT_BOUNDED`, or `IMAGE_CONTENT_COMPLETE`
-assertion. These tests run through the existing root `npm test` deployment glob.
+assertion. Additional mutations restore dependency-driven traversal, inject a declared but
+unimported staged workspace (even with a valid link), remove a reached manifest,
+remove a needed link, and add an unreferenced link. They require named
+`CLOSURE_DECLARED_BUT_UNIMPORTED`, `CLOSURE_REACHABLE_NOT_STAGED`,
+`CLOSURE_STAGED_NOT_LINKED`, and `CLOSURE_LINKED_NOT_REFERENCED` failures.
+The fixture compares the staged package set to a separately computed import
+closure in both directions; the content guard additionally compares staged
+manifests/links to ownership of reached code, independently of its package list.
+These tests run through the existing root `npm test` deployment glob.
 
 ## Local reproduction and mutation
 
