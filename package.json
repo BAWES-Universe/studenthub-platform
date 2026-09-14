@@ -20,7 +20,7 @@
     "dry-run:import": "npm run build && node dist/tools/legacy-import/src/dry-run.js",
     "typecheck": "npm run build -w @bawes/actor-assertion && npm run build -w @studenthub/contracts && npm run build -w @studenthub/login-contract && npm run build -w @studenthub/source-connection-contract && npm run build -w @studenthub/safe-write-contract && npm run build -w @studenthub/idempotency-contract && npm run build -w @studenthub/db && npm run build -w @studenthub/profile && tsc --noEmit",
     "test:assertion": "vitest run packages/actor-assertion/test",
-    "test:coordinator": "node --test .github/coordinator/test/*.test.mjs",
+    "test:coordinator": "node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs",
     "test:idempotency:mutations": "node packages/idempotency-contract/test/mutations.mjs",
     "test:profile:mutations": "node packages/profile/test/mutations.mjs",
     "test:deployment": "node --test deploy/coolify/test/*.test.mjs",

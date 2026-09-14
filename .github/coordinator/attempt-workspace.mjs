@@ -1,3 +1,4 @@
+import { LANE_NAMES, resolveReceiptRoleAuthority, isWriterRole } from "./launch-vocabulary.mjs";
 // Host-side checkout preparation. Each attempt gets an independent repository:
 // a linked git worktree would expose the coordinator's common .git to a writer.
 // Remote operations run only in a fresh coordinator-owned bare repository; the
@@ -11,7 +12,7 @@ import { baseBundlePath } from "./base-bundle.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
-const BINDINGS = ["attempt_id", "issue_id", "authorization_ref", "requested_worker", "repo", "branch", "target_sha", "workspace_scope", "scope_phase", "scoped_base_sha"];
+const BINDINGS = ["receipt_version", "role", "runtime", "attempt_id", "issue_id", "authorization_ref", "requested_worker", "repo", "branch", "target_sha", "workspace_scope", "scope_phase", "scoped_base_sha"];
 const SCOPED_IDENTITY_ENV = Object.freeze({
   GIT_AUTHOR_NAME: "StudentHub coordinator",
   GIT_AUTHOR_EMAIL: "coordinator@users.noreply.github.com",
@@ -125,16 +126,20 @@ function publicReadOnlyTree(dir) {
 export function prepareAttemptWorkspace({ receipt, env = process.env, resume = false,
   allowedRepo = "BAWES-Universe/studenthub-platform", allowedHost = "github.com" } = {}) {
   if (!UUID.test(receipt?.attempt_id ?? "") || !SHA.test(receipt?.target_sha ?? "") ||
-      receipt?.repo !== allowedRepo || !["codex-builder", "claude-verifier"].includes(receipt?.requested_worker)) {
+      receipt?.repo !== allowedRepo || !LANE_NAMES.includes(receipt?.requested_worker)) {
     throw new Error("invalid attempt workspace binding");
   }
+  const authority = resolveReceiptRoleAuthority(receipt);
+  if (!authority.ok) throw new Error(authority.reason);
   const normalized = normalizeReceiptWorkspaceScope(receipt);
   if (!normalized.ok) throw new Error(`invalid attempt workspace scope: ${normalized.reason}`);
   const normalizedReceipt = { ...receipt, ...normalized.scope };
   const scope = validateWorkspaceScope(normalizedReceipt, { requireScopedBase: true });
-  if (receipt.requested_worker === "claude-verifier" && (normalizedReceipt.workspace_scope !== "full" || normalizedReceipt.scope_phase !== "review")) {
+  if (authority.role === "review" && (normalizedReceipt.workspace_scope !== "full" || normalizedReceipt.scope_phase !== "review")) {
     throw new Error("reviewer checkout must be complete and unscoped");
   }
+  if (!scope.ok) throw new Error(scope.reason);
+  if (isWriterRole(authority.role) && normalizedReceipt.scope_phase === "review") throw new Error("writer checkout cannot use review scope");
   const root = directory(env.SHU_WORKTREE_ROOT);
   const rootStat = fs.statSync(root);
   if ((rootStat.mode & 0o7777) !== 0o3770) {
@@ -156,7 +161,7 @@ export function prepareAttemptWorkspace({ receipt, env = process.env, resume = f
   const binding = { ...Object.fromEntries(BINDINGS.map(k => [k, normalizedReceipt[k]])), allowed_paths: [...normalizedReceipt.allowed_paths] };
   const hostEnv = brokerGitEnv(env);
   const workerEnv = brokerGitEnv({ PATH: env.PATH ?? process.env.PATH, HOME: "/nonexistent", LANG: "C.UTF-8" });
-  const writer = receipt.requested_worker === "codex-builder";
+  const writer = isWriterRole(authority.role);
   const wrapper = writer ? (env.SHU_WORKER_LAUNCH_WRAPPER ?? "").trim().split(/\s+/).filter(Boolean) : [];
   if (writer && (wrapper.length === 0 || !/^\d+$/.test(env.SHU_WORKER_UID ?? "") ||
       Number(env.SHU_WORKER_UID) === 0 || Number(env.SHU_WORKER_UID) === process.getuid())) {

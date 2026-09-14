@@ -26,7 +26,7 @@ import net from "node:net";
 import { dirname, join } from "node:path";
 import { validWorkOrder } from "./review-routing.mjs";
 
-export const SUPERVISOR_PROTOCOL_VERSION = "1.0.0";
+export const SUPERVISOR_PROTOCOL_VERSION = "2.0.0";
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const DEFAULT_DEADLINE_MS = 60 * 60 * 1000;
 export const MAX_REQUEST_BYTES = 64 * 1024;
@@ -68,19 +68,20 @@ function validateBoundOrder(order) {
   return { ok: true };
 }
 
-function macFor(order, secret) {
+function macFor(order, secret, operation = "submit") {
   return createHmac("sha256", assertSecret(secret))
-    .update(`${SUPERVISOR_PROTOCOL_VERSION}\n${canonical(order)}`)
+    .update(`${SUPERVISOR_PROTOCOL_VERSION}\n${operation}\n${canonical(order)}`)
     .digest("base64url");
 }
 
-export function signedSupervisorRequest(order, secret) {
+export function signedSupervisorRequest(order, secret, operation = "submit") {
   const valid = validateBoundOrder(order);
   if (!valid.ok) throw new Error(valid.reason);
   return {
     version: SUPERVISOR_PROTOCOL_VERSION,
     order,
-    mac: macFor(order, secret),
+    operation,
+    mac: macFor(order, secret, operation),
   };
 }
 
@@ -88,11 +89,12 @@ export function verifySupervisorRequest(request, secret) {
   if (!request || request.version !== SUPERVISOR_PROTOCOL_VERSION || typeof request.mac !== "string") {
     return { ok: false, reason: "invalid supervisor envelope" };
   }
+  if (!["submit", "status"].includes(request.operation ?? "submit")) return { ok: false, reason: "unknown supervisor operation" };
   const valid = validateBoundOrder(request.order);
   if (!valid.ok) return valid;
   let expected;
   try {
-    expected = Buffer.from(macFor(request.order, secret));
+    expected = Buffer.from(macFor(request.order, secret, request.operation));
   } catch (error) {
     return { ok: false, reason: error.message };
   }
@@ -164,6 +166,8 @@ function readJson(path) {
 export class SupervisorStore {
   constructor(root) {
     this.root = root;
+    this.branchesDir = join(root, "branches");
+    ensureDir(this.branchesDir);
     this.ordersDir = join(root, "orders");
     this.runsDir = join(root, "runs");
     this.launchesDir = join(root, "launches");
@@ -191,9 +195,30 @@ export class SupervisorStore {
       order,
       digest: createHash("sha256").update(canonical(order)).digest("hex"),
     };
+    // Append-only branch ownership chain: atomic creation elects one successor
+    // even if two clients/processes race with different attempt IDs. A claim
+    // without a provably finished child remains occupied after a crash.
+    if (!existsSync(paths.order)) {
+      const branchKey = createHash("sha256").update(`${order.repo}\n${order.branch}`).digest("hex");
+      let predecessor = "initial";
+      for (;;) {
+        const claim = join(this.branchesDir, `${branchKey}-${predecessor}.json`);
+        if (durableCreate(claim, { attempt_id: order.attempt_id })) break;
+        const owner = readJson(claim).attempt_id;
+        if (owner === order.attempt_id) break;
+        try {
+          const run = this.readRun(owner);
+          if (!["completed", "failed"].includes(run.status) || !this.validatedCompletion(owner).ok) {
+            return { ok: false, stage: "HOLD", reason: "branch already owned by an unfinished attempt" };
+          }
+        } catch { return { ok: false, stage: "HOLD", reason: "ambiguous branch ownership" }; }
+        predecessor = owner;
+      }
+    }
     const created = durableCreate(paths.order, durableOrder);
     if (!created) {
       const existing = readJson(paths.order);
+      if (existing.protocol !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, stage: "HOLD", reason: "unknown durable order version" };
       if (canonical(existing.order) !== canonical(order)) {
         return { ok: false, stage: "HOLD", reason: "attempt_id is already bound to a different work order" };
       }
@@ -213,7 +238,9 @@ export class SupervisorStore {
   }
 
   readOrder(attemptId) {
-    return readJson(this.paths(attemptId).order).order;
+    const stored = readJson(this.paths(attemptId).order);
+    if (stored.protocol !== SUPERVISOR_PROTOCOL_VERSION) throw new Error("unknown durable order version");
+    return stored.order;
   }
 
   readRun(attemptId) {
@@ -261,6 +288,10 @@ export class SupervisorStore {
     if (!token || tokenHash !== launch.completion_token_hash || targetSha !== order.target_sha) {
       return { ok: false, reason: "completion binding failed" };
     }
+    if (completion.version !== undefined && completion.version !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, reason: "unknown result version" };
+    // Legacy exit-only records carry no callback authority. Evidence requires v2.
+    if (completion.result && completion.version !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, reason: "unversioned result" };
+    if (Buffer.byteLength(canonical(completion)) > MAX_REQUEST_BYTES / 2) return { ok: false, reason: "result too large" };
     const exitCode = completion.exit_code;
     if (!(exitCode === null || Number.isInteger(exitCode))) return { ok: false, reason: "invalid completion exit code" };
     if (completion.signal !== null && completion.signal !== undefined && (
@@ -270,6 +301,8 @@ export class SupervisorStore {
       return { ok: false, reason: "invalid completion timestamp" };
     }
     const durable = {
+      version: SUPERVISOR_PROTOCOL_VERSION,
+      result: completion.result ?? null,
       attempt_id: attemptId,
       target_sha: targetSha,
       status: exitCode === 0 ? "completed" : "failed",
@@ -293,6 +326,7 @@ export class SupervisorStore {
       return { ok: false, reason: "completion evidence is missing" };
     }
     const stored = this.readCompletion(attemptId);
+    if (stored.version !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, reason: "unknown durable result version" };
     const launch = this.readLaunch(attemptId);
     const order = this.readOrder(attemptId);
     const tokenHash = createHash("sha256").update(String(stored.completion_token ?? "")).digest("hex");
@@ -367,9 +401,28 @@ export class DurableSupervisor {
     this.shutdownHolds = new Set();
   }
 
+  status(request) {
+    const verified = verifySupervisorRequest(request, this.secret);
+    if (!verified.ok) return { ok: false, stage: "HOLD", reason: verified.reason };
+    try {
+      const order = this.store.readOrder(request.order.attempt_id);
+      for (const key of ["attempt_id", "target_sha", "repo", "branch", "role", "runtime", "issue_id", "authorization_ref"]) {
+        if (order[key] !== request.order[key]) return { ok: false, stage: "HOLD", reason: "status binding mismatch" };
+      }
+      const run = this.store.readRun(order.attempt_id);
+      const terminal = this.store.hasCompletion(order.attempt_id) ? this.store.validatedCompletion(order.attempt_id) : null;
+      if (terminal && !terminal.ok) return { ok: false, stage: "HOLD", reason: terminal.reason };
+      return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
+        attempt_id: order.attempt_id, target_sha: order.target_sha,
+        stage: run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase(),
+        result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
+    } catch { return { ok: false, stage: "HOLD", reason: "supervisor attempt unavailable" }; }
+  }
+
   async submit(request) {
     const verified = verifySupervisorRequest(request, this.secret);
     if (!verified.ok) return { ok: false, stage: "HOLD", reason: verified.reason };
+    if (request.operation === "status") return this.status(request);
     const accepted = this.store.accept(request.order, this.now());
     if (!accepted.ok) return accepted;
     const run = accepted.run;
@@ -377,6 +430,7 @@ export class DurableSupervisor {
       this.schedule(() => void this.launch(request.order.attempt_id));
     }
     return {
+      version: SUPERVISOR_PROTOCOL_VERSION,
       ok: true,
       stage: run.status.toUpperCase(),
       attempt_id: request.order.attempt_id,
@@ -461,7 +515,8 @@ export class DurableSupervisor {
         output_bytes: outputBytes,
         finished_at: this.now(),
       };
-      const recorded = status === "hold" ? null : this.store.recordCompletion(completion);
+      const recorded = status === "hold" ? null : this.store.hasCompletion(attemptId)
+        ? this.store.validatedCompletion(attemptId) : this.store.recordCompletion(completion);
       this.store.writeRun(attemptId, {
         ...this.store.readRun(attemptId),
         status,
@@ -479,6 +534,20 @@ export class DurableSupervisor {
         child.kill?.("SIGTERM");
       }
     };
+    // IPC contains adapter-observed data only. No callback is derived from exit
+    // codes, elapsed time, or a heartbeat. The coordinator validates it again.
+    child.on?.("message", (message) => {
+      if (terminal) return;
+      if (message?.version !== SUPERVISOR_PROTOCOL_VERSION) {
+        finish("hold", { error_code: "UNKNOWN_CONTRACT", reason: "unknown worker message version" });
+        child.kill?.("SIGTERM");
+        return;
+      }
+      if (message.attempt_id !== attemptId || message.target_sha !== running.target_sha) return;
+      if (message.type === "heartbeat" && typeof message.at === "string" && Number.isFinite(Date.parse(message.at))) {
+        this.store.writeRun(attemptId, { ...this.store.readRun(attemptId), heartbeat: message.at });
+      }
+    });
     child.stdout?.on?.("data", output);
     child.stderr?.on?.("data", output);
     child.stdout?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stdout failed" }));
@@ -505,11 +574,13 @@ export class DurableSupervisor {
     for (const attemptId of this.store.attempts()) {
       this.store.repairAccepted(attemptId, this.now());
       const run = this.store.readRun(attemptId);
+      if (run.status === "hold") { results.push(run); continue; }
       if (this.store.hasCompletion(attemptId)) {
         const validated = this.store.validatedCompletion(attemptId);
         results.push(this.store.writeRun(attemptId, validated.ok ? {
           ...run,
           ...validated.completion,
+          output_bytes: Math.max(run.output_bytes ?? 0, validated.completion.output_bytes ?? 0),
           completion_durable: true,
           recovered_at: this.now(),
         } : {
@@ -632,6 +703,17 @@ export async function listenSupervisor({
 
 export function submitToSupervisor({ socketPath, request, timeoutMs = 5_000 }) {
   return new Promise((resolve) => {
+    try {
+      const socketStat = lstatSync(socketPath), parent = lstatSync(dirname(socketPath));
+      if (!socketStat.isSocket() || (socketStat.mode & 0o077) || socketStat.uid !== process.getuid()
+          || !parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) || parent.uid !== process.getuid()) {
+        resolve({ ok: false, stage: "HOLD", reason: "unsafe supervisor socket ownership or permissions" });
+        return;
+      }
+    } catch {
+      resolve({ ok: false, stage: "HOLD", reason: "supervisor unavailable; direct spawn is forbidden" });
+      return;
+    }
     const socket = net.createConnection(socketPath);
     let body = "";
     let done = false;
@@ -655,7 +737,9 @@ export function submitToSupervisor({ socketPath, request, timeoutMs = 5_000 }) {
       const newline = body.indexOf("\n");
       if (newline === -1) return;
       try {
-        finish(JSON.parse(body.slice(0, newline)));
+        const response = JSON.parse(body.slice(0, newline));
+        finish(response.ok && response.version !== SUPERVISOR_PROTOCOL_VERSION
+          ? { ok: false, stage: "HOLD", reason: "unknown supervisor response version" } : response);
       } catch {
         finish({ ok: false, stage: "HOLD", reason: "invalid supervisor response" });
       }

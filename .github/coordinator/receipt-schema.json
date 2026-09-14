@@ -24,7 +24,9 @@
     "notes"
   ],
   "properties": {
-    "receipt_version": { "type": "string", "const": "1.0.0" },
+    "receipt_version": { "type": "string", "enum": ["1.0.0", "1.1.0"] },
+    "role": {"type": "string", "enum": ["build", "review", "revise"]},
+    "runtime": {"type": "string", "enum": ["codex-cli", "claude-code", "hermes-pool"]},
     "issue_id": { "type": "string", "minLength": 1 },
     "attempt_id": {
       "type": "string",
@@ -49,7 +51,7 @@
     "requested_worker": {
       "type": "string",
       "description": "Worker FAMILY requested (distinct from worker_identity, which is the actual session/run identity once one exists).",
-      "enum": ["codex-builder", "claude-verifier", "hermes-box"]
+      "enum": ["codex-builder", "claude-verifier", "hermes-box", "codex-verifier", "claude-builder", "hermes-verifier"]
     },
     "worker_identity": {
       "type": ["string", "null"],
@@ -195,6 +197,7 @@
           }
         }
       }
-    }
+    },
+    {"description": "1.1.0 introduces authoritative role/runtime; retained 1.0.0 receipts are never backfilled.", "if": {"properties": {"receipt_version": {"const": "1.1.0"}}}, "then": {"required": ["role", "runtime"]}, "else": {"not": {"anyOf": [{"required": ["role"]}, {"required": ["runtime"]}]}}}
   ]
 }

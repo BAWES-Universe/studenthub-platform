@@ -85,7 +85,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
-import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, REVIEW_LANES } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid } from "./review-routing.mjs";
+// SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
+// the activation record's accepted lanes and the routing module's review
+// capability can never drift apart.
+import { REVIEW_LANES } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -242,6 +246,10 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   // needs a usable lineage to name a next actor, and a finished loop has no next
   // actor to name. The lane must match, though: a builder lane cannot carry a PASS,
   // and that contradiction is left to the routing to name below.
+  if (terminal.receipt_version === "1.1.0") {
+    const authority = reviewVerdictProvenanceValid(terminal, issueReceipts);
+    if (!authority.ok) return { ended: true, reason: `role authority or author exclusion HOLD — ${authority.reason}` };
+  }
   const verdict = outcomeForEvidenceStage(terminal.verdict_stage);
   if (verdict?.outcome === "PASS" && verdictMatchesLane(terminal.requested_worker, terminal.verdict_stage)) {
     return { ended: true, reason: "review PASS — the episode is complete" };
