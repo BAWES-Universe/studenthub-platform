@@ -6,6 +6,8 @@
 // supervisor owns worker processes and terminal state. A missing supervisor is
 // HOLD; callers must never fall back to spawning a worker themselves.
 
+import assert from 'node:assert/strict';
+import { requireHoldCode, hasLaunchReceipt } from './intended-work.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
@@ -168,6 +170,7 @@ export class SupervisorStore {
     this.root = root;
     this.branchesDir = join(root, "branches");
     ensureDir(this.branchesDir);
+    this.intentsDir = join(root, "intents");
     this.ordersDir = join(root, "orders");
     this.runsDir = join(root, "runs");
     this.launchesDir = join(root, "launches");
@@ -188,7 +191,62 @@ export class SupervisorStore {
     };
   }
 
+  intentPath(order) {
+    this.paths(order.attempt_id);
+    assert.match(order.issue_id, /^[A-Za-z0-9-]+$/, 'ANNOUNCE_WITHOUT_CLAIM: safe issue binding required');
+    return join(this.intentsDir, `${order.issue_id}-${order.attempt_id}.json`);
+  }
+
+  intend(order, now, holdCode) {
+    requireHoldCode(holdCode);
+    assert.ok(validateBoundOrder(order).ok, 'ANNOUNCE_WITHOUT_CLAIM: a valid bound work order is required');
+    const path = this.intentPath(order);
+    durableCreate(path, { order, intended_at: now, hold_code: holdCode });
+    const intent = readJson(path);
+    assert.equal(canonical(intent.order), canonical(order), 'ANNOUNCE_WITHOUT_CLAIM: intent binding is immutable');
+    requireHoldCode(intent.hold_code);
+    return intent;
+  }
+
+  holdIntent(order, code) {
+    requireHoldCode(code);
+    const path = this.intentPath(order);
+    const intent = readJson(path);
+    durableReplace(path, { ...intent, hold_code: code });
+  }
+
+  pendingIntents() {
+    if (!existsSync(this.intentsDir)) return [];
+    return readdirSync(this.intentsDir).filter(name => name.endsWith('.json')).map(name => {
+      const intent = readJson(join(this.intentsDir, name));
+      requireHoldCode(intent.hold_code);
+      assert.equal(this.intentPath(intent.order), join(this.intentsDir, name), 'ANNOUNCE_WITHOUT_CLAIM: intent key mismatch');
+      return intent;
+    });
+  }
+
+  reportIntent(order) {
+    const path = this.intentPath(order);
+    if (!existsSync(path)) return { status: 'UNLAUNCHED', hold_code: requireHoldCode('MISSING_CLAIM'), next_automatic_action: null };
+    const intent = readJson(path);
+    requireHoldCode(intent.hold_code);
+    assert.equal(canonical(intent.order), canonical(order), 'ANNOUNCE_WITHOUT_CLAIM: report binding mismatch');
+    const launch = this.hasLaunch(order.attempt_id) ? this.readLaunch(order.attempt_id) : null;
+    if (!hasLaunchReceipt(launch, order)) return { status: 'UNLAUNCHED', hold_code: launch ? requireHoldCode('AMBIGUOUS_LAUNCH') : intent.hold_code, next_automatic_action: null };
+    return { status: this.readRun(order.attempt_id).status.toUpperCase(), launch_receipt: launch, next_automatic_action: null };
+  }
+
+  announce(order) {
+    assert.ok(existsSync(this.intentPath(order)), 'ANNOUNCE_WITHOUT_CLAIM: durable intent required before announcement');
+    return this.reportIntent(order);
+  }
+
   accept(order, now) {
+    try { this.intend(order, now, 'AWAITING_LAUNCH'); } catch (error) {
+      if (error.code !== 'ERR_ASSERTION') throw error;
+      if (error.message.startsWith('HOLD_CODE_REQUIRED')) throw error;
+      return { ok: false, stage: 'HOLD', reason: 'attempt_id is already bound to a different work order' };
+    }
     const paths = this.paths(order.attempt_id);
     const durableOrder = {
       protocol: SUPERVISOR_PROTOCOL_VERSION,
@@ -209,9 +267,14 @@ export class SupervisorStore {
         try {
           const run = this.readRun(owner);
           if (!["completed", "failed"].includes(run.status) || !this.validatedCompletion(owner).ok) {
-            return { ok: false, stage: "HOLD", reason: "branch already owned by an unfinished attempt" };
+            this.holdIntent(order, 'BRANCH_OCCUPIED');
+            return { ok: false, stage: "HOLD", hold_code: 'BRANCH_OCCUPIED', reason: "branch already owned by an unfinished attempt" };
           }
-        } catch { return { ok: false, stage: "HOLD", reason: "ambiguous branch ownership" }; }
+        } catch (error) {
+          if (error.code === 'ERR_ASSERTION') throw error;
+          this.holdIntent(order, 'MISSING_AUTHORITY');
+          return { ok: false, stage: "HOLD", hold_code: 'MISSING_AUTHORITY', reason: "ambiguous branch ownership" };
+        }
         predecessor = owner;
       }
     }
@@ -410,25 +473,31 @@ export class DurableSupervisor {
         if (order[key] !== request.order[key]) return { ok: false, stage: "HOLD", reason: "status binding mismatch" };
       }
       const run = this.store.readRun(order.attempt_id);
+      // Validate storage before either admission or execution projection.
+      if (!["accepted", "running", "hold", "completed", "failed"].includes(run.status)) {
+        return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
+      }
       const terminal = this.store.hasCompletion(order.attempt_id) ? this.store.validatedCompletion(order.attempt_id) : null;
       if (terminal && !terminal.ok) return { ok: false, stage: "HOLD", reason: terminal.reason };
-      // A run file alone is not evidence that spawn was attempted (SHU-86).
       const stage = run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase();
       if (!["ACCEPTED", "RUNNING", "HOLD", "COMPLETED", "FAILED"].includes(stage)) {
         return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
       }
-      if (["RUNNING", "COMPLETED", "FAILED"].includes(stage)) {
-        const launch = this.store.hasLaunch(order.attempt_id) ? this.store.readLaunch(order.attempt_id) : null;
-        if (launch?.attempt_id !== order.attempt_id || launch.phase !== "spawn_attempted"
-            || !/^[0-9a-f]{64}$/.test(launch.completion_token_hash)) {
-          return { ok: false, stage: "HOLD", reason: "launch receipt missing or invalid" };
-        }
+      const report = this.store.reportIntent(order);
+      const execution = ["RUNNING", "COMPLETED", "FAILED"].includes(stage);
+      if (execution && !hasLaunchReceipt(report.launch_receipt, order)) {
+        return { ok: false, stage: "UNLAUNCHED", reason: "launch receipt missing or invalid" };
       }
+      // ACCEPTED is queue admission; announce() independently remains UNLAUNCHED.
       return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
-        attempt_id: order.attempt_id, target_sha: order.target_sha,
-        stage,
+        attempt_id: order.attempt_id, target_sha: order.target_sha, stage,
+        ...((execution || hasLaunchReceipt(report.launch_receipt, order)) ? { launch_receipt: report.launch_receipt }
+          : { hold_code: requireHoldCode(run.hold_code ?? report.hold_code ?? 'AWAITING_LAUNCH') }),
         result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
-    } catch { return { ok: false, stage: "HOLD", reason: "supervisor attempt unavailable" }; }
+    } catch (error) {
+      if (error.code === 'ERR_ASSERTION') throw error;
+      return { ok: false, stage: "HOLD", hold_code: requireHoldCode('MISSING_CLAIM'), reason: "supervisor attempt unavailable" };
+    }
   }
 
   async submit(request) {
@@ -438,7 +507,8 @@ export class DurableSupervisor {
     const accepted = this.store.accept(request.order, this.now());
     if (!accepted.ok) return accepted;
     const run = accepted.run;
-    if (run.status === "accepted" && !this.store.hasLaunch(request.order.attempt_id)) {
+    if (run.status === "accepted" && !this.store.hasLaunch(request.order.attempt_id)
+        && this.store.reportIntent(request.order).hold_code === 'AWAITING_LAUNCH') {
       this.schedule(() => void this.launch(request.order.attempt_id));
     }
     return {
@@ -449,12 +519,15 @@ export class DurableSupervisor {
       target_sha: request.order.target_sha,
       durable: true,
       duplicate: accepted.duplicate,
+      ...this.store.announce(request.order),
     };
   }
 
   async launch(attemptId) {
     const run = this.store.readRun(attemptId);
     if (run.status !== "accepted") return run;
+    if (this.store.reportIntent(this.store.readOrder(attemptId)).hold_code !== 'AWAITING_LAUNCH'
+        && !this.store.hasLaunch(attemptId)) return run;
     const claimed = this.store.claimLaunch(attemptId, {
       attempt_id: attemptId,
       phase: "reserved",
@@ -505,6 +578,10 @@ export class DurableSupervisor {
         error_code: "PROCESS_IDENTITY_UNKNOWN",
         reason: "worker started without durable process-start evidence",
       } : {}),
+    });
+    this.store.markLaunch(attemptId, {
+      ...this.store.readLaunch(attemptId), phase: 'launched', issue_id: run.issue_id,
+      target_sha: run.target_sha, pid: child.pid, launched_at: this.now(),
     });
     this.children.set(attemptId, child);
     let terminal = false;
@@ -583,6 +660,11 @@ export class DurableSupervisor {
 
   recover() {
     const results = [];
+    // Recover intentions even if the process died before accept wrote an order.
+    for (const intent of this.store.pendingIntents()) {
+      if (intent.hold_code !== 'AWAITING_LAUNCH') continue;
+      this.store.accept(intent.order, this.now());
+    }
     for (const attemptId of this.store.attempts()) {
       this.store.repairAccepted(attemptId, this.now());
       const run = this.store.readRun(attemptId);
@@ -606,15 +688,20 @@ export class DurableSupervisor {
       }
       if (run.status === "accepted") {
         if (this.store.hasLaunch(attemptId)) {
+          const order = this.store.readOrder(attemptId);
+          this.store.intend(order, this.now(), 'AMBIGUOUS_LAUNCH');
+          this.store.holdIntent(order, 'AMBIGUOUS_LAUNCH');
           results.push(this.store.writeRun(attemptId, {
             ...run,
             status: "hold",
             recovered_at: this.now(),
+            hold_code: requireHoldCode("AMBIGUOUS_LAUNCH"),
             error_code: "AMBIGUOUS_LAUNCH",
             reason: "launch was attempted before restart; refusing duplicate spawn",
           }));
         } else {
-          this.schedule(() => void this.launch(attemptId));
+          const intent = this.store.intend(this.store.readOrder(attemptId), this.now(), 'AWAITING_LAUNCH');
+          if (intent.hold_code === 'AWAITING_LAUNCH') this.schedule(() => void this.launch(attemptId));
           results.push(run);
         }
       } else if (run.status === "running") {

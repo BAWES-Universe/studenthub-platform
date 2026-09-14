@@ -1727,9 +1727,10 @@ function printReport({ config, source, eligibility, selection, dispatchEnabled, 
   }
   lines.push(`adapter_pause_map=${JSON.stringify(config.adapter_pause_map ?? {})}`);
   if (selection.candidate) {
-    lines.push(`next reservation (if dispatch were on): ${selection.candidate.id} via ${selection.adapter}`);
+    lines.push(`UNLAUNCHED ${selection.candidate.id} via ${selection.adapter}; HOLD=${dispatchEnabled ? 'MISSING_CLAIM' : 'MISSING_AUTHORITY'}`);
+    if (!dispatchEnabled) lines.push(`next reservation (if dispatch were on): ${selection.candidate.id} via ${selection.adapter}`);
   } else {
-    lines.push(`next reservation: none` + (selection.skipped.length ? ` — ${selection.skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}` : ""));
+    lines.push(`HOLD=${eligibility.ready.length ? "CAPACITY_FULL" : "NO_ELIGIBLE_WORK"}; no launch` + (selection.skipped.length ? ` — ${selection.skipped.map((s) => `${s.id}: ${s.reason}`).join("; ")}` : ""));
   }
   return lines.join("\n");
 }
@@ -2183,6 +2184,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       }
       const idx = receipts.indexOf(receipt);
       if (idx >= 0) receipts[idx] = nextReceipt;
+      // A newly receipt-proven supervised launch can be monitored this tick.
+      // Otherwise its first terminal result/heartbeat would be delayed a tick.
+      if (adapterModule.supervised && nextReceipt.stage === 'RUNNING') {
+        const startIndex = lifecycleStartReceipts.indexOf(receipt);
+        if (startIndex >= 0) lifecycleStartReceipts[startIndex] = nextReceipt;
+      }
       if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} LAUNCH_UNKNOWN -> ${nextReceipt.stage} using the same attempt/idempotency key`);
     }
 
@@ -2472,7 +2479,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const adapter = adapterNameFor(requested_worker);
   if (successor) {
     if (io.stdout) {
-      io.stdout(`dispatch: episode successor — ${successor.role} via ${requested_worker} (attempt ${successor.attempt_id}, head ${target_sha}) under the armed activation`);
+      io.stdout(`dispatch: episode successor — ${successor.role} via ${requested_worker} (attempt ${successor.attempt_id}, head ${target_sha}) under the armed activation; UNLAUNCHED HOLD=MISSING_CLAIM`);
     }
     // Recheck at the write boundary, not merely while deriving selection. Linear
     // refresh/backfill can take long enough for the branch to move after the first

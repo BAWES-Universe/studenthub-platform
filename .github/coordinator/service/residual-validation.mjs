@@ -1,5 +1,6 @@
 // Local acceptance assertions; never installs services or contacts production.
 import assert from 'node:assert/strict';
+import { hasLaunchReceipt, HOLD_CODES } from '../intended-work.mjs';
 import { createEpisodeHarness } from '../test/fixture/episode-harness.mjs';
 import { tree, assertQuiet } from './verify.mjs';
 
@@ -36,10 +37,24 @@ export const RECEIPT = 'SHU251_STATUS_RECEIPT: a launch claim requires a matchin
 export function assertStatusShape(status, { store, attemptId } = {}) {
   assert.ok(status && typeof status === 'object' && !Array.isArray(status), SHAPE);
   assert.equal(typeof status.ok, 'boolean', SHAPE);
-  const keys = status.ok ? ['version', 'ok', 'durable', 'attempt_id', 'target_sha', 'stage', 'result', 'heartbeat'] : ['ok', 'stage', 'reason'];
+  const execution = ['RUNNING', 'COMPLETED', 'FAILED'].includes(status.stage);
+  const receipted = execution || (status.stage === 'HOLD' && Object.hasOwn(status, 'launch_receipt'));
+  // Receipt failures must remain distinguishable even on a forged admission shape.
+  if (status.ok && receipted) {
+    assert.ok(store && attemptId === status.attempt_id && store.hasLaunch(attemptId), RECEIPT);
+    const launch = store.readLaunch(attemptId), order = store.readOrder(attemptId);
+    assert.ok(launch.attempt_id === attemptId && launch.phase === 'launched' && /^[0-9a-f]{64}$/.test(launch.completion_token_hash), RECEIPT);
+    assert.ok(hasLaunchReceipt(launch, order), RECEIPT);
+    assert.equal(order.target_sha, status.target_sha, RECEIPT);
+    assert.deepEqual(status.launch_receipt, launch, RECEIPT);
+  }
+  const keys = status.ok
+    ? ['version', 'ok', 'durable', 'attempt_id', 'target_sha', 'stage', 'result', 'heartbeat', receipted ? 'launch_receipt' : 'hold_code']
+    : ['ok', 'stage', 'reason', ...(status.reason === 'supervisor attempt unavailable' ? ['hold_code'] : [])];
   assert.deepEqual(Object.keys(status).sort(), keys.sort(), SHAPE);
   if (!status.ok) {
-    assert.equal(status.stage, 'HOLD', SHAPE);
+    assert.equal(status.stage, status.reason === 'launch receipt missing or invalid' ? 'UNLAUNCHED' : 'HOLD', SHAPE);
+    if (status.reason === 'supervisor attempt unavailable') assert.equal(status.hold_code, 'MISSING_CLAIM', SHAPE);
     assert.equal(typeof status.reason, 'string', SHAPE);
     return;
   }
@@ -52,10 +67,9 @@ export function assertStatusShape(status, { store, attemptId } = {}) {
   assert.ok(['ACCEPTED', 'RUNNING', 'HOLD', 'COMPLETED', 'FAILED'].includes(status.stage), SHAPE);
   assert.ok(status.result === null || (typeof status.result === 'object' && !Array.isArray(status.result)), SHAPE);
   assert.ok(status.heartbeat === null || (typeof status.heartbeat === 'string' && Number.isFinite(Date.parse(status.heartbeat))), SHAPE);
-  if (['RUNNING', 'COMPLETED', 'FAILED'].includes(status.stage)) {
-    assert.ok(store && attemptId === status.attempt_id && store.hasLaunch(attemptId), RECEIPT);
-    const launch = store.readLaunch(attemptId);
-    assert.ok(launch.attempt_id === attemptId && launch.phase === 'spawn_attempted' && /^[0-9a-f]{64}$/.test(launch.completion_token_hash), RECEIPT);
-    assert.equal(store.readOrder(attemptId).target_sha, status.target_sha, RECEIPT);
+  if (!receipted) assert.ok(HOLD_CODES.includes(status.hold_code), SHAPE);
+  if (status.stage === 'ACCEPTED') {
+    assert.equal(status.result, null, SHAPE);
+    assert.equal(status.heartbeat, null, SHAPE);
   }
 }

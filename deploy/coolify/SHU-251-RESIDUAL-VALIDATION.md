@@ -133,7 +133,7 @@ node --test --test-name-pattern='SHU251_STATUS_SHAPE|required status field|statu
 ```
 
 The authenticated `operation: status` response is a JSON object with exactly one
-of these two shapes. This schema covers status, not submission acknowledgements.
+of the exact state-specific shapes below. This schema covers status, not submission acknowledgements.
 
 | Success field (all required; no additional fields) | Type/value |
 | --- | --- |
@@ -146,18 +146,40 @@ of these two shapes. This schema covers status, not submission acknowledgements.
 | `result` | JSON object or null; adapter payload, whose callback authority is validated separately |
 | `heartbeat` | parseable timestamp string or null |
 
-Refusal has exactly `ok: false`, `stage: "HOLD"`, and string `reason`.
-ACCEPTED means durably queued, not launched. RUNNING means a recorded worker;
-COMPLETED/FAILED are terminal states, not proof of a successful callback or publish.
-HOLD means uncertainty/refusal and retains capacity. A spawn failure can be FAILED
-with a spawn-attempt receipt without implying a successfully running child.
+Every success retains all eight base fields above. ACCEPTED and receiptless HOLD additionally
+require exactly one `hold_code` from `intended-work.mjs`'s enumerated HOLD_CODES.
+ACCEPTED has null result and heartbeat. RUNNING/COMPLETED/FAILED and confirmed-spawn
+operational HOLD instead require exactly one `launch_receipt`, equal to the durable confirmed-spawn receipt. No
+other fields are accepted; fields cannot be removed or renamed.
 
-RUNNING/COMPLETED/FAILED require a matching durable `launches/<attempt_id>.json`
-with `phase: "spawn_attempted"`, matching attempt ID and a 64-hex completion token
-hash, plus the order's matching target SHA. A run file alone is insufficient.
-The production status method now returns a refusal if that receipt is missing or
-invalid. This agrees with the SHU-86 no-launch-without-receipt invariant; it does
-not claim completion of SHU-86's parallel coordinator/publication implementation.
+Ordinary refusals have exactly `ok: false`, `stage: "HOLD"`, and string `reason`.
+The unavailable-attempt refusal additionally requires `hold_code: "MISSING_CLAIM"`.
+Missing/invalid execution receipts have exactly `ok: false`, `stage: "UNLAUNCHED"`,
+and `reason: "launch receipt missing or invalid"`.
+
+Authenticated ACCEPTED means durable queue admission. Announcement `status`
+remains UNLAUNCHED until confirmed spawn. RUNNING is recorded execution;
+COMPLETED/FAILED do not imply callback or publication authority. A genuinely
+attempted, failed spawn retains internal failed/SPAWN_FAILED evidence but reports
+UNLAUNCHED publicly because no confirmed-spawn receipt exists.
+
+RUNNING/COMPLETED/FAILED require a durable `launches/<attempt_id>.json` with
+`phase: "launched"`, matching issue ID, attempt ID and target SHA, a positive
+integer PID, and the preserved 64-hex completion token hash. The earlier
+`spawn_attempted` phase and hash are persisted before process creation and remain
+necessary duplicate-prevention evidence, but are insufficient for execution
+claims. Recovery never manufactures confirmed spawn from process liveness.
+
+Validation order is authentication/request binding, known stored run state,
+present completion integrity, then intent integrity and execution receipt.
+Unknown stored states cannot be masked by a completion or an UNLAUNCHED projection.
+Status reads never create intent or receipt files. Pending recovery and submission
+honor existing enumerated holds; only AWAITING_LAUNCH may schedule a launch.
+Legacy accepted records without markers may recover a bound intent; records with
+markers receive an ambiguity intent and never elect another spawn. Legacy running
+records retain process identity without gaining launch authority. Intent filenames
+support only issue identifiers matching `[A-Za-z0-9-]+`; integrity assertions remain
+local errors and the socket retains its existing invalid-request boundary.
 
 Tests:
 

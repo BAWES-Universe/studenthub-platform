@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { verifyGatePositiveControl, assertStatusShape, POSITIVE, SHAPE, RECEIPT } from '../residual-validation.mjs';
 import { DurableSupervisor, SupervisorStore, signedSupervisorRequest, submitToSupervisor } from '../../supervisor.mjs';
+import { hasLaunchReceipt } from '../../intended-work.mjs';
 import { checkStatus } from '../check-status.mjs';
 import { probeProcess } from '../supervisor-service.mjs';
 import { createEpisodeHarness } from '../../test/fixture/episode-harness.mjs';
@@ -62,6 +63,10 @@ async function liveRestart(t, { duplicate = false, loseReceipt = false } = {}) {
     bound = { ...order, attempt_id: o.attempt_id, target_sha: o.target_sha };
     const response = await submitToSupervisor({ socketPath: params.socketPath, request: signedSupervisorRequest(bound, secret) });
     assert.equal(response.ok, true);
+    await until(async () => {
+      const status = await checkStatus({ ...params, order: bound });
+      return status.stage === 'RUNNING' && hasLaunchReceipt(status.launch_receipt, bound);
+    }, RECEIPT);
     return { stage: 'RUNNING', external_run_id: `sandbox_${o.attempt_id}`, worker_identity: 'sandbox:worker' };
   };
   const first = await start();
@@ -105,7 +110,7 @@ async function liveRestart(t, { duplicate = false, loseReceipt = false } = {}) {
   assertStatusShape(await status(), { store, attemptId: bound.attempt_id });
   await stop(third);
   t.diagnostic(JSON.stringify({ supervisorPids: [first.pid, second.pid, third.pid], workerPid: run.pid,
-    processToken: run.process_token, spawnCount: 1, completionCount: 1, orphan: false,
+    spawnCount: 1, completionCount: 1, orphan: false,
     states: ['RUNNING', 'RUNNING', 'COMPLETED'], terminalReceiptValidated: true, launchReceiptUnchanged: true }));
 }
 test('SHU251 live worker restart adopts once and recovers durable completion', { timeout: 20000 }, t => liveRestart(t));
@@ -119,7 +124,8 @@ test('SHU251_STATUS_SHAPE pins all states and launch receipt binding', t => {
   const request = signedSupervisorRequest(order, secret, 'status');
   for (const state of ['accepted', 'hold', 'running', 'completed', 'failed']) {
     store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: state });
-    if (['running', 'completed', 'failed'].includes(state)) store.markLaunch(order.attempt_id, { attempt_id: order.attempt_id, phase: 'spawn_attempted', completion_token_hash: 'a'.repeat(64) });
+    if (['running', 'completed', 'failed'].includes(state)) store.markLaunch(order.attempt_id, { issue_id: order.issue_id, attempt_id: order.attempt_id, target_sha: order.target_sha,
+      pid: 7001, phase: 'launched', completion_token_hash: 'a'.repeat(64) });
     const status = supervisor.status(request);
     assert.equal(status.stage, state.toUpperCase());
     assertStatusShape(status, { store, attemptId: order.attempt_id });
@@ -151,4 +157,93 @@ test('SHU251 mutation: status claims launch without receipt', t => {
   supervisor.store.accept(order, new Date().toISOString());
   const status = supervisor.status(signedSupervisorRequest(order, secret, 'status'));
   assert.throws(() => assertStatusShape({ ...status, stage: 'RUNNING' }, { store: supervisor.store, attemptId: order.attempt_id }), named(RECEIPT));
+});
+
+const confirmedReceipt = () => ({ issue_id: order.issue_id, attempt_id: order.attempt_id,
+  target_sha: order.target_sha, pid: 7001, phase: 'launched', completion_token_hash: 'a'.repeat(64) });
+
+test('SHU251_STATUS_RECEIPT rejects marker-only and every invalid confirmed-spawn binding', t => {
+  const supervisor = new DurableSupervisor({ ...fixture(t), spawnWorker: () => {}, schedule: () => {} });
+  const store = supervisor.store, request = signedSupervisorRequest(order, secret, 'status');
+  store.accept(order, new Date().toISOString());
+  const invalid = [
+    { attempt_id: order.attempt_id, phase: 'spawn_attempted', completion_token_hash: 'a'.repeat(64) },
+    ...Object.keys(confirmedReceipt()).map(key => { const r = confirmedReceipt(); delete r[key]; return r; }),
+    ...[{ issue_id: 'SHU-999' }, { attempt_id: '22222222-2222-4333-8444-555555555555' },
+      { target_sha: 'b'.repeat(40) }, { pid: 0 }, { pid: -1 }, { pid: 1.5 }, { pid: '7001' },
+      { phase: 'reserved' }, { phase: 'spawn_attempted' }, { completion_token_hash: 'a'.repeat(63) },
+      { completion_token_hash: 'g'.repeat(64) }].map(change => ({ ...confirmedReceipt(), ...change })),
+  ];
+  for (const state of ['running', 'completed', 'failed']) {
+    store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: state });
+    for (const receipt of invalid) {
+      store.markLaunch(order.attempt_id, receipt);
+      const refused = supervisor.status(request);
+      assert.deepEqual(refused, { ok: false, stage: 'UNLAUNCHED', reason: 'launch receipt missing or invalid' }, RECEIPT);
+      assertStatusShape(refused);
+      assert.equal(store.announce(order).status, 'UNLAUNCHED', RECEIPT);
+      assert.throws(() => assertStatusShape({ version: '2.0.0', ok: true, durable: true,
+        attempt_id: order.attempt_id, target_sha: order.target_sha, stage: state.toUpperCase(),
+        result: null, heartbeat: null, launch_receipt: receipt }, { store, attemptId: order.attempt_id }), named(RECEIPT));
+    }
+  }
+});
+
+test('SHU251_STATUS_SHAPE exact variants reject removed renamed and extra fields', t => {
+  const supervisor = new DurableSupervisor({ ...fixture(t), spawnWorker: () => {}, schedule: () => {} });
+  const store = supervisor.store, request = signedSupervisorRequest(order, secret, 'status');
+  store.accept(order, new Date().toISOString());
+  const variants = [];
+  for (const state of ['accepted', 'hold', 'running', 'completed', 'failed']) {
+    store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: state });
+    if (['running', 'completed', 'failed'].includes(state)) store.markLaunch(order.attempt_id, confirmedReceipt());
+    variants.push(supervisor.status(request));
+  }
+  store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'hold' });
+  variants.push(supervisor.status(request)); // Confirmed spawn with operational HOLD retains its receipt.
+  store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'failed' });
+  fs.unlinkSync(store.paths(order.attempt_id).launch);
+  variants.push(supervisor.status(request));
+  store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'unknown' });
+  variants.push(supervisor.status(request));
+  fs.unlinkSync(store.paths(order.attempt_id).run);
+  variants.push(supervisor.status(request));
+  // Restore the receipt so execution schema mutations test shape independently.
+  store.markLaunch(order.attempt_id, confirmedReceipt());
+  const context = { store, attemptId: order.attempt_id };
+  for (const status of variants) {
+    assertStatusShape(status, context);
+    assert.throws(() => assertStatusShape({ ...status, extra: true }, context), named(SHAPE));
+    for (const key of Object.keys(status)) {
+      const removed = { ...status }; delete removed[key];
+      // Receipt identity remains a named RECEIPT failure, never a silent pass.
+      const failure = status.ok && Object.hasOwn(status, 'launch_receipt')
+        && ['attempt_id', 'target_sha', 'launch_receipt'].includes(key) && !(status.stage === 'HOLD' && key === 'launch_receipt') ? RECEIPT : SHAPE;
+      assert.throws(() => assertStatusShape(removed, context), named(failure));
+      assert.throws(() => assertStatusShape({ ...removed, [`renamed_${key}`]: status[key] }, context), named(failure));
+    }
+  }
+});
+
+test('SHU251 status precedence validates unknown states and completion before receipt or intent', t => {
+  const supervisor = new DurableSupervisor({ ...fixture(t), spawnWorker: () => {}, schedule: () => {} });
+  const store = supervisor.store, request = signedSupervisorRequest(order, secret, 'status');
+  store.accept(order, new Date().toISOString());
+  assert.equal(supervisor.status(request).stage, 'ACCEPTED');
+  assert.equal(store.announce(order).status, 'UNLAUNCHED');
+  fs.unlinkSync(store.intentPath(order));
+  for (const receipt of [null, confirmedReceipt()]) {
+    if (receipt) store.markLaunch(order.attempt_id, receipt);
+    store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'unknown' });
+    fs.writeFileSync(store.paths(order.attempt_id).completion, '{}');
+    assert.deepEqual(supervisor.status(request), { ok: false, stage: 'HOLD', reason: 'unknown durable run state' });
+    store.writeRun(order.attempt_id, { ...store.readRun(order.attempt_id), status: 'running' });
+    const reason = store.validatedCompletion(order.attempt_id).reason;
+    assert.deepEqual(supervisor.status(request), { ok: false, stage: 'HOLD', reason });
+    fs.unlinkSync(store.paths(order.attempt_id).completion);
+    assert.deepEqual(supervisor.status(request), { ok: false, stage: 'UNLAUNCHED', reason: 'launch receipt missing or invalid' });
+    assert.equal(fs.existsSync(store.intentPath(order)), false, 'status must not repair intent');
+  }
+  const other = { ...order, target_sha: 'b'.repeat(40) };
+  assert.equal(supervisor.status(signedSupervisorRequest(other, secret, 'status')).reason, 'status binding mismatch');
 });

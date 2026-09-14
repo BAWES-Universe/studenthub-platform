@@ -367,9 +367,11 @@ export function readableTaskStatus(task, outcome) {
     task_id: safeId(task.task_id),
     role: task.role,
     runtime: safeId(task.runtime),
-    status: outcome.status,
-    hold_reason: redact(outcome.hold_reason),
-    next_automatic_action: outcome.next_automatic_action ?? (outcome.status === "reserved" ? "mark_dispatching_then_submit" : null),
+    // Capacity reservations measure occupancy; they are not launch evidence.
+    status: ["reserved", "dispatching", "running", "queued", "in-review"].includes(outcome.status) ? "UNLAUNCHED" : outcome.status,
+    hold_reason: ["reserved", "dispatching", "running", "queued", "in-review"].includes(outcome.status)
+      ? "MISSING_LAUNCH_RECEIPT" : redact(outcome.hold_reason),
+    next_automatic_action: /^(wait_|retry_after:)/.test(outcome.next_automatic_action ?? "") ? outcome.next_automatic_action : null,
     human_decision: redact(outcome.human_decision),
     estimated_cost_micros: nonNegativeInteger(task.estimated_cost_micros) ? task.estimated_cost_micros : null,
   };

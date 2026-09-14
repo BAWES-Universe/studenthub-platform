@@ -1,3 +1,4 @@
+import { hasLaunchReceipt, requireHoldCode } from './intended-work.mjs';
 // Coordinator-side transport. Injected legacy adapters are reserved for existing
 // unit fixtures; production always uses the durable supervisor socket.
 import { signedSupervisorRequest, submitToSupervisor, SUPERVISOR_PROTOCOL_VERSION } from "./supervisor.mjs";
@@ -19,6 +20,9 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
   if (response?.version !== SUPERVISOR_PROTOCOL_VERSION || !response.ok
       || response.attempt_id !== receipt.attempt_id || response.target_sha !== receipt.target_sha || response.durable !== true) {
     return { stage: "HOLD", reason: "supervisor contract or binding rejected" };
+  }
+  if (['ACCEPTED', 'RUNNING', 'UNLAUNCHED'].includes(response.stage) && !hasLaunchReceipt(response.launch_receipt, receipt)) {
+    return { stage: 'LAUNCH_UNKNOWN', status: 'UNLAUNCHED', hold_code: requireHoldCode(response.hold_code ?? 'MISSING_LAUNCH_RECEIPT') };
   }
   const identity = { external_run_id: `supervisor_${receipt.attempt_id}` };
   if (["ACCEPTED", "RUNNING"].includes(response.stage)) {
@@ -66,6 +70,10 @@ export function supervisorAdapter(receipt, env, io = {}) {
       if (!response.ok) return { stage: "LAUNCH_UNKNOWN", reason: response.reason };
       if (response.version !== SUPERVISOR_PROTOCOL_VERSION || response.attempt_id !== receipt.attempt_id
           || response.target_sha !== receipt.target_sha || response.durable !== true) return { stage: "LAUNCH_UNKNOWN" };
+      if (response.stage === 'HOLD') return { stage: 'HOLD', external_run_id: `supervisor_${receipt.attempt_id}`, hold_code: requireHoldCode(response.hold_code ?? 'AMBIGUOUS_LAUNCH') };
+      if (!hasLaunchReceipt(response.launch_receipt, receipt)) return {
+        stage: 'LAUNCH_UNKNOWN', status: 'UNLAUNCHED', hold_code: requireHoldCode(response.hold_code ?? 'MISSING_LAUNCH_RECEIPT'),
+      };
       return { stage: "RUNNING", external_run_id: `supervisor_${receipt.attempt_id}`, adapter_status: "queued" };
     },
     async monitorRun(options) {

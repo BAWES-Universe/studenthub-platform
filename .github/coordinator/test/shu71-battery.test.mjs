@@ -298,13 +298,18 @@ test('SHU-71 recovery: child death yields terminal receipt', async t => {
   await f.tick(); assert.equal(f.children.length, 1, named.death);
 });
 for (const failing of [false, true]) test(`SHU-71 isolation: ${failing ? 'dead' : 'hanging'} worker permits later unit`, async t => {
-  const f = setup(t, true); await f.tick(); await f.drain();
+  const f = setup(t, true); await f.tick();
+  assert.equal(f.h.allReceipts()[0].stage, 'LAUNCH_UNKNOWN', 'SHU86_UNLAUNCHED: acceptance alone must not report RUNNING');
+  await f.drain(); await f.tick(); // Observe the durable launch receipt before testing later-unit isolation.
   assert.equal(f.children[0]?.order.issue_id, 'SHU-71', named.isolation);
   if (failing) f.children[0].emit('exit', 1, 'SIGKILL');
   const started = performance.now(); await f.tick();
   // A terminal transition consumes this tick; dispatch resumes on the next tick.
   if (failing) await f.tick();
-  await f.drain();
+  const secondPending = f.h.allReceipts().find(r => r.issue_id === 'SHU-72');
+  assert.ok(secondPending, named.isolation);
+  assert.equal(secondPending.stage, 'LAUNCH_UNKNOWN', 'SHU86_UNLAUNCHED: the second unit also requires a launch receipt');
+  await f.drain(); await f.tick();
   assert.ok(performance.now() - started < 1000, named.isolation);
   assert.deepEqual(f.children.map(c => c.order.issue_id), ['SHU-71', 'SHU-72'], named.isolation);
   assert.equal(f.children[1].executing, true, named.isolation);
