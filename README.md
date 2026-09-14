@@ -28,7 +28,8 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 | Claim | Where | Status |
 | -- | -- | -- |
 | HTTP gateway | `apps/gateway` | ✅ health, MCP, and optional PostgreSQL-backed Universe login/profile/logout routes |
-| First browser surface | `apps/gateway/src/web-ui.ts` | ✅ HTML welcome page, session-bound own-profile view and browser sign-out; no client JavaScript or external assets |
+| First browser surface | `apps/gateway/src/web-ui.ts` | ✅ HTML welcome page, session-bound own-profile view and browser sign-out; workspace-only same-origin history revalidation script |
+| Grant-backed workspace selection | `apps/gateway/src/context-navigation.ts` | ✅ server-rendered organization/role chooser, explicit URL context, request-time authorization and revocation; [scope and verification](docs/workspace-navigation.md) |
 | Worker | `apps/worker` (heartbeat) | ✅ |
 | Shared contracts incl. authz | `packages/contracts` | ✅ authz store **interfaces** + `InMemoryAuthzStore` test implementation |
 | Actor assertions | `packages/actor-assertion` | ✅ Ed25519-signed, verified |
@@ -47,7 +48,7 @@ The StudentHub platform is a **planned** modular monolith: web/iframe panels, HT
 
 | Planned | Card |
 | -- | -- |
-| Full role-aware web/iframe workspace | First server-rendered profile exists; capability panels, context switching and iframe integration are still unbuilt |
+| Full role-aware web/iframe workspace | Profile and grant-backed context switching exist; capability panels, full SHU-235 navigation manifest, Arabic localization and iframe integration remain unbuilt |
 | 7 domain packages (`domain-*`) | none exist |
 | `packages/observability` | PII-safe gateway/web/worker correlation, local Sentry diagnosis, bounded metrics and isolation; [contract and runbook](docs/observability.md). External ingestion disabled. |
 | Remaining `packages/` capabilities | domain packages and shared UI are not built yet |
