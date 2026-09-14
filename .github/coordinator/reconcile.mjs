@@ -1,3 +1,5 @@
+import { consumeDurableHandoffs, durableHandoffStatus, handoffContinuations, validHandoff } from './durable-handoff.mjs';
+export { consumeDurableHandoffs, durableHandoffStatus };
 // Coordinator — deterministic dry-run skeleton (BAWES-Universe/studenthub-platform).
 //
 // WHY THIS FILE IS SHAPED THIS WAY:
@@ -693,6 +695,7 @@ export function validateReceipt(receipt) {
     }
   }
 
+  if (Object.hasOwn(receipt, "handoff") && !validHandoff(receipt)) errors.push("invalid durable handoff binding or action");
   return { valid: errors.length === 0, errors };
 }
 
@@ -1574,6 +1577,8 @@ export function parseWorkOrderDirectiveFromComments(comments = []) {
   for (const comment of comments ?? []) {
     const parsed = parseWorkOrderDirective(comment?.body ?? "");
     if (parsed.ok && parsed.order) orders.push(parsed.order);
+    const receipt = parseReceiptCommentBody(comment?.body);
+    if (receipt?.handoff?.action === "work-order" && validHandoff(receipt) && !orders.some(o => o.attempt_id === receipt.handoff.order.attempt_id)) orders.push(receipt.handoff.order);
   }
   return orders;
 }
@@ -2330,8 +2335,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     }
   }
 
+  if (!singleRunActivation.requested) {
+    for (const [id, continuation] of handoffContinuations(receipts)) episodeContinuations.set(id, continuation);
+  }
   const { eligibility, selection } = reconcileOnce({ issues, openPRs, config, receipts, episodeContinuations, episodeScope, episodeIssueIds });
   const report = printReport({ config, source, eligibility, selection, dispatchEnabled, activation: singleRunActivation });
+  if (!singleRunActivation.requested) {
+    for (const receipt of receipts.filter(r => r.handoff)) {
+      const status = durableHandoffStatus(receipt, receipts);
+      io.stdout?.(`handoff: ${receipt.issue_id} ${status.stage} HOLD=${status.hold_code}`);
+    }
+  }
 
   if (singleRunActivation.requested && singleRunActivation.state === "refused") {
     // An activation was supplied and every binding failed closed. This is NOT a
@@ -2385,7 +2399,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   // where no lifecycle transition was persisted, before new dispatch, so a
   // directive is never raced by a fresh launch of the same successor.
   if (io.stdout) io.stdout(`dispatch: backfill successor directives from durable terminal receipts`);
-  const backfilled = await backfillSuccessorDirectives({
+  const backfilled = await (singleRunActivation.requested ? backfillSuccessorDirectives : consumeDurableHandoffs)({
     receipts,
     commentsByIssue,
     dispatchEnabled,
@@ -2457,7 +2471,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     throw new Error(`dispatch refused: no contract-bound authorization_ref for ${candidate.id} (free text and unapproved fixture ids are rejected)`);
   }
   const repo = candidate.repo ?? config.pilot_repo;
-  const branch = candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
+  const branch = (!singleRunActivation.requested ? selection.successor?.branch : null) ?? candidate.branch ?? env.DISPATCH_BRANCH ?? `coordinator/${candidate.id}`;
   // SHU-225: when this selection is the ARMED episode's routed successor, the claim
   // carries the successor's own lane, bound head and deterministic attempt id. This
   // is the ONLY place a successor is turned into work — there is no second
@@ -2566,6 +2580,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   }
   // Persist RESERVED *before* anything reaches the adapter (reserve precedes launch).
   await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(receipt) }, linearToken, fetchImpl);
+  if (!singleRunActivation.requested && successor) {
+    const source = receipts.find(r => r.handoff?.order?.attempt_id === receipt.attempt_id);
+    if (source) {
+      const claimed = { ...source, handoff: { ...source.handoff, claim_attempt_id: receipt.attempt_id } };
+      await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: receiptCommentBody(claimed) }, linearToken, fetchImpl);
+    }
+  }
 
   // GPT review #3: RE-READ and validate the authoritative reservation before
   // launching. A missing, failed, or colliding reservation must never authorize
@@ -2574,6 +2595,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   const verifyComments = await fetchIssueComments({ issueId: linearIssueId, token: linearToken, fetchImpl });
   const durable = parseReceiptsFromComments(verifyComments);
   const ownReservation = durable.find((r) => r.attempt_id === receipt.attempt_id && r.stage === "RESERVED");
+  if (!singleRunActivation.requested && successor && !durable.some(r =>
+    validHandoff(r) && r.handoff.order?.attempt_id === receipt.attempt_id && r.handoff.claim_attempt_id === receipt.attempt_id)) {
+    io.stdout?.(`handoff: ${receipt.issue_id} UNKNOWN HOLD=MISSING_CLAIM — claim acknowledgement not durably visible`);
+    return 2;
+  }
   const otherActive = durable.find((r) => r.attempt_id !== receipt.attempt_id && !TERMINAL_STAGES.includes(r.stage));
   // Same immutable-field rule as the initial read: a record wearing THIS
   // attempt_id but disagreeing on repo/branch/target_sha was not written by this
@@ -2646,7 +2672,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     scope_phase: receipt.scope_phase,
     allowed_paths: [...receipt.allowed_paths],
     scoped_base_sha: receipt.scoped_base_sha,
-    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}`,
+    task_context: `Authorized contract ref ${receipt.authorization_ref}; deterministic dispatch pilot; issue ${receipt.issue_id} on ${receipt.branch} @ ${receipt.target_sha}` + (!singleRunActivation.requested && successor?.findings ? `\nReview findings: ${JSON.stringify(successor.findings)}` : ""),
     ...options,
     fetchImpl,
     io: { ...io, resultStillAuthorized: () => resultStillAuthorized(receipt.issue_id) },
