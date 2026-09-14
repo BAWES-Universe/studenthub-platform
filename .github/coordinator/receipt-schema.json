@@ -24,7 +24,9 @@
     "notes"
   ],
   "properties": {
-    "receipt_version": { "type": "string", "const": "1.0.0" },
+    "receipt_version": { "type": "string", "enum": ["1.0.0", "1.1.0"] },
+    "role": {"type": "string", "enum": ["build", "review", "revise"]},
+    "runtime": {"type": "string", "enum": ["codex-cli", "claude-code", "hermes-pool"]},
     "issue_id": { "type": "string", "minLength": 1 },
     "attempt_id": {
       "type": "string",
@@ -36,6 +38,11 @@
       "description": "Approved contract reference the dispatch is authorized against. Free text is REJECTED — only real Linear issue refs (SHU-NNNN) or seeded FIXTURE refs.",
       "pattern": "^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$"
     },
+    "episode_id": {
+      "type": ["string", "null"],
+      "description": "SHU-231: the activated episode (the activation record's activation_id) this attempt belongs to. Stamped by the coordinator at RESERVED while an episode is armed; null on the disabled/global path and on receipts written before the episode boundary existed. Immutable for a given attempt_id.",
+      "pattern": "^[A-Za-z0-9_-]{0,64}$"
+    },
     "stage": {
       "type": "string",
       "description": "RESERVED is persisted BEFORE any launch is sent. Timeout alone never changes stage and never releases the slot.",
@@ -44,7 +51,7 @@
     "requested_worker": {
       "type": "string",
       "description": "Worker FAMILY requested (distinct from worker_identity, which is the actual session/run identity once one exists).",
-      "enum": ["codex-builder", "claude-verifier", "hermes-box"]
+      "enum": ["codex-builder", "claude-verifier", "hermes-box", "codex-verifier", "claude-builder", "hermes-verifier"]
     },
     "worker_identity": {
       "type": ["string", "null"],
@@ -56,6 +63,18 @@
       "type": "string",
       "description": "Head SHA the dispatch is bound to. A PASS against any other SHA is stale and never satisfies this receipt.",
       "pattern": "^[0-9a-f]{40}$"
+    },
+    "workspace_scope": { "type": "string", "enum": ["scoped", "full"] },
+    "scope_phase": { "type": "string", "enum": ["initial", "revision", "review"] },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Exact literal paths authorized for a scoped writer attempt; empty only for a full workspace. Immutable for the attempt."
+    },
+    "scoped_base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Deterministic parentless worker-input commit derived from target_sha plus allowed_paths. Null for full workspaces; never substitutes for target_sha authority."
     },
     "external_run_id": {
       "type": ["string", "null"],
@@ -80,7 +99,7 @@
     "evidence_links": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Validated callback evidence links (GitHub PR / Linear comment) whose attempt_id and target_sha were checked before COMPLETED."
+      "description": "Append-only evidence links. These include validated callback links whose attempt_id and target_sha were checked before COMPLETED, plus coordinator-private raw reviewer envelopes and confined exact-head test reports retained on every terminal outcome."
     },
     "last_activity": { "type": "string" },
     "notes": {
@@ -178,6 +197,7 @@
           }
         }
       }
-    }
+    },
+    {"description": "1.1.0 introduces authoritative role/runtime; retained 1.0.0 receipts are never backfilled.", "if": {"properties": {"receipt_version": {"const": "1.1.0"}}}, "then": {"required": ["role", "runtime"]}, "else": {"not": {"anyOf": [{"required": ["role"]}, {"required": ["runtime"]}]}}}
   ]
 }
