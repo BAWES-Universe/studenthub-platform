@@ -98,7 +98,7 @@ test('SHU261_CLEANUP_RUNS_ALL_CALLBACKS', async () => {
 
 });
 
-test('SHU261_NO_SETENV: parsed policy controls real wrapper startup and preserves OAuth', (t) => {
+function parsedReviewerPolicy(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu261-policy-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   let policy = source('../service/shu-reviewer.sudoers');
@@ -109,9 +109,32 @@ test('SHU261_NO_SETENV: parsed policy controls real wrapper startup and preserve
   assert.equal(parsed.status, 0, parsed.stderr);
   const config = JSON.parse(parsed.stdout);
   const options = config.User_Specs[0].Cmnd_Specs[0].Options;
-  const setenv = options.find((option) => Object.hasOwn(option, 'setenv')).setenv;
+  const setenv = options.some((option) => option.setenv === true);
   const keep = config.Defaults.filter((entry) => entry.Binding.some((binding) => binding.command === '/usr/local/libexec/shu-reviewer-sandbox'))
     .flatMap((entry) => entry.Options.flatMap((option) => option.env_keep ?? []));
+  return { root, options, setenv, keep };
+}
+
+test('SHU261_NO_SETENV_POLICY', (t) => {
+  const { options, keep } = parsedReviewerPolicy(t);
+  assert.ok(options.some((option) => option.setenv === false), 'SHU261_NO_SETENV: command-spec must carry NOSETENV');
+  assert.ok(!options.some((option) => Object.hasOwn(option, 'setenv') && option.setenv !== false),
+    'SHU261_NO_SETENV: command-spec must not carry a SETENV option');
+  assert.deepEqual(keep, ['CLAUDE_CODE_OAUTH_TOKEN'], 'SHU261_OAUTH_ENV_KEEP: command-specific env_keep must preserve only OAuth');
+});
+
+test('SHU261_NO_SETENV_NAMESPACE_STARTUP', (t) => {
+  // Probe a known-good command separately; wrapper failures must never skip.
+  const probe = spawnSync('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/true'],
+    { env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' }, encoding: 'utf8' });
+  assert.ifError(probe.error);
+  if (probe.status === 1 && probe.signal === null &&
+      /^unshare: (?:unshare failed|write failed \/proc\/self\/uid_map): Operation not permitted$/.test(probe.stderr.trim())) {
+    t.skip(`requires unprivileged user namespaces (unshare --user --map-root-user): ${probe.stderr.trim()}`);
+    return;
+  }
+  assert.equal(probe.status, 0, `SHU261_NAMESPACE_CAPABILITY_PROBE: ${probe.stderr}`);
+  const { root, setenv, keep } = parsedReviewerPolicy(t);
   const marker = path.join(root, 'startup');
   const bashEnv = path.join(root, 'bash-env');
   fs.writeFileSync(bashEnv, `printf '%s' "$(id -u):$CLAUDE_CODE_OAUTH_TOKEN" > '${marker}'\n`);
@@ -123,7 +146,8 @@ test('SHU261_NO_SETENV: parsed policy controls real wrapper startup and preserve
   for (const [key, value] of Object.entries(supplied)) if (setenv || keep.includes(key)) env[key] = value;
   const wrapper = new URL('../reviewer-sandbox.sh', import.meta.url).pathname;
   const result = spawnSync('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/bash', wrapper], { env, encoding: 'utf8' });
-  assert.equal(result.status, 64, result.stderr);
+  assert.ifError(result.error);
+  assert.equal(result.status, 64, `SHU261_NAMESPACE_STARTUP: wrapper must reject missing arguments: ${result.stderr}`);
   const observed = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null;
   console.log(`parsed_setenv=${setenv} namespace_root_startup=${observed} oauth_preserved=${env.CLAUDE_CODE_OAUTH_TOKEN === supplied.CLAUDE_CODE_OAUTH_TOKEN}`);
   assert.equal(observed, null, 'SHU261_NO_SETENV: uncontrolled BASH_ENV must not execute in privileged wrapper startup');
