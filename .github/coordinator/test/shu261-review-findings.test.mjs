@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
-import { runReviewEvidence, validateReviewWrapper } from '../review-execution.mjs';
+import { processCanaryMarker, runReviewEvidence, validateReviewWrapper } from '../review-execution.mjs';
 import { inheritedDescriptorDenied, processInspectionDenied } from '../review-execution-child.mjs';
 import { PROTECTED_CLASSES } from '../service/reviewer-isolation.mjs';
+import { finalizeHostValidation } from '../service/reviewer-host-validation.mjs';
 
 const mutation = process.env.SHU261_MUTATION;
 function source(relative) {
@@ -21,7 +22,10 @@ function source(relative) {
   return fs.readFileSync(file, 'utf8');
 }
 const keys = ['protected-paths-json', 'fd-canary', 'env-canary', 'process-canary'];
-const valid = [JSON.stringify([{ class: 'activation_records', path: '/protected' }]),
+const valid = [JSON.stringify([{
+  class: 'activation_records', path: '/protected',
+  symlink_path: '/workspace/protected-link', traversal_path: '../protected',
+}]),
   'SHU261_FD_0123456789abcdef0123456789abcdef', 'SHU261_ENV_0123456789abcdef0123456789abcdef', 'SHU261_PROCESS_0123456789abcdef0123456789abcdef'];
 
 async function childProbe(overrides = {}, suppliedArgs = null) {
@@ -71,29 +75,37 @@ for (const [i, key] of keys.entries()) test(`SHU261_CANARY_MISSING_MUST_FAIL_${i
 });
 
 test('SHU261_CLEANUP_RUNS_ALL_CALLBACKS', async () => {
-  let code = source('../service/reviewer-host-validation.mjs');
-  if (mutation === 'SHU261_CLEANUP_RUNS_ALL_CALLBACKS') code = code.replace('try { await remove(); } catch (error) { cleanupErrors.push(error); }', 'await remove();');
-  const start = code.lastIndexOf('  } finally {');
-  const end = code.indexOf('  return evidence;', start);
-  assert.ok(start > 0 && end > start, 'loaded cleanup region must be found');
-  const region = `{{${code.slice(start + '  } finally {'.length, end)}}`;
   const calls = [0, 0, 0]; let inventory = 0, caught;
-  const context = { assert, server: null, markerProcess: null, cleanup: [
+  const finalize = mutation === 'SHU261_CLEANUP_RUNS_ALL_CALLBACKS'
+    ? async ({ cleanupCallbacks, verifyInventory }) => {
+      for (const callback of [...cleanupCallbacks].reverse()) await callback();
+      await verifyInventory();
+    }
+    : finalizeHostValidation;
+  const cleanupCallbacks = [
     () => { calls[0]++; }, () => { calls[1]++; }, () => { calls[2]++; throw new Error('early cleanup failure'); },
-  ], worktreesBefore: { stdout: 'original inventory' }, GIT: 'git', REPO: '/unused',
-  spawnSync: () => { inventory++; return { status: 0, stdout: 'original inventory', stderr: '' }; } };
-  try { await vm.runInNewContext(`(async () => ${region})()`, context); } catch (error) { caught = error; }
+  ];
+  try {
+    await finalize({ cleanupCallbacks, verifyInventory: () => { inventory++; } });
+  } catch (error) { caught = error; }
   console.log(`cleanup_calls=${JSON.stringify(calls)} inventory_calls=${inventory} error=${caught?.name}: ${caught?.message}`);
   assert.deepEqual(calls, [1, 1, 1], 'SHU261_CLEANUP_RUNS_ALL_CALLBACKS: every callback must run exactly once');
   assert.equal(inventory, 1, 'SHU261_CLEANUP_INVENTORY: final inventory must run after callback failure');
   assert.equal(caught?.name, 'AggregateError', 'SHU261_CLEANUP_AGGREGATE: report errors after every callback and inventory');
   assert.match(caught.errors[0].message, /early cleanup failure/);
-  context.spawnSync = () => { inventory++; return { status: 0, stdout: 'leaked worktree', stderr: '' }; };
-  try { await vm.runInNewContext(`(async () => ${region})()`, context); } catch (error) { caught = error; }
+  caught = undefined;
+  const inventoryError = new Error('SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory');
+  try {
+    await finalize({
+      cleanupCallbacks,
+      verifyInventory: () => { inventory++; throw inventoryError; },
+    });
+  } catch (error) { caught = error; }
   assert.deepEqual(calls, [2, 2, 2], 'SHU261_CLEANUP_RUNS_ALL_CALLBACKS: inventory failure cannot skip callbacks');
   assert.equal(inventory, 2);
   assert.equal(caught.errors.length, 2, 'SHU261_CLEANUP_INVENTORY: retain callback and inventory failures');
-  assert.equal(caught.errors[1].name, 'AssertionError');
+  assert.equal(caught.errors[1].name, 'Error');
+  assert.equal(caught.errors[1], inventoryError, 'SHU261_CLEANUP_INVENTORY_IDENTITY: retain the exact inventory error unchanged');
   assert.match(caught.errors[1].message, /SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory/);
 
 });
@@ -138,11 +150,11 @@ test('SHU261_NO_SETENV_NAMESPACE_STARTUP', (t) => {
   const marker = path.join(root, 'startup');
   const bashEnv = path.join(root, 'bash-env');
   fs.writeFileSync(bashEnv, `printf '%s' "$(id -u):$CLAUDE_CODE_OAUTH_TOKEN" > '${marker}'\n`);
-  // Model only sudo's environment admission using its real parsed policy. Execute
-  // the unmodified wrapper as namespace root, with no arguments: it exits before
-  // locks, ACLs, /srv access or systemd. This is not a deployed sudo integration test.
+  // Model sudo's environment admission using its real parsed policy, then run
+  // the wrapper as namespace root. Empty argv exits before locks, ACLs, /srv
+  // access, or systemd. The separate direct-exec test exercises its shebang.
   const supplied = { BASH_ENV: bashEnv, CLAUDE_CODE_OAUTH_TOKEN: 'local-oauth-canary' };
-  const env = { PATH: '/usr/bin:/bin' };
+  const env = { PATH: root };
   for (const [key, value] of Object.entries(supplied)) if (setenv || keep.includes(key)) env[key] = value;
   const wrapper = new URL('../reviewer-sandbox.sh', import.meta.url).pathname;
   const result = spawnSync('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/bash', wrapper], { env, encoding: 'utf8' });
@@ -150,6 +162,7 @@ test('SHU261_NO_SETENV_NAMESPACE_STARTUP', (t) => {
   assert.equal(result.status, 64, `SHU261_NAMESPACE_STARTUP: wrapper must reject missing arguments: ${result.stderr}`);
   const observed = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null;
   console.log(`parsed_setenv=${setenv} namespace_root_startup=${observed} oauth_preserved=${env.CLAUDE_CODE_OAUTH_TOKEN === supplied.CLAUDE_CODE_OAUTH_TOKEN}`);
+  assert.equal(setenv, false, 'SHU261_NO_SETENV: sudo policy must reject caller-selected environment values');
   assert.equal(observed, null, 'SHU261_NO_SETENV: uncontrolled BASH_ENV must not execute in privileged wrapper startup');
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, supplied.CLAUDE_CODE_OAUTH_TOKEN, 'SHU261_OAUTH_ENV_KEEP: command-specific env_keep must preserve OAuth');
   assert.deepEqual(keep, ['CLAUDE_CODE_OAUTH_TOKEN']);
@@ -163,28 +176,40 @@ test('SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child
   const workspace = path.join(root, attempt), evidence = path.join(root, 'evidence');
   fs.mkdirSync(workspace, { mode: 0o750 }); fs.mkdirSync(evidence, { mode: 0o700 });
   for (const omitted of [null, ...keys]) {
-    let observed;
+    let observed, processCanaryStarted, callerError;
     const result = await runReviewEvidence({ attempt_id: attempt, target_sha: '6'.repeat(40), cwd: workspace,
       env: { SHU_REVIEW_EXEC_UID: '994', SHU_REVIEW_EXEC_WRAPPER_JSON: '["/test/wrapper"]',
         SHU_REVIEW_MODEL_WRAPPER_JSON: '["/test/wrapper"]', SHU_REVIEW_TEST_FILES_JSON: '["builder.test.mjs"]', SHU_REVIEW_EVIDENCE_DIR: evidence },
       validateWrapperImpl: (wrapper) => wrapper,
+      startProcessCanaryImpl: async (canary) => {
+        processCanaryStarted = canary;
+        return processCanaryMarker(canary);
+      },
+      listenProbeImpl: async () => ({ address: () => ({ port: 26123 }), close: (done) => done() }),
       execFileImpl: (_file, args, options, done) => {
         (async () => {
           const get = (key) => args[args.indexOf(`--${key}`) + 1];
           keys.forEach((key, i) => assert.ok(args.includes(`--${key}`), `SHU261_CALLER_CANARY_${i}: caller must supply ${key}`));
           assert.equal(fs.readFileSync(get('protected-path'), 'utf8'), get('fd-canary'));
           assert.equal(inheritedDescriptorDenied(get('fd-canary')), false, 'SHU261_CALLER_FD: open source descriptor must be live before confinement');
-          assert.equal(options.env.SHU261_ENV_CANARY, get('env-canary'));
-          assert.equal(processInspectionDenied(get('process-canary')), false, 'SHU261_CALLER_PROCESS: live marker must be visible before confinement');
+          await t.test(`wrapper environment contains probe canary; omitted child option=${omitted}`, () => {
+            assert.equal(options.env.SHU261_ENV_CANARY, get('env-canary'),
+              'SHU261_CALLER_ENVIRONMENT: wrapper environment must contain the exact canary supplied to the child probe');
+          });
+          assert.equal(processInspectionDenied(get('process-canary')), false,
+            'SHU261_CALLER_PROCESS_VISIBLE: real marker must be observable before confinement');
+          assert.equal(processCanaryStarted, get('process-canary'),
+            'SHU261_CALLER_PROCESS: caller must start the exact process canary passed to the child');
           const childArgs = args.slice(args.indexOf('--cwd'));
           if (omitted) childArgs.splice(childArgs.indexOf(`--${omitted}`), 2);
           // The VM substitutes confined OS responses, but executes the loaded
           // production child predicates and builder phase unchanged.
           observed = await childProbe({}, childArgs);
           done(observed.status ? new Error('child refused') : null, JSON.stringify(observed.report), '');
-        })().catch((error) => done(error));
+        })().catch((error) => { callerError = error; done(error); });
       },
     });
+    assert.ifError(callerError);
     assert.ok(observed, `SHU261_CALLER_CANARIES: ${result.detail ?? 'callback must reach loaded child'}`);
     assert.equal(observed.calls, omitted ? 0 : 1, `SHU261_CALLER_${omitted}: builder invocation count`);
     assert.equal(result.executed, !omitted);
@@ -199,7 +224,7 @@ test('SHU261_MODEL_ARGV: contract pins length 3 and sandbox index 2', () => {
   assert.deepEqual(actual, expected, 'SHU261_MODEL_ARGV: exact command form');
   assert.equal(actual.length, 3, 'SHU261_MODEL_ARGV_LENGTH: length must be 3');
   assert.equal(actual[2], expected[2], 'SHU261_MODEL_ARGV_INDEX: sandbox must be index 2');
-  assert.throws(() => validateReviewWrapper([expected[0], '-n', '--preserve-env=CLAUDE_CODE_OAUTH_TOKEN', expected[2]], fsImpl, { model: true }), /fixed noninteractive/);
+  assert.throws(() => validateReviewWrapper([expected[0], '-n', '--preserve-env=CLAUDE_CODE_OAUTH_TOKEN', expected[2]], fsImpl, { model: true }), /fixed .*noninteractive/);
   for (const file of ['../SINGLE-RUN-ACTIVATION.md', '../../../docs/SHU-63-activation-contract.md']) {
     const doc = source(file);
     assert.ok(doc.includes(JSON.stringify(expected)), 'SHU261_MODEL_DOC: activation instructions must pin the same argv');
