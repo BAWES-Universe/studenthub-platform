@@ -1,5 +1,17 @@
 # SHU-251 service staging and supervisor integration
 
+## Coordinator environment evidence
+
+Read-only host evidence supplied by the orchestration lane establishes
+`/srv/shu/coordinator.env` as the authoritative coordinator file. Both it and
+`/srv/shu/service.env` are owned by `shu-coordinator:shu-coordinator`, mode 0600,
+and carry the coordinator credential key names, including `GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`. Only the legacy combined `/srv/shu/service.env` also carries
+`SHU_SUPERVISOR_SECRET`, so the enforced crossed-file guard refuses it as a
+coordinator file. The supervisor remains `/etc/shu/supervisor.env`, root:root
+0600. This default correction follows that evidence; the crossed-file guard
+remains enforced. No environment values were read for this correction.
+
 This package supplies systemd templates, a temporary-directory staging installer,
 exact file rollback, and lifecycle composition of the merged SHU-250 supervisor.
 Nothing installs, enables or starts host services. All executed verification uses
@@ -25,7 +37,7 @@ Before the coordinator-controlled host re-run, the operator must provide:
 - Supervisor `EnvironmentFile=/etc/shu/supervisor.env`, parameter
   `supervisorEnvironmentFile`: root:root **0600**, containing only
   `SHU_SUPERVISOR_SECRET` of at least 32 bytes.
-- Coordinator `EnvironmentFile=/srv/shu/service.env`, parameter
+- Coordinator `EnvironmentFile=/srv/shu/coordinator.env`, parameter
   `coordinatorEnvironmentFile`: as provisioned, containing nonempty
   `GITHUB_TOKEN` and `LINEAR_API_TOKEN`. These are distinct required absolute
   paths. Missing files, identical paths/inodes, crossed paths or contents,

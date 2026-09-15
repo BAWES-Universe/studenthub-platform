@@ -28,15 +28,37 @@ path in the running checkout, with plain-path, no-dot-segment, exact-path and
 regular-file checks (`ACT_PUBLIC_KEY_PATH`). Supplied public keys are equality
 checks against that source, never alternate authorities.
 
-The owner-approved Ed25519 public anchor is provisioned. `validateAnchor()`
-recomputes SHA-256 over its SPKI DER and rejects a manifest mismatch with
-`ACT_TRUST_ANCHOR_MISMATCH`. The exact manifest retains a null coordinator
-revision: the final approved window must supply a manifest copy pinning the
-final reviewed revision. Null or mismatched revisions fail closed with
-`ACT_TRUST_ANCHOR_INVALID`. No commit claims to embed its own hash.
+## Anchor provenance and execution authorization
 
-Custody only: the host signing key is `/etc/shu/keys/shu71-activation-ed25519.pem`,
-root:root 0600, with `/etc/shu/keys` root:root 0700. No code reads or requires it.
+ANCHOR PROVENANCE: `shu71-trust-anchor.json.provenance_revision` identifies
+`bd13e3fcea6361c46acb0d94df4918603c6601c1` (#125), the reviewed revision that
+established the committed public key. The public PEM and SPKI fingerprint stay
+in the repository. Provenance supplies no execution authority.
+
+EXECUTION AUTHORIZATION: the separate signed activation record's
+`coordinator_revision` names the final approved execution SHA. Never copy the
+provenance SHA into this field as a substitute for execution approval.
+
+Final-revision binding step: first fix and approve the execution commit; then
+have the authorized signing process produce the detached package and runtime
+record with that existing SHA in both `coordinator_revision` fields and a
+bounded `expires_at`. Keep those signed records outside the execution commit;
+do not edit the anchor to bind an execution or embed a commit's own hash.
+This correction produces no operational signature or activation record.
+
+`executionBindingError()` requires a valid record binding, equality with the
+approved main revision, and equality with the observed checkout revision.
+`validateTwoFixtureActivation()` enforces it along with expiry and the signature
+from the committed key. `validateShu71Package()` checks the outer binding and
+exact inner projection; `validateAnchor()` checks provenance, the fingerprint,
+and the separate inner binding. Anchor validation alone is not signature or
+expiry validation: the package must still pass both signature checks and its
+window check. Missing bindings, wrong approved revisions and checkout drift
+refuse. A valid anchor with differing provenance cannot authorize execution.
+The read-only runtime entry point obtains the checkout SHA through
+`resolveCoordinatorRevision()`; package callers must supply observed checkout
+and approved main evidence, not derive either from the anchor.
+
 See [reconciliation](service/ACTIVATION-WINDOW-RECONCILIATION.md) for the public
 fingerprint, mutation assertions and the remaining final-revision binding.
 

@@ -1,5 +1,17 @@
 # SHU-251 deterministic operational bindings
 
+## Coordinator environment evidence
+
+Read-only host evidence supplied by the orchestration lane establishes
+`/srv/shu/coordinator.env` as the authoritative coordinator file. Both it and
+`/srv/shu/service.env` are owned by `shu-coordinator:shu-coordinator`, mode 0600,
+and carry the coordinator credential key names, including `GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`. Only the legacy combined `/srv/shu/service.env` also carries
+`SHU_SUPERVISOR_SECRET`, so the enforced crossed-file guard refuses it as a
+coordinator file. The supervisor remains `/etc/shu/supervisor.env`, root:root
+0600. This default correction follows that evidence; the crossed-file guard
+remains enforced. No environment values were read for this correction.
+
 This package replaces the nine free-form command parameters named by the
 `shu251-window-v2.sh` preparation report. It is reviewed tooling for a later
 approved host window; adding it does not install a unit, access a credential,
@@ -78,7 +90,7 @@ also rejected by the closed spec.
 ## Decided credential environment files
 
 The owner has decided the pair: supervisor `/etc/shu/supervisor.env`, root:root
-0600, containing only `SHU_SUPERVISOR_SECRET`; coordinator `/srv/shu/service.env`,
+0600, containing only `SHU_SUPERVISOR_SECRET`; coordinator `/srv/shu/coordinator.env`,
 as provisioned, containing its GitHub / Linear credentials (`GITHUB_TOKEN` and
 `LINEAR_API_TOKEN`). The status binding uses the supervisor file. Neither file
 may substitute for the other. The tooling does not invent, copy or rotate

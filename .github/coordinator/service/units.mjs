@@ -15,7 +15,7 @@ function workspaceDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWork
 
 // System services share the identity owning the private workspace/socket directory.
 function serviceConfiguration({ serviceUser = 'shu-coordinator', serviceGroup = serviceUser,
-  supervisorEnvironmentFile = '/etc/shu/supervisor.env', coordinatorEnvironmentFile = '/srv/shu/service.env' } = {}) {
+  supervisorEnvironmentFile = '/etc/shu/supervisor.env', coordinatorEnvironmentFile = '/srv/shu/coordinator.env' } = {}) {
   for (const value of [serviceUser, serviceGroup]) {
     assert.ok(typeof value === 'string' && /^[a-z_][a-z0-9_-]*$/.test(value) && value !== 'root',
       'SHU251_IDENTITY: non-root service user and group names required');

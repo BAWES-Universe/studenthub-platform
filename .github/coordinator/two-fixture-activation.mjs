@@ -2,6 +2,7 @@
 import { verify, createPublicKey } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from './shu71-public-key.mjs';
+import { executionBindingError } from './execution-authorization.mjs';
 import { resolveFixtureLane, validateFixtureScopePolicy } from './workspace-scope.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -34,7 +35,8 @@ export function validateTwoFixtureActivation({ record, config, revision, mainRev
   if (new Set(record.fixtures.map(f => f.issue_id)).size !== record.fixtures.length || new Set(record.fixtures.map(f => f.lane.id)).size !== record.fixtures.length || new Set(configured.map(f => f.id)).size !== configured.length) return refusal('ACT_DUPLICATE_LANE', 'duplicate card or lane');
   if (record.slots !== 2 || config.max_dispatch !== record.slots) return refusal('ACT_CAPACITY_DRIFT', 'record and committed capacity must both equal two');
   if (!isDeepStrictEqual([...record.fixtures.map(f => f.issue_id)].sort(), IDS) || !isDeepStrictEqual((Array.isArray(config.dispatch_scope?.issue_ids) ? [...config.dispatch_scope.issue_ids].sort() : []), IDS)) return refusal('ACT_LANE_CROSS', 'only the reviewed pair is allowed');
-  if (record.coordinator_revision !== revision || record.coordinator_revision !== mainRevision) return refusal('ACT_MALFORMED', 'running coordinator and main must equal the bound revision');
+  const binding = executionBindingError(record, revision, mainRevision);
+  if (binding) return refusal('ACT_MALFORMED', binding);
   if (record.gates.reviewed !== record.gates.runtime || record.fixtures.some(f => !issues.some(i => i.id === f.issue_id && i.linearId)) || configured.length !== 2) return refusal('ACT_PARTIAL_ARMING', 'both gates and both resolvable fixtures required');
   for (const fixture of record.fixtures) {
     let lane;

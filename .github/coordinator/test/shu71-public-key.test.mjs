@@ -5,13 +5,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from '../shu71-public-key.mjs';
-import { publicKeyFingerprint, validateAnchor, validateShu71Package } from '../shu71-activation-package.mjs';
+import { publicKeyFingerprint, validateAnchor as validateBoundAnchor, validateShu71Package } from '../shu71-activation-package.mjs';
 import { validateTwoFixtureActivation } from '../two-fixture-activation.mjs';
 
 const revision = 'a'.repeat(40);
 const manifest = JSON.parse(fs.readFileSync(new URL('../shu71-trust-anchor.json', import.meta.url), 'utf8'));
 const config = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
-const anchor = { ...manifest, coordinator_revision: revision };
+const anchor = { ...manifest };
+// Direct anchor checks require the same separate execution binding as the package.
+function validateAnchor(value, key, checkout) {
+  return validateBoundAnchor(value, key, checkout, undefined, { record: context().record, mainRevision: revision });
+}
 const pem = loadShu71PublicKey();
 const fingerprint = '0cc5f24f46554bd25b713d78fca2f2bd48ab9b270d217a9dce613956d5786d5a';
 // A public-only foreign Ed25519 SPKI, not a signing fixture.
@@ -47,8 +51,8 @@ test('ACT_COMMITTED_ANCHOR_POSITIVE: real PEM validates and package reaches sign
   assert.deepEqual(validateAnchor(anchor, pem, revision), { ok: true }, 'ACT_COMMITTED_ANCHOR_POSITIVE');
   assert.equal(validateShu71Package(context()).code, 'ACT_FORGED_ENVELOPE', 'ACT_PACKAGE_PROCEEDS: unsigned control reaches signature verification');
   assert.equal(validateTwoFixtureActivation(context()).code, 'ACT_MANUAL_GATE_BYPASS', 'ACT_RUNTIME_PROCEEDS: unsigned control reaches signature verification');
-  // ACT_REVISION_UNBOUND exercises the manifest's null binding against a valid caller revision.
-  assert.equal(validateAnchor(manifest, pem, revision).code, 'ACT_TRUST_ANCHOR_INVALID', 'ACT_REVISION_UNBOUND: null is not final-revision authority');
+  // A valid reviewed manifest cannot supply a missing execution authorization.
+  assert.equal(validateBoundAnchor(manifest, pem, revision).code, 'ACT_TRUST_ANCHOR_INVALID', 'ACT_REVISION_UNBOUND: valid provenance cannot authorize execution');
   assert.equal(validateAnchor(anchor, pem, 'b'.repeat(40)).code, 'ACT_TRUST_ANCHOR_INVALID', 'ACT_REVISION_DRIFT');
 });
 
@@ -118,7 +122,7 @@ for (const [label, invalidRevision] of [
   ['NULL', null], ['UNDEFINED', undefined], ['EMPTY', ''], ['NON_HEX_40', 'g'.repeat(40)],
 ]) test(`ACT_REVISION_${label}: non-conforming caller revision refuses`, () => {
   // Match the manifest binding so only the revision-format clause can refuse.
-  const unbound = { ...manifest, coordinator_revision: invalidRevision };
+  const unbound = { ...manifest, provenance_revision: invalidRevision };
   assert.equal(validateAnchor(unbound, pem, invalidRevision).code, 'ACT_TRUST_ANCHOR_INVALID',
     `ACT_REVISION_${label}: non-conforming caller revision must refuse`);
 });

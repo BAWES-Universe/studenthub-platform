@@ -72,7 +72,7 @@ function harness() {
     activation, signature: "",
   };
   pkg.signature = sign(null, canonicalBytes(pkg), privateKey).toString("base64");
-  const anchor = { version: "1.0.0", algorithm: "Ed25519", coordinator_revision: REVISION,
+  const anchor = { version: "1.0.0", algorithm: "Ed25519", provenance_revision: "e".repeat(40),
     spki_sha256: publicKeyFingerprint(publicKeyPem), state: "ready" };
   const issues = fixtures.map((entry) => ({ issue_id: entry.issue_id, linear_id: entry.linear_id }));
   const preparedHeads = { "coordinator/SHU-140": PARENT, "coordinator/SHU-254": SHU254_SEED };
@@ -263,3 +263,46 @@ for (const [name, from, to, pattern] of MUTATIONS) {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+import { killExecutionMutant } from './fixture/execution-mutants.mjs';
+const executionCases = ['MISSING_BINDING', 'WRONG_REVISION', 'FOREIGN_KEY', 'EXPIRED_AUTHORIZATION', 'CHECKOUT_DRIFT'];
+
+test('EXEC_PACKAGE_POSITIVE: differing provenance and correctly signed execution proceeds', () => {
+  const h = harness();
+  assert.notEqual(h.context.anchor.provenance_revision, h.context.pkg.coordinator_revision, 'EXEC_PACKAGE_POSITIVE: provenance is independent');
+  assert.equal(validateShu71Package(h.context).ok, true, 'EXEC_PACKAGE_POSITIVE: signed, current, matching execution proceeds');
+});
+for (const kind of executionCases) test(`EXEC_PACKAGE_${kind}: signed execution refusal`, () => {
+  const h = harness();
+  assert.equal(validateShu71Package(h.context).ok, true, `EXEC_PACKAGE_${kind}: positive control`);
+  if (kind === 'MISSING_BINDING') {
+    h.context.pkg.coordinator_revision = null;
+    h.context.pkg.activation.coordinator_revision = null;
+  }
+  if (kind === 'WRONG_REVISION') h.context.mainRevision = 'b'.repeat(40);
+  if (kind === 'CHECKOUT_DRIFT') {
+    const observed = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+    assert.equal(observed.status, 0, 'EXEC_CHECKOUT_EVIDENCE: read actual working clone HEAD');
+    h.context.revision = observed.stdout.trim();
+    assert.match(h.context.revision, /^[0-9a-f]{40}$/, 'EXEC_CHECKOUT_EVIDENCE: actual SHA');
+  }
+  if (kind === 'FOREIGN_KEY') h.context.publicKeyPem = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA' + Buffer.alloc(32, 1).toString('base64') + '\n-----END PUBLIC KEY-----\n';
+  if (kind === 'EXPIRED_AUTHORIZATION') {
+    h.context.pkg.expires_at = '2026-09-15T09:59:59.000Z';
+    h.context.pkg.activation.expires_at = h.context.pkg.expires_at;
+  }
+  resign(h);
+  assert.equal(validateShu71Package(h.context).ok, false, `EXEC_PACKAGE_${kind}: authorization must refuse`);
+});
+
+for (const kind of executionCases) test(`EXEC_PACKAGE_MUTANT_${kind}: valid mutant dies by named assertion`, () => {
+  killExecutionMutant(kind, 'PACKAGE', `EXEC_PACKAGE_${kind}`, 'shu71-activation-package.test.mjs');
+});
+
+test('EXEC_PACKAGE_PROVENANCE_ONLY: signed provenance SHA cannot substitute for approved execution', () => {
+  const h = harness();
+  h.context.pkg.coordinator_revision = h.context.anchor.provenance_revision;
+  h.context.pkg.activation.coordinator_revision = h.context.anchor.provenance_revision;
+  resign(h);
+  assert.equal(validateShu71Package(h.context).ok, false, 'EXEC_PACKAGE_PROVENANCE_ONLY: even a signed provenance SHA is not the approved execution');
+});

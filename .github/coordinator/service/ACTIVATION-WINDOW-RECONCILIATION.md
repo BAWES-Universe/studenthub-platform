@@ -1,5 +1,17 @@
 # Activation-window reconciliation
 
+## Coordinator environment evidence
+
+Read-only host evidence supplied by the orchestration lane establishes
+`/srv/shu/coordinator.env` as the authoritative coordinator file. Both it and
+`/srv/shu/service.env` are owned by `shu-coordinator:shu-coordinator`, mode 0600,
+and carry the coordinator credential key names, including `GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`. Only the legacy combined `/srv/shu/service.env` also carries
+`SHU_SUPERVISOR_SECRET`, so the enforced crossed-file guard refuses it as a
+coordinator file. The supervisor remains `/etc/shu/supervisor.env`, root:root
+0600. This default correction follows that evidence; the crossed-file guard
+remains enforced. No environment values were read for this correction.
+
 ## Completion boundary
 
 Items 1–2 and 5 remain as committed in `c31e523`. Items 3–4 now share the
@@ -31,20 +43,21 @@ all dispatch gates and scope.
 compares it to `spki_sha256`; mismatch returns `ACT_TRUST_ANCHOR_MISMATCH`.
 The Ed25519 SPKI DER SHA-256 is
 `0cc5f24f46554bd25b713d78fca2f2bd48ab9b270d217a9dce613956d5786d5a`.
-The exact five-key manifest is provisioned (`state: ready`), but
-`coordinator_revision: null` deliberately remains unbound. At the final-revision
-step the approved window must supply a manifest copy with only that field bound
-to the final reviewed 40-character revision. The package, running revision,
-main revision and anchor must agree. The committed null, malformed revisions,
-and different revisions refuse with `ACT_TRUST_ANCHOR_INVALID`; no current or
-stale commit SHA is fabricated. Revision binding and a valid owner-signed
-package/envelope remain required before any operational package can proceed.
+The five-key manifest now records `provenance_revision`, the reviewed key's
+introduction at `bd13e3fcea6361c46acb0d94df4918603c6601c1` (#125). It never names
+an approved execution. After the execution SHA is final and approved, the
+separate signed package and activation record bind that existing SHA through
+`coordinator_revision`. Both verifiers compare that binding with approved main
+and the observed checkout; the package additionally validates anchor provenance
+and the public fingerprint. No manifest rewrite or self-referencing commit is
+needed. Missing, wrong and drifted bindings fail closed. See the
+[final-revision binding step](../SHU-71-ACTIVATION-PACKAGE.md#anchor-provenance-and-execution-authorization).
 
 Host custody is documentation only: `/etc/shu/keys/shu71-activation-ed25519.pem`,
 Ed25519, root:root 0600; parent `/etc/shu/keys`, root:root 0700. No code reads or
 requires that location.
 
-The real committed-key positive control accepts the revision-bound anchor and
+The real committed-key positive control accepts the anchor with a separate binding and
 proves the package reaches signature verification (`ACT_FORGED_ENVELOPE` for
 an intentionally unsigned control). It does not claim a valid owner signature.
 Existing signed positive controls still reach PREPARED/VERIFIED and exercise
@@ -134,7 +147,7 @@ The service parameter shape replaces the shared field with:
 ```js
 {
   supervisorEnvironmentFile: '/etc/shu/supervisor.env',
-  coordinatorEnvironmentFile: '/srv/shu/service.env'
+  coordinatorEnvironmentFile: '/srv/shu/coordinator.env'
 }
 ```
 
@@ -275,7 +288,7 @@ index bf3ea22..e0b4813 100644
 +- Supervisor `EnvironmentFile=/etc/shu/supervisor.env`, parameter
 +  `supervisorEnvironmentFile`: root:root **0600**, containing only
 +  `SHU_SUPERVISOR_SECRET` of at least 32 bytes.
-+- Coordinator `EnvironmentFile=/srv/shu/service.env`, parameter
++- Coordinator `EnvironmentFile=/srv/shu/coordinator.env`, parameter
 +  `coordinatorEnvironmentFile`: as provisioned, containing nonempty
 +  `GITHUB_TOKEN` and `LINEAR_API_TOKEN`. These are distinct required absolute
 +  paths. Missing files, identical paths/inodes, crossed paths or contents,
@@ -355,7 +368,7 @@ index 4f050da..87d8bbb 100644
 -tooling verifies ownership/mode/key name and uses the value only in memory; it
 -never prints it. No other free-form operational input remains in this package.
 +The owner has decided the pair: supervisor `/etc/shu/supervisor.env`, root:root
-+0600, containing only `SHU_SUPERVISOR_SECRET`; coordinator `/srv/shu/service.env`,
++0600, containing only `SHU_SUPERVISOR_SECRET`; coordinator `/srv/shu/coordinator.env`,
 +as provisioned, containing its GitHub / Linear credentials (`GITHUB_TOKEN` and
 +`LINEAR_API_TOKEN`). The status binding uses the supervisor file. Neither file
 +may substitute for the other. The tooling does not invent, copy or rotate
@@ -382,7 +395,7 @@ index c9f03ea..48cd07b 100644
 +The templates require separate external `EnvironmentFile=` bindings:
 +`supervisorEnvironmentFile` defaults to `/etc/shu/supervisor.env` (root:root 0600,
 +only `SHU_SUPERVISOR_SECRET`); `coordinatorEnvironmentFile` defaults to
-+`/srv/shu/service.env` (as provisioned, GitHub / Linear credentials). Rendering
++`/srv/shu/coordinator.env` (GitHub / Linear credentials; see host evidence above). Rendering
 +and policy validation inspect existing files without emitting values: missing,
 +identical, crossed or incomplete bindings fail by named assertions. Neither
 +reference is optional, and no secret value is embedded in a unit.

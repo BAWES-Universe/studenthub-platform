@@ -166,3 +166,37 @@ test('ACT_REMOTE_FAILURE: absent credentials and failed API reads cannot supply 
   assert.deepEqual(readTwoFixtureEvidence(committed, {}, () => { throw new Error('must not execute'); }), { heads: {}, issues: [] });
   assert.deepEqual(readTwoFixtureEvidence(committed, { GITHUB_TOKEN: 'fake', LINEAR_API_TOKEN: 'fake' }, () => { throw new Error('API failure'); }), { heads: {}, issues: [] });
 });
+
+import { killExecutionMutant } from './fixture/execution-mutants.mjs';
+const executionCases = ['MISSING_BINDING', 'WRONG_REVISION', 'FOREIGN_KEY', 'EXPIRED_AUTHORIZATION', 'CHECKOUT_DRIFT'];
+
+test('EXEC_RUNTIME_POSITIVE: correctly signed current execution proceeds', () => {
+  assert.equal(validateTwoFixtureActivation(signed(fixture())).valid, true, 'EXEC_RUNTIME_POSITIVE: signed, current, matching execution proceeds');
+});
+for (const kind of executionCases) test(`EXEC_RUNTIME_${kind}: signed execution refusal`, () => {
+  const x = signed(fixture());
+  assert.equal(validateTwoFixtureActivation(x).valid, true, `EXEC_RUNTIME_${kind}: positive control`);
+  if (kind === 'MISSING_BINDING') x.record.coordinator_revision = null;
+  if (kind === 'WRONG_REVISION') x.mainRevision = 'b'.repeat(40);
+  if (kind === 'CHECKOUT_DRIFT') {
+    const observed = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+    assert.equal(observed.status, 0, 'EXEC_CHECKOUT_EVIDENCE: read actual working clone HEAD');
+    x.revision = observed.stdout.trim();
+    assert.match(x.revision, /^[0-9a-f]{40}$/, 'EXEC_CHECKOUT_EVIDENCE: actual SHA');
+  }
+  if (kind === 'FOREIGN_KEY') x.config.two_fixture_activation_public_key = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA' + Buffer.alloc(32, 1).toString('base64') + '\n-----END PUBLIC KEY-----\n';
+  if (kind === 'EXPIRED_AUTHORIZATION') x.record.expires_at = '2026-09-14T10:59:59.000Z';
+  signed(x);
+  assert.equal(validateTwoFixtureActivation(x).valid, false, `EXEC_RUNTIME_${kind}: authorization must refuse`);
+});
+
+for (const kind of executionCases) test(`EXEC_RUNTIME_MUTANT_${kind}: valid mutant dies by named assertion`, () => {
+  killExecutionMutant(kind, 'RUNTIME', `EXEC_RUNTIME_${kind}`, 'two-fixture-activation.test.mjs');
+});
+
+test('EXEC_RUNTIME_PROVENANCE_ONLY: signed provenance SHA cannot substitute for approved execution', () => {
+  const x = fixture();
+  x.record.coordinator_revision = JSON.parse(fs.readFileSync(new URL('../shu71-trust-anchor.json', import.meta.url), 'utf8')).provenance_revision;
+  signed(x);
+  assert.equal(validateTwoFixtureActivation(x).valid, false, 'EXEC_RUNTIME_PROVENANCE_ONLY: anchor cannot supply execution authority');
+});
