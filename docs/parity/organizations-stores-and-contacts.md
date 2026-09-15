@@ -14,7 +14,7 @@ The customer side of production: a **company** that hires, its **sub-companies**
 Three structural facts drive the platform design:
 
 1. **The company hierarchy is exactly one level deep — in depth only.** `company.parent_company_id` points at a parent; `getSubCompanies()` is a plain `hasMany` on that column with no recursion anywhere (`common/models/Company.php:585-588`). Sub-company stores are reached by collecting the parent's id plus its children's ids and querying stores in that set (`company/components/StoreManager.php:49-61`). **Depth is the only thing this constrains.** It places no limit on how many direct sub-companies a parent may have; stores are a separate entity keyed by `company_id`, not a deeper tier of company; and the transfer billing lineage is separate (fact 3). Consolidated invoicing across the group remains unproven here. Reading "one level deep" as a bound on organization size, on store count, or on billing breadth is the specific error this sentence exists to prevent.
-2. **Company status is derived, not stored,** unless an operator overrides it. `company_status` is computed at read time from three counters, and `company_status_override` short-circuits it (`common/models/Company.php:253-262` in `fields()`, and again in `getCompany_status() :276-285`). The same logic is duplicated a third time in the employer projection (`company/models/Company.php:33-44`), where it **omits the override** — while still exposing `company_status_override` as a field one line above (`:32`), so the employer is handed the override value and a status computed without it. An employer and a staff member can therefore see different statuses for the same company.
+2. **Company status is derived, not stored,** unless an operator overrides it. `company_status` is computed at read time from three counters, and `company_status_override` short-circuits it (`common/models/Company.php:253-262` in `fields()`, and again in `getCompany_status() :276-285`). The same logic has a third copy in the employer projection (`company/models/Company.php:33-44`), where it **omits the override** — while still exposing `company_status_override` as a field one line above (`:32`), so the employer is handed the override value and a status computed without it. A fourth copy in the manager projection likewise exposes the override but ignores it in the derivation (`manager/models/Company.php:32-44`). An employer and a staff member can therefore see different statuses for the same company.
 3. **A second hierarchy carries the money, and this cluster owns its parent side.** Billing does not run on `company.parent_company_id`; it runs on **`transfer.parent_transfer_id`**, added by `console/migrations/m170428_113508_invoice.php:9-15,24-26` — the same migration that **drops** the original `invoice` and `invoice_candidates` tables and adds `total` and `company_total` to `transfer`. A child transfer returns its **parent's** candidate lines filtered to its own `company_id` (`common/models/Transfer.php:521-535`); `TransferCandidate::getInvoiceNumber()` prefers the per-company child invoice and falls back to the parent's (`common/models/TransferCandidate.php:937-955`); and the invoice view selects a parent-or-self `$main_transfer` (`admin/modules/v1/views/transfer/invoice.php:7`), but iterates the invoice's own transfer candidate relation (`:10`), prints its own `invoice_id` alongside the parent-or-self transfer number (`:73-74`), and uses the invoice's own transfer `company_total` as the amount due (`:77`). Roll-ups already guard the resulting double-count with `parent_transfer_id IS NULL` (`admin/modules/v1/controllers/StatisticController.php:209,216,230,247`, the last commented *"ignore duplicate entries of child transfers"*, and `common/models/query/TransferCandidateQuery.php:202,219`). **This proves transfer lineage and invoice selection/rendering, not one consolidated invoice with per-company subtotals. That acceptance claim is unproven at this head: no code path plus test asserting exactly one consolidated invoice is established here, and the claim that it is working in production is withdrawn.**
 
    Invoice *behaviour* is SHU-185's, not this card's. What belongs here is that the organization hierarchy is **load-bearing** for it: any change to parent/child company semantics must be checked against the transfer group, and OR-30/OR-31 hand off accordingly. Note also `admin/modules/v1/controllers/CompanyController.php:811-815`, which rolls up hired counts with `(company_id=N OR parent_company_id=N)` built by raw string concatenation.
@@ -35,9 +35,9 @@ Three structural facts drive the platform design:
 | CRM follow-up | `company_followup` (bool), `company_followup_interval_weeks`, `company_last_followup_datetime`, `company_next_followup_datetime` |
 | Legacy credential columns | `company_auth_key`, `company_password_hash`, `company_password_reset_token` from the original init migration; superseded by the `contact` model. Unused by any live login path (identity inventory §2.1 lists no company principal). Confirm as dead before migrating |
 
-Rate inheritance: both `company_hourly_rate` and `company_bonus_commission` fall back to the parent company when null (`admin/models/Company.php:35-45`, `company/models/Company.php:43-48`). A company's rate must not be below any of its candidates' rates (`Company::validateHourlyRate`, `common/models/Company.php:148-158`) — note the error is attached to `candidate_hourly_rate`, an attribute this model does not have.
+Rate inheritance: admin exposes both `company_hourly_rate` and `company_bonus_commission` with parent fallback when the own value is falsey (`admin/models/Company.php:35-48`); the employer exposes the same fallback for `company_hourly_rate` (`company/models/Company.php:45-51`). A company's rate must not be below any of its candidates' rates (`Company::validateHourlyRate`, `common/models/Company.php:148-158`) — note the error is attached to `candidate_hourly_rate`, an attribute this model does not have.
 
-Worked example in the source comment (`common/models/Company.php:55-62`): company rate 1.5 KWD, bonus commission 20%; a candidate at 1.2 KWD for 2 hours plus a 20 KWD bonus bills the company 23 KWD. The margin between company rate and candidate rate is the revenue, which is what `CompanyStats.total_revenue` accumulates (`CronController.php:actionUpdateCompanyStats :1109-1128`).
+Worked example in the source comment (`common/models/Company.php:55-62`): company rate 1.5 KWD, bonus commission 20%; a candidate at 1.2 KWD for 2 hours plus a 20 KWD bonus bills the company 23 KWD. The margin between company rate and candidate rate is the revenue, which is what `CompanyStats.total_revenue` accumulates (`CronController.php:actionUpdateCompanyStats :1109-1149`).
 
 ### 2.2 Other tables
 
@@ -71,49 +71,49 @@ Worked example in the source comment (`common/models/Company.php:55-62`): compan
 
 Production defines this by subclassing `common\models\Company` per app and overriding `fields()`.
 
-| | Employer (`company/models/Company.php:16-50`) | Manager (`manager/models/Company.php:16`) | Staff (`staff/models/Company.php:16-40`) | Admin (`admin/models/Company.php:29-67`) |
+| | Employer (`company/models/Company.php:16-55`) | Manager (`manager/models/Company.php:16`) | Staff (`staff/models/Company.php:46-74`) | Admin (`admin/models/Company.php:29-67`) |
 |---|---|---|---|---|
 | Identity, logo, website, descriptions | yes | yes | yes (website normalised to add `http://`) | yes |
 | `company_hourly_rate` | **yes**, with parent fallback | yes | yes | yes, with parent fallback |
 | `company_bonus_commission` | no | no | no | **yes**, with parent fallback |
-| `company_status` | derived, **override ignored** | derived | derived, override applied | derived, override applied |
+| `company_status` | derived, **override ignored** | derived, **override ignored** | derived, override applied | derived, override applied |
 | `company_status_override` | exposed as a raw field | exposed | exposed | exposed |
 | `company_approved_to_hire` | yes | yes | yes | yes |
 | Counters (`total_candidates`, `total_subcompanies`, `total_stores`, `total_suggestions`) | no | no | `total_candidates`, `total_suggestions` | all four |
 | `deleted` | hidden (unset in base `fields()`) | hidden | hidden | hidden |
 | Timestamps | no | no | unset | yes |
 
-The employer projection is a hand-written whitelist, not `parent::fields()` minus unsets, which is why the override-ignoring status duplicate exists there and nowhere else.
+The employer and manager projections are hand-written whitelists, not `parent::fields()` minus unsets; both contain the override-ignoring status duplicate, with the manager likewise exposing `company_status_override` immediately above it (`manager/models/Company.php:32-44`).
 
 **Scope of the lookup** (separate from the projection):
 
 - Employer: `getSubCompanies()`, `getStores()`, `getSubCompanyStores()` all resolve from the authenticated contact's company (`company/models/Company.php:103-130`). `StoreManager::getManagedStores()` caches "stores of my company plus my sub-companies" for **60 seconds on a plain time duration**, not behind a `DbDependency`: the dependency is commented out both where it is built (`:36-43`) and at the call site (`:63`, `}, $cacheDuration);//$cacheDependency`), so invalidation is time-based rather than data-based (`company/components/StoreManager.php:45-63`).
 - Manager: one store, one company; `getSubCompanies` exists but the manager app exposes only `ListChild` and `View` (`manager/modules/v1/controllers/CompanyController.php`, 2 actions).
-- Staff and admin: unscoped. Staff has an `AssignedList` for companies where `staff_id` is the caller (`staff/.../CompanyController.php:152`).
+- Staff and admin: unscoped. Staff has an `AssignedList` for companies where `staff_id` is the caller (`staff/.../CompanyController.php:155-156`, `common/models/Staff.php:1381-1384`).
 - `status` app: read-only reporting projections over companies, requests, transfers (reporting cluster, RP).
 
 ## 4. Lifecycle journeys
 
 ### 4.1 Company onboarding
 
-Two paths converge on the same shape.
+Self-service submits a request for staff approval; staff or admin can also create a company directly.
 
-**Self-service** (`company/modules/v1/controllers/AuthController.php:585-640`, mirrored in the manager app): creates a `contact`, a `company_request` with status pending, and a `company` with `company_approved_to_hire = false` and `company_status_override = STATUS_UNDER_REVIEW`. The password handling here is legacy and out of scope per the identity inventory.
+**Self-service** (`company/modules/v1/controllers/AuthController.php:632-646`, mirrored in `manager/modules/v1/controllers/AuthController.php:576-590`): creates only a `company_request` with status pending. Contact creation (`company/modules/v1/controllers/AuthController.php:593-624`) and company creation (`:655-705`) are commented out; the manager app likewise comments out store-manager creation (`manager/modules/v1/controllers/AuthController.php:537-568`) and company creation (`:599-649`). The password handling here is legacy and out of scope per the identity inventory.
 
-**Staff approval** (`staff/.../CompanyRequestController.php` `Approve` → `CompanyRequest::approve()`, `common/models/CompanyRequest.php:267-330`): sets request status accepted, creates the `Contact`, creates the `Company` with `company_approved_to_hire = true`, creates the `company_contact` link with `allow_access = true`, and creates `contact_phone` rows. The line that would activate the company is **commented out** (`:312`), so an approved company keeps whatever `company_status_override` it was created with. Worth confirming against live data during migration.
+**Staff approval** (`staff/.../CompanyRequestController.php` `Approve` → `CompanyRequest::approve()`, `common/models/CompanyRequest.php:267-340`): sets request status accepted, creates the `Contact`, creates the `Company` with `company_approved_to_hire = true`, creates the `company_contact` link with `allow_access = true`, and creates a `contact_phone` row only when `phone_number` is truthy (`:342-358`). The line that would activate the company is **commented out** (`:312`), so `approve()` sets no override on the company it creates; the column default is `false` (`console/migrations/m211217_071326_status.php:15-16`). Worth confirming against live data during migration.
 
-**Direct creation** by staff or admin (`staff/.../CompanyController.php` `Create`, `admin/.../CompanyController.php` `Create`): 17 body parameters including `parent` (making it a sub-company), `hourly_rate`, `bonus_commission`, `approved_to_hire`, `logo`, `commercial_licence`, `currency_code` (defaulting to a `Currency` request header then `"KWD"`, `admin/.../CompanyController.php:238-242`). Scenario is `newAccount` or `newSubAccount`; the sub-account scenario requires only the hourly rate (`common/models/Company.php:99-102`).
+**Direct creation** by staff or admin (`staff/.../CompanyController.php` `Create`, `admin/.../CompanyController.php` `Create`): 17 body parameters including `parent` (making it a sub-company), `hourly_rate`, `bonus_commission`, `approved_to_hire`, `logo`, `commercial_licence`, `currency_code` (defaulting to `"KWD"` when the body parameter is omitted; only a falsey body value falls back to the `Currency` request header, itself defaulting to `"KWD"`, `admin/.../CompanyController.php:238-242`). Scenario is `newAccount` or `newSubAccount`; the sub-account scenario requires only the hourly rate (`common/models/Company.php:99-102`).
 
 ### 4.2 Status and approval
 
 - `ChangeStatus` (staff `:330`, admin) writes `company_status_override` under scenario `updateStatus` and logs a `Yii::info` line.
-- Setting the override to **under review** triggers an email to `company_email` copied to every other contact of the company, plus a Segment event (`common/models/Company.php:508-540`). No other status transition notifies anyone.
+- Changing the override **from under review** triggers an account-live email to `company_email` copied to every other contact of the company (`common/models/Company.php:508-536`): `$changedAttributes` contains the previous value. Separately, any non-insert save in production emits the Segment event `Company Profile Updated` (`:538-542`).
 - `Activate` (`company/.../CompanyController.php:228-325`) is excluded from bearer authentication and accepts `contact_auth_key`, contact email, company id, an optional password, logo and commercial licence. It marks the contact email verified and sets `company_status_override = STATUS_ACTIVE`. **This is an anonymous legacy invitation/activation flow, not an authenticated org-owner action, and it has no staff review step.** Authentik replaces its identity mechanics; D-OR1 decides the surviving business approval rule.
 - `company_approved_to_hire` is set at creation and by staff/admin `Update`; it gates listing filters (`filterByApprovedToHire`) and has no separate transition route.
 
 ### 4.3 Deletion
 
-- Company: soft delete, refused when the company still has stores (`admin/.../CompanyController.php:370-395`).
+- Company: `actionDelete` refuses deletion when the company still has stores (`admin/.../CompanyController.php:424-429`), transfers (`:431-436`), or sub-companies (`:438-443`), then soft-deletes the company (`:445-448`).
 - Store: soft delete, refused when candidates are still assigned (`staff/.../StoreController.php` `Delete`).
 - Contact and membership deletion differ by action: staff `Delete` soft-deletes the `contact` row (`deleted = true`, `staff/.../CompanyContactController.php:432-459`); admin `Delete` hard-deletes the contact (`admin/.../CompanyContactController.php:383-400`); staff `RemoveFromTeam` hard-deletes only the `company_contact` membership link (`staff/modules/v1/controllers/CompanyContactController.php:399-425`).
 - **Employer `RemoveMember` hard-deletes the person Contact record.** `actionRemoveMember` loads `$contact` via `findModel` (`company/modules/v1/controllers/CompanyContactController.php:74`), which resolves `$company->getContacts()->andWhere(['contact_uuid' => $id])->one()` (`:114-118`), then calls `$contact->delete()` (`:99`). `company/models/Company.php:198-200` selects the company Contact model; `common/models/Company.php:818-822` defines a `hasMany(Contact)->via(companyContacts)` relation, so the target is a Contact, not a join row. `company/models/Contact.php:14` inherits `common\models\Contact` without a delete/beforeDelete override; the base is plain `yii\db\ActiveRecord` (`common/models/Contact.php:40`) and its behaviors contain no soft-delete (`:111-132`). The inherited `Contact::beforeDelete()` explicitly calls `deleteAll` for `ContactEmail`, `ContactPhone`, `CompanyContact` and `ContactToken`, each filtered only by `contact_uuid`, then delegates to the parent hook (`common/models/Contact.php:227-238`).
@@ -123,7 +123,7 @@ Two paths converge on the same shape.
 
 ### 4.4 Team membership
 
-`Create` a contact with a company id, or `AddToTeam` an existing contact, both writing a `company_contact` row with `allow_access` (`staff/.../CompanyContactController.php:242`, `:286-292`). `RemoveFromTeam` hard-deletes that link (`:399-425`). One contact can belong to several companies; `getManagedCompanies()` goes through the links that have access (`common/models/Contact.php:319-341`). At login the session picks **the first** such company (`company/.../AuthController.php` `_loginResponse`) — but that is a **default, not a binding**. `CompanyManager::getCompany()` reads a `Company-Id` request header on every request, falls back to `companies[0]` only when the header is absent, matches the id against the contact's managed companies, and throws `BadRequestHttpException('You do not manage this company.')` for an unmanaged id (`company/components/CompanyManager.php:56-74`). Switching therefore exists in legacy. The finding that matters is sharper: **scope is enforced server-side while context is chosen by the client on every request**, and `StoreManager` inherits it, resolving `companyManager->getCompany()` before collecting managed stores (`company/components/StoreManager.php:49`), so store scope follows the same client-supplied header. The target decision is already made in SHU-91: show the current organization and allow explicit context switching — which is a **replacement of a client-selected context with a server-side one**, not construction from nothing.
+`Create` a contact with a company id, or `AddToTeam` an existing contact, both writing a `company_contact` row with `allow_access` (`staff/.../CompanyContactController.php:242`, `:286-292`). `RemoveFromTeam` hard-deletes that link (`:399-425`). One contact can belong to several companies; `getManagedCompanies()` goes through the links that have access (`common/models/Contact.php:319-341`). At login the session picks **the first** such company (`company/.../AuthController.php` `_loginResponse`) — but that is a **default, not a binding**. `CompanyManager::getCompany()` reads a `Company-Id` request header on every request, falls back to `companies[0]` when the header value is falsey (including an absent header, an empty string, or `"0"`), matches the id against the contact's managed companies, and throws `BadRequestHttpException('You do not manage this company.')` for an unmanaged id (`company/components/CompanyManager.php:56-74`). Switching therefore exists in legacy. The finding that matters is sharper: **scope is enforced server-side while context is chosen by the client on every request**, and `StoreManager` inherits it, resolving `companyManager->getCompany()` before collecting managed stores (`company/components/StoreManager.php:49`), so store scope follows the same client-supplied header. The target decision is already made in SHU-91: show the current organization and allow explicit context switching — which is a **replacement of a client-selected context with a server-side one**, not construction from nothing.
 
 ### 4.5 Stores and managers
 
@@ -157,14 +157,14 @@ Currency carries a `rate` column with no code path that updates it — no exchan
 
 | Effect | Where | Notes |
 |---|---|---|
-| Company logo, commercial licence, brand logo | temporary bucket then permanent copy, same mechanism as profile documents (`common/models/Company.php:118-140`, `common/models/Brand.php setLogo`) | public-read objects (SHU-54); commercial licences are business documents on unsigned URLs |
-| Status-change email | `common/models/Company.php:508-540` | to the company address, copied to all other contacts; ElasticMail pool header |
-| Segment tracking | same block, `:537` | company status transitions |
+| Company logo, commercial licence, brand logo | temporary bucket then Cloudinary upload: company validation (`common/models/Company.php:117-139`), licence transfer (`:885-891,920-935`), logo transfer (`:993-999,1028-1043`), invoked by `beforeSave` (`:1120-1149`); brand `setLogo` (`common/models/Brand.php:140-169`) | public-read objects (SHU-54); commercial licences are business documents on unsigned URLs |
+| Status-change email | `common/models/Company.php:508-536` | when the override leaves under-review; account-live email to the company address, copied to all other contacts; no pool header set in this block |
+| Segment tracking | `common/models/Company.php:538-542` | `Company Profile Updated` on any non-insert save in production |
 | Payroll email | `staff/.../CompanyController.php:365-390` | sends payroll summary to company contacts |
-| Excel exports | `admin/.../CompanyController.php:829` `DownloadCandidatesExcel`, `:860` `DownloadListExcel`, `University` export | **bulk personal data leaves the system as spreadsheets with no audit record** |
-| Store counter maintenance | `Candidate::afterSave` adjusts `store_total_candidates` and `Company::updateCandidate` (profile inventory §4) | counters drift, hence the reconciliation cron |
-| `cron/check-if-candidate-total-mismatch` | `CronController.php:200-224` | detects counter drift between `store_total_candidates` and reality |
-| `cron/update-company-stats` | `:1109-1128` | writes `CompanyStats.total_revenue` from `company_total - candidate_total` per currency |
+| Excel exports | `admin/.../CompanyController.php:829` `DownloadCandidatesExcel`, `:933` `DownloadListExcel`, `University` export | **bulk personal data leaves the system as spreadsheets with no audit record** |
+| Store counter maintenance | `Candidate::afterSave` adjusts `store_total_candidates` and `Company::updateCandidate` (profile inventory §4) | stored counters adjusted on candidate insert or store change; drift and reconciliation are not established (§13) |
+| `cron/check-if-candidate-total-mismatch` | `CronController.php:200-220`; `common/models/TransferCandidate.php:622-636` | candidate payment-total mismatch check; cannot detect a mismatch because `getTotalPaidToCandidate()` returns the same `candidate_total` attribute it is compared against; no store-counter reconciliation |
+| `cron/update-company-stats` | `CronController.php:1109-1149` | writes `CompanyStats.total_revenue` from `company_total - candidate_total` per currency |
 | Google Maps geocoding | `staff/.../GoogleMapController.php`, area lookup | address to area resolution |
 
 ## 7. Parity rows
@@ -183,7 +183,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | OR-08 | Change status / approve to hire | staff, admin | `ChangeStatus`, `Update` | 1 | REQUIRED, with the notification | O5 |
 | OR-09 | Assign account manager | admin | `UpdateStaff` (`admin/.../CompanyController.php:655`) | none | REQUIRED | O5 |
 | OR-10 | Follow-up flag, interval, note | staff, admin | `UpdateFollowup`, `UpdateFollowupInterval`, `AddFollowupNote`, `Followups` | none | **EXCLUDE-PENDING-OWNER** (D-OR3) | — |
-| OR-11 | Delete organization | admin | admin `Delete` (blocked while stores exist) | 1 | REQUIRED | O6 |
+| OR-11 | Delete organization | admin | admin `Delete` (blocked while stores, transfers or sub-companies exist) | 1 | REQUIRED | O6 |
 | OR-12 | Company sign-up request and approval | anonymous → staff | `create-account`, `CompanyRequestController` `List`/`View`/`Approve`/`Reject` | `company AuthCest::tryToSignup` | REQUIRED (identity part is Universe's) | O3 |
 | OR-13 | List, view team members | org member | `company/.../CompanyContactController.php` `List`, `View`, `ViewCompanyContact` | `admin CompanyContactCest` 10, `staff` 11 | REQUIRED | O4 |
 | OR-14 | Invite / add a person to the organization | org owner, staff, admin | `Create`, `AddToTeam`, `contact_invitation` | 4 | REQUIRED as a grant invitation | O4 |
@@ -201,7 +201,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | OR-26 | Universities, majors, degrees, degree groups | admin write; **candidate create for universities** | admin CRUD; `candidate/.../UniversityController.php` `Create` | none | REQUIRED, ADAPT: candidate submissions become moderated suggestions | O8 |
 | OR-27 | Notes on companies and contacts | staff, admin | `NoteController` in three apps | none | REQUIRED as one typed note entity | O9 |
 | OR-28 | Excel exports of candidates and lists | admin | `DownloadCandidatesExcel`, `DownloadListExcel`, university export | none | REQUIRED, **ADAPT: authorized, audited, time-bounded** | O9 |
-| OR-29 | Counter reconciliation | system | `cron/check-if-candidate-total-mismatch` | none | ADAPT: derive counts rather than store them | O10 |
+| OR-29 | Candidate payment-total mismatch check (ineffective at the pin; §6) | system | `cron/check-if-candidate-total-mismatch` | none | ADAPT recommendation: derive counts rather than store them; store-counter reconciliation is not established (§13) | O10 |
 | OR-30 | Company revenue statistics | system | `cron/update-company-stats` | none | OTHER-CLUSTER (reporting SHU-137, finance SHU-128). Roll-ups across the hierarchy must respect `parent_transfer_id IS NULL` — see §1 fact 3 | — |
 | OR-31 | Payroll email to company contacts | staff | `PayrollEmail` | none | OTHER-CLUSTER (finance SHU-128) | — |
 | OR-32 | Firing chart / hit map per company | staff | `FiringChart`, `cron/gen-hit-map` | none | OTHER-CLUSTER (work SHU-126) | — |
@@ -224,7 +224,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | `staff/MallCest.php` | 8 (2) | OR-24 | |
 | Fixtures | `CompanyFixture`, `CompanyContactFixture`, `ContactFixture`, `ContactEmailFixture`, `ContactPhoneFixture`, `ContactInvitationFixture`, `StoreFixture`, `StoreManagerFixture`, `BrandFixture`, `MallFixture`, `BankFixture`, `CountryFixture`, `UniversityFixture` + matching `data/*.php` | | reusable as synthetic seeds for platform tests |
 
-**Untested behaviour in this cluster, explicitly:** company self-activation (OR-04); every follow-up endpoint (OR-10); account-manager assignment (OR-09); store manager assign, change, remove (OR-21); store assignment requests (OR-22); every reference-data endpoint except brands and malls (OR-25, OR-26); notes (OR-27); all Excel exports (OR-28); both cron jobs (OR-29, OR-30); the status-change email and its Segment event; rate inheritance from parent company; and the `validateHourlyRate` rule. Company and store fixtures exist, so these are cheap to cover on the platform — they were simply never written.
+**Untested behaviour in this cluster, explicitly:** company self-activation (OR-04); every follow-up endpoint (OR-10); account-manager assignment (OR-09); store manager assign, change, remove (OR-21); store assignment requests (OR-22); every reference-data endpoint except brands and malls (OR-25, OR-26); notes (OR-27); all Excel exports (OR-28); both cron jobs (OR-29, OR-30); the status-change email and the separate company-profile Segment event; rate inheritance from parent company; and the `validateHourlyRate` rule. Company and store fixtures exist, so these are cheap to cover on the platform — they were simply never written.
 
 ## 9. Findings
 
@@ -234,9 +234,9 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | **OR-F2** | The employer projection recomputes `company_status` **ignoring** `company_status_override` — while still exposing that column as a field (`:32`) — so employer and staff can see different statuses for the same company | `company/models/Company.php:32-44` vs `common/models/Company.php:253-262` | Medium (data integrity) | fix by construction in O1: one derivation, one place |
 | **OR-F3** | A contact belonging to several companies gets a silent first-company **default**, and thereafter the acting organization is chosen by a client-supplied `Company-Id` header on every request — scope is enforced server-side, context is not | `company/.../AuthController.php` `_loginResponse`; `Contact::getManagedCompanies`; `company/components/CompanyManager.php:56-74`; `company/components/StoreManager.php:49` | High for the one-app model | OR-18; resolved in SHU-91 with a server-side current organization |
 | **OR-F4** | Deletion semantics conflict by action: staff soft-deletes contacts and hard-deletes membership links; admin `Delete` and employer `RemoveMember` hard-delete the person Contact; its inherited hook deletes extra emails, phones, all company memberships and tokens (`common/models/Contact.php:227-238`); none produces an audit receipt | §4.3, including `company/modules/v1/controllers/CompanyContactController.php:74,99,114-118` and `common/models/Company.php:818-822` | High (destructive person deletion) | O4, O6 |
-| **OR-F5** | Bulk candidate data leaves through Excel exports with no authorization record | `admin/.../CompanyController.php:829`, `:860` | Medium (privacy) | O9, and P4 telemetry |
+| **OR-F5** | Bulk candidate data leaves through Excel exports with no authorization record | `admin/.../CompanyController.php:829`, `:933` | Medium (privacy) | O9, and P4 telemetry |
 | **OR-F6** | `currency.rate` exists but no code updates it; no exchange-rate provider anywhere | `common/models/Currency.php`; repo-wide grep for rate providers finds nothing | Medium (money correctness) | D-OR4 |
-| **OR-F7** | `CompanyRequest::approve()` has the company-activation line commented out, so approved companies keep their under-review override | `common/models/CompanyRequest.php:312` | Low–Medium | verify against live data in SHU-97 |
+| **OR-F7** | `CompanyRequest::approve()` has the company-activation line commented out and sets no override on the new company; the column default is `false` | `common/models/CompanyRequest.php:301-324`; `console/migrations/m211217_071326_status.php:15-16` | Low–Medium | verify against live data in SHU-97 |
 | **OR-F8** | Candidates can create university rows; `university_data_source` marks them but nothing consumes the flag | `candidate/.../UniversityController.php:109` | Low (data quality) | OR-26 |
 | **OR-F9** | Store managers of sub-company stores are recorded against the **parent** company id | `staff/.../StoreController.php:130-131` | Low, but it will distort a naive grant import | note in SHU-97 |
 | **OR-F10** | Company logos and commercial licences are public-read objects on unsigned URLs, same as profile documents | §6; SHU-54 | Medium | folded into SHU-54 / slice O2 |
@@ -250,7 +250,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | SHU-34 ledger | Company/store/contact hierarchy is reusable structure → ADAPT | **Production-supported**; the hierarchy is one level, not arbitrary depth |
 | SHU-39 | Inconsistent delete conventions | **Production-supported** here too: soft on company, store, university, bank; hard on contact, brand, mall, tag |
 | SHU-39 | Public-read S3 objects | **Production-supported**, extends to company logos and commercial licences |
-| SHU-39 | Counters denormalised and drifting | **Production-supported**: `total_candidate`, `store_total_candidates`, `no_of_active_requests`, plus a cron that exists only to detect the drift |
+| SHU-39 | Counters denormalised and drifting | **Production-supported**: denormalised `total_candidate`, `store_total_candidates`, `no_of_active_requests`; drift and store-counter reconciliation are **not established** (§13) |
 | SHU-46 | Xero DEFER | Not this cluster (finance) |
 | SHU-51 | Marketplace expansion is an open decision | Untouched; nothing in this inventory presumes it |
 
@@ -267,7 +267,7 @@ Actor names are platform grants, not legacy apps. Disposition: REQUIRED, ADAPT, 
 | O7 | Stores: CRUD, brand and mall association, store-scoped manager grant | O1, identity I4 | 5 |
 | O8 | Reference-data catalogue: countries, currencies, banks, tags, brands, malls, universities, majors, degrees and degree groups, with moderated candidate submissions | — | 5 |
 | O9 | Notes and exports: one typed note entity; authorized, audited, time-bounded exports | O1, SHU-59 | 5 |
-| O10 | Derived counters: compute rather than store, or reconcile with an audit | O1 | 2 |
+| O10 | Recommendation: derived counters (compute rather than store, or reconcile with an audit); legacy store-counter reconciliation is not established (§13) | O1 | 2 |
 
 Cluster total: **46 points**, against the 8-point placeholder on the delivery card. Running total for the two clusters sized so far: profile 40, organizations 46.
 
@@ -284,7 +284,8 @@ Cluster total: **46 points**, against the 8-point placeholder on the delivery ca
 - One consolidated invoice with reconciled per-company subtotals: the cited transfer lineage and view do not prove this, and no test asserting it is established here (OR-34).
 - Coverage completeness: the PR #52 ledger/generator and the reported 167/1,016 figures are not reproducible from this branch (see the opening disclaimer).
 
-- Whether any company currently sits in a state that `CompanyRequest::approve()` left inconsistent (OR-F7) — needs the database.
+- Actual store-counter drift and any running store-counter reconciler: the pin maintains stored counters in `Candidate::afterSave`, but the cited cron compares candidate payment totals against the same attribute (§6), not store counts (OR-29, O10).
+- Whether any company currently sits in a state that `CompanyRequest::approve()` left inconsistent (OR-F7) — needs the database; the pin establishes no override assignment and a `false` column default, not an under-review override.
 - Real counts of sub-companies, stores per company, contacts per company, and how many contacts belong to more than one company — the last one sizes the impact of OR-18.
 - Whether `company_auth_key` and its siblings hold values.
 - The employer, staff, admin and manager front ends, which live in other repositories (SHU-138).
