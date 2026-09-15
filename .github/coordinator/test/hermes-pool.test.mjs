@@ -207,7 +207,7 @@ const FIXTURE_NODE = {
   title: "Fixture: seeded-defect probe card",
   state: { name: "Todo" },
   priorityLabel: "High",
-  labels: { nodes: [{ name: "fixture-safe" }, { name: "worker:hermes-box" }] },
+  labels: { nodes: [{ name: "fixture-safe" }, { name: "worker:hermes-box" }, { name: "repo:platform" }] },
   assignee: null,
   delegate: null,
   parent: null,
@@ -265,7 +265,9 @@ function runMain({ comments, poolDir, spawnCalls }) {
   const store = fakeLinearStore(comments);
   const out = [];
   return main([], ENV, {
+    adapterModules: { "hermes-pool": { launchBuilder, monitorRun } },
     configPath: tempConfig(),
+    openPRsOverride: [],
     stdout: (s) => out.push(s),
     fetchImpl: async (url, opts) => {
       assert.ok(url.includes("api.linear.app"), `unexpected fetch to ${url}`);
@@ -647,7 +649,9 @@ test("F6: hermes-box LAUNCH_UNKNOWN recovery runs without Workspace Agents crede
   const store = fakeLinearStore(comments);
   const runWith = (io) =>
     main([], noWaEnv, {
+      adapterModules: { "hermes-pool": { launchBuilder, monitorRun } },
       configPath: tempConfig(),
+      openPRsOverride: [],
       stdout: () => {},
       fetchImpl: async (url, opts) => store(url, opts),
       fetchDurable: true,
@@ -1042,6 +1046,7 @@ test("CR-2: the lifecycle poll monitors through the SAME adapter instance it res
   const run = () =>
     main([], ENV, {
       configPath: tempConfig(),
+      openPRsOverride: [],
       stdout: () => {},
       fetchImpl: async (url, opts) => store(url, opts),
       fetchDurable: true,

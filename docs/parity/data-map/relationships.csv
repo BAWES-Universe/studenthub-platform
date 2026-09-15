@@ -1,0 +1,1121 @@
+kind,owner,name,target,keys,delete,source
+createIndex,candidate,idx-candidate-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m130524_201442_init.php:74
+addForeignKey,candidate,fk-candidate-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m130524_201442_init.php:80
+createIndex,admin_token,idx-admin_token-admin_id,,'admin_id',constraint history; unique=unspecified,console/migrations/m170209_151757_create_token_tables.php:24
+addForeignKey,admin_token,fk-admin_token-admin_id,admin,'admin_id' -> 'admin_id',CASCADE,console/migrations/m170209_151757_create_token_tables.php:30
+createIndex,candidate_token,idx-candidate_token-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m170209_151757_create_token_tables.php:54
+addForeignKey,candidate_token,fk-candidate_token-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m170209_151757_create_token_tables.php:60
+createIndex,company_token,idx-company_token-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m170209_151757_create_token_tables.php:84
+addForeignKey,company_token,fk-company_token-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m170209_151757_create_token_tables.php:90
+createIndex,staff_token,idx-staff_token-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m170209_151757_create_token_tables.php:114
+addForeignKey,staff_token,fk-staff_token-staff_id,staff,'staff_id' -> 'staff_id',CASCADE,console/migrations/m170209_151757_create_token_tables.php:120
+createIndex,company,idx-company-parent_company_id,,'parent_company_id',constraint history; unique=unspecified,console/migrations/m170223_113047_parent_company.php:11
+addForeignKey,company,fk-company-parent_company_id,company,'parent_company_id' -> 'company_id',CASCADE,console/migrations/m170223_113047_parent_company.php:17
+createIndex,store,idx-store-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m170223_125009_store.php:24
+addForeignKey,store,fk-store-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m170223_125009_store.php:30
+createIndex,candidate,idx-candidate-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m170223_132254_candidate_to_store.php:11
+addForeignKey,candidate,fk-candidate-store_id,store,'store_id' -> 'store_id',CASCADE,console/migrations/m170223_132254_candidate_to_store.php:17
+dropForeignKey,candidate,fk-candidate-company_id,,,unspecified,console/migrations/m170227_113509_candidate_company.php:9
+dropIndex,candidate,idx-candidate-company_id,,,constraint history; unique=unspecified,console/migrations/m170227_113509_candidate_company.php:14
+createIndex,transfer,idx-transfer-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m170227_122635_company_transfer.php:17
+addForeignKey,transfer,fk-transfer-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m170227_122635_company_transfer.php:23
+createIndex,transfer_candidates,idx-tc-transfer_id,,'transfer_id',constraint history; unique=unspecified,console/migrations/m170227_122635_company_transfer.php:42
+addForeignKey,transfer_candidates,fk-tc-transfer_id,transfer,'transfer_id' -> 'transfer_id',CASCADE,console/migrations/m170227_122635_company_transfer.php:48
+createIndex,transfer_candidates,idx-tc-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m170227_122635_company_transfer.php:57
+addForeignKey,transfer_candidates,fk-tc-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m170227_122635_company_transfer.php:63
+createIndex,invoice,idx-invoice-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m170228_144703_company_invoice.php:18
+addForeignKey,invoice,fk-invoice-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m170228_144703_company_invoice.php:24
+createIndex,invoice_candidates,idx-ic-invoice_id,,'invoice_id',constraint history; unique=unspecified,console/migrations/m170228_144703_company_invoice.php:44
+addForeignKey,invoice_candidates,fk-ic-invoice_id,invoice,'invoice_id' -> 'invoice_id',CASCADE,console/migrations/m170228_144703_company_invoice.php:50
+createIndex,invoice_candidates,idx-ic-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m170228_144703_company_invoice.php:59
+addForeignKey,invoice_candidates,fk-ic-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m170228_144703_company_invoice.php:65
+createIndex,candidate,idx-candidate-bank_id,,'bank_id',constraint history; unique=unspecified,console/migrations/m170306_112515_candiate_bank.php:11
+addForeignKey,candidate,fk-candidate-bank_id,bank,'bank_id' -> 'bank_id',CASCADE,console/migrations/m170306_112515_candiate_bank.php:17
+createIndex,candidate,idx-candidate-university_id,,'university_id',constraint history; unique=unspecified,console/migrations/m170420_125428_candidate_university.php:12
+addForeignKey,candidate,fk-candidate-university_id,university,'university_id' -> 'university_id',,console/migrations/m170420_125428_candidate_university.php:19
+createIndex,candidate,idx-candidate-country_id,,'country_id',constraint history; unique=unspecified,console/migrations/m170425_134445_candidate_country.php:11
+addForeignKey,candidate,fk-candidate-country_id,country,'country_id' -> 'country_id',,console/migrations/m170425_134445_candidate_country.php:17
+createIndex,transfer,idx-transfer-transfer_id,,'transfer_id',constraint history; unique=unspecified,console/migrations/m170428_113508_invoice.php:17
+addForeignKey,transfer,fk-transfer-parent_transfer_id,transfer,'parent_transfer_id' -> 'transfer_id',,console/migrations/m170428_113508_invoice.php:23
+createIndex,invoice,idx-invoice-transfer_id,,'transfer_id',constraint history; unique=unspecified,console/migrations/m170428_113508_invoice.php:52
+addForeignKey,invoice,fk-invoice-transfer_id,transfer,'transfer_id' -> 'transfer_id',,console/migrations/m170428_113508_invoice.php:58
+dropIndex,company,company_email,,,constraint history; unique=unspecified,console/migrations/m170502_133510_company_email.php:9
+createIndex,candidate_id_card,idx-candidate_id_card-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m170502_143647_candidate_ID.php:24
+addForeignKey,candidate_id_card,fk-candidate_id_card-candidate_id,candidate,'candidate_id' -> 'candidate_id',,console/migrations/m170502_143647_candidate_ID.php:30
+createIndex,transfer_candidate,idx-transfer_candidate-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m170622_120801_transfer_candidate.php:15
+addForeignKey,transfer_candidate,fk-transfer_candidate-store_id,store,'store_id' -> 'store_id',,console/migrations/m170622_120801_transfer_candidate.php:21
+createIndex,transfer_candidate,idx-transfer_candidate-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m170622_120801_transfer_candidate.php:30
+addForeignKey,transfer_candidate,fk-transfer_candidate-company_id,company,'company_id' -> 'company_id',,console/migrations/m170622_120801_transfer_candidate.php:36
+createIndex,transfer_candidate,idx-transfer_candidate-bank_id,,'bank_id',constraint history; unique=unspecified,console/migrations/m200721_082533_candidate_bank.php:39
+addForeignKey,transfer_candidate,fk-transfer_candidate-bank_id,bank,'bank_id' -> 'bank_id',unspecified,console/migrations/m200721_082533_candidate_bank.php:40
+addPrimaryKey,candidate_email_verify_attempt,PK,,'ceva_uuid',constraint history; unique=unspecified,console/migrations/m200724_100421_email_verification.php:29
+addForeignKey,candidate_skill,fk-candidate_skill-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m200729_094528_candidate_fields.php:37
+addForeignKey,candidate_experience,fk-candidate_experience-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m200729_094528_candidate_fields.php:55
+createIndex,file,idx-file-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m200806_102214_file_tbl.php:34
+addForeignKey,file,fk-file-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m200806_102214_file_tbl.php:40
+addPrimaryKey,file,PK,,'file_uuid',constraint history; unique=unspecified,console/migrations/m200807_085807_file_primary_key.php:15
+createIndex,transfer_candidate,idx-transfer_candidate-transfer_file_id,,'transfer_file_id',constraint history; unique=unspecified,console/migrations/m200810_100835_transfer_file.php:35
+addForeignKey,transfer_candidate,fk-transfer_candidate-CASCADE,transfer_file,'transfer_file_id' -> 'transfer_file_id',CASCADE,console/migrations/m200810_100835_transfer_file.php:42
+addPrimaryKey,brand,PK,,'brand_uuid',constraint history; unique=unspecified,console/migrations/m200818_104012_brand.php:31
+createIndex,brand,idx-brand-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m200818_104012_brand.php:34
+addForeignKey,brand,fk-brand-CASCADE,company,'company_id' -> 'company_id',CASCADE,console/migrations/m200818_104012_brand.php:41
+addPrimaryKey,company_contact,PK,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m200820_144521_new_tabl.php:33
+createIndex,company_contact,idx-company_contact-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m200820_144521_new_tabl.php:36
+addForeignKey,company_contact,fk-company_contact-CASCADE,company,'company_id' -> 'company_id',CASCADE,console/migrations/m200820_144521_new_tabl.php:43
+addPrimaryKey,company_contact_email,PK,,'email_uuid',constraint history; unique=unspecified,console/migrations/m200820_144521_new_tabl.php:62
+createIndex,company_contact_email,idx-company_contact_email-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m200820_144521_new_tabl.php:65
+addForeignKey,company_contact_email,fk-company_contact_email-CASCADE,company_contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m200820_144521_new_tabl.php:72
+addPrimaryKey,company_contact_phone,PK,,'phone_uuid',constraint history; unique=unspecified,console/migrations/m200820_144521_new_tabl.php:91
+createIndex,company_contact_phone,idx-company_contact_phone-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m200820_144521_new_tabl.php:94
+addForeignKey,company_contact_phone,fk-company_contact_phone-CASCADE,company_contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m200820_144521_new_tabl.php:101
+addPrimaryKey,note,PK,,'note_uuid',constraint history; unique=unspecified,console/migrations/m200821_134549_note_table.php:31
+createIndex,note,idx-note-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m200821_134549_note_table.php:33
+addForeignKey,note,fk-note-contact_uuid,company_contact,'contact_uuid' -> 'contact_uuid',unspecified,console/migrations/m200821_134549_note_table.php:39
+createIndex,note,idx-note-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m200821_134549_note_table.php:48
+addForeignKey,note,fk-note-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m200821_134549_note_table.php:55
+createIndex,note,idx-note-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m200821_134549_note_table.php:65
+addForeignKey,note,fk-note-staff_id,staff,'staff_id' -> 'staff_id',CASCADE,console/migrations/m200821_134549_note_table.php:72
+addPrimaryKey,request,PK,,'request_uuid',constraint history; unique=unspecified,console/migrations/m200825_145436_request.php:36
+createIndex,request,idx-request-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m200825_145436_request.php:39
+addForeignKey,request,fk-request-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m200825_145436_request.php:46
+createIndex,request,idx-request-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m200825_145436_request.php:56
+addForeignKey,request,fk-request-contact_uuid,company_contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m200825_145436_request.php:63
+createIndex,request,idx-request-request_created_by,,'request_created_by',constraint history; unique=unspecified,console/migrations/m200825_145436_request.php:73
+addForeignKey,request,fk-request-request_created_by,staff,'request_created_by' -> 'staff_id',CASCADE,console/migrations/m200825_145436_request.php:80
+createIndex,request,idx-request-request_updated_by,,'request_updated_by',constraint history; unique=unspecified,console/migrations/m200825_145436_request.php:90
+addForeignKey,request,fk-request-request_updated_by,staff,'request_updated_by' -> 'staff_id',CASCADE,console/migrations/m200825_145436_request.php:97
+addPrimaryKey,inspector,PK,,'inspector_uuid',constraint history; unique=unspecified,console/migrations/m200904_075357_inspector_type_user.php:34
+addPrimaryKey,inspector_token,PK,,'token_uuid',constraint history; unique=unspecified,console/migrations/m200904_075357_inspector_type_user.php:48
+createIndex,inspector_token,idx-inspector_token-inspector_uuid,,'inspector_uuid',constraint history; unique=unspecified,console/migrations/m200904_075357_inspector_type_user.php:51
+addForeignKey,inspector_token,fk-inspector_token-inspector_uuid,inspector,'inspector_uuid' -> 'inspector_uuid',CASCADE,console/migrations/m200904_075357_inspector_type_user.php:57
+createIndex,store,idx-store-brand_uuid,,'brand_uuid',constraint history; unique=unspecified,console/migrations/m200909_110549_alter_store_table_for_brand.php:20
+addForeignKey,store,fk-store-brand_uuid,brand,'brand_uuid' -> 'brand_uuid',CASCADE,console/migrations/m200909_110549_alter_store_table_for_brand.php:26
+addPrimaryKey,mall,PK,,'mall_uuid',constraint history; unique=unspecified,console/migrations/m200911_052307_mall_table.php:29
+createIndex,store,idx-store-mall_uuid,,'mall_uuid',constraint history; unique=unspecified,console/migrations/m200911_052307_mall_table.php:35
+addForeignKey,store,fk-store-mall_uuid,mall,'mall_uuid' -> 'mall_uuid',CASCADE,console/migrations/m200911_052307_mall_table.php:41
+addPrimaryKey,area,PK,,'area_uuid',constraint history; unique=unspecified,console/migrations/m200922_070412_candidate_location.php:31
+createIndex,candidate,idx-candidate-candidate_area_uuid,,'candidate_area_uuid',constraint history; unique=unspecified,console/migrations/m200922_070412_candidate_location.php:37
+addForeignKey,candidate,fk-candidate-candidate_area_uuid,area,'candidate_area_uuid' -> 'area_uuid',unspecified,console/migrations/m200922_070412_candidate_location.php:43
+createIndex,area,idx-area-country_id,,'country_id',constraint history; unique=unspecified,console/migrations/m200925_134404_area_country.php:21
+addForeignKey,area,fk-area-country_id,country,'country_id' -> 'country_id',unspecified,console/migrations/m200925_134404_area_country.php:27
+createIndex,store,idx-store-store_manager_uuid,,'store_manager_uuid',constraint history; unique=unspecified,console/migrations/m201005_135449_store_manager.php:17
+addForeignKey,store,fk-store-store_manager_uuid,company_contact,'store_manager_uuid' -> 'contact_uuid',unspecified,console/migrations/m201005_135449_store_manager.php:23
+addPrimaryKey,request_activity,PK,,'activity_uuid',constraint history; unique=unspecified,console/migrations/m201023_094550_request_activities.php:31
+createIndex,request_activity,idx-request_activity-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m201023_094550_request_activities.php:34
+addForeignKey,request_activity,fk-request_activity-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m201023_094550_request_activities.php:40
+createIndex,request_activity,idx-request_activity-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m201023_094550_request_activities.php:49
+addForeignKey,request_activity,fk-request_activity-request_uuid,request,'request_uuid' -> 'request_uuid',unspecified,console/migrations/m201023_094550_request_activities.php:55
+createIndex,request,idx-request-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m201026_105629_request_staff.php:17
+addForeignKey,request,fk-request-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m201026_105629_request_staff.php:23
+addPrimaryKey,candidate_note,PK,,'candidate_note_uuid',constraint history; unique=unspecified,console/migrations/m201105_063544_candidate_notes.php:30
+createIndex,candidate_note,idx-candidate_note-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m201105_063544_candidate_notes.php:33
+addForeignKey,candidate_note,fk-candidate_note-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m201105_063544_candidate_notes.php:40
+createIndex,candidate_note,idx-candidate_note-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m201105_063544_candidate_notes.php:49
+addForeignKey,candidate_note,fk-candidate_note-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m201105_063544_candidate_notes.php:56
+addPrimaryKey,candidate_video_log,PK,,'video_log_uuid',constraint history; unique=unspecified,console/migrations/m201105_122925_video_log.php:28
+createIndex,candidate_video_log,idx-candidate_video_log-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m201105_122925_video_log.php:31
+addForeignKey,candidate_video_log,fk-candidate_video_log-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m201105_122925_video_log.php:38
+createIndex,candidate_note,idx-candidate_note-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m201106_060223_update_note_table.php:22
+createIndex,candidate_note,idx-candidate_note-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m201106_060223_update_note_table.php:29
+addForeignKey,candidate_note,fk-candidate_note-created_by,staff,'created_by' -> 'staff_id',unspecified,console/migrations/m201106_060223_update_note_table.php:36
+addForeignKey,candidate_note,fk-candidate_note-updated_by,staff,'updated_by' -> 'staff_id',unspecified,console/migrations/m201106_060223_update_note_table.php:46
+dropForeignKey,candidate_note,fk-candidate_note-staff_id,,,unspecified,console/migrations/m201106_060223_update_note_table.php:55
+createIndex,note,idx-note-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m201106_060223_update_note_table.php:66
+createIndex,note,idx-note-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m201106_060223_update_note_table.php:73
+addForeignKey,note,fk-note-created_by,staff,'created_by' -> 'staff_id',unspecified,console/migrations/m201106_060223_update_note_table.php:80
+addForeignKey,note,fk-note-updated_by,staff,'updated_by' -> 'staff_id',unspecified,console/migrations/m201106_060223_update_note_table.php:90
+dropForeignKey,note,fk-note-staff_id,,,unspecified,console/migrations/m201106_060223_update_note_table.php:99
+dropIndex,candidate,candidate_email,,,constraint history; unique=unspecified,console/migrations/m201118_053835_remove_email_constrain.php:16
+createIndex,note,idx-note-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m201125_141940_note.php:27
+addForeignKey,note,fk-note-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m201125_141940_note.php:33
+createIndex,note,idx-note-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m201125_141940_note.php:51
+addForeignKey,note,fk-note-request_uuid,request,'request_uuid' -> 'request_uuid',unspecified,console/migrations/m201125_141940_note.php:57
+addPrimaryKey,fulltimer,PK,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m201127_092741_fulltime.php:38
+createIndex,fulltimer,idx-fulltimer-country_id,,'country_id',constraint history; unique=unspecified,console/migrations/m201127_092741_fulltime.php:41
+addForeignKey,fulltimer,fk-fulltimer-country_id,country,'country_id' -> 'country_id',unspecified,console/migrations/m201127_092741_fulltime.php:48
+createIndex,fulltimer,idx-fulltimer-fulltimer_area_uuid,,'fulltimer_area_uuid',constraint history; unique=unspecified,console/migrations/m201127_092741_fulltime.php:57
+addForeignKey,fulltimer,fk-fulltimer-fulltimer_area_uuid,area,'fulltimer_area_uuid' -> 'area_uuid',unspecified,console/migrations/m201127_092741_fulltime.php:64
+createIndex,fulltimer,idx-fulltimer-nationality_id,,'nationality_id',constraint history; unique=unspecified,console/migrations/m201127_092741_fulltime.php:73
+addForeignKey,fulltimer,fk-fulltimer-nationality_id,country,'nationality_id' -> 'country_id',CASCADE,console/migrations/m201127_092741_fulltime.php:80
+createIndex,fulltimer_tags,idx-fulltimer_tags-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m201127_092741_fulltime.php:96
+addForeignKey,fulltimer_tags,fk-fulltimer_tags-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',unspecified,console/migrations/m201127_092741_fulltime.php:103
+createIndex,note,idx-note-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m201201_065229_add_fulltimer_in_note.php:25
+addForeignKey,note,fk-note-contact_uuid,company_contact,'contact_uuid' -> 'contact_uuid',unspecified,console/migrations/m201201_065229_add_fulltimer_in_note.php:31
+createIndex,note,idx-note-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m201201_065229_add_fulltimer_in_note.php:42
+addForeignKey,note,fk-note-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',unspecified,console/migrations/m201201_065229_add_fulltimer_in_note.php:48
+addPrimaryKey,suggestion,PK,,'suggestion_uuid',constraint history; unique=unspecified,console/migrations/m201201_120803_suggesstionn.php:31
+createIndex,suggestion,idx-suggestion-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m201201_120803_suggesstionn.php:34
+addForeignKey,suggestion,fk-suggestion-request_uuid,request,'request_uuid' -> 'request_uuid',unspecified,console/migrations/m201201_120803_suggesstionn.php:41
+createIndex,suggestion,idx-suggestion-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m201201_120803_suggesstionn.php:50
+addForeignKey,suggestion,fk-suggestion-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',unspecified,console/migrations/m201201_120803_suggesstionn.php:57
+createIndex,suggestion,idx-suggestion-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m201201_120803_suggesstionn.php:67
+addForeignKey,suggestion,fk-suggestion-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m201201_120803_suggesstionn.php:74
+createIndex,suggestion,idx-suggestion-note_uuid,,'note_uuid',constraint history; unique=unspecified,console/migrations/m201201_120803_suggesstionn.php:83
+addForeignKey,suggestion,fk-suggestion-note_uuid,note,'note_uuid' -> 'note_uuid',unspecified,console/migrations/m201201_120803_suggesstionn.php:90
+createIndex,candidate_work_history,idx-candidate_work_history-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m201208_080317_work_history_table.php:18
+addForeignKey,candidate_work_history,fk-candidate_work_history-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m201208_080317_work_history_table.php:24
+createIndex,candidate_work_history,idx-candidate_work_history-parent_company_id,,'parent_company_id',constraint history; unique=unspecified,console/migrations/m201208_080317_work_history_table.php:33
+addForeignKey,candidate_work_history,fk-candidate_work_history-parent_company_id,company,'parent_company_id' -> 'company_id',unspecified,console/migrations/m201208_080317_work_history_table.php:39
+createIndex,note,idx-note-suggestion_uuid,,'suggestion_uuid',constraint history; unique=unspecified,console/migrations/m201210_144631_suggestion_feedback.php:18
+addForeignKey,note,fk-note-suggestion_uuid,suggestion,'suggestion_uuid' -> 'suggestion_uuid',unspecified,console/migrations/m201210_144631_suggestion_feedback.php:25
+createIndex,transfer,idx-transfer-transfer_created_by,,'transfer_created_by',constraint history; unique=unspecified,console/migrations/m201214_110450_transfer_staff.php:20
+addForeignKey,transfer,fk-transfer-transfer_created_by,staff,'transfer_created_by' -> 'staff_id',unspecified,console/migrations/m201214_110450_transfer_staff.php:27
+createIndex,transfer,idx-transfer-transfer_updated_by,,'transfer_updated_by',constraint history; unique=unspecified,console/migrations/m201214_110450_transfer_staff.php:36
+addForeignKey,transfer,fk-transfer-transfer_updated_by,staff,'transfer_updated_by' -> 'staff_id',unspecified,console/migrations/m201214_110450_transfer_staff.php:43
+dropForeignKey,request,fk-request-staff_id,,,unspecified,console/migrations/m201224_094026_request_staff.php:15
+dropIndex,request,idx-request-staff_id,,,constraint history; unique=unspecified,console/migrations/m201224_094026_request_staff.php:17
+dropIndex,candidate,candidate_civil_id,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:17
+dropIndex,candidate,candidate_civil_id_2,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:18
+dropIndex,candidate,candidate_password_reset_token,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:19
+createIndex,candidate,idx-candidate-candidate_civil_id,,"['candidate_civil_id', 'deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:21
+createIndex,candidate,idx-candidate-candidate_password_reset_token,,"['candidate_password_reset_token', 'deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:23
+dropIndex,company,company_password_reset_token,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:27
+createIndex,company,idx-company-company_password_reset_token,,"['company_password_reset_token', 'deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:29
+dropIndex,inspector,inspector_password_reset_token,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:33
+dropIndex,inspector,inspector_email,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:34
+createIndex,inspector,idx-inspector-inspector_password_reset_token,,"['inspector_password_reset_token', 'inspector_deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:36
+createIndex,inspector,idx-inspector-inspector_email,,"['inspector_email', 'inspector_deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:37
+dropIndex,staff,staff_email,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:41
+dropIndex,staff,staff_password_reset_token,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:42
+createIndex,staff,idx-staff-staff_email,,"['staff_email', 'deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:44
+createIndex,staff,idx-staff-staff_password_reset_token,,"['staff_password_reset_token', 'deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:45
+dropIndex,transfer_candidate,transfer_confirmation_id,,,constraint history; unique=unspecified,console/migrations/m201231_105431_fix_unique_key.php:49
+createIndex,transfer_candidate,idx-transfer_candidate-transfer_confirmation_id,,"['transfer_confirmation_id', 'deleted']",constraint history; unique=true,console/migrations/m201231_105431_fix_unique_key.php:51
+dropForeignKey,contact,fk-company_contact-CASCADE,,,unspecified,console/migrations/m210108_092910_rename_company_contact_to_contact.php:45
+dropForeignKey,company_contact_phone,fk-company_contact_phone-CASCADE,,,unspecified,console/migrations/m210108_092910_rename_company_contact_to_contact.php:52
+dropForeignKey,company_contact_email,fk-company_contact_email-CASCADE,,,unspecified,console/migrations/m210108_092910_rename_company_contact_to_contact.php:60
+createIndex,contact,idx-contact-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m210108_092910_rename_company_contact_to_contact.php:69
+addForeignKey,contact,fk-contact-CASCADE,company,'company_id' -> 'company_id',CASCADE,console/migrations/m210108_092910_rename_company_contact_to_contact.php:76
+addForeignKey,company_contact_phone,fk-company_contact_phone-CASCADE,contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m210108_092910_rename_company_contact_to_contact.php:93
+addForeignKey,company_contact_email,fk-company_contact_email-CASCADE,contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m210108_092910_rename_company_contact_to_contact.php:108
+addPrimaryKey,company_contact,PK,,'company_contact_uuid',constraint history; unique=unspecified,console/migrations/m210108_111710_company_contact_tbl.php:32
+createIndex,company_contact,idx-company_contact-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m210108_111710_company_contact_tbl.php:35
+addForeignKey,company_contact,fk-company_contact-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m210108_111710_company_contact_tbl.php:42
+createIndex,company_contact,idx-company_contact-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m210108_111710_company_contact_tbl.php:52
+addForeignKey,company_contact,fk-company_contact-contact_uuid,contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m210108_111710_company_contact_tbl.php:59
+dropIndex,company,idx-company-company_password_reset_token,,,constraint history; unique=unspecified,console/migrations/m210108_131700_contact_table_rename.php:19
+dropForeignKey,contact,fk-contact-CASCADE,,,unspecified,console/migrations/m210108_131700_contact_table_rename.php:30
+dropIndex,contact,idx-company_contact-company_id,,,constraint history; unique=unspecified,console/migrations/m210108_131700_contact_table_rename.php:35
+dropForeignKey,contact,fk-company_contact-CASCADE,,,unspecified,console/migrations/m210108_131700_contact_table_rename.php:46
+dropForeignKey,contact,fk-contact-company_id,,,unspecified,console/migrations/m210108_131700_contact_table_rename.php:53
+createIndex,contact_token,idx-contact_token-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m210111_064411_contact_token_tbl.php:36
+addForeignKey,contact_token,fk-contact_token-contact_uuid,contact,'contact_uuid' -> 'contact_uuid',unspecified,console/migrations/m210111_064411_contact_token_tbl.php:43
+dropForeignKey,request,fk-request-request_created_by,,,unspecified,console/migrations/m210114_074728_remove_request_forign_key_frm_staff_tbl.php:17
+dropForeignKey,request,fk-request-request_updated_by,,,unspecified,console/migrations/m210114_074728_remove_request_forign_key_frm_staff_tbl.php:18
+dropForeignKey,note,fk-note-created_by,,,unspecified,console/migrations/m210114_074728_remove_request_forign_key_frm_staff_tbl.php:22
+dropForeignKey,note,fk-note-updated_by,,,unspecified,console/migrations/m210114_074728_remove_request_forign_key_frm_staff_tbl.php:23
+addPrimaryKey,contact_invitation,PK,,'contact_invitation_uuid',constraint history; unique=unspecified,console/migrations/m210118_080437_contact_intivation_tbl.php:28
+createIndex,contact_invitation,idx-contact_invitation-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m210118_080437_contact_intivation_tbl.php:30
+addForeignKey,contact_invitation,fk-contact_invitation-contact_uuid,contact,'contact_uuid' -> 'contact_uuid',,console/migrations/m210118_080437_contact_intivation_tbl.php:36
+createIndex,contact_invitation,idx-contact_invitation-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m210118_080437_contact_intivation_tbl.php:45
+addForeignKey,contact_invitation,fk-contact_invitation-company_id,company,'company_id' -> 'company_id',,console/migrations/m210118_080437_contact_intivation_tbl.php:51
+addPrimaryKey,invitation,PK,,'invitation_uuid',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:33
+createIndex,invitation,idx-invitation-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:36
+addForeignKey,invitation,fk-invitation-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m210222_122653_invitation.php:43
+createIndex,invitation,idx-invitation-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:52
+addForeignKey,invitation,fk-invitation-request_uuid,request,'request_uuid' -> 'request_uuid',unspecified,console/migrations/m210222_122653_invitation.php:59
+createIndex,invitation,idx-invitation-invitation_created_by_staff,,'invitation_created_by_staff',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:68
+addForeignKey,invitation,fk-invitation-invitation_created_by_staff,staff,'invitation_created_by_staff' -> 'staff_id',unspecified,console/migrations/m210222_122653_invitation.php:75
+createIndex,invitation,idx-invitation-invitation_updated_by_staff,,'invitation_updated_by_staff',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:84
+addForeignKey,invitation,fk-invitation-invitation_updated_by_staff,staff,'invitation_updated_by_staff' -> 'staff_id',unspecified,console/migrations/m210222_122653_invitation.php:91
+createIndex,invitation,idx-invitation-invitation_created_by_company,,'invitation_created_by_company',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:100
+addForeignKey,invitation,fk-invitation-invitation_created_by_company,company,'invitation_created_by_company' -> 'company_id',unspecified,console/migrations/m210222_122653_invitation.php:107
+createIndex,invitation,idx-invitation-invitation_updated_by_company,,'invitation_updated_by_company',constraint history; unique=unspecified,console/migrations/m210222_122653_invitation.php:116
+addForeignKey,invitation,fk-invitation-invitation_updated_by_company,company,'invitation_updated_by_company' -> 'company_id',unspecified,console/migrations/m210222_122653_invitation.php:123
+createIndex,note,idx-note-invitation_uuid,,'invitation_uuid',constraint history; unique=unspecified,console/migrations/m210223_135821_invitation_note.php:18
+addForeignKey,note,fk-note-invitation_uuid,invitation,'invitation_uuid' -> 'invitation_uuid',unspecified,console/migrations/m210223_135821_invitation_note.php:25
+addPrimaryKey,contact_email_verify_attempt,PK,,'ceva_uuid',constraint history; unique=unspecified,console/migrations/m210407_160447_company_email_update.php:33
+addPrimaryKey,transfer_file_entry,PK,,'tfe_uuid',constraint history; unique=unspecified,console/migrations/m210628_060232_transfer_file_entries.php:66
+createIndex,transfer_file_entry,idx-transfer_file_entry-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m210628_060232_transfer_file_entries.php:68
+addForeignKey,transfer_file_entry,fk-transfer_file_entry-created_by,admin,'created_by' -> 'admin_id',RESTRICT,console/migrations/m210628_060232_transfer_file_entries.php:74
+createIndex,transfer_file_entry,idx-transfer_file_entry-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m210628_060232_transfer_file_entries.php:84
+addForeignKey,transfer_file_entry,fk-transfer_file_entry-updated_by,admin,'updated_by' -> 'admin_id',RESTRICT,console/migrations/m210628_060232_transfer_file_entries.php:90
+createIndex,transfer_file_entry,idx-transfer_file_entry-transfer_file_id,,'transfer_file_id',constraint history; unique=unspecified,console/migrations/m210628_060232_transfer_file_entries.php:100
+addForeignKey,transfer_file_entry,fk-transfer_file_entry-transfer_file_id,transfer_file,'transfer_file_id' -> 'transfer_file_id',RESTRICT,console/migrations/m210628_060232_transfer_file_entries.php:106
+createIndex,transfer_file_entry,idx-transfer_file_entry-debit_narrative,,'debit_narrative',constraint history; unique=unspecified,console/migrations/m210628_060232_transfer_file_entries.php:116
+addForeignKey,transfer_file_entry,fk-transfer_file_entry-debit_narrative,transfer,'debit_narrative' -> 'transfer_id',RESTRICT,console/migrations/m210628_060232_transfer_file_entries.php:122
+createIndex,transfer_file_entry,idx-transfer_file_entry-credit_narrative,,'credit_narrative',constraint history; unique=unspecified,console/migrations/m210628_060232_transfer_file_entries.php:132
+addForeignKey,transfer_file_entry,fk-transfer_file_entry-credit_narrative,transfer_candidate,'credit_narrative' -> 'tc_id',RESTRICT,console/migrations/m210628_060232_transfer_file_entries.php:138
+createIndex,fulltimer,idx-fulltimer-university_id,,'university_id',constraint history; unique=unspecified,console/migrations/m211019_093500_fulltimer_filter.php:30
+addForeignKey,fulltimer,fk-fulltimer-university_id,university,'university_id' -> 'university_id',,console/migrations/m211019_093500_fulltimer_filter.php:37
+createIndex,fulltimer_skill,idx-fulltimer_skill-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m211019_093500_fulltimer_filter.php:80
+addForeignKey,fulltimer_skill,fk-fulltimer_skill-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',CASCADE,console/migrations/m211019_093500_fulltimer_filter.php:86
+createIndex,fulltimer_experience,idx-fulltimer_experience-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m211019_093500_fulltimer_filter.php:105
+addForeignKey,fulltimer_experience,fk-fulltimer_experience-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',CASCADE,console/migrations/m211019_093500_fulltimer_filter.php:111
+createIndex,request,idx-request-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m211027_172434_request_staff.php:21
+addForeignKey,request,fk-request-staff_id,staff,'staff_id' -> 'staff_id',CASCADE,console/migrations/m211027_172434_request_staff.php:27
+addPrimaryKey,request_checklist,PK,,'request_checklist_uuid',constraint history; unique=unspecified,console/migrations/m211126_083930_request_checklist.php:31
+createIndex,note,idx-note-request_checklist_uuid,,'request_checklist_uuid',constraint history; unique=unspecified,console/migrations/m211126_083930_request_checklist.php:37
+addForeignKey,note,fk-note-request_checklist_uuid,request_checklist,'request_checklist_uuid' -> 'request_checklist_uuid',,console/migrations/m211126_083930_request_checklist.php:46
+addPrimaryKey,story,PK,,'story_uuid',constraint history; unique=unspecified,console/migrations/m211127_154105_add_story_table.php:37
+createIndex,story,idx-story-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m211127_154105_add_story_table.php:39
+addForeignKey,story,fk-story-request_uuid,request,'request_uuid' -> 'request_uuid',RESTRICT,console/migrations/m211127_154105_add_story_table.php:45
+createIndex,story,idx-story-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m211127_154105_add_story_table.php:56
+addForeignKey,story,fk-story-staff_id,staff,'staff_id' -> 'staff_id',CASCADE,console/migrations/m211127_154105_add_story_table.php:62
+addPrimaryKey,story_activity,PK,,'story_activity_uuid',constraint history; unique=unspecified,console/migrations/m211127_154105_add_story_table.php:81
+createIndex,story_activity,idx-story_activity-story_uuid,,'story_uuid',constraint history; unique=unspecified,console/migrations/m211127_154105_add_story_table.php:83
+addForeignKey,story_activity,fk-story_activity-story_uuid,story,'story_uuid' -> 'story_uuid',RESTRICT,console/migrations/m211127_154105_add_story_table.php:89
+createIndex,story_activity,idx-story_activity-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m211127_154105_add_story_table.php:100
+addForeignKey,story_activity,fk-story_activity-staff_id,staff,'staff_id' -> 'staff_id',CASCADE,console/migrations/m211127_154105_add_story_table.php:106
+createIndex,story,idx-story-suggestion_uuid,,'suggestion_uuid',constraint history; unique=unspecified,console/migrations/m211130_141016_add_suggestion_id_to_story_table.php:18
+addForeignKey,story,fk-story-suggestion_uuid,suggestion,'suggestion_uuid' -> 'suggestion_uuid',unspecified,console/migrations/m211130_141016_add_suggestion_id_to_story_table.php:25
+createIndex,invitation,idx-invitation-story_uuid,,'story_uuid',constraint history; unique=unspecified,console/migrations/m211224_102328_invitation.php:25
+addForeignKey,invitation,fk-invitation-story_uuid,story,'story_uuid' -> 'story_uuid',RESTRICT,console/migrations/m211224_102328_invitation.php:31
+createIndex,suggestion,idx-suggestion-story_uuid,,'story_uuid',constraint history; unique=unspecified,console/migrations/m220112_103815_suggestion_note_story_uuid.php:24
+addForeignKey,suggestion,fk-suggestion-story_uuid,story,'story_uuid' -> 'story_uuid',unspecified,console/migrations/m220112_103815_suggestion_note_story_uuid.php:30
+createIndex,note,idx-note-story_uuid,,'story_uuid',constraint history; unique=unspecified,console/migrations/m220511_072946_story_notes_changes.php:25
+addForeignKey,note,fk-note-story_uuid,story,'story_uuid' -> 'story_uuid',unspecified,console/migrations/m220511_072946_story_notes_changes.php:31
+addPrimaryKey,expense,PK,,'expense_uuid',constraint history; unique=unspecified,console/migrations/m220628_134842_expense.php:33
+createIndex,expense,idx-expense-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m220628_134842_expense.php:35
+addForeignKey,expense,fk-expense-created_by,admin,'created_by' -> 'admin_id',,console/migrations/m220628_134842_expense.php:41
+createIndex,expense,idx-expense-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m220628_134842_expense.php:50
+addForeignKey,expense,fk-expense-updated_by,admin,'updated_by' -> 'admin_id',,console/migrations/m220628_134842_expense.php:56
+createIndex,candidate_work_history,idx-candidate_work_history-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m220729_055851_work_history_changes.php:21
+addForeignKey,candidate_work_history,fk-candidate_work_history-staff_id,staff,'staff_id' -> 'staff_id',,console/migrations/m220729_055851_work_history_changes.php:27
+addPrimaryKey,staff_salary,PK,,'staff_salary_uuid',constraint history; unique=unspecified,console/migrations/m220818_050737_salary.php:35
+createIndex,staff_salary,idx-staff_salary-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m220818_050737_salary.php:37
+addForeignKey,staff_salary,fk-staff_salary-staff_id,staff,'staff_id' -> 'staff_id',,console/migrations/m220818_050737_salary.php:43
+addPrimaryKey,candidate_working_hour,PK,,'candidate_working_hour_uuid',constraint history; unique=unspecified,console/migrations/m220919_094549_time_tracker_table.php:37
+createIndex,candidate_working_hour,idx-candidate_working_hour-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m220919_094549_time_tracker_table.php:39
+addForeignKey,candidate_working_hour,fk-candidate_working_hour-candidate_id,candidate,'candidate_id' -> 'candidate_id',,console/migrations/m220919_094549_time_tracker_table.php:45
+createIndex,candidate_working_hour,idx-candidate_working_hour-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m220919_094549_time_tracker_table.php:54
+addForeignKey,candidate_working_hour,fk-candidate_working_hour-store_id,store,'store_id' -> 'store_id',,console/migrations/m220919_094549_time_tracker_table.php:60
+addPrimaryKey,permission_section,PK,,'permission_uuid',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:25
+addPrimaryKey,permission_sub_section,PK,,'permission_sub_section_uuid',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:34
+createIndex,permission_sub_section,idx-permission_sub_section-permission_uuid,,'permission_uuid',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:37
+addForeignKey,permission_sub_section,fk-permission_sub_section-permission_uuid,permission_section,'permission_uuid' -> 'permission_uuid',unspecified,console/migrations/m221017_131312_permission.php:44
+addPrimaryKey,permission_user,PK,,'permission_user_uuid',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:60
+createIndex,permission_user,idx-permission_user-permission_sub_section_uuid,,'permission_sub_section_uuid',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:62
+addForeignKey,permission_user,fk-permission_user-permission_sub_section_uuid,permission_sub_section,'permission_sub_section_uuid' -> 'permission_sub_section_uuid',unspecified,console/migrations/m221017_131312_permission.php:68
+createIndex,permission_user,idx-permission_user-admin_id,,'admin_id',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:76
+addForeignKey,permission_user,fk-permission_user-admin_id,admin,'admin_id' -> 'admin_id',unspecified,console/migrations/m221017_131312_permission.php:82
+createIndex,permission_user,idx-permission_user-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m221017_131312_permission.php:90
+addForeignKey,permission_user,fk-permission_user-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m221017_131312_permission.php:96
+addPrimaryKey,daily_standup_question,PK,,'question_uuid',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:32
+addPrimaryKey,daily_standup_answer,PK,,'answer_uuid',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:44
+createIndex,daily_standup_answer,idx-daily_standup_answer-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:46
+addForeignKey,daily_standup_answer,fk-daily_standup_answer-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m221215_072607_attendance.php:53
+createIndex,daily_standup_answer,idx-daily_standup_answer-question_uuid,,'question_uuid',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:61
+addForeignKey,daily_standup_answer,fk-daily_standup_answer-question_uuid,daily_standup_question,'question_uuid' -> 'question_uuid',unspecified,console/migrations/m221215_072607_attendance.php:68
+addPrimaryKey,staff_work_session,PK,,'work_session_uuid',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:84
+createIndex,staff_work_session,idx-staff_work_session-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:86
+addForeignKey,staff_work_session,fk-staff_work_session-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m221215_072607_attendance.php:93
+addPrimaryKey,staff_leave,PK,,'staff_leave_uuid',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:111
+createIndex,staff_leave,idx-staff_leave-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m221215_072607_attendance.php:113
+addForeignKey,staff_leave,fk-staff_leave-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m221215_072607_attendance.php:120
+addPrimaryKey,candidate_eval_ques,PK,,'ceq_uuid',constraint history; unique=unspecified,console/migrations/m230113_065332_candidate_evaluation.php:28
+createIndex,candidate_eval_dept_ques,idx_candidate_eval_dept_ques_ceq_uuid,,'ceq_uuid',constraint history; unique=unspecified,console/migrations/m230113_065332_candidate_evaluation.php:51
+createIndex,candidate_evaluation,idx_candidate_evaluation_candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m230113_065332_candidate_evaluation.php:53
+createIndex,candidate_evaluation,idx_candidate_evaluation_ceq_uuid,,'ceq_uuid',constraint history; unique=unspecified,console/migrations/m230113_065332_candidate_evaluation.php:54
+createIndex,candidate_evaluation,idx_candidate_evaluation_staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m230113_065332_candidate_evaluation.php:55
+addForeignKey,candidate_eval_dept_ques,fk_candidate_eval_dept_ques_ceq_uuid,candidate_eval_ques,'ceq_uuid' -> 'ceq_uuid',,console/migrations/m230113_065332_candidate_evaluation.php:57
+addForeignKey,candidate_evaluation,fk_candidate_evaluation_candidate_id,candidate,'candidate_id' -> 'candidate_id',,console/migrations/m230113_065332_candidate_evaluation.php:66
+addForeignKey,candidate_evaluation,fk_candidate_evaluation_ceq_uuid,candidate_eval_ques,'ceq_uuid' -> 'ceq_uuid',,console/migrations/m230113_065332_candidate_evaluation.php:75
+addForeignKey,candidate_evaluation,fk_candidate_evaluation_staff_id,staff,'staff_id' -> 'staff_id',,console/migrations/m230113_065332_candidate_evaluation.php:84
+createIndex,candidate_evaluation_answer,idx_candidate_evaluation_answer_ceq_uuid,,'ceq_uuid',constraint history; unique=unspecified,console/migrations/m230117_113129_candidate_evaluation_answers.php:28
+createIndex,candidate_evaluation_answer,idx_candidate_evaluation_answer_can_eval_uuid,,'can_eval_uuid',constraint history; unique=unspecified,console/migrations/m230117_113129_candidate_evaluation_answers.php:29
+addForeignKey,candidate_evaluation_answer,fk_candidate_evaluation_answer_ceq_uuid,candidate_eval_ques,'ceq_uuid' -> 'ceq_uuid',,console/migrations/m230117_113129_candidate_evaluation_answers.php:31
+addForeignKey,candidate_evaluation_answer,fk_candidate_evaluation_answer_can_eval_uuid,candidate_evaluation,'can_eval_uuid' -> 'can_eval_uuid',,console/migrations/m230117_113129_candidate_evaluation_answers.php:40
+dropForeignKey,candidate_evaluation,fk_candidate_evaluation_ceq_uuid,,,unspecified,console/migrations/m230117_113129_candidate_evaluation_answers.php:50
+addPrimaryKey,staff_expenses,PK,,'staff_expense_uuid',constraint history; unique=unspecified,console/migrations/m230201_084401_staff_expenses.php:40
+createIndex,staff_expenses,idx_staff_expenses_staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m230201_084401_staff_expenses.php:42
+addForeignKey,staff_expenses,fk_staff_expenses_staff_id,staff,'staff_id' -> 'staff_id',,console/migrations/m230201_084401_staff_expenses.php:44
+createIndex,company,idx-company-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m230222_105944_update_company_table.php:18
+addForeignKey,company,fk-company-staff_id,staff,'staff_id' -> 'staff_id',,console/migrations/m230222_105944_update_company_table.php:24
+addPrimaryKey,setting,PK,,'setting_uuid',constraint history; unique=unspecified,console/migrations/m230314_125154_setting.php:32
+addForeignKey,candidate_tag,fk-candidate_tag-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m230504_083255_candidate_tag.php:30
+createIndex,candidate_tag,idx-candidate_tag-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m230521_161132_tag_reason.php:23
+addForeignKey,candidate_tag,fk-candidate_tag-created_by,staff,'created_by' -> 'staff_id',CASCADE,console/migrations/m230521_161132_tag_reason.php:29
+createIndex,webhook,idx-webhook-event,,'event',constraint history; unique=unspecified,console/migrations/m230528_090412_webhook.php:33
+addForeignKey,webhook,fk-webhook-created_by,staff,'created_by' -> 'staff_id',,console/migrations/m230528_090412_webhook.php:40
+addForeignKey,webhook,fk-webhook-updated_by,staff,'updated_by' -> 'staff_id',,console/migrations/m230528_090412_webhook.php:50
+createIndex,candidate_warning,idx-candidate_warning-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m230606_130436_warning.php:33
+addForeignKey,candidate_warning,fk-candidate_warning-candidate_id,candidate,'candidate_id' -> 'candidate_id',,console/migrations/m230606_130436_warning.php:40
+createIndex,candidate_warning,idx-candidate_warning-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m230606_130436_warning.php:50
+addForeignKey,candidate_warning,fk-candidate_warning-created_by,staff,'created_by' -> 'staff_id',,console/migrations/m230606_130436_warning.php:57
+createIndex,candidate_warning,idx-candidate_warning-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m230606_130436_warning.php:67
+addForeignKey,candidate_warning,fk-candidate_warning-updated_by,staff,'updated_by' -> 'staff_id',,console/migrations/m230606_130436_warning.php:74
+addPrimaryKey,company_request,PK,,'company_request_uuid',constraint history; unique=unspecified,console/migrations/m230706_042813_company_request.php:38
+createIndex,company_request,idx-company_request-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m230706_042813_company_request.php:41
+addForeignKey,company_request,fk-company_request-contact_uuid,contact,'contact_uuid' -> 'contact_uuid',,console/migrations/m230706_042813_company_request.php:48
+addPrimaryKey,email_campaign,PK,,'campaign_uuid',constraint history; unique=unspecified,console/migrations/m231009_105032_email.php:31
+addPrimaryKey,email_campaign_filter,PK,,'cf_uuid',constraint history; unique=unspecified,console/migrations/m231009_105032_email.php:40
+createIndex,email_campaign_filter,ind-email_campaign_filter-campaign_uuid,,'campaign_uuid',constraint history; unique=unspecified,console/migrations/m231009_105032_email.php:42
+addForeignKey,email_campaign_filter,fk-email_campaign_filter-customer_id,email_campaign,'campaign_uuid' -> 'campaign_uuid',CASCADE,console/migrations/m231009_105032_email.php:44
+addPrimaryKey,staff_notification,PK,,'sn_uuid',constraint history; unique=unspecified,console/migrations/m231129_080008_staff_notification.php:29
+createIndex,staff_notification,idx-staff_notification-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m231129_080008_staff_notification.php:32
+addForeignKey,staff_notification,fk-staff_notification-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m231129_080008_staff_notification.php:39
+createIndex,contact,ind-contact-contact_email_verified_by,,'contact_email_verified_by',constraint history; unique=unspecified,console/migrations/m240103_101148_contact.php:19
+addForeignKey,contact,fk-contact-contact_email_verified_by,staff,'contact_email_verified_by' -> 'staff_id',unspecified,console/migrations/m240103_101148_contact.php:21
+addPrimaryKey,blocked_ip,PK,,'ip_uuid',constraint history; unique=unspecified,console/migrations/m240203_060625_block_ip.php:37
+createIndex,company,ind-company-country_id,,'country_id',constraint history; unique=unspecified,console/migrations/m240214_084103_multi_currency.php:212
+addForeignKey,company,fk-company-country_id,country,'country_id' -> 'country_id',unspecified,console/migrations/m240214_084103_multi_currency.php:214
+createIndex,company,ind-company-currency_code,,'currency_code',constraint history; unique=unspecified,console/migrations/m240214_084103_multi_currency.php:220
+createIndex,transfer,ind-transfer-currency_code,,'currency_code',constraint history; unique=unspecified,console/migrations/m240214_084103_multi_currency.php:226
+createIndex,company_request,ind-company_request-country_id,,'country_id',constraint history; unique=unspecified,console/migrations/m240214_084103_multi_currency.php:233
+createIndex,company_request,ind-company_request-currency_code,,'currency_code',constraint history; unique=unspecified,console/migrations/m240214_084103_multi_currency.php:235
+addForeignKey,company_request,fk-company_request-country_id,country,'country_id' -> 'country_id',unspecified,console/migrations/m240214_084103_multi_currency.php:237
+addPrimaryKey,mail_log,PK,,'mail_uuid',constraint history; unique=unspecified,console/migrations/m240227_045347_mail_log.php:31
+addPrimaryKey,candidate_stats,PK,,'cs_uuid',constraint history; unique=unspecified,console/migrations/m240325_073509_revenue.php:30
+createIndex,candidate_stats,idx-candidate_stats-currency_code,,'currency_code',constraint history; unique=unspecified,console/migrations/m240325_073509_revenue.php:33
+createIndex,candidate_stats,idx-candidate_stats-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240325_073509_revenue.php:40
+addForeignKey,candidate_stats,fk-candidate_stats-candidate_id,candidate,'candidate_id' -> 'candidate_id',,console/migrations/m240325_073509_revenue.php:47
+addPrimaryKey,company_stats,PK,,'cs_uuid',constraint history; unique=unspecified,console/migrations/m240325_073509_revenue.php:65
+createIndex,company_stats,idx-company_stats-currency_code,,'currency_code',constraint history; unique=unspecified,console/migrations/m240325_073509_revenue.php:68
+createIndex,company_stats,idx-company_stats-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240325_073509_revenue.php:75
+addForeignKey,company_stats,fk-company_stats-company_id,company,'company_id' -> 'company_id',,console/migrations/m240325_073509_revenue.php:82
+addPrimaryKey,bank_transaction_contact,PK,,'contact_id',constraint history; unique=unspecified,console/migrations/m240328_182245_bank_transaction.php:28
+addPrimaryKey,bank_transaction,PK,,'bank_transaction_id',constraint history; unique=unspecified,console/migrations/m240328_182245_bank_transaction.php:54
+createIndex,bank_transaction,idx-bank_transaction-contact_id,,'contact_id',constraint history; unique=unspecified,console/migrations/m240328_182245_bank_transaction.php:57
+addForeignKey,bank_transaction,fk-bank_transaction-contact_id,bank_transaction_contact,'contact_id' -> 'contact_id',unspecified,console/migrations/m240328_182245_bank_transaction.php:64
+addPrimaryKey,bank_transaction_line_item,PK,,'line_item_id',constraint history; unique=unspecified,console/migrations/m240328_182245_bank_transaction.php:89
+createIndex,bank_transaction_line_item,idx-bank_transaction_line_item-bank_transaction_id,,'bank_transaction_id',constraint history; unique=unspecified,console/migrations/m240328_182245_bank_transaction.php:92
+addForeignKey,bank_transaction_line_item,fk-bank_transaction_line_item-bank_transaction_id,bank_transaction,'bank_transaction_id' -> 'bank_transaction_id',CASCADE,console/migrations/m240328_182245_bank_transaction.php:99
+addPrimaryKey,campaign,PK,,'utm_uuid',constraint history; unique=unspecified,console/migrations/m240407_062424_campaign.php:38
+createIndex,candidate,ind-candidate-utm_uuid,,'utm_uuid',constraint history; unique=unspecified,console/migrations/m240407_062424_campaign.php:42
+addForeignKey,candidate,fk-candidate-utm_uuid,campaign,'utm_uuid' -> 'utm_uuid',unspecified,console/migrations/m240407_062424_campaign.php:44
+createIndex,contact,ind-contact-utm_uuid,,'utm_uuid',constraint history; unique=unspecified,console/migrations/m240407_062424_campaign.php:51
+addForeignKey,contact,fk-contact-utm_uuid,campaign,'utm_uuid' -> 'utm_uuid',unspecified,console/migrations/m240407_062424_campaign.php:53
+createIndex,company_request,ind-company_request-utm_uuid,,'utm_uuid',constraint history; unique=unspecified,console/migrations/m240407_062424_campaign.php:60
+addForeignKey,company_request,fk-company_request-utm_uuid,campaign,'utm_uuid' -> 'utm_uuid',unspecified,console/migrations/m240407_062424_campaign.php:62
+addPrimaryKey,request_skill,request_skill_pk,,"['request_uuid', 'skill']",constraint history; unique=unspecified,console/migrations/m240421_081720_request_skills.php:26
+addForeignKey,request_skill,fk-request_skill-request_uuid,request,'request_uuid' -> 'request_uuid',CASCADE,console/migrations/m240421_081720_request_skills.php:28
+createIndex,request_skill,ind-request_skill-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m240422_091725_request.php:15
+createIndex,request,ind-request-nationality_id,,'nationality_id',constraint history; unique=unspecified,console/migrations/m240422_091725_request.php:20
+addForeignKey,request,fk-request-nationality_id,country,'nationality_id' -> 'country_id',unspecified,console/migrations/m240422_091725_request.php:22
+addPrimaryKey,store_manager,PK,,'store_manager_uuid',constraint history; unique=unspecified,console/migrations/m240422_190025_manager.php:38
+createIndex,store_manager,idx-store_manager-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240422_190025_manager.php:41
+addForeignKey,store_manager,fk-store_manager-CASCADE,company,'company_id' -> 'company_id',CASCADE,console/migrations/m240422_190025_manager.php:48
+createIndex,store_manager,idx-store_manager-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240422_190025_manager.php:58
+addForeignKey,store_manager,fk-store_manager-store_id,store,'store_id' -> 'store_id',CASCADE,console/migrations/m240422_190025_manager.php:65
+addPrimaryKey,manager_token,PK,,'token_uuid',constraint history; unique=unspecified,console/migrations/m240422_190025_manager.php:86
+createIndex,manager_token,idx-manager_token-store_manager_uuid,,'store_manager_uuid',constraint history; unique=unspecified,console/migrations/m240422_190025_manager.php:89
+addForeignKey,manager_token,fk-manager_token-store_manager_uuid,store_manager,'store_manager_uuid' -> 'store_manager_uuid',CASCADE,console/migrations/m240422_190025_manager.php:96
+addPrimaryKey,request_application,PK,,'application_uuid',constraint history; unique=unspecified,console/migrations/m240428_090018_application.php:31
+createIndex,request_application,idx-request_application-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m240428_090018_application.php:34
+addForeignKey,request_application,fk-request_application-request_uuid,request,'request_uuid' -> 'request_uuid',CASCADE,console/migrations/m240428_090018_application.php:41
+createIndex,request_application,idx-request_application-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m240428_090018_application.php:51
+addForeignKey,request_application,fk-request_application-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',CASCADE,console/migrations/m240428_090018_application.php:58
+createIndex,request_application,idx-request_application-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240428_090018_application.php:68
+addForeignKey,request_application,fk-request_application-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m240428_090018_application.php:75
+addPrimaryKey,store_assignment_request,PK,,'sar_uuid',constraint history; unique=unspecified,console/migrations/m240429_110602_store_assignment_request.php:31
+createIndex,store_assignment_request,idx-store_assignment_request-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240429_110602_store_assignment_request.php:34
+addForeignKey,store_assignment_request,fk-store_assignment_request-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m240429_110602_store_assignment_request.php:41
+createIndex,store_assignment_request,idx-store_assignment_request-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240429_110602_store_assignment_request.php:51
+addForeignKey,store_assignment_request,fk-store_assignment_request-store_id,store,'store_id' -> 'store_id',unspecified,console/migrations/m240429_110602_store_assignment_request.php:58
+addPrimaryKey,request_interview,PK,,'request_interview_uuid',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:38
+createIndex,request_interview,idx-request_interview-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:41
+addForeignKey,request_interview,fk-request_interview-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240505_081539_request_interview.php:48
+createIndex,request_interview,idx-request_interview-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:57
+addForeignKey,request_interview,fk-request_interview-created_by,contact,'created_by' -> 'contact_uuid',unspecified,console/migrations/m240505_081539_request_interview.php:64
+createIndex,request_interview,idx-request_interview-application_uuid,,'application_uuid',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:73
+addForeignKey,request_interview,fk-request_interview-application_uuid,request_application,'application_uuid' -> 'application_uuid',CASCADE,console/migrations/m240505_081539_request_interview.php:80
+createIndex,request_interview,idx-request_interview-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:90
+addForeignKey,request_interview,fk-request_interview-request_uuid,request,'request_uuid' -> 'request_uuid',CASCADE,console/migrations/m240505_081539_request_interview.php:97
+createIndex,request_interview,idx-request_interview-fulltimer_uuid,,'fulltimer_uuid',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:107
+addForeignKey,request_interview,fk-request_interview-fulltimer_uuid,fulltimer,'fulltimer_uuid' -> 'fulltimer_uuid',CASCADE,console/migrations/m240505_081539_request_interview.php:114
+createIndex,request_interview,idx-request_interview-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240505_081539_request_interview.php:124
+addForeignKey,request_interview,fk-request_interview-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m240505_081539_request_interview.php:131
+addPrimaryKey,degree_group,PK,,'degree_group_uuid',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:33
+addPrimaryKey,degree,PK,,'degree_uuid',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:47
+createIndex,degree,idx-degree-degree_group_uuid,,"""degree_group_uuid""",constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:49
+addForeignKey,degree,fk-degree-degree_group_uuid,degree_group,"""degree_group_uuid"" -> ""degree_group_uuid""",,console/migrations/m240523_133605_education.php:55
+addPrimaryKey,major,PK,,'major_uuid',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:141
+addPrimaryKey,candidate_education,PK,,'education_uuid',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:1580
+createIndex,candidate_education,idx-candidate_education-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:1582
+addForeignKey,candidate_education,fk-candidate_education-candidate_id,candidate,"""candidate_id"" -> ""candidate_id""",unspecified,console/migrations/m240523_133605_education.php:1588
+createIndex,candidate_education,idx-candidate_education-major_uuid,,'major_uuid',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:1596
+addForeignKey,candidate_education,fk-candidate_education-major_uuid,major,"""major_uuid"" -> ""major_uuid""",unspecified,console/migrations/m240523_133605_education.php:1602
+createIndex,candidate_education,idx-candidate_education-degree_uuid,,'degree_uuid',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:1610
+addForeignKey,candidate_education,fk-candidate_education-degree_uuid,degree,"""degree_uuid"" -> ""degree_uuid""",unspecified,console/migrations/m240523_133605_education.php:1616
+createIndex,candidate_education,idx-candidate_education-university_id,,'university_id',constraint history; unique=unspecified,console/migrations/m240523_133605_education.php:1624
+addForeignKey,candidate_education,fk-candidate_education-university_id,university,"""university_id"" -> ""university_id""",unspecified,console/migrations/m240523_133605_education.php:1630
+addPrimaryKey,ticket,PK,,'ticket_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:35
+createIndex,ticket,idx-ticket-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:37
+addForeignKey,ticket,fk-ticket-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m240612_071616_ticket.php:41
+createIndex,ticket,idx-ticket-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:45
+addForeignKey,ticket,fk-ticket-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240612_071616_ticket.php:49
+addPrimaryKey,ticket_attachment,PK,,'ticket_attachment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:59
+createIndex,ticket_attachment,idx-ticket_attachment-attachment_uuid,,'attachment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:61
+addPrimaryKey,attachment,PK,,'attachment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:70
+addForeignKey,ticket_attachment,fk-ticket_attachment-attachment_uuid,attachment,'attachment_uuid' -> 'attachment_uuid',unspecified,console/migrations/m240612_071616_ticket.php:73
+createIndex,ticket_attachment,idx-ticket_attachment-candidate_id,,'ticket_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:77
+addForeignKey,ticket_attachment,fk-ticket_attachment-candidate_id,ticket,'ticket_uuid' -> 'ticket_uuid',unspecified,console/migrations/m240612_071616_ticket.php:81
+addPrimaryKey,ticket_comment,PK,,'ticket_comment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:95
+createIndex,ticket_comment,idx-ticket_comment-ticket_uuid,,'ticket_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:97
+addForeignKey,ticket_comment,fk-ticket_comment-ticket_uuid,ticket,'ticket_uuid' -> 'ticket_uuid',unspecified,console/migrations/m240612_071616_ticket.php:101
+createIndex,ticket_comment,idx-ticket_comment-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:105
+addForeignKey,ticket_comment,fk-ticket_comment-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m240612_071616_ticket.php:109
+createIndex,ticket_comment,idx-ticket_comment-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:113
+addForeignKey,ticket_comment,fk-ticket_comment-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240612_071616_ticket.php:117
+addPrimaryKey,ticket_comment_attachment,PK,,'ticket_comment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:127
+createIndex,ticket_comment_attachment,idx-ticket_comment_attachment-ticket_comment_uuid,,'ticket_comment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:129
+addForeignKey,ticket_comment_attachment,fk-ticket_comment_attachment-ticket_comment_uuid,ticket_comment,'ticket_comment_uuid' -> 'ticket_comment_uuid',unspecified,console/migrations/m240612_071616_ticket.php:133
+createIndex,ticket_comment_attachment,idx-ticket_comment_attachment-attachment_uuid,,'attachment_uuid',constraint history; unique=unspecified,console/migrations/m240612_071616_ticket.php:137
+addForeignKey,ticket_comment_attachment,fk-ticket_comment_attachment-attachment_uuid,attachment,'attachment_uuid' -> 'attachment_uuid',unspecified,console/migrations/m240612_071616_ticket.php:141
+addPrimaryKey,candidate_work_log_feedback,PK,,'cwlf_uuid',constraint history; unique=unspecified,console/migrations/m240618_144001_candidate_work_log.php:36
+createIndex,candidate_work_log_feedback,idx-candidate_work_log_feedback-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240618_144001_candidate_work_log.php:40
+addForeignKey,candidate_work_log_feedback,fk-candidate_work_log_feedback-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m240618_144001_candidate_work_log.php:44
+createIndex,candidate_work_log_feedback,idx-candidate_work_log_feedback-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240618_144001_candidate_work_log.php:50
+addForeignKey,candidate_work_log_feedback,fk-candidate_work_log_feedback-store_id,store,'store_id' -> 'store_id',unspecified,console/migrations/m240618_144001_candidate_work_log.php:54
+createIndex,candidate_work_log_feedback,idx-candidate_work_log_feedback-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240618_144001_candidate_work_log.php:60
+addForeignKey,candidate_work_log_feedback,fk-candidate_work_log_feedback-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m240618_144001_candidate_work_log.php:64
+addPrimaryKey,candidate_working_date,PK,,'cwd_uuid',constraint history; unique=unspecified,console/migrations/m240620_143332_candidate_working_date.php:38
+createIndex,candidate_working_date,idx-candidate_working_date-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240620_143332_candidate_working_date.php:42
+addForeignKey,candidate_working_date,fk-candidate_working_date-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m240620_143332_candidate_working_date.php:46
+createIndex,candidate_working_date,idx-candidate_working_date-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240620_143332_candidate_working_date.php:52
+addForeignKey,candidate_working_date,fk-candidate_working_date-store_id,store,'store_id' -> 'store_id',unspecified,console/migrations/m240620_143332_candidate_working_date.php:56
+createIndex,candidate_working_date,idx-candidate_working_date-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240620_143332_candidate_working_date.php:62
+addForeignKey,candidate_working_date,fk-candidate_working_date-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m240620_143332_candidate_working_date.php:66
+addPrimaryKey,firing_hitmap,PK,,'fh_uuid',constraint history; unique=unspecified,console/migrations/m240630_171036_hitmap.php:31
+createIndex,firing_hitmap,idx-firing_hitmap-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240630_171036_hitmap.php:35
+addForeignKey,firing_hitmap,fk-firing_hitmap-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m240630_171036_hitmap.php:39
+addPrimaryKey,interview_evaluation,PK,,'interview_evaluation_uuid',constraint history; unique=unspecified,console/migrations/m240702_075505_interview_note.php:30
+createIndex,interview_evaluation,idx-interview_evaluation-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240702_075505_interview_note.php:34
+addForeignKey,interview_evaluation,fk-interview_evaluation-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m240702_075505_interview_note.php:38
+createIndex,interview_evaluation,idx-interview_evaluation-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m240702_075505_interview_note.php:46
+addForeignKey,interview_evaluation,fk-interview_evaluation-request_uuid,request,'request_uuid' -> 'request_uuid',CASCADE,console/migrations/m240702_075505_interview_note.php:50
+createIndex,interview_evaluation,idx-interview_evaluation-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240702_075505_interview_note.php:58
+addForeignKey,interview_evaluation,fk-interview_evaluation-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240702_075505_interview_note.php:62
+createIndex,interview_evaluation,idx-note-interview_evaluation_uuid,,'interview_evaluation_uuid',constraint history; unique=unspecified,console/migrations/m240702_075505_interview_note.php:70
+addForeignKey,note,fk-note-interview_evaluation_uuid,interview_evaluation,'interview_evaluation_uuid' -> 'interview_evaluation_uuid',CASCADE,console/migrations/m240702_075505_interview_note.php:74
+addPrimaryKey,interview_evaluation_note_version,PK,,'ienv_uuid',constraint history; unique=unspecified,console/migrations/m240708_092502_interview_note.php:30
+createIndex,interview_evaluation_note_version,idx-interview_evaluation_note_version-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240708_092502_interview_note.php:34
+addForeignKey,interview_evaluation_note_version,fk-interview_evaluation_note_version-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240708_092502_interview_note.php:38
+createIndex,interview_evaluation_note_version,idx-interview_evaluation_note_version-interview_evaluation_uuid,,'interview_evaluation_uuid',constraint history; unique=unspecified,console/migrations/m240708_092502_interview_note.php:45
+addForeignKey,interview_evaluation_note_version,fk-interview_evaluation_note_version-interview_evaluation_uuid,interview_evaluation,'interview_evaluation_uuid' -> 'interview_evaluation_uuid',CASCADE,console/migrations/m240708_092502_interview_note.php:49
+addPrimaryKey,interview_evaluation_note,PK,,'ien_uuid',constraint history; unique=unspecified,console/migrations/m240708_092502_interview_note.php:63
+addPrimaryKey,discount,PK,,'discount_uuid',constraint history; unique=unspecified,console/migrations/m240710_075924_discount.php:45
+createIndex,discount,idx-discount-category_id,,'category_id',constraint history; unique=unspecified,console/migrations/m240710_075924_discount.php:49
+addForeignKey,discount,fk-discount-category_id,discount_category,'category_id' -> 'category_id',unspecified,console/migrations/m240710_075924_discount.php:53
+createIndex,discount,idx-discount-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240710_075924_discount.php:60
+addForeignKey,discount,fk-discount-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m240710_075924_discount.php:64
+createIndex,discount,idx-discount-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240710_075924_discount.php:71
+addForeignKey,discount,fk-discount-store_id,store,'store_id' -> 'store_id',unspecified,console/migrations/m240710_075924_discount.php:75
+createIndex,interview_evaluation,idx-interview_evaluation-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240715_083745_interview.php:27
+addForeignKey,interview_evaluation,fk-interview_evaluation-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m240715_083745_interview.php:31
+addPrimaryKey,exam,PK,,'exam_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:34
+addPrimaryKey,exam_question,PK,,'question_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:54
+createIndex,exam_question,idx-exam_question-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:58
+addForeignKey,exam_question,fk-exam_question-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240808_113636_certificate.php:62
+createIndex,exam_question,idx-exam_question-exam_uuid,,'exam_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:69
+addForeignKey,exam_question,fk-exam_question-exam_uuid,exam,'exam_uuid' -> 'exam_uuid',unspecified,console/migrations/m240808_113636_certificate.php:73
+addPrimaryKey,exam_question_choice,PK,,'choice_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:89
+createIndex,exam_question_choice,idx-exam_question_choice-question_uuid,,'question_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:93
+addForeignKey,exam_question_choice,fk-exam_question_choice-question_uuid,exam_question,'question_uuid' -> 'question_uuid',unspecified,console/migrations/m240808_113636_certificate.php:97
+addPrimaryKey,exam_question_answer,PK,,'answer_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:116
+createIndex,exam_question_answer,idx-exam_question_answer-question_uuid,,'question_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:120
+addForeignKey,exam_question_answer,fk-exam_question_answer-question_uuid,exam_question,'question_uuid' -> 'question_uuid',unspecified,console/migrations/m240808_113636_certificate.php:124
+createIndex,exam_question_answer,idx-exam_question_answer-exam_uuid,,'exam_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:131
+addForeignKey,exam_question_answer,fk-exam_question_answer-exam_uuid,exam,'exam_uuid' -> 'exam_uuid',unspecified,console/migrations/m240808_113636_certificate.php:135
+createIndex,exam_question_answer,idx-exam_question_answer-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:142
+addForeignKey,exam_question_answer,fk-exam_question_answer-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m240808_113636_certificate.php:146
+addPrimaryKey,candidate_certificate,PK,,'certificate_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:172
+createIndex,candidate_certificate,idx-candidate_certificate-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:176
+addForeignKey,candidate_certificate,fk-candidate_certificate-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m240808_113636_certificate.php:180
+createIndex,candidate_certificate,idx-candidate_certificate-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:187
+addForeignKey,candidate_certificate,fk-candidate_certificate-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m240808_113636_certificate.php:191
+createIndex,candidate_certificate,idx-candidate_certificate-candidate_work_history_id,,'candidate_work_history_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:198
+addForeignKey,candidate_certificate,fk-candidate_certificate-candidate_work_history_id,candidate_work_history,'candidate_work_history_id' -> 'id',unspecified,console/migrations/m240808_113636_certificate.php:202
+createIndex,candidate_certificate,idx-candidate_certificate-exam_uuid,,'exam_uuid',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:209
+addForeignKey,candidate_certificate,fk-candidate_certificate-exam_uuid,exam,'exam_uuid' -> 'exam_uuid',unspecified,console/migrations/m240808_113636_certificate.php:213
+createIndex,candidate_certificate,idx-candidate_certificate-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:220
+addForeignKey,candidate_certificate,fk-candidate_certificate-store_id,store,'store_id' -> 'store_id',unspecified,console/migrations/m240808_113636_certificate.php:224
+createIndex,candidate_certificate,idx-candidate_certificate-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:231
+addForeignKey,candidate_certificate,fk-candidate_certificate-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m240808_113636_certificate.php:235
+createIndex,candidate_certificate,idx-candidate_certificate-parent_company_id,,'parent_company_id',constraint history; unique=unspecified,console/migrations/m240808_113636_certificate.php:242
+addForeignKey,candidate_certificate,fk-candidate_certificate-parent_company_id,company,'parent_company_id' -> 'company_id',unspecified,console/migrations/m240808_113636_certificate.php:246
+addPrimaryKey,transfer_cost,pk-transfer_cost,,"['candidate_id', 'company_id']",constraint history; unique=unspecified,console/migrations/m240812_080436_transfer_rate.php:31
+createIndex,transfer_cost,idx-transfer_cost-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240812_080436_transfer_rate.php:35
+addForeignKey,transfer_cost,fk-transfer_cost-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m240812_080436_transfer_rate.php:39
+createIndex,transfer_cost,idx-transfer_cost-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240812_080436_transfer_rate.php:46
+addForeignKey,transfer_cost,fk-transfer_cost-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m240812_080436_transfer_rate.php:50
+addPrimaryKey,chat,pk-chat,,"""chat_uuid""",constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:35
+createIndex,chat,idx-chat-contact_uuid,,'contact_uuid',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:39
+addForeignKey,chat,fk-chat-contact_uuid,contact,'contact_uuid' -> 'contact_uuid',CASCADE,console/migrations/m240902_074003_chat.php:43
+createIndex,chat,idx-chat-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:50
+addForeignKey,chat,fk-chat-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m240902_074003_chat.php:54
+createIndex,chat,idx-chat-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:61
+addForeignKey,chat,fk-chat-company_id,company,'company_id' -> 'company_id',CASCADE,console/migrations/m240902_074003_chat.php:65
+createIndex,chat,idx-chat-parent_company_id,,'parent_company_id',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:72
+addForeignKey,chat,fk-chat-parent_company_id,company,'parent_company_id' -> 'company_id',CASCADE,console/migrations/m240902_074003_chat.php:76
+createIndex,chat,idx-chat-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:83
+addForeignKey,chat,fk-chat-store_id,store,'store_id' -> 'store_id',CASCADE,console/migrations/m240902_074003_chat.php:87
+createIndex,chat,idx-chat-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:94
+addForeignKey,chat,fk-chat-staff_id,staff,'staff_id' -> 'staff_id',CASCADE,console/migrations/m240902_074003_chat.php:98
+addPrimaryKey,chat_message,pk-chat_message,,"""chat_message_uuid""",constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:116
+createIndex,chat_message,idx-chat_message-chat_uuid,,'chat_uuid',constraint history; unique=unspecified,console/migrations/m240902_074003_chat.php:120
+addForeignKey,chat_message,fk-chat_message-chat_uuid,chat,'chat_uuid' -> 'chat_uuid',CASCADE,console/migrations/m240902_074003_chat.php:124
+createIndex,transfer_file,idx-transfer_file-admin_id,,'admin_id',constraint history; unique=unspecified,console/migrations/m240925_160159_request.php:26
+addForeignKey,transfer_file,fk-transfer_file-admin_id,admin,'admin_id' -> 'admin_id',unspecified,console/migrations/m240925_160159_request.php:33
+addPrimaryKey,transfer_bank_advice,pk-transfer_bank_advice-tba_uuid,,"""tba_uuid""",constraint history; unique=unspecified,console/migrations/m241001_072924_advice.php:31
+createIndex,transfer_bank_advice,idx-transfer_bank_advice-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m241001_072924_advice.php:34
+addForeignKey,transfer_bank_advice,fk-transfer_bank_advice-admin_id,admin,'created_by' -> 'admin_id',unspecified,console/migrations/m241001_072924_advice.php:41
+dropIndex,transfer_candidate,idx-transfer_candidate-transfer_confirmation_id,,,constraint history; unique=unspecified,console/migrations/m241010_110144_transfer.php:15
+createIndex,transfer_candidate,idx-transfer_candidate-transfer_confirmation_id,,"['transfer_confirmation_id', ""bank_id"", 'deleted']",constraint history; unique=true,console/migrations/m241010_110144_transfer.php:17
+createIndex,candidate_work_log_feedback,idx-candidate_work_log_feedback-candidate_working_hour_uuid,,'candidate_working_hour_uuid',constraint history; unique=unspecified,console/migrations/m241023_091738_timer.php:21
+addForeignKey,candidate_work_log_feedback,fk-candidate_work_log_feedback-candidate_working_hour_uuid,candidate_working_hour,'candidate_working_hour_uuid' -> 'candidate_working_hour_uuid',unspecified,console/migrations/m241023_091738_timer.php:28
+createIndex,candidate_work_log_feedback,idx-candidate_work_log_feedback-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:18
+addForeignKey,candidate_work_log_feedback,fk-candidate_work_log_feedback-created_by,contact,'created_by' -> 'contact_uuid',unspecified,console/migrations/m241027_101214_notification.php:25
+addPrimaryKey,candidate_notification,pk-candidate_notification-tba_uuid,,"""cn_uuid""",constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:58
+createIndex,candidate_notification,idx-candidate_notification-staff_id,,'staff_id',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:61
+addForeignKey,candidate_notification,fk-candidate_notification-staff_id,staff,'staff_id' -> 'staff_id',unspecified,console/migrations/m241027_101214_notification.php:68
+createIndex,candidate_notification,idx-candidate_notification-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:77
+addForeignKey,candidate_notification,fk-candidate_notification-store_id,store,'store_id' -> 'store_id',unspecified,console/migrations/m241027_101214_notification.php:84
+createIndex,candidate_notification,idx-candidate_notification-cwlf_uuid,,'cwlf_uuid',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:93
+addForeignKey,candidate_notification,fk-candidate_notification-cwlf_uuid,candidate_work_log_feedback,'cwlf_uuid' -> 'cwlf_uuid',unspecified,console/migrations/m241027_101214_notification.php:100
+createIndex,candidate_notification,idx-candidate_notification-tc_id,,'tc_id',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:109
+addForeignKey,candidate_notification,fk-candidate_notification-tc_id,transfer_candidate,'tc_id' -> 'tc_id',unspecified,console/migrations/m241027_101214_notification.php:116
+createIndex,candidate_notification,idx-candidate_notification-candidate_working_date_uuid,,'candidate_working_date_uuid',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:125
+addForeignKey,candidate_notification,fk-candidate_notification-candidate_working_date_uuid,candidate_working_date,'candidate_working_date_uuid' -> 'cwd_uuid',unspecified,console/migrations/m241027_101214_notification.php:132
+createIndex,candidate_notification,idx-candidate_notification-invitation_uuid,,'invitation_uuid',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:141
+addForeignKey,candidate_notification,fk-candidate_notification-invitation_uuid,invitation,'invitation_uuid' -> 'invitation_uuid',unspecified,console/migrations/m241027_101214_notification.php:148
+createIndex,candidate_notification,idx-candidate_notification-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:157
+addForeignKey,candidate_notification,fk-candidate_notification-request_uuid,request,'request_uuid' -> 'request_uuid',unspecified,console/migrations/m241027_101214_notification.php:164
+createIndex,candidate_notification,idx-candidate_notification-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:173
+addForeignKey,candidate_notification,fk-candidate_notification-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m241027_101214_notification.php:180
+createIndex,candidate_notification,idx-candidate_notification-candidate_work_history_id,,'candidate_work_history_id',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:189
+addForeignKey,candidate_notification,fk-candidate_notification-candidate_work_history_id,candidate_work_history,'candidate_work_history_id' -> 'id',unspecified,console/migrations/m241027_101214_notification.php:196
+createIndex,candidate_notification,idx-candidate_notification-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m241027_101214_notification.php:205
+addForeignKey,candidate_notification,fk-candidate_notification-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m241027_101214_notification.php:212
+addPrimaryKey,contract,pk-contract-contract_uuid,,"""contract_uuid""",constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:36
+createIndex,contract,idx-contract-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:55
+addForeignKey,contract,fk-contract-created_by,staff,'created_by' -> 'staff_id',unspecified,console/migrations/m241029_193106_contract.php:62
+createIndex,contract,idx-contract-company_id,,'company_id',constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:71
+addForeignKey,contract,fk-contract-company_id,company,'company_id' -> 'company_id',unspecified,console/migrations/m241029_193106_contract.php:78
+addPrimaryKey,monthly_salary_contract,pk-monthly_salary_contract,,"""ms_contract_uuid""",constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:96
+createIndex,monthly_salary_contract,idx-monthly_salary_contract-contract_uuid,,'contract_uuid',constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:99
+addForeignKey,monthly_salary_contract,fk-monthly_salary_contract-contract_uuid,contract,'contract_uuid' -> 'contract_uuid',unspecified,console/migrations/m241029_193106_contract.php:106
+addPrimaryKey,hourly_contract,pk-hourly_contract,,"""h_contract_uuid""",constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:123
+createIndex,hourly_contract,idx-hourly_contract-contract_uuid,,'contract_uuid',constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:126
+addForeignKey,hourly_contract,fk-hourly_contract-contract_uuid,contract,'contract_uuid' -> 'contract_uuid',unspecified,console/migrations/m241029_193106_contract.php:133
+addPrimaryKey,fixed_price_contract,pk-fp_contract_uuid,,"""fp_contract_uuid""",constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:151
+createIndex,fixed_price_contract,idx-fixed_price_contract-contract_uuid,,'contract_uuid',constraint history; unique=unspecified,console/migrations/m241029_193106_contract.php:154
+addForeignKey,fixed_price_contract,fk-fixed_price_contract-contract_uuid,contract,'contract_uuid' -> 'contract_uuid',unspecified,console/migrations/m241029_193106_contract.php:161
+createIndex,candidate_notification,idx-candidate_notification-candidate_working_hour_uuid,,'candidate_working_hour_uuid',constraint history; unique=unspecified,console/migrations/m241103_170837_session_notification.php:18
+addForeignKey,candidate_notification,fk-candidate_notification-candidate_working_hour_uuid,candidate_working_hour,'candidate_working_hour_uuid' -> 'candidate_working_hour_uuid',unspecified,console/migrations/m241103_170837_session_notification.php:25
+createIndex,transfer,idx-transfer-contract_uuid,,'contract_uuid',constraint history; unique=unspecified,console/migrations/m241104_073200_contract.php:19
+addForeignKey,transfer,fk-transfer-contract_uuid,contract,'contract_uuid' -> 'contract_uuid',unspecified,console/migrations/m241104_073200_contract.php:26
+dropIndex,candidate,idx-candidate-candidate_civil_id,,,constraint history; unique=unspecified,console/migrations/m241107_154751_civil_id.php:15
+addPrimaryKey,candidate_working_hour_appeal,pk-cwha-candidate_working_hour_uuid,,"""appeal_uuid""",constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:33
+createIndex,candidate_working_hour_appeal,idx-cwha-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:37
+addForeignKey,candidate_working_hour_appeal,fk-cwha-candidate_id,candidate,'candidate_id' -> 'candidate_id',unspecified,console/migrations/m241223_083804_appeal.php:44
+createIndex,candidate_working_hour_appeal,idx-cwha-candidate_working_hour_uuid,,'candidate_working_hour_uuid',constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:53
+addForeignKey,candidate_working_hour_appeal,fk-cwha-candidate_working_hour_uuid,candidate_working_hour,'candidate_working_hour_uuid' -> 'candidate_working_hour_uuid',unspecified,console/migrations/m241223_083804_appeal.php:60
+addPrimaryKey,candidate_working_hour_appeal_updates,pk-cwhau-appeal_update_uuid,,"""appeal_update_uuid""",constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:80
+createIndex,candidate_working_hour_appeal_updates,idx-candidate_working_hour_appeal_updates-appeal_uuid,,'appeal_uuid',constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:83
+addForeignKey,candidate_working_hour_appeal_updates,fk-candidate_working_hour_appeal_updates-appeal_uuid,candidate_working_hour_appeal,'appeal_uuid' -> 'appeal_uuid',CASCADE,console/migrations/m241223_083804_appeal.php:89
+createIndex,candidate_working_hour,idx-candidate_working_hour-appeal_uuid,,'appeal_uuid',constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:103
+addForeignKey,candidate_working_hour,fk-candidate_working_hour-appeal_uuid,candidate_working_hour_appeal,'appeal_uuid' -> 'appeal_uuid',unspecified,console/migrations/m241223_083804_appeal.php:110
+createIndex,candidate_notification,idx-candidate_notification-appeal_uuid,,'appeal_uuid',constraint history; unique=unspecified,console/migrations/m241223_083804_appeal.php:120
+addForeignKey,candidate_notification,fk-candidate_notification-appeal_uuid,candidate_working_hour_appeal,'appeal_uuid' -> 'appeal_uuid',unspecified,console/migrations/m241223_083804_appeal.php:127
+addPrimaryKey,job,pk-job-job_uuid,,"""job_uuid""",constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:55
+createIndex,job,idx-job-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:59
+addForeignKey,job,fk-job-updated_by,staff,'updated_by' -> 'staff_id',unspecified,console/migrations/m241229_113044_job.php:66
+createIndex,job,idx-job-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:75
+addForeignKey,job,fk-job-created_by,staff,'created_by' -> 'staff_id',unspecified,console/migrations/m241229_113044_job.php:82
+createIndex,job,idx-job-area_uuid,,'area_uuid',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:91
+addForeignKey,job,fk-job-area_uuid,area,'area_uuid' -> 'area_uuid',unspecified,console/migrations/m241229_113044_job.php:98
+createIndex,job,idx-job-story_uuid,,'story_uuid',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:107
+addForeignKey,job,fk-job-story_uuid,story,'story_uuid' -> 'story_uuid',unspecified,console/migrations/m241229_113044_job.php:114
+createIndex,job,idx-job-request_uuid,,'request_uuid',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:123
+addForeignKey,job,fk-job-request_uuid,request,'request_uuid' -> 'request_uuid',CASCADE,console/migrations/m241229_113044_job.php:130
+addPrimaryKey,job_skills,pk-job_skills,,"[""job_uuid"", ""skill""]",constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:147
+addForeignKey,job_skills,fk-job_skills-job_uuid,job,'job_uuid' -> 'job_uuid',CASCADE,console/migrations/m241229_113044_job.php:149
+addPrimaryKey,job_interest,pk-job_interest-job_uuid,,"""job_interest_uuid""",constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:170
+createIndex,job_interest,idx-job_interest-job_uuid,,'job_uuid',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:174
+addForeignKey,job_interest,fk-job_interest-job_uuid,job,'job_uuid' -> 'job_uuid',CASCADE,console/migrations/m241229_113044_job.php:180
+createIndex,job_interest,idx-job_interest-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:189
+addForeignKey,job_interest,fk-job_interest-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m241229_113044_job.php:195
+createIndex,invitation,idx-invitation-job_interest_uuid,,'job_interest_uuid',constraint history; unique=unspecified,console/migrations/m241229_113044_job.php:209
+addForeignKey,invitation,fk-invitation-job_interest_uuid,job_interest,'job_interest_uuid' -> 'job_interest_uuid',unspecified,console/migrations/m241229_113044_job.php:216
+addPrimaryKey,candidate_id_request,pk-candidate_id_request-cir_uuid,,"""cir_uuid""",constraint history; unique=unspecified,console/migrations/m250120_201548_id_request.php:40
+createIndex,candidate_id_request,idx-candidate_id_request-updated_by,,'updated_by',constraint history; unique=unspecified,console/migrations/m250120_201548_id_request.php:44
+addForeignKey,candidate_id_request,fk-candidate_id_request-updated_by,staff,'updated_by' -> 'staff_id',unspecified,console/migrations/m250120_201548_id_request.php:51
+createIndex,candidate_id_request,idx-candidate_id_request-created_by,,'created_by',constraint history; unique=unspecified,console/migrations/m250120_201548_id_request.php:60
+addForeignKey,candidate_id_request,fk-candidate_id_request-created_by,staff,'created_by' -> 'staff_id',unspecified,console/migrations/m250120_201548_id_request.php:67
+createIndex,job,idx-job-deleted_by,,'deleted_by',constraint history; unique=unspecified,console/migrations/m250127_131617_job_delete.php:29
+addForeignKey,job,fk-job-deleted_by,staff,'deleted_by' -> 'staff_id',unspecified,console/migrations/m250127_131617_job_delete.php:36
+createIndex,candidate_notification,idx-candidate_notification-job_uuid,,'job_uuid',constraint history; unique=unspecified,console/migrations/m250127_131617_job_delete.php:51
+addForeignKey,candidate_notification,fk-candidate_notification-job_uuid,job,'job_uuid' -> 'job_uuid',unspecified,console/migrations/m250127_131617_job_delete.php:58
+createIndex,candidate_notification,idx-candidate_notification-job_interest_uuid,,'job_interest_uuid',constraint history; unique=unspecified,console/migrations/m250127_131617_job_delete.php:67
+addForeignKey,candidate_notification,fk-candidate_notification-job_interest_uuid,job_interest,'job_interest_uuid' -> 'job_interest_uuid',unspecified,console/migrations/m250127_131617_job_delete.php:74
+createIndex,contract,idx-contract-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m250209_144529_contract.php:31
+addForeignKey,contract,fk-contract-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m250209_144529_contract.php:33
+createIndex,contract,idx-contract-parent_company_id,,'parent_company_id',constraint history; unique=unspecified,console/migrations/m250209_144529_contract.php:46
+addForeignKey,contract,fk-contract-parent_company_id,company,'parent_company_id' -> 'company_id',CASCADE,console/migrations/m250209_144529_contract.php:48
+createIndex,contract,idx-contract-store_id,,'store_id',constraint history; unique=unspecified,console/migrations/m250209_144529_contract.php:61
+addForeignKey,contract,fk-contract-store_id,store,'store_id' -> 'store_id',CASCADE,console/migrations/m250209_144529_contract.php:63
+addForeignKey,transfer_candidate,fk_transfer_candidate_contract,contract,'contract_uuid' -> 'contract_uuid',,console/migrations/m250306_191700_transfer_contract.php:22
+createIndex,transfer_candidate,idx-transfer_candidate-contract_uuid,,'contract_uuid',constraint history; unique=unspecified,console/migrations/m250306_191700_transfer_contract.php:32
+addPrimaryKey,candidate_link,pk-candidate_link-cl_uuid,,"""cl_uuid""",constraint history; unique=unspecified,console/migrations/m250319_163212_links.php:32
+createIndex,candidate_link,idx-candidate_link-candidate_id,,'candidate_id',constraint history; unique=unspecified,console/migrations/m250319_163212_links.php:36
+addForeignKey,candidate_link,fk-candidate_link-candidate_id,candidate,'candidate_id' -> 'candidate_id',CASCADE,console/migrations/m250319_163212_links.php:43
+hasMany,admin,,$modelClass::className(),['admin_id' => 'admin_id'],"ORM cardinality, not FK/delete guarantee",common/models/Admin.php:110
+hasOne,admin_token,,$modelClass::className(),['admin_id' => 'admin_id'],"ORM cardinality, not FK/delete guarantee",common/models/AdminToken.php:115
+hasMany,area,,$modelClass::className(),['candidate_area_uuid' => 'area_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Area.php:300
+hasOne,area,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Area.php:308
+hasMany,attachment,,$modelClass::className(),['attachment_uuid' => 'attachment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Attachment.php:80
+hasMany,attachment,,$modelClass::className(),['attachment_uuid' => 'attachment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Attachment.php:90
+hasMany,wallet.balance_account,,$modelClass::className(),['account_uuid' => 'balance_account_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/BalanceAccount.php:101
+hasOne,wallet.balance_transaction,,$modelClass::className(),['user_uuid' => 'user_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/BalanceTransaction.php:127
+hasOne,wallet.balance_transaction,,$modelClass::className(),['balance_account_uuid' => 'account_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/BalanceTransaction.php:137
+hasMany,bank,,$modelClass::className(),['bank_id' => 'bank_id'],"ORM cardinality, not FK/delete guarantee",common/models/Bank.php:119
+hasOne,bank_transaction,,$modelClass::className(),['contact_id' => 'contact_id'],"ORM cardinality, not FK/delete guarantee",common/models/BankTransaction.php:141
+hasMany,bank_transaction,,$modelClass::className(),['bank_transaction_id' => 'bank_transaction_id'],"ORM cardinality, not FK/delete guarantee",common/models/BankTransaction.php:149
+hasMany,bank_transaction_contact,,$modelClass::className(),['contact_id' => 'contact_id'],"ORM cardinality, not FK/delete guarantee",common/models/BankTransactionContact.php:89
+hasOne,bank_transaction_line_item,,$modelClass::className(),['bank_transaction_id' => 'bank_transaction_id'],"ORM cardinality, not FK/delete guarantee",common/models/BankTransactionLineItem.php:81
+hasOne,brand,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Brand.php:227
+hasMany,brand,,$modelClass::className(),['brand_uuid' => 'brand_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Brand.php:235
+hasMany,brand,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Brand.php:243
+hasMany,campaign,,$modelClass::className(),['utm_uuid' => 'utm_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Campaign.php:252
+hasMany,campaign,,$modelClass::className(),['utm_uuid' => 'utm_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Campaign.php:260
+hasOne,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1340
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1351
+hasOne,candidate,,$modelClass::className(),['university_id' => 'university_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1359
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1369
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1386
+hasOne,candidate,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1394
+hasOne,candidate,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1402
+hasOne,candidate,,$modelClass::className(),['bank_id' => 'bank_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1411
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1421
+hasOne,candidate,,$modelClass::className(),['area_uuid' => 'candidate_area_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1430
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1438
+hasOne,candidate,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1446
+hasOne,candidate,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1455
+hasMany,candidate,,$modelClass::className(),['transfer_id' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1466
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1476
+hasOne,candidate,,$modelClass::className(),['utm_uuid' => 'utm_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1484
+hasOne,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1492
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1501
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1511
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1519
+hasOne,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1528
+hasOne,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1541
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1552
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1560
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:1568
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4072
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4081
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4090
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4227
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4236
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4245
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4254
+hasOne,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4263
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4469
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4478
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4487
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4514
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4523
+hasOne,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4531
+hasMany,candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Candidate.php:4540
+hasOne,candidate_certificate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:138
+hasOne,candidate_certificate,,$modelClass::className(),['id' => 'candidate_work_history_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:146
+hasOne,candidate_certificate,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:154
+hasOne,candidate_certificate,,$modelClass::className(),['exam_uuid' => 'exam_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:162
+hasOne,candidate_certificate,,$modelClass::className(),['company_id' => 'parent_company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:170
+hasOne,candidate_certificate,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:178
+hasOne,candidate_certificate,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateCertificate.php:186
+hasOne,candidate_education,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEducation.php:176
+hasOne,candidate_education,,$modelClass::className(),['degree_uuid' => 'degree_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEducation.php:184
+hasOne,candidate_education,,$modelClass::className(),['major_uuid' => 'major_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEducation.php:192
+hasOne,candidate_education,,$modelClass::className(),['university_id' => 'university_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEducation.php:200
+hasOne,candidate_eval_dept_ques,,CandidateEvalQues::className(),['ceq_uuid' => 'ceq_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvalDeptQues.php:70
+hasMany,candidate_eval_dept_ques,,self::className(),['dept_id' => 'dept_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvalDeptQues.php:76
+hasMany,candidate_eval_ques,,CandidateEvalDeptQues::className(),['ceq_uuid' => 'ceq_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvalQues.php:94
+hasMany,candidate_eval_ques,,CandidateEvaluation::className(),['ceq_uuid' => 'ceq_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvalQues.php:102
+hasOne,candidate_evaluation,,Candidate::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvaluation.php:117
+hasOne,candidate_evaluation,,Staff::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvaluation.php:125
+hasMany,candidate_evaluation,,CandidateEvaluationAnswer::className(),['can_eval_uuid' => 'can_eval_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvaluation.php:133
+hasOne,candidate_evaluation_answer,,CandidateEvaluation::className(),['can_eval_uuid' => 'can_eval_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvaluationAnswer.php:64
+hasOne,candidate_evaluation_answer,,CandidateEvalQues::className(),['ceq_uuid' => 'ceq_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateEvaluationAnswer.php:72
+hasOne,candidate_experience,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateExperience.php:112
+hasOne,candidate_id_card,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateIdCard.php:151
+hasOne,candidate_id_request,,Staff::class,['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateIdRequest.php:107
+hasOne,candidate_id_request,,Staff::class,['staff_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateIdRequest.php:117
+hasOne,candidate_link,,Candidate::class,['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateLink.php:98
+hasOne,candidate_notification,,$modelClass::className(),['job_uuid' => 'job_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:193
+hasOne,candidate_notification,,$modelClass::className(),['job_interest_uuid' => 'job_interest_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:201
+hasOne,candidate_notification,,$modelClass::className(),['cwlf_uuid' => 'cwlf_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:209
+hasOne,candidate_notification,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:217
+hasOne,candidate_notification,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:225
+hasOne,candidate_notification,,$modelClass::className(),['id' => 'candidate_work_history_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:233
+hasOne,candidate_notification,,$modelClass::className(),['candidate_working_hour_uuid' => 'candidate_working_hour_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:241
+hasOne,candidate_notification,,$modelClass::className(),['cwd_uuid' => 'candidate_working_date_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:249
+hasOne,candidate_notification,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:257
+hasOne,candidate_notification,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:265
+hasOne,candidate_notification,,$modelClass::className(),['invitation_uuid' => 'invitation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:273
+hasOne,candidate_notification,,$modelClass::className(),['tc_id' => 'tc_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:281
+hasOne,candidate_notification,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateNotification.php:289
+hasOne,candidate_skill,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateSkill.php:106
+hasMany,candidate_stats,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateStats.php:96
+hasOne,candidate_stats,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateStats.php:104
+hasOne,candidate_tag,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateTag.php:123
+hasOne,candidate_tag,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateTag.php:131
+hasOne,candidate_token,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateToken.php:116
+hasOne,candidate_video_log,,$className::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateVideoLog.php:88
+hasOne,candidate_warning,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWarning.php:151
+hasOne,candidate_warning,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWarning.php:159
+hasOne,candidate_warning,,$modelClass::className(),['staff_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWarning.php:167
+hasOne,candidate_work_history,,$className::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkHistory.php:482
+hasOne,candidate_work_history,,$className::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkHistory.php:489
+hasOne,candidate_work_history,,$className::className(),['company_id' => 'parent_company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkHistory.php:496
+hasOne,candidate_work_history,,$className::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkHistory.php:503
+hasOne,candidate_work_history,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkHistory.php:511
+hasOne,candidate_work_log_feedback,,$className::className(),['candidate_working_hour_uuid' => 'candidate_working_hour_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkLogFeedback.php:274
+hasOne,candidate_work_log_feedback,,$className::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkLogFeedback.php:282
+hasOne,candidate_work_log_feedback,,$className::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkLogFeedback.php:290
+hasOne,candidate_work_log_feedback,,$className::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkLogFeedback.php:298
+hasOne,candidate_work_log_feedback,,$className::className(),['contact_uuid' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkLogFeedback.php:307
+hasMany,candidate_working_date,,$modelClass::className(),"[
+            'candidate_id' => 'candidate_id',
+            ""store_id"" => ""store_id"",
+            ""date"" => ""date""
+        ]","ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingDate.php:195
+hasOne,candidate_working_date,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingDate.php:207
+hasOne,candidate_working_date,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingDate.php:215
+hasOne,candidate_working_date,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingDate.php:223
+hasOne,candidate_working_hour,,$className::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:350
+hasOne,candidate_working_hour,,$className::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:358
+hasOne,candidate_working_hour,,$className::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:366
+hasOne,candidate_working_hour,,$className::className(),['company_id' => 'parent_company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:374
+hasOne,candidate_working_hour,,$className::className(),['candidate_working_hour_uuid' => 'candidate_working_hour_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:390
+hasMany,candidate_working_hour,,$className::className(),['candidate_working_hour_uuid' => 'candidate_working_hour_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:399
+hasOne,candidate_working_hour,,$className::className(),['cwlf_uuid' => 'cwlf_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHour.php:409
+hasOne,candidate_working_hour_appeal,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppeal.php:114
+hasMany,candidate_working_hour_appeal,,$modelClass::className(),['appeal_uuid' => 'appeal_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppeal.php:136
+hasOne,candidate_working_hour_appeal,,$modelClass::className(),['candidate_working_hour_uuid' => 'candidate_working_hour_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppeal.php:145
+hasMany,candidate_working_hour_appeal,,$modelClass::className(),['appeal_uuid' => 'appeal_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppeal.php:153
+hasMany,candidate_working_hour_appeal,,$modelClass::className(),['appeal_uuid' => 'appeal_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppeal.php:162
+hasOne,candidate_working_hour_appeal_updates,,$modelClass::className(),['appeal_uuid' => 'appeal_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppealUpdates.php:114
+hasOne,candidate_working_hour_appeal_updates,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppealUpdates.php:123
+hasOne,candidate_working_hour_appeal_updates,,$modelClass::className(),['staff_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/CandidateWorkingHourAppealUpdates.php:132
+hasOne,chat,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:132
+hasOne,chat,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:140
+hasOne,chat,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:148
+hasOne,chat,,$modelClass::className(),['company_id' => 'parent_company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:156
+hasOne,chat,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:164
+hasOne,chat,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:172
+hasMany,chat,,$modelClass::className(),['chat_uuid' => 'chat_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Chat.php:180
+hasOne,chat_message,,$modelClass::className(),['chat_uuid' => 'chat_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ChatMessage.php:109
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:551
+hasMany,company,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:560
+hasOne,company,,$modelClass::className(),['company_id' => 'parent_company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:578
+hasMany,company,,$modelClass::className(),['parent_company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:587
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:597
+hasOne,company,,$modelClass::className(),['code' => 'currency_code'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:606
+hasOne,company,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:615
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:624
+hasMany,company,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:638
+hasMany,company,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:644
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:723
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:728
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:738
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:765
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:774
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:783
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:794
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:804
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:812
+hasMany,company,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:820
+hasMany,company,,$modelClass::className(),['mall_uuid' => 'mall_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1184
+hasMany,company,,$modelClass::className(),['mall_uuid' => 'mall_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1189
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1199
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1324
+hasOne,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1332
+hasOne,company,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1340
+hasMany,company,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Company.php:1348
+hasOne,company_contact,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyContact.php:121
+hasOne,company_contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyContact.php:129
+hasMany,company_contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyContact.php:137
+hasMany,company_contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyContact.php:146
+hasOne,company_request,,$modelClass::className(),['code' => 'currency_code'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyRequest.php:424
+hasOne,company_request,,$modelClass::className(),['utm_uuid' => 'utm_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyRequest.php:432
+hasOne,company_request,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyRequest.php:441
+hasOne,company_stats,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/CompanyStats.php:95
+hasMany,contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:313
+hasMany,contact,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:331
+hasMany,contact,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:340
+hasMany,contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:349
+hasMany,contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:357
+hasMany,contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:364
+hasMany,contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:372
+hasOne,contact,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:755
+hasOne,contact,,$modelClass::className(),['utm_uuid' => 'utm_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contact.php:763
+hasOne,contact_email,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ContactEmail.php:89
+hasOne,contact_invitation,,$modelClass::className(),['contact_email' => 'email_to_invite'],"ORM cardinality, not FK/delete guarantee",common/models/ContactInvitation.php:203
+hasOne,contact_invitation,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ContactInvitation.php:211
+hasOne,contact_invitation,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/ContactInvitation.php:219
+hasOne,contact_phone,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ContactPhone.php:88
+hasOne,contact_token,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ContactToken.php:114
+hasOne,contract,,$className::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:408
+hasOne,contract,,$className::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:416
+hasOne,contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:424
+hasOne,contract,,$className::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:432
+hasOne,contract,,$className::className(),['company_id' => 'parent_company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:440
+hasOne,contract,,$className::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:448
+hasOne,contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:472
+hasOne,contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:480
+hasOne,contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Contract.php:488
+hasOne,country,,$modelClass::className(),['code' => 'currency_code'],"ORM cardinality, not FK/delete guarantee",common/models/Country.php:81
+hasMany,country,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Country.php:89
+hasMany,country,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Country.php:97
+hasOne,daily_standup_answer,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/DailyStandupAnswer.php:116
+hasOne,daily_standup_answer,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/DailyStandupAnswer.php:124
+hasMany,daily_standup_question,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/DailyStandupQuestion.php:144
+hasMany,degree,,$modelClass::className(),['degree_uuid' => 'degree_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Degree.php:100
+hasOne,degree,,$modelClass::className(),['degree_group_uuid' => 'degree_group_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Degree.php:109
+hasMany,degree_group,,$modelClass::className(),['degree_group_uuid' => 'degree_group_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/DegreeGroup.php:116
+hasOne,discount,,$modelClass::className(),['category_id' => 'category_id'],"ORM cardinality, not FK/delete guarantee",common/models/Discount.php:250
+hasOne,discount,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Discount.php:258
+hasOne,discount,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Discount.php:266
+hasMany,discount_category,,$modelClass::className(),['category_id' => 'category_id'],"ORM cardinality, not FK/delete guarantee",common/models/DiscountCategory.php:205
+hasMany,email_campaign,,$modelClass::className(),['campaign_uuid' => 'campaign_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/EmailCampaign.php:451
+hasOne,email_campaign_filter,,$modelClass::className(),['campaign_uuid' => 'campaign_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/EmailCampaignFilter.php:80
+hasMany,exam,,$modelClass::className(),['exam_uuid' => 'exam_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Exam.php:101
+hasMany,exam,,$modelClass::className(),['exam_uuid' => 'exam_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Exam.php:109
+hasMany,exam,,$modelClass::className(),['exam_uuid' => 'exam_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Exam.php:117
+hasOne,exam_question,,$modelClass::className(),['exam_uuid' => 'exam_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestion.php:168
+hasOne,exam_question,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestion.php:176
+hasMany,exam_question,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestion.php:184
+hasMany,exam_question,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestion.php:192
+hasOne,exam_question_answer,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestionAnswer.php:212
+hasOne,exam_question_answer,,$modelClass::className(),['exam_uuid' => 'exam_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestionAnswer.php:220
+hasOne,exam_question_answer,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestionAnswer.php:228
+hasOne,exam_question_answer,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestionAnswer.php:236
+hasOne,exam_question_choice,,$modelClass::className(),['question_uuid' => 'question_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ExamQuestionChoice.php:98
+hasOne,expense,,$modelClass::className(),['admin_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Expense.php:140
+hasOne,expense,,$modelClass::className(),['admin_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Expense.php:148
+hasOne,file,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/File.php:125
+hasOne,firing_hitmap,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/FiringHitmap.php:235
+hasOne,fixed_price_contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/FixedPriceContract.php:117
+hasMany,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:609
+hasMany,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:617
+hasOne,fulltimer,,$modelClass::className(),['university_id' => 'university_id'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:625
+hasOne,fulltimer,,$modelClass::className(),['country_id' => 'country_id'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:633
+hasOne,fulltimer,,$modelClass::className(),['area_uuid' => 'fulltimer_area_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:641
+hasOne,fulltimer,,$modelClass::className(),['country_id' => 'nationality_id'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:649
+hasMany,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:657
+hasMany,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:665
+hasMany,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:674
+hasOne,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:682
+hasMany,fulltimer,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Fulltimer.php:691
+hasOne,fulltimer_experience,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/FulltimerExperience.php:89
+hasOne,fulltimer_skill,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/FulltimerSkill.php:89
+hasOne,fulltimer_tags,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/FulltimerTags.php:56
+hasOne,hourly_contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/HourlyContract.php:115
+hasMany,inspector,,$modelClass::className(),['inspector_uuid' => 'inspector_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Inspector.php:560
+hasOne,inspector_token,,$modelClass::className(),['inspector_uuid' => 'inspector_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InspectorToken.php:133
+hasOne,interview_evaluation,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:117
+hasOne,interview_evaluation,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:126
+hasOne,interview_evaluation,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:134
+hasOne,interview_evaluation,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:142
+hasMany,interview_evaluation,,$modelClass::className(),['interview_evaluation_uuid' => 'interview_evaluation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:150
+hasOne,interview_evaluation,,$modelClass::className(),['interview_evaluation_uuid' => 'interview_evaluation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:159
+hasMany,interview_evaluation,,$modelClass::className(),['interview_evaluation_uuid' => 'interview_evaluation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluation.php:169
+hasOne,interview_evaluation_note_version,,Staff::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluationNoteVersion.php:106
+hasOne,interview_evaluation_note_version,,InterviewEvaluation::className(),['interview_evaluation_uuid' => 'interview_evaluation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluationNoteVersion.php:114
+hasMany,interview_evaluation_note_version,,InterviewEvaluationNote::className(),['ienv_uuid' => 'ienv_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/InterviewEvaluationNoteVersion.php:122
+hasOne,invitation,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:433
+hasOne,invitation,,$modelClass::className(),"['candidate_id' => 'candidate_id','request_uuid'=>'request_uuid']","ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:441
+hasOne,invitation,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:449
+hasOne,invitation,,$modelClass::className(),['company_id' => 'invitation_created_by_company'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:457
+hasOne,invitation,,$modelClass::className(),['staff_id' => 'invitation_created_by_staff'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:465
+hasOne,invitation,,$modelClass::className(),['company_id' => 'invitation_updated_by_company'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:473
+hasOne,invitation,,$modelClass::className(),['staff_id' => 'invitation_updated_by_staff'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:481
+hasOne,invitation,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:489
+hasOne,invitation,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:497
+hasMany,invitation,,$modelClass::className(),['note_uuid' => 'note_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:506
+hasOne,invitation,,$modelClass::className(),['invitation_uuid' => 'invitation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:514
+hasOne,invitation,,$modelClass::className(),['invitation_uuid' => 'invitation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Invitation.php:574
+hasOne,invoice,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Invoice.php:84
+hasOne,invoice,,$modelClass::className(),['transfer_id' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Invoice.php:93
+hasOne,job,,$modelClass::className(),['area_uuid' => 'area_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:244
+hasOne,job,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:252
+hasOne,job,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:260
+hasOne,job,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:268
+hasOne,job,,$modelClass::className(),['staff_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:276
+hasOne,job,,$modelClass::className(),['staff_id' => 'deleted_by'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:284
+hasMany,job,,$modelClass::className(),['job_uuid' => 'job_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:292
+hasMany,job,,$modelClass::className(),['job_uuid' => 'job_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Job.php:300
+hasMany,job_interest,,$modelClass::className(),['job_interest_uuid' => 'job_interest_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/JobInterest.php:117
+hasOne,job_interest,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/JobInterest.php:125
+hasOne,job_interest,,$modelClass::className(),['job_uuid' => 'job_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/JobInterest.php:133
+hasOne,job_skills,,$modelClass::className(),['job_uuid' => 'job_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/JobSkills.php:57
+hasMany,major,,$modelClass::className(),['major_uuid' => 'major_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Major.php:195
+hasMany,mall,,$modelClass::className(),['mall_uuid' => 'mall_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Mall.php:112
+hasMany,mall,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Mall.php:120
+hasOne,manager_token,,StoreManager::className(),['store_manager_uuid' => 'store_manager_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ManagerToken.php:123
+hasOne,manager_token,,StoreManager::className(),['store_manager_uuid' => 'store_manager_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/ManagerToken.php:131
+hasOne,monthly_salary_contract,,$className::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/MonthlySalaryContract.php:98
+hasMany,note,,$modelClass::className(),['request_checklist_uuid' => 'request_checklist_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:302
+hasOne,note,,$modelName::className(),['invitation_uuid' => 'invitation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:312
+hasOne,note,,$modelName::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:322
+hasOne,note,,$modelName::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:332
+hasOne,note,,$modelName::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:342
+hasOne,note,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:350
+hasOne,note,,$candidateClass::className(),['candidate_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:359
+hasOne,note,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:361
+hasOne,note,,$candidateClass::className(),['candidate_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:371
+hasOne,note,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:373
+hasOne,note,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:382
+hasOne,note,,$modelClass::className(),['suggestion_uuid' => 'suggestion_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:389
+hasOne,note,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:396
+hasOne,note,,$modelClass::className(),['interview_evaluation_uuid' => 'interview_evaluation_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Note.php:403
+hasMany,permission_section,,PermissionSubSection::className(),['permission_uuid' => 'permission_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/PermissionSection.php:94
+hasOne,permission_sub_section,,PermissionSection::className(),['permission_uuid' => 'permission_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/PermissionSubSection.php:88
+hasMany,permission_sub_section,,PermissionUser::className(),['permission_sub_section_uuid' => 'permission_sub_section_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/PermissionSubSection.php:96
+hasOne,permission_user,,Admin::className(),['admin_id' => 'admin_id'],"ORM cardinality, not FK/delete guarantee",common/models/PermissionUser.php:91
+hasOne,permission_user,,PermissionSubSection::className(),['permission_sub_section_uuid' => 'permission_sub_section_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/PermissionUser.php:99
+hasOne,permission_user,,Staff::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/PermissionUser.php:107
+hasOne,request,,$modelClass::className(),['country_id' => 'nationality_id'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:311
+hasOne,request,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:320
+hasMany,request,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:330
+hasOne,request,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:340
+hasOne,request,,$modelClass::className(),['contact_uuid' => 'contact_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:348
+hasOne,request,,$modelClass::className(),['staff_id' => 'request_created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:356
+hasOne,request,,$modelClass::className(),['staff_id' => 'request_updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:365
+hasOne,request,,$modelClass::className(),['contact_uuid' => 'request_created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:374
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:382
+hasOne,request,,$modelClass::className(),['contact_uuid' => 'request_updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:390
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:398
+hasOne,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:406
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:415
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:424
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:433
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:442
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:451
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:460
+hasMany,request,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:469
+hasMany,request,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:479
+hasOne,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:690
+hasMany,request,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Request.php:699
+hasOne,request_application,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/RequestApplication.php:149
+hasOne,request_application,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestApplication.php:157
+hasOne,request_application,,$modelClass::className(),['application_uuid' => 'application_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestApplication.php:165
+hasMany,request_application,,$modelClass::className(),['application_uuid' => 'application_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestApplication.php:174
+hasOne,request_application,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestApplication.php:183
+hasMany,request_checklist,,$modelClass::className(),['request_checklist_uuid' => 'request_checklist_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestChecklist.php:96
+hasOne,request_interview,,$modelClass::className(),['application_uuid' => 'application_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestInterview.php:145
+hasOne,request_interview,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/RequestInterview.php:153
+hasOne,request_interview,,$modelClass::className(),['contact_uuid' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/RequestInterview.php:161
+hasOne,request_interview,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestInterview.php:169
+hasOne,request_interview,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestInterview.php:177
+hasOne,request_interview,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/RequestInterview.php:185
+hasOne,request_skill,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/RequestSkill.php:55
+hasMany,staff,,$modelClass::className(),['request_created_by' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:700
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:778
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:791
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:799
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1122
+hasMany,staff,,$modelClass::className(),['created_by' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1186
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1222
+hasMany,staff,,$modelClass::className(),['invitation_created_by_staff' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1262
+hasMany,staff,,$modelClass::className(),['created_by' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1334
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1344
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1353
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1375
+hasMany,staff,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Staff.php:1383
+hasOne,staff_expenses,,Staff::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffExpenses.php:134
+hasOne,staff_leave,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffLeave.php:132
+hasOne,staff_notification,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffNotification.php:92
+hasOne,staff_salary,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffSalary.php:119
+hasOne,staff_salary_process,,Staff::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffSalaryProcess.php:68
+hasOne,staff_token,,Staff::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffToken.php:119
+hasOne,staff_work_session,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffWorkSession.php:99
+hasMany,staff_work_session,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StaffWorkSession.php:103
+hasMany,store,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:138
+hasOne,store,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:199
+hasOne,store,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:206
+hasOne,store,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:229
+hasMany,store,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:249
+hasOne,store,,$modelClass::className(),['brand_uuid' => 'brand_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:266
+hasOne,store,,$modelClass::className(),['mall_uuid' => 'mall_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:274
+hasMany,store,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Store.php:282
+hasOne,store_assignment_request,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/StoreAssignmentRequest.php:126
+hasOne,store_assignment_request,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/StoreAssignmentRequest.php:134
+hasOne,store_manager,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/StoreManager.php:516
+hasOne,store_manager,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/StoreManager.php:524
+hasOne,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:225
+hasMany,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:235
+hasOne,story,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:244
+hasOne,story,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:252
+hasOne,story,,$modelClass::className(),['suggestion_uuid' => 'suggestion_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:260
+hasMany,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:268
+hasMany,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:276
+hasMany,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:284
+hasMany,story,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:293
+hasOne,story,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:302
+hasOne,story,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:310
+hasOne,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:319
+hasMany,story,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Story.php:328
+hasOne,story_activity,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/StoryActivity.php:192
+hasOne,story_activity,,$modelClass::className(),['story_uuid' => 'story_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/StoryActivity.php:200
+hasOne,story_activity,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/StoryActivity.php:208
+hasOne,story_activity,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/StoryActivity.php:216
+hasOne,suggestion,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:252
+hasOne,suggestion,,$modelClass::className(),['fulltimer_uuid' => 'fulltimer_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:260
+hasOne,suggestion,,$modelClass::className(),['note_uuid' => 'note_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:268
+hasOne,suggestion,,$modelClass::className(),['request_uuid' => 'request_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:276
+hasOne,suggestion,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:284
+hasOne,suggestion,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:293
+hasOne,suggestion,,$modelClass::className(),['staff_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:301
+hasOne,suggestion,,$modelClass::className(),['suggestion_uuid' => 'suggestion_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:310
+hasOne,suggestion,,$modelClass::className(),['suggestion_uuid' => 'suggestion_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:319
+hasMany,suggestion,,$modelClass::className(),['suggestion_uuid' => 'suggestion_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Suggestion.php:328
+hasOne,ticket,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/Ticket.php:335
+hasOne,ticket,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/Ticket.php:345
+hasMany,ticket,,$modelClass::className(),['ticket_uuid' => 'ticket_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Ticket.php:355
+hasMany,ticket,,$modelClass::className(),['attachment_uuid' => 'attachment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Ticket.php:365
+hasMany,ticket,,$modelClass::className(),['ticket_uuid' => 'ticket_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Ticket.php:376
+hasOne,ticket_attachment,,$modelClass::className(),['ticket_uuid' => 'ticket_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketAttachment.php:94
+hasOne,ticket_attachment,,$modelClass::className(),['attachment_uuid' => 'attachment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketAttachment.php:104
+hasOne,ticket_comment,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/TicketComment.php:278
+hasOne,ticket_comment,,$modelClass::className(),['staff_id' => 'staff_id'],"ORM cardinality, not FK/delete guarantee",common/models/TicketComment.php:288
+hasOne,ticket_comment,,$modelClass::className(),['ticket_uuid' => 'ticket_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketComment.php:298
+hasMany,ticket_comment,,$modelClass::className(),['ticket_comment_uuid' => 'ticket_comment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketComment.php:308
+hasMany,ticket_comment,,$modelClass::className(),['attachment_uuid' => 'attachment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketComment.php:318
+hasOne,ticket_comment_attachment,,$modelClass::className(),['attachment_uuid' => 'attachment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketCommentAttachment.php:94
+hasOne,ticket_comment_attachment,,$modelClass::className(),['ticket_comment_uuid' => 'ticket_comment_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TicketCommentAttachment.php:104
+hasOne,transfer,,$modelClass::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:461
+hasOne,transfer,,$modelClass::className(),['staff_id' => 'transfer_created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:470
+hasOne,transfer,,$modelClass::className(),['staff_id' => 'transfer_updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:479
+hasOne,transfer,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:488
+hasMany,transfer,,$modelClass::className(),['transfer_id' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:533
+hasMany,transfer,,$modelClass::className(),['transfer_id' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:549
+hasOne,transfer,,$modelClass::className(),['transfer_id'=>'parent_transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:559
+hasMany,transfer,,$modelClass::className(),['transfer_id'=>'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:570
+hasMany,transfer,,$modelClass::className(),['parent_transfer_id'=>'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:580
+hasMany,transfer,,$modelClass::className(),['transfer_id'=>'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:591
+hasMany,transfer,,$modelClass::className(),['transfer_id'=>'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:603
+hasMany,transfer,,$modelClass::className(),['debit_narrative' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:614
+hasMany,transfer,,$modelClass::className(),['code' => 'currency_code'],"ORM cardinality, not FK/delete guarantee",common/models/Transfer.php:623
+hasOne,transfer_bank_advice,,$modelClass::className(),['admin_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/TransferBankAdvice.php:200
+hasOne,transfer_candidate,,$modelClass::className(),['store_id' => 'store_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:677
+hasOne,transfer_candidate,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:686
+hasOne,transfer_candidate,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:695
+hasOne,transfer_candidate,,$modelClass::className(),['candidate_id' => 'prev_candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:704
+hasOne,transfer_candidate,,$modelClass::className(),['contract_uuid' => 'contract_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:712
+hasOne,transfer_candidate,,$modelClass::className(),['transfer_id' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:721
+hasOne,transfer_candidate,,$modelClass::className(),['bank_id' => 'bank_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:730
+hasOne,transfer_candidate,,$modelClass::className(),['transfer_file_id' => 'transfer_file_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:748
+hasOne,transfer_candidate,,$modelClass::className(),['transfer_id' => 'transfer_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:757
+hasOne,transfer_candidate,,$modelClass::className(),['credit_narrative' => 'tc_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCandidate.php:766
+hasOne,transfer_cost,,$modelClass::className(),['candidate_id' => 'candidate_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCost.php:82
+hasOne,transfer_cost,,$modelClass::className(),['company_id' => 'company_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferCost.php:90
+hasMany,transfer_file,,$modelClass::className(),['transfer_file_id' => 'transfer_file_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFile.php:1059
+hasMany,transfer_file,,$modelClass::className(),['transfer_file_id' => 'transfer_file_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFile.php:1067
+hasOne,transfer_file,,$modelClass::className(),['admin_id' => 'admin_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFile.php:1076
+hasOne,transfer_file_entry,,$modelClass::className(),['tc_id' => 'credit_narrative'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFileEntry.php:180
+hasOne,transfer_file_entry,,$modelClass::className(),['transfer_id' => 'debit_narrative'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFileEntry.php:188
+hasOne,transfer_file_entry,,$modelClass::className(),['transfer_file_id' => 'transfer_file_id'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFileEntry.php:196
+hasOne,transfer_file_entry,,$modelClass::className(),['admin_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFileEntry.php:204
+hasOne,transfer_file_entry,,$modelClass::className(),['admin_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/TransferFileEntry.php:212
+hasMany,university,,$modelClass::className(),['university_id'=>'university_id'],"ORM cardinality, not FK/delete guarantee",common/models/University.php:143
+hasMany,wallet.bank,,$modelClass::className(),['bank_uuid' => 'bank_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/WalletBank.php:105
+hasOne,wallet.transfer,,$modelClass::className(),['bank_uuid' => 'bank_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/WalletTransfer.php:382
+hasOne,wallet.transfer,,$modelClass::className(),['user_uuid' => 'user_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/WalletTransfer.php:392
+hasMany,wallet.user,,$modelClass::className(),['user_uuid' => 'user_uuid'],"ORM cardinality, not FK/delete guarantee",common/models/WalletUser.php:446
+hasOne,webhook,,$modelClass::className(),['staff_id' => 'created_by'],"ORM cardinality, not FK/delete guarantee",common/models/Webhook.php:109
+hasOne,webhook,,$modelClass::className(),['staff_id' => 'updated_by'],"ORM cardinality, not FK/delete guarantee",common/models/Webhook.php:117

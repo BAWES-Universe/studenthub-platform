@@ -1,0 +1,39 @@
+console_route,source,schedule_receipts,plan
+algolia/index,console/controllers/AlgoliaController.php:19,cron/cronlist:10,DISABLED in all fixture/import runs; semantic disposition in README
+central-db/index,console/controllers/CentralDbController.php:20,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+central-db/staff,console/controllers/CentralDbController.php:58,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+central-db/agent,console/controllers/CentralDbController.php:95,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+central-db/provider,console/controllers/CentralDbController.php:132,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/index,console/controllers/CronController.php:40,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/fill-civil-id-expiry-date,console/controllers/CronController.php:96,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/fill-civil-id-expiry-date-not-assigned,console/controllers/CronController.php:116,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/validate-civil-id,console/controllers/CronController.php:137,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/check-if-candidate-total-mismatch,console/controllers/CronController.php:200,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/daily,console/controllers/CronController.php:225,cron/cronlist:22,DISABLED in all fixture/import runs; semantic disposition in README
+cron/gen-hit-map,console/controllers/CronController.php:287,cron/cronlist:37,DISABLED in all fixture/import runs; semantic disposition in README
+cron/every-minute,console/controllers/CronController.php:316,cron/cronlist:2,DISABLED in all fixture/import runs; semantic disposition in README
+cron/every5-minute,console/controllers/CronController.php:330,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/process-transfer-files,console/controllers/CronController.php:338,cron/cronlist:3,DISABLED in all fixture/import runs; semantic disposition in README
+cron/process-campaign,console/controllers/CronController.php:364,cron/cronlist:4,DISABLED in all fixture/import runs; semantic disposition in README
+cron/weekly,console/controllers/CronController.php:386,cron/cronlist:28,DISABLED in all fixture/import runs; semantic disposition in README
+cron/mid-month,console/controllers/CronController.php:457,cron/cronlist:31,DISABLED in all fixture/import runs; semantic disposition in README
+cron/end-of-month,console/controllers/CronController.php:471,cron/cronlist:36,DISABLED in all fixture/import runs; semantic disposition in README
+cron/remove-duplicate,console/controllers/CronController.php:489,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/summary,console/controllers/CronController.php:513,cron/cronlist:19,DISABLED in all fixture/import runs; semantic disposition in README
+cron/payable-candidate-notification,console/controllers/CronController.php:621,cron/cronlist:13,DISABLED in all fixture/import runs; semantic disposition in README
+cron/kuwait-mom-check,console/controllers/CronController.php:783,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/segment-transfer,console/controllers/CronController.php:797,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/segment-suggestion,console/controllers/CronController.php:853,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/segment-expense,console/controllers/CronController.php:909,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/check-daily-attendance,console/controllers/CronController.php:977,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/update-candidate-stats,console/controllers/CronController.php:1049,cron/cronlist:32,DISABLED in all fixture/import runs; semantic disposition in README
+cron/update-company-stats,console/controllers/CronController.php:1109,cron/cronlist:33,DISABLED in all fixture/import runs; semantic disposition in README
+cron/fix-work-logs,console/controllers/CronController.php:1165,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/fix-work-log-dates,console/controllers/CronController.php:1188,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+cron/fix-education,console/controllers/CronController.php:1255,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+event/emulate,console/controllers/EventController.php:284,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+report/recruiter,console/controllers/ReportController.php:16,cron/cronlist:25,DISABLED in all fixture/import runs; semantic disposition in README
+resource/s3-to-cloudinary,console/controllers/ResourceController.php:18,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+xero/test,console/controllers/XeroController.php:12,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+xero/sync-transactions,console/controllers/XeroController.php:25,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
+xero/sync-after,console/controllers/XeroController.php:41,not in checked cron file,DISABLED in all fixture/import runs; semantic disposition in README
