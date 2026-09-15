@@ -2,6 +2,6 @@
   "version": "1.0.0",
   "algorithm": "Ed25519",
   "coordinator_revision": null,
-  "spki_sha256": null,
-  "state": "owner-authority-required"
+  "spki_sha256": "0cc5f24f46554bd25b713d78fca2f2bd48ab9b270d217a9dce613956d5786d5a",
+  "state": "ready"
 }

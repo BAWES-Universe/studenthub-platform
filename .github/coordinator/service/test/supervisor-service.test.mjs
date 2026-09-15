@@ -1,3 +1,4 @@
+import { fixtureEnvironmentFiles } from '../verify.mjs';
 import { test as nodeTest } from 'node:test';
 // Bound every service test, including regressions that leave asynchronous work pending.
 const test = (name, options, fn) => typeof options === 'function'
@@ -125,8 +126,9 @@ test('SHU251 mutation: durable inventory directory missing or symlinked', t => {
 });
 test('SHU251 concrete merged service argv renders valid units', { skip: process.env.SHU251_NO_SYSTEMD === '1' ? 'SHU251_NO_SYSTEMD: systemd interaction prohibited in this window' : false }, t => {
   const params = fixture(t), workdir = process.cwd();
-  const units = render(serviceParameters({ workdir, supervisorStateDir: params.stateDir, supervisorSocket: params.socketPath }));
-  assertPolicy(units);
+  const options = serviceParameters({ ...fixtureEnvironmentFiles(join(params.stateDir, '..')), workdir, supervisorStateDir: params.stateDir, supervisorSocket: params.socketPath });
+  const units = render(options);
+  assertPolicy(units, options);
   for (const name of names) fs.writeFileSync(join(params.stateDir, '..', name), units[name]);
   verifySyntax(join(params.stateDir, '..'));
 });

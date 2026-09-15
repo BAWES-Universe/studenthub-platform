@@ -21,20 +21,24 @@ The reviewed state machine is `shu71-activation-package.mjs`. A package binds:
 - the existing `two-fixture-v1` runtime envelope with both gates true,
   `stop_before_merge: true`, and no merge authority.
 
-The whole package is signed. The key is accepted only when its Ed25519 SPKI
-fingerprint and coordinator revision equal a separately owner-approved,
-host-local trust-anchor manifest. A key inside the package cannot appoint
-itself. The repository deliberately contains only an unprovisioned schema
-sentinel, so every
-operational invocation currently HALTs with `ACT_KEY_AUTHORITY_REQUIRED`.
+The whole package is signed. Both verification paths load the single committed
+`.github/coordinator/shu71-activation-public-key.pem` through the exported
+`SHU71_PUBLIC_KEY_PATH` in `shu71-public-key.mjs`. This is the absolute sibling
+path in the running checkout, with plain-path, no-dot-segment, exact-path and
+regular-file checks (`ACT_PUBLIC_KEY_PATH`). Supplied public keys are equality
+checks against that source, never alternate authorities.
 
-Private-key generation and custody are not implemented here. The owner must
-approve one Ed25519 public trust anchor (public SPKI PEM plus SHA-256 fingerprint)
-and authorize a host-local manifest that binds it to the final reviewed main
-revision. The corresponding private key is provisioned outside the repository.
-The private key must never be committed, printed, passed in a process argument,
-or written to evidence. This avoids an impossible self-referential manifest in
-which a committed file would need to contain the SHA of the commit containing it.
+The owner-approved Ed25519 public anchor is provisioned. `validateAnchor()`
+recomputes SHA-256 over its SPKI DER and rejects a manifest mismatch with
+`ACT_TRUST_ANCHOR_MISMATCH`. The exact manifest retains a null coordinator
+revision: the final approved window must supply a manifest copy pinning the
+final reviewed revision. Null or mismatched revisions fail closed with
+`ACT_TRUST_ANCHOR_INVALID`. No commit claims to embed its own hash.
+
+Custody only: the host signing key is `/etc/shu/keys/shu71-activation-ed25519.pem`,
+root:root 0600, with `/etc/shu/keys` root:root 0700. No code reads or requires it.
+See [reconciliation](service/ACTIVATION-WINDOW-RECONCILIATION.md) for the public
+fingerprint, mutation assertions and the remaining final-revision binding.
 
 ## Structured operations
 

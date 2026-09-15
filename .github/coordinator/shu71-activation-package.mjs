@@ -7,6 +7,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
+import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from "./shu71-public-key.mjs";
 import { validateFixtureScopePolicy } from "./workspace-scope.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -48,12 +49,14 @@ function fail(code, detail, phase = "validation") {
   return { ok: false, state: "HALT", phase, code, detail };
 }
 
-function validateAnchor(anchor, publicKeyPem, revision) {
+export function validateAnchor(anchor, publicKeyPem, revision, publicKeyPath = SHU71_PUBLIC_KEY_PATH) {
+  try { publicKeyPem = loadShu71PublicKey(publicKeyPath, publicKeyPem); }
+  catch (error) { return fail(error.message.startsWith("ACT_PUBLIC_KEY_PATH:") ? "ACT_PUBLIC_KEY_PATH" : "ACT_TRUST_ANCHOR_MISMATCH", error.message); }
   if (!exactObject(anchor, ["version", "algorithm", "coordinator_revision", "spki_sha256", "state"])) {
     return fail("ACT_TRUST_ANCHOR_INVALID", "trust-anchor manifest shape is not exact");
   }
   if (anchor.state !== "ready") return fail("ACT_KEY_AUTHORITY_REQUIRED", "owner-approved public trust anchor is not provisioned");
-  if (anchor.version !== "1.0.0" || anchor.algorithm !== "Ed25519" || anchor.coordinator_revision !== revision
+  if (anchor.version !== "1.0.0" || anchor.algorithm !== "Ed25519" || !SHA.test(revision ?? "") || anchor.coordinator_revision !== revision
       || !SHA256.test(anchor.spki_sha256 ?? "") || typeof publicKeyPem !== "string") {
     return fail("ACT_TRUST_ANCHOR_INVALID", "trust anchor is malformed or bound to another revision");
   }
@@ -111,7 +114,7 @@ function confinedEvidencePath(value, root, activationId) {
     && value.startsWith(`${episodeRoot}/`);
 }
 
-export function validateShu71Package({ pkg, anchor, publicKeyPem, revision, mainRevision, heads = {}, issues = [], seenActivationIds = [], now = new Date(), phase = "prepared" }) {
+export function validateShu71Package({ pkg, anchor, publicKeyPem, publicKeyPath = SHU71_PUBLIC_KEY_PATH, revision, mainRevision, heads = {}, issues = [], seenActivationIds = [], now = new Date(), phase = "prepared" }) {
   if (!exactObject(pkg, PACKAGE_KEYS) || pkg.kind !== "shu71-activation-package-v1") {
     return fail("ACT_PACKAGE_MALFORMED", "package shape or kind is invalid");
   }
@@ -179,8 +182,9 @@ export function validateShu71Package({ pkg, anchor, publicKeyPem, revision, main
         || fixture.branch !== byId[fixture.issue_id]?.branch || !isDeepStrictEqual(fixture.lane, byId[fixture.issue_id]?.lane))) {
     return fail("ACT_ENVELOPE_MISMATCH", "runtime envelope does not exactly project the reviewed package");
   }
-  const anchorResult = validateAnchor(anchor, publicKeyPem, revision);
+  const anchorResult = validateAnchor(anchor, publicKeyPem, revision, publicKeyPath);
   if (!anchorResult.ok) return anchorResult;
+  publicKeyPem = loadShu71PublicKey(publicKeyPath, publicKeyPem);
   if (!verifySignature(pkg, publicKeyPem)) return fail("ACT_FORGED_ENVELOPE", "package signature is absent, malformed, or invalid");
   if (!verifySignature(pkg.activation, publicKeyPem)) return fail("ACT_FORGED_ENVELOPE", "runtime activation envelope signature is invalid");
 

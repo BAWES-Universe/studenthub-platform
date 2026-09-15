@@ -15,15 +15,57 @@ function workspaceDirectory({ workspaceStateDir = WORKSPACE_STATE_DIR, allowWork
 
 // System services share the identity owning the private workspace/socket directory.
 function serviceConfiguration({ serviceUser = 'shu-coordinator', serviceGroup = serviceUser,
-  secretEnvironmentFile = '/etc/shu/supervisor.env' } = {}) {
+  supervisorEnvironmentFile = '/etc/shu/supervisor.env', coordinatorEnvironmentFile = '/srv/shu/service.env' } = {}) {
   for (const value of [serviceUser, serviceGroup]) {
     assert.ok(typeof value === 'string' && /^[a-z_][a-z0-9_-]*$/.test(value) && value !== 'root',
       'SHU251_IDENTITY: non-root service user and group names required');
   }
-  assert.ok(typeof secretEnvironmentFile === 'string' && /^\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*$/.test(secretEnvironmentFile)
-    && !secretEnvironmentFile.split('/').some(p => p === '.' || p === '..'),
-    'SHU251_SECRET_FILE: plain absolute environment file path required');
-  return { serviceUser, serviceGroup, secretEnvironmentFile };
+  for (const environmentFile of [supervisorEnvironmentFile, coordinatorEnvironmentFile]) {
+    assert.ok(typeof environmentFile === 'string' && /^\/[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*$/.test(environmentFile)
+      && !environmentFile.split('/').some(p => p === '.' || p === '..'),
+      'SHU251_SECRET_FILE: plain absolute environment file path required');
+  }
+  assert.notEqual(supervisorEnvironmentFile, coordinatorEnvironmentFile, 'SHU251_ENV_IDENTICAL: environment files must be distinct');
+  assert.ok(supervisorEnvironmentFile !== '/srv/shu/service.env' && coordinatorEnvironmentFile !== '/etc/shu/supervisor.env',
+    'SHU251_ENV_CROSSED: environment file paths belong to the other unit');
+  return { serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile };
+}
+
+// Inspect key names and nonempty values only; never include contents in errors.
+// Restrict the accepted format to unambiguous single-line systemd assignments.
+function environmentBindings(identity) {
+  const files = [identity.supervisorEnvironmentFile, identity.coordinatorEnvironmentFile];
+  const stats = files.map(file => {
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    assert.ok(stat, 'SHU251_ENV_MISSING: required environment file is absent');
+    assert.ok(stat.isFile(), 'SHU251_ENV_FILE: environment binding must be a regular non-symlink file');
+    return stat;
+  });
+  assert.ok(stats[0].dev !== stats[1].dev || stats[0].ino !== stats[1].ino,
+    'SHU251_ENV_IDENTICAL: environment files must not share an inode');
+  const entries = files.map(file => {
+    let source;
+    try { source = fs.readFileSync(file, 'utf8'); }
+    catch { assert.fail('SHU251_ENV_UNREADABLE: required environment file cannot be read'); }
+    const result = new Map();
+    for (const line of source.split(/\r?\n/)) {
+      if (/^\s*(?:[#;].*)?$/.test(line)) continue;
+      const match = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+      assert.ok(match && !result.has(match[1]), 'SHU251_ENV_CONTENT: unique single-line assignments required');
+      const raw = match[2];
+      const value = /^(?:"[^"\\]*"|'[^'\\]*')$/.test(raw) ? raw.slice(1, -1) : raw;
+      assert.ok(value.trim().length > 0 && !/["'\\]/.test(value), 'SHU251_ENV_CONTENT: nonempty unambiguous values required');
+      result.set(match[1], value);
+    }
+    return result;
+  });
+  const [supervisor, coordinator] = entries;
+  assert.ok(!supervisor.has('GITHUB_TOKEN') && !supervisor.has('LINEAR_API_TOKEN') && !coordinator.has('SHU_SUPERVISOR_SECRET'),
+    'SHU251_ENV_CROSSED: environment contents belong to the other unit');
+  assert.ok(supervisor.size === 1 && Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
+    'SHU251_ENV_SUPERVISOR: only SHU_SUPERVISOR_SECRET of at least 32 bytes is required');
+  assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
+    'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
 }
 
 export const names = ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'];
@@ -36,7 +78,7 @@ function command(argv) {
   assert.ok(Array.isArray(argv) && argv.length > 0 && argv[0].startsWith('/'), 'SHU251_COMMAND: absolute executable argv required');
   return argv.map(quote).join(' ');
 }
-export function render({ workdir, supervisor, coordinator, writerLock, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, secretEnvironmentFile }) {
+export function render({ workdir, supervisor, coordinator, writerLock, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }) {
   assert.ok(workdir?.startsWith('/') && writerLock?.startsWith('/'), 'SHU251_PATH: absolute workdir and shared writer lock required');
   // Use the SAME lock as host-tick.sh. The supplied coordinator command must
   // invoke the reviewed tick directly, not recursively acquire this lock.
@@ -47,8 +89,9 @@ export function render({ workdir, supervisor, coordinator, writerLock, workspace
   assert.equal(writerLock, `${workspaceStateDir}/host-tick.lock`, 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
   for (const path of [supervisorStateDir, supervisorSocket]) assert.match(path, /^\/[a-zA-Z0-9_./-]+$/, 'SHU251_PATH: plain absolute supervisor paths required');
   command(coordinator);
-  const identity = serviceConfiguration({ serviceUser, serviceGroup, secretEnvironmentFile });
-  const values = { SERVICE_USER: identity.serviceUser, SERVICE_GROUP: identity.serviceGroup, SECRET_ENVIRONMENT_FILE: identity.secretEnvironmentFile, WORKDIR: workdir, WORKSPACE_STATE_DIR: workspaceStateDir, SUPERVISOR_STATE_DIR: supervisorStateDir, SUPERVISOR_SOCKET: supervisorSocket, SUPERVISOR_EXEC: command(supervisor),
+  const identity = serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile });
+  environmentBindings(identity);
+  const values = { SERVICE_USER: identity.serviceUser, SERVICE_GROUP: identity.serviceGroup, SUPERVISOR_ENVIRONMENT_FILE: identity.supervisorEnvironmentFile, COORDINATOR_ENVIRONMENT_FILE: identity.coordinatorEnvironmentFile, WORKDIR: workdir, WORKSPACE_STATE_DIR: workspaceStateDir, SUPERVISOR_STATE_DIR: supervisorStateDir, SUPERVISOR_SOCKET: supervisorSocket, SUPERVISOR_EXEC: command(supervisor),
     COORDINATOR_EXEC: command(['/usr/bin/flock', '--nonblock', '--conflict-exit-code', '2', writerLock, ...coordinator]) };
   const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(new URL(`${name}.in`, import.meta.url), 'utf8')
     .replace(/@([A-Z_]+)@/g, (_, key) => { assert.ok(key in values, 'SHU251_PARAMETER: unresolved template'); return values[key]; })]));
@@ -58,6 +101,7 @@ export function render({ workdir, supervisor, coordinator, writerLock, workspace
 export function assertPolicy(units, options = {}) {
   const expectedState = workspaceDirectory(options);
   const identity = serviceConfiguration(options);
+  environmentBindings(identity);
   assert.match(units['shu-supervisor.service'], /^Type=notify$/m, 'SHU251_READINESS: supervisor must notify after recovery and listen');
   assert.match(units['shu-supervisor.service'], /^Restart=on-failure$/m, 'SHU251_RESTART: supervisor must restart on failure');
   assert.match(units['shu-coordinator.service'], /^Restart=on-failure$/m, 'SHU251_RESTART: writer must restart on failure');
@@ -80,8 +124,8 @@ export function assertPolicy(units, options = {}) {
       assert.deepEqual(units[name].split('\n').filter(line => line.startsWith(`${directive}=`)), [`${directive}=${expected}`],
         `SHU251_IDENTITY: ${name} must run with configured ${directive}`);
     }
-    assert.deepEqual(units[name].split('\n').filter(line => line.startsWith('EnvironmentFile=')), [`EnvironmentFile=${identity.secretEnvironmentFile}`],
-      'SHU251_SECRET_FILE: services must require the shared secret environment file');
+    assert.deepEqual(units[name].split('\n').filter(line => line.startsWith('EnvironmentFile=')), [`EnvironmentFile=${identity[name === 'shu-supervisor.service' ? 'supervisorEnvironmentFile' : 'coordinatorEnvironmentFile']}`],
+      'SHU251_SECRET_FILE: each service must require its own environment file');
     assert.match(units[name], /^Environment=ENABLE_DISPATCH=false$/m, 'SHU251_GATE: staged dispatch must be off');
   }
 }
@@ -93,9 +137,9 @@ export function verifySyntax(directory) {
 }
 
 // Concrete merged interface; secrets and activation are supplied separately at deployment.
-export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, secretEnvironmentFile, node = process.execPath }) {
+export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket, serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile, node = process.execPath }) {
   workspaceDirectory({ workspaceStateDir, allowWorkspaceStateDirOverride });
-  return { ...serviceConfiguration({ serviceUser, serviceGroup, secretEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket,
+  return { ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket,
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
     coordinator: [node, join(workdir, '.github/coordinator/reconcile.mjs')] };

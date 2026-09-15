@@ -9,8 +9,11 @@ change host permissions, start a worker, arm dispatch, or authorize SHU-71.
 absolute JSON-spec path. The Node implementation uses fixed executable paths and
 fixed argv. There is no `eval`, `sh -c`, command field, executable field, or
 operator-provided argument array. Unknown fields fail the closed manifest before
-an operation runs. Every failure is JSON with `ok:false`, a binding name and one
-of the following typed codes.
+an operation runs. Failures emit machine-readable JSON with `ok:false` on stderr
+and set `process.exitCode = 2`. A `HostBindingHalt` includes a binding name and
+one of the nine typed codes below. All other failures use `SHU251_UNEXPECTED`
+with a `reason` and no binding name, including a repeated `capture-prior`
+(`atomicExclusive` EEXIST) or an fs error for a missing `unit_directory`.
 
 | Missing binding from the report | Reviewed action/control | Typed failure |
 | --- | --- | --- |
@@ -72,11 +75,13 @@ out-of-scope cleanup path and rollback record bound to another revision. Each
 dies with its binding-specific `HostBindingHalt`; a free-form command field is
 also rejected by the closed spec.
 
-## One credential-owner decision remains
+## Decided credential environment files
 
-The tooling does not invent, copy or rotate `SHU_SUPERVISOR_SECRET`. Before a
-window is approved, the credential owner must name and provision **one** approved
-credential-only environment file whose parent and file satisfy the service
-privacy contract, and bind that absolute path in the final window spec. The
-tooling verifies ownership/mode/key name and uses the value only in memory; it
-never prints it. No other free-form operational input remains in this package.
+The owner has decided the pair: supervisor `/etc/shu/supervisor.env`, root:root
+0600, containing only `SHU_SUPERVISOR_SECRET`; coordinator `/srv/shu/service.env`,
+as provisioned, containing its GitHub / Linear credentials (`GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`). The status binding uses the supervisor file. Neither file
+may substitute for the other. The tooling does not invent, copy or rotate
+credentials, and never prints their values. The renderer and policy validator
+require both files to exist and check their distinct roles before accepting units.
+The final window spec binds the decided supervisor path for status authentication.
