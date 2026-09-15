@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "sourceKind": "synthetic",
+  "fixtureId": "parent-ambiguous",
+  "newInvoiceNumbers": ["ACME-2026-08-000001"],
+  "transfers": [
+    { "transfer_id": 400, "parent_transfer_id": null, "company_id": 40, "company_total": "36.000", "deleted": 0 },
+    { "transfer_id": 401, "parent_transfer_id": 400, "company_id": 41, "company_total": "30.000", "deleted": 0 }
+  ],
+  "transfer_candidates": [
+    { "tc_id": 4001, "transfer_id": 400, "company_id": 41, "store_id": 411, "company_total": "30.000", "deleted": 0 },
+    { "tc_id": 4002, "transfer_id": 400, "company_id": 40, "store_id": 401, "company_total": "2.000", "deleted": 0 },
+    { "tc_id": 4003, "transfer_id": 400, "company_id": 40, "store_id": 402, "company_total": "4.000", "deleted": 0 }
+  ],
+  "invoices": [
+    { "invoice_id": 8001, "transfer_id": 400, "deleted": 0 },
+    { "invoice_id": 8002, "transfer_id": 401, "deleted": 0 }
+  ]
+}
