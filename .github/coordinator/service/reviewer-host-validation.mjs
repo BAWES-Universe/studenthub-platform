@@ -75,6 +75,7 @@ export async function finalizeHostValidation({ cleanupCallbacks = [], verifyInve
     throw new AggregateError(
       primaryError ? [primaryError, ...cleanupErrors] : cleanupErrors,
       `SHU261_CLEANUP_AGGREGATE: ${cleanupErrors.length} cleanup or inventory operation(s) failed`,
+      { cause: primaryError ?? cleanupErrors[0] },
     );
   }
   if (primaryError) throw primaryError;

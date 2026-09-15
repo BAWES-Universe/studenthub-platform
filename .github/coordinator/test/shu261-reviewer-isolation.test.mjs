@@ -195,6 +195,27 @@ test("SHU261 cleanup attempts every callback and inventory check before aggregat
   );
   assert.deepEqual(calls, ["last", "failing", "first", "inventory"],
     "SHU261_CLEANUP_RUNS_ALL_CALLBACKS: one failure cannot skip any cleanup or final inventory validation");
+
+  const primaryError = new Error("simulated isolation failure");
+  await assert.rejects(
+    finalizeHostValidation({
+      primaryError,
+      cleanupCallbacks: [() => { throw new Error("simulated cleanup failure"); }],
+      verifyInventory: () => {},
+    }),
+    (error) => {
+      assert.equal(error.cause, primaryError,
+        "SHU261_CLEANUP_PRIMARY_CAUSE: cleanup aggregation must retain the primary isolation failure as its cause");
+      assert.equal(error.errors[0], primaryError,
+        "SHU261_CLEANUP_PRIMARY_CAUSE: aggregate details must retain the primary isolation failure");
+      return true;
+    },
+  );
+  await assert.rejects(
+    finalizeHostValidation({ primaryError, verifyInventory: () => {} }),
+    (error) => error === primaryError,
+    "SHU261_CLEANUP_PRIMARY_CAUSE: successful cleanup must rethrow the original validation error unchanged",
+  );
 });
 
 test("SHU261 model review crosses the validated reviewer wrapper with a clean environment", async (t) => {
