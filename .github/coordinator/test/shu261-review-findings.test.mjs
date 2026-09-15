@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { spawnSync } from 'node:child_process';
-import { runReviewEvidence, validateReviewWrapper } from '../review-execution.mjs';
-import { inheritedDescriptorDenied } from '../review-execution-child.mjs';
+import { processCanaryMarker, runReviewEvidence, validateReviewWrapper } from '../review-execution.mjs';
+import { inheritedDescriptorDenied, processInspectionDenied } from '../review-execution-child.mjs';
 import { PROTECTED_CLASSES } from '../service/reviewer-isolation.mjs';
 import { finalizeHostValidation } from '../service/reviewer-host-validation.mjs';
 
@@ -94,16 +94,18 @@ test('SHU261_CLEANUP_RUNS_ALL_CALLBACKS', async () => {
   assert.equal(caught?.name, 'AggregateError', 'SHU261_CLEANUP_AGGREGATE: report errors after every callback and inventory');
   assert.match(caught.errors[0].message, /early cleanup failure/);
   caught = undefined;
+  const inventoryError = new Error('SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory');
   try {
     await finalize({
       cleanupCallbacks,
-      verifyInventory: () => { inventory++; throw new Error('SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory'); },
+      verifyInventory: () => { inventory++; throw inventoryError; },
     });
   } catch (error) { caught = error; }
   assert.deepEqual(calls, [2, 2, 2], 'SHU261_CLEANUP_RUNS_ALL_CALLBACKS: inventory failure cannot skip callbacks');
   assert.equal(inventory, 2);
   assert.equal(caught.errors.length, 2, 'SHU261_CLEANUP_INVENTORY: retain callback and inventory failures');
   assert.equal(caught.errors[1].name, 'Error');
+  assert.equal(caught.errors[1], inventoryError, 'SHU261_CLEANUP_INVENTORY_IDENTITY: retain the exact inventory error unchanged');
   assert.match(caught.errors[1].message, /SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory/);
 
 });
@@ -174,12 +176,15 @@ test('SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child
   const workspace = path.join(root, attempt), evidence = path.join(root, 'evidence');
   fs.mkdirSync(workspace, { mode: 0o750 }); fs.mkdirSync(evidence, { mode: 0o700 });
   for (const omitted of [null, ...keys]) {
-    let observed, processCanaryStarted;
+    let observed, processCanaryStarted, callerError;
     const result = await runReviewEvidence({ attempt_id: attempt, target_sha: '6'.repeat(40), cwd: workspace,
       env: { SHU_REVIEW_EXEC_UID: '994', SHU_REVIEW_EXEC_WRAPPER_JSON: '["/test/wrapper"]',
         SHU_REVIEW_MODEL_WRAPPER_JSON: '["/test/wrapper"]', SHU_REVIEW_TEST_FILES_JSON: '["builder.test.mjs"]', SHU_REVIEW_EVIDENCE_DIR: evidence },
       validateWrapperImpl: (wrapper) => wrapper,
-      startProcessCanaryImpl: async (canary) => { processCanaryStarted = canary; return { kill: () => true }; },
+      startProcessCanaryImpl: async (canary) => {
+        processCanaryStarted = canary;
+        return processCanaryMarker(canary);
+      },
       listenProbeImpl: async () => ({ address: () => ({ port: 26123 }), close: (done) => done() }),
       execFileImpl: (_file, args, options, done) => {
         (async () => {
@@ -187,8 +192,12 @@ test('SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child
           keys.forEach((key, i) => assert.ok(args.includes(`--${key}`), `SHU261_CALLER_CANARY_${i}: caller must supply ${key}`));
           assert.equal(fs.readFileSync(get('protected-path'), 'utf8'), get('fd-canary'));
           assert.equal(inheritedDescriptorDenied(get('fd-canary')), false, 'SHU261_CALLER_FD: open source descriptor must be live before confinement');
-          assert.equal(Object.values(options.env).includes(get('env-canary')), false,
-            'SHU261_CALLER_ENVIRONMENT: live source canary must be stripped from the confined child environment');
+          await t.test(`wrapper environment contains probe canary; omitted child option=${omitted}`, () => {
+            assert.equal(options.env.SHU261_ENV_CANARY, get('env-canary'),
+              'SHU261_CALLER_ENVIRONMENT: wrapper environment must contain the exact canary supplied to the child probe');
+          });
+          assert.equal(processInspectionDenied(get('process-canary')), false,
+            'SHU261_CALLER_PROCESS_VISIBLE: real marker must be observable before confinement');
           assert.equal(processCanaryStarted, get('process-canary'),
             'SHU261_CALLER_PROCESS: caller must start the exact process canary passed to the child');
           const childArgs = args.slice(args.indexOf('--cwd'));
@@ -197,9 +206,10 @@ test('SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child
           // production child predicates and builder phase unchanged.
           observed = await childProbe({}, childArgs);
           done(observed.status ? new Error('child refused') : null, JSON.stringify(observed.report), '');
-        })().catch((error) => done(error));
+        })().catch((error) => { callerError = error; done(error); });
       },
     });
+    assert.ifError(callerError);
     assert.ok(observed, `SHU261_CALLER_CANARIES: ${result.detail ?? 'callback must reach loaded child'}`);
     assert.equal(observed.calls, omitted ? 0 : 1, `SHU261_CALLER_${omitted}: builder invocation count`);
     assert.equal(result.executed, !omitted);

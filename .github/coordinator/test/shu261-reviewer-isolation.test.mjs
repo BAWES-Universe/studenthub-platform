@@ -6,9 +6,10 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { launchBuilder, validateCallback } from "../adapters/claude-code.mjs";
-import { runReviewEvidence, runtimeIsolationEvidenceValid } from "../review-execution.mjs";
+import { processCanaryMarker, runReviewEvidence, runtimeIsolationEvidenceValid } from "../review-execution.mjs";
 import { environmentValueDenied, inheritedDescriptorDenied, processInspectionDenied, protectedProbes } from "../review-execution-child.mjs";
 import { PROTECTED_CLASSES, REVIEWER_IDENTITIES, REVIEWER_LAYOUT, assertIsolationEvidence, assertReviewerSandboxContract } from "../service/reviewer-isolation.mjs";
+import { readOnlyHostPreflight } from "../service/reviewer-isolation.mjs";
 import { finalizeHostValidation } from "../service/reviewer-host-validation.mjs";
 
 const ATTEMPT = "26126126-1261-4261-8261-261261261261";
@@ -333,4 +334,54 @@ test("SHU261 sanitized evidence requires every denial and still requires assigne
   assert.throws(() => assertIsolationEvidence(report({ sibling_workspace_probe: "REACHABLE" }), { expectedUid: 994 }), /SHU261_SIBLING/);
   assert.throws(() => assertIsolationEvidence(report({ forbidden_env_keys: ["GITHUB_TOKEN"] }), { expectedUid: 994 }), /SHU261_ENVIRONMENT/);
   assert.throws(() => assertIsolationEvidence(report({ tests: { executed: false, exit_code: null } }), { expectedUid: 994 }), /SHU261_POSITIVE_TEST/);
+});
+
+
+test("SHU261 host preflight pins every inspected path", () => {
+  let uid = 990;
+  const inspected = [];
+  const preflight = readOnlyHostPreflight({
+    lookupIdentity: () => ({ uid: uid++, gid: 990 }),
+    lookupGroup: () => ({ gid: 990 }),
+    fsImpl: {
+      lstatSync: (file) => {
+        inspected.push(file);
+        return { uid: 990, gid: 990, mode: 0o750, isSymbolicLink: () => false, isDirectory: () => true };
+      },
+      realpathSync: (file) => file,
+    },
+  });
+  const expected = ["checkout", "worktree_root", "activation_records", "workspace_authority",
+    "supervisor_secrets", "coordinator_environment", "deployed_supervisor_environment",
+    "ssh_credentials", "codex_session_sidecars", "service_home_claude_sidecars", "claude_session_sidecars"]
+    .map((key) => REVIEWER_LAYOUT[key]);
+  assert.deepEqual(inspected, expected, "SHU261_PREFLIGHT_PATHS: every protected host path must be inspected");
+  assert.deepEqual(preflight.paths.map(({ path }) => path), expected,
+    "SHU261_PREFLIGHT_PATHS: evidence must retain every inspected path");
+});
+
+test("SHU261 host validation pins every sentinel directory class", () => {
+  // Inspect only the shipped declaration: executing host validation is outside CI's authority.
+  const source = fs.readFileSync(new URL("../service/reviewer-host-validation.mjs", import.meta.url), "utf8");
+  const declaration = source.match(/const classDirectories = \{([\s\S]*?)\n    \};/);
+  assert.ok(declaration, "SHU261_HOST_CLASS_DIRECTORIES: shipped declaration must exist");
+  assert.deepEqual([...declaration[1].matchAll(/^\s+(\w+):/gm)].map((match) => match[1]).sort(),
+    ["activation_records", "workspace_authority", "supervisor_secrets", "ssh_credentials",
+      "codex_session_sidecars", "service_home_claude_sidecars", "claude_session_sidecars", "coordinator_logs"].sort(),
+    "SHU261_HOST_CLASS_DIRECTORIES: every sentinel directory class must remain mandatory");
+});
+
+test("SHU261 process marker verifies observable cmdline before confinement", async (t) => {
+  const canary = `SHU261_PROCESS_${process.pid.toString(16).padStart(32, "0")}`;
+  const marker = await processCanaryMarker(canary);
+  t.after(() => marker.kill("SIGTERM"));
+  assert.ok(fs.readFileSync(`/proc/${marker.pid}/cmdline`, "utf8").includes(canary),
+    "SHU261_PROCESS_MARKER_VISIBLE: real marker must contain the canary");
+  let rejectedMarker;
+  await assert.rejects(async () => {
+    // Keep a handle even when a mutant incorrectly returns the process.
+    rejectedMarker = await processCanaryMarker(canary, { readFileSync: () => "unrelated cmdline" });
+    t.after(() => rejectedMarker.kill("SIGTERM"));
+  }, /review process canary is not observable before confinement/,
+  "SHU261_PROCESS_MARKER_LIVENESS: an unobservable canary must reject before confinement");
 });

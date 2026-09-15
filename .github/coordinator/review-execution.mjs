@@ -135,7 +135,7 @@ function listenProbe() {
   });
 }
 
-async function processCanaryMarker(canary, fsImpl = fs) {
+export async function processCanaryMarker(canary, fsImpl = fs) {
   const marker = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", canary], {
     env: buildReviewExecutionEnvironment(),
     stdio: "ignore",
@@ -275,11 +275,9 @@ export async function runReviewEvidence({
     markerProcess = await startProcessCanaryImpl(processCanary, fsImpl);
     server = await listenProbeImpl();
     const port = server.address().port;
-    const canarySourceEnv = { ...env, SHU261_ENV_CANARY: environmentCanary };
-    if (!Object.values(canarySourceEnv).includes(environmentCanary)) {
-      throw new Error("review environment canary is not live before confinement");
-    }
-    const safeEnv = buildReviewExecutionEnvironment(canarySourceEnv);
+    const safeEnv = buildReviewExecutionEnvironment(env);
+    // The wrapper receives this value; the confined child must not inherit it.
+    safeEnv.SHU261_ENV_CANARY = environmentCanary;
     const result = await runExecFile(execFileImpl, wrapper[0], [
       ...wrapper.slice(1),
       "--profile", "test",

@@ -9,6 +9,19 @@ const classNames = ["activation_records", "workspace_authority", "supervisor_sec
   "ssh_credentials", "codex_session_sidecars", "service_home_claude_sidecars", "claude_session_sidecars", "coordinator_logs", "sibling_attempts"];
 
 const CASES = [
+  { name: "wrapper environment canary placement removed", file: "review-execution.mjs",
+    from: "    safeEnv.SHU261_ENV_CANARY = environmentCanary;", to: "",
+    pattern: "SHU261_CALLER_CANARIES", testFile: "shu261-review-findings.test.mjs",
+    assertion: "SHU261_CALLER_ENVIRONMENT" },
+  { name: "preflight service-home Claude path omitted", file: "service/reviewer-isolation.mjs",
+    from: "REVIEWER_LAYOUT.service_home_claude_sidecars, ", to: "",
+    pattern: "SHU261 host preflight", assertion: "SHU261_PREFLIGHT_PATHS" },
+  { name: "host validation service-home Claude directory omitted", file: "service/reviewer-host-validation.mjs",
+    from: "      service_home_claude_sidecars: REVIEWER_LAYOUT.service_home_claude_sidecars,", to: "",
+    pattern: "SHU261 host validation pins", assertion: "SHU261_HOST_CLASS_DIRECTORIES" },
+  { name: "process marker liveness check removed", file: "review-execution.mjs",
+    from: '    if (!cmdline.includes(canary)) throw new Error("review process canary is not observable before confinement");', to: "",
+    pattern: "SHU261 process marker", assertion: "SHU261_PROCESS_MARKER_LIVENESS" },
   ...classNames.map((name) => ({
     name: `protected class ${name} omitted`, file: "service/reviewer-isolation.mjs",
     from: `  \"${name}\",`, to: "", pattern: "SHU261 deployed identities",
@@ -87,9 +100,11 @@ for (const mutation of CASES) test(`SHU-261 mutation: ${mutation.name}`, () => {
     const childEnv = { ...process.env };
     delete childEnv.NODE_TEST_CONTEXT;
     const run = spawnSync(process.execPath, ["--test", `--test-name-pattern=${mutation.pattern}`,
-      path.join(root, "test/shu261-reviewer-isolation.test.mjs")], { cwd: root, env: childEnv, encoding: "utf8", timeout: 30_000 });
+      path.join(root, "test", mutation.testFile ?? "shu261-reviewer-isolation.test.mjs")], { cwd: root, env: childEnv, encoding: "utf8", timeout: 30_000 });
     assert.equal(run.status, 1, `${mutation.name} survived or did not run:\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout + run.stderr, /AssertionError/, `${mutation.name} must fail a named assertion`);
+    if (mutation.assertion) assert.match(run.stdout + run.stderr, new RegExp(mutation.assertion),
+      `${mutation.name} must fail ${mutation.assertion}`);
     assert.doesNotMatch(run.stdout + run.stderr, /SyntaxError|ERR_MODULE_NOT_FOUND/, `${mutation.name} must not crash the suite`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
