@@ -6,7 +6,8 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { execFile as nodeExecFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { execFile as nodeExecFile, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -52,14 +53,14 @@ export function reviewTestFiles(env = {}) {
   return files;
 }
 
-export function reviewWrapper(env = {}) {
+export function reviewWrapper(env = {}, key = "SHU_REVIEW_EXEC_WRAPPER_JSON") {
   let wrapper;
-  try { wrapper = JSON.parse(env.SHU_REVIEW_EXEC_WRAPPER_JSON ?? ""); }
-  catch { throw new Error("SHU_REVIEW_EXEC_WRAPPER_JSON must be a JSON argv array"); }
+  try { wrapper = JSON.parse(env[key] ?? ""); }
+  catch { throw new Error(`${key} must be a JSON argv array`); }
   if (!Array.isArray(wrapper) || wrapper.length === 0 || wrapper.some((part) => typeof part !== "string" || part.length === 0)) {
-    throw new Error("SHU_REVIEW_EXEC_WRAPPER_JSON must be a non-empty JSON argv array");
+    throw new Error(`${key} must be a non-empty JSON argv array`);
   }
-  if (!path.isAbsolute(wrapper[0])) throw new Error("review execution wrapper must use an absolute executable path");
+  if (!path.isAbsolute(wrapper[0])) throw new Error(`${key} must use an absolute executable path`);
   return wrapper;
 }
 
@@ -99,14 +100,19 @@ function trustedRootPath(file, fsImpl = fs) {
   return resolved;
 }
 
-export function validateReviewWrapper(wrapper, fsImpl = fs) {
+export function validateReviewWrapper(wrapper, fsImpl = fs, { model = false } = {}) {
   const executable = trustedRootPath(wrapper[0], fsImpl);
   const normalized = [executable, ...wrapper.slice(1)];
   if (path.basename(wrapper[0]) === "sudo" || path.basename(executable) === "sudo") {
-    if (wrapper.length !== 3 || wrapper[1] !== "-n" || !path.isAbsolute(wrapper[2] ?? "")) {
-      throw new Error("sudo review wrapper must be the fixed noninteractive command form");
+    const expectedLength = 3;
+    const sandboxIndex = 2;
+    if (wrapper.length !== expectedLength || wrapper[1] !== "-n"
+      || !path.isAbsolute(wrapper[sandboxIndex] ?? "")) {
+      throw new Error(model
+        ? "sudo reviewer model wrapper must use command-specific env_keep in the fixed noninteractive command form"
+        : "sudo review wrapper must be the fixed noninteractive command form");
     }
-    normalized[2] = trustedRootPath(wrapper[2], fsImpl);
+    normalized[sandboxIndex] = trustedRootPath(wrapper[sandboxIndex], fsImpl);
   }
   return normalized;
 }
@@ -171,6 +177,8 @@ export async function runReviewEvidence({
   let server;
   let protectedPath;
   let siblingProbeDir;
+  let canaryFd;
+  let markerProcess;
   try {
     if (!UUID.test(attempt_id ?? "") || !SHA.test(target_sha ?? "") || !path.isAbsolute(cwd ?? "")) {
       throw new Error("invalid review evidence binding");
@@ -181,6 +189,13 @@ export async function runReviewEvidence({
     }
     const configuredWrapper = reviewWrapper(env);
     const wrapper = validateWrapperImpl(configuredWrapper, fsImpl);
+    const configuredModelWrapper = reviewWrapper(env, "SHU_REVIEW_MODEL_WRAPPER_JSON");
+    const modelWrapper = validateWrapperImpl(configuredModelWrapper, fsImpl, { model: true });
+    const testSandbox = wrapper.at(-1);
+    const modelSandbox = modelWrapper.at(-1);
+    if (testSandbox !== modelSandbox) {
+      throw new Error("test and model reviewer profiles must use the same canonical sandbox executable");
+    }
     const childStat = fsImpl.lstatSync(childPath);
     if (!trustedControlPlaneObject(childStat, { ownUid, expectedUid, kind: "file" })) {
       throw new Error("review evidence child must be a root/coordinator-owned, non-writable regular file");
@@ -204,16 +219,27 @@ export async function runReviewEvidence({
       throw new Error("review evidence authority must be outside the builder-authored checkout");
     }
     protectedPath = path.join(evidenceDir, `${attempt_id}.confinement-sentinel`);
-    fsImpl.writeFileSync(protectedPath, "coordinator-private", { flag: "wx", mode: 0o600 });
+    const nonce = randomUUID().replaceAll("-", "");
+    const fdCanary = `SHU261_FD_${nonce}`;
+    const envCanary = `SHU261_ENV_${nonce}`;
+    const processCanary = `SHU261_PROCESS_${nonce}`;
+    fsImpl.writeFileSync(protectedPath, fdCanary, { flag: "wx", mode: 0o600 });
     siblingProbeDir = fsImpl.mkdtempSync(path.join(workspaceRoot, ".shu-review-sibling-probe-"));
     fsImpl.chmodSync(siblingProbeDir, 0o755);
     const siblingProbePath = path.join(siblingProbeDir, "must-not-be-readable");
     fsImpl.writeFileSync(siblingProbePath, "sibling-private", { mode: 0o644 });
+    canaryFd = fsImpl.openSync(protectedPath, "r");
+    markerProcess = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", processCanary], {
+      env: buildReviewExecutionEnvironment(), stdio: "ignore",
+    });
+    await new Promise((resolve, reject) => { markerProcess.once("spawn", resolve); markerProcess.once("error", reject); });
     server = await listenProbe();
     const port = server.address().port;
     const safeEnv = buildReviewExecutionEnvironment(env);
+    safeEnv.SHU261_ENV_CANARY = envCanary;
     const result = await runExecFile(execFileImpl, wrapper[0], [
       ...wrapper.slice(1),
+      "--profile", "test",
       "--workspace-root", workspaceRoot,
       "--workspace", resolvedCwd,
       "--",
@@ -225,6 +251,13 @@ export async function runReviewEvidence({
       "--sibling-probe-path", siblingProbePath,
       "--probe-port", String(port),
       "--target-sha", target_sha,
+      "--protected-paths-json", JSON.stringify([
+        { class: "activation_records", path: protectedPath },
+        { class: "sibling_attempts", path: siblingProbePath },
+      ]),
+      "--fd-canary", fdCanary,
+      "--env-canary", envCanary,
+      "--process-canary", processCanary,
       "--",
       ...files,
     ], {
@@ -271,10 +304,13 @@ export async function runReviewEvidence({
       reason_code: report.tests.exit_code === 0 ? "REVIEW_TESTS_PASSED" : "REVIEW_TESTS_FAILED",
       evidence_link: artifact.link,
       report,
+      isolation_wrapper: modelWrapper,
     };
   } catch (error) {
     return { ok: false, executed: false, passed: false, reason_code: "REVIEW_EXECUTION_UNAVAILABLE", evidence_link: null, detail: error?.message ?? "unknown" };
   } finally {
+    if (markerProcess) markerProcess.kill("SIGTERM");
+    if (canaryFd !== undefined) { try { fsImpl.closeSync(canaryFd); } catch {} }
     if (server) await new Promise((resolve) => server.close(resolve));
     if (protectedPath) {
       try { fsImpl.unlinkSync(protectedPath); } catch { /* evidence write failures never mask the outcome */ }

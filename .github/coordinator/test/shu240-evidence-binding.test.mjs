@@ -65,6 +65,7 @@ function launch(f, stdout) {
       readHeadImpl: async () => SHA,
       reviewEvidenceImpl: async () => ({
         executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+        isolation_wrapper: ["/test/reviewer-model-wrapper"],
         evidence_link: pathToFileURL(f.reportPath).href, report: f.report,
       }),
       persistEnvelopeImpl: () => ({ link: pathToFileURL(path.join(f.evidence, "envelope.stdout")).href }),
