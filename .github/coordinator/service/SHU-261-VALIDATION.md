@@ -12,10 +12,13 @@ remain `shu-worker`, and attempt directories remain direct mode-0750 children of
 `/srv/shu/worktrees` governed by `shu-workspace`.
 
 The wrapper grants a temporary read/traverse ACL only to the assigned attempt,
-then removes it on every exit. The checkout is read-only and non-executable.
+then attempts revocation on exit. Cleanup failures retain tool diagnostics and
+are reported alongside any primary failure; cleanup failure alone exits non-zero.
+The checkout is read-only and non-executable.
 Sibling attempts and the deployed authority paths are inaccessible mounts.
-Tests use a networkless profile; the model profile retains ordinary provider
-network address families and receives only its own subscription OAuth value.
+Tests use a networkless profile; the model profile permits AF_UNIX, AF_INET
+and AF_INET6 address families, with no destination allowlist, and receives only
+its own subscription OAuth value.
 
 Writer/broker separation is unchanged: reviewers receive no GitHub, Linear,
 supervisor or SSH credential; their Claude tool surface is `Read,Glob,Grep`; and
@@ -44,9 +47,11 @@ protected paths without copying their contents. Retained evidence contains only
 revision, uid/gid/mode and `DENIED`/test-result fields.
 
 `shu261-mutations.test.mjs` independently weakens each protected class and each
-attack detector, direct model confinement, hardlink refusal, sibling masking,
-same-identity serialization, process hiding, and OAuth argv handling. Every
-mutation must fail a named assertion.
+attack detector, each canary's propagation and missing-value behavior, direct
+model confinement, hardlink refusal, sibling masking, same-identity
+serialization, process hiding, root-wrapper startup/environment controls,
+cleanup aggregation, and OAuth argv handling. Every mutation must fail a named
+assertion.
 
 ## Prepared host window — do not run without separate approval
 
@@ -76,8 +81,10 @@ SHU261_HOST_MUTATION_APPROVED=true \
 The harness first proves installed wrapper/sudoers byte identity and sudoers
 syntax. It then creates two temporary detached worktrees at the approved SHA,
 performs the bounded sentinel/attack mutations, runs the SHU-261 test from the
-assigned worktree, removes both worktrees, and requires the final worktree
-inventory to equal the initial inventory byte-for-byte. It never calls
+assigned worktree, attempts every cleanup even after an individual cleanup
+failure, and requires the final worktree inventory to equal the initial
+inventory byte-for-byte. Any cleanup and inventory failures are reported
+together. It never calls
 `systemctl`, starts the coordinator, enables dispatch, or prints protected
 contents. Host evidence remains **PENDING** until that separately approved
 command succeeds; repository tests do not claim otherwise.
