@@ -1,5 +1,17 @@
 # SHU-251 correction validation
 
+## Coordinator environment evidence
+
+Read-only host evidence supplied by the orchestration lane establishes
+`/srv/shu/coordinator.env` as the authoritative coordinator file. Both it and
+`/srv/shu/service.env` are owned by `shu-coordinator:shu-coordinator`, mode 0600,
+and carry the coordinator credential key names, including `GITHUB_TOKEN` and
+`LINEAR_API_TOKEN`. Only the legacy combined `/srv/shu/service.env` also carries
+`SHU_SUPERVISOR_SECRET`, so the enforced crossed-file guard refuses it as a
+coordinator file. The supervisor remains `/etc/shu/supervisor.env`, root:root
+0600. This default correction follows that evidence; the crossed-file guard
+remains enforced. No environment values were read for this correction.
+
 Earlier correction measurements below are historical; the host-acceptance
 correction and current-main measurements are recorded first.
 
@@ -26,7 +38,7 @@ one matching identity directive on each service and reject root configuration.
 The templates require separate external `EnvironmentFile=` bindings:
 `supervisorEnvironmentFile` defaults to `/etc/shu/supervisor.env` (root:root 0600,
 only `SHU_SUPERVISOR_SECRET`); `coordinatorEnvironmentFile` defaults to
-`/srv/shu/service.env` (as provisioned, GitHub / Linear credentials). Rendering
+`/srv/shu/coordinator.env` (GitHub / Linear credentials; see host evidence above). Rendering
 and policy validation inspect existing files without emitting values: missing,
 identical, crossed or incomplete bindings fail by named assertions. Neither
 reference is optional, and no secret value is embedded in a unit.

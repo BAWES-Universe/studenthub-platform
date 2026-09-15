@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "algorithm": "Ed25519",
-  "coordinator_revision": null,
+  "provenance_revision": "bd13e3fcea6361c46acb0d94df4918603c6601c1",
   "spki_sha256": "0cc5f24f46554bd25b713d78fca2f2bd48ab9b270d217a9dce613956d5786d5a",
   "state": "ready"
 }

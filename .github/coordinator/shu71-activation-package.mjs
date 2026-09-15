@@ -8,6 +8,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from "./shu71-public-key.mjs";
+import { executionBindingError } from "./execution-authorization.mjs";
 import { validateFixtureScopePolicy } from "./workspace-scope.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -49,14 +50,14 @@ function fail(code, detail, phase = "validation") {
   return { ok: false, state: "HALT", phase, code, detail };
 }
 
-export function validateAnchor(anchor, publicKeyPem, revision, publicKeyPath = SHU71_PUBLIC_KEY_PATH) {
+export function validateAnchor(anchor, publicKeyPem, revision, publicKeyPath = SHU71_PUBLIC_KEY_PATH, authorization = {}) {
   try { publicKeyPem = loadShu71PublicKey(publicKeyPath, publicKeyPem); }
   catch (error) { return fail(error.message.startsWith("ACT_PUBLIC_KEY_PATH:") ? "ACT_PUBLIC_KEY_PATH" : "ACT_TRUST_ANCHOR_MISMATCH", error.message); }
-  if (!exactObject(anchor, ["version", "algorithm", "coordinator_revision", "spki_sha256", "state"])) {
+  if (!exactObject(anchor, ["version", "algorithm", "provenance_revision", "spki_sha256", "state"])) {
     return fail("ACT_TRUST_ANCHOR_INVALID", "trust-anchor manifest shape is not exact");
   }
   if (anchor.state !== "ready") return fail("ACT_KEY_AUTHORITY_REQUIRED", "owner-approved public trust anchor is not provisioned");
-  if (anchor.version !== "1.0.0" || anchor.algorithm !== "Ed25519" || !SHA.test(revision ?? "") || anchor.coordinator_revision !== revision
+  if (anchor.version !== "1.0.0" || anchor.algorithm !== "Ed25519" || !SHA.test(anchor.provenance_revision ?? "") || !SHA.test(revision ?? "")
       || !SHA256.test(anchor.spki_sha256 ?? "") || typeof publicKeyPem !== "string") {
     return fail("ACT_TRUST_ANCHOR_INVALID", "trust anchor is malformed or bound to another revision");
   }
@@ -67,6 +68,9 @@ export function validateAnchor(anchor, publicKeyPem, revision, publicKeyPath = S
   } catch (error) {
     return fail("ACT_TRUST_ANCHOR_INVALID", error.message);
   }
+  // Provenance identifies the reviewed key; only the separate record binds execution.
+  const binding = executionBindingError(authorization.record, revision, authorization.mainRevision);
+  if (binding) return fail("ACT_TRUST_ANCHOR_INVALID", binding);
   return { ok: true };
 }
 
@@ -123,7 +127,7 @@ export function validateShu71Package({ pkg, anchor, publicKeyPem, publicKeyPath 
   const expiry = Date.parse(pkg.expires_at);
   const identityAndWindowValid = /^[A-Za-z0-9_-]{8,64}$/.test(pkg.activation_id ?? "")
       && SHA.test(pkg.coordinator_revision ?? "")
-      && pkg.coordinator_revision === revision && pkg.coordinator_revision === mainRevision
+      && !executionBindingError(pkg, revision, mainRevision)
       && ISO.test(pkg.created_at ?? "") && ISO.test(pkg.expires_at ?? "")
       && Number.isFinite(at) && Number.isFinite(created) && Number.isFinite(expiry)
       && created <= at && (phase === "revocation" || expiry > at) && expiry > created && expiry - created <= 43_200_000;
@@ -182,7 +186,7 @@ export function validateShu71Package({ pkg, anchor, publicKeyPem, publicKeyPath 
         || fixture.branch !== byId[fixture.issue_id]?.branch || !isDeepStrictEqual(fixture.lane, byId[fixture.issue_id]?.lane))) {
     return fail("ACT_ENVELOPE_MISMATCH", "runtime envelope does not exactly project the reviewed package");
   }
-  const anchorResult = validateAnchor(anchor, publicKeyPem, revision, publicKeyPath);
+  const anchorResult = validateAnchor(anchor, publicKeyPem, revision, publicKeyPath, { record: pkg.activation, mainRevision });
   if (!anchorResult.ok) return anchorResult;
   publicKeyPem = loadShu71PublicKey(publicKeyPath, publicKeyPem);
   if (!verifySignature(pkg, publicKeyPem)) return fail("ACT_FORGED_ENVELOPE", "package signature is absent, malformed, or invalid");

@@ -26,7 +26,7 @@ test('RECON_ENV_POSITIVE: distinct credential roles render and pass policy', t =
   }
   const defaults = serviceParameters({ workdir: params.workdir });
   assert.equal(defaults.supervisorEnvironmentFile, '/etc/shu/supervisor.env', 'RECON_ENV_DEFAULTS: supervisor owner binding');
-  assert.equal(defaults.coordinatorEnvironmentFile, '/srv/shu/service.env', 'RECON_ENV_DEFAULTS: coordinator owner binding');
+  assert.deepEqual([defaults.coordinatorEnvironmentFile, defaults.supervisorEnvironmentFile], ['/srv/shu/coordinator.env', '/etc/shu/supervisor.env'], 'RECON_ENV_DEFAULTS: evidence-backed pair and coordinator owner binding');
 });
 
 test('RECON_ENV_MUTATION: crossed file paths', t => {
