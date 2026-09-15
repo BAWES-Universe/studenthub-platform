@@ -109,7 +109,7 @@ export function validateReviewWrapper(wrapper, fsImpl = fs, { model = false } = 
     if (wrapper.length !== expectedLength || wrapper[1] !== "-n"
       || !path.isAbsolute(wrapper[sandboxIndex] ?? "")) {
       throw new Error(model
-        ? "sudo reviewer model wrapper must use command-specific env_keep in the fixed noninteractive command form"
+        ? "sudo reviewer model wrapper must use the fixed NOSETENV-compatible noninteractive command form"
         : "sudo review wrapper must be the fixed noninteractive command form");
     }
     normalized[sandboxIndex] = trustedRootPath(wrapper[sandboxIndex], fsImpl);
@@ -135,6 +135,26 @@ function listenProbe() {
   });
 }
 
+export async function processCanaryMarker(canary, fsImpl = fs) {
+  const marker = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", canary], {
+    env: buildReviewExecutionEnvironment(),
+    stdio: "ignore",
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 75);
+      marker.once("error", (error) => { clearTimeout(timer); reject(error); });
+      marker.once("exit", () => { clearTimeout(timer); reject(new Error("review process canary exited before confinement")); });
+    });
+    const cmdline = fsImpl.readFileSync(`/proc/${marker.pid}/cmdline`, "utf8");
+    if (!cmdline.includes(canary)) throw new Error("review process canary is not observable before confinement");
+    return marker;
+  } catch (error) {
+    marker.kill("SIGTERM");
+    throw error;
+  }
+}
+
 function artifactPath(dir, attemptId, kind, fsImpl = fs) {
   for (let sequence = 1; sequence <= 100; sequence += 1) {
     const candidate = path.join(dir, `${attemptId}.${kind}.${sequence}.json`);
@@ -146,6 +166,15 @@ function artifactPath(dir, attemptId, kind, fsImpl = fs) {
     }
   }
   throw new Error("review evidence artifact sequence exhausted");
+}
+
+export function runtimeIsolationEvidenceValid(report) {
+  return report?.protected_class_probes?.coordinator_evidence === "DENIED"
+    && report?.symlink_probe === "DENIED"
+    && report?.traversal_probe === "DENIED"
+    && report?.inherited_descriptor_probe === "DENIED"
+    && report?.environment_value_probe === "DENIED"
+    && report?.process_inspection_probe === "DENIED";
 }
 
 function persistEvidence(dir, attemptId, report, fsImpl = fs, sensitiveValues = []) {
@@ -171,13 +200,15 @@ export async function runReviewEvidence({
   fsImpl = fs,
   childPath = CHILD,
   validateWrapperImpl = validateReviewWrapper,
+  startProcessCanaryImpl = processCanaryMarker,
+  listenProbeImpl = listenProbe,
   ownUid = process.getuid?.(),
   timeout_ms = 16 * 60 * 1000,
 } = {}) {
   let server;
   let protectedPath;
   let siblingProbeDir;
-  let canaryFd;
+  let inheritedFd;
   let markerProcess;
   try {
     if (!UUID.test(attempt_id ?? "") || !SHA.test(target_sha ?? "") || !path.isAbsolute(cwd ?? "")) {
@@ -218,25 +249,35 @@ export async function runReviewEvidence({
     if (evidenceDir === resolvedCwd || evidenceDir.startsWith(`${resolvedCwd}${path.sep}`)) {
       throw new Error("review evidence authority must be outside the builder-authored checkout");
     }
-    protectedPath = path.join(evidenceDir, `${attempt_id}.confinement-sentinel`);
     const nonce = randomUUID().replaceAll("-", "");
     const fdCanary = `SHU261_FD_${nonce}`;
-    const envCanary = `SHU261_ENV_${nonce}`;
+    const environmentCanary = `SHU261_ENV_${nonce}`;
     const processCanary = `SHU261_PROCESS_${nonce}`;
+    protectedPath = path.join(evidenceDir, `${attempt_id}.confinement-sentinel`);
     fsImpl.writeFileSync(protectedPath, fdCanary, { flag: "wx", mode: 0o600 });
+    inheritedFd = fsImpl.openSync(protectedPath, "r");
+    if (!fsImpl.readFileSync(protectedPath, "utf8").includes(fdCanary)) {
+      throw new Error("review inherited-descriptor canary is not live before confinement");
+    }
     siblingProbeDir = fsImpl.mkdtempSync(path.join(workspaceRoot, ".shu-review-sibling-probe-"));
     fsImpl.chmodSync(siblingProbeDir, 0o755);
     const siblingProbePath = path.join(siblingProbeDir, "must-not-be-readable");
     fsImpl.writeFileSync(siblingProbePath, "sibling-private", { mode: 0o644 });
-    canaryFd = fsImpl.openSync(protectedPath, "r");
-    markerProcess = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", processCanary], {
-      env: buildReviewExecutionEnvironment(), stdio: "ignore",
-    });
-    await new Promise((resolve, reject) => { markerProcess.once("spawn", resolve); markerProcess.once("error", reject); });
-    server = await listenProbe();
+    const protectedSymlink = path.join(siblingProbeDir, "coordinator-evidence-link");
+    fsImpl.symlinkSync(protectedPath, protectedSymlink);
+    const protectedTraversal = path.relative(resolvedCwd, protectedPath);
+    const protectedPaths = [{
+      class: "coordinator_evidence",
+      path: protectedPath,
+      symlink_path: protectedSymlink,
+      traversal_path: protectedTraversal,
+    }];
+    markerProcess = await startProcessCanaryImpl(processCanary, fsImpl);
+    server = await listenProbeImpl();
     const port = server.address().port;
     const safeEnv = buildReviewExecutionEnvironment(env);
-    safeEnv.SHU261_ENV_CANARY = envCanary;
+    // The wrapper receives this value; the confined child must not inherit it.
+    safeEnv.SHU261_ENV_CANARY = environmentCanary;
     const result = await runExecFile(execFileImpl, wrapper[0], [
       ...wrapper.slice(1),
       "--profile", "test",
@@ -251,12 +292,9 @@ export async function runReviewEvidence({
       "--sibling-probe-path", siblingProbePath,
       "--probe-port", String(port),
       "--target-sha", target_sha,
-      "--protected-paths-json", JSON.stringify([
-        { class: "activation_records", path: protectedPath },
-        { class: "sibling_attempts", path: siblingProbePath },
-      ]),
+      "--protected-paths-json", JSON.stringify(protectedPaths),
       "--fd-canary", fdCanary,
-      "--env-canary", envCanary,
+      "--env-canary", environmentCanary,
       "--process-canary", processCanary,
       "--",
       ...files,
@@ -284,7 +322,8 @@ export async function runReviewEvidence({
       && report?.workspace_write_probe === "DENIED"
       && report?.network_probe === "DENIED"
       && Array.isArray(report?.forbidden_env_keys)
-      && report.forbidden_env_keys.length === 0;
+      && report.forbidden_env_keys.length === 0
+      && runtimeIsolationEvidenceValid(report);
     const executed = probeOk && report?.tests?.executed === true;
     const artifact = report ? persistEvidence(evidenceDir, attempt_id, report, fsImpl, sensitiveEnvironmentValues(env)) : null;
     if (!executed) {
@@ -309,9 +348,11 @@ export async function runReviewEvidence({
   } catch (error) {
     return { ok: false, executed: false, passed: false, reason_code: "REVIEW_EXECUTION_UNAVAILABLE", evidence_link: null, detail: error?.message ?? "unknown" };
   } finally {
-    if (markerProcess) markerProcess.kill("SIGTERM");
-    if (canaryFd !== undefined) { try { fsImpl.closeSync(canaryFd); } catch {} }
     if (server) await new Promise((resolve) => server.close(resolve));
+    if (markerProcess) markerProcess.kill("SIGTERM");
+    if (inheritedFd !== undefined) {
+      try { fsImpl.closeSync(inheritedFd); } catch { /* descriptor cleanup never masks the outcome */ }
+    }
     if (protectedPath) {
       try { fsImpl.unlinkSync(protectedPath); } catch { /* evidence write failures never mask the outcome */ }
     }

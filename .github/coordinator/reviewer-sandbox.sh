@@ -1,28 +1,40 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Install this reviewed file root-owned and non-writable at
 # /usr/local/libexec/shu-reviewer-sandbox. The coordinator invokes it through a
 # narrowly-scoped sudo rule. It executes both phases of review as shu-reviewer:
 # builder-authored tests use the no-network `test` profile and Claude uses the
-# provider-network-only `model` profile. Both profiles share the same filesystem,
-# process and identity boundary.
+# address-family-restricted `model` profile (AF_UNIX, AF_INET, AF_INET6), with
+# no destination allowlist. Both profiles share the same filesystem,
+# process and identity boundary. Privileged bash mode prevents startup files,
+# imported functions, BASH_ENV and caller shell options from running as root.
+while IFS= read -r environment_name; do
+  case "$environment_name" in
+    CLAUDE_CODE_OAUTH_TOKEN|SUDO_UID) ;;
+    *) unset "$environment_name" 2>/dev/null || true ;;
+  esac
+done < <(compgen -e)
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
+unset BASH_ENV ENV CDPATH GLOBIGNORE
 set -euo pipefail
 
 trusted_executable() {
   local configured="$1" canonical mode directory parent
-  canonical="$(realpath -e -- "$configured")"
-  mode="$(stat -c '%a' -- "$canonical")"
+  canonical="$(/usr/bin/realpath -e -- "$configured")"
+  mode="$(/usr/bin/stat -c '%a' -- "$canonical")"
   if [[ ! -f "$canonical" || -L "$canonical" || ! -x "$canonical" ||
-        "$(stat -c '%u' -- "$canonical")" != "0" || $(( 8#$mode & 8#022 )) -ne 0 ]]; then
+        "$(/usr/bin/stat -c '%u' -- "$canonical")" != "0" || $(( 8#$mode & 8#022 )) -ne 0 ]]; then
     return 1
   fi
-  directory="$(dirname -- "$canonical")"
+  directory="$(/usr/bin/dirname -- "$canonical")"
   while :; do
-    mode="$(stat -c '%a' -- "$directory")"
-    if [[ ! -d "$directory" || -L "$directory" || "$(stat -c '%u' -- "$directory")" != "0" ||
+    mode="$(/usr/bin/stat -c '%a' -- "$directory")"
+    if [[ ! -d "$directory" || -L "$directory" || "$(/usr/bin/stat -c '%u' -- "$directory")" != "0" ||
           $(( 8#$mode & 8#022 )) -ne 0 ]]; then
       return 1
     fi
-    parent="$(dirname -- "$directory")"
+    parent="$(/usr/bin/dirname -- "$directory")"
     [[ "$parent" == "$directory" ]] && break
     directory="$parent"
   done
@@ -32,6 +44,11 @@ trusted_executable() {
 if [[ "$#" -lt 8 || "$1" != "--profile" || ( "$2" != "test" && "$2" != "model" ) ||
       "$3" != "--workspace-root" || "$5" != "--workspace" || "$7" != "--" ]]; then
   echo "reviewer sandbox requires an exact workspace binding and argv" >&2
+  exit 64
+fi
+
+if [[ "$EUID" -ne 0 || ! "${SUDO_UID:-}" =~ ^[0-9]+$ || "${SUDO_UID:-0}" == "0" ]]; then
+  echo "reviewer sandbox requires root execution from the deployed non-root coordinator" >&2
   exit 64
 fi
 
@@ -53,26 +70,26 @@ if [[ "$workspace_root" != /* || "$workspace" != /* || -L "$workspace_root" || -
   echo "reviewer sandbox paths must be absolute real directories" >&2
   exit 64
 fi
-canonical_root="$(realpath -e -- "$workspace_root")"
-canonical_workspace="$(realpath -e -- "$workspace")"
+canonical_root="$(/usr/bin/realpath -e -- "$workspace_root")"
+canonical_workspace="$(/usr/bin/realpath -e -- "$workspace")"
 if [[ ! -d "$canonical_root" || ! -d "$canonical_workspace" ||
-      "$(dirname -- "$canonical_workspace")" != "$canonical_root" ||
-      ! "$(basename -- "$canonical_workspace")" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+      "$(/usr/bin/dirname -- "$canonical_workspace")" != "$canonical_root" ||
+      ! "$(/usr/bin/basename -- "$canonical_workspace")" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
   echo "reviewer sandbox workspace is not a direct attempt child" >&2
   exit 64
 fi
-if [[ "$(stat -c '%a' -- "$canonical_workspace")" != "750" ]]; then
+if [[ "$(/usr/bin/stat -c '%a' -- "$canonical_workspace")" != "750" ]]; then
   echo "reviewer sandbox workspace must have mode 0750" >&2
   exit 64
 fi
-workspace_uid="$(stat -c '%u' -- "$canonical_workspace")"
+workspace_uid="$(/usr/bin/stat -c '%u' -- "$canonical_workspace")"
 if [[ "$workspace_uid" != "0" && "$workspace_uid" != "${SUDO_UID:-}" ]]; then
   echo "reviewer sandbox workspace must be root/coordinator-owned" >&2
   exit 64
 fi
 
-reviewer_uid="$(id -u shu-reviewer)"
-reviewer_gid="$(id -g shu-reviewer)"
+reviewer_uid="$(/usr/bin/id -u shu-reviewer)"
+reviewer_gid="$(/usr/bin/id -g shu-reviewer)"
 if [[ "$reviewer_uid" == "0" || "$reviewer_uid" == "${SUDO_UID:-}" ]]; then
   echo "reviewer sandbox requires a distinct non-root deployed reviewer identity" >&2
   exit 64
@@ -82,12 +99,42 @@ if /usr/bin/getfacl -cpn -- "$canonical_workspace" | /usr/bin/grep -q "^user:${r
   exit 64
 fi
 
-# Access exists only for this invocation. The trap removes it on success,
-# refusal, signal, or systemd failure; sibling paths are additionally masked in
-# the transient mount namespace, including siblings that predate mode 0750.
+# Revoke invocation access on exit and report failures without hiding the primary
+# status or tool diagnostics. Keep the serialization lock until revocation ends.
+cleanup_step() {
+  local step="$1" status
+  shift
+  if "$@"; then
+    return 0
+  else
+    status=$?
+    cleanup_failures+=("$step (exit $status)")
+  fi
+}
+
+cleanup() {
+  local primary_status=$? failure
+  local -a cleanup_failures=()
+  trap - EXIT HUP INT TERM
+  cleanup_step "revoke reviewer workspace ACL" /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace"
+  cleanup_step "release reviewer lock" /usr/bin/flock -u 9
+  if (( ${#cleanup_failures[@]} > 0 )); then
+    for failure in "${cleanup_failures[@]}"; do
+      printf 'reviewer sandbox cleanup failed: %s\n' "$failure" >&2
+    done
+    if (( primary_status == 0 )); then
+      printf 'reviewer sandbox failed: cleanup failed after an otherwise successful run\n' >&2
+      exit 1
+    fi
+    printf 'reviewer sandbox primary failure retained (exit %s); cleanup also failed\n' "$primary_status" >&2
+  fi
+  exit "$primary_status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 /usr/bin/setfacl -m "u:${reviewer_uid}:r-x" -- "$canonical_workspace"
-cleanup() { /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace" || true; }
-trap cleanup EXIT HUP INT TERM
 
 # A checkout hardlink can bypass path-only masking: a protected inode linked
 # under the allowed checkout remains the same readable object. Independent Git
@@ -101,8 +148,8 @@ fi
 systemd_args=()
 while IFS= read -r -d '' sibling; do
   [[ "$sibling" == "$canonical_workspace" ]] && continue
-  sibling_name="$(basename -- "$sibling")"
-  if [[ -L "$sibling" || ! -d "$sibling" || "$(dirname -- "$(realpath -e -- "$sibling")")" != "$canonical_root" ||
+  sibling_name="$(/usr/bin/basename -- "$sibling")"
+  if [[ -L "$sibling" || ! -d "$sibling" || "$(/usr/bin/dirname -- "$(/usr/bin/realpath -e -- "$sibling")")" != "$canonical_root" ||
         ! "$sibling_name" =~ ^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\.shu-review-sibling-probe-[A-Za-z0-9]+)$ ]]; then
     echo "reviewer sandbox refuses an unsafe sibling workspace entry" >&2
     exit 64

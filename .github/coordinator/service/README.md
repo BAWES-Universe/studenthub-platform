@@ -240,13 +240,16 @@ and remain unexecuted by design. No SHU-250 interface work remains deferred here
 SHU-261 adds a second separately gated host window for reviewer isolation. The
 reviewed wrapper must be installed at `/usr/local/libexec/shu-reviewer-sandbox`,
 and the coordinator's command-specific sudo policy must allow the test form plus
-the model form that preserves only `CLAUDE_CODE_OAUTH_TOKEN`. Do not grant a
-general shell, arbitrary environment preservation, or another sudo target. The
+the model form. Command-specific `env_keep` preserves only
+`CLAUDE_CODE_OAUTH_TOKEN`; `NOSETENV` forbids caller-selected startup variables.
+Do not grant a general shell, arbitrary environment preservation, or another sudo target. The
 prepared `reviewer-host-validation.mjs` refuses unless it is run as root from a
 clean exact approved revision with `SHU261_HOST_MUTATION_APPROVED=true` and
 `--approved-host-mutation <full-sha>`. It creates only unique harmless sentinels
 and temporary detached exact-head worktrees, cleans them on every exit, prints sanitized
 uid/gid/mode/result evidence, and never starts or enables coordinator services.
+Cleanup attempts every registered callback and the final worktree inventory
+check, then reports any failures as one aggregate result.
 The wrapper is compatible with the planned systemd 255 host: it combines a
 root-held same-reviewer serialization lock with `ProtectProc=invisible` and
 `ProcSubset=pid`; the active harness proves a coordinator-process canary is not

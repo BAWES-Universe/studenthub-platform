@@ -288,9 +288,9 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
 * `SHU_REVIEW_MODEL_WRAPPER_JSON`: the same canonical sandbox behind the exact
   noninteractive model form
   `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
-  The `NOPASSWD:NOSETENV:` sudo rule uses command-specific `env_keep` to
-  preserve that one reviewer subscription value and nothing
-  else. The actual Claude process, not only its test child, then runs as
+  Command-specific sudoers `env_keep` preserves that one reviewer subscription
+  value, while `NOSETENV` rejects caller-selected startup environment values.
+  The actual Claude process, not only its test child, then runs as
   `shu-reviewer` with a transient private home, a serialized reviewer identity,
   no process view of other service identities, no view of
   coordinator/worker/session/SSH/state/log paths, and a read-only non-executable
