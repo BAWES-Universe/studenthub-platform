@@ -69,7 +69,18 @@
             "MISSING_CLAIM",
             "MISSING_LAUNCH_RECEIPT",
             "BRANCH_OCCUPIED",
-            "AMBIGUOUS_LAUNCH"
+            "AMBIGUOUS_LAUNCH",
+            "STALE_HEAD",
+            "INELIGIBLE_VERDICT",
+            "REQUIRED_CHECKS_NOT_GREEN",
+            "BLOCKING_REVIEW_THREAD",
+            "EXPLICIT_HOLD",
+            "BRANCH_PROTECTION_UNSATISFIED",
+            "FORBIDDEN_MERGE_ACTION",
+            "AMBIGUOUS_GITHUB_RESPONSE",
+            "BASE_ADVANCED",
+            "TREE_MISMATCH",
+            "AMBIGUOUS_MERGE_RESPONSE"
           ]
         },
         "reason": {

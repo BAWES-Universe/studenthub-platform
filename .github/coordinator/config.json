@@ -2,6 +2,13 @@
   "pilot_repo": "BAWES-Universe/studenthub-platform",
   "max_dispatch": 2,
   "enable_dispatch": false,
+  "routine_merge_authority": {
+    "enabled": false,
+    "authority_ref": "SHU-259",
+    "repo": "BAWES-Universe/studenthub-platform",
+    "merge_method": "squash",
+    "max_per_tick": 1
+  },
   "dispatch_scope": {
     "issue_ids": [
       "SHU-140",
