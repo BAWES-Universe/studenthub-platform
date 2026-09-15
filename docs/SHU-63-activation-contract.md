@@ -102,9 +102,9 @@ export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 
 Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
 above, install the host `acl` package, and grant only that fixed command to
-`shu-coordinator`. The command-specific sudoers `env_keep` entry preserves
-`CLAUDE_CODE_OAUTH_TOKEN` with `NOPASSWD:NOSETENV:`; arbitrary caller
-environment overrides are refused. Both the
+`shu-coordinator`. Command-specific sudoers `env_keep` preserves exactly
+`CLAUDE_CODE_OAUTH_TOKEN`, while `NOSETENV` rejects caller-controlled startup
+environment values. Both the
 confined test child and the actual Claude verifier cross this wrapper and run as
 `shu-reviewer`. The adapter does
 not trust the declaration: symlinked system entrypoints are resolved to a
