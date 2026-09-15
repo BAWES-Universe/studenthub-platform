@@ -18,6 +18,9 @@ test("publishes a content-addressed collection before atomically switching the a
     fetch: async (input, init = {}) => {
       const url = String(input);
       requests.push({ url, init });
+      if (url.endsWith("/aliases/candidates") && (init.method ?? "GET") === "GET") {
+        return new Response(null, { status: 404 });
+      }
       if (init.method === "GET" && url.includes("/collections/candidates_v1_")) {
         const seenImport = requests.some((request) => request.url.includes("/documents/import"));
         return seenImport ? Response.json({ num_documents: 2 }) : new Response(null, { status: 404 });
@@ -44,6 +47,7 @@ test("publishes a content-addressed collection before atomically switching the a
   assert.match(publication.collection, /^candidates_v1_[a-f0-9]{16}$/);
   assert.equal(publication.collection, `candidates_v1_${expectedDigest.slice(0, 16)}`);
   assert.equal(publication.documents, 2);
+  assert.equal(publication.previousCollection, null);
   assert.equal(requests.at(-1)?.url, "https://search.example.invalid/aliases/candidates");
   assert.ok(requests.every((request) => request.init.redirect === "error"));
   assert.deepEqual(
@@ -63,6 +67,9 @@ test("canonicalizes document key order while preserving fractional scores", asyn
     fetch: async (input, init = {}) => {
       const url = String(input);
       const method = init.method ?? "GET";
+      if (url.endsWith("/aliases/candidates") && method === "GET") {
+        return Response.json({ collection_name: "candidates_v1_1111111111111111" });
+      }
       if (method === "GET") return Response.json({ num_documents: 1 });
       if (url.includes("/documents/import")) {
         imports.push(String(init.body));
@@ -82,8 +89,56 @@ test("canonicalizes document key order while preserving fractional scores", asyn
   assert.equal((JSON.parse(imports[0] ?? "{}") as { score?: number }).score, 80.5);
 });
 
+test("rollback restores the prior alias only while the publication is still current", async () => {
+  let alias = "candidates_v1_1111111111111111";
+  let candidateCollectionGets = 0;
+  const switches: Array<string | null> = [];
+  const indexer = new TypesenseCandidateIndexer({
+    url: "https://search.example.invalid",
+    apiKey: "test-key",
+    alias: "candidates",
+    fetch: async (input, init = {}) => {
+      const url = String(input);
+      const method = init.method ?? "GET";
+      if (url.endsWith("/aliases/candidates") && method === "GET") {
+        return Response.json({ collection_name: alias });
+      }
+      if (url.includes("/collections/candidates_v1_") && method === "GET") {
+        candidateCollectionGets += 1;
+        return candidateCollectionGets === 1
+          ? new Response(null, { status: 404 })
+          : Response.json({ num_documents: 2 });
+      }
+      if (url.endsWith("/collections") && method === "POST") return Response.json({}, { status: 201 });
+      if (url.includes("/documents/import") && method === "POST") {
+        return new Response('{"success":true}\n{"success":true}');
+      }
+      if (url.endsWith("/aliases/candidates") && method === "PUT") {
+        alias = (JSON.parse(String(init.body)) as { collection_name: string }).collection_name;
+        switches.push(alias);
+        return Response.json({});
+      }
+      throw new Error(`unexpected request ${method} ${url}`);
+    },
+  });
+
+  const publication = await indexer.publish(DOCUMENTS);
+  assert.equal(publication.previousCollection, "candidates_v1_1111111111111111");
+  assert.equal(alias, publication.collection);
+
+  const rollback = await indexer.rollback(publication);
+  assert.deepEqual(rollback, { alias: "candidates", restoredCollection: "candidates_v1_1111111111111111" });
+  assert.equal(alias, "candidates_v1_1111111111111111");
+
+  alias = "candidates_v1_2222222222222222";
+  await assert.rejects(indexer.rollback(publication), /refusing stale rollback/);
+  assert.equal(alias, "candidates_v1_2222222222222222");
+  assert.deepEqual(switches, [publication.collection, "candidates_v1_1111111111111111"]);
+});
+
 test("rejects a failed import receipt even when count verification would pass", async () => {
   const requests: Array<{ url: string; method: string }> = [];
+  let collectionGets = 0;
   const indexer = new TypesenseCandidateIndexer({
     url: "https://search.example.invalid",
     apiKey: "test-key",
@@ -91,10 +146,15 @@ test("rejects a failed import receipt even when count verification would pass", 
       const url = String(input);
       const method = init.method ?? "GET";
       requests.push({ url, method });
-      if (method === "GET" && requests.filter((request) => request.method === "GET").length === 1) {
+      if (url.endsWith("/aliases/studenthub_candidates") && method === "GET") {
         return new Response(null, { status: 404 });
       }
-      if (method === "GET") return Response.json({ num_documents: DOCUMENTS.length });
+      if (method === "GET") {
+        collectionGets += 1;
+        return collectionGets === 1
+          ? new Response(null, { status: 404 })
+          : Response.json({ num_documents: DOCUMENTS.length });
+      }
       if (url.endsWith("/collections")) return Response.json({}, { status: 201 });
       if (url.includes("/documents/import")) {
         return new Response('{"success":true}\n{"success":false,"error":"invalid"}');
@@ -106,7 +166,7 @@ test("rejects a failed import receipt even when count verification would pass", 
   });
 
   await assert.rejects(indexer.publish(DOCUMENTS), CandidateIndexPublishError);
-  assert.equal(requests.some((request) => request.url.includes("/aliases/")), false);
+  assert.equal(requests.some((request) => request.url.includes("/aliases/") && request.method === "PUT"), false);
   assert.equal(
     requests.some((request) => request.method === "DELETE" && request.url.includes("/collections/")),
     true,
@@ -116,6 +176,7 @@ test("rejects a failed import receipt even when count verification would pass", 
 
 test("rejects a document-count mismatch before switching the alias", async () => {
   const requests: Array<{ url: string; method: string }> = [];
+  let collectionGets = 0;
   const indexer = new TypesenseCandidateIndexer({
     url: "https://search.example.invalid",
     apiKey: "test-key",
@@ -123,10 +184,15 @@ test("rejects a document-count mismatch before switching the alias", async () =>
       const url = String(input);
       const method = init.method ?? "GET";
       requests.push({ url, method });
-      if (method === "GET" && requests.filter((request) => request.method === "GET").length === 1) {
+      if (url.endsWith("/aliases/studenthub_candidates") && method === "GET") {
         return new Response(null, { status: 404 });
       }
-      if (method === "GET") return Response.json({ num_documents: DOCUMENTS.length - 1 });
+      if (method === "GET") {
+        collectionGets += 1;
+        return collectionGets === 1
+          ? new Response(null, { status: 404 })
+          : Response.json({ num_documents: DOCUMENTS.length - 1 });
+      }
       if (url.endsWith("/collections") && method === "POST") return Response.json({}, { status: 201 });
       if (url.includes("/documents/import")) {
         return new Response('{"success":true}\n{"success":true}');
@@ -138,7 +204,7 @@ test("rejects a document-count mismatch before switching the alias", async () =>
   });
 
   await assert.rejects(indexer.publish(DOCUMENTS), /count does not match/);
-  assert.equal(requests.some((request) => request.url.includes("/aliases/")), false);
+  assert.equal(requests.some((request) => request.url.includes("/aliases/") && request.method === "PUT"), false);
 });
 
 test("does not delete a pre-existing collection after a later import failure", async () => {
@@ -150,6 +216,9 @@ test("does not delete a pre-existing collection after a later import failure", a
       const url = String(input);
       const method = init.method ?? "GET";
       requests.push({ url, method });
+      if (url.endsWith("/aliases/studenthub_candidates") && method === "GET") {
+        return Response.json({ collection_name: "studenthub_candidates_v1_1111111111111111" });
+      }
       if (method === "GET") return Response.json({ num_documents: DOCUMENTS.length });
       if (url.includes("/documents/import")) {
         return new Response('{"success":true}\n{"success":false,"error":"invalid"}');
@@ -176,6 +245,9 @@ test("releases unused response bodies when publishing to a pre-existing collecti
     fetch: async (input, init = {}) => {
       const url = String(input);
       const method = init.method ?? "GET";
+      if (url.endsWith("/aliases/studenthub_candidates") && method === "GET") {
+        return reply(Response.json({ collection_name: "studenthub_candidates_v1_1111111111111111" }));
+      }
       if (method === "GET") {
         collectionGets += 1;
         return reply(Response.json({ num_documents: DOCUMENTS.length }));
@@ -207,6 +279,9 @@ test("releases response bodies before propagating every HTTP-stage failure", asy
       fetch: async (input, init = {}) => {
         const url = String(input);
         const method = init.method ?? "GET";
+        if (url.endsWith("/aliases/studenthub_candidates") && method === "GET") {
+          return reply(new Response("missing", { status: 404 }));
+        }
         if (method === "GET") {
           collectionGets += 1;
           if (failingStage === "ensure" || (failingStage === "verify" && collectionGets === 2)) {
