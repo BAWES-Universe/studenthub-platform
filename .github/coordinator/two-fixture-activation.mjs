@@ -1,6 +1,7 @@
 // Read-only authorization verifier. No record writer, gate setter or launcher.
 import { verify, createPublicKey } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from './shu71-public-key.mjs';
 import { resolveFixtureLane, validateFixtureScopePolicy } from './workspace-scope.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -17,7 +18,7 @@ export function reviewedActivationBytes(record) {
 }
 const refusal = (code, detail) => ({ requested: true, state: 'refused', valid: false, code, reason: `${code}: ${detail}`, kind: 'two-fixture-v1' });
 
-export function validateTwoFixtureActivation({ record, config, revision, mainRevision, heads = {}, issues = [], env = {}, now = new Date() }) {
+export function validateTwoFixtureActivation({ record, config, revision, mainRevision, heads = {}, issues = [], env = {}, now = new Date(), publicKeyPath = SHU71_PUBLIC_KEY_PATH }) {
   const at = new Date(now).getTime();
   const expiry = Date.parse(record?.expires_at);
   if (!exact(record, keys) || record.kind !== 'two-fixture-v1' || typeof record.activation_id !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(record.activation_id ?? '') ||
@@ -42,9 +43,12 @@ export function validateTwoFixtureActivation({ record, config, revision, mainRev
     if (fixture.branch !== `coordinator/${fixture.issue_id}` || fixture.lane.id !== fixture.issue_id || !isDeepStrictEqual(fixture.lane, lane) || !validateFixtureScopePolicy(lane).ok) return refusal('ACT_LANE_CROSS', 'issue must retain its exact reviewed lane definition and branch');
     if (heads[fixture.branch] !== fixture.seed_head) return refusal('ACT_STALE_SEED_HEAD', 'branch head differs from bound seed');
   }
+  let publicKeyPem;
+  try { publicKeyPem = loadShu71PublicKey(publicKeyPath, config.two_fixture_activation_public_key); }
+  catch (error) { return refusal(error.message.startsWith('ACT_PUBLIC_KEY_PATH:') ? 'ACT_PUBLIC_KEY_PATH' : 'ACT_TRUST_ANCHOR_MISMATCH', error.message); }
   let authenticated = false;
   try {
-    const key = createPublicKey(config.two_fixture_activation_public_key);
+    const key = createPublicKey(publicKeyPem);
     authenticated = key.asymmetricKeyType === 'ed25519' && /^[A-Za-z0-9+/]{86}==$/.test(record.signature) && verify(null, reviewedActivationBytes(record), key, Buffer.from(record.signature, 'base64'));
   } catch { /* absent or invalid trust anchor refuses */ }
   if (!authenticated || config.enable_dispatch !== false || (env.ENABLE_DISPATCH === 'true') !== record.gates.runtime) return refusal('ACT_MANUAL_GATE_BYPASS', 'signed reviewed gates diverge from runtime or committed configuration');

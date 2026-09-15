@@ -10,7 +10,8 @@ import { readTwoFixtureEvidence } from '../two-fixture-evidence.mjs';
 import { singleRunActivationStatus } from '../single-run-activation.mjs';
 import { dispatchEnabledFor, main } from '../reconcile.mjs';
 const committed = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8'));
-const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+import { ephemeralPublicSource } from './fixture/ephemeral-public-source.mjs';
+const { privateKey, publicKey } = ephemeralPublicSource();
 const revision = 'a'.repeat(40);
 function fixture() {
   const config = structuredClone(committed);
@@ -71,8 +72,14 @@ test('ACT_BOUND_FIELDS: every required field, SHA, expiry, lane and capacity is 
 });
 
 test('ACT_REVIEW_SIGNATURE: unsigned, altered, wrong-key and manual committed gates refuse', () => {
+  for (const pem of [null, '', generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' })]) {
+    const x = signed(fixture()); x.config.two_fixture_activation_public_key = pem;
+    assert.equal(validateTwoFixtureActivation(x).code, 'ACT_TRUST_ANCHOR_MISMATCH', 'ACT_SOURCE_DIVERGENCE: config cannot appoint a key');
+  }
+  const implicit = signed(fixture()); delete implicit.config.two_fixture_activation_public_key;
+  assert.equal(validateTwoFixtureActivation(implicit).state, 'disabled', 'ACT_COMMITTED_DEFAULT: absent legacy config selects the committed source');
   for (const change of [x => { x.record.activation_id = 'altered-approval'; }, x => { x.record.signature = ''; },
-    x => { delete x.config.two_fixture_activation_public_key; }, x => { x.config.two_fixture_activation_public_key = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }); }, x => { x.config.enable_dispatch = true; }]) {
+    x => { x.config.enable_dispatch = true; }]) {
     const x = signed(fixture()); change(x);
     assert.equal(validateTwoFixtureActivation(x).code, 'ACT_MANUAL_GATE_BYPASS');
   }

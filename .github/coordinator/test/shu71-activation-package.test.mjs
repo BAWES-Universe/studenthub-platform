@@ -4,13 +4,16 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { sign } from "node:crypto";
 import {
   canonicalBytes,
   publicKeyFingerprint,
   runShu71Command,
   validateShu71Package,
 } from "../shu71-activation-package.mjs";
+
+import { ephemeralPublicSource } from "./fixture/ephemeral-public-source.mjs";
+const testKeys = ephemeralPublicSource();
 
 const REVISION = "a".repeat(40);
 const PARENT = "0d3b65a4ca7588905952a57086394f264c2e24d4";
@@ -27,7 +30,7 @@ const IDS = {
 };
 
 function harness() {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const { privateKey, publicKey } = testKeys;
   const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
   const lanes = {
     "SHU-140": { id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905", note: "fixture",
@@ -149,6 +152,7 @@ test("SHU71_MANUAL_GATE_BYPASS: merge authority or absent stop gate HALTs", () =
 test("SHU71_OWNER_KEY: committed unprovisioned anchor fails closed without generating a key", () => {
   const h = harness();
   const anchor = JSON.parse(fs.readFileSync(new URL("../shu71-trust-anchor.json", import.meta.url), "utf8"));
+  anchor.state = "owner-authority-required"; // Preserve the pre-provisioning refusal control.
   assert.equal(validateShu71Package({ ...h.context, anchor }).code, "ACT_KEY_AUTHORITY_REQUIRED");
 });
 

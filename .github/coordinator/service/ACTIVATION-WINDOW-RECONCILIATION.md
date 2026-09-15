@@ -1,6 +1,116 @@
-# Activation-window reconciliation: partial checkpoint
+# Activation-window reconciliation
 
 ## Completion boundary
+
+Items 1–2 and 5 remain as committed in `c31e523`. Items 3–4 now share the
+owner-approved public source described below. The final coordinator revision
+remains an explicit unbound window input; this is not activation authority.
+The measurements and removed-line adjudication below the Items 3–4 section are
+retained historical evidence from the prior commit.
+
+## Items 3–4: one public source and explicit load path
+
+The single committed PEM is `.github/coordinator/shu71-activation-public-key.pem`.
+`SHU71_PUBLIC_KEY_PATH`, exported by `shu71-public-key.mjs`, resolves that sibling
+file to an absolute path in the running checkout. It is not configurable from a
+host environment or dispatch config. `loadShu71PublicKey()` enforces the existing
+plain absolute-path character discipline, rejects dot/dot-dot segments, pins
+exact equality with that constant, and requires a regular non-symlink file.
+Missing/unreadable files and changed or unnamed path inputs fail
+`ACT_PUBLIC_KEY_PATH`. Omitting the optional argument uses the named constant.
+
+Both verification paths call `loadShu71PublicKey(publicKeyPath, suppliedPem)`.
+The runtime verifier supplies `config.two_fixture_activation_public_key`; the
+package verifier supplies its `publicKeyPem` argument. An absent legacy key
+selects the committed source. Any supplied value must be byte-identical to that
+source or fail `ACT_TRUST_ANCHOR_MISMATCH`; it cannot appoint another key.
+Both signature verifiers use the returned PEM. Config is unchanged, including
+all dispatch gates and scope.
+
+`validateAnchor()` recomputes `publicKeyFingerprint()` from the loaded PEM and
+compares it to `spki_sha256`; mismatch returns `ACT_TRUST_ANCHOR_MISMATCH`.
+The Ed25519 SPKI DER SHA-256 is
+`0cc5f24f46554bd25b713d78fca2f2bd48ab9b270d217a9dce613956d5786d5a`.
+The exact five-key manifest is provisioned (`state: ready`), but
+`coordinator_revision: null` deliberately remains unbound. At the final-revision
+step the approved window must supply a manifest copy with only that field bound
+to the final reviewed 40-character revision. The package, running revision,
+main revision and anchor must agree. The committed null, malformed revisions,
+and different revisions refuse with `ACT_TRUST_ANCHOR_INVALID`; no current or
+stale commit SHA is fabricated. Revision binding and a valid owner-signed
+package/envelope remain required before any operational package can proceed.
+
+Host custody is documentation only: `/etc/shu/keys/shu71-activation-ed25519.pem`,
+Ed25519, root:root 0600; parent `/etc/shu/keys`, root:root 0700. No code reads or
+requires that location.
+
+The real committed-key positive control accepts the revision-bound anchor and
+proves the package reaches signature verification (`ACT_FORGED_ENVELOPE` for
+an intentionally unsigned control). It does not claim a valid owner signature.
+Existing signed positive controls still reach PREPARED/VERIFIED and exercise
+rollback using an explicit test-only filesystem double: ephemeral signing
+objects stay in memory and their public fixture is written only under `/tmp`.
+Production exposes no alternate loader. No test authority is committed.
+
+Named data mutations in `shu71-public-key.test.mjs`:
+
+| Mutation | Named assertion | Refusal |
+| --- | --- | --- |
+| Manifest digest differs | ACT_FINGERPRINT_MUTATION / ACT_FINGERPRINT_PACKAGE_MUTATION | ACT_TRUST_ANCHOR_MISMATCH |
+| Foreign key with its own matching digest | ACT_FOREIGN_KEY_MUTATION | ACT_TRUST_ANCHOR_MISMATCH |
+| Foreign package key | ACT_PACKAGE_SOURCE_DIVERGENCE | ACT_TRUST_ANCHOR_MISMATCH |
+| Foreign runtime config key | ACT_RUNTIME_SOURCE_DIVERGENCE | ACT_TRUST_ANCHOR_MISMATCH |
+| Null/empty/changed/dot-segment load path | ACT_PUBLIC_KEY_PATH_MUTATION / ACT_PACKAGE_PATH_PIN / ACT_RUNTIME_PATH_PIN | ACT_PUBLIC_KEY_PATH |
+| Missing public file | ACT_PUBLIC_KEY_MISSING_MUTATION | ACT_PUBLIC_KEY_PATH |
+
+Guard-removal subprocess mutations additionally remove the fingerprint
+comparison, supplied-key equality (foreign and two-path tests), and path guard.
+Each must exit 1 with an AssertionError in its named control; crashes do not count.
+
+## Items 3–4 validation (this commit)
+
+Executed in `/home/bawes/work/rec34`, branch
+`chore/activation-window-reconciliation`, on top of
+`c31e523d9d3f6ff8da76c086a8a43c2e4377d6f2` (prior Items 1/2/5 present).
+There is no local main ref; comparison uses `origin/main` at
+`9dc776977870f9bf32a43a82d3e40d4cae8bed11`. Config blobs for both that baseline
+and this work are `8a0317173d76f4c09811b9365e25b380b38dc93d`.
+
+After `chmod -R go-w .github/coordinator`, with umask 0002:
+
+| Command | Total | Pass | Fail | Skip |
+| --- | ---: | ---: | ---: | ---: |
+| `TMPDIR=/tmp node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs` | 1171 | 1164 | 0 | 7 |
+| `TMPDIR=/tmp SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS="--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs" npm run test:coordinator` | 1171 | 1164 | 0 | 7 |
+
+Both runs have exactly these skips; none counts as a pass:
+
+- `SHU-227: worker owns its checkout and recovery preserves descendant commits` — requires root or passwordless sudo for distinct-uid proof.
+- `SHU-227: non-owner service account resolves revision with no global Git trust` — requires distinct-uid execution.
+- `SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches` — requires distinct-uid execution.
+- `SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches` — requires distinct-uid execution.
+- `SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity` — host cannot switch to the fixture worker uid.
+- `SHU-244 A10: distinct-root scoped handoff production workspace` — host cannot switch worker uid.
+- `SHU-71 restricted capability refusal` — production vocabulary has no undeclared runtime/role pair.
+
+Literal/template `test()`/`it()` name multiset across coordinator `.test.mjs`
+files: origin/main 840, current 858, lost 0, added 18 (8 from the prior commit,
+10 here). This is a source-declaration count, distinct from expanded TAP totals.
+Removed lines matching `assert|expect|throw` relative to the start commit: 0;
+no replacements require adjudication. `git diff --check` is clean; no shell
+files changed (bash syntax check is not applicable). No conflict markers or
+secret values were added. Only the public PEM is persisted as key material.
+
+`systemd-analyze verify` is available and passed through the existing service
+verifier against temporary rendered units: syntax passed, exact rollback,
+2 ticks, 0 launches, 0 writes, empty state diff. This is local fixture evidence,
+not a running-host validation. No owner signing material was written, read,
+derived or printed; the authorized ephemeral test signing objects stay in memory.
+No host key location was accessed. No push, PR action, activation or arming.
+
+## Prior Items 1–2/5 checkpoint (retained)
+
+Historical completion boundary before the owner supplied the public anchor:
 
 Items 1–2 and their Item 6 controls are implemented. **Items 3–4 are incomplete**:
 there is no owner-approved committed public SPKI PEM, `config.json` has no
