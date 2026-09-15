@@ -3,7 +3,7 @@
 **Card:** SHU-128 (parent SHU-88). Feeds SHU-100 (financial records contract), SHU-97 (data map).
 **Production source:** `BAWES-Universe/studenthub` at `c2ce255`; schema facts additionally from `railway/staging/studenthub.sql` in the same repository, which is the only place several tables are defined. Permalink base `https://github.com/BAWES-Universe/studenthub/blob/c2ce255/`.
 **Method:** read-only static inspection. No database, bank, accounting-system or live-host access. No account numbers, amounts or personal data.
-**Coverage:** 138 of 1,016 functional production actions (`docs/parity/coverage.md`, cluster FI, regenerated at `84ab149` after an independent audit: comments are now masked, so a commented-out cron action is no longer counted, and six assignments were corrected; `cron/daily` is now primary FI with CM and ID effects, and `admin/Staff::actionListCompanies` moved to OR).
+**Coverage:** 138 of 1,016 functional production actions in the independently regenerated SHU-88 ledger at `84ab149` ([immutable ledger](https://github.com/BAWES-Universe/studenthub-platform/blob/84ab149/docs/parity/coverage.md), cluster FI). The ledger is not on platform `main` yet, so this inventory does not use a dangling relative link. Its counting rule excludes Yii `actions()` CORS/OPTIONS hooks and masks comments; all controller counts below use the same rule.
 
 ## 1. What this cluster is
 
@@ -13,7 +13,7 @@ This is the highest-consequence cluster in the system: an error here mispays a s
 
 ## 2. Contracts: three pay models
 
-`contract` (`common/models/Contract.php`) is the parent: `contract_uuid`, `candidate_id`, `company_id`, `parent_company_id`, `store_id`, `type`, `start_date`, `end_date`, `transfer_cost`, `currency_code`, `auto_generate`, `status` (1 active / 0 inactive), `deleted`.
+`contract` (`common/models/Contract.php`) is the parent: `contract_uuid`, `candidate_id`, `company_id`, `parent_company_id`, `store_id`, `type`, `start_date`, `end_date`, `transfer_cost`, `currency_code`, `auto_generate`, `status` (1 active / 0 inactive), `deleted`. The checked-in SQL dump contains the 2024 base table but omits later model-visible columns: `candidate_id`, `parent_company_id`, and `store_id` are added by `console/migrations/m250209_144529_contract.php`; `transfer_candidate.contract_uuid` is added by `m250306_191700_transfer_contract.php`. Schema evidence therefore comes from the dump **and** later migrations, not the dump alone. The source for `auto_generate` is the model/cron path; its migration is not established in this pass.
 
 | Type | Detail table | Amount columns |
 |---|---|---|
@@ -49,17 +49,31 @@ Inside a line (`common/models/TransferCandidate.php`, `saveCandidateTransfer`):
 
 So the quantity that multiplies every rate is a floating-point number, the line items are `decimal(10,3)` while their parent is `decimal(12,3)`, and PHP does the arithmetic in floats, rounding once for hourly and manual lines and never for monthly or fixed-price lines. Findings FI-F1 and FI-F2.
 
+### 3.1 Parent/child billing lineage and invoice regeneration
+
+Company ancestry and billing lineage are separate. `company.parent_company_id` describes organization structure; `transfer.parent_transfer_id`, introduced by `console/migrations/m170428_113508_invoice.php:12-30`, groups money.
+
+- A locked parent transfer owns the only persisted `transfer_candidate` rows. `Transfer::generateEachCompanyTransfer()` groups those lines by their own `company_id`, explicitly excluding the parent's company (`TransferCandidateQuery::groupByCompany:246-251`).
+- Each child transfer records `parent_transfer_id = parent.transfer_id`, one company, copied currency, and status LOCK (`Transfer.php:877-946`). A child does **not** own copied lines: `getTransferCandidates()` reads the parent's lines filtered to the child's company (`:521-535`). Child totals are sums of the already-computed parent-owned line totals.
+- If children exist, `getInvoices()` on the parent returns only child invoices; otherwise it returns the parent's own invoice (`:542-593`). `TransferCandidate::getInvoiceNumber()` prefers the matching child's invoice and falls back to the parent's (`TransferCandidate.php:937-955`).
+- Parent-owned lines are a real gap: `groupByCompany()` excludes the parent's own company, and when any sub-company group exists the parent gets no invoice. Repository evidence cannot establish whether such lines exist in live data; SHU-268 must measure this rather than assuming them away.
+- Invoice identity is mutable legacy state. Invoice number is the autoincrement `invoice_id`; regeneration may mint replacement IDs and soft-delete old invoices (`Transfer.php:1645-1671`). PDFs are rendered on demand from live transfer rows, so the repository does not establish immutable issued documents.
+- Regeneration contains a deterministic defect: at `Transfer.php:1594-1625`, `$company_total` is initialized to zero and then used as the guard for the entire child aggregation. The body can never run, leaving regenerated child totals at zero before a new invoice may be minted. Finding FI-F14.
+- Double-count prevention is not structural. It is repeated `parent_transfer_id IS NULL` filtering in admin statistics, transfer-candidate listings, `TransferCandidateQuery` unpaid/payable scopes, and `Company::getParentTransfers`; `Transfer::getInvoices` avoids returning parent and child invoices together, while `InvoiceQuery::byTransfer` intentionally returns the whole group. A new query can omit a guard. Finding FI-F15.
+
 ## 4. Scheduled money movement
 
-| Job | Schedule (`cron/cronlist`) | What it does |
+| Job | Schedule (`cron/cronlist`) | Authority, retry/failure and effects |
 |---|---|---|
-| `cron/weekly` | Saturdays 00:00 | finds active `MONTHLY_SALARY` contracts with `auto_generate`, whose window covers today, and creates a transfer per contract at a quarter of the monthly amount |
-| `cron/process-transfer-files` | **every minute** | takes every `transfer_file` with status pending and calls `$transferFile->process()` |
-| `cron/payable-candidate-notification` | daily 05:00 | notifies about payable candidates |
-| `cron/mid-month` | 13:30 on the 15th | civil-ID-expiring and missing-bank-info notifications |
-| `cron/end-of-month` | 13:30 on the 28th | attendance request to companies (work cluster) plus the same notifications |
-| `cron/segment-transfer`, `-suggestion`, `-expense` | not scheduled | analytics emitters |
-| `xero/sync-transactions`, `xero/sync-after` | not scheduled | accounting sync |
+| `cron/process-transfer-files` | **every minute** | Selects pending files in batches of 100 and calls `process()`. There is no CAS/lease. A file is unconditionally pre-marked PROCESSING, then the method opens one DB transaction, reads an S3/resource-manager file or stored entries, retries a deadlocked line save up to three times, marks lines paid, emails before commit, commits, then emits a payable-candidate event. Several failures call `die()`, so later files and the CronLog update are skipped. |
+| `cron/daily` | daily 13:30 | For each paid, unnotified line, sends email + app/SMS notification and only then sets `is_candidate_notified=1`; a delivery/save crash can duplicate or lose effects. The same job also deletes expired auth tokens and runs identity/profile/reporting work. |
+| `cron/weekly` | Saturdays 00:00 | Groups active auto-generated monthly contracts by billing company and calls `saveTransfer(..., noOfPayout=4)`. It `return`s inside the first company iteration, so at most one grouped company is processed and CronLog is not updated when work exists. Finding FI-F16. |
+| `cron/payable-candidate-notification` | daily 05:00 | Builds an XLSX of payable lines in a temp file, logs and sends it to the operations email, catches mail exceptions, deletes the temp file, then updates CronLog. This is an external email/export effect, not a candidate notification. |
+| `cron/mid-month` | 13:30 on the 15th | Sends missing-bank-info and civil-ID-expiry notifications; the source retains a “stop until we found culprit” TODO but executes both calls. |
+| `cron/update-company-stats` | 13:30 on the 15th | Aggregates paid line profit by company/currency and calls `updateCounters`; because it adds the full historical sum on every run, repeated runs can inflate stored revenue. Owned by reporting SHU-137 but financially consequential. |
+| `cron/end-of-month` | 13:30 on the 28th | Requests attendance from companies (work cluster), sends the same bank/civil notifications, and updates CronLog. |
+| `cron/segment-transfer`, `cron/segment-suggestion`, `cron/segment-expense` | not scheduled in `cronlist` | Batch historical rows to the external event manager/Segment and flush. Transfer and expense payloads contain monetary values; these are analytics effects, not payment effects. |
+| `xero/sync-transactions`, `xero/sync-after` | not scheduled in `cronlist` | Accounting synchronization entry points; DEFER per SHU-46. |
 
 `process-transfer-files` is the reconciliation step, not the payment step: `TransferFile::process()` reads a bank statement or the file's entries and **marks lines paid** (`common/models/TransferFile.php:238-250`); it does not issue a payment instruction. It sets `STATUS_PROCESSING` and saves **before** opening its transaction or reading any file (`:179-187`, verified after the independent audit), so the marker exists. What is missing is a claim: the cron preselects pending rows in batches of 100 (`CronController.php:338-348`) and the status save is unconditional, with no compare-and-swap on `pending`, so two overlapping minute-runs that both loaded the same batch can both enter `process()`. Whether that has ever produced a double `paid` mark is not established. Finding FI-F3, downgraded from High to Medium. Separately, `markProcessed` sends the confirmation mail (`:687-692`) **before** the transaction commits (`:327-329`), so a commit failure leaves an email that describes a reconciliation that did not happen. Finding FI-F7.
 
@@ -69,79 +83,90 @@ So the quantity that multiplies every rate is a floating-point number, the line 
 
 `transfer_file_entry` mirrors a bank's payment-instruction row: transfer method, credit amount and currency, exchange rate, deal, value date, debit and credit account numbers, narratives, four payment-detail lines, beneficiary name, address lines, bank name, and a status with description. `transfer_bank_advice` holds generated advice documents by serial number.
 
-`TransferCandidate` carries `transfer_confirmation_id` and `transfer_file_id`, which is how a paid line is tied back to a bank file, plus denormalised copies of store name, company name, company email, beneficiary name and IBAN — captured at payment time, which is correct for an audit trail.
+`TransferCandidate` carries `transfer_confirmation_id` and `transfer_file_id`, which are written during reconciliation. Its denormalised store name, company name/email, bank, beneficiary name and IBAN are copied earlier by `saveCandidateTransfer()` at **transfer-generation time** (`TransferCandidate.php:979-994`) and are not refreshed by `TransferFile::process()`. That preserves the generation-time payment destination, not a payment-time snapshot.
 
-Statuses on `transfer`: 10 initiated (draft), 1 payment sent, 3 salary distribution in progress, 4 transfer complete, 5 lock, 0 cancel. A `lock` state exists, which suggests finance freezes a transfer before export; where it is set and what it prevents needs confirming against the controllers.
+Statuses on `transfer`: 10 initiated (draft), 1 payment sent, 3 salary distribution in progress, 4 transfer complete, 5 lock, 0 cancel. Common `lock()` permits INITIATED → LOCK, checks that all lines still belong to company candidates, and generates child transfers/invoices before saving (`Transfer.php:1080-1129`). Child transfers are created already LOCKed. Admin `lock()` instead permits PAYMENT_SENT → LOCK as a revert, and admin `unlock()` permits LOCK or PAYMENT_SENT → INITIATED (`admin/models/Transfer.php:76-108`). This role-dependent state machine is FI-F9.
 
 ## 6. Parity rows
 
 | ID | Journey | Actor / grant | Legacy routes | Tests | Disposition | Slice |
 |---|---|---|---|---|---|---|
-| FI-01 | Create and maintain a contract (three types) | staff, admin | staff `ContractController` (6), company (3) | none | REQUIRED | F1 |
-| FI-02 | See my contract | org member | company `ContractController` | none | REQUIRED | F1 |
-| FI-03 | Generate a transfer from approved hours | staff, admin | staff `TransferController` (19), admin (27) | none | REQUIRED, **the transactional boundary preserved** | F2 |
+| FI-01 | Create and maintain a contract (three types) | staff | staff `ContractController` (5 functional actions) | none | REQUIRED | F1 |
+| FI-02 | See my contract | org member | company `ContractController` (2 functional actions; scoped through server-side `companyManager`) | none | REQUIRED | F1 |
+| FI-03 | Generate a transfer from approved hours | staff, admin | staff `TransferController` (18 functional actions), admin (26) | none | REQUIRED, **the transactional boundary preserved** | F2 |
 | FI-04 | Auto-generate monthly-salary payouts weekly | system | `cron/weekly` | none | REQUIRED, **ADAPT: the quarter-month rule is a policy choice, not arithmetic** (D-FI2) | F2 |
-| FI-05 | Adjust a transfer line: hours, bonus, rates, transfer cost | staff, admin | `TransferCandidateController` admin (13) | none | REQUIRED, audited | F2 |
+| FI-05 | Adjust a transfer line: hours, bonus, rates, transfer cost | staff, admin | admin `TransferCandidateController` (12 functional actions) | none | REQUIRED, audited | F2 |
 | FI-06 | Lock, cancel, or advance a transfer's status | staff, admin | transfer controllers | none | REQUIRED as an explicit state machine | F2 |
-| FI-07 | Export a bank transfer file | admin | `TransferFileController` (4), `TransferBankAdvice` (6) | none | REQUIRED, **ADAPT: idempotent, leased, single-writer** | F3 |
+| FI-07 | Export/reconcile a bank transfer file and maintain bank advice | admin | `TransferFileController` (3 functional actions), `TransferBankAdviceController` (5); outbound shapes separately traced by SHU-220 | none | REQUIRED, **ADAPT: idempotent, leased, single-writer**; unsupported outbound execution remains blocked | F3 |
 | FI-08 | Process a transfer file and reconcile entries | system | `cron/process-transfer-files` → `TransferFile::process()` | `admin/tests/functional/TransferFileCest.php` (list/view only) | REQUIRED, **ADAPT: compare-and-swap claim before processing, mail after commit (FI-F3, FI-F7)** | F3 |
 | FI-09 | Notify a candidate that they were paid | system | `TransferCandidate` mail and SMS paths | none | REQUIRED | F3 |
 | FI-10 | Invoices | staff, admin | `Invoice` model, transfer relation | none | REQUIRED | F4 |
-| FI-11 | Company balance and statement | org member, staff | `BalanceController` in four apps (16) | none | REQUIRED | F4 |
+| FI-11 | Wallet payable balance and transaction list | candidate, company contact, admin | three `BalanceController` copies × 3 functional actions (admin/candidate/company); stored `walletDb` `BalanceAccount.balance`, not invoice-derived | none | EXCLUDE-PENDING-OWNER with FI-18 on SHU-213; **not evidence for invoice balances/statements** | — |
 | FI-12 | Candidate salary view | candidate, self | `GET v1/account/salary`, `salary/<id>` | none | REQUIRED | F4 |
 | FI-13 | Bank details for payment | candidate, self | `update-bank-detail`; IBAN rules in the profile inventory | `candidate AccountCest::tryUpdateBankDetail` | REQUIRED (profile owns the field, finance owns the validation) | F1 |
-| FI-14 | Expenses | admin | `ExpenseController` (6), `StaffExpenses` (staff 6, admin 7) | none | **EXCLUDE-PENDING-OWNER** (D-FI4, internal finance) | — |
-| FI-15 | Staff salaries and salary processing | admin | `StaffSalaryController` (6), `StaffSalaryProcess` | none | EXCLUDE-PENDING-OWNER (D-FI4) | — |
-| FI-16 | Discounts and discount categories | admin, staff | `Discount` (6+6), `DiscountCategory` (6+6) | none | EXCLUDE-PENDING-OWNER (D-FI5) | — |
-| FI-17 | Xero accounting sync | admin | `XeroController` admin (8), console (3), `XeroWebhook` (unrouted) | none | **DEFER** (owner decision on SHU-46 stands) | — |
-| FI-18 | Wallet | — | `WalletUser`, `WalletBank`, `WalletTransfer` in a separate database | none | DISCARD (integration disabled 2025-11-30, SHU-39) | — |
+| FI-14 | Expenses | admin, staff | admin `ExpenseController` (5), `StaffExpensesController` (admin 6, staff 5 functional actions) | none | **EXCLUDE-PENDING-OWNER** (D-FI4, internal finance) | — |
+| FI-15 | Staff salaries and salary processing | admin | `StaffSalaryController` (5 functional actions), `StaffSalaryProcess` model | none | EXCLUDE-PENDING-OWNER (D-FI4) | — |
+| FI-16 | Discounts and discount categories | admin, staff | `DiscountController` (5+5), `DiscountCategoryController` (5+5 functional actions; staff routes are not configured) | none | EXCLUDE-PENDING-OWNER (D-FI5) | — |
+| FI-17 | Xero accounting sync | admin, system | admin `XeroController` (7 functional actions), console (3), `XeroWebhookController` (1, unrouted) | none | **DEFER** (owner decision on SHU-46 stands) | — |
+| FI-18 | Wallet | candidate, company contact, admin | `WalletUser`, `WalletBank`, `WalletTransfer`, `BalanceAccount`, `BalanceTransaction` in `walletDb`; API/UI entry points remain, while `WalletManager::addEntry()` is a success-returning no-op | wallet fixtures only | EXCLUDE-PENDING-OWNER on SHU-213; do not call the whole surface dead | — |
 | FI-19 | Company revenue statistics | system | `cron/update-company-stats` | none | OTHER-CLUSTER (reporting SHU-137) | — |
 | FI-20 | Transfer analytics events | system | `cron/segment-transfer` | none | OTHER-CLUSTER (platform SHU-139) | — |
 | FI-21 | Payroll email to company contacts | staff | `PayrollEmail` | none | OTHER-CLUSTER (communication SHU-129) | — |
-| FI-22 | Transfer rate excel | admin | `TransferRateExcel` model | none | REQUIRED, audited export | F4 |
+| FI-22 | Transfer rate excel | admin | `TransferRateExcel` model and staff transfer template/update/export actions | none | REQUIRED through audited export SHU-196 | F4 |
+
+Permissions in this cluster are mostly authentication, not fine-grained authorization. Staff/admin finance controllers install bearer authentication but generally do not enforce per-action grants. Company contract reads are scoped through `companyManager`; candidate salary list/detail explicitly filter `candidate_id` to the authenticated principal (`AccountController.php:709-746`). Admin transfer reads/writes are broadly available to an authenticated admin, with the limited-admin restriction enforced only on the PDF path. These gaps are requirements for SHU-183–185, not permissions to preserve.
+
+The production repository does **not** establish an invoice-derived account balance or immutable statement. SHU-270 is a target requirement derived from the approved consolidated-billing capability; it must not be cited as legacy parity. Likewise, consolidated billing design must reconcile the parent/child lineage above without assuming company ancestry is billing membership.
 
 ## 7. Tests and fixtures
 
 **Correction.** An earlier revision of this section said this cluster had zero tests and no fixtures. That was false, and an independent audit caught it. What exists at `c2ce255`:
 
-| Suite | What it establishes |
+| Suite | What it establishes at source level |
 |---|---|
-| `common/tests/unit/models/TransferCandidateTest.php` (536 lines) | `:308-343` manual-rate fallback with persisted totals asserted; `:346-387` an overlapping hourly contract; `:390-465` zero-payable and missing-rate errors |
-| `common/tests/unit/models/TransferTest.php` | transfer aggregate behaviour |
-| `admin/tests/functional/TransferCest.php`, `TransferCandidateCest.php`, `TransferFileCest.php` | list/view return 200 with a JSON envelope; `TransferFileCest.php:18-24, :42-61` loads the finance fixture |
-| Fixtures `common/fixtures/TransferFixture.php`, `TransferCandidateFixture.php`, `TransferFileFixture.php`, `TransferFileEntryFixture.php`, `InvoiceFixture.php`, `WalletTransferFixture.php` | synthetic finance rows, reusable for platform tests |
+| `common/tests/unit/models/TransferCandidateTest.php` (536 lines) | Live tests cover validation/list formatting plus manual-rate fallback with persisted totals, overlapping-contract selection, zero-payable behavior and missing-rate errors. Several older total/profit methods are commented out. |
+| `common/tests/unit/models/TransferTest.php` | Only fixture setup and validation are live; save/delete aggregate tests are commented out. It does not establish transaction rollback. |
+| `common/tests/unit/models/InvoiceTest.php` | Required-field validation only. |
+| `admin/tests/functional/TransferCest.php` | Live HTTP scenarios cover list/view, received/lock/unlock, candidate paid/unpaid, invoice/receipt download, invoices, import, suspicious list and update-from-file. Some export/download scenarios are commented out. These mostly establish responses over fixtures, not exact monetary invariants. |
+| `admin/tests/functional/TransferCandidateCest.php` | Live list/by-transfer/by-file/view and paid/unpaid bulk/single endpoints. |
+| `admin/tests/functional/TransferFileCest.php` | List/view only; no processing lifecycle. |
+| Company/staff transfer suites | `company/tests/unit/models/TransferTest.php` has live validation and lock/payment-sent/delete-state tests. The parent/child create/edit/invoice unit scenarios and nearly all company/staff functional scenarios are commented out; the only live company child functional scenario lists relations. |
+| Fixtures `TransferFixture`, `TransferCandidateFixture`, `TransferFileFixture`, `TransferFileEntryFixture`, `InvoiceFixture`, `WalletTransferFixture` | Synthetic finance rows exist, but fixture existence is not behavior coverage. |
 
-What remains untested in production: the per-second rate derivation on the contract path, the quarter-month division, the monthly and fixed-price (unrounded) branches, the minute-only hourly case (FI-F8), the transfer-file lifecycle beyond list/view, and the rollback path — which the legacy suite cannot reach because of FI-F10. Whether the suite currently passes is not established (nothing was executed).
+What remains untested or not established by an assertion: per-second contract arithmetic; quarter-month and first-company-only weekly behavior; monthly/fixed branches; minute-only hourly work; real transaction rollback; transfer-file claiming, parsing, reconciliation, retry/error and after-commit notification; parent-owned-line completeness; child regeneration totals; stable invoice identity; invoice-derived balances/statements; candidate salary isolation beyond source filtering; and external mail/SMS/Segment/Xero outcomes. The suite was not executed in this read-only audit, so pass/fail status is not claimed.
 
-**Untested behaviour, explicitly:** contract creation and type-specific amounts; transfer generation and its rollback; line adjustment; the weekly auto-generation; transfer-file export, processing, retry and error handling; reconciliation back to lines; payment notifications; invoices; balances; the candidate salary view; expenses; staff salaries; discounts; Xero sync.
+**Other untested behavior:** contract create/update across all three pay models; audited line adjustment; transfer-rate export; expenses; staff salary processing; discounts; and Xero sync.
 
 ## 8. Findings
 
 | ID | Finding | Evidence | Severity | Action |
 |---|---|---|---|---|
-| **FI-F1** | `transfer_candidate.hours` is `double unsigned` — floating point — and PHP casts hours, minutes and seconds to `(float)` before multiplying by rates | schema dump; `TransferCandidate::saveCandidateTransfer` `:87-90` | **High** (money computed in binary floating point) | F2: integer minutes or a decimal type end to end |
-| **FI-F2** | Money precision is inconsistent along one flow: parent `transfer` is `decimal(12,3)`, its `transfer_candidate` lines are `decimal(10,3)`, contracts are `decimal(12,3)` | schema dump | Medium (a line that fits its parent can overflow, and sums may not reconcile) | F2, and SHU-97 must check for existing overflow |
-| **FI-F3** | `cron/process-transfer-files` runs **every minute**; `process()` does set `STATUS_PROCESSING` first (`TransferFile.php:179-187`), but the save is unconditional and the cron preselects pending rows, so overlapping runs that loaded the same batch can both enter | `CronController.php:338-348`; `TransferFile.php:179-187` | Medium (no double payment is evidenced; the method marks lines paid, it does not pay) | F3: claim with compare-and-swap, idempotent marking |
-| **FI-F7** | Confirmation mail is sent inside `markProcessed` before the surrounding transaction commits | `TransferFile.php:327-329`, `:687-692` | Medium (mail can describe a rolled-back reconciliation) | F3: mail after commit |
-| **FI-F8** | Hourly-contract lines with zero hours and zero bonus return zero without checking minutes or seconds; the manual branch checks all four | `TransferCandidate.php:1243-1252` vs `:1068-1082` | Medium (minute-only work unpaid) | F2: test `hours=0, minutes>0` on both branches; do not preserve |
-| **FI-F9** | Locking is role-dependent: the common model locks an initiated transfer after checking assignments and then generates child transfers and invoices (`Transfer.php:1080-1129`, `:990-1018`); the admin subclass allows relocking payment-sent transfers and unlocking locked ones (`admin/models/Transfer.php:76-108`) | see evidence | Medium (state machine differs by app) | F2/F4: one explicit lock state machine |
-| **FI-F10** | Explicit transaction operations are skipped when `inCodeception` is set (`Transfer.php:1200`, `:1271-1311`), so the legacy tests never exercise the production rollback path | see evidence | Migration-confidence | F2: platform tests run with real transactions |
-| **FI-F4** | The quarter-month rule (`$noOfPayout = 4`) treats every month as four weeks, so a monthly salary paid weekly under-pays or over-pays depending on the month | `CronController.php` `actionWeekly` | Medium (systematic drift against the contract) | D-FI2 |
-| **FI-F5** | Rounding happens once at the end of a line (`round(..., 3)`), so intermediate per-second products carry full float error | `TransferCandidate.php:227-228` | Medium | F2 |
-| **FI-F6** | Rate fallback silently reaches through to the parent company when a company rate is zero | `:334-346`, `:112-118` | Medium (a missing rate produces a payment rather than an error) | F1: make the effective rate explicit and recorded on the line |
-| **FI-F7** | A transfer line with no hours and no bonus succeeds with zero totals rather than being rejected | `:92-98` | Low–Medium | F2 |
-| **FI-F8** | Zero automated tests anywhere in the money path | §7 | **High** for migration confidence | specify test-first in F1–F3 |
-| **FI-F9** | `transfer.total` is described as `integer` in the model docblock but is `decimal(12,3)` in the schema | `common/models/Transfer.php` docblock vs dump | Low (documentation drift, but it misleads readers) | note in SHU-97 |
-| **FI-F10** | `admin/XeroWebhook` has no route (coverage ledger) yet Xero sync actions exist | coverage ledger §"no route" | Low | confirm dead before migration |
+| **FI-F1** | `transfer_candidate.hours` is `double unsigned`, and PHP casts time inputs to floats before multiplying by rates | schema dump; `TransferCandidate.php:1068-1071,1149-1175,1319-1324,1367-1388` | **High** | F2: integer time units and decimal money end to end |
+| **FI-F2** | Parent transfer money is `decimal(12,3)`, while line money/rates are `decimal(10,3)` | schema dump | Medium | F2 and SHU-97 overflow/reconciliation check |
+| **FI-F3** | Every-minute transfer-file processing preselects pending rows and unconditionally writes PROCESSING; no CAS/lease | `CronController.php:338-348`; `TransferFile.php:179-187` | Medium; this reconciles, it does not initiate payment | F3: CAS claim and idempotent marking |
+| **FI-F4** | Weekly auto-payout divides monthly salary by four | `CronController::actionWeekly:386-446` | Medium | D-FI2 |
+| **FI-F5** | Hourly/manual totals round once at line end, but monthly/fixed totals are unrounded floats | `TransferCandidate.php:1191-1192,1328-1351,1390-1392` | Medium | D-FI3/F2 |
+| **FI-F6** | Manual rate fallback reaches through to the parent company when the direct company rate is zero | `TransferCandidate.php:1062-1208` | Medium | F1: explicit recorded effective-rate resolution |
+| **FI-F7** | Transfer-file confirmation email is sent before the reconciliation transaction commits | `TransferFile.php:327-329,687-692` | Medium | F3: durable outbox/after-commit delivery |
+| **FI-F8** | Hourly-contract lines with zero hours and bonus return zero without checking minutes/seconds; manual lines check all units | `TransferCandidate.php:1243-1252` vs `:1068-1082` | Medium | F2 minute-only tests |
+| **FI-F9** | Lock/unlock transitions differ between common and admin models | `Transfer.php:1080-1129`; `admin/models/Transfer.php:76-108` | Medium | F2: one state machine |
+| **FI-F10** | Transfer transactions are skipped when `inCodeception` is set | `Transfer.php:1200,1271-1311,1430-1431,1675-1676` | Migration-confidence | F2 tests with real transactions |
+| **FI-F11** | A zero-work/zero-bonus line succeeds with zero totals; transfer-level validation catches only an all-zero aggregate | `TransferCandidate.php:1068-1082`; `Transfer.php:1327-1338` | Low–Medium | F2: explicit zero-line rule |
+| **FI-F12** | Model docblocks call decimal transfer totals integers, and the checked-in dump omits later contract columns | `Transfer.php:23-24`; contract dump vs `m250209_144529_contract.php` | Low | SHU-97: migration-derived schema authority |
+| **FI-F13** | Xero webhook controller has an action but no configured route | coverage ledger at `84ab149`; config trace | Low | confirm dead before migration |
+| **FI-F14** | Child regeneration aggregation is unreachable because `$company_total` starts at zero and guards its own increments; a replacement invoice may then be minted | `Transfer.php:1594-1647` | **High** | F4 import/reconciliation fixtures; never port |
+| **FI-F15** | Parent/child double-count protection is repeated query filtering rather than a structural invariant; parent-owned lines can be omitted from invoices when sub-company lines exist | `Transfer.php:521-593,990-1018`; `TransferCandidateQuery.php:202,219,246-251`; statistics/list filters | **High** | F4: exactly-once line ownership and full-group reconciliation; SHU-268 measures legacy gaps |
+| **FI-F16** | Weekly cron returns after the first grouped company and skips its CronLog update whenever work exists | `CronController::actionWeekly:420-447` | **High** | F2: process every eligible group idempotently |
+| **FI-F17** | `update-company-stats` adds each run's full historical profit sum to stored counters | `CronController::actionUpdateCompanyStats` | Medium | SHU-137: derive or replace atomically with reconciliation |
 
 ## 9. Classification of prior findings
 
 | Source | Claim | At `c2ce255` |
 |---|---|---|
 | SHU-46 | Xero integration → DEFER | **Owner decision stands**; FI-17 records it, nothing here reopens it |
-| SHU-39 | Wallet integration disabled 2025-11-30 | **Production-supported**: a separate database, no live path (FI-18) |
+| SHU-39 | Wallet integration disabled 2025-11-30 | **Partially supported**: external `WalletManager::addEntry()` is disabled, but walletDb models and three API controllers remain reachable in source (FI-11/FI-18); SHU-213 owns the exclusion decision |
 | SHU-34 | Transfer and payment behaviour is core | **Production-supported**, and now sized |
-| SHU-39 | Denormalised copies on records | **Production-supported** on `transfer_candidate`, and here it is **correct** — payment-time snapshots belong in an audit trail |
+| SHU-39 | Denormalised copies on records | **Production-supported** on `transfer_candidate`; they are generation-time snapshots, while payment linkage is written later |
 
 ## 10. Bounded slices for SHU-100
 
@@ -150,7 +175,7 @@ What remains untested in production: the per-second rate derivation on the contr
 | F1 | Contracts: three pay models, effective-rate resolution made explicit and recorded, bank-detail validation | organizations O1, profile S2 | 5 |
 | F2 | Transfer generation: exact-decimal arithmetic end to end, integer time units, one transactional boundary, audited line adjustment, explicit state machine | F1, work W7, SHU-59 | 8 |
 | F3 | Bank files: idempotent export with a lease, single-writer processing, reconciliation back to lines, retry and error semantics, payment notification | F2 | 8 |
-| F4 | Invoices, balances, statements, candidate salary view, audited rate exports | F2 | 5 |
+| F4 | Parent/child invoice lineage and reconciliation, candidate salary view, audited rate exports; invoice-derived balance/statements are a target requirement on SHU-270, not established legacy parity | F2 | 5 |
 
 Cluster total: **26 points**, against the 8-point placeholder, and this is the estimate most likely to grow once D-FI1 is answered. Running total: profile 40, organizations 46, work 31, recruit 36, finance 26.
 
@@ -167,8 +192,7 @@ Cluster total: **26 points**, against the 8-point placeholder, and this is the e
 ## 12. Not established
 
 - Whether two overlapping `process-transfer-files` runs have ever double-marked a line (`process()` does pre-mark, but without a compare-and-swap; FI-F3). Needs `cron_log` and the database.
-- Where the actual bank payment instruction is produced. `process()` reconciles statements; the outbound file or portal step is outside this method and was not located in this pass.
-- Where `Transfer::STATUS_LOCK` is set and what it prevents.
+- Provider-specific outbound shapes were traced separately by SHU-220, but provider version, approval/release, delivery, acknowledgement, duplicate handling and finality remain unestablished; unsupported outbound execution stays blocked on SHU-184.
 - Real volumes: transfers per week, lines per transfer, files per month. These size F3.
 - Whether any existing `transfer_candidate` row has already lost precision, or any line exceeds `decimal(10,3)` — needs the database, and belongs in SHU-97.
 - The bank's file format specification and its error codes, which are not in the repository.
