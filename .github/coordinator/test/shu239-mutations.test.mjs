@@ -38,7 +38,7 @@ const CASES = [
   { name: "M14 stop masking sibling workspaces", file: "reviewer-sandbox.sh",
     from: '  systemd_args+=("--property=InaccessiblePaths=$sibling")', to: '  systemd_args+=("--property=ReadOnlyPaths=$sibling")', testFile: "shu239-reviewer-launch.test.mjs", pattern: "SHU-239 A7: shipped" },
   { name: "M15 retain reviewer ACL after execution", file: "reviewer-sandbox.sh",
-    from: 'cleanup() { /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace" || true; }', to: "cleanup() { true; }", testFile: "shu239-reviewer-launch.test.mjs", pattern: "SHU-239 A7: shipped" },
+    from: '  cleanup_step "revoke reviewer workspace ACL" /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace"', to: "  true", testFile: "shu239-reviewer-launch.test.mjs", pattern: "SHU-239 A7: shipped" },
 ];
 
 for (const mutation of CASES) {

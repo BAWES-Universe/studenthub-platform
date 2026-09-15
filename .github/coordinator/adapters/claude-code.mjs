@@ -14,6 +14,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { isRole, isWriterRole } from "../launch-vocabulary.mjs";
+import { validateWorkspaceScope } from "../workspace-scope.mjs";
+import { pushExactSha } from "../push-broker.mjs";
 import { runReviewEvidence, sensitiveEnvironmentValues } from "../review-execution.mjs";
 
 export const ADAPTER_NAME = "claude-code";
@@ -56,16 +59,53 @@ export function workerIdentity(attemptId) {
 // Build an explicit child environment. API credentials and alternate API
 // endpoints are removed so a stale host setting cannot silently switch this
 // subscription lane to metered billing.
-export function buildClaudeEnvironment(parentEnv = {}, oauthToken = "") {
+export function buildClaudeEnvironment(parentEnv = {}, oauthToken = "", { reviewer = false } = {}) {
   const childEnv = {};
   for (const key of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "SHELL", "CI"]) {
     if (typeof parentEnv[key] === "string") childEnv[key] = parentEnv[key];
+  }
+  if (reviewer) {
+    childEnv.HOME = "/nonexistent";
+    delete childEnv.TMPDIR;
+    delete childEnv.TMP;
+    delete childEnv.TEMP;
+    delete childEnv.USER;
+    delete childEnv.LOGNAME;
+    delete childEnv.SHELL;
   }
   if (oauthToken) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
   return childEnv;
 }
 
-export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context }) {
+export function isolatedReviewerModelCommand({ isolationWrapper, cwd, args }) {
+  if (!Array.isArray(isolationWrapper) || isolationWrapper.length === 0
+    || isolationWrapper.some((part) => typeof part !== "string" || part.length === 0)) {
+    throw new Error("reviewer model launch requires the wrapper validated by the confined test phase");
+  }
+  const root = path.dirname(cwd);
+  return {
+    file: isolationWrapper[0],
+    args: [
+      ...isolationWrapper.slice(1),
+      "--profile", "model",
+      "--workspace-root", root,
+      "--workspace", cwd,
+      "--",
+      "claude",
+      ...args,
+    ],
+  };
+}
+
+export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, role = "review", allowed_paths = [], scoped_base_sha = null }) {
+  if (isWriterRole(role)) return [
+    `You are the authorized ${role} worker for ${issue_id}; contract ${authorization_ref}.`,
+    `Attempt: ${attempt_id}. Bound target: ${target_sha}. Local head: ${scoped_base_sha ?? target_sha}.`,
+    task_context,
+    `Implement only the authorized paths: ${allowed_paths.length ? allowed_paths.join(", ") : "the bound full workspace"}.`,
+    "Leave changes in the workspace. Do not commit, push, merge, access the network, or alter .git. The host broker validates and publishes the result.",
+    `Return the structured callback with stage ${role === "revise" ? "REVISION_READY" : "BUILD_READY"}, result_sha:null, the exact supplied attempt_id and target_sha, and nonempty evidence links. Use BLOCKED or FAILED if unable to finish.`,
+  ].filter(Boolean).join("\n");
   return [
     "You are the independent verifier for an authorized StudentHub change.",
     `Issue: ${issue_id}`,
@@ -87,13 +127,15 @@ export function buildClaudeArgs(input, { resume = false } = {}) {
     "-p",
     "--model", CLAUDE_MODEL,
     "--output-format", "json",
-    "--json-schema", JSON.stringify(CALLBACK_SCHEMA),
+    "--json-schema", JSON.stringify(isWriterRole(input.role) ? { ...CALLBACK_SCHEMA, required: [...CALLBACK_SCHEMA.required, "result_sha"], properties: { ...CALLBACK_SCHEMA.properties, stage: { type: "string", enum: [input.role === "revise" ? "REVISION_READY" : "BUILD_READY", "BLOCKED", "FAILED"] }, result_sha: { type: "null" } } } : CALLBACK_SCHEMA),
     // `--restricted` keeps subscription OAuth available while disabling every
     // customization source and confining file tools to the exact cwd. `--bare`
     // must not return: it deliberately ignores the subscription login.
     "--restricted",
     "--disable-slash-commands",
+    ...(isWriterRole(input.role) ? ["--tools", "Read,Glob,Grep,Write,Edit"] : [
     "--tools", "Read,Glob,Grep",
+    ]),
     // --tools constrains built-ins only. MCP tools have their own namespace and
     // therefore need both an empty strict config and an explicit deny pattern.
     "--strict-mcp-config",
@@ -261,10 +303,17 @@ function allowedSourceCitation(rawLink, { target_sha, cwd, fsImpl = fs }) {
   }
 }
 
-export function validateCallback(callback, { attempt_id, target_sha, cwd, evidence_dir, fsImpl = fs } = {}) {
+export function validateCallback(callback, { attempt_id, target_sha, cwd, evidence_dir, fsImpl = fs, role = "review" } = {}) {
   if (!callback || typeof callback !== "object" || Array.isArray(callback)) return { valid: false, field: "callback", detail: "must be an object" };
   if (callback.attempt_id !== attempt_id) return { valid: false, field: "attempt_id", detail: "does not match the bound attempt" };
   if (callback.target_sha !== target_sha) return { valid: false, field: "target_sha", detail: "does not match the bound head" };
+  if (isWriterRole(role)) {
+    if (![role === "revise" ? "REVISION_READY" : "BUILD_READY", "BLOCKED", "FAILED"].includes(callback.stage) || callback.result_sha !== null) return { valid: false, field: "stage", detail: "writer callback does not match its role or host-owned result" };
+    return { valid: Array.isArray(callback.links) && callback.links.length > 0 && callback.links.every((link) => typeof link === "string" && link.length > 0), field: "links", detail: "writer requires evidence" };
+  }
+  const reviewerKeys = new Set(["attempt_id", "target_sha", "stage", "links", "summary"]);
+  const extraReviewerKey = Object.keys(callback).find((key) => !reviewerKeys.has(key));
+  if (extraReviewerKey) return { valid: false, field: extraReviewerKey, detail: "is outside the closed reviewer callback schema" };
   if (!CALLBACK_STAGES.includes(callback.stage)) return { valid: false, field: "stage", detail: "is not an allowed reviewer stage" };
   if (!Array.isArray(callback.links) || callback.links.length === 0) return { valid: false, field: "links", detail: "must be a non-empty array" };
   let hasFileEvidence = false;
@@ -348,6 +397,10 @@ export async function launchBuilder({
   attempt_id,
   target_sha,
   task_context,
+  role = "review",
+  runtime = "claude-code",
+  repo,
+  branch,
   workspace_scope = "full",
   scope_phase = "review",
   allowed_paths = [],
@@ -366,8 +419,15 @@ export async function launchBuilder({
   if (!ATTEMPT_RE.test(attempt_id ?? "") || !SHA_RE.test(target_sha ?? "")) {
     return { stage: "FAILED", error_code: "INVALID_LAUNCH_BINDING", ok: false };
   }
+  if (!isRole(role) || runtime !== "claude-code") return { stage: "HOLD", reason: "invalid Claude role/runtime authority", ok: false };
+  if (role === "review") {
   if (workspace_scope !== "full" || scope_phase !== "review" || !Array.isArray(allowed_paths) || allowed_paths.length !== 0 || scoped_base_sha !== null) {
     return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: "reviewer checkout must be complete and unscoped", pause_adapter: true, ok: false };
+  }
+  } else {
+    const scope = validateWorkspaceScope({ workspace_scope, scope_phase, allowed_paths, scoped_base_sha }, { requireScopedBase: true });
+    if (!scope.ok || scope_phase === "review") return { stage: "HOLD", reason_code: "REVIEW_EXECUTION_UNAVAILABLE", reason: scope.reason ?? "writer cannot use review scope", ok: false };
+    if (!env.SHU_WORKER_LAUNCH_WRAPPER || !/^\d+$/.test(env.SHU_WORKER_UID ?? "") || Number(env.SHU_WORKER_UID) === 0 || Number(env.SHU_WORKER_UID) === process.getuid()) return { stage: "HOLD", reason: "Claude writer requires the configured distinct worker identity", ok: false };
   }
   if (!oauth_token) {
     if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {
@@ -382,14 +442,19 @@ export async function launchBuilder({
   } catch {
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_UNREADABLE", ok: false };
   }
+  if (role === "review") {
   if (checkoutHead !== target_sha) {
     return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
   }
+  } else if (checkoutHead !== (workspace_scope === "scoped" ? scoped_base_sha : target_sha)) {
+    return { stage: "FAILED", error_code: "CHECKOUT_HEAD_MISMATCH", ok: false };
+  }
 
-  const reviewEvidence = await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env });
+  const reviewEvidence = role === "review" ? await reviewEvidenceImpl({ attempt_id, target_sha, cwd, env }) : null;
   const auditEvidenceLinks = reviewEvidence?.evidence_link ? [reviewEvidence.evidence_link] : [];
   let inlineEvidence;
   try { inlineEvidence = inlineEvidencePayload(reviewEvidence); } catch { inlineEvidence = null; }
+  if (role === "review") {
   if (reviewEvidence?.executed !== true || !reviewEvidence.evidence_link || !inlineEvidence) {
     return {
       stage: "HOLD",
@@ -401,25 +466,45 @@ export async function launchBuilder({
       ok: false,
     };
   }
+  if (!Array.isArray(reviewEvidence.isolation_wrapper) || reviewEvidence.isolation_wrapper.length === 0) {
+    return {
+      stage: "HOLD",
+      pause_adapter: true,
+      reason_code: "REVIEW_EXECUTION_UNAVAILABLE",
+      reason: "REVIEW_EXECUTION_UNAVAILABLE — the validated reviewer model wrapper is unavailable; no reviewer launched",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: ["review model isolation: REVIEW_EXECUTION_UNAVAILABLE"],
+      ok: false,
+    };
+  }
+
+  }
 
   const input = {
+    role, allowed_paths, scoped_base_sha,
     issue_id,
     authorization_ref,
     attempt_id,
     target_sha,
     task_context: [
       task_context,
+      ...(role === "review" ? [
       `Confined exact-head test evidence URI (machine provenance only; do not Read): ${reviewEvidence.evidence_link}`,
       `Confined test result: ${reviewEvidence.passed ? "PASS" : "FAIL"}`,
       `Trusted confined evidence payload (inline): ${inlineEvidence}`,
+      ] : []),
     ].filter(Boolean).join("\n"),
   };
   const args = buildClaudeArgs(input, { resume });
   let result;
   try {
-    result = await runExecFile(execFileImpl, "claude", args, {
+    const writerWrapper = isWriterRole(role) ? env.SHU_WORKER_LAUNCH_WRAPPER.trim().split(/\s+/) : [];
+    const command = role === "review"
+      ? isolatedReviewerModelCommand({ isolationWrapper: reviewEvidence.isolation_wrapper, cwd, args })
+      : { file: writerWrapper[0] ?? "claude", args: writerWrapper.length ? [...writerWrapper.slice(1), "claude", ...args] : args };
+    result = await runExecFile(execFileImpl, command.file, command.args, {
       cwd,
-      env: buildClaudeEnvironment(env, oauth_token),
+      env: buildClaudeEnvironment(env, oauth_token, { reviewer: role === "review" }),
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
       timeout: timeout_ms,
@@ -429,7 +514,7 @@ export async function launchBuilder({
     return failureFrom(error, "", "");
   }
   let envelope = null;
-  const auditNotes = [`review execution proof: ${reviewEvidence.reason_code}`];
+  const auditNotes = role === "review" ? [`review execution proof: ${reviewEvidence.reason_code}`] : [];
   try {
     envelope = persistEnvelopeImpl({
       stdout: result.stdout,
@@ -491,7 +576,7 @@ export async function launchBuilder({
       ok: false,
     };
   }
-  const selected = selectCallback(parsed, { attempt_id, target_sha, cwd, evidence_dir: env.SHU_REVIEW_EVIDENCE_DIR });
+  const selected = selectCallback(parsed, { attempt_id, target_sha, cwd, role, evidence_dir: env.SHU_REVIEW_EVIDENCE_DIR });
   if (!selected.callback) {
     return {
       stage: "HOLD",
@@ -505,7 +590,8 @@ export async function launchBuilder({
       ok: false,
     };
   }
-  if (!SUCCESS_CALLBACK_STAGES.includes(selected.callback.stage)) {
+  const successStages = role === "review" ? SUCCESS_CALLBACK_STAGES : [role === "revise" ? "REVISION_READY" : "BUILD_READY"];
+  if (!successStages.includes(selected.callback.stage)) {
     return {
       stage: "HOLD",
       external_run_id: runId,
@@ -518,6 +604,21 @@ export async function launchBuilder({
       audit_notes: auditNotes,
       ok: false,
     };
+  }
+  if (isWriterRole(role)) {
+    const push = await (io.pushBrokerImpl ?? pushExactSha)({
+      stateDir: env.SHU_WORKSPACE_STATE_DIR, attempt_id, target_sha, result_sha: null,
+      workspaceReady: true, beforePublish: io.resultStillAuthorized, repo, branch,
+      worktree: cwd, allowedRoot: env.SHU_WORKTREE_ROOT, remoteUrl: env.SHU_PUSH_REMOTE_URL,
+      branchPrefix: env.SHU_LANE_BRANCH_PREFIX ?? "coordinator/",
+      workspace_scope, scope_phase, allowed_paths, scoped_base_sha, env,
+    });
+    if (!push.ok || !SHA_RE.test(push.remote_head ?? "")) return {
+      stage: "HOLD", external_run_id: runId, worker_identity: identity, adapter_status: "completed",
+      reason: `writer result broker refused: ${push.reason ?? "missing exact result head"}`,
+      reason_code: push.reason_code, audit_evidence_links: auditEvidenceLinks, audit_notes: auditNotes, ok: false,
+    };
+    selected.callback.result_sha = push.remote_head;
   }
   return {
     stage: "COMPLETED",

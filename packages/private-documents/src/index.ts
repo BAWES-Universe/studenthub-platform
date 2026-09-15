@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { mkdir, open, rename, unlink, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { resolveActiveContext, type AuthzStore, type RequestIdentity } from '../../contracts/src/index.js';
+import { validateLifecycleState, type LifecycleState } from './lifecycle-state.js';
 export type DocumentType = 'personal-photo' | 'resume' | 'civil-id-front' | 'civil-id-back' | 'video' | 'video-thumbnail' | 'company-logo' | 'commercial-licence';
 export interface Scope {
     orgId: string;
@@ -25,6 +26,7 @@ export interface DocumentState {
     format: 1;
     documents: StoredDocument[];
     retired: StoredDocument[];
+    lifecycle?: LifecycleState;
 }
 /** Must isolate concurrent transactions, commit atomically, and roll back on callback failure.
  * This is a trusted server-only port, never a client adapter or metadata endpoint. */
@@ -32,7 +34,7 @@ export interface DocumentStore {
     transaction<T>(fn: (state: DocumentState) => Promise<T>): Promise<T>;
 }
 type Code = 'denied' | 'invalid' | 'unavailable';
-class DocumentError extends Error {
+export class DocumentError extends Error {
     constructor(readonly code: Code) { super(code); this.name = 'DocumentError'; }
 }
 function fail(code: Code): never { throw new DocumentError(code); }
@@ -70,9 +72,10 @@ function uploadOf(value: unknown): Omit<StoredDocument, 'id' | 'version'> {
     return { scope, type: value.type as DocumentType, mime: value.mime, size: bytes.length, data: bytes.toString('base64'), acl: 'private' };
 }
 function metadata(d: StoredDocument): Metadata { return { id: d.id, version: d.version, type: d.type, mime: d.mime, size: d.size }; }
-function validateState(value: unknown): asserts value is DocumentState {
-    if (!record(value) || value.format !== 1 || !exact(value, ['format', 'documents', 'retired']) || !Array.isArray(value.documents) || !Array.isArray(value.retired))
+export function validateState(value: unknown): asserts value is DocumentState {
+    if (!record(value) || value.format !== 1 || !exact(value, ['format', 'documents', 'retired', 'lifecycle']) || !Array.isArray(value.documents) || !Array.isArray(value.retired))
         fail('unavailable');
+    if (value.lifecycle !== undefined) validateLifecycleState(value.lifecycle);
     const ids = new Set<string>();
     for (const d of [...value.documents, ...value.retired]) {
         if (!record(d) || !exact(d, ['id', 'version', 'type', 'mime', 'size', 'scope', 'acl', 'data']) || typeof d.id !== 'string' || !uuid.test(d.id) || typeof d.version !== 'string' || !uuid.test(d.version) || d.acl !== 'private' || typeof d.data !== 'string' || !Number.isSafeInteger(d.size) || typeof d.type !== 'string' || typeof d.mime !== 'string')
@@ -222,7 +225,7 @@ export class PrivateDocuments {
         }
     }
     private log(operation: string, code: 'ok' | Code): void { try {
-        this.options.audit?.({ operation, code });
+        void Promise.resolve(this.options.audit?.({ operation, code })).catch(() => undefined);
     }
     catch { /* logging cannot expose dependency errors or change a committed result */ } }
     private async authorize(identity: RequestIdentity, scope: Scope): Promise<string> {

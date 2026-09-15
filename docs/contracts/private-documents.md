@@ -4,10 +4,10 @@
 
 `packages/private-documents/src/index.ts` provides a server-only storage and
 expiring-delivery primitive, a durable private filesystem reference adapter, and
-an opt-in Node HTTP download handler. No route is mounted in the running gateway;
-no deployment configuration, legacy code, bucket, or production data is changed.
-SHU-145 and SHU-160 own capability/UI integration and safe-write orchestration.
-This PR does not implement their browser upload credentials or claim live acceptance.
+an opt-in Node HTTP download handler. SHU-145 now mounts the candidate lifecycle and delivery routes through the configured
+gateway path; see [candidate lifecycle](candidate-document-lifecycle.md). The
+primitive itself does not configure a provider, change legacy storage or claim
+live acceptance. SHU-160 organization integration remains separate.
 
 The implementation accepts bytes, never a remote URL, caller-selected object key,
 filename, bucket, or storage credential. Upload/copy ACL is exclusively `private`;
@@ -61,7 +61,8 @@ Delivery URLs carry HMAC-SHA256 authenticated claims bound to document ID,
 immutable version, a keyed principal reference, issuance time and expiry. TTL
 is 60 seconds by default, restricted to integer 1–300 seconds. The signing key
 must be at least 32 bytes and must be supplied securely by the integrator; rotating
-it invalidates outstanding links. Exact origin/path/query shape and signature
+it invalidates outstanding links. The configured origin must be an exact default-port
+HTTPS origin (the SHU-236 configuration rule). Exact origin/path/query shape and signature
 are checked. Every redemption also re-authenticates and re-reads current grants.
 The URL is therefore not a bearer authority on its own. Expiry is exclusive:
 `now >= exp` denies. Replacement changes the version; logical deletion removes

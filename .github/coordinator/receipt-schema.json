@@ -24,7 +24,81 @@
     "notes"
   ],
   "properties": {
-    "receipt_version": { "type": "string", "const": "1.0.0" },
+    "handoff": {
+      "type": "object",
+      "description": "Consumed terminal handoff and queued action, atomically appended in the existing Linear receipt comment. No merge or launch authority.",
+      "additionalProperties": false,
+      "required": [
+        "source_attempt_id",
+        "target_sha",
+        "verdict_stage",
+        "action",
+        "hold_code"
+      ],
+      "properties": {
+        "source_attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "target_sha": {
+          "type": "string",
+          "description": "Head SHA the dispatch is bound to. A PASS against any other SHA is stale and never satisfies this receipt.",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "verdict_stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action": {
+          "enum": [
+            "merge-readiness",
+            "work-order",
+            "HOLD"
+          ]
+        },
+        "hold_code": {
+          "enum": [
+            "BLOCKED_BY_APPROVED_WINDOW",
+            "AWAITING_VERDICT",
+            "MISSING_AUTHORITY",
+            "NO_ELIGIBLE_WORK",
+            "CAPACITY_FULL",
+            "AWAITING_LAUNCH",
+            "MISSING_CLAIM",
+            "MISSING_LAUNCH_RECEIPT",
+            "BRANCH_OCCUPIED",
+            "AMBIGUOUS_LAUNCH",
+            "STALE_HEAD",
+            "INELIGIBLE_VERDICT",
+            "REQUIRED_CHECKS_NOT_GREEN",
+            "BLOCKING_REVIEW_THREAD",
+            "EXPLICIT_HOLD",
+            "BRANCH_PROTECTION_UNSATISFIED",
+            "FORBIDDEN_MERGE_ACTION",
+            "AMBIGUOUS_GITHUB_RESPONSE",
+            "BASE_ADVANCED",
+            "TREE_MISMATCH",
+            "AMBIGUOUS_MERGE_RESPONSE"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "order": {
+          "type": "object",
+          "description": "Existing review-routing work order plus repo, branch and findings (notes and evidence_links)."
+        },
+        "claim_attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "receipt_version": { "type": "string", "enum": ["1.0.0", "1.1.0"] },
+    "role": {"type": "string", "enum": ["build", "review", "revise"]},
+    "runtime": {"type": "string", "enum": ["codex-cli", "claude-code", "hermes-pool"]},
     "issue_id": { "type": "string", "minLength": 1 },
     "attempt_id": {
       "type": "string",
@@ -49,7 +123,7 @@
     "requested_worker": {
       "type": "string",
       "description": "Worker FAMILY requested (distinct from worker_identity, which is the actual session/run identity once one exists).",
-      "enum": ["codex-builder", "claude-verifier", "hermes-box"]
+      "enum": ["codex-builder", "claude-verifier", "hermes-box", "codex-verifier", "claude-builder", "hermes-verifier"]
     },
     "worker_identity": {
       "type": ["string", "null"],
@@ -195,6 +269,7 @@
           }
         }
       }
-    }
+    },
+    {"description": "1.1.0 introduces authoritative role/runtime; retained 1.0.0 receipts are never backfilled.", "if": {"properties": {"receipt_version": {"const": "1.1.0"}}}, "then": {"required": ["role", "runtime"]}, "else": {"not": {"anyOf": [{"required": ["role"]}, {"required": ["runtime"]}]}}}
   ]
 }

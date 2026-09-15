@@ -1,10 +1,18 @@
 {
   "pilot_repo": "BAWES-Universe/studenthub-platform",
-  "max_dispatch": 1,
+  "max_dispatch": 2,
   "enable_dispatch": false,
+  "routine_merge_authority": {
+    "enabled": false,
+    "authority_ref": "SHU-259",
+    "repo": "BAWES-Universe/studenthub-platform",
+    "merge_method": "squash",
+    "max_per_tick": 1
+  },
   "dispatch_scope": {
     "issue_ids": [
-      "SHU-140"
+      "SHU-140",
+      "SHU-254"
     ]
   },
   "adapter_pause_map": {},
@@ -12,6 +20,9 @@
     "BAWES"
   ],
   "linear_callback_actor_ids": [
+    "48918d3d-f843-483f-bb23-2ba6c7ace499"
+  ],
+  "linear_receipt_actor_ids": [
     "48918d3d-f843-483f-bb23-2ba6c7ace499"
   ],
   "max_failed_attempts": 3,
@@ -29,5 +40,22 @@
       "tools/fixture-conformance/scan-vacuous.expectations.mjs"
     ],
     "seeded_defect_path": "tools/fixture-conformance/scan-vacuous.expectations.mjs"
-  }
+  },
+  "fixture_lanes": [
+    {
+      "id": "SHU-254",
+      "authorization_ref": "SHU-254",
+      "note": "second isolated fixture lane for SHU-71; configuration only, not activation",
+      "initial_build_paths": [
+        "tools/fixture-2/scan-unawaited.mjs",
+        "tools/fixture-2/test/scan-unawaited.test.mjs"
+      ],
+      "revision_paths": [
+        "tools/fixture-2/scan-unawaited.mjs",
+        "tools/fixture-2/test/scan-unawaited.test.mjs",
+        "tools/fixture-2-conformance/scan-unawaited.expectations.mjs"
+      ],
+      "seeded_defect_path": "tools/fixture-2-conformance/scan-unawaited.expectations.mjs"
+    }
+  ]
 }

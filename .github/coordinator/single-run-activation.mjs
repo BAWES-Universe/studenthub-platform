@@ -81,11 +81,18 @@
 // already bounded by expiry, target, revision, one slot and the runtime switch.
 // Failing that way round is the cheaper mistake.
 
+import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
+import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
+import { resolveFixtureLane } from "./workspace-scope.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { BROKER_GIT_CONFIG_ARGS, brokerGitEnv } from "./push-broker.mjs";
-import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, REVIEW_LANES } from "./review-routing.mjs";
+import { routeSuccessorFromReceipts, outcomeForEvidenceStage, verdictMatchesLane, reviewVerdictProvenanceValid } from "./review-routing.mjs";
+// SHU-249: the reviewer-lane set is derived from the ONE launch vocabulary, so
+// the activation record's accepted lanes and the routing module's review
+// capability can never drift apart.
+import { REVIEW_LANES } from "./launch-vocabulary.mjs";
 
 // The exact key set. A record is rejected for a missing key AND for an extra one:
 // a configuration surface nobody reviewed is how scope creep enters security code.
@@ -242,6 +249,10 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
   // needs a usable lineage to name a next actor, and a finished loop has no next
   // actor to name. The lane must match, though: a builder lane cannot carry a PASS,
   // and that contradiction is left to the routing to name below.
+  if (terminal.receipt_version === "1.1.0") {
+    const authority = reviewVerdictProvenanceValid(terminal, issueReceipts);
+    if (!authority.ok) return { ended: true, reason: `role authority or author exclusion HOLD — ${authority.reason}` };
+  }
   const verdict = outcomeForEvidenceStage(terminal.verdict_stage);
   if (verdict?.outcome === "PASS" && verdictMatchesLane(terminal.requested_worker, terminal.verdict_stage)) {
     return { ended: true, reason: "review PASS — the episode is complete" };
@@ -263,7 +274,7 @@ export function episodeVerdict({ receipts = [], targetIssueId, config = {}, boot
       // only ever unlocks a review the lineage could not otherwise name (zero
       // review entries); every later step is routed from real receipts.
       bootstrapReviewer,
-      fixtureLane: config.fixture_lane ?? null,
+      fixtureLane: resolveFixtureLane(config, terminal.issue_id),
     });
   } catch (err) {
     return { ended: false, reason: `mid-episode: routing could not decide (${err?.message ?? "error"})` };
@@ -372,8 +383,36 @@ export function resolveCoordinatorRevision({ dir, gitHead, io = {} } = {}) {
 // The record
 // ---------------------------------------------------------------------------
 
-function refused(reason) {
-  return { requested: true, state: "refused", valid: false, reason, target_issue_id: null, activation_id: null, expires_at: null };
+function refused(reason, reporting = null) {
+  const safe = reporting &&
+    typeof reporting.activation_id === "string" && ACTIVATION_ID_RE.test(reporting.activation_id) &&
+    typeof reporting.target_issue_id === "string" && LINEAR_ISSUE_ID_RE.test(reporting.target_issue_id) &&
+    typeof reporting.coordinator_revision === "string" && REVISION_RE.test(reporting.coordinator_revision) &&
+    typeof reporting.expires_at === "string" && Number.isFinite(Date.parse(reporting.expires_at)) &&
+    ["expired", "spent"].includes(reporting.reporting_exception)
+      ? reporting
+      : null;
+  return {
+    requested: true,
+    state: "refused",
+    valid: false,
+    reason,
+    target_issue_id: safe?.target_issue_id ?? null,
+    activation_id: safe?.activation_id ?? null,
+    coordinator_revision: safe?.coordinator_revision ?? null,
+    expires_at: safe?.expires_at ?? null,
+    reporting_exception: safe?.reporting_exception ?? null,
+  };
+}
+
+function reportingRefusal(record, reporting_exception) {
+  return {
+    activation_id: record.activation_id,
+    target_issue_id: record.target_issue_id,
+    coordinator_revision: record.coordinator_revision,
+    expires_at: record.expires_at,
+    reporting_exception,
+  };
 }
 
 function readActivationText(filePath, io = {}) {
@@ -486,8 +525,43 @@ export function singleRunActivationStatus({
   gitHead,
   initialTargetSha,
   io = {},
+  env = {},
+  issues = [],
 } = {}) {
   if (!filePath) return { requested: false, state: "absent", valid: true, reason: null, target_issue_id: null, activation_id: null, expires_at: null };
+
+  // Explicit versioned extension; legacy records keep their original checks.
+  const envelope = readActivationText(filePath, io);
+  let pairRecord;
+  try { pairRecord = envelope.ok ? JSON.parse(envelope.text) : null; } catch { /* legacy diagnosis below */ }
+  if (config.dispatch_scope?.issue_ids?.length === 2 && !pairRecord?.target_issue_id && pairRecord?.kind !== "two-fixture-v1") {
+    return { ...refused(`ACT_MALFORMED: ${envelope.ok ? "missing or invalid two-fixture record kind" : envelope.reason}`), code: "ACT_MALFORMED", kind: "two-fixture-v1" };
+  }
+  if (pairRecord?.kind === "two-fixture-v1") {
+    const readRef = (ref) => {
+      try {
+        return execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-C", dir, "rev-parse", "--verify", ref], {
+          env: brokerGitEnv(process.env), encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch { return null; }
+    };
+    const evidence = io.fixtureHeadResolver
+      ? { heads: Object.fromEntries(["SHU-140", "SHU-254"].map(id => [`coordinator/${id}`, io.fixtureHeadResolver(`coordinator/${id}`)])), issues }
+      : readTwoFixtureEvidence(config, env);
+    const status = validateTwoFixtureActivation({ record: pairRecord, config,
+      revision: resolveCoordinatorRevision({ dir, gitHead, io }),
+      mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now });
+    if (!status.valid || status.state !== "armed") return status;
+    const episodes = status.fixtures.map(fixture => ({ fixture, episode: episodeVerdict({ receipts,
+      targetIssueId: fixture.issue_id, config, episodeScope: episodeScopeFor(status) }) }));
+    const ongoing = episodes.filter(entry => !entry.episode.ended);
+    if (!ongoing.length) return refused("activation is spent: both fixture episodes ended");
+    const selected = ongoing.find(entry => !receipts.some(r => r.issue_id === entry.fixture.issue_id && !TERMINAL_RECEIPT_STAGES.includes(r.stage))) ?? ongoing[0];
+    return { ...status, target_issue_id: selected.fixture.issue_id,
+      authorization_ref: selected.fixture.lane.authorization_ref, initial_target_sha: selected.fixture.seed_head,
+      successor: selected.episode.successor ?? null, episode: selected.episode.reason,
+      target_issue_ids: ongoing.map(entry => entry.fixture.issue_id) };
+  }
 
   // (1) Target binding — must be the single committed dispatch_scope issue.
   const scopeIds = config?.dispatch_scope?.issue_ids;
@@ -495,7 +569,7 @@ export function singleRunActivationStatus({
     return refused("a single-run activation requires a committed single-issue dispatch_scope; this configuration is board-wide");
   }
   const [scopeIssue] = scopeIds;
-  const fixtureLane = config?.fixture_lane ?? {};
+  const fixtureLane = resolveFixtureLane(config, scopeIssue) ?? config?.fixture_lane ?? {};
   if (fixtureLane.id && fixtureLane.id !== scopeIssue) {
     return refused(`committed configuration is inconsistent: fixture_lane.id ${fixtureLane.id} is not the scoped issue ${scopeIssue}`);
   }
@@ -544,7 +618,7 @@ export function singleRunActivationStatus({
   const expiry = new Date(record.expires_at).getTime();
   const at = now instanceof Date ? now.getTime() : Date.parse(now);
   if (!Number.isFinite(at)) return refused("current time could not be resolved (fail closed)");
-  if (expiry <= at) return refused(`activation expired at ${record.expires_at}`);
+  if (expiry <= at) return refused(`activation expired at ${record.expires_at}`, reportingRefusal(record, "expired"));
   if (expiry - at > MAX_ACTIVATION_WINDOW_MS) {
     return refused(`activation expiry is more than ${MAX_ACTIVATION_WINDOW_MS / 3600000}h away — the window is not bounded`);
   }
@@ -564,7 +638,10 @@ export function singleRunActivationStatus({
     bootstrapReviewer: record.reviewer_lane ? { lane: record.reviewer_lane } : null,
   });
   if (episode.ended) {
-    return refused(`activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`);
+    return refused(
+      `activation is spent: the episode for ${record.target_issue_id} ended — ${episode.reason}`,
+      reportingRefusal(record, "spent"),
+    );
   }
 
   return {
@@ -594,6 +671,7 @@ export function singleRunActivationStatus({
 // under a live activation.
 export function activationAllowsTarget(activation, issueId) {
   if (!activation || activation.state !== "armed") return true;
+  if (activation.kind === "two-fixture-v1") return activation.target_issue_ids.includes(issueId);
   return activation.target_issue_id === issueId;
 }
 

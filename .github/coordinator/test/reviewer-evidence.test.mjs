@@ -18,6 +18,8 @@ import { createEpisodeHarness, SHA_INPUT, SHA_WRITE } from "./fixture/episode-ha
 const ATTEMPT = "23223223-2232-4232-8232-232232232232";
 const SHA = "2".repeat(40);
 const TEST_LINK = "file:///srv/shu/review-evidence/review-test.json";
+const startProcessCanaryImpl = async () => ({ kill: () => true });
+const listenProbeImpl = async () => ({ address: () => ({ port: 26123 }), close: (done) => done() });
 
 function privateTemp(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -62,6 +64,7 @@ function reviewProof(over = {}) {
     passed: true,
     reason_code: "REVIEW_TESTS_PASSED",
     evidence_link: TEST_LINK,
+    isolation_wrapper: ["/test/reviewer-model-wrapper"],
     report: {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
       expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
@@ -239,6 +242,8 @@ test("SHU-232 B6: a real node --test execution at the bound workspace produces d
     const report = {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"], expected_uid: expectedUid, actual_uid: expectedUid,
       filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
+      protected_class_probes: { coordinator_evidence: "DENIED" }, symlink_probe: "DENIED", traversal_probe: "DENIED",
+      inherited_descriptor_probe: "DENIED", environment_value_probe: "DENIED", process_inspection_probe: "DENIED",
       tests: { executed: true, exit_code: actual.status, signal: actual.signal, stdout: actual.stdout, stderr: actual.stderr },
     };
     queueMicrotask(() => callback(null, JSON.stringify(report), ""));
@@ -251,11 +256,14 @@ test("SHU-232 B6: a real node --test execution at the bound workspace produces d
       PATH: process.env.PATH,
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
     execFileImpl,
     validateWrapperImpl: (wrapper) => wrapper,
+    startProcessCanaryImpl,
+    listenProbeImpl,
   });
   assert.equal(fs.readFileSync(marker, "utf8"), "ran", "assert on execution, not merely constructed argv");
   assert.equal(result.executed, true);
@@ -297,7 +305,7 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
   const unconfinedWrapper = path.join(root, "unconfined-wrapper");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
-  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nshift 5\nexec "$@"\n`, { mode: 0o700 });
+  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nshift 7\nexec "$@"\n`, { mode: 0o700 });
   fs.writeFileSync(path.join(workspace, "must-not-run.test.mjs"), "throw new Error('unconfined test ran');\n");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ownUid = process.getuid?.() ?? 1000;
@@ -309,10 +317,13 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
       PATH: process.env.PATH,
       SHU_REVIEW_EXEC_UID: String(ownUid + 1),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify([unconfinedWrapper]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify([unconfinedWrapper]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["must-not-run.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
     validateWrapperImpl: (wrapper) => wrapper,
+    startProcessCanaryImpl,
+    listenProbeImpl,
   });
   assert.equal(fs.existsSync(wrapperMarker), true, "a test-owned real wrapper reached the active child probe");
   assert.equal(fs.readFileSync(wrapperMarker, "utf8"), "ran");
@@ -399,13 +410,18 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
   const execFileImpl = (_file, _args, _options, callback) => queueMicrotask(() => callback(null, JSON.stringify({
     version: "1.0.0", target_sha: SHA, test_files: ["uid.test.mjs"], expected_uid: expectedUid, actual_uid: expectedUid,
     filesystem_probe: "DENIED", sibling_workspace_probe: "DENIED", workspace_write_probe: "DENIED", network_probe: "DENIED", forbidden_env_keys: [],
+    protected_class_probes: { coordinator_evidence: "DENIED" }, symlink_probe: "DENIED", traversal_probe: "DENIED",
+    inherited_descriptor_probe: "DENIED", environment_value_probe: "DENIED", process_inspection_probe: "DENIED",
     tests: { executed: true, exit_code: 0, signal: null, stdout: "TAP version 13\n# pass 1", stderr: "" },
   }), ""));
   const result = await runReviewEvidence({
     attempt_id: ATTEMPT, target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: (wrapper) => wrapper,
+    startProcessCanaryImpl,
+    listenProbeImpl,
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["uid.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
@@ -427,10 +443,13 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
   };
   const refused = await runReviewEvidence({
     attempt_id: ATTEMPT, target_sha: SHA, cwd: workspace, execFileImpl, validateWrapperImpl: (wrapper) => wrapper,
+    startProcessCanaryImpl,
+    listenProbeImpl,
     fsImpl: wrongOwnerFs,
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["uid.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },

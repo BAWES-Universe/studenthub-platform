@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Assert service verification prerequisites
+        run: systemd-analyze --version && test -x /usr/bin/flock
       - name: Entire coordinator suite with wall clock advanced 365 days
         env:
           SHU_TEST_CLOCK_OFFSET_MS: '31536000000'
@@ -82,6 +84,8 @@ jobs:
       - run: npm run typecheck
       # Deterministic coordinator dry-run package (dispatch disabled): pure JS,
       # no build step — runs directly via node --test.
+      - name: Assert service verification prerequisites
+        run: systemd-analyze --version && test -x /usr/bin/flock
       - run: npm run test:coordinator
       # npm test is the no-external-dependencies suite; the db suite needs the
       # postgres service above, so it runs as its own explicit step (test:db).
@@ -105,5 +109,31 @@ jobs:
           OIDC_JWKS_URL: https://auth.example.test/application/o/studenthub/jwks/
           LOGIN_ALLOWED_RETURN_URLS: https://studenthub.example.test/
         run: docker compose -f deploy/coolify/compose.yaml config --quiet
-      - name: Build staging gateway image
-        run: docker build --build-arg SOURCE_REVISION="${GITHUB_SHA}" .
+  image-smoke:
+    name: gateway-image-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-placeholder
+          POSTGRES_DB: studenthub_authz
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build deployable gateway image
+        run: docker build --file Dockerfile --build-arg SOURCE_REVISION="${GITHUB_SHA}" --tag gateway-image-smoke .
+      - name: 'IMAGE_SMOKE: /health must return 200 from the built image'
+        env:
+          DATABASE_URL: postgres://postgres:ci-only-placeholder@localhost:55432/studenthub_authz
+        run: bash deploy/coolify/image-smoke.sh gateway-image-smoke

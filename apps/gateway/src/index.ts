@@ -1,3 +1,6 @@
+import { handleCandidateDocuments } from './candidate-documents-http.js';
+import { createRuntimeCandidateDocumentsFromEnv } from './candidate-documents-runtime.js';
+import type { CandidateDocuments } from '../../../packages/private-documents/src/candidate-lifecycle.js';
 import { createServer, type OutgoingHttpHeaders, type Server } from "node:http";
 import { Telemetry, disabledTelemetry, telemetryMode, newSpan, inSpan, classifyJourney, type Fault } from '../../../packages/observability/src/index.js';
 import { randomBytes } from "node:crypto";
@@ -19,7 +22,7 @@ import {
 import { createRuntimeLoginFromEnv } from "./login-runtime.js";
 import {
   type BrowserLoginApplication, profileDocument, renderError, renderLanding,
-  WEB_CSS, wantsHtml, writeHtml,
+  WEB_CSS, WORKSPACE_HISTORY_JS, wantsHtml, writeHtml, renderWorkspace,
 } from "./web-ui.js";
 
 export * from "./authz-middleware.js";
@@ -123,6 +126,7 @@ export function createGatewayServer(
   login?: BrowserLoginApplication,
   sourceRevision: string | null = readImageSourceRevision(),
   telemetry: Telemetry = disabledTelemetry,
+  documents?: CandidateDocuments,
 ): Server {
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
     throw new RangeError("maxRequestBytes must be a positive safe integer");
@@ -150,6 +154,7 @@ export function createGatewayServer(
     response.once('close', () => complete(!response.writableFinished));
     void inSpan(webSpan ?? span, async () => {
     try {
+    if (await handleCandidateDocuments(request, response, documents)) return;
     if (request.method === "GET" && request.url?.split("?", 1)[0] === "/") {
       writeHtml(response, 200, renderLanding(login));
       return;
@@ -162,6 +167,12 @@ export function createGatewayServer(
       response.end(WEB_CSS);
       return;
     }
+    if (request.method === "GET" && request.url === "/assets/workspace-history.js") {
+      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-store", "x-content-type-options": "nosniff" });
+      response.end(WORKSPACE_HISTORY_JS);
+      return;
+    }
     if (!login && html && request.url && ["/profile", "/login/universe", "/login/callback", "/logout"].includes(requestPath(request.url))) {
       writeHtml(response, 503, renderError(503));
       return;
@@ -169,6 +180,26 @@ export function createGatewayServer(
     if (request.method === "GET" && request.url === "/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(createHealthResponse("gateway", new Date(), sourceRevision)));
+      return;
+    }
+
+    if (request.method === "GET" && request.url && requestPath(request.url) === "/workspace") {
+      let result: import("./context-navigation.js").NavigationResult;
+      try {
+        result = login?.navigation
+          ? await login.navigation.open(
+            cookieValue(request.headers.cookie, "__Host-studenthub_session"),
+            new URL(request.url, "http://gateway.invalid").searchParams,
+          )
+          : { status: 503, body: { error: "context_unavailable" } };
+      } catch {
+        result = { status: 503, body: { error: "context_unavailable" } };
+      }
+      if (html) {
+        writeHtml(response, result.status, login ? renderWorkspace(result, login) : renderError(503), {}, true);
+      } else {
+        writeBrowserResponseSafely(response, { ...result, headers: { "cache-control": "no-store", vary: "Accept" } });
+      }
       return;
     }
 
@@ -229,6 +260,26 @@ export function createGatewayServer(
       } catch {
         fault = 'dependency_unavailable';
         result = { status: 503, body: { error: "login_unavailable" } };
+      }
+      if (result.status === 200 && login.web) {
+        try {
+          const requesterPrincipalId = result.body?.personId;
+          if (typeof requesterPrincipalId !== "string" || requesterPrincipalId.length === 0) {
+            throw new Error("invalid authorized profile");
+          }
+          const profile = await login.web.profiles.readOwn({
+            requesterPrincipalId,
+            targetPersonId: url.searchParams.get("person_id") ?? requesterPrincipalId,
+          });
+          result = profile.kind === "found"
+            ? { status: 200, body: profile.profile }
+            : profile.kind === "not_found"
+              ? { status: 404, body: { error: "profile_not_found" } }
+              : { status: 503, body: { error: "profile_unavailable" } };
+        } catch {
+          fault = 'dependency_unavailable';
+          result = { status: 503, body: { error: "profile_unavailable" } };
+        }
       }
       if (html) {
         try {
@@ -410,6 +461,7 @@ if (entrypoint === import.meta.url) {
   const port = parseGatewayPort(process.env.PORT);
   const host = parseGatewayHost(process.env.HOST);
   const runtimeLogin = createRuntimeLoginFromEnv();
+  const runtimeDocuments = await createRuntimeCandidateDocumentsFromEnv();
   const telemetry = new Telemetry(telemetryMode(process.env));
   const server = createGatewayServer(
     new UnconfiguredMcpAdapter(),
@@ -418,8 +470,9 @@ if (entrypoint === import.meta.url) {
     runtimeLogin?.application,
     readImageSourceRevision(),
     telemetry,
+    runtimeDocuments?.service,
   );
-  server.once("close", () => { void runtimeLogin?.close(); void telemetry.close(); });
+  server.once("close", () => { void runtimeLogin?.close(); void runtimeDocuments?.close(); void telemetry.close(); });
   server.listen(port, host, () => {
     process.stdout.write(`studenthub gateway listening on ${gatewayListenUrl(host, port)}\n`);
   });

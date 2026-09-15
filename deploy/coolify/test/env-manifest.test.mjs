@@ -175,7 +175,17 @@ test("SHU-243 workflow gates image build and push on the env-store check", () =>
   assert.match(workflow, /application\/vnd\.github\.raw\+json/);
   assert.match(workflow, /if: \$\{\{ github\.event_name != 'pull_request_target' \}\}/);
   assert.match(workflow, /build-push:\n    if:.*\n    needs: env-manifest/);
-  assert.match(workflow, /deploy:\n    if: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' \}\}/);
+  assert.match(workflow, /deploy:\n(?:    #.*\n)*    if: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' \}\}\n    needs: build-push/,
+    "AUTOMATIC_STAGING_ONLY: main push deployment must wait for the smoke-tested publication");
+  const deploy = workflow.slice(workflow.indexOf("\n  deploy:"));
+  assert.doesNotMatch(workflow, /workflow_dispatch:|inputs\.revision|inputs\.digest/,
+    "NO_OPERATOR_DISPATCH: selection must come from this publication");
+  assert.match(workflow, /Smoke-test the exact published digest/);
+  assert.ok(workflow.indexOf('Smoke-test the exact published digest') < workflow.indexOf('Record published artifact'));
+  assert.match(deploy, /needs\.build-push\.outputs\.digest/);
+  const recorded = deploy.indexOf('path: selected-artifact.json');
+  assert.ok(recorded >= 0 && recorded < deploy.indexOf('run: node deploy/coolify/automatic-staging.mjs'),
+    "RECORD_BEFORE_TRIGGER: selection upload must precede deployment");
   assert.doesNotMatch(workflow, /DEPLOYMENT_ENV_MANIFEST_PATH:/);
   assert.match(workflow, /Validate proposed manifest as untrusted data/);
   assert.match(workflow, /Verify trusted Coolify deployment environment/);

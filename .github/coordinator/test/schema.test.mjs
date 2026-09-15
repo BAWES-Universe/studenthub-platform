@@ -299,6 +299,10 @@ test("machine never emits an invalid receipt across the happy path", () => {
 
 test("receipt comments round-trip (durable receipt on the Linear thread)", () => {
   const { receipt } = createReceipt({
+    // SHU-249: explicitly opt into 1.1.0; retain the exact-shape assertion below.
+    receipt_version: "1.1.0",
+    role: "build",
+    runtime: "hermes-pool",
     issue_id: "SHU-11",
     authorization_ref: "SHU-11",
     requested_worker: "hermes-box",
