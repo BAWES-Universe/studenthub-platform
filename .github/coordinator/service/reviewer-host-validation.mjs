@@ -63,6 +63,23 @@ function runChild(file, args, options) {
   });
 }
 
+export async function finalizeHostValidation({ cleanupCallbacks = [], verifyInventory, primaryError = null } = {}) {
+  const cleanupErrors = [];
+  for (const callback of [...cleanupCallbacks].reverse()) {
+    try { await callback(); }
+    catch (error) { cleanupErrors.push(error); }
+  }
+  try { await verifyInventory?.(); }
+  catch (error) { cleanupErrors.push(error); }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      primaryError ? [primaryError, ...cleanupErrors] : cleanupErrors,
+      `SHU261_CLEANUP_AGGREGATE: ${cleanupErrors.length} cleanup or inventory operation(s) failed`,
+    );
+  }
+  if (primaryError) throw primaryError;
+}
+
 export async function validateReviewerHost({ approvedRevision, env = process.env } = {}) {
   assert.equal(process.getuid?.(), 0, "SHU261_HOST_GATE: approved validation must run as root without escalating inside the script");
   assert.equal(env.SHU261_HOST_MUTATION_APPROVED, "true", "SHU261_HOST_GATE: explicit host-mutation approval environment is required");
@@ -92,11 +109,12 @@ export async function validateReviewerHost({ approvedRevision, env = process.env
   let markerProcess;
   let server;
   let evidence;
+  let primaryError;
   try {
     if (!fs.existsSync(REVIEWER_LAYOUT.coordinator_logs)) {
       fs.mkdirSync(REVIEWER_LAYOUT.coordinator_logs, { mode: 0o700 });
-      fs.chownSync(REVIEWER_LAYOUT.coordinator_logs, preflight.identities.coordinator.uid, preflight.identities.coordinator.gid);
       cleanup.push(() => fs.rmdirSync(REVIEWER_LAYOUT.coordinator_logs));
+      fs.chownSync(REVIEWER_LAYOUT.coordinator_logs, preflight.identities.coordinator.uid, preflight.identities.coordinator.gid);
     }
     const classDirectories = {
       activation_records: REVIEWER_LAYOUT.activation_records,
@@ -104,6 +122,7 @@ export async function validateReviewerHost({ approvedRevision, env = process.env
       supervisor_secrets: REVIEWER_LAYOUT.supervisor_secrets,
       ssh_credentials: REVIEWER_LAYOUT.ssh_credentials,
       codex_session_sidecars: REVIEWER_LAYOUT.codex_session_sidecars,
+      service_home_claude_sidecars: REVIEWER_LAYOUT.service_home_claude_sidecars,
       claude_session_sidecars: REVIEWER_LAYOUT.claude_session_sidecars,
       coordinator_logs: REVIEWER_LAYOUT.coordinator_logs,
     };
@@ -124,11 +143,11 @@ export async function validateReviewerHost({ approvedRevision, env = process.env
     for (const candidate of [workspace, siblingWorkspace]) {
       const added = spawnSync(GIT, ["worktree", "add", "--detach", candidate, approvedRevision], { cwd: REPO, encoding: "utf8" });
       assert.equal(added.status, 0, `SHU261_HOST_WORKTREE: detached exact-head worktree must be created: ${added.stderr}`);
-      fs.chmodSync(candidate, 0o750);
       cleanup.push(() => {
         const removed = spawnSync(GIT, ["worktree", "remove", "--force", candidate], { cwd: REPO, encoding: "utf8" });
         assert.equal(removed.status, 0, `SHU261_HOST_WORKTREE: temporary worktree cleanup must succeed: ${removed.stderr}`);
       });
+      fs.chmodSync(candidate, 0o750);
       assert.equal(spawnSync(GIT, ["rev-parse", "HEAD"], { cwd: candidate, encoding: "utf8" }).stdout.trim(), approvedRevision,
         "SHU261_HOST_WORKTREE: each temporary checkout must bind the approved exact head");
     }
@@ -180,11 +199,20 @@ export async function validateReviewerHost({ approvedRevision, env = process.env
       `--reuid=${REVIEWER_IDENTITIES.coordinator}`, `--regid=${REVIEWER_IDENTITIES.coordinator}`, "--clear-groups",
       process.execPath, "-e", "setInterval(()=>{},1000)", processCanary,
     ], { stdio: "ignore" });
+    cleanup.push(() => {
+      if (markerProcess.exitCode === null && !markerProcess.kill("SIGTERM")) {
+        throw new Error("SHU261_CLEANUP_PROCESS: coordinator process canary could not be stopped");
+      }
+    });
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.match(fs.readFileSync(`/proc/${markerProcess.pid}/cmdline`, "utf8"), new RegExp(processCanary),
       "SHU261_POSITIVE_PROCESS: coordinator process canary must be inspectable before confinement");
 
     server = net.createServer((socket) => socket.end());
+    cleanup.push(() => new Promise((resolve, reject) => {
+      try { server.close((error) => error ? reject(error) : resolve()); }
+      catch (error) { reject(error); }
+    }));
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     const environmentCanary = `SHU261_ENV_${nonce}`;
     const args = ["-n", WRAPPER, "--profile", "test", "--workspace-root", REVIEWER_LAYOUT.worktree_root, "--workspace", workspace, "--",
@@ -220,21 +248,19 @@ export async function validateReviewerHost({ approvedRevision, env = process.env
       },
       positive: { uid: report.actual_uid, workspace_uid: report.workspace_uid, tests_executed: report.tests.executed, tests_exit_code: report.tests.exit_code },
     };
-  } finally {
-    const cleanupErrors = [];
-    if (server) cleanup.push(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
-    if (markerProcess) cleanup.push(() => markerProcess.kill("SIGTERM"));
-    for (const remove of cleanup.reverse()) {
-      try { await remove(); } catch (error) { cleanupErrors.push(error); }
-    }
-    try {
+  } catch (error) {
+    primaryError = error;
+  }
+  await finalizeHostValidation({
+    cleanupCallbacks: cleanup,
+    primaryError,
+    verifyInventory: () => {
       const worktreesAfter = spawnSync(GIT, ["worktree", "list", "--porcelain"], { cwd: REPO, encoding: "utf8" });
       assert.equal(worktreesAfter.status, 0, `SHU261_HOST_WORKTREE: final inventory must succeed: ${worktreesAfter.stderr}`);
       assert.equal(worktreesAfter.stdout, worktreesBefore.stdout,
         "SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory");
-    } catch (error) { cleanupErrors.push(error); }
-    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "SHU261_HOST_CLEANUP: cleanup or final inventory failed");
-  }
+    },
+  });
   return evidence;
 }
 
