@@ -129,8 +129,8 @@ deployed authority roots: `/srv/shu/state`, `/etc/shu`, `/srv/shu/service.env`,
 `/srv/shu/coordinator.env`, `/srv/shu/.gitkeys`, `/srv/codex`,
 `/srv/shu/.claude`, `/home/shu-coordinator`, `/srv/shu/logs`, `/var/log` and `/run/log`.
 
-Claude's `model` profile keeps ordinary provider network families while the
-test profile remains networkless. Its tool surface is restricted to `Read`, `Glob`, and `Grep`
+Claude's `model` profile permits only the AF_UNIX, AF_INET and AF_INET6 address
+families, with no destination allowlist. The test profile remains networkless. Its tool surface is restricted to `Read`, `Glob`, and `Grep`
 in restricted evaluation mode. This preserves subscription authentication while
 disabling ambient settings, CLAUDE.md, hooks, skills, commands, plugins and
 subagents; file tools remain inside the exact cwd. Strict MCP configuration and

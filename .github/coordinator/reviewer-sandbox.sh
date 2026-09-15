@@ -3,7 +3,8 @@
 # /usr/local/libexec/shu-reviewer-sandbox. The coordinator invokes it through a
 # narrowly-scoped sudo rule. It executes both phases of review as shu-reviewer:
 # builder-authored tests use the no-network `test` profile and Claude uses the
-# provider-network-only `model` profile. Both profiles share the same filesystem,
+# address-family-restricted `model` profile (AF_UNIX, AF_INET, AF_INET6), with
+# no destination allowlist. Both profiles share the same filesystem,
 # process and identity boundary. Privileged bash mode prevents startup files,
 # imported functions, BASH_ENV and caller shell options from running as root.
 while IFS= read -r environment_name; do
@@ -98,12 +99,42 @@ if /usr/bin/getfacl -cpn -- "$canonical_workspace" | /usr/bin/grep -q "^user:${r
   exit 64
 fi
 
-# Access exists only for this invocation. The trap removes it on success,
-# refusal, signal, or systemd failure; sibling paths are additionally masked in
-# the transient mount namespace, including siblings that predate mode 0750.
+# Revoke invocation access on exit and report failures without hiding the primary
+# status or tool diagnostics. Keep the serialization lock until revocation ends.
+cleanup_step() {
+  local step="$1" status
+  shift
+  if "$@"; then
+    return 0
+  else
+    status=$?
+    cleanup_failures+=("$step (exit $status)")
+  fi
+}
+
+cleanup() {
+  local primary_status=$? failure
+  local -a cleanup_failures=()
+  trap - EXIT HUP INT TERM
+  cleanup_step "revoke reviewer workspace ACL" /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace"
+  cleanup_step "release reviewer lock" /usr/bin/flock -u 9
+  if (( ${#cleanup_failures[@]} > 0 )); then
+    for failure in "${cleanup_failures[@]}"; do
+      printf 'reviewer sandbox cleanup failed: %s\n' "$failure" >&2
+    done
+    if (( primary_status == 0 )); then
+      printf 'reviewer sandbox failed: cleanup failed after an otherwise successful run\n' >&2
+      exit 1
+    fi
+    printf 'reviewer sandbox primary failure retained (exit %s); cleanup also failed\n' "$primary_status" >&2
+  fi
+  exit "$primary_status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 /usr/bin/setfacl -m "u:${reviewer_uid}:r-x" -- "$canonical_workspace"
-cleanup() { /usr/bin/setfacl -x "u:${reviewer_uid}" -- "$canonical_workspace" || true; }
-trap cleanup EXIT HUP INT TERM
 
 # A checkout hardlink can bypass path-only masking: a protected inode linked
 # under the allowed checkout remains the same readable object. Independent Git

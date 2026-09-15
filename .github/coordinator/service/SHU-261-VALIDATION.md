@@ -12,10 +12,13 @@ remain `shu-worker`, and attempt directories remain direct mode-0750 children of
 `/srv/shu/worktrees` governed by `shu-workspace`.
 
 The wrapper grants a temporary read/traverse ACL only to the assigned attempt,
-then removes it on every exit. The checkout is read-only and non-executable.
+then attempts revocation on exit. Cleanup failures retain tool diagnostics and
+are reported alongside any primary failure; cleanup failure alone exits non-zero.
+The checkout is read-only and non-executable.
 Sibling attempts and the deployed authority paths are inaccessible mounts.
-Tests use a networkless profile; the model profile retains ordinary provider
-network address families and receives only its own subscription OAuth value.
+Tests use a networkless profile; the model profile permits AF_UNIX, AF_INET
+and AF_INET6 address families, with no destination allowlist, and receives only
+its own subscription OAuth value.
 
 Writer/broker separation is unchanged: reviewers receive no GitHub, Linear,
 supervisor or SSH credential; their Claude tool surface is `Read,Glob,Grep`; and

@@ -67,7 +67,18 @@ export function assertReviewerSandboxContract(source) {
   required(source, /CapabilityBoundingSet=/, "SHU261_PRIVILEGE: reviewer capability set must be empty");
   required(source, /PrivateNetwork=yes/, "SHU261_TEST_NETWORK: assigned tests must have no network");
   required(source, /RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6/,
-    "SHU261_MODEL_NETWORK: model profile may use only ordinary provider network families");
+    "SHU261_MODEL_NETWORK: model profile permits AF_UNIX, AF_INET, AF_INET6; no destination allowlist");
+  assert.deepEqual([...source.matchAll(/network_args=\(([\s\S]*?)\)/g)].map((match) => match[1].trim()), [
+    '"--property=PrivateNetwork=yes"\n    "--property=RestrictAddressFamilies=AF_UNIX"',
+    '"--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"',
+  ], "SHU261_NETWORK_ENFORCEMENT: exact test isolation and model address families must stay pinned");
+  assert.doesNotMatch(source, /provider[- ]network[- ]only|ordinary[ ]provider[ ]network/i,
+    "SHU261_NETWORK_CLAIM: address families do not confine destinations");
+  required(source, /no destination allowlist/,
+    "SHU261_NETWORK_CLAIM: disclose the absence of destination confinement");
+  assert.doesNotMatch(source.replace(/^\s*#.*$/gm, ""),
+    /IPAddressAllow|IPAddressDeny|RestrictNetworkInterfaces|NFTSet|SocketBindAllow|SocketBindDeny|\b(?:nft|iptables|ip6tables|firewall-cmd)\b|(?:HTTP|HTTPS|ALL)_PROXY/i,
+    "SHU261_NETWORK_NO_ALLOWLIST: wrapper has no destination filtering or proxy mechanism");
   required(source, /HOME=\/tmp\/shu-reviewer-home/, "SHU261_SIDECAR: reviewer home must be transient and private");
   required(source, /accepts only the reviewed exact-head evidence child/,
     "SHU261_COMMAND: test profile must bind the reviewed child");
