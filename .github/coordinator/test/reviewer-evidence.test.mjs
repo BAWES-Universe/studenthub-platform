@@ -62,6 +62,7 @@ function reviewProof(over = {}) {
     passed: true,
     reason_code: "REVIEW_TESTS_PASSED",
     evidence_link: TEST_LINK,
+    isolation_wrapper: ["/test/reviewer-model-wrapper"],
     report: {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
       expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
@@ -251,6 +252,7 @@ test("SHU-232 B6: a real node --test execution at the bound workspace produces d
       PATH: process.env.PATH,
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
@@ -297,7 +299,7 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
   const unconfinedWrapper = path.join(root, "unconfined-wrapper");
   fs.mkdirSync(workspace, { mode: 0o755 });
   fs.mkdirSync(evidence, { mode: 0o700 });
-  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nshift 5\nexec "$@"\n`, { mode: 0o700 });
+  fs.writeFileSync(unconfinedWrapper, `#!/bin/sh\nprintf ran > ${JSON.stringify(wrapperMarker)}\nshift 7\nexec "$@"\n`, { mode: 0o700 });
   fs.writeFileSync(path.join(workspace, "must-not-run.test.mjs"), "throw new Error('unconfined test ran');\n");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ownUid = process.getuid?.() ?? 1000;
@@ -309,6 +311,7 @@ test("SHU-232 B7: an actual unconfined child exposes a boundary and is refused b
       PATH: process.env.PATH,
       SHU_REVIEW_EXEC_UID: String(ownUid + 1),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify([unconfinedWrapper]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify([unconfinedWrapper]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["must-not-run.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
@@ -406,6 +409,7 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["uid.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
@@ -431,6 +435,7 @@ test("SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effe
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/confinement-wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["uid.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },

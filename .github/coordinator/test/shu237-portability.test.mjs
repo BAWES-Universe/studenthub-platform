@@ -123,6 +123,7 @@ test("SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validate
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify([SUDO_ALIAS, "-n", SANDBOX_ALIAS]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify([SUDO_ALIAS, "-n", SANDBOX_ALIAS]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },
@@ -216,6 +217,7 @@ async function ownershipRun({ attempt, childUid, childMode = 0o644, workspaceUid
     env: {
       SHU_REVIEW_EXEC_UID: String(expectedUid),
       SHU_REVIEW_EXEC_WRAPPER_JSON: JSON.stringify(["/test/wrapper"]),
+      SHU_REVIEW_MODEL_WRAPPER_JSON: JSON.stringify(["/test/wrapper"]),
       SHU_REVIEW_TEST_FILES_JSON: JSON.stringify(["bound.test.mjs"]),
       SHU_REVIEW_EVIDENCE_DIR: evidence,
     },

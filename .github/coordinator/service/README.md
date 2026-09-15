@@ -236,6 +236,23 @@ Host installation, credential delivery, service identity/permissions, unit/drop-
 and enabled/active-state backups, daemon reload, activation, crash/restart proof,
 and running-system one-writer/kill-switch/rollback evidence require host access
 and remain unexecuted by design. No SHU-250 interface work remains deferred here.
+
+SHU-261 adds a second separately gated host window for reviewer isolation. The
+reviewed wrapper must be installed at `/usr/local/libexec/shu-reviewer-sandbox`,
+and the coordinator's command-specific sudo policy must allow the test form plus
+the model form that preserves only `CLAUDE_CODE_OAUTH_TOKEN`. Do not grant a
+general shell, arbitrary environment preservation, or another sudo target. The
+prepared `reviewer-host-validation.mjs` refuses unless it is run as root from a
+clean exact approved revision with `SHU261_HOST_MUTATION_APPROVED=true` and
+`--approved-host-mutation <full-sha>`. It creates only unique harmless sentinels
+and temporary detached exact-head worktrees, cleans them on every exit, prints sanitized
+uid/gid/mode/result evidence, and never starts or enables coordinator services.
+The wrapper is compatible with the planned systemd 255 host: it combines a
+root-held same-reviewer serialization lock with `ProtectProc=invisible` and
+`ProcSubset=pid`; the active harness proves a coordinator-process canary is not
+inspectable. It does not use the systemd-257-only `PrivatePIDs=` directive.
+Preparing this harness does not authorize running it.
+
 Before a future host audit, stop the timer, disable runtime admission and account
 for all existing workers; then baseline remote, workspace and supervisor state.
 Observe repeated disabled ticks across at least two wake intervals, requiring
