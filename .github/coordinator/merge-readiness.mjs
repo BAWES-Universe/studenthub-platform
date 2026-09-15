@@ -17,7 +17,7 @@ const MARKER = '<!-- coordinator-merge-attempt v1 -->';
 const STATES = Object.freeze(['PREPARED', 'COMPLETED', 'HOLD']);
 const IMMUTABLE = Object.freeze([
   'version', 'attempt_id', 'source_attempt_id', 'issue_id', 'repo', 'branch',
-  'pr_number', 'approved_head_sha', 'approved_tree_sha', 'base_sha',
+  'pr_number', 'approved_head_sha', 'approved_tree_sha', 'base_sha', 'base_ref',
   'merge_method', 'authority_ref',
 ]);
 const FORBIDDEN_LABELS = new Set([
@@ -90,6 +90,10 @@ export function validateMergeAttempt(record) {
       record.authority_ref !== 'SHU-259' || !STATES.includes(record.state) || typeof record.updated_at !== 'string') {
     return { ok: false, reason: 'invalid required field' };
   }
+  // Retain legacy records without base_ref so their deterministic attempt cannot
+  // disappear on upgrade. They may only transition to HOLD, never resume a PUT.
+  if (record.base_ref !== undefined && !(record.state === 'HOLD' && record.base_ref === null) &&
+      (typeof record.base_ref !== 'string' || record.base_ref.length === 0)) return { ok: false, reason: 'invalid base ref' };
   if (record.state === 'HOLD') {
     if (record.pr_number !== null && (!Number.isInteger(record.pr_number) || record.pr_number <= 0)) return { ok: false, reason: 'invalid HOLD pull request' };
     if (record.approved_tree_sha !== null && !SHA.test(record.approved_tree_sha ?? '')) return { ok: false, reason: 'invalid HOLD tree' };
@@ -225,7 +229,7 @@ export async function fetchGitHubMergeSnapshot({ repo, branch, targetSha, token,
     const landedTree = mergedCommitResult.body?.commit?.tree?.sha;
     if (!mergedCommitResult.ok || !SHA.test(landedTree ?? '')) return { ok: false, code: 'AMBIGUOUS_GITHUB_RESPONSE', reason: 'landed merge tree was not readable' };
     return { ok: true, merged: true, pr_number: number, head_sha: targetSha, tree_sha: treeSha,
-      base_sha: pr.base.sha, merge_commit_sha: pr.merge_commit_sha, landed_tree_sha: landedTree };
+      base_sha: pr.base.sha, base_ref: pr.base.ref, merge_commit_sha: pr.merge_commit_sha, landed_tree_sha: landedTree };
   }
   if (pr.state !== 'open' || pr.draft === true) return { ok: false, code: 'EXPLICIT_HOLD', reason: 'pull request is not open and ready for review' };
   const branchResult = await jsonRequest(fetchImpl, `https://api.github.com/repos/${repo}/branches/${encodeURIComponent(pr.base.ref)}`, token);
@@ -244,9 +248,12 @@ export async function fetchGitHubMergeSnapshot({ repo, branch, targetSha, token,
   if (!protectionResult.ok || !statusResult.ok || !Array.isArray(statusResult.body?.statuses) || statusResult.body.statuses.length >= 100 || !checksResult.ok || !Array.isArray(checksResult.body?.check_runs) || checksResult.body.total_count > 100) {
     return { ok: false, code: 'AMBIGUOUS_GITHUB_RESPONSE', reason: 'required-check authority was unavailable or incomplete' };
   }
+  if (protectionResult.body?.required_status_checks?.strict !== true) {
+    return { ok: false, code: 'BRANCH_PROTECTION_UNSATISFIED', reason: 'server-enforced strict base freshness is required' };
+  }
   const requiredGreen = requiredChecksGreen(protectionResult.body?.required_status_checks ?? {}, statusResult.body.statuses, checksResult.body.check_runs);
   if (!threadsResult.ok) return { ok: false, code: 'AMBIGUOUS_GITHUB_RESPONSE', reason: 'review thread authority was unavailable or incomplete' };
-  return { ok: true, merged: false, pr_number: number, head_sha: targetSha, tree_sha: treeSha, base_sha: baseLive,
+  return { ok: true, merged: false, pr_number: number, head_sha: targetSha, tree_sha: treeSha, base_sha: baseLive, base_ref: pr.base.ref,
     required_checks_green: requiredGreen,
     blocking_threads: threadsResult.nodes.filter(thread => thread?.isResolved !== true).length,
     protection_satisfied: pr.mergeable === true && pr.mergeable_state === 'clean' };
@@ -269,6 +276,7 @@ function makeRecord({ source, snapshot, authorityRef, state = 'PREPARED', code =
     approved_head_sha: source.handoff.target_sha,
     approved_tree_sha: snapshot.tree_sha,
     base_sha: snapshot.base_sha,
+    base_ref: snapshot.base_ref,
     merge_method: 'squash',
     authority_ref: authorityRef,
     state,
@@ -288,6 +296,7 @@ function initialHoldRecord({ source, authorityRef, code, reason, snapshot = {}, 
     approved_head_sha: source.handoff.target_sha,
     approved_tree_sha: SHA.test(snapshot.tree_sha ?? '') ? snapshot.tree_sha : null,
     base_sha: SHA.test(snapshot.base_sha ?? '') ? snapshot.base_sha : null,
+    base_ref: typeof snapshot.base_ref === 'string' && snapshot.base_ref.length > 0 ? snapshot.base_ref : null,
     merge_method: 'squash', authority_ref: authorityRef, state: 'HOLD',
     hold_code: requireHoldCode(code), reason, merge_commit_sha: null, landed_tree_sha: null,
     updated_at: (now instanceof Date ? now : new Date(now)).toISOString(),
@@ -309,6 +318,15 @@ async function appendRecord({ record, issueId, linearToken, fetchImpl, allowedAc
 function holdFrom(prepared, code, reason, now) {
   return { ...prepared, state: 'HOLD', hold_code: requireHoldCode(code), reason,
     merge_commit_sha: null, landed_tree_sha: null, updated_at: now.toISOString() };
+}
+
+function bindingHold(prepared, snapshot, now) {
+  if (!prepared) return null;
+  if (snapshot.pr_number !== prepared.pr_number) return holdFrom(prepared, 'AMBIGUOUS_GITHUB_RESPONSE',
+    'pull request identity changed after the durable merge intent', now);
+  if (!prepared.base_ref || snapshot.base_ref !== prepared.base_ref) return holdFrom(prepared, 'BASE_ADVANCED',
+    'base ref is unbound or changed after the durable merge intent', now);
+  return null;
 }
 
 function completedFrom(prepared, snapshot, now) {
@@ -370,15 +388,20 @@ export async function consumeMergeReadiness({
 
     let authorityCheck = await authorityNow({ source, linearIssueId, linearToken, githubToken, fetchImpl, allowedActorIds });
     if (!authorityCheck.ok) {
-      const held = initialHoldRecord({ source, authorityRef: authority.authority_ref,
+      const held = existing ? holdFrom(existing, authorityCheck.code, authorityCheck.reason, now()) : initialHoldRecord({ source, authorityRef: authority.authority_ref,
         code: authorityCheck.code, reason: authorityCheck.reason, snapshot: authorityCheck.snapshot, now: now() });
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds });
       writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=${authorityCheck.code} — ${authorityCheck.reason}`);
       continue;
     }
+    const initialBinding = bindingHold(existing, authorityCheck.snapshot, now());
+    if (initialBinding) {
+      await appendRecord({ record: initialBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      continue;
+    }
     if (authorityCheck.snapshot.merged) {
-      const recoveredBase = makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now() });
+      const recoveredBase = existing ?? makeRecord({ source, snapshot: authorityCheck.snapshot, authorityRef: authority.authority_ref, now: now() });
       const recovered = authorityCheck.snapshot.landed_tree_sha !== recoveredBase.approved_tree_sha
         ? holdFrom(recoveredBase, 'TREE_MISMATCH', 'landed squash tree does not match the approved head tree', now())
         : completedFrom(recoveredBase, authorityCheck.snapshot, now());
@@ -405,6 +428,11 @@ export async function consumeMergeReadiness({
       continue;
     }
     const snapshot = authorityCheck.snapshot;
+    const changedBinding = bindingHold(existing, snapshot, now());
+    if (changedBinding) {
+      await appendRecord({ record: changedBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
+      continue;
+    }
     if (snapshot.merged) {
       const recovered = snapshot.landed_tree_sha !== existing.approved_tree_sha
         ? holdFrom(existing, 'TREE_MISMATCH', 'landed squash tree does not match the approved head tree', now())
@@ -422,7 +450,7 @@ export async function consumeMergeReadiness({
 
     let mergeResponse;
     try {
-      mergeResponse = await jsonRequest(fetchImpl, `https://api.github.com/repos/${source.repo}/pulls/${snapshot.pr_number}/merge`, githubToken, {
+      mergeResponse = await jsonRequest(fetchImpl, `https://api.github.com/repos/${existing.repo}/pulls/${existing.pr_number}/merge`, githubToken, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sha: existing.approved_head_sha, merge_method: 'squash' }),
       });
@@ -434,6 +462,11 @@ export async function consumeMergeReadiness({
         'conditional merge did not produce a uniquely verifiable landed pull request', now());
       await appendRecord({ record: held, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
       stdout(`merge-readiness: ${source.issue_id} HOLD=${held.hold_code} — ${held.reason}`);
+      continue;
+    }
+    const recoveredBinding = bindingHold(existing, recovered, now());
+    if (recoveredBinding) {
+      await appendRecord({ record: recoveredBinding, issueId: linearIssueId, linearToken, fetchImpl, allowedActorIds }); writes++;
       continue;
     }
     if (recovered.landed_tree_sha !== existing.approved_tree_sha) {
