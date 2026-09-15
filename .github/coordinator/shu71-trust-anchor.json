@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "algorithm": "Ed25519",
+  "coordinator_revision": null,
+  "spki_sha256": null,
+  "state": "owner-authority-required"
+}
