@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { render, assertPolicy, verifySyntax, names, WORKSPACE_STATE_DIR, serviceParameters } from '../units.mjs';
 import { install, rollback, snapshot } from '../install.mjs';
 import { verify, fixtureParameters, assertQuiet } from '../verify.mjs';
+import { assertFixtureEnvironmentUnchanged } from '../verify.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(join(tmpdir(), 'shu251-test-'));
@@ -33,7 +34,7 @@ test('SHU251 parameterised argv and unit syntax', noSystemd, t => {
   const units = render(params);
   assert.match(units[names[0]], /\$\$TOKEN %%i/);
   for (const name of names) fs.writeFileSync(join(root, name), units[name]);
-  assertPolicy(units);
+  assertPolicy(units, params);
   verifySyntax(root);
   named(() => render({ ...params, supervisor: ['relative'] }), 'SHU251_COMMAND');
   named(() => render({ ...params, coordinator: ['relative'] }), 'SHU251_COMMAND');
@@ -77,7 +78,8 @@ test('SHU251 invalid executable fails syntax before staging changes', noSystemd,
   params.supervisor = [join(root, 'missing-executable')];
   named(() => install(root, params), 'SHU251_SYNTAX');
   assert.deepEqual(snapshot(root), before);
-  assert.deepEqual(fs.readdirSync(root), []);
+  assert.deepEqual(fs.readdirSync(root), ['.environment']);
+  assertFixtureEnvironmentUnchanged(root);
 });
 test('SHU251 common flock excludes overlapping writers and releases after exit', { timeout: 5000 }, async t => {
   const root = fixture(t), lock = join(root, 'host-tick.lock');
@@ -103,10 +105,10 @@ const policyMutations = [
   ['dispatch gate enabled', names[1], 'ENABLE_DISPATCH=false', 'ENABLE_DISPATCH=true', 'SHU251_GATE: staged dispatch must be off'],
 ];
 for (const [label, name, before, after, message] of policyMutations) test(`SHU251 mutation: ${label}`, t => {
-  const units = render(fixtureParameters(fixture(t)));
+  const params = fixtureParameters(fixture(t)), units = render(params);
   assert.ok(units[name].includes(before));
   units[name] = units[name].replace(before, after);
-  named(() => assertPolicy(units), message);
+  named(() => assertPolicy(units, params), message);
 });
 for (const [label, after, launches, writes, message] of [
   ['unexpected adapter call', {}, 1, 0, 'SHU251_ZERO_LAUNCH: disabled tick must make zero adapter calls'],
@@ -146,27 +148,28 @@ test('SHU251 partial staging failure restores prior state', noSystemd, t => {
   finally { fs.renameSync = rename; }
   assert.equal(injected, true);
   assert.deepEqual(snapshot(root), prior, 'SHU251_ROLLBACK: prior bytes, modes and absence must be restored');
-  assert.deepEqual(fs.readdirSync(root), [names[0]]);
+  assert.deepEqual(fs.readdirSync(root), ['.environment', names[0]]);
+  assertFixtureEnvironmentUnchanged(root);
 });
 
 test('SHU251 canonical writer lock accepted and foreign parameter refused', t => {
   const params = fixtureParameters(fixture(t));
-  assertPolicy(render(params));
+  assertPolicy(render(params), params);
   named(() => render({ ...params, writerLock: '/tmp/foreign.lock' }), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
 });
 test('SHU251 mutation: rendered foreign writer lock', t => {
   const params = fixtureParameters(fixture(t)), units = render(params);
   units[names[1]] = units[names[1]].replace(params.writerLock, '/tmp/foreign.lock');
-  named(() => assertPolicy(units), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
+  named(() => assertPolicy(units, params), 'SHU251_WRITER_LOCK: writer lock must equal SHU_WORKSPACE_STATE_DIR/host-tick.lock');
 });
 test('SHU251 nonexistent destination has named refusal', t => {
   const root = fixture(t);
   named(() => install(join(root, 'missing'), fixtureParameters(root)), 'SHU251_DESTINATION: existing real temporary staging directory required');
 });
 test('SHU251 mutation: unresolved timer placeholder', t => {
-  const units = render(fixtureParameters(fixture(t)));
+  const params = fixtureParameters(fixture(t)), units = render(params);
   units[names[2]] += '\n@UNRESOLVED@\n';
-  named(() => assertPolicy(units), 'SHU251_PARAMETER: unresolved template');
+  named(() => assertPolicy(units, params), 'SHU251_PARAMETER: unresolved template');
 });
 test('SHU251 mutation: enabled tick trips real kill-switch harness', async () => {
   const { verifyKillSwitch } = await import('../verify.mjs');
@@ -177,9 +180,9 @@ for (const [label, from, to, unit, message] of [
   ['supervisor dependency removed', 'Requires=shu-supervisor.service', '', names[1], 'SHU251_DEPENDENCY: coordinator must require supervisor'],
   ['supervisor readiness bypassed', 'Type=notify', 'Type=simple', names[0], 'SHU251_READINESS: supervisor must notify after recovery and listen'],
 ]) test(`SHU251 mutation: ${label}`, t => {
-  const units = render(fixtureParameters(fixture(t)));
+  const params = fixtureParameters(fixture(t)), units = render(params);
   units[unit] = units[unit].replace(from, to);
-  named(() => assertPolicy(units), message);
+  named(() => assertPolicy(units, params), message);
 });
 test('SHU251 required CI runs both globs with service prerequisites', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../../../../package.json', import.meta.url)));
@@ -217,7 +220,8 @@ test('SHU251 foreign workspace state directory refused before staging', t => {
   const root = fixture(t), params = { ...fixtureParameters(root), workspaceStateDir: root, writerLock: join(root, 'host-tick.lock') };
   for (const allowWorkspaceStateDirOverride of [undefined, false, 'true']) {
     named(() => install(root, { ...params, allowWorkspaceStateDirOverride }), 'SHU251_WRITER_LOCK: foreign workspace state directory requires allowWorkspaceStateDirOverride=true');
-    assert.deepEqual(fs.readdirSync(root), []);
+    assert.deepEqual(fs.readdirSync(root), ['.environment']);
+    assertFixtureEnvironmentUnchanged(root);
   }
 });
 test('SHU251 explicit workspace override stages a visible two-writer hazard', noSystemd, t => {
@@ -228,12 +232,12 @@ test('SHU251 explicit workspace override stages a visible two-writer hazard', no
   assert.ok(units[names[1]].includes(`"${root}/host-tick.lock"`));
   assert.ok(units[names[1]].includes('two-writer hazard'));
   assertPolicy(units, params);
-  named(() => assertPolicy(units), 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
+  named(() => assertPolicy(units, { ...params, workspaceStateDir: WORKSPACE_STATE_DIR, allowWorkspaceStateDirOverride: false }), 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
 });
 test('SHU251 mutation: matching foreign environment and writer lock', t => {
-  const units = render(fixtureParameters(fixture(t)));
+  const params = fixtureParameters(fixture(t)), units = render(params);
   units[names[1]] = units[names[1]].replaceAll(WORKSPACE_STATE_DIR, '/tmp/foreign-state');
-  named(() => assertPolicy(units), 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
+  named(() => assertPolicy(units, params), 'SHU251_WRITER_LOCK: rendered SHU_WORKSPACE_STATE_DIR must equal the deployed workspace state directory or explicit override');
 });
 test('SHU251 mutation: explicit override warning removed', t => {
   const root = fixture(t), params = { ...fixtureParameters(root), workspaceStateDir: root, writerLock: join(root, 'host-tick.lock'), allowWorkspaceStateDirOverride: true };
@@ -268,7 +272,8 @@ test('SHU251 non-string workspace state directory has named fail-closed refusal'
     const invalid = { ...params, workspaceStateDir, allowWorkspaceStateDirOverride: true };
     for (const operation of [serviceParameters, render, p => install(root, p)]) {
       named(() => operation(invalid), 'SHU251_WRITER_LOCK: canonical workspace state directory required');
-      assert.deepEqual(fs.readdirSync(root), []);
+      assert.deepEqual(fs.readdirSync(root), ['.environment']);
+      assertFixtureEnvironmentUnchanged(root);
     }
   }
   assert.equal(coerced, false, 'SHU251_WRITER_LOCK: non-string workspace state directory must not be coerced');
@@ -276,8 +281,8 @@ test('SHU251 non-string workspace state directory has named fail-closed refusal'
 
 test('SHU251 configured identity and external secret file survive staging', noSystemd, t => {
   const root = fixture(t);
-  const params = serviceParameters({ workdir: root, serviceUser: 'fixture-coordinator', serviceGroup: 'fixture-state', secretEnvironmentFile: '/etc/fixture/supervisor.env' });
-  // Syntax-only commands permit staging without a host account or secret file.
+  const params = serviceParameters({ workdir: root, serviceUser: 'fixture-coordinator', serviceGroup: 'fixture-state', ...fixtureParameters(root) });
+  // Syntax-only commands and temporary environment files require no host account.
   Object.assign(params, { supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'] });
   install(root, params);
   const units = Object.fromEntries(names.map(name => [name, fs.readFileSync(join(root, name), 'utf8')]));
@@ -285,7 +290,7 @@ test('SHU251 configured identity and external secret file survive staging', noSy
   for (const name of names.filter(name => name.endsWith('.service'))) {
     assert.match(units[name], /^User=fixture-coordinator$/m);
     assert.match(units[name], /^Group=fixture-state$/m);
-    assert.match(units[name], /^EnvironmentFile=\/etc\/fixture\/supervisor.env$/m);
+    assert.deepEqual(units[name].split('\n').filter(line => line.startsWith('EnvironmentFile=')), [`EnvironmentFile=${params[name === names[0] ? 'supervisorEnvironmentFile' : 'coordinatorEnvironmentFile']}`], 'SHU251_SECRET_FILE: exact per-unit environment binding required');
   }
   for (const name of names) assert.doesNotMatch(units[name], /SHU_SUPERVISOR_SECRET\s*=/);
   rollback(root);
@@ -293,24 +298,24 @@ test('SHU251 configured identity and external secret file survive staging', noSy
 for (const name of names.filter(name => name.endsWith('.service'))) {
   for (const directive of ['User', 'Group']) {
     test(`SHU251 mutation: ${name} ${directive} removed`, t => {
-      const units = render(fixtureParameters(fixture(t)));
+      const params = fixtureParameters(fixture(t)), units = render(params);
       units[name] = units[name].replace(`${directive}=shu-coordinator\n`, '');
-      named(() => assertPolicy(units), `SHU251_IDENTITY: ${name} must run with configured ${directive}`);
+      named(() => assertPolicy(units, params), `SHU251_IDENTITY: ${name} must run with configured ${directive}`);
     });
   }
   test(`SHU251 mutation: ${name} secret file removed or optional`, t => {
     for (const replacement of ['', 'EnvironmentFile=-/etc/shu/supervisor.env']) {
-      const units = render(fixtureParameters(fixture(t)));
-      units[name] = units[name].replace('EnvironmentFile=/etc/shu/supervisor.env', replacement);
-      named(() => assertPolicy(units), 'SHU251_SECRET_FILE: services must require the shared secret environment file');
+      const params = fixtureParameters(fixture(t)), units = render(params);
+      units[name] = units[name].replace(`EnvironmentFile=${params[name === names[0] ? 'supervisorEnvironmentFile' : 'coordinatorEnvironmentFile']}`, replacement);
+      named(() => assertPolicy(units, params), 'SHU251_SECRET_FILE: each service must require its own environment file');
     }
   });
 }
 test('SHU251 mutation: embedded secret in any unit refused', t => {
   for (const name of names) {
-    const units = render(fixtureParameters(fixture(t)));
+    const params = fixtureParameters(fixture(t)), units = render(params);
     units[name] += '\nEnvironment="SHU_SUPERVISOR_SECRET=fixture-only-mutation-secret-value"\n';
-    named(() => assertPolicy(units), 'SHU251_SECRET_LITERAL: units must not embed supervisor secrets');
+    named(() => assertPolicy(units, params), 'SHU251_SECRET_LITERAL: units must not embed supervisor secrets');
   }
 });
 test('SHU251 unsafe identity and secret file parameters fail before staging', t => {
@@ -318,8 +323,9 @@ test('SHU251 unsafe identity and secret file parameters fail before staging', t 
   for (const change of [{ serviceUser: 'root' }, { serviceGroup: 'root' }, { serviceUser: 'bad\nUser=root' }, { serviceUser: 0 }]) {
     named(() => install(root, { ...params, ...change }), 'SHU251_IDENTITY: non-root service user and group names required');
   }
-  for (const secretEnvironmentFile of ['relative', '-/etc/shu/secret', '/etc/../secret', '/etc/secret\nEnvironment=bad', null]) {
-    named(() => install(root, { ...params, secretEnvironmentFile }), 'SHU251_SECRET_FILE: plain absolute environment file path required');
+  for (const parameter of ['supervisorEnvironmentFile', 'coordinatorEnvironmentFile']) for (const environmentFile of ['relative', '-/etc/shu/secret', '/etc/../secret', '/etc/secret\nEnvironment=bad', null]) {
+    named(() => install(root, { ...params, [parameter]: environmentFile }), 'SHU251_SECRET_FILE: plain absolute environment file path required');
   }
-  assert.deepEqual(fs.readdirSync(root), []);
+  assert.deepEqual(fs.readdirSync(root), ['.environment']);
+  assertFixtureEnvironmentUnchanged(root);
 });

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createEpisodeHarness } from '../test/fixture/episode-harness.mjs';
 import { createReceipt, nextReceiptState } from '../reconcile.mjs';
 import { WORKSPACE_STATE_DIR } from './units.mjs';
@@ -57,9 +57,25 @@ export async function verifyKillSwitch({ enabled = false, configEnabled = enable
     return { ticks: 2, launches, writes, stateDiff: [] };
   } finally { h.cleanup(); }
 }
+const fixtureEnvironments = new Map();
+export function assertFixtureEnvironmentUnchanged(root) {
+  assert.ok(fixtureEnvironments.has(root), 'SHU251_FIXTURE_ENVIRONMENT: credential fixture baseline required');
+  assert.deepEqual(tree(join(root, '.environment')), fixtureEnvironments.get(root), 'SHU251_FIXTURE_ENVIRONMENT: credential fixture bytes, modes and timestamps must remain unchanged');
+}
+export function fixtureEnvironmentFiles(root) {
+  const directory = join(root, '.environment');
+  fs.mkdirSync(directory, { mode: 0o700, recursive: true });
+  const supervisorEnvironmentFile = join(directory, 'supervisor.env');
+  const coordinatorEnvironmentFile = join(directory, 'coordinator.env');
+  for (const [file, keys] of [[supervisorEnvironmentFile, ['SHU_SUPERVISOR_SECRET']], [coordinatorEnvironmentFile, ['GITHUB_TOKEN', 'LINEAR_API_TOKEN']]]) {
+    if (!fs.existsSync(file)) fs.writeFileSync(file, keys.map(key => `${key}=${randomBytes(32).toString('hex')}\n`).join(''), { mode: 0o600 });
+  }
+  if (!fixtureEnvironments.has(root)) fixtureEnvironments.set(root, tree(directory));
+  return { supervisorEnvironmentFile, coordinatorEnvironmentFile };
+}
 export function fixtureParameters(root) {
   // Syntax-only executables. These are not supervisor interface implementations.
-  return { workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], workspaceStateDir: WORKSPACE_STATE_DIR, writerLock: join(WORKSPACE_STATE_DIR, 'host-tick.lock') };
+  return { ...fixtureEnvironmentFiles(root), workdir: root, supervisor: ['/usr/bin/true'], coordinator: ['/usr/bin/true'], workspaceStateDir: WORKSPACE_STATE_DIR, writerLock: join(WORKSPACE_STATE_DIR, 'host-tick.lock') };
 }
 export async function verify() {
   const root = fs.mkdtempSync(join(tmpdir(), 'shu251-verify-'));
@@ -71,7 +87,8 @@ export async function verify() {
     const quiet = await verifyKillSwitch();
     rollback(root);
     assert.deepEqual(snapshot(root), prior, 'SHU251_ROLLBACK: prior bytes, modes and absence must be restored');
-    assert.deepEqual(fs.readdirSync(root), ['shu-supervisor.service'], 'SHU251_CLEANUP: rollback must remove transaction artifacts');
+    assert.deepEqual(fs.readdirSync(root), ['.environment', 'shu-supervisor.service'], 'SHU251_CLEANUP: rollback must remove transaction artifacts');
+    assertFixtureEnvironmentUnchanged(root);
     return { syntax: 'passed', rollback: 'exact bytes/modes/absence restored', ...quiet, scope: 'local fixtures only; no running-system proof' };
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }

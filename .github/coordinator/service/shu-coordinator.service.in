@@ -8,7 +8,7 @@ StartLimitBurst=3
 [Service]
 User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
-EnvironmentFile=@SECRET_ENVIRONMENT_FILE@
+EnvironmentFile=@COORDINATOR_ENVIRONMENT_FILE@
 Type=oneshot
 WorkingDirectory=@WORKDIR@
 Environment=ENABLE_DISPATCH=false
