@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { computeEligibility, requestedWorkerFor, compareIdentifiers } from "../reconcile.mjs";
+import { computeEligibility, requestedWorkerFor, compareIdentifiers, resolveAuthorizationRef, SAME_FAMILY_VERIFIERS, WORKER_FAMILIES } from "../reconcile.mjs";
 
 const CONFIG = { pilot_repo: "BAWES-Universe/studenthub-platform", max_dispatch: 1, adapter_pause_map: {} };
 
@@ -19,6 +19,8 @@ function card(overrides = {}) {
     linkedPRs: [],
     parent: null,
     blockers: [],
+    repo: "BAWES-Universe/studenthub-platform",
+    repoResolutionError: null,
     ...overrides,
   };
 }
@@ -27,14 +29,31 @@ function eligibleIds(issues, openPRs = []) {
   return computeEligibility({ issues, openPRs, config: CONFIG }).ready.map((i) => i.id);
 }
 
-test("plain Backlog/Todo cards with no claims are ready", () => {
+test("numeric Linear fixture id resolves to the dedicated fixture contract before the canonical-card fallback", () => {
+  const config = { fixture_lane: { id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905" } };
+  assert.equal(resolveAuthorizationRef(card({ id: "SHU-140" }), config), "FIXTURE-OPUS-CONTRACT-20260905");
+  assert.equal(
+    resolveAuthorizationRef(card({ id: "SHU-140", authorization_ref: "SHU-999" }), config),
+    "FIXTURE-OPUS-CONTRACT-20260905",
+    "fixture card authorization cannot override the configured fixture contract",
+  );
+});
+
+test("a misconfigured numeric fixture id fails closed instead of falling back to its card id", () => {
+  const config = { fixture_lane: { id: "SHU-140", authorization_ref: "not-an-approved-contract" } };
+  assert.equal(resolveAuthorizationRef(card({ id: "SHU-140" }), config), null);
+  assert.equal(resolveAuthorizationRef(card({ id: "SHU-141" }), config), "SHU-141");
+});
+
+test("SHU-222 mutation guard: only Todo is ready; Backlog is parked", () => {
   const { ready, excluded } = computeEligibility({
     issues: [card({ id: "SHU-10", state: "Backlog" }), card({ id: "SHU-11", state: "Todo" })],
     openPRs: [],
     config: CONFIG,
   });
-  assert.deepEqual(excluded, []);
-  assert.deepEqual(ready.map((i) => i.id), ["SHU-10", "SHU-11"]);
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /Backlog.*not in \{Todo\}/);
+  assert.deepEqual(ready.map((i) => i.id), ["SHU-11"]);
 });
 
 test("excluded: delegated card (delegate claim)", () => {
@@ -58,13 +77,31 @@ test("excluded: needs:decision label", () => {
   assert.equal(excluded[0].reason, "label needs:decision");
 });
 
-test("excluded: parent not Done", () => {
+test("eligible: child of an In Progress parent with no open blockers is eligible (SHU-219)", () => {
+  const ids = eligibleIds([
+    card({ id: "SHU-22", parent: { id: "SHU-1", state: "In Progress" } }),
+  ]);
+  assert.deepEqual(ids, ["SHU-22"]);
+});
+
+test("excluded: child of a Canceled parent is excluded (SHU-219)", () => {
   const { excluded } = computeEligibility({
-    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "In Progress" } })],
+    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "Canceled" } })],
     openPRs: [],
     config: CONFIG,
   });
-  assert.match(excluded[0].reason, /parent SHU-1 not Done/);
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /children of a canceled parent/);
+});
+
+test("excluded: child of a Duplicate parent is excluded (SHU-219)", () => {
+  const { excluded } = computeEligibility({
+    issues: [card({ id: "SHU-22", parent: { id: "SHU-1", state: "Duplicate" } })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.equal(excluded.length, 1);
+  assert.match(excluded[0].reason, /children of a canceled parent/);
 });
 
 test("excluded: blocker not Done", () => {
@@ -101,20 +138,128 @@ test("excluded: linked to an open PR (live openPRs list)", () => {
   assert.match(excluded[0].reason, /open PR/);
 });
 
-test("excluded: R3 card without named verifier label", () => {
-  for (const r3card of [
+test("SHU-222 mutation guard: risk:R2 and risk:R3 require a named verifier", () => {
+  for (const riskyCard of [
     card({ id: "SHU-27", priority: "R3" }),
-    card({ id: "SHU-28", labels: ["r3"] }),
+    card({ id: "SHU-28", labels: ["risk:R3"] }),
+    card({ id: "SHU-34", labels: ["risk:R2"] }),
   ]) {
-    const { excluded } = computeEligibility({ issues: [r3card], openPRs: [], config: CONFIG });
+    const { excluded } = computeEligibility({ issues: [riskyCard], openPRs: [], config: CONFIG });
     assert.equal(excluded.length, 1);
-    assert.match(excluded[0].reason, /R3 card without a named verifier/);
+    assert.match(excluded[0].reason, /R[23] card without a named verifier/);
   }
 });
 
-test("eligible: R3 card WITH named verifier label", () => {
-  const ids = eligibleIds([card({ id: "SHU-29", priority: "R3", labels: ["verifier:opus"] })]);
+test("eligible: R2/R3 card WITH named verifier label", () => {
+  const ids = eligibleIds([
+    card({ id: "SHU-29", labels: ["risk:R3", "verifier:opus"] }),
+    card({ id: "SHU-35", labels: ["risk:R2", "verifier:codex"] }),
+  ]);
+  assert.deepEqual(ids, ["SHU-29", "SHU-35"]);
+});
+
+test("SHU-222: an implementation cannot be assigned to its named verifier runtime", () => {
+  const { ready, excluded } = computeEligibility({
+    issues: [card({ id: "SHU-29", labels: ["type:implementation", "risk:R3", "verifier:codex"] })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.deepEqual(ready, []);
+  assert.match(excluded[0].reason, /authored by its named verifier \(codex\)/);
+  const ids = eligibleIds([card({
+    id: "SHU-29",
+    labels: ["type:implementation", "risk:R3", "verifier:codex", "worker:hermes-box"],
+  })]);
   assert.deepEqual(ids, ["SHU-29"]);
+});
+
+test("SHU-223: a claude-verifier implementation cannot name a Claude-family verifier", () => {
+  for (const verifier of ["claude", "opus", "sonnet", "haiku", "fable"]) {
+    const { ready, excluded } = computeEligibility({
+      issues: [card({
+        id: "SHU-223",
+        labels: ["type:implementation", "risk:R2", `verifier:${verifier}`, "worker:claude-verifier"],
+      })],
+      openPRs: [],
+      config: CONFIG,
+    });
+    assert.deepEqual(ready, [], `verifier:${verifier} must not review a claude-verifier implementation`);
+    assert.equal(excluded.length, 1);
+    assert.match(excluded[0].reason, new RegExp(`authored by its named verifier \\(${verifier}\\)`));
+  }
+});
+
+test("SHU-223: existing Codex and Hermes same-family exclusions still hold", () => {
+  const sameFamily = [
+    ["codex-builder", "codex"],
+    ["codex-builder", "gpt"],
+    ["codex-builder", "gpt-6"],
+    ["hermes-box", "hermes"],
+  ];
+  for (const [worker, verifier] of sameFamily) {
+    const { ready, excluded } = computeEligibility({
+      issues: [card({
+        id: "SHU-223",
+        labels: ["type:implementation", "risk:R3", `verifier:${verifier}`, `worker:${worker}`],
+      })],
+      openPRs: [],
+      config: CONFIG,
+    });
+    assert.deepEqual(ready, [], `worker:${worker} must not be reviewed by verifier:${verifier}`);
+    assert.match(excluded[0].reason, /authored by its named verifier/);
+  }
+
+  // A card with no worker:<family> label is routed to codex-builder, so the
+  // Codex exclusion must apply to it without an explicit worker label too.
+  const { ready } = computeEligibility({
+    issues: [card({ id: "SHU-223", labels: ["type:implementation", "risk:R3", "verifier:codex"] })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.deepEqual(ready, []);
+});
+
+test("SHU-223: independent cross-family verifiers stay eligible", () => {
+  const independent = [
+    ["claude-verifier", "codex"],
+    ["claude-verifier", "gpt"],
+    ["claude-verifier", "hermes"],
+    ["codex-builder", "opus"],
+    ["codex-builder", "claude"],
+    ["codex-builder", "hermes"],
+    ["hermes-box", "opus"],
+    ["hermes-box", "codex"],
+  ];
+  for (const [worker, verifier] of independent) {
+    const ids = eligibleIds([card({
+      id: "SHU-223",
+      labels: ["type:implementation", "risk:R3", `verifier:${verifier}`, `worker:${worker}`],
+    })]);
+    assert.deepEqual(ids, ["SHU-223"], `worker:${worker} + verifier:${verifier} is independent and must stay eligible`);
+  }
+
+  // The guard is scoped to implementation cards: a verification card naming its
+  // own family is the normal case and must not be excluded by this rule.
+  const ids = eligibleIds([card({
+    id: "SHU-224",
+    labels: ["type:verification", "risk:R3", "verifier:opus", "worker:claude-verifier"],
+  })]);
+  assert.deepEqual(ids, ["SHU-224"]);
+});
+
+test("SHU-223: every recognized worker family declares its same-family verifiers", () => {
+  for (const family of WORKER_FAMILIES) {
+    const declared = SAME_FAMILY_VERIFIERS[family];
+    assert.ok(
+      Array.isArray(declared) && declared.length > 0,
+      `worker family ${family} has no same-family verifier list — a new family must declare one, never fall through to "independent"`,
+    );
+  }
+  assert.deepEqual(
+    Object.keys(SAME_FAMILY_VERIFIERS).sort(),
+    [...WORKER_FAMILIES].sort(),
+    "SAME_FAMILY_VERIFIERS and WORKER_FAMILIES must describe exactly the same set of worker families",
+  );
 });
 
 test("excluded: unknown / inaccessible state — never invent backlog", () => {
@@ -122,12 +267,12 @@ test("excluded: unknown / inaccessible state — never invent backlog", () => {
     const { ready, excluded } = computeEligibility({ issues: [card({ id: "SHU-30", ...bad })], openPRs: [], config: CONFIG });
     assert.deepEqual(ready, [], `state ${JSON.stringify(bad.state)} must not be invented into backlog`);
     assert.equal(excluded[0].id, "SHU-30");
-    assert.match(excluded[0].reason, /never invent backlog|not in \{Backlog, Todo\}/);
+    assert.match(excluded[0].reason, /never invent backlog|not in \{Todo\}/);
   }
 });
 
-test("excluded: state not in {Backlog,Todo} (In Progress, Done, Canceled)", () => {
-  for (const state of ["In Progress", "Done", "Canceled", "Triage"]) {
+test("excluded: state not Todo (Backlog, In Progress, Done, Canceled)", () => {
+  for (const state of ["Backlog", "In Progress", "Done", "Canceled", "Triage"]) {
     const { excluded } = computeEligibility({ issues: [card({ id: "SHU-31", state })], openPRs: [], config: CONFIG });
     assert.match(excluded[0].reason, new RegExp(`state "${state}" not in`));
   }
@@ -151,10 +296,36 @@ test("excluded: card naming an out-of-pilot repo", () => {
   assert.match(excluded[0].reason, /outside pilot repo/);
 });
 
+test("SHU-222 mutation guard: unresolved repository ownership is held", () => {
+  for (const repoResolutionError of [
+    "missing repo:<name> ownership label",
+    "multiple repository ownership labels: repo:platform, repo:legacy",
+    "unknown repository ownership label: repo:other",
+  ]) {
+    const { ready, excluded } = computeEligibility({
+      issues: [card({ id: "SHU-36", repo: null, repoResolutionError })],
+      openPRs: [],
+      config: CONFIG,
+    });
+    assert.deepEqual(ready, []);
+    assert.match(excluded[0].reason, /repository ownership HOLD/);
+  }
+});
+
+test("SHU-222: unavailable claim evidence is held", () => {
+  const { ready, excluded } = computeEligibility({
+    issues: [card({ id: "SHU-37", claimEvidenceError: "GitHub lookup failed" })],
+    openPRs: [],
+    config: CONFIG,
+  });
+  assert.deepEqual(ready, []);
+  assert.match(excluded[0].reason, /claim evidence HOLD/);
+});
+
 test("ready sorted by priority then stable identifier tie-breaker", () => {
   const issues = [
-    card({ id: "SHU-50", priority: "Low", state: "Backlog" }),
-    card({ id: "SHU-9", priority: "High", state: "Backlog" }),
+    card({ id: "SHU-50", priority: "Low", state: "Todo" }),
+    card({ id: "SHU-9", priority: "High", state: "Todo" }),
     card({ id: "SHU-10", priority: "High", state: "Todo" }), // numeric tie-break: SHU-9 < SHU-10
     card({ id: "SHU-51", priority: "Urgent" }),
     card({ id: "SHU-52", priority: "Medium" }),
@@ -185,21 +356,103 @@ test("requestedWorkerFor: explicit worker label wins; default codex-builder", ()
   assert.equal(requestedWorkerFor(card({ labels: ["worker:someone-else"] })), "codex-builder");
 });
 
-test("snapshot fixture: exactly one eligible card, exclusions carry reasons", () => {
+test("snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)", () => {
   const snap = JSON.parse(
     fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
   );
   const { ready, excluded } = computeEligibility({ issues: snap.issues, openPRs: snap.openPRs, config: CONFIG });
-  assert.equal(ready.length, 1);
-  assert.equal(ready[0].id, "SHU-FIXTURE-001");
-  assert.equal(ready[0].state, "Todo");
-  assert.equal(excluded.length, 5);
+  assert.equal(ready.length, 2);
+  const readyIds = ready.map((x) => x.id).sort();
+  assert.deepEqual(readyIds, ["SHU-140", "SHU-206"]);
+  assert.equal(excluded.length, 6);
   const byId = Object.fromEntries(excluded.map((x) => [x.id, x.reason]));
   assert.ok(byId["SHU-201"].includes("In Progress"));
   assert.ok(byId["SHU-202"].includes("assigned to bob"));
   assert.ok(byId["SHU-203"].includes("needs:decision"));
   assert.ok(byId["SHU-204"].includes("open PR"));
   assert.ok(byId["SHU-205"].includes("R3"));
+  // SHU-207: child of a Canceled parent — excluded by Rule 6.
+  assert.ok(byId["SHU-207"].includes("children of a canceled parent"));
   // Deterministic ordering of excluded by identifier.
-  assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205"]);
+  assert.deepEqual(excluded.map((x) => x.id), ["SHU-201", "SHU-202", "SHU-203", "SHU-204", "SHU-205", "SHU-207"]);
+});
+
+// The snapshot board must stay bound to the LIVE fixture lane: config.json says
+// which card is the fixture card, and the fixture card's contract ref must be the
+// SEPARATELY APPROVED constant — not whatever config.json happens to say.
+//
+// Two distinct drift failures, both real:
+//   * the lane id stops identifying the fixture card. Resolution then falls to the
+//     CANDIDATE's own id, not to the lane id: a numeric id resolves to its own
+//     ordinary Linear identifier (an unauthorized contract ref — worse than a
+//     refusal), a non-numeric one resolves to null and dispatch refuses loudly.
+//     (Sentry HIGH + CodeRabbit Major on PR #64: the lane id had moved to Linear's
+//     minted SHU-140 while the snapshot still carried the pre-mint placeholder.)
+//   * the lane's contract ref is edited to some other value. Nothing about
+//     resolution breaks — the fixture simply runs on an unauthorized contract.
+//
+// So both the identity AND the contract ref are pinned here. The ref is pinned as
+// a literal on purpose: reading it back out of the config under test is exactly
+// how a contract edit would go unnoticed (Codex, verification round 2).
+const APPROVED_FIXTURE_CONTRACT = "FIXTURE-OPUS-CONTRACT-20260905";
+const FIXTURE_MARKER_LABELS = ["fixture-safe", "coordinator:pilot"];
+
+test("fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract", () => {
+  const snapshot = JSON.parse(
+    fs.readFileSync(new URL("./fixtures/snapshot.json", import.meta.url), "utf8"),
+  );
+  const realConfig = JSON.parse(
+    fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"),
+  );
+  const lane = realConfig.fixture_lane ?? {};
+
+  assert.ok(lane.id, "config.json must configure a fixture lane id");
+  assert.equal(realConfig.enable_dispatch, false, "the fixture lane is a lane, never an activation");
+  assert.match(
+    String(lane.id),
+    /^SHU-[0-9]+$/,
+    "the fixture lane id must be the Linear-minted card identifier (SHU-<n>), not a pre-mint placeholder",
+  );
+  assert.equal(
+    lane.authorization_ref,
+    APPROVED_FIXTURE_CONTRACT,
+    "the fixture lane's contract ref must be the separately approved constant, not an edited value",
+  );
+
+  // The fixture card is identified by its id AND its fixture markers. A lane id
+  // pointed at some other real card must not pass this test.
+  const configured = snapshot.issues.filter((issue) => issue.id === lane.id);
+  assert.equal(
+    configured.length,
+    1,
+    `snapshot must contain exactly one card with the configured fixture lane id "${lane.id}" `
+      + `(snapshot ids: ${snapshot.issues.map((i) => i.id).join(", ")})`,
+  );
+  const [fixtureCard] = configured;
+  const markerLabels = fixtureCard.labels ?? [];
+  assert.ok(
+    FIXTURE_MARKER_LABELS.every((label) => markerLabels.includes(label)),
+    `the card carrying the configured fixture lane id "${lane.id}" must be the fixture card `
+      + `(labels: ${markerLabels.join(", ")})`,
+  );
+
+  // Exactly ONE card in the board may be granted the approved contract — that is
+  // what stops a misconfigured lane id from handing the contract to a real card.
+  const granted = snapshot.issues
+    .filter((issue) => resolveAuthorizationRef(issue, realConfig) === APPROVED_FIXTURE_CONTRACT)
+    .map((issue) => issue.id);
+  assert.deepEqual(
+    granted,
+    [lane.id],
+    "only the fixture card may resolve to the approved fixture contract",
+  );
+
+  // The fixture card resolves to the APPROVED CONTRACT, never to its own minted
+  // Linear identifier and never to a candidate-supplied value.
+  assert.equal(resolveAuthorizationRef(fixtureCard, realConfig), APPROVED_FIXTURE_CONTRACT);
+  assert.equal(
+    resolveAuthorizationRef({ ...fixtureCard, authorization_ref: "SHU-999" }, realConfig),
+    APPROVED_FIXTURE_CONTRACT,
+    "a fixture card cannot override its configured contract ref",
+  );
 });

@@ -91,14 +91,15 @@ test("LAUNCH_UNKNOWN and ambiguous HOLD retain capacity", () => {
 });
 
 test("resource-scoped quota pause blocks one account while unrelated work continues", () => {
-  let now = Date.parse("2026-09-08T12:00:00Z");
+  let now = Date.now();
   const scheduler = new CapacityScheduler({ stateDir: stateDir(), policy: policy(), now: () => now });
-  scheduler.pauseResource({ scope: "account", id: "anthropic_shared", reason: "quota", until: "2026-09-08T13:00:00Z" });
+  const until = new Date(now + 3600000).toISOString();
+  scheduler.pauseResource({ scope: "account", id: "anthropic_shared", reason: "quota", until });
   const paused = scheduler.reserve(task("paused", { fallback_runtimes: [] }));
   assert.equal(paused.code, "RESOURCE_PAUSED");
-  assert.equal(paused.next_automatic_action, "retry_after:2026-09-08T13:00:00Z");
+  assert.equal(paused.next_automatic_action, `retry_after:${until}`);
   assert.equal(scheduler.reserve(task("unrelated", { account: "openai_shared", runtime: "codex-cli" })).status, "reserved");
-  now = Date.parse("2026-09-08T13:00:01Z");
+  now += 3601000;
   assert.equal(scheduler.reserve(task("after-backoff")).status, "reserved", "expired pause clears automatically");
 });
 
@@ -149,7 +150,7 @@ test("deadlines, retries, revisions and total spending are bounded", () => {
 });
 
 test("reserved acknowledgement expires, but running/unknown work never releases by age", () => {
-  let now = Date.parse("2026-09-08T12:00:00Z");
+  let now = Date.now();
   const scheduler = new CapacityScheduler({ stateDir: stateDir(), policy: policy({ accounts: { anthropic_shared: 1, openai_shared: 2 }, reservation_ttl_ms: 10 }), now: () => now });
   scheduler.reserve(task("reserved"));
   now += 11;
@@ -330,49 +331,100 @@ test("persisted reservation estimated cost must remain an integer", () => {
   assert.equal(result.status, "hold");
 });
 
-test("four concurrent processes cannot oversubscribe a two-slot ledger", async () => {
+test("four concurrent processes cannot oversubscribe a two-slot ledger", { timeout: 15000 }, async (t) => {
   const root = stateDir();
-  const gate = join(root, "start");
+  // The old 100 x 2 ms BUSY retry loop could finish while a competing process
+  // was still fsyncing its transaction: two successes/two capacity refusals
+  // then failed on scheduling latency, even with the wall clock advanced 365
+  // days and a shared frozen ledger clock. In the split-clock mutant that early
+  // failure also masked the named expiry assertion below. Hold each real
+  // transaction before its durable write, prove every other claimant is BUSY,
+  // then release it explicitly; elapsed time never decides a capacity outcome.
+  const now = Date.now();
   const moduleUrl = pathToFileURL(join(process.cwd(), ".github/coordinator/capacity-scheduler.mjs")).href;
   const concurrentPolicy = policy({ global_limit: 2, review_reserve: 0, hosts: { brick: 4, studenthub: 4 }, accounts: { anthropic_shared: 4, openai_shared: 4 } });
-  const serializedPolicy = JSON.stringify(concurrentPolicy);
   const script = `
-    import { existsSync } from "node:fs";
+    import { readSync } from "node:fs";
     import { CapacityScheduler } from ${JSON.stringify(moduleUrl)};
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    while (!existsSync(process.env.GATE)) await sleep(2);
-    const scheduler = new CapacityScheduler({ stateDir: process.env.STATE, policy: JSON.parse(process.env.POLICY) });
+    const scheduler = new CapacityScheduler({ stateDir: process.env.STATE, policy: JSON.parse(process.env.POLICY), now: () => Number(process.env.TEST_NOW) });
     const task = JSON.parse(process.env.TASK);
-    let result;
-    for (let i = 0; i < 100; i += 1) {
-      result = scheduler.reserve(task);
-      if (result.code !== "SCHEDULER_BUSY") break;
-      await sleep(2);
-    }
-    process.stdout.write(JSON.stringify({ status: result.status, code: result.code }));
+    const withLock = scheduler.withLock.bind(scheduler);
+    scheduler.withLock = (operation) => withLock((state) => {
+      const result = operation(state);
+      process.send({ phase: "locked" });
+      if (readSync(0, Buffer.alloc(1), 0, 1, null) !== 1) throw new Error("release channel closed");
+      return result;
+    });
+    process.on("message", () => {
+      const result = scheduler.reserve(task);
+      process.send({ phase: "result", status: result.status, code: result.code });
+    });
+    process.send({ phase: "ready" });
   `;
-  const children = Array.from({ length: 4 }, (_, index) => new Promise((resolve, reject) => {
+  const children = Array.from({ length: 4 }, (_, index) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
       env: {
+        TEST_NOW: String(now),
         STATE: root,
-        GATE: gate,
-        POLICY: serializedPolicy,
+        POLICY: JSON.stringify(concurrentPolicy),
         TASK: JSON.stringify(task(`concurrent-${index}`, { account: index % 2 ? "openai_shared" : "anthropic_shared" })),
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "ignore", "pipe", "ipc"],
     });
-    let stdout = "";
+    t.after(() => child.kill());
     let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("exit", (code) => code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(stderr)));
-  }));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  mkdirSync(gate);
-  const results = await Promise.all(children);
+    const messages = [];
+    let pending;
+    let failure;
+    child.on("message", (message) => {
+      if (pending) {
+        const { resolve } = pending;
+        pending = undefined;
+        resolve(message);
+      } else messages.push(message);
+    });
+    const fail = (error) => {
+      failure = error;
+      if (pending) {
+        pending.reject(error);
+        pending = undefined;
+      }
+    };
+    child.on("error", fail);
+    child.on("exit", (code, signal) => fail(new Error(`claimant exited: ${code ?? signal}: ${stderr}`)));
+    return {
+      child,
+      next: () => {
+        if (failure) return Promise.reject(failure);
+        if (messages.length) return Promise.resolve(messages.shift());
+        return new Promise((resolve, reject) => { pending = { resolve, reject }; });
+      },
+    };
+  });
+  for (const claimant of children) assert.equal((await claimant.next()).phase, "ready");
+  const results = [];
+  for (let index = 0; index < children.length; index += 1) {
+    const owner = children[index];
+    owner.child.send("reserve");
+    assert.equal((await owner.next()).phase, "locked", "claimant must hold the real transaction lock before contention");
+    const contenders = children.slice(index + 1);
+    for (const contender of contenders) contender.child.send("reserve");
+    for (const contender of contenders) {
+      assert.deepEqual(await contender.next(), { phase: "result", status: "hold", code: "SCHEDULER_BUSY" },
+        "concurrent claimants must not enter an uncommitted ledger transaction");
+    }
+    owner.child.stdin.write(".");
+    const result = await owner.next();
+    assert.equal(result.phase, "result");
+    results.push(result);
+    const ledger = JSON.parse(readFileSync(join(root, "capacity-ledger.json"), "utf8"));
+    assert.deepEqual(Object.keys(ledger.reservations).sort(),
+      Array.from({ length: Math.min(index + 1, 2) }, (_, i) => `concurrent-${i}`),
+      "each committed transaction must preserve its predecessors without oversubscribing two slots");
+  }
   assert.equal(results.filter((result) => result.status === "reserved").length, 2);
   assert.equal(results.filter((result) => result.code === "GLOBAL_CAPACITY").length, 2);
-  const final = new CapacityScheduler({ stateDir: root, policy: concurrentPolicy });
-  assert.equal(Object.values(final.snapshot().reservations).filter((r) => r.status === "reserved").length, 2);
+  const final = new CapacityScheduler({ stateDir: root, policy: concurrentPolicy, now: () => now });
+  assert.equal(Object.values(final.snapshot().reservations).filter((r) => r.status === "reserved").length, 2, "shared clock must preserve both reservations");
 });
