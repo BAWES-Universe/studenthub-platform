@@ -34,6 +34,7 @@ import fs from "node:fs";
 import { supervisorAdapter, SUPERVISOR_DISPATCH_NOTE } from "./supervisor-dispatch.mjs";
 import { deriveScopedBaseShaFromRemote, prepareAttemptWorkspace, workspaceFailureCode } from "./attempt-workspace.mjs";
 import { resolveFixtureLane, validateFixtureAttemptScope, initialWorkspaceScope, normalizeReceiptWorkspaceScope, validateWorkspaceScope } from "./workspace-scope.mjs";
+import { deriveIncidentEvent, INCIDENT_REASON, reportCoordinatorIncident, reportingExceptionAllowsLaunch } from "./incident-reporting.mjs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -823,6 +824,8 @@ export function nextReceiptState(receipt, event, ctx = {}) {
     if (typeof event.reason_code === "string" && event.reason_code.length > 0) {
       notes.push(`adapter reason code: ${event.reason_code}`);
     }
+    if (event.reason_code === "LIVE_HEAD_STALE") next.stop_reason_code = INCIDENT_REASON.STALE_HEAD;
+    if (event.reason_code === "LIVE_HEAD_UNREADABLE") next.stop_reason_code = INCIDENT_REASON.UNREADABLE_HEAD;
     next.evidence_links = [...next.evidence_links, ...links];
     next.notes = [...next.notes, ...notes];
     return next;
@@ -1991,6 +1994,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         state: "refused",
         valid: false,
         reason: "activation successor live branch head could not be verified — HOLD, fail closed",
+        reporting_exception: "unreadable_head",
         successor: null,
       };
     } else {
@@ -2008,6 +2012,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
           state: "refused",
           valid: false,
           reason: `activation is spent: the episode for ${singleRunActivation.target_issue_id} ended — ${verifiedEpisode.reason}`,
+          reporting_exception: "spent",
           successor: null,
         };
       } else {
@@ -2093,6 +2098,42 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       return null;
     }
     return uuid;
+  };
+  // SHU-226: the sole reporting authority is a runtime-gated activation tick
+  // backed by at least one launch receipt from that exact episode. A spent or
+  // expired activation may cross this seam only to report its already-stopped
+  // episode; deriveIncidentEvent rejects every other refused/default/dry-run
+  // shape. The reporter never mutates activation/config or reaches an adapter.
+  const reportCurrentIncident = async (reportReceipts = receipts) => {
+    const targetIssueId = singleRunActivation.target_issue_id;
+    const runtimeGate = (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
+    if (!activationArg.path || !runtimeGate || !targetIssueId) return { status: "not_authorized" };
+    const reportScope = episodeScopeFor({
+      activation_id: singleRunActivation.activation_id,
+      supersedes_attempt_ids: singleRunActivation.supersedes_attempt_ids,
+    });
+    const episodeDecision = episodeVerdict({
+      receipts: reportReceipts,
+      targetIssueId,
+      config,
+      bootstrapReviewer: singleRunActivation.reviewer_lane ? { lane: singleRunActivation.reviewer_lane } : null,
+      episodeScope: reportScope,
+    });
+    const event = deriveIncidentEvent({ activation: singleRunActivation, receipts: reportReceipts, config, episodeDecision });
+    return reportCoordinatorIncident({
+      event,
+      authorized: Boolean(event) && !reportingExceptionAllowsLaunch(singleRunActivation),
+      targetLinearId: linearIdFor.get(targetIssueId),
+      config,
+      token: linearToken,
+      fetchImpl,
+      sendLinear,
+      commentMutation: LINEAR_COMMENT_CREATE_MUTATION,
+      now: io.now?.() ?? new Date(),
+      stdout: io.stdout,
+      timeoutMs: io.incidentTimeoutMs,
+      timeoutImpl: io.incidentTimeout,
+    });
   };
 
   let lifecyclePersisted = false; // a lifecycle transition was durably written this run
@@ -2192,7 +2233,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       if (launch.stage === "COMPLETED") {
         const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
         if (!resolved.verified) {
-          launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
+          launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD", reason_code: "LIVE_HEAD_UNREADABLE" };
         } else {
           // A builder starts at target_sha and is expected to move its work
           // branch. Its callback binds the resulting commit separately; using
@@ -2207,6 +2248,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
             // reject a review verdict whose observed session is a lineage author.
             lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
           };
+          if (
+            launch.callback?.attempt_id === receipt.attempt_id &&
+            launch.callback?.target_sha === receipt.target_sha &&
+            TARGET_SHA_RE.test(expectedHead ?? "") &&
+            resolved.head !== expectedHead
+          ) launch = { ...launch, reason_code: "LIVE_HEAD_STALE" };
         }
       }
       const transition = foldLaunchOutcome(receipt, launch, { ...recoveryCtx, now: io.now });
@@ -2291,13 +2338,20 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         if (!headVerified) {
           // Completed upstream but the live head could not be verified — HOLD,
           // never COMPLETED (GPT BLOCK #4: fail closed on unverifiable head).
-          event = { type: "run_status", status: "completed", reason: "head could not be verified" };
+          event = { type: "run_status", status: "completed", reason: "head could not be verified", reason_code: "LIVE_HEAD_UNREADABLE" };
         } else {
+          const expectedHead = (adapterModule.supervised ? isWriterRole(roleForReceipt(receipt)) : roleForRequestedWorker(receipt.requested_worker) !== "review")
+            ? evidence?.result_sha
+            : receipt.target_sha;
+          const staleBoundCallback = evidence?.attempt_id === receipt.attempt_id &&
+            evidence?.target_sha === receipt.target_sha &&
+            TARGET_SHA_RE.test(expectedHead ?? "") && current_head !== expectedHead;
           event = {
             type: "run_status",
             status: "completed",
             callback: adapterModule.supervised ? outcome.callback : { links: outcome.evidence_links ?? [], attempt_id: receipt.attempt_id, target_sha: receipt.target_sha, stage: evidence?.stage ?? null, result_sha: evidence?.result_sha ?? null },
             worker_identity: outcome.worker_identity ?? null,
+            ...(staleBoundCallback ? { reason_code: "LIVE_HEAD_STALE" } : {}),
           };
         }
       } else if (outcome.stage === "HOLD") {
@@ -2358,6 +2412,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
       if (io.stdout) io.stdout(`lifecycle: ${receipt.issue_id} ${receipt.stage} -> ${nextReceipt.stage} (worker_identity=${nextReceipt.worker_identity ?? "null"}, external_run_id=${nextReceipt.external_run_id ?? "null"})`);
     }
   }
+
+  // Report after lifecycle so a breaker persisted by this tick is visible in the
+  // same tick. All failures are absorbed inside the bounded reporter; stop/exit
+  // semantics below never depend on a card write succeeding.
+  await reportCurrentIncident();
 
   if (!singleRunActivation.requested) {
     for (const [id, continuation] of handoffContinuations(receipts, config.linear_receipt_actor_ids)) episodeContinuations.set(id, continuation);
@@ -2555,6 +2614,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — SHU-63 activation contract unmet for ${adapter}: ${describeUnmetActivation(activation.unmet)}`);
     config.adapter_pause_map[adapter] = true;
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    await reportCurrentIncident();
     return 2;
   }
   const activationTarget = activation
@@ -2564,6 +2624,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     if (io.stdout) io.stdout(`dispatch: ABORTED before reservation — activation GitHub probe failed for ${adapter}: ${activationTarget.reason}`);
     config.adapter_pause_map[adapter] = true;
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
+    await reportCurrentIncident();
     return 2;
   }
   if (workspaceScope.workspace_scope === "scoped") {
@@ -2718,7 +2779,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
   if (launch.stage === "COMPLETED") {
     const resolved = await resolveLiveHead(receipt, { githubToken, fetchImpl });
     if (!resolved.verified) {
-      launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD" };
+      launch = { ...launch, stage: "HOLD", callback: undefined, reason: "live head could not be verified — HOLD", reason_code: "LIVE_HEAD_UNREADABLE" };
     } else {
       const expectedHead = (receipt.receipt_version === "1.1.0" ? isWriterRole(roleForReceipt(receipt)) : receipt.requested_worker === "codex-builder")
         ? launch.callback?.result_sha
@@ -2729,6 +2790,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
         // Fold-time author exclusion (SHU-73): lineage receipts for this issue.
         lineage: (receipts ?? []).filter((r) => r && r.issue_id === receipt.issue_id),
       };
+      if (
+        launch.callback?.attempt_id === receipt.attempt_id &&
+        launch.callback?.target_sha === receipt.target_sha &&
+        TARGET_SHA_RE.test(expectedHead ?? "") &&
+        resolved.head !== expectedHead
+      ) launch = { ...launch, reason_code: "LIVE_HEAD_STALE" };
     }
   }
   const transition = foldLaunchOutcome(launchIntent.receipt, launch, { ...launchCtx, now: io.now });
@@ -2752,6 +2819,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     config.adapter_pause_map[adapter] = true;
     await sendLinear(LINEAR_COMMENT_CREATE_MUTATION, { issueId: linearIssueId, body: `coordinator-pause: ${adapter}` }, linearToken, fetchImpl).catch(() => undefined);
   }
+  // Synchronous adapters can cross a breaker in the same tick that creates the
+  // launch receipt. Include that just-persisted terminal state so reporting does
+  // not depend on a later wakeup. The reporter remains read-only with respect to
+  // coordinator state and absorbs every delivery failure.
+  await reportCurrentIncident([...receipts, next]);
   if (io.stdout) io.stdout(`dispatch: ${candidate.id} ${receipt.stage} -> ${next.stage} (external_run_id=${next.external_run_id ?? "null"}, pause_adapter=${launch.pause_adapter === true})`);
   return next.stage === "RUNNING" || next.stage === "LAUNCH_UNKNOWN" || next.stage === "COMPLETED" ? 0 : 2;
 }
