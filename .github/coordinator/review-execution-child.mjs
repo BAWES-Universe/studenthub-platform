@@ -1,6 +1,7 @@
 // Fixed child for the reviewer evidence sandbox. This file is loaded from the
 // coordinator checkout, never from the builder-authored target checkout.
 // The host-configured wrapper must confine this process before it starts.
+import { PROTECTED_CLASSES } from "./service/reviewer-isolation.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import { spawnSync } from "node:child_process";
@@ -39,12 +40,14 @@ export function protectedFileDenied(file) {
 }
 
 export function inheritedDescriptorDenied(canary, { fsImpl = fs, pid = process.pid } = {}) {
-  if (!canary) return true;
+  if (typeof canary !== "string" || !/^SHU261_FD_[0-9a-f]{32}$/.test(canary)) return false;
   let descriptors = [];
   try { descriptors = fsImpl.readdirSync(`/proc/${pid}/fd`); } catch { return false; }
   for (const descriptor of descriptors) {
     if (!/^\d+$/.test(descriptor) || Number(descriptor) <= 2) continue;
     try {
+      // Reading a pipe can block forever. The sentinel is a regular file.
+      if (!fsImpl.statSync(`/proc/${pid}/fd/${descriptor}`).isFile()) continue;
       if (fsImpl.readFileSync(`/proc/${pid}/fd/${descriptor}`, "utf8").includes(canary)) return false;
     } catch { /* unreadable/non-regular descriptors do not expose the canary */ }
   }
@@ -52,11 +55,11 @@ export function inheritedDescriptorDenied(canary, { fsImpl = fs, pid = process.p
 }
 
 export function environmentValueDenied(canary, env = process.env) {
-  return !canary || !Object.values(env).some((value) => String(value).includes(canary));
+  return typeof canary === "string" && /^SHU261_ENV_[0-9a-f]{32}$/.test(canary) && !Object.values(env).some((value) => String(value).includes(canary));
 }
 
 export function processInspectionDenied(canary, { fsImpl = fs, pid = process.pid } = {}) {
-  if (!canary) return true;
+  if (typeof canary !== "string" || !/^SHU261_PROCESS_[0-9a-f]{32}$/.test(canary)) return false;
   let entries = [];
   try { entries = fsImpl.readdirSync("/proc"); } catch { return false; }
   for (const entry of entries) {
@@ -71,7 +74,7 @@ export function processInspectionDenied(canary, { fsImpl = fs, pid = process.pid
 }
 
 export function protectedProbes(raw) {
-  if (!raw) return { ok: true, classes: {}, symlink: "NOT_REQUESTED", traversal: "NOT_REQUESTED" };
+  if (!raw) return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" };
   let probes;
   try { probes = JSON.parse(raw); } catch { return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" }; }
   if (!Array.isArray(probes) || probes.length === 0 || probes.length > 16) {
@@ -81,7 +84,7 @@ export function protectedProbes(raw) {
   let symlink = true;
   let traversal = true;
   for (const probe of probes) {
-    if (!probe || typeof probe !== "object" || !/^[a-z][a-z0-9_]+$/.test(probe.class ?? "")
+    if (!probe || typeof probe !== "object" || ![...PROTECTED_CLASSES, "deployed_supervisor_environment"].includes(probe.class)
       || typeof probe.path !== "string" || !probe.path.startsWith("/") || Object.hasOwn(classes, probe.class)) {
       return { ok: false, classes: {}, symlink: "INVALID", traversal: "INVALID" };
     }

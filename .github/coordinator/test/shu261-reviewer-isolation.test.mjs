@@ -71,7 +71,7 @@ test("SHU261 wrapper contract isolates both reviewer phases and every protected 
   const sudoers = fs.readFileSync(new URL("../service/shu-reviewer.sudoers", import.meta.url), "utf8");
   assert.match(sudoers, /^Defaults!\/usr\/local\/libexec\/shu-reviewer-sandbox env_keep \+= "CLAUDE_CODE_OAUTH_TOKEN"$/m,
     "SHU261_SUDO: only reviewer OAuth may be preserved for the wrapper");
-  assert.match(sudoers, /^shu-coordinator ALL=\(root\) NOPASSWD:SETENV: \/usr\/local\/libexec\/shu-reviewer-sandbox \*$/m,
+  assert.match(sudoers, /^shu-coordinator ALL=\(root\) NOPASSWD:NOSETENV: \/usr\/local\/libexec\/shu-reviewer-sandbox \*$/m,
     "SHU261_SUDO: coordinator may invoke only the reviewed wrapper");
   assert.doesNotMatch(sudoers, /NOPASSWD:\s*(?:ALL|\/bin\/(?:ba)?sh)/,
     "SHU261_SUDO: reviewer isolation must not grant a shell or general root command");
@@ -88,14 +88,14 @@ test("SHU261 model review crosses the validated reviewer wrapper with a clean en
       SHU_SUPERVISOR_SECRET: "supervisor-canary", SHU_PUSH_SSH_COMMAND: "ssh-canary", SHU_REVIEW_EVIDENCE_DIR: f.evidence },
     readHeadImpl: async () => SHA,
     reviewEvidenceImpl: async () => ({ executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
-      evidence_link: pathToFileURL(f.reportPath).href, report: report(), isolation_wrapper: ["/usr/bin/sudo", "-n", "--preserve-env=CLAUDE_CODE_OAUTH_TOKEN", "/usr/local/libexec/shu-reviewer-sandbox"] }),
+      evidence_link: pathToFileURL(f.reportPath).href, report: report(), isolation_wrapper: ["/usr/bin/sudo", "-n", "/usr/local/libexec/shu-reviewer-sandbox"] }),
     persistEnvelopeImpl: () => ({ link: pathToFileURL(path.join(f.evidence, "envelope.stdout")).href }),
     execFileImpl: (file, args, options, done) => { calls.push({ file, args, options }); queueMicrotask(() => done(null, JSON.stringify({ type: "result", session_id: ATTEMPT, structured_output: callback }), "")); },
   });
   assert.equal(result.stage, "COMPLETED", result.reason);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].file, "/usr/bin/sudo", "SHU261_MODEL_UID: Claude cannot run directly as the coordinator");
-  assert.deepEqual(calls[0].args.slice(0, 11), ["-n", "--preserve-env=CLAUDE_CODE_OAUTH_TOKEN", "/usr/local/libexec/shu-reviewer-sandbox",
+  assert.deepEqual(calls[0].args.slice(0, 10), ["-n", "/usr/local/libexec/shu-reviewer-sandbox",
     "--profile", "model", "--workspace-root", f.root, "--workspace", f.workspace, "--", "claude"],
   "SHU261_MODEL_BINDING: model profile must bind the exact assigned checkout");
   assert.deepEqual(Object.keys(calls[0].options.env).sort(), ["CLAUDE_CODE_OAUTH_TOKEN", "HOME", "PATH"],
@@ -156,7 +156,7 @@ test("SHU261 active attack probes are non-vacuous before confinement", async (t)
   const f = fixture(t);
   const sentinel = path.join(f.root, "sentinel");
   const symlink = path.join(f.workspace, "symlink");
-  fs.writeFileSync(sentinel, "SHU261_CANARY", { mode: 0o600 });
+  fs.writeFileSync(sentinel, "SHU261_FD_0123456789abcdef0123456789abcdef", { mode: 0o600 });
   fs.symlinkSync(sentinel, symlink);
   const traversal = path.relative(f.workspace, sentinel);
   const probes = protectedProbes(JSON.stringify([{ class: "activation_records", path: sentinel, symlink_path: symlink, traversal_path: traversal }]));
@@ -164,14 +164,14 @@ test("SHU261 active attack probes are non-vacuous before confinement", async (t)
   assert.equal(probes.symlink, "REACHABLE", "SHU261_POSITIVE_SYMLINK: symlink attack is genuinely live without confinement");
   assert.equal(probes.traversal, "REACHABLE", "SHU261_POSITIVE_TRAVERSAL: traversal attack is genuinely live without confinement");
 
-  const envCanary = "SHU261_ENV_CANARY";
+  const envCanary = "SHU261_ENV_0123456789abcdef0123456789abcdef";
   assert.equal(environmentValueDenied(envCanary, { ORDINARY_NAME: envCanary }), false,
     "SHU261_POSITIVE_ENVIRONMENT: value-based leakage is detected even under an innocent key");
   const fd = fs.openSync(sentinel, "r");
-  try { assert.equal(inheritedDescriptorDenied("SHU261_CANARY"), false, "SHU261_POSITIVE_FD: an open sentinel descriptor is detected"); }
+  try { assert.equal(inheritedDescriptorDenied("SHU261_FD_0123456789abcdef0123456789abcdef"), false, "SHU261_POSITIVE_FD: an open sentinel descriptor is detected"); }
   finally { fs.closeSync(fd); }
 
-  const processCanary = `SHU261_PROCESS_${process.pid}`;
+  const processCanary = `SHU261_PROCESS_${process.pid.toString(16).padStart(32, "0")}`;
   const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", processCanary], { stdio: "ignore" });
   t.after(() => child.kill("SIGTERM"));
   await new Promise((resolve) => setTimeout(resolve, 100));

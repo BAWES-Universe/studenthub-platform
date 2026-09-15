@@ -6,7 +6,8 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { execFile as nodeExecFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { execFile as nodeExecFile, spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -103,13 +104,12 @@ export function validateReviewWrapper(wrapper, fsImpl = fs, { model = false } = 
   const executable = trustedRootPath(wrapper[0], fsImpl);
   const normalized = [executable, ...wrapper.slice(1)];
   if (path.basename(wrapper[0]) === "sudo" || path.basename(executable) === "sudo") {
-    const expectedLength = model ? 4 : 3;
-    const sandboxIndex = model ? 3 : 2;
+    const expectedLength = 3;
+    const sandboxIndex = 2;
     if (wrapper.length !== expectedLength || wrapper[1] !== "-n"
-      || (model && wrapper[2] !== "--preserve-env=CLAUDE_CODE_OAUTH_TOKEN")
       || !path.isAbsolute(wrapper[sandboxIndex] ?? "")) {
       throw new Error(model
-        ? "sudo reviewer model wrapper must preserve only CLAUDE_CODE_OAUTH_TOKEN in the fixed noninteractive command form"
+        ? "sudo reviewer model wrapper must use command-specific env_keep in the fixed noninteractive command form"
         : "sudo review wrapper must be the fixed noninteractive command form");
     }
     normalized[sandboxIndex] = trustedRootPath(wrapper[sandboxIndex], fsImpl);
@@ -177,6 +177,8 @@ export async function runReviewEvidence({
   let server;
   let protectedPath;
   let siblingProbeDir;
+  let canaryFd;
+  let markerProcess;
   try {
     if (!UUID.test(attempt_id ?? "") || !SHA.test(target_sha ?? "") || !path.isAbsolute(cwd ?? "")) {
       throw new Error("invalid review evidence binding");
@@ -217,14 +219,24 @@ export async function runReviewEvidence({
       throw new Error("review evidence authority must be outside the builder-authored checkout");
     }
     protectedPath = path.join(evidenceDir, `${attempt_id}.confinement-sentinel`);
-    fsImpl.writeFileSync(protectedPath, "coordinator-private", { flag: "wx", mode: 0o600 });
+    const nonce = randomUUID().replaceAll("-", "");
+    const fdCanary = `SHU261_FD_${nonce}`;
+    const envCanary = `SHU261_ENV_${nonce}`;
+    const processCanary = `SHU261_PROCESS_${nonce}`;
+    fsImpl.writeFileSync(protectedPath, fdCanary, { flag: "wx", mode: 0o600 });
     siblingProbeDir = fsImpl.mkdtempSync(path.join(workspaceRoot, ".shu-review-sibling-probe-"));
     fsImpl.chmodSync(siblingProbeDir, 0o755);
     const siblingProbePath = path.join(siblingProbeDir, "must-not-be-readable");
     fsImpl.writeFileSync(siblingProbePath, "sibling-private", { mode: 0o644 });
+    canaryFd = fsImpl.openSync(protectedPath, "r");
+    markerProcess = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)", processCanary], {
+      env: buildReviewExecutionEnvironment(), stdio: "ignore",
+    });
+    await new Promise((resolve, reject) => { markerProcess.once("spawn", resolve); markerProcess.once("error", reject); });
     server = await listenProbe();
     const port = server.address().port;
     const safeEnv = buildReviewExecutionEnvironment(env);
+    safeEnv.SHU261_ENV_CANARY = envCanary;
     const result = await runExecFile(execFileImpl, wrapper[0], [
       ...wrapper.slice(1),
       "--profile", "test",
@@ -239,6 +251,13 @@ export async function runReviewEvidence({
       "--sibling-probe-path", siblingProbePath,
       "--probe-port", String(port),
       "--target-sha", target_sha,
+      "--protected-paths-json", JSON.stringify([
+        { class: "activation_records", path: protectedPath },
+        { class: "sibling_attempts", path: siblingProbePath },
+      ]),
+      "--fd-canary", fdCanary,
+      "--env-canary", envCanary,
+      "--process-canary", processCanary,
       "--",
       ...files,
     ], {
@@ -290,6 +309,8 @@ export async function runReviewEvidence({
   } catch (error) {
     return { ok: false, executed: false, passed: false, reason_code: "REVIEW_EXECUTION_UNAVAILABLE", evidence_link: null, detail: error?.message ?? "unknown" };
   } finally {
+    if (markerProcess) markerProcess.kill("SIGTERM");
+    if (canaryFd !== undefined) { try { fsImpl.closeSync(canaryFd); } catch {} }
     if (server) await new Promise((resolve) => server.close(resolve));
     if (protectedPath) {
       try { fsImpl.unlinkSync(protectedPath); } catch { /* evidence write failures never mask the outcome */ }

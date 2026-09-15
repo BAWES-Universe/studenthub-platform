@@ -95,15 +95,16 @@ export SHU_WORKER_LAUNCH_WRAPPER="setpriv --reuid=shu-worker --regid=shu-worker 
 # systemd sandbox as a distinct uid with no network, secrets or writable host tree.
 export SHU_REVIEW_EXEC_UID="$(id -u shu-reviewer)"
 export SHU_REVIEW_EXEC_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'
-export SHU_REVIEW_MODEL_WRAPPER_JSON='["/usr/bin/sudo","-n","--preserve-env=CLAUDE_CODE_OAUTH_TOKEN","/usr/local/libexec/shu-reviewer-sandbox"]'
+export SHU_REVIEW_MODEL_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'
 export SHU_REVIEW_TEST_FILES_JSON='["tools/fixture/test/scan-vacuous.test.mjs"]'
 export SHU_REVIEW_EVIDENCE_DIR=/srv/shu/state/reviewer-evidence
 ```
 
 Install `.github/coordinator/reviewer-sandbox.sh` as the root-owned wrapper named
 above, install the host `acl` package, and grant only that fixed command to
-`shu-coordinator`. The model form additionally preserves exactly
-`CLAUDE_CODE_OAUTH_TOKEN`; no other caller environment is preserved. Both the
+`shu-coordinator`. The command-specific sudoers `env_keep` entry preserves
+`CLAUDE_CODE_OAUTH_TOKEN` with `NOPASSWD:NOSETENV:`; arbitrary caller
+environment overrides are refused. Both the
 confined test child and the actual Claude verifier cross this wrapper and run as
 `shu-reviewer`. The adapter does
 not trust the declaration: symlinked system entrypoints are resolved to a

@@ -221,14 +221,20 @@ export async function validateReviewerHost({ approvedRevision, env = process.env
       positive: { uid: report.actual_uid, workspace_uid: report.workspace_uid, tests_executed: report.tests.executed, tests_exit_code: report.tests.exit_code },
     };
   } finally {
-    if (server) await new Promise((resolve) => server.close(resolve));
-    if (markerProcess) markerProcess.kill("SIGTERM");
-    for (const remove of cleanup.reverse()) remove();
+    const cleanupErrors = [];
+    if (server) cleanup.push(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+    if (markerProcess) cleanup.push(() => markerProcess.kill("SIGTERM"));
+    for (const remove of cleanup.reverse()) {
+      try { await remove(); } catch (error) { cleanupErrors.push(error); }
+    }
+    try {
+      const worktreesAfter = spawnSync(GIT, ["worktree", "list", "--porcelain"], { cwd: REPO, encoding: "utf8" });
+      assert.equal(worktreesAfter.status, 0, `SHU261_HOST_WORKTREE: final inventory must succeed: ${worktreesAfter.stderr}`);
+      assert.equal(worktreesAfter.stdout, worktreesBefore.stdout,
+        "SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory");
+    } catch (error) { cleanupErrors.push(error); }
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "SHU261_HOST_CLEANUP: cleanup or final inventory failed");
   }
-  const worktreesAfter = spawnSync(GIT, ["worktree", "list", "--porcelain"], { cwd: REPO, encoding: "utf8" });
-  assert.equal(worktreesAfter.status, 0, `SHU261_HOST_WORKTREE: final inventory must succeed: ${worktreesAfter.stderr}`);
-  assert.equal(worktreesAfter.stdout, worktreesBefore.stdout,
-    "SHU261_HOST_WORKTREE: bounded validation must restore the exact worktree inventory");
   return evidence;
 }
 

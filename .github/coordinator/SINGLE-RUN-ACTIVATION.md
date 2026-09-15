@@ -287,8 +287,9 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   exit trap. A pre-existing reviewer ACL is refused rather than silently reused.
 * `SHU_REVIEW_MODEL_WRAPPER_JSON`: the same canonical sandbox behind the exact
   noninteractive model form
-  `["/usr/bin/sudo","-n","--preserve-env=CLAUDE_CODE_OAUTH_TOKEN","/usr/local/libexec/shu-reviewer-sandbox"]`.
-  The sudo rule may preserve that one reviewer subscription value and nothing
+  `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
+  The `NOPASSWD:NOSETENV:` sudo rule uses command-specific `env_keep` to
+  preserve that one reviewer subscription value and nothing
   else. The actual Claude process, not only its test child, then runs as
   `shu-reviewer` with a transient private home, a serialized reviewer identity,
   no process view of other service identities, no view of
