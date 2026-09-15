@@ -13,7 +13,7 @@ an operation runs. Failures emit machine-readable JSON with `ok:false` on stderr
 and set `process.exitCode = 2`. A `HostBindingHalt` includes a binding name and
 one of the nine typed codes below. All other failures use `SHU251_UNEXPECTED`
 with a `reason` and no binding name, including a repeated `capture-prior`
-(`atomicExclusive` EEXIST) or an fs error for a missing `unit_directory`.
+(`atomicExclusive` EEXIST) or an fs error for a non-directory `unit_directory`.
 
 | Missing binding from the report | Reviewed action/control | Typed failure |
 | --- | --- | --- |

@@ -130,3 +130,22 @@ test('SHU251_PRIOR_STATE_ROLLBACK positive control and mutation', t => {
   const prior = JSON.parse(fs.readFileSync(spec.prior_state_file)); prior.approved_sha = 'c'.repeat(40); fs.writeFileSync(spec.prior_state_file, JSON.stringify(prior));
   assert.throws(() => rollbackPriorState(spec, { run: () => '' }), named('prior_state_rollback'));
 });
+
+test('SHU251_UNEXPECTED: non-directory unit_directory reaches ENOTDIR', t => {
+  const { root, spec } = fixture(t);
+  fs.rmdirSync(spec.unit_directory);
+  fs.writeFileSync(spec.unit_directory, 'fixture regular file');
+  assert.throws(() => capturePriorState(spec, {
+    serviceState: () => assert.fail('SHU251_UNEXPECTED: must fail before service access'),
+  }), { code: 'ENOTDIR' }, 'SHU251_UNEXPECTED: non-directory example is reachable');
+  const specFile = path.join(root, 'spec.json');
+  fs.writeFileSync(specFile, JSON.stringify(spec));
+  const run = spawnSync(process.execPath, [new URL('../host-window-bindings.mjs', import.meta.url).pathname,
+    'capture-prior', specFile], { encoding: 'utf8' });
+  assert.equal(run.status, 2, 'SHU251_UNEXPECTED: CLI failure exit');
+  const error = JSON.parse(run.stderr);
+  assert.equal(error.ok, false, 'SHU251_UNEXPECTED: CLI failure contract');
+  assert.equal(error.code, 'SHU251_UNEXPECTED', 'SHU251_UNEXPECTED: CLI classifies ENOTDIR');
+  assert.match(error.reason, /ENOTDIR/, 'SHU251_UNEXPECTED: CLI preserves reason');
+  assert.equal(Object.hasOwn(error, 'binding'), false, 'SHU251_UNEXPECTED: no binding name');
+});

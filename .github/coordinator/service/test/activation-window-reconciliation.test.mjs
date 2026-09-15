@@ -108,3 +108,43 @@ test('RECON_CONFIG_MUTATION: committed dispatch gate flipped true', () => {
   config.enable_dispatch = true;
   assert.throws(() => assertDispatch(config), error => error.name === 'AssertionError' && error.message.startsWith('RECON_CONFIG_GATE:'), 'RECON_CONFIG_GATE: enabled config must die by name');
 });
+
+test('RECON_ENV_ONLY_SECRET: exactly SHU_SUPERVISOR_SECRET proceeds through render and policy', t => {
+  const params = fixture(t);
+  fs.writeFileSync(params.supervisorEnvironmentFile, `SHU_SUPERVISOR_SECRET=${'s'.repeat(40)}\n`);
+  const units = render(params);
+  assert.deepEqual(Object.keys(units), names, 'RECON_ENV_ONLY_SECRET: all units rendered');
+  assert.doesNotThrow(() => assertPolicy(units, params), 'RECON_ENV_ONLY_SECRET: policy accepts ruled configuration');
+});
+
+for (const [label, extra] of [
+  ['EXTRA_CREDENTIAL', 'AWS_SECRET_ACCESS_KEY=fixture-only'],
+  ['EXTRA_SETTING', 'LOG_LEVEL=debug'],
+]) test(`RECON_ENV_${label}: supervisor extra assignment refuses`, t => {
+  const params = fixture(t);
+  fs.appendFileSync(params.supervisorEnvironmentFile, `${extra}\n`);
+  refuses(params, 'SHU251_ENV_SUPERVISOR');
+});
+
+for (const field of ['supervisorEnvironmentFile', 'coordinatorEnvironmentFile']) {
+  test(`RECON_ENV_FILE: ${field} symlink refuses`, t => {
+    const params = fixture(t), target = `${params[field]}.target`;
+    fs.renameSync(params[field], target);
+    fs.symlinkSync(target, params[field]);
+    refuses(params, 'SHU251_ENV_FILE');
+  });
+  test(`RECON_ENV_UNREADABLE: ${field} present but unreadable refuses`, t => {
+    const params = fixture(t), file = params[field];
+    fs.chmodSync(file, 0o000);
+    assert.ok(fs.lstatSync(file).isFile(), 'RECON_ENV_UNREADABLE: file is present and regular');
+    // Root bypasses mode bits; inject the same EACCES only for this fixture there.
+    if (process.getuid?.() === 0) {
+      const read = fs.readFileSync;
+      t.mock.method(fs, 'readFileSync', function (target, ...args) {
+        if (target === file) throw Object.assign(new Error('fixture permission denied'), { code: 'EACCES' });
+        return read.call(this, target, ...args);
+      });
+    }
+    refuses(params, 'SHU251_ENV_UNREADABLE');
+  });
+}
