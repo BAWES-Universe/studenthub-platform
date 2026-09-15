@@ -1,0 +1,55 @@
+import { PROFILE_PARITY_REVISION } from "./types.js";
+
+const metadata = Object.freeze({
+  source_revision: PROFILE_PARITY_REVISION,
+  imported_at: "2026-09-13T12:00:00.000Z",
+});
+
+export const SYNTHETIC_PROFILE_FIXTURES = Object.freeze({
+  populated: Object.freeze({
+    ...metadata,
+    candidate_id: 231,
+    candidate_name: "Noor Al-Sabah",
+    candidate_name_ar: "نور الصباح",
+    candidate_gender: 2,
+    candidate_birth_date: "2002-09-14",
+    nationality_name: "Kuwaiti",
+    university_name: "Synthetic Gulf University",
+    candidate_objective: "Build welcoming customer experiences",
+    candidate_intro: "Student and part-time retail teammate.",
+    candidate_preferred_time: "Weekday evenings",
+    candidate_language_pref: "ar",
+    area_name: "Synthetic Salmiya",
+    candidate_driving_license: 1,
+    candidate_job_search_status: 2,
+    candidate_committed: 1,
+    is_incomplete_profile: 0,
+    candidate_pending_profile: "",
+    candidate_civil_expiry_date: "2028-04-30",
+    // Canary-only excluded inputs prove selection is closed.
+    candidate_civil_id: "SENSITIVE-CIVIL-ID-SENTINEL",
+    candidate_resume: "SENSITIVE-RESUME-KEY-SENTINEL",
+    candidate_iban: "SENSITIVE-IBAN-SENTINEL",
+    candidate_video: "SENSITIVE-VIDEO-SENTINEL",
+  }),
+  partial: Object.freeze({
+    ...metadata,
+    candidate_id: "47",
+    candidate_name: "Synthetic Mariam",
+    candidate_name_ar: null,
+    candidate_gender: 2,
+    candidate_birth_date: "1998-01-10",
+    nationality_name: "Jordanian",
+    university_name: null,
+    candidate_objective: null,
+    candidate_intro: "Learning through flexible work.",
+    candidate_language_pref: "en",
+    candidate_driving_license: 2,
+    candidate_job_search_status: 1,
+    candidate_committed: 0,
+    is_incomplete_profile: 1,
+    candidate_pending_profile: "Name Arabic,objective,location,education,skill",
+    candidate_civil_expiry_date: null,
+  }),
+  unavailable: Object.freeze({ ...metadata }),
+});

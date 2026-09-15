@@ -6,6 +6,8 @@
 // supervisor owns worker processes and terminal state. A missing supervisor is
 // HOLD; callers must never fall back to spawning a worker themselves.
 
+import assert from 'node:assert/strict';
+import { requireHoldCode, hasLaunchReceipt } from './intended-work.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
@@ -26,7 +28,7 @@ import net from "node:net";
 import { dirname, join } from "node:path";
 import { validWorkOrder } from "./review-routing.mjs";
 
-export const SUPERVISOR_PROTOCOL_VERSION = "1.0.0";
+export const SUPERVISOR_PROTOCOL_VERSION = "2.0.0";
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 export const DEFAULT_DEADLINE_MS = 60 * 60 * 1000;
 export const MAX_REQUEST_BYTES = 64 * 1024;
@@ -68,19 +70,20 @@ function validateBoundOrder(order) {
   return { ok: true };
 }
 
-function macFor(order, secret) {
+function macFor(order, secret, operation = "submit") {
   return createHmac("sha256", assertSecret(secret))
-    .update(`${SUPERVISOR_PROTOCOL_VERSION}\n${canonical(order)}`)
+    .update(`${SUPERVISOR_PROTOCOL_VERSION}\n${operation}\n${canonical(order)}`)
     .digest("base64url");
 }
 
-export function signedSupervisorRequest(order, secret) {
+export function signedSupervisorRequest(order, secret, operation = "submit") {
   const valid = validateBoundOrder(order);
   if (!valid.ok) throw new Error(valid.reason);
   return {
     version: SUPERVISOR_PROTOCOL_VERSION,
     order,
-    mac: macFor(order, secret),
+    operation,
+    mac: macFor(order, secret, operation),
   };
 }
 
@@ -88,11 +91,12 @@ export function verifySupervisorRequest(request, secret) {
   if (!request || request.version !== SUPERVISOR_PROTOCOL_VERSION || typeof request.mac !== "string") {
     return { ok: false, reason: "invalid supervisor envelope" };
   }
+  if (!["submit", "status"].includes(request.operation ?? "submit")) return { ok: false, reason: "unknown supervisor operation" };
   const valid = validateBoundOrder(request.order);
   if (!valid.ok) return valid;
   let expected;
   try {
-    expected = Buffer.from(macFor(request.order, secret));
+    expected = Buffer.from(macFor(request.order, secret, request.operation));
   } catch (error) {
     return { ok: false, reason: error.message };
   }
@@ -164,6 +168,9 @@ function readJson(path) {
 export class SupervisorStore {
   constructor(root) {
     this.root = root;
+    this.branchesDir = join(root, "branches");
+    ensureDir(this.branchesDir);
+    this.intentsDir = join(root, "intents");
     this.ordersDir = join(root, "orders");
     this.runsDir = join(root, "runs");
     this.launchesDir = join(root, "launches");
@@ -184,16 +191,97 @@ export class SupervisorStore {
     };
   }
 
+  intentPath(order) {
+    this.paths(order.attempt_id);
+    assert.match(order.issue_id, /^[A-Za-z0-9-]+$/, 'ANNOUNCE_WITHOUT_CLAIM: safe issue binding required');
+    return join(this.intentsDir, `${order.issue_id}-${order.attempt_id}.json`);
+  }
+
+  intend(order, now, holdCode) {
+    requireHoldCode(holdCode);
+    assert.ok(validateBoundOrder(order).ok, 'ANNOUNCE_WITHOUT_CLAIM: a valid bound work order is required');
+    const path = this.intentPath(order);
+    durableCreate(path, { order, intended_at: now, hold_code: holdCode });
+    const intent = readJson(path);
+    assert.equal(canonical(intent.order), canonical(order), 'ANNOUNCE_WITHOUT_CLAIM: intent binding is immutable');
+    requireHoldCode(intent.hold_code);
+    return intent;
+  }
+
+  holdIntent(order, code) {
+    requireHoldCode(code);
+    const path = this.intentPath(order);
+    const intent = readJson(path);
+    durableReplace(path, { ...intent, hold_code: code });
+  }
+
+  pendingIntents() {
+    if (!existsSync(this.intentsDir)) return [];
+    return readdirSync(this.intentsDir).filter(name => name.endsWith('.json')).map(name => {
+      const intent = readJson(join(this.intentsDir, name));
+      requireHoldCode(intent.hold_code);
+      assert.equal(this.intentPath(intent.order), join(this.intentsDir, name), 'ANNOUNCE_WITHOUT_CLAIM: intent key mismatch');
+      return intent;
+    });
+  }
+
+  reportIntent(order) {
+    const path = this.intentPath(order);
+    if (!existsSync(path)) return { status: 'UNLAUNCHED', hold_code: requireHoldCode('MISSING_CLAIM'), next_automatic_action: null };
+    const intent = readJson(path);
+    requireHoldCode(intent.hold_code);
+    assert.equal(canonical(intent.order), canonical(order), 'ANNOUNCE_WITHOUT_CLAIM: report binding mismatch');
+    const launch = this.hasLaunch(order.attempt_id) ? this.readLaunch(order.attempt_id) : null;
+    if (!hasLaunchReceipt(launch, order)) return { status: 'UNLAUNCHED', hold_code: launch ? requireHoldCode('AMBIGUOUS_LAUNCH') : intent.hold_code, next_automatic_action: null };
+    return { status: this.readRun(order.attempt_id).status.toUpperCase(), launch_receipt: launch, next_automatic_action: null };
+  }
+
+  announce(order) {
+    assert.ok(existsSync(this.intentPath(order)), 'ANNOUNCE_WITHOUT_CLAIM: durable intent required before announcement');
+    return this.reportIntent(order);
+  }
+
   accept(order, now) {
+    try { this.intend(order, now, 'AWAITING_LAUNCH'); } catch (error) {
+      if (error.code !== 'ERR_ASSERTION') throw error;
+      if (error.message.startsWith('HOLD_CODE_REQUIRED')) throw error;
+      return { ok: false, stage: 'HOLD', reason: 'attempt_id is already bound to a different work order' };
+    }
     const paths = this.paths(order.attempt_id);
     const durableOrder = {
       protocol: SUPERVISOR_PROTOCOL_VERSION,
       order,
       digest: createHash("sha256").update(canonical(order)).digest("hex"),
     };
+    // Append-only branch ownership chain: atomic creation elects one successor
+    // even if two clients/processes race with different attempt IDs. A claim
+    // without a provably finished child remains occupied after a crash.
+    if (!existsSync(paths.order)) {
+      const branchKey = createHash("sha256").update(`${order.repo}\n${order.branch}`).digest("hex");
+      let predecessor = "initial";
+      for (;;) {
+        const claim = join(this.branchesDir, `${branchKey}-${predecessor}.json`);
+        if (durableCreate(claim, { attempt_id: order.attempt_id })) break;
+        const owner = readJson(claim).attempt_id;
+        if (owner === order.attempt_id) break;
+        try {
+          const run = this.readRun(owner);
+          if (!["completed", "failed"].includes(run.status) || !this.validatedCompletion(owner).ok) {
+            this.holdIntent(order, 'BRANCH_OCCUPIED');
+            return { ok: false, stage: "HOLD", hold_code: 'BRANCH_OCCUPIED', reason: "branch already owned by an unfinished attempt" };
+          }
+        } catch (error) {
+          if (error.code === 'ERR_ASSERTION') throw error;
+          this.holdIntent(order, 'MISSING_AUTHORITY');
+          return { ok: false, stage: "HOLD", hold_code: 'MISSING_AUTHORITY', reason: "ambiguous branch ownership" };
+        }
+        predecessor = owner;
+      }
+    }
     const created = durableCreate(paths.order, durableOrder);
     if (!created) {
       const existing = readJson(paths.order);
+      if (existing.protocol !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, stage: "HOLD", reason: "unknown durable order version" };
       if (canonical(existing.order) !== canonical(order)) {
         return { ok: false, stage: "HOLD", reason: "attempt_id is already bound to a different work order" };
       }
@@ -213,7 +301,9 @@ export class SupervisorStore {
   }
 
   readOrder(attemptId) {
-    return readJson(this.paths(attemptId).order).order;
+    const stored = readJson(this.paths(attemptId).order);
+    if (stored.protocol !== SUPERVISOR_PROTOCOL_VERSION) throw new Error("unknown durable order version");
+    return stored.order;
   }
 
   readRun(attemptId) {
@@ -261,6 +351,10 @@ export class SupervisorStore {
     if (!token || tokenHash !== launch.completion_token_hash || targetSha !== order.target_sha) {
       return { ok: false, reason: "completion binding failed" };
     }
+    if (completion.version !== undefined && completion.version !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, reason: "unknown result version" };
+    // Legacy exit-only records carry no callback authority. Evidence requires v2.
+    if (completion.result && completion.version !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, reason: "unversioned result" };
+    if (Buffer.byteLength(canonical(completion)) > MAX_REQUEST_BYTES / 2) return { ok: false, reason: "result too large" };
     const exitCode = completion.exit_code;
     if (!(exitCode === null || Number.isInteger(exitCode))) return { ok: false, reason: "invalid completion exit code" };
     if (completion.signal !== null && completion.signal !== undefined && (
@@ -270,6 +364,8 @@ export class SupervisorStore {
       return { ok: false, reason: "invalid completion timestamp" };
     }
     const durable = {
+      version: SUPERVISOR_PROTOCOL_VERSION,
+      result: completion.result ?? null,
       attempt_id: attemptId,
       target_sha: targetSha,
       status: exitCode === 0 ? "completed" : "failed",
@@ -293,6 +389,7 @@ export class SupervisorStore {
       return { ok: false, reason: "completion evidence is missing" };
     }
     const stored = this.readCompletion(attemptId);
+    if (stored.version !== SUPERVISOR_PROTOCOL_VERSION) return { ok: false, reason: "unknown durable result version" };
     const launch = this.readLaunch(attemptId);
     const order = this.readOrder(attemptId);
     const tokenHash = createHash("sha256").update(String(stored.completion_token ?? "")).digest("hex");
@@ -367,28 +464,70 @@ export class DurableSupervisor {
     this.shutdownHolds = new Set();
   }
 
+  status(request) {
+    const verified = verifySupervisorRequest(request, this.secret);
+    if (!verified.ok) return { ok: false, stage: "HOLD", reason: verified.reason };
+    try {
+      const order = this.store.readOrder(request.order.attempt_id);
+      for (const key of ["attempt_id", "target_sha", "repo", "branch", "role", "runtime", "issue_id", "authorization_ref"]) {
+        if (order[key] !== request.order[key]) return { ok: false, stage: "HOLD", reason: "status binding mismatch" };
+      }
+      const run = this.store.readRun(order.attempt_id);
+      // Validate storage before either admission or execution projection.
+      if (!["accepted", "running", "hold", "completed", "failed"].includes(run.status)) {
+        return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
+      }
+      const terminal = this.store.hasCompletion(order.attempt_id) ? this.store.validatedCompletion(order.attempt_id) : null;
+      if (terminal && !terminal.ok) return { ok: false, stage: "HOLD", reason: terminal.reason };
+      const stage = run.status === "hold" ? "HOLD" : (terminal?.completion.status ?? run.status).toUpperCase();
+      if (!["ACCEPTED", "RUNNING", "HOLD", "COMPLETED", "FAILED"].includes(stage)) {
+        return { ok: false, stage: "HOLD", reason: "unknown durable run state" };
+      }
+      const report = this.store.reportIntent(order);
+      const execution = ["RUNNING", "COMPLETED", "FAILED"].includes(stage);
+      if (execution && !hasLaunchReceipt(report.launch_receipt, order)) {
+        return { ok: false, stage: "UNLAUNCHED", reason: "launch receipt missing or invalid" };
+      }
+      // ACCEPTED is queue admission; announce() independently remains UNLAUNCHED.
+      return { version: SUPERVISOR_PROTOCOL_VERSION, ok: true, durable: true,
+        attempt_id: order.attempt_id, target_sha: order.target_sha, stage,
+        ...((execution || hasLaunchReceipt(report.launch_receipt, order)) ? { launch_receipt: report.launch_receipt }
+          : { hold_code: requireHoldCode(run.hold_code ?? report.hold_code ?? 'AWAITING_LAUNCH') }),
+        result: terminal?.completion.result ?? null, heartbeat: run.heartbeat ?? null };
+    } catch (error) {
+      if (error.code === 'ERR_ASSERTION') throw error;
+      return { ok: false, stage: "HOLD", hold_code: requireHoldCode('MISSING_CLAIM'), reason: "supervisor attempt unavailable" };
+    }
+  }
+
   async submit(request) {
     const verified = verifySupervisorRequest(request, this.secret);
     if (!verified.ok) return { ok: false, stage: "HOLD", reason: verified.reason };
+    if (request.operation === "status") return this.status(request);
     const accepted = this.store.accept(request.order, this.now());
     if (!accepted.ok) return accepted;
     const run = accepted.run;
-    if (run.status === "accepted" && !this.store.hasLaunch(request.order.attempt_id)) {
+    if (run.status === "accepted" && !this.store.hasLaunch(request.order.attempt_id)
+        && this.store.reportIntent(request.order).hold_code === 'AWAITING_LAUNCH') {
       this.schedule(() => void this.launch(request.order.attempt_id));
     }
     return {
+      version: SUPERVISOR_PROTOCOL_VERSION,
       ok: true,
       stage: run.status.toUpperCase(),
       attempt_id: request.order.attempt_id,
       target_sha: request.order.target_sha,
       durable: true,
       duplicate: accepted.duplicate,
+      ...this.store.announce(request.order),
     };
   }
 
   async launch(attemptId) {
     const run = this.store.readRun(attemptId);
     if (run.status !== "accepted") return run;
+    if (this.store.reportIntent(this.store.readOrder(attemptId)).hold_code !== 'AWAITING_LAUNCH'
+        && !this.store.hasLaunch(attemptId)) return run;
     const claimed = this.store.claimLaunch(attemptId, {
       attempt_id: attemptId,
       phase: "reserved",
@@ -440,6 +579,10 @@ export class DurableSupervisor {
         reason: "worker started without durable process-start evidence",
       } : {}),
     });
+    this.store.markLaunch(attemptId, {
+      ...this.store.readLaunch(attemptId), phase: 'launched', issue_id: run.issue_id,
+      target_sha: run.target_sha, pid: child.pid, launched_at: this.now(),
+    });
     this.children.set(attemptId, child);
     let terminal = false;
     let outputBytes = 0;
@@ -461,7 +604,8 @@ export class DurableSupervisor {
         output_bytes: outputBytes,
         finished_at: this.now(),
       };
-      const recorded = status === "hold" ? null : this.store.recordCompletion(completion);
+      const recorded = status === "hold" ? null : this.store.hasCompletion(attemptId)
+        ? this.store.validatedCompletion(attemptId) : this.store.recordCompletion(completion);
       this.store.writeRun(attemptId, {
         ...this.store.readRun(attemptId),
         status,
@@ -479,6 +623,20 @@ export class DurableSupervisor {
         child.kill?.("SIGTERM");
       }
     };
+    // IPC contains adapter-observed data only. No callback is derived from exit
+    // codes, elapsed time, or a heartbeat. The coordinator validates it again.
+    child.on?.("message", (message) => {
+      if (terminal) return;
+      if (message?.version !== SUPERVISOR_PROTOCOL_VERSION) {
+        finish("hold", { error_code: "UNKNOWN_CONTRACT", reason: "unknown worker message version" });
+        child.kill?.("SIGTERM");
+        return;
+      }
+      if (message.attempt_id !== attemptId || message.target_sha !== running.target_sha) return;
+      if (message.type === "heartbeat" && typeof message.at === "string" && Number.isFinite(Date.parse(message.at))) {
+        this.store.writeRun(attemptId, { ...this.store.readRun(attemptId), heartbeat: message.at });
+      }
+    });
     child.stdout?.on?.("data", output);
     child.stderr?.on?.("data", output);
     child.stdout?.on?.("error", () => finish("hold", { error_code: "OUTPUT_STREAM_ERROR", reason: "worker stdout failed" }));
@@ -502,14 +660,21 @@ export class DurableSupervisor {
 
   recover() {
     const results = [];
+    // Recover intentions even if the process died before accept wrote an order.
+    for (const intent of this.store.pendingIntents()) {
+      if (intent.hold_code !== 'AWAITING_LAUNCH') continue;
+      this.store.accept(intent.order, this.now());
+    }
     for (const attemptId of this.store.attempts()) {
       this.store.repairAccepted(attemptId, this.now());
       const run = this.store.readRun(attemptId);
+      if (run.status === "hold") { results.push(run); continue; }
       if (this.store.hasCompletion(attemptId)) {
         const validated = this.store.validatedCompletion(attemptId);
         results.push(this.store.writeRun(attemptId, validated.ok ? {
           ...run,
           ...validated.completion,
+          output_bytes: Math.max(run.output_bytes ?? 0, validated.completion.output_bytes ?? 0),
           completion_durable: true,
           recovered_at: this.now(),
         } : {
@@ -523,15 +688,20 @@ export class DurableSupervisor {
       }
       if (run.status === "accepted") {
         if (this.store.hasLaunch(attemptId)) {
+          const order = this.store.readOrder(attemptId);
+          this.store.intend(order, this.now(), 'AMBIGUOUS_LAUNCH');
+          this.store.holdIntent(order, 'AMBIGUOUS_LAUNCH');
           results.push(this.store.writeRun(attemptId, {
             ...run,
             status: "hold",
             recovered_at: this.now(),
+            hold_code: requireHoldCode("AMBIGUOUS_LAUNCH"),
             error_code: "AMBIGUOUS_LAUNCH",
             reason: "launch was attempted before restart; refusing duplicate spawn",
           }));
         } else {
-          this.schedule(() => void this.launch(attemptId));
+          const intent = this.store.intend(this.store.readOrder(attemptId), this.now(), 'AWAITING_LAUNCH');
+          if (intent.hold_code === 'AWAITING_LAUNCH') this.schedule(() => void this.launch(attemptId));
           results.push(run);
         }
       } else if (run.status === "running") {
@@ -632,6 +802,17 @@ export async function listenSupervisor({
 
 export function submitToSupervisor({ socketPath, request, timeoutMs = 5_000 }) {
   return new Promise((resolve) => {
+    try {
+      const socketStat = lstatSync(socketPath), parent = lstatSync(dirname(socketPath));
+      if (!socketStat.isSocket() || (socketStat.mode & 0o077) || socketStat.uid !== process.getuid()
+          || !parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) || parent.uid !== process.getuid()) {
+        resolve({ ok: false, stage: "HOLD", reason: "unsafe supervisor socket ownership or permissions" });
+        return;
+      }
+    } catch {
+      resolve({ ok: false, stage: "HOLD", reason: "supervisor unavailable; direct spawn is forbidden" });
+      return;
+    }
     const socket = net.createConnection(socketPath);
     let body = "";
     let done = false;
@@ -655,7 +836,9 @@ export function submitToSupervisor({ socketPath, request, timeoutMs = 5_000 }) {
       const newline = body.indexOf("\n");
       if (newline === -1) return;
       try {
-        finish(JSON.parse(body.slice(0, newline)));
+        const response = JSON.parse(body.slice(0, newline));
+        finish(response.ok && response.version !== SUPERVISOR_PROTOCOL_VERSION
+          ? { ok: false, stage: "HOLD", reason: "unknown supervisor response version" } : response);
       } catch {
         finish({ ok: false, stage: "HOLD", reason: "invalid supervisor response" });
       }
