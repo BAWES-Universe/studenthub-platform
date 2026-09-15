@@ -12,7 +12,7 @@ const mutations = [
   {
     name: "process children as root billing groups",
     pattern: "SHU-268/parent-child-no-double-count",
-    from: "const rootTransfers = transfers.filter((transfer) => transfer.parent_transfer_id === null);",
+    from: "const rootTransfers = transfers.filter((transfer) => transfer?.parent_transfer_id === null);",
     to: "const rootTransfers = transfers;"
   },
   {
@@ -98,6 +98,12 @@ const mutations = [
     pattern: "SHU-268/malformed-records-fail-closed",
     from: "if (typeof value === \"string\" && DECIMAL_RE.test(value)) return true;",
     to: "if (typeof value === \"string\") return true;"
+  },
+  {
+    name: "dereference a malformed transfer before reporting it",
+    pattern: "SHU-268/malformed-records-fail-closed",
+    from: "transfers.filter((transfer) => transfer?.parent_transfer_id === null)",
+    to: "transfers.filter((transfer) => transfer.parent_transfer_id === null)"
   },
   {
     name: "accept an unapproved production source marker",

@@ -220,7 +220,7 @@ export function reconcileBillingFixture(input) {
     ? fixture.newInvoiceNumbers.slice().sort(stableCompare)
     : [];
   const transfers = Array.isArray(fixture.transfers) ? fixture.transfers : [];
-  const rootTransfers = transfers.filter((transfer) => transfer.parent_transfer_id === null);
+  const rootTransfers = transfers.filter((transfer) => transfer?.parent_transfer_id === null);
   rootTransfers.sort((left, right) => stableCompare(left.transfer_id, right.transfer_id));
   const rootTransferIds = rootTransfers.map((transfer) => transfer.transfer_id);
 

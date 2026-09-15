@@ -207,6 +207,16 @@ test("SHU-268/malformed-records-fail-closed", async () => {
   const sourceReport = reconcileBillingFixture(wrongSource);
   assert.equal(sourceReport.status, "blocked");
   assert.ok(sourceReport.failures.some((failure) => failure.code === "unapproved-source-kind"));
+
+  const malformedRow = await fixture("reconciled.json");
+  malformedRow.transfers.push(null);
+  let malformedRowReport;
+  assert.doesNotThrow(() => {
+    malformedRowReport = reconcileBillingFixture(malformedRow);
+  });
+  assert.equal(malformedRowReport.status, "blocked");
+  assert.ok(malformedRowReport.failures.some((failure) =>
+    failure.code === "malformed-id" && failure.recordType === "transfer"));
 });
 
 test("SHU-268/cross-company-records-fail-closed", async () => {
