@@ -44,9 +44,11 @@ protected paths without copying their contents. Retained evidence contains only
 revision, uid/gid/mode and `DENIED`/test-result fields.
 
 `shu261-mutations.test.mjs` independently weakens each protected class and each
-attack detector, direct model confinement, hardlink refusal, sibling masking,
-same-identity serialization, process hiding, and OAuth argv handling. Every
-mutation must fail a named assertion.
+attack detector, each canary's propagation and missing-value behavior, direct
+model confinement, hardlink refusal, sibling masking, same-identity
+serialization, process hiding, root-wrapper startup/environment controls,
+cleanup aggregation, and OAuth argv handling. Every mutation must fail a named
+assertion.
 
 ## Prepared host window — do not run without separate approval
 
@@ -76,8 +78,10 @@ SHU261_HOST_MUTATION_APPROVED=true \
 The harness first proves installed wrapper/sudoers byte identity and sudoers
 syntax. It then creates two temporary detached worktrees at the approved SHA,
 performs the bounded sentinel/attack mutations, runs the SHU-261 test from the
-assigned worktree, removes both worktrees, and requires the final worktree
-inventory to equal the initial inventory byte-for-byte. It never calls
+assigned worktree, attempts every cleanup even after an individual cleanup
+failure, and requires the final worktree inventory to equal the initial
+inventory byte-for-byte. Any cleanup and inventory failures are reported
+together. It never calls
 `systemctl`, starts the coordinator, enables dispatch, or prints protected
 contents. Host evidence remains **PENDING** until that separately approved
 command succeeds; repository tests do not claim otherwise.

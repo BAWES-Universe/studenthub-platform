@@ -33,6 +33,7 @@ export const PROTECTED_CLASSES = Object.freeze([
   "coordinator_environment",
   "ssh_credentials",
   "codex_session_sidecars",
+  "service_home_claude_sidecars",
   "claude_session_sidecars",
   "coordinator_logs",
   "sibling_attempts",
@@ -123,7 +124,7 @@ export function readOnlyHostPreflight({ lookupIdentity, lookupGroup, fsImpl = fs
   const paths = [REVIEWER_LAYOUT.checkout, REVIEWER_LAYOUT.worktree_root, REVIEWER_LAYOUT.activation_records,
     REVIEWER_LAYOUT.workspace_authority, REVIEWER_LAYOUT.supervisor_secrets, REVIEWER_LAYOUT.coordinator_environment,
     REVIEWER_LAYOUT.deployed_supervisor_environment, REVIEWER_LAYOUT.ssh_credentials, REVIEWER_LAYOUT.codex_session_sidecars,
-    REVIEWER_LAYOUT.claude_session_sidecars];
+    REVIEWER_LAYOUT.service_home_claude_sidecars, REVIEWER_LAYOUT.claude_session_sidecars];
   const metadata = paths.map((path) => inspectPath(path, { fsImpl }));
   return { version: "shu261-host-preflight-v1", identities, paths: metadata };
 }
