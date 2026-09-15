@@ -335,6 +335,9 @@ export function reconcileBillingFixture(input) {
     if (parentOutcome === "omitted") {
       groupFailures.push(failure("parent-own-lines-omitted", { parentTransferId: parent.transfer_id }));
     }
+    if (children.length > 0 && parentOwn.length === 0 && parentInvoices.length > 0) {
+      groupFailures.push(failure("unexpected-parent-invoice", { parentTransferId: parent.transfer_id }));
+    }
 
     const childReconciliation = children.map((child) => {
       const filteredLineMilli = eligibleLines

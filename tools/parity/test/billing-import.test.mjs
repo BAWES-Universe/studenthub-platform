@@ -92,6 +92,18 @@ test("SHU-268/parent-own-lines-ambiguous", async () => {
   assert.ok(report.failures.some((failure) => failure.code === "parent-own-lines-ambiguous"));
 });
 
+test("SHU-268/unexpected-parent-invoice-fails-closed", async () => {
+  const input = await fixture("reconciled.json");
+  input.invoices.push({ invoice_id: 5004, transfer_id: 100, deleted: 0 });
+  const report = reconcileBillingFixture(input);
+  const billingGroup = group(report, 100);
+  assert.equal(report.status, "blocked");
+  assert.equal(billingGroup.parentOwnLines.outcome, "none");
+  assert.equal(billingGroup.importPlan, null);
+  assert.ok(report.failures.some((failure) =>
+    failure.code === "unexpected-parent-invoice" && failure.parentTransferId === 100));
+});
+
 test("SHU-268/import-mismatch-reports", async () => {
   const report = reconcileBillingFixture(await fixture("mismatch-parent-own.json"));
   const billingGroup = group(report, 200);

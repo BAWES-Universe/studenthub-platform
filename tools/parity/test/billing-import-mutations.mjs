@@ -64,6 +64,12 @@ const mutations = [
     to: "parentOutcome = \"omitted\";"
   },
   {
+    name: "accept an unexpected consolidated parent invoice",
+    pattern: "SHU-268/unexpected-parent-invoice-fails-closed",
+    from: "if (children.length > 0 && parentOwn.length === 0 && parentInvoices.length > 0) {",
+    to: "if (false) {"
+  },
+  {
     name: "ignore deleted transfers",
     pattern: "SHU-268/deleted-records-fail-closed",
     from: "if (row?.deleted === 1) failures.push(failure(\"deleted-transfer\", { recordType: \"transfer\", recordId: id }));",
