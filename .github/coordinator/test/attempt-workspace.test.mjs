@@ -209,6 +209,7 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
       fs.writeFileSync(evidencePath, "{}", { mode: 0o600 });
       return {
         executed: true, passed: true, reason_code: "REVIEW_TESTS_PASSED",
+        isolation_wrapper: [path.join(f.bin, "claude")],
         evidence_link: pathToFileURL(evidencePath).href,
         report: {
         version: "1.0.0", target_sha, test_files: ["fixture.test.mjs"],

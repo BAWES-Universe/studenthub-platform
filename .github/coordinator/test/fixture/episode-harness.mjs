@@ -55,6 +55,12 @@ export function createEpisodeHarness({
   const nodes = [node, ...extraNodes];
   const comments = [];
   const pauses = [];
+  const incidentIssues = new Map();
+  const incidentRelations = new Map();
+  const repairIssues = new Map();
+  const repairRelations = new Map();
+  const entityComments = new Map();
+  const incidentCreatePlan = [];
   const triggers = { "codex-cli": 0, "claude-code": 0, "hermes-pool": 0 };
   const polls = new Map();
   const launched = [];
@@ -64,14 +70,115 @@ export function createEpisodeHarness({
     const respond = (data) => ({ status: 200, ok: true, json: async () => ({ data }) });
     const { query, variables } = JSON.parse(opts.body);
     if (query.includes("CoordinatorIssues")) return respond({ issues: { nodes } });
+    if (query.includes("CoordinatorIncidentComments")) {
+      return respond({ issue: { comments: { nodes: [...comments] } } });
+    }
+    if (query.includes("CoordinatorIncidentLookup")) {
+      const issue = incidentIssues.get(variables.issueId) ?? null;
+      if (!issue) return respond({ issue: null });
+      const relations = [...incidentRelations.values()]
+        .filter((relation) => relation.issueId === issue.id)
+        .map(() => ({ type: "related", relatedIssue: { id: nodeId, identifier: issueId } }));
+      return respond({ issue: { ...issue, relations: { nodes: relations } } });
+    }
+    if (query.includes("CoordinatorIncidentTriage")) {
+      const incident = incidentIssues.get(variables.incidentId) ?? null;
+      const repair = repairIssues.get(variables.repairId) ?? null;
+      const incidentRelationNodes = incident
+        ? [...incidentRelations.values()].filter((relation) => relation.issueId === incident.id)
+          .map(() => ({ type: "related", relatedIssue: { id: nodeId, identifier: issueId, state: { name: node.state.name } } }))
+        : [];
+      const repairRelationNodes = repair
+        ? [...repairRelations.values()].filter((relation) => relation.issueId === repair.id || relation.relatedIssueId === repair.id).map((relation) => {
+          if (relation.relatedIssueId === variables.incidentId) return { type: relation.type, relatedIssue: { id: variables.incidentId, identifier: incident?.identifier, state: { name: "Triage" } } };
+          const dependency = relation.issueId.endsWith("0226") ? "SHU-226" : "SHU-260";
+          return { type: relation.type === "blocks" ? "blockedBy" : relation.type, relatedIssue: { id: relation.issueId, identifier: dependency, state: { name: "Done" } } };
+        })
+        : [];
+      const triageLabels = ["repo:platform", "type:implementation", "risk:R3", "worker:codex-builder", "verifier:opus"]
+        .map((name, index) => ({ id: `${String(index + 1).padStart(8, "0")}-7777-4777-8777-777777777777`, name }));
+      return respond({
+        incident: incident ? { ...incident, delegate: null, relations: { nodes: incidentRelationNodes }, comments: { nodes: entityComments.get(incident.id) ?? [] } } : null,
+        repair: repair ? { ...repair, delegate: null, relations: { nodes: repairRelationNodes }, attachments: repair.attachments ?? { nodes: [] }, comments: { nodes: entityComments.get(repair.id) ?? [] } } : null,
+        teams: { nodes: [{
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", key: "SHU",
+          states: { nodes: [{ id: "77777777-7777-4777-8777-777777777777", name: "Todo", type: "unstarted" }] },
+          labels: { nodes: triageLabels },
+        }] },
+        dependency226: { id: "22222222-2222-4222-8222-222222220226", identifier: "SHU-226", state: { name: "Done" } },
+        dependency260: { id: "22222222-2222-4222-8222-222222220260", identifier: "SHU-260", state: { name: "Done" } },
+      });
+    }
+    if (query.includes("CoordinatorIncidentMetadata")) {
+      return respond({ teams: { nodes: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        key: "SHU",
+        states: { nodes: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Triage", type: "triage" }] },
+        labels: { nodes: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "repo:platform" }] },
+      }] } });
+    }
+    if (query.includes("CoordinatorIncidentCreate")) {
+      const input = variables.input;
+      const planned = incidentCreatePlan.shift() ?? "success";
+      if (planned === "never") return new Promise(() => {});
+      if (planned === "503") return { status: 503, ok: false, json: async () => ({ errors: [{ message: "sentinel-http-body" }] }) };
+      if (planned === "429") return { status: 429, ok: false, json: async () => ({ errors: [{ message: "sentinel-rate-limit-body" }] }) };
+      if (incidentIssues.has(input.id)) return { status: 200, ok: true, json: async () => ({ errors: [{ message: "duplicate id" }] }) };
+      const issue = {
+        id: input.id,
+        identifier: `SHU-${900 + incidentIssues.size}`,
+        title: input.title,
+        description: input.description,
+        team: { id: input.teamId, key: "SHU" },
+        state: { id: input.stateId, name: "Triage", type: "triage" },
+        labels: { nodes: [{ id: input.labelIds[0], name: "repo:platform" }] },
+        assignee: null,
+      };
+      incidentIssues.set(input.id, issue);
+      if (planned === "lost") throw new Error("sentinel-lost-response-body");
+      return respond({ issueCreate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
+    }
+    if (query.includes("CoordinatorIncidentRelate")) {
+      incidentRelations.set(variables.input.id, variables.input);
+      return respond({ issueRelationCreate: { success: true, issueRelation: { id: variables.input.id } } });
+    }
+    if (query.includes("CoordinatorRepairCreate")) {
+      const input = variables.input;
+      const labels = ["repo:platform", "type:implementation", "risk:R3", "worker:codex-builder", "verifier:opus"]
+        .map((name, index) => ({ id: `${String(index + 1).padStart(8, "0")}-7777-4777-8777-777777777777`, name }))
+        .filter((label) => input.labelIds.includes(label.id));
+      const issue = {
+        id: input.id, identifier: `SHU-${950 + repairIssues.size}`, title: input.title, description: input.description,
+        team: { id: input.teamId, key: "SHU" }, state: { id: input.stateId, name: "Todo", type: "unstarted" },
+        labels: { nodes: labels }, assignee: null,
+      };
+      repairIssues.set(input.id, issue);
+      return respond({ issueCreate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
+    }
+    if (query.includes("CoordinatorRepairUpdate")) {
+      const issue = repairIssues.get(variables.id);
+      if (!issue) return respond({ issueUpdate: { success: false, issue: null } });
+      Object.assign(issue, { title: variables.input.title, description: variables.input.description });
+      return respond({ issueUpdate: { success: true, issue: { id: issue.id, identifier: issue.identifier } } });
+    }
+    if (query.includes("CoordinatorRepairRelate")) {
+      repairRelations.set(variables.input.id, variables.input);
+      return respond({ issueRelationCreate: { success: true, issueRelation: { id: variables.input.id } } });
+    }
     if (query.includes("CoordinatorIssueComments")) {
       const known = nodes.some((n) => n.id === variables.issueId || n.identifier === variables.issueId);
       return respond({ issue: { comments: { nodes: known ? [...comments] : [] } } });
     }
     if (query.includes("commentCreate")) {
-      if (!nodes.some((n) => n.id === variables.issueId)) throw new Error(`non-UUID comment write (${variables.issueId})`);
+      const isFixture = nodes.some((n) => n.id === variables.issueId);
+      const isEntity = incidentIssues.has(variables.issueId) || repairIssues.has(variables.issueId);
+      if (!isFixture && !isEntity) throw new Error(`non-UUID comment write (${variables.issueId})`);
       const body = String(variables.body ?? "");
-      if (body.startsWith("coordinator-pause:")) pauses.push(body);
+      if (isEntity) {
+        const list = entityComments.get(variables.issueId) ?? [];
+        list.push({ body, createdAt: new Date().toISOString() });
+        entityComments.set(variables.issueId, list);
+      } else if (body.startsWith("coordinator-pause:")) pauses.push(body);
       else comments.push({ body, createdAt: new Date().toISOString() });
       return respond({ commentCreate: { success: true, comment: { id: `c${comments.length + pauses.length}` } } });
     }
@@ -123,6 +230,7 @@ export function createEpisodeHarness({
     adapter_pause_map: {},
     wake_actor_allowlist: ["BAWES"],
     linear_callback_actor_ids: [callbackActor],
+    linear_receipt_actor_ids: [callbackActor],
     max_failed_attempts: 3,
     dispatch_scope: { issue_ids: [issueId] },
     fixture_lane: { id: issueId, authorization_ref: authorizationRef },
@@ -187,6 +295,7 @@ export function createEpisodeHarness({
   const completeRun = (runId) => polls.set(runId, "completed");
   const failRun = (runId) => polls.set(runId, "failed");
   const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  const planIncidentCreates = (...plan) => incidentCreatePlan.push(...plan);
 
   return {
     dir,
@@ -195,6 +304,11 @@ export function createEpisodeHarness({
     nodes,
     comments,
     pauses,
+    incidentIssues,
+    incidentRelations,
+    repairIssues,
+    repairRelations,
+    entityComments,
     triggers,
     launched,
     adapters,
@@ -211,6 +325,7 @@ export function createEpisodeHarness({
     postCallback,
     completeRun,
     failRun,
+    planIncidentCreates,
     cleanup,
   };
 }

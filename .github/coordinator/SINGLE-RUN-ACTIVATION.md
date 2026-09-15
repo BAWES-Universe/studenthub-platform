@@ -285,6 +285,16 @@ the workspaces empty. Do not hand-create a worker checkout. Set:
   Install the host `acl` package: the wrapper grants `shu-reviewer` `r-x` on only
   the bound attempt for the lifetime of the sandbox and removes that ACL in its
   exit trap. A pre-existing reviewer ACL is refused rather than silently reused.
+* `SHU_REVIEW_MODEL_WRAPPER_JSON`: the same canonical sandbox behind the exact
+  noninteractive model form
+  `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`.
+  The `NOPASSWD:NOSETENV:` sudo rule uses command-specific `env_keep` to
+  preserve that one reviewer subscription value and nothing
+  else. The actual Claude process, not only its test child, then runs as
+  `shu-reviewer` with a transient private home, a serialized reviewer identity,
+  no process view of other service identities, no view of
+  coordinator/worker/session/SSH/state/log paths, and a read-only non-executable
+  assigned checkout. Missing model isolation HOLDs before Claude starts.
 * `SHU_REVIEW_TEST_FILES_JSON`: a JSON array of 1–32 safe relative test paths.
   For SHU-140 this is
   `["tools/fixture/test/scan-vacuous.test.mjs"]`; no shell or glob expansion is

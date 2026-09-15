@@ -59,13 +59,42 @@ export function workerIdentity(attemptId) {
 // Build an explicit child environment. API credentials and alternate API
 // endpoints are removed so a stale host setting cannot silently switch this
 // subscription lane to metered billing.
-export function buildClaudeEnvironment(parentEnv = {}, oauthToken = "") {
+export function buildClaudeEnvironment(parentEnv = {}, oauthToken = "", { reviewer = false } = {}) {
   const childEnv = {};
   for (const key of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME", "SHELL", "CI"]) {
     if (typeof parentEnv[key] === "string") childEnv[key] = parentEnv[key];
   }
+  if (reviewer) {
+    childEnv.HOME = "/nonexistent";
+    delete childEnv.TMPDIR;
+    delete childEnv.TMP;
+    delete childEnv.TEMP;
+    delete childEnv.USER;
+    delete childEnv.LOGNAME;
+    delete childEnv.SHELL;
+  }
   if (oauthToken) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
   return childEnv;
+}
+
+export function isolatedReviewerModelCommand({ isolationWrapper, cwd, args }) {
+  if (!Array.isArray(isolationWrapper) || isolationWrapper.length === 0
+    || isolationWrapper.some((part) => typeof part !== "string" || part.length === 0)) {
+    throw new Error("reviewer model launch requires the wrapper validated by the confined test phase");
+  }
+  const root = path.dirname(cwd);
+  return {
+    file: isolationWrapper[0],
+    args: [
+      ...isolationWrapper.slice(1),
+      "--profile", "model",
+      "--workspace-root", root,
+      "--workspace", cwd,
+      "--",
+      "claude",
+      ...args,
+    ],
+  };
 }
 
 export function buildClaudePrompt({ issue_id, authorization_ref, attempt_id, target_sha, task_context, role = "review", allowed_paths = [], scoped_base_sha = null }) {
@@ -282,6 +311,9 @@ export function validateCallback(callback, { attempt_id, target_sha, cwd, eviden
     if (![role === "revise" ? "REVISION_READY" : "BUILD_READY", "BLOCKED", "FAILED"].includes(callback.stage) || callback.result_sha !== null) return { valid: false, field: "stage", detail: "writer callback does not match its role or host-owned result" };
     return { valid: Array.isArray(callback.links) && callback.links.length > 0 && callback.links.every((link) => typeof link === "string" && link.length > 0), field: "links", detail: "writer requires evidence" };
   }
+  const reviewerKeys = new Set(["attempt_id", "target_sha", "stage", "links", "summary"]);
+  const extraReviewerKey = Object.keys(callback).find((key) => !reviewerKeys.has(key));
+  if (extraReviewerKey) return { valid: false, field: extraReviewerKey, detail: "is outside the closed reviewer callback schema" };
   if (!CALLBACK_STAGES.includes(callback.stage)) return { valid: false, field: "stage", detail: "is not an allowed reviewer stage" };
   if (!Array.isArray(callback.links) || callback.links.length === 0) return { valid: false, field: "links", detail: "must be a non-empty array" };
   let hasFileEvidence = false;
@@ -434,6 +466,17 @@ export async function launchBuilder({
       ok: false,
     };
   }
+  if (!Array.isArray(reviewEvidence.isolation_wrapper) || reviewEvidence.isolation_wrapper.length === 0) {
+    return {
+      stage: "HOLD",
+      pause_adapter: true,
+      reason_code: "REVIEW_EXECUTION_UNAVAILABLE",
+      reason: "REVIEW_EXECUTION_UNAVAILABLE — the validated reviewer model wrapper is unavailable; no reviewer launched",
+      audit_evidence_links: auditEvidenceLinks,
+      audit_notes: ["review model isolation: REVIEW_EXECUTION_UNAVAILABLE"],
+      ok: false,
+    };
+  }
 
   }
 
@@ -455,10 +498,13 @@ export async function launchBuilder({
   const args = buildClaudeArgs(input, { resume });
   let result;
   try {
-    const wrapper = isWriterRole(role) ? env.SHU_WORKER_LAUNCH_WRAPPER.trim().split(/\s+/) : [];
-    result = await runExecFile(execFileImpl, wrapper[0] ?? "claude", wrapper.length ? [...wrapper.slice(1), "claude", ...args] : args, {
+    const writerWrapper = isWriterRole(role) ? env.SHU_WORKER_LAUNCH_WRAPPER.trim().split(/\s+/) : [];
+    const command = role === "review"
+      ? isolatedReviewerModelCommand({ isolationWrapper: reviewEvidence.isolation_wrapper, cwd, args })
+      : { file: writerWrapper[0] ?? "claude", args: writerWrapper.length ? [...writerWrapper.slice(1), "claude", ...args] : args };
+    result = await runExecFile(execFileImpl, command.file, command.args, {
       cwd,
-      env: buildClaudeEnvironment(env, oauth_token),
+      env: buildClaudeEnvironment(env, oauth_token, { reviewer: role === "review" }),
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
       timeout: timeout_ms,

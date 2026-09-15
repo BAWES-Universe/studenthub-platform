@@ -74,6 +74,7 @@ const launchInput = {
     passed: true,
     reason_code: "REVIEW_TESTS_PASSED",
     evidence_link: pathToFileURL(CONTRACT_REPORT).href,
+    isolation_wrapper: ["/test/reviewer-model-wrapper"],
     report: {
       version: "1.0.0", target_sha: SHA, test_files: ["bound.test.mjs"],
       expected_uid: 994, actual_uid: 994, filesystem_probe: "DENIED",
@@ -92,11 +93,13 @@ test("official headless contract: execFile claude -p with JSON schema and bound 
   assert.equal(out.external_run_id, externalRunId(ATTEMPT));
   assert.equal(execFileImpl.calls.length, 1);
   const call = execFileImpl.calls[0];
-  assert.equal(call.file, "claude");
+  assert.equal(call.file, "/test/reviewer-model-wrapper", "the model phase crosses the same reviewed OS boundary as tests");
   assert.equal(call.options.shell, undefined, "execFile arg arrays must not opt into a shell");
-  assert.deepEqual(call.args.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
-  assert.equal(call.args[5], "--json-schema");
-  assert.deepEqual(JSON.parse(call.args[6]), CALLBACK_SCHEMA);
+  assert.deepEqual(call.args.slice(0, 9), ["--profile", "model", "--workspace-root", CONTRACT_ROOT, "--workspace", CONTRACT_WORKSPACE, "--", "claude", "-p"]);
+  const claudeArgs = call.args.slice(8);
+  assert.deepEqual(claudeArgs.slice(0, 5), ["-p", "--model", CLAUDE_MODEL, "--output-format", "json"]);
+  assert.equal(claudeArgs[5], "--json-schema");
+  assert.deepEqual(JSON.parse(claudeArgs[6]), CALLBACK_SCHEMA);
   assert.ok(call.args.includes("--restricted"), "review ignores builder-controlled project settings and hooks without disabling subscription auth");
   assert.equal(call.args.includes("--bare"), false, "bare mode must not disable the subscription login");
   assert.deepEqual(call.args.slice(call.args.indexOf("--tools"), call.args.indexOf("--tools") + 2), ["--tools", "Read,Glob,Grep"]);
@@ -158,7 +161,7 @@ test("default checkout verifier calls git rev-parse HEAD before claude", async (
   const { readHeadImpl: _ignored, ...withoutInjectedHead } = launchInput;
   const out = await launchBuilder({ ...withoutInjectedHead, execFileImpl });
   assert.equal(out.stage, "COMPLETED");
-  assert.deepEqual(calls.map(({ file }) => file), ["git", "claude"]);
+  assert.deepEqual(calls.map(({ file }) => file), ["git", "/test/reviewer-model-wrapper"]);
   assert.deepEqual(calls[0].args, ["-c", `safe.directory=${launchInput.cwd}`, "rev-parse", "HEAD"]);
   assert.equal(calls[0].options.cwd, launchInput.cwd);
 });
