@@ -47,6 +47,7 @@ test('ACT_COMMITTED_ANCHOR_POSITIVE: real PEM validates and package reaches sign
   assert.deepEqual(validateAnchor(anchor, pem, revision), { ok: true }, 'ACT_COMMITTED_ANCHOR_POSITIVE');
   assert.equal(validateShu71Package(context()).code, 'ACT_FORGED_ENVELOPE', 'ACT_PACKAGE_PROCEEDS: unsigned control reaches signature verification');
   assert.equal(validateTwoFixtureActivation(context()).code, 'ACT_MANUAL_GATE_BYPASS', 'ACT_RUNTIME_PROCEEDS: unsigned control reaches signature verification');
+  // ACT_REVISION_UNBOUND exercises the manifest's null binding against a valid caller revision.
   assert.equal(validateAnchor(manifest, pem, revision).code, 'ACT_TRUST_ANCHOR_INVALID', 'ACT_REVISION_UNBOUND: null is not final-revision authority');
   assert.equal(validateAnchor(anchor, pem, 'b'.repeat(40)).code, 'ACT_TRUST_ANCHOR_INVALID', 'ACT_REVISION_DRIFT');
 });
@@ -111,4 +112,13 @@ for (const [name, file, from, to, pattern] of [
     assert.match(output, new RegExp(pattern), `${name}: named assertion required`);
     assert.doesNotMatch(output, /SyntaxError|TypeError|ERR_MODULE_NOT_FOUND/, `${name}: crashes do not count`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const [label, invalidRevision] of [
+  ['NULL', null], ['UNDEFINED', undefined], ['EMPTY', ''], ['NON_HEX_40', 'g'.repeat(40)],
+]) test(`ACT_REVISION_${label}: non-conforming caller revision refuses`, () => {
+  // Match the manifest binding so only the revision-format clause can refuse.
+  const unbound = { ...manifest, coordinator_revision: invalidRevision };
+  assert.equal(validateAnchor(unbound, pem, invalidRevision).code, 'ACT_TRUST_ANCHOR_INVALID',
+    `ACT_REVISION_${label}: non-conforming caller revision must refuse`);
 });
