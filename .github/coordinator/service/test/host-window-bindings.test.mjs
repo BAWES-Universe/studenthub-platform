@@ -29,7 +29,7 @@ function fixture(t) {
   const spec = { version: 'shu251-host-window-v2', approved_sha: SHA, repo_dir: repo,
     remote_url: 'https://github.com/BAWES-Universe/studenthub-platform.git', remote_ref: 'refs/heads/main',
     workspace_state_dir: workspace, supervisor_state_dir: state, supervisor_socket: path.join(root, 'supervisor.sock'),
-    status_environment_file: envFile, service_uid: 999, unit_directory: units, staged_unit_directory: staged,
+    status_environment_file: envFile, service_uid: process.getuid() === 0 ? 999 : process.getuid(), unit_directory: units, staged_unit_directory: staged,
     prior_state_file: path.join(evidence, 'prior.json'), fixture: { issue_id: 'SHU-140', attempt_id: ATTEMPT,
       target_sha: SHA, order_json: orderFile, release_file: path.join(evidence, 'release'),
       journal_file: path.join(evidence, 'worker.log'), pid: 4242, start_token: PROCESS_TOKEN } };
