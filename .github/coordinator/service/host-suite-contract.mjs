@@ -33,6 +33,65 @@ export const CAPABILITIES = Object.freeze([
 export function halt(code, detail = '') { throw Object.assign(new Error(`${code}: ${detail}`), { code }); }
 const run = (file, args, options = {}) => spawnSync(file, args, { encoding: 'utf8', timeout: 30000, ...options });
 const successful = out => !out.error && out.status === 0;
+// Ordered, literal and deliberately independent of PATH, spec and environment.
+export const CVTSUDOERS_CANDIDATES = Object.freeze(['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws']);
+export const CVTSUDOERS_REFUSALS = Object.freeze([
+  'SHU251_PREFLIGHT_CVTSUDOERS', 'SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS',
+  'SHU251_PREFLIGHT_CVTSUDOERS_SUBSTITUTION', 'SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT',
+]);
+// Serialized into the service-identity Node probe; IO injection is test-only.
+export function resolveCvtsudoers(tempDir, io = { fs, run }) {
+  const fail = code => halt(`SHU251_PREFLIGHT_CVTSUDOERS${code}`);
+  const present = [];
+  for (const candidate of CVTSUDOERS_CANDIDATES) {
+    try { present.push({ candidate, stat: io.fs.lstatSync(candidate, { bigint: true }) }); }
+    catch (error) { if (error.code !== 'ENOENT') fail('_SUBSTITUTION'); }
+  }
+  // Even agreeing dual providers are ambiguous: never select by ordering alone.
+  if (present.length > 1) fail('_AMBIGUOUS');
+  if (present.length === 0) fail('');
+  const { candidate, stat } = present[0];
+  const identity = s => ['dev', 'ino', 'mode', 'size', 'mtimeNs', 'ctimeNs'].map(k => String(s[k])).join(':');
+  const verify = () => {
+    for (const other of CVTSUDOERS_CANDIDATES.filter(p => p !== candidate)) {
+      try { io.fs.lstatSync(other); fail('_AMBIGUOUS'); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    if (!stat.isFile() || !(Number(stat.mode) & 0o111) || io.fs.realpathSync(candidate) !== candidate) fail('_SUBSTITUTION');
+    io.fs.accessSync(candidate, io.fs.constants.X_OK);
+    if (identity(io.fs.lstatSync(candidate, { bigint: true })) !== identity(stat)) fail('_SUBSTITUTION');
+  };
+  let fd, dir;
+  try {
+    verify();
+    fd = io.fs.openSync(candidate, io.fs.constants.O_RDONLY | io.fs.constants.O_NOFOLLOW | io.fs.constants.O_NONBLOCK);
+    if (identity(io.fs.fstatSync(fd, { bigint: true })) !== identity(stat)) fail('_SUBSTITUTION');
+    dir = io.fs.mkdtempSync(path.join(tempDir, 'shu251-cap-'));
+    const fixture = path.join(dir, 'sudoers');
+    io.fs.writeFileSync(fixture, 'root ALL=(ALL) ALL\n', { flag: 'wx' });
+    verify();
+    // Execute the pinned inode, not a second pathname lookup. Only this fixed
+    // inherited descriptor is executable; candidate identity remains the path.
+    const result = io.run('/proc/self/fd/3', ['-f', 'json', fixture], { stdio: ['ignore', 'pipe', 'pipe', fd] });
+    verify(); // Recheck the approved pathname and inode metadata after execution.
+    if (!successful(result)) fail('');
+    let output;
+    try { output = JSON.parse(result.stdout); } catch { fail('_OUTPUT'); }
+    const validShape = Array.isArray(output?.User_Specs) && output.User_Specs.length === 1 &&
+      Array.isArray(output.User_Specs[0]?.Users) && output.User_Specs[0].Users.some(u => u?.username === 'root') &&
+      Array.isArray(output.User_Specs[0]?.Cmnd_Specs) && output.User_Specs[0].Cmnd_Specs.length === 1 &&
+      Array.isArray(output.User_Specs[0].Cmnd_Specs[0]?.Commands) &&
+      output.User_Specs[0].Cmnd_Specs[0].Commands.some(c => c?.command === 'ALL');
+    if (!validShape) fail('_OUTPUT');
+    return { available: true, identity: candidate };
+  } catch (error) {
+    if (CVTSUDOERS_REFUSALS.includes(error.code)) throw error;
+    fail('_SUBSTITUTION');
+  } finally {
+    if (fd !== undefined) io.fs.closeSync(fd);
+    if (dir !== undefined) io.fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
   const asService = (file, args) => io.uid() === spec.service_uid ? io.run(file, args)
     : io.uid() === 0 ? io.run('/usr/bin/setpriv', [`--reuid=${spec.service_uid}`, `--regid=${spec.service_gid}`, '--clear-groups', file, ...args])
@@ -48,7 +107,22 @@ export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
         const out = io.uid() === 0 ? io.run('/usr/bin/setpriv', args) : io.run('/usr/bin/sudo', ['-n', '/usr/bin/setpriv', ...args]);
         return successful(out) && out.stdout.trim() === '65534';
       }
-      case 'cvtsudoers': return temporary(`const f=path.join(dir,'sudoers'); fs.writeFileSync(f,'root ALL=(ALL) ALL\\n'); const r=spawnSync('/usr/bin/cvtsudoers',['-f','json',f]); if(r.status!==0) throw Error('cvtsudoers'); JSON.parse(r.stdout);`);
+      case 'cvtsudoers': {
+        const source = `import fs from 'node:fs'; import path from 'node:path'; import {spawnSync} from 'node:child_process';
+          const CVTSUDOERS_CANDIDATES=Object.freeze(${JSON.stringify(CVTSUDOERS_CANDIDATES)});
+          const CVTSUDOERS_REFUSALS=${JSON.stringify(CVTSUDOERS_REFUSALS)};
+          const run=${run.toString()}; const successful=${successful.toString()};
+          ${halt.toString()} ${resolveCvtsudoers.toString()}
+          try { console.log(JSON.stringify(resolveCvtsudoers(${JSON.stringify(spec.temp_dir)}))); }
+          catch(e) { console.log(JSON.stringify({code:CVTSUDOERS_REFUSALS.includes(e.code)?e.code:'SHU251_PREFLIGHT_CVTSUDOERS'})); process.exitCode=2; }`;
+        const result = asService(process.execPath, ['--input-type=module', '-e', source]);
+        let value;
+        try { value = JSON.parse(result.stdout); } catch { halt('SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT'); }
+        if (CVTSUDOERS_REFUSALS.includes(value?.code)) halt(value.code);
+        if (!successful(result)) halt('SHU251_PREFLIGHT_CVTSUDOERS');
+        if (value?.available !== true || !CVTSUDOERS_CANDIDATES.includes(value.identity)) halt('SHU251_PREFLIGHT_CVTSUDOERS_SUBSTITUTION');
+        return value;
+      }
       case 'user_namespaces': return successful(asService('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/true']));
       case 'checkout': return io.fs.lstatSync(spec.checkout).uid === spec.service_uid && nodeProbe(`import fs from 'node:fs'; import path from 'node:path'; function visit(p){const s=fs.lstatSync(p); if(s.isSymbolicLink()) throw Error('symlink'); fs.accessSync(p,fs.constants.R_OK|(s.isDirectory()?fs.constants.X_OK:0)); if(s.isDirectory()) for(const n of fs.readdirSync(p)) { visit(path.join(p,n)); }} visit(${JSON.stringify(spec.checkout)});`);
       case 'temp': return temporary(`const f=path.join(dir,'probe'); fs.writeFileSync(f,'proof',{flag:'wx'}); if(fs.readFileSync(f,'utf8')!=='proof') throw Error('temp');`);
@@ -69,9 +143,18 @@ export async function preflight(spec, probe = hostProbe(spec)) {
   const evidence = {};
   for (const capability of CAPABILITIES) {
     let available = false;
-    try { available = await probe(capability.name) === true; } catch { /* Named refusal below includes probe exceptions. */ }
+    let resolved;
+    try {
+      resolved = await probe(capability.name);
+      available = capability.name === 'cvtsudoers'
+        ? resolved?.available === true && CVTSUDOERS_CANDIDATES.includes(resolved.identity)
+        : resolved === true;
+    } catch (error) {
+      if (capability.name === 'cvtsudoers' && CVTSUDOERS_REFUSALS.includes(error.code)) throw error;
+      // Other probe exceptions retain their existing capability refusal.
+    }
     if (!available) halt(capability.code, capability.name);
-    evidence[capability.name] = 'available';
+    evidence[capability.name] = capability.name === 'cvtsudoers' ? resolved : 'available';
   }
   return { version: 'shu251-host-preflight-v1', capabilities: evidence };
 }
