@@ -4,20 +4,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-import { CAPABILITIES, PERMITTED_SKIPS, preflight, evaluateSuite, runSuite, hostProbe } from '../host-suite-contract.mjs';
+import { CAPABILITIES, PERMITTED_SKIPS, preflight, evaluateSuite, runSuite, hostProbe, resolveCvtsudoers, CVTSUDOERS_CANDIDATES } from '../host-suite-contract.mjs';
 const spec = { service_uid: 1234, service_gid: 1234, checkout: '/temporary-checkout', temp_dir: '/temporary-area' };
+const available = name => name === 'cvtsudoers' ? { available: true, identity: '/usr/bin/cvtsudoers' } : true;
 const named = code => e => e.code === code;
 const report = outcomes => ({ complete: true, exit_code: 0, outcomes });
 
 test('SHU251 contract missing capabilities never become skips', async () => {
   for (const capability of CAPABILITIES)
-    await assert.rejects(() => preflight(spec, async name => name !== capability.name), named(capability.code), `CAPABILITY_REQUIRED: missing ${capability.name} must refuse`);
+    await assert.rejects(() => preflight(spec, async name => name !== capability.name && available(name)), named(capability.code), `CAPABILITY_REQUIRED: missing ${capability.name} must refuse`);
 });
 test('SHU251 contract probe errors are named preflight refusals', async () => {
   await assert.rejects(() => preflight(spec, async () => { throw Error('missing executable'); }), named('SHU251_PREFLIGHT_PRIVILEGE'));
-  await assert.rejects(() => preflight({ ...spec, service_uid: 0 }, async () => true), named('SHU251_PREFLIGHT_SPEC'));
-  const result = await preflight(spec, async () => true);
+  await assert.rejects(() => preflight({ ...spec, service_uid: 0 }, async name => available(name)), named('SHU251_PREFLIGHT_SPEC'));
+  const result = await preflight(spec, async name => available(name));
   assert.equal(Object.keys(result.capabilities).length, CAPABILITIES.length);
 });
 test('SHU251 contract publishes eight exact sanctioned skips', () => {
@@ -47,13 +49,13 @@ test('SHU251 contract structured reporter runs only temp fixture tests', async t
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const file = path.join(root, 'fixture.test.mjs');
   fs.writeFileSync(file, "import test from 'node:test'; test('fixture one',()=>{}); test('fixture two',()=>{});\n");
-  const result = await runSuite({ ...spec, checkout: root, temp_dir: root, files: [file], expected_tests: 2 }, { probe: async () => true });
+  const result = await runSuite({ ...spec, checkout: root, temp_dir: root, files: [file], expected_tests: 2 }, { probe: async name => available(name) });
   assert.deepEqual(result.counts, { tests: 2, pass: 2, fail: 0, skipped: 0 });
 });
 test('SHU251 contract detects capabilities through injectable command boundaries', async () => {
   const calls = [];
-  const probe = hostProbe(spec, { uid: () => 0, fs: { lstatSync: () => ({ uid: 1234 }) }, run(file, args) { calls.push([file, args]); return { status: 0, stdout: args.includes('--reuid=65534') ? '65534\n' : '' }; } });
-  for (const { name } of CAPABILITIES) assert.equal(await probe(name), true, name);
+  const probe = hostProbe(spec, { uid: () => 0, fs: { lstatSync: () => ({ uid: 1234 }) }, run(file, args) { calls.push([file, args]); return { status: 0, stdout: args.includes('--reuid=65534') ? '65534\n' : JSON.stringify(available('cvtsudoers')) }; } });
+  for (const { name } of CAPABILITIES) assert.deepEqual(await probe(name), available(name), name);
   assert.ok(calls.some(([, args]) => args.includes('/usr/bin/unshare') && args.includes('--map-root-user')));
   assert.ok(calls.some(([, args]) => args.some(a => a.includes('cvtsudoers'))));
   assert.ok(calls.every(([file]) => ['/usr/bin/setpriv'].includes(file)));
@@ -105,4 +107,237 @@ test('SHU251 contract source skip guard fails closed on unsupported expressions'
   for (const expression of ['reasonVariable', 'true', "condition ? 'literal' : otherReason", "condition &&\ncomputedReason", "condition ? 'first' : other && 'second'", "condition && 'first' && 'second'"])
     assert.throws(() => sourceSkipReasons(`{ ${property}${expression} }`, 'sample'), /unsupported skip expression/);
   assert.equal(sourceSkipReasons(`{ ${property}'changed reason' }`, 'sample')[0].reason, 'changed reason');
+});
+
+// Target-host cvtsudoers.ws observations supplied by the operator, verbatim.
+// This is a raw prefix, not complete JSON (the ellipsis is in the supplied capture).
+const targetCapture = `{ "User_Specs": [ { "User_List": [ { "username": "root" } ], "Host_List": [ { "hostname": "ALL" } ],
+  "Cmnd_Specs": [ { "runasusers": [ ... ] } ] } ] }`;
+// Complete stdout captured locally from /usr/bin/cvtsudoers -f json with
+// the same root ALL=(ALL) ALL fixture; preserved verbatim, not synthesized.
+const validConversion = `{
+    "User_Specs": [
+        {
+            "User_List": [
+                { "username": "root" }
+            ],
+            "Host_List": [
+                { "hostname": "ALL" }
+            ],
+            "Cmnd_Specs": [
+                {
+                    "runasusers": [
+                        { "username": "ALL" }
+                    ],
+                    "Options": [
+                        { "setenv": true }
+                    ],
+                    "Commands": [
+                        { "command": "ALL" }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+`;
+test('SHU251 parser captured documented shape', () => {
+  const observed = JSON.parse(validConversion).User_Specs[0];
+  assert.deepEqual(Object.keys(observed), ['User_List', 'Host_List', 'Cmnd_Specs']);
+  const capturedUsers = JSON.parse(targetCapture.match(/"User_List": (\[[^\]]+\])/)[1]);
+  assert.deepEqual(observed.User_List, capturedUsers);
+  assert.equal(Object.hasOwn(observed, 'Users'), false);
+  assert.deepEqual(resolveCvtsudoers('/virtual', parserIO({ [sudoRs]: {} }).io), { available: true, identity: sudoRs });
+});
+test('SHU251 parser real installed provider', async t => {
+  const present = CVTSUDOERS_CANDIDATES.filter(file => {
+    try { fs.lstatSync(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'real-parser-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  if (present.length === 0) {
+    assert.throws(() => resolveCvtsudoers(root), named('SHU251_PREFLIGHT_CVTSUDOERS'));
+  } else if (present.length > 1) {
+    assert.throws(() => resolveCvtsudoers(root), named('SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS'));
+  } else {
+    const expected = { available: true, identity: present[0] };
+    assert.deepEqual(resolveCvtsudoers(root), expected, 'REAL_PARSER_ACCEPTED');
+    const probe = hostProbe({ ...spec, service_uid: process.getuid(), temp_dir: root });
+    assert.deepEqual(await probe('cvtsudoers'), expected, 'REAL_CHILD_IDENTITY');
+    t.diagnostic(`real parser accepted: ${present[0]}`);
+  }
+});
+test('SHU251 parser frozen allowlist', () => {
+  assert.ok(Object.isFrozen(CVTSUDOERS_CANDIDATES), 'ALLOWLIST_FROZEN');
+  assert.throws(() => CVTSUDOERS_CANDIDATES.push('/unapproved/parser'), TypeError);
+  assert.throws(() => { CVTSUDOERS_CANDIDATES[0] = '/unapproved/parser'; }, TypeError);
+  assert.deepEqual(CVTSUDOERS_CANDIDATES, ['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws']);
+});
+test('SHU251 parser nonblocking open', () => {
+  const { io } = parserIO({ [conventional]: {} });
+  const open = io.fs.openSync;
+  let flags;
+  io.fs.openSync = (file, value) => { flags = value; return open(file, value); };
+  resolveCvtsudoers('/virtual', io);
+  assert.ok(flags & fs.constants.O_NONBLOCK, 'NONBLOCK_REQUIRED');
+});
+test('SHU251 parser minimal child environment', () => {
+  const { io, calls } = parserIO({ [conventional]: {} });
+  resolveCvtsudoers('/virtual', io);
+  assert.deepEqual(calls[0][2].env, { LC_ALL: 'C' }, 'MINIMAL_ENV_REQUIRED');
+});
+// Virtual filesystem and process boundary: no real system paths are read/written.
+function parserIO(entries = {}, options = {}) {
+  const calls = [], looked = [], closed = [], removed = [];
+  let executed = false;
+  const stat = entry => ({ dev: BigInt(entry.dev ?? 1), ino: BigInt(entry.ino ?? 2), mode: BigInt(entry.mode ?? 0o100755), size: 42n,
+    mtimeNs: executed && options.changed ? 2n : 1n, ctimeNs: 1n, isFile: () => !entry.nonregular });
+  const io = {
+    fs: {
+      constants: fs.constants,
+      lstatSync(file) { looked.push(file); if (options.inspectionError && file === sudoRs && (options.lateError ? looked.length > 2 : looked.length <= 2)) throw Object.assign(Error('inspection'), { code: options.inspectionError }); if (!entries[file]) throw Object.assign(Error('absent'), { code: 'ENOENT' }); return stat(entries[file]); },
+      realpathSync: file => entries[file].target ?? file,
+      accessSync(file) { if (entries[file].denied) throw Error('denied'); },
+      openSync(file, flags) { assert.ok(flags & fs.constants.O_NOFOLLOW); io.opened = file; return 17; },
+      fstatSync: () => stat(options.openChanged ? { ino: 3 } : options.deviceChanged ? { dev: 2 } : entries[io.opened]),
+      mkdtempSync: () => '/virtual/fixture',
+      writeFileSync(file, data) { assert.equal(data, 'root ALL=(ALL) ALL\n'); },
+      closeSync: fd => closed.push(fd), rmSync: dir => removed.push(dir),
+    },
+    run(file, args, opts) {
+      calls.push([file, args, opts]); executed = true;
+      if (options.drift) entries[sudoRs] = {};
+      assert.equal(file, '/proc/self/fd/3', 'PINNED_EXECUTION: execute only the inherited descriptor');
+      assert.equal(JSON.stringify(opts.stdio), JSON.stringify(['ignore', 'pipe', 'pipe', 17]));
+      return options.result ?? { status: 0, stdout: validConversion };
+    },
+  };
+  return { io, calls, looked, closed, removed };
+}
+const conventional = '/usr/bin/cvtsudoers', sudoRs = '/usr/bin/cvtsudoers.ws';
+for (const [label, candidate] of [['conventional', conventional], ['sudo-rs', sudoRs]]) {
+  test(`SHU251 parser ${label} identity`, async () => {
+    const { io, calls, closed, removed } = parserIO({ [candidate]: {} });
+    let result;
+    assert.doesNotThrow(() => { result = resolveCvtsudoers('/virtual', io); }, `${label.toUpperCase()}_ACCEPTED`);
+    assert.deepEqual(result, { available: true, identity: candidate }, `${label.toUpperCase()}_IDENTITY`);
+    const receipt = await preflight(spec, async name => name === 'cvtsudoers' ? result : true);
+    assert.deepEqual(receipt.capabilities.cvtsudoers, result, 'RECEIPT_IDENTITY');
+    const suite = await runSuite({ ...spec, files: [spec.checkout + '/example.test.mjs'], expected_tests: 1 }, {
+      probe: async name => name === 'cvtsudoers' ? result : true,
+      run: () => ({ status: 0, stdout: '{"type":"outcome","name":"example","status":"pass"}\n{"type":"complete"}' }),
+    });
+    assert.deepEqual(suite.preflight.capabilities.cvtsudoers, result, 'SUITE_RECEIPT_IDENTITY');
+    assert.equal(calls.length, 1); assert.deepEqual(closed, [17]); assert.deepEqual(removed, ['/virtual/fixture']);
+  });
+}
+const shapeCases = [
+  ['multiple user specs', o => o.User_Specs.push(structuredClone(o.User_Specs[0])), 'ONE_USER_SPEC_REQUIRED'],
+  ['missing root user', o => { o.User_Specs[0].User_List[0].username = 'nobody'; }, 'ROOT_USER_REQUIRED'],
+  ['multiple command specs', o => o.User_Specs[0].Cmnd_Specs.push(structuredClone(o.User_Specs[0].Cmnd_Specs[0])), 'ONE_COMMAND_SPEC_REQUIRED'],
+  ['missing ALL command', o => { o.User_Specs[0].Cmnd_Specs[0].Commands[0].command = '/bin/true'; }, 'ALL_COMMAND_REQUIRED'],
+  ['invented Users key', o => { o.User_Specs[0].Users = o.User_Specs[0].User_List; delete o.User_Specs[0].User_List; }, 'DOCUMENTED_USER_LIST_REQUIRED'],
+];
+const refusalCases = [
+  ...shapeCases.map(([label, change, message]) => {
+    const output = JSON.parse(validConversion); change(output);
+    return [label, { [conventional]: {} }, { result: { status: 0, stdout: JSON.stringify(output) } }, '_OUTPUT', message];
+  }),
+  ...['EACCES', 'EIO', 'EPERM', 'ENOTDIR', 'ELOOP'].flatMap(code => [false, true].map(lateError =>
+    [`inspection ${code} ${lateError ? 'recheck' : 'initial'}`, { [conventional]: {} }, { inspectionError: code, lateError }, '_SUBSTITUTION', 'INSPECTION_ERROR_REFUSED'])),
+  ['device changed on open', { [conventional]: {} }, { deviceChanged: true }, '_SUBSTITUTION', 'DEVICE_IDENTITY_REQUIRED'],
+  ['absent', {}, {}, '', 'ABSENT_REFUSED'],
+  ['nonzero', { [conventional]: {} }, { result: { status: 1, stdout: validConversion } }, '', 'NONZERO_REFUSED'],
+  ['invalid JSON', { [conventional]: {} }, { result: { status: 0, stdout: 'invalid' } }, '_OUTPUT', 'JSON_REFUSED'],
+  ['empty output', { [conventional]: {} }, { result: { status: 0, stdout: '' } }, '_OUTPUT', 'EMPTY_REFUSED'],
+  ['missing shape', { [conventional]: {} }, { result: { status: 0, stdout: '{}' } }, '_OUTPUT', 'SHAPE_REFUSED'],
+  ['PATH substitution', { cvtsudoers: {}, '/hostile/cvtsudoers': {} }, {}, '', 'PATH_REFUSED'],
+  ['unapproved path', { '/unapproved/parser': {} }, {}, '', 'UNAPPROVED_REFUSED'],
+  ['ambiguous providers', { [conventional]: {}, [sudoRs]: {} }, {}, '_AMBIGUOUS', 'AMBIGUITY_REFUSED'],
+  ['provider appears during execution', { [conventional]: {} }, { drift: true }, '_AMBIGUOUS', 'PROVIDER_DRIFT_REFUSED'],
+  ['symlink', { [conventional]: { target: '/unapproved/parser' } }, {}, '_SUBSTITUTION', 'SYMLINK_REFUSED'],
+  ['nonregular', { [conventional]: { nonregular: true } }, {}, '_SUBSTITUTION', 'REGULAR_REQUIRED'],
+  ['nonexecutable', { [conventional]: { mode: 0o100644 } }, {}, '_SUBSTITUTION', 'EXECUTABLE_REQUIRED'],
+  ['access denied', { [conventional]: { denied: true } }, {}, '_SUBSTITUTION', 'ACCESS_REQUIRED'],
+  ['changed on open', { [conventional]: {} }, { openChanged: true }, '_SUBSTITUTION', 'OPEN_IDENTITY_REQUIRED'],
+  ['changed during execution', { [conventional]: {} }, { changed: true }, '_SUBSTITUTION', 'STABLE_IDENTITY_REQUIRED'],
+];
+for (const [label, entries, options, suffix, message] of refusalCases) test(`SHU251 parser ${label}`, async () => {
+  const { io, calls, looked } = parserIO(structuredClone(entries), options);
+  const oldPath = process.env.PATH;
+  process.env.PATH = '/hostile';
+  try {
+    assert.throws(() => resolveCvtsudoers('/virtual', io), named(`SHU251_PREFLIGHT_CVTSUDOERS${suffix}`), message);
+    await assert.rejects(() => preflight(spec, async name => name === 'cvtsudoers' ? resolveCvtsudoers('/virtual', parserIO(structuredClone(entries), options).io) : true), named(`SHU251_PREFLIGHT_CVTSUDOERS${suffix}`), message);
+    assert.ok(looked.every(file => CVTSUDOERS_CANDIDATES.includes(file)), 'ONLY_APPROVED_PATHS');
+    if (['PATH substitution', 'unapproved path', 'ambiguous providers', 'absent'].includes(label)) assert.equal(calls.length, 0);
+  } finally { if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath; }
+});
+test('SHU251 parser service child carries only resolved identity', async () => {
+  const { io } = parserIO({ [sudoRs]: {} });
+  const probe = hostProbe(spec, { uid: () => spec.service_uid, run(file, args) {
+    assert.equal(file, process.execPath);
+    const source = args.at(-1).replace("import fs from 'node:fs'; import path from 'node:path'; import {spawnSync} from 'node:child_process';", '');
+    let stdout;
+    runInNewContext(source, { fs: io.fs, path, spawnSync: io.run, process: {}, console: { log: s => { stdout = s; } } });
+    return { status: 0, stdout };
+  } });
+  assert.deepEqual(await probe('cvtsudoers'), { available: true, identity: sudoRs });
+});
+
+const parserMutations = [
+  ['multiple user specs accepted', 'multiple user specs', 'output.User_Specs.length === 1', 'output.User_Specs.length >= 1', 'ONE_USER_SPEC_REQUIRED'],
+  ['root username unchecked', 'missing root user', "output.User_Specs[0].User_List.some(u => u?.username === 'root')", 'true', 'ROOT_USER_REQUIRED'],
+  ['multiple command specs accepted', 'multiple command specs', 'output.User_Specs[0].Cmnd_Specs.length === 1', 'output.User_Specs[0].Cmnd_Specs.length >= 1', 'ONE_COMMAND_SPEC_REQUIRED'],
+  ['ALL command unchecked', 'missing ALL command', "output.User_Specs[0].Cmnd_Specs[0].Commands.some(c => c?.command === 'ALL')", 'true', 'ALL_COMMAND_REQUIRED'],
+  ['inspection error swallowed', 'inspection EACCES initial', "if (error.code !== 'ENOENT') fail('_SUBSTITUTION');", '', 'INSPECTION_ERROR_REFUSED'],
+  ['recheck inspection error swallowed', 'inspection EIO recheck', "if (error.code !== 'ENOENT') throw error;", '', 'INSPECTION_ERROR_REFUSED'],
+  ['nonblocking open removed', 'nonblocking open', ' | io.fs.constants.O_NONBLOCK', '', 'NONBLOCK_REQUIRED'],
+  ['device identity removed', 'device changed on open', "['dev', 'ino',", "['ino',", 'DEVICE_IDENTITY_REQUIRED'],
+  ['allowlist unfrozen', 'frozen allowlist', "Object.freeze(['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws'])", "['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws']", 'ALLOWLIST_FROZEN'],
+  ['child environment inherited', 'minimal child environment', ", env: { LC_ALL: 'C' }", '', 'MINIMAL_ENV_REQUIRED'],
+  ['conventional identity lost', 'conventional identity', 'identity: candidate', "identity: '/usr/bin/cvtsudoers.ws'", 'CONVENTIONAL_IDENTITY'],
+  ['sudo-rs identity lost', 'sudo-rs identity', 'identity: candidate', "identity: '/usr/bin/cvtsudoers'", 'SUDO-RS_IDENTITY'],
+  ['absence accepted', 'absent', "if (present.length === 0) fail('');", "if (present.length === 0) return {available:true,identity:'/usr/bin/cvtsudoers'};", 'ABSENT_REFUSED'],
+  ['nonzero accepted', 'nonzero', "if (!successful(result)) fail('');", 'if (false) fail(\'\');', 'NONZERO_REFUSED'],
+  ['invalid JSON accepted', 'invalid JSON', "catch { fail('_OUTPUT'); }", "catch { return {available:true,identity:candidate}; }", 'JSON_REFUSED'],
+  ['PATH search enabled', 'PATH substitution', 'for (const candidate of CVTSUDOERS_CANDIDATES)', "for (const candidate of [...CVTSUDOERS_CANDIDATES, ...process.env.PATH.split(':').map(dir => path.join(dir, 'cvtsudoers'))])", 'PATH_REFUSED'],
+  ['unapproved path admitted', 'unapproved path', 'for (const candidate of CVTSUDOERS_CANDIDATES)', "for (const candidate of [...CVTSUDOERS_CANDIDATES, '/unapproved/parser'])", 'UNAPPROVED_REFUSED'],
+  ['dual provider selection', 'ambiguous providers', "if (present.length > 1) fail('_AMBIGUOUS');", "if (present.length > 1) return {available:true,identity:present[0].candidate};", 'AMBIGUITY_REFUSED'],
+  ['provider drift unchecked', 'provider appears during execution', 'CVTSUDOERS_CANDIDATES.filter(p => p !== candidate)', '[]', 'PROVIDER_DRIFT_REFUSED'],
+  ['pinned execution removed', 'conventional identity', "io.run('/proc/self/fd/3',", 'io.run(candidate,', 'CONVENTIONAL_ACCEPTED'],
+  ['old hardcoded path restored', 'sudo-rs identity', 'for (const candidate of CVTSUDOERS_CANDIDATES)', "for (const candidate of ['/usr/bin/cvtsudoers'])", 'SUDO-RS_ACCEPTED'],
+  ['shape validation removed', 'missing shape', 'if (!validShape)', 'if (false)', 'SHAPE_REFUSED'],
+  ['symlink accepted', 'symlink', 'io.fs.realpathSync(candidate) !== candidate', 'false', 'SYMLINK_REFUSED'],
+  ['nonregular accepted', 'nonregular', '!stat.isFile()', 'false', 'REGULAR_REQUIRED'],
+  ['nonexecutable accepted', 'nonexecutable', '!(Number(stat.mode) & 0o111)', 'false', 'EXECUTABLE_REQUIRED'],
+  ['access check removed', 'access denied', 'io.fs.accessSync(candidate, io.fs.constants.X_OK);', '', 'ACCESS_REQUIRED'],
+  ['opened inode unchecked', 'changed on open', "if (identity(io.fs.fstatSync(fd, { bigint: true })) !== identity(stat)) fail('_SUBSTITUTION');\n    dir", "if (false) fail('_SUBSTITUTION');\n    dir", 'OPEN_IDENTITY_REQUIRED'],
+  ['post execution identity unchecked', 'changed during execution', "    verify(); // Recheck the approved pathname and inode metadata after execution.", '', 'STABLE_IDENTITY_REQUIRED'],
+  ['receipt identity dropped', 'sudo-rs identity', "capability.name === 'cvtsudoers' ? resolved : 'available'", "'available'", 'RECEIPT_IDENTITY'],
+];
+for (const [name, controlName, from, to, message] of parserMutations) test(`SHU251 parser mutation: ${name}`, t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'parser-mutation-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'test'));
+  const target = path.join(root, 'host-suite-contract.mjs');
+  fs.copyFileSync(new URL('../host-suite-contract.mjs', import.meta.url), target);
+  fs.copyFileSync(new URL('./host-suite-contract.test.mjs', import.meta.url), path.join(root, 'test/host-suite-contract.test.mjs'));
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const run = () => spawnSync(process.execPath, ['--test', `--test-name-pattern=^SHU251 parser ${controlName}$`, path.join(root, 'test/host-suite-contract.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });
+  const control = run();
+  assert.equal(control.status, 0, control.stdout + control.stderr);
+  assert.match(control.stdout, /^# pass 1$/m); assert.match(control.stdout, /^# fail 0$/m);
+  const source = fs.readFileSync(target, 'utf8');
+  assert.equal(source.split(from).length, 2, 'exactly one unique textual replacement');
+  fs.writeFileSync(target, source.replace(from, to));
+  assert.equal(spawnSync(process.execPath, ['--check', target]).status, 0, 'syntax clean mutant');
+  const mutant = run(), output = mutant.stdout + mutant.stderr;
+  assert.equal(mutant.status, 1, output);
+  assert.doesNotMatch(output, /SyntaxError|TypeError|ERR_MODULE_NOT_FOUND/);
+  assert.match(output, /name: 'AssertionError'/); assert.match(output, /code: 'ERR_ASSERTION'/);
+  assert.match(output, /failureType: 'testCodeFailure'/); assert.match(output, /^# fail 1$/m);
+  assert.ok(output.includes(message), output);
+  const error = output.match(/^  error: ([\s\S]*?)\n  code: 'ERR_ASSERTION'/m)?.[1].trim();
+  t.diagnostic(`${name}: AssertionError: ${error}`);
 });

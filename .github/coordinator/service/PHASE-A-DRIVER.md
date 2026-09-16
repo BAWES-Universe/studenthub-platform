@@ -346,3 +346,109 @@ after:  8a0317173d76f4c09811b9365e25b380b38dc93d
 This record is repository verification, not host acceptance. No driver or host
 preflight was executed against a host. No activation, installation, dispatch,
 credential change, signing, remote fixture change, PR creation or merge occurred.
+
+## SHU-251 packaged parser capability correction (Codex/GPT)
+
+The observed `SHU251_PREFLIGHT_CVTSUDOERS` halt was a filename mismatch:
+trusted sudo-rs supplies `/usr/bin/cvtsudoers.ws`, while the former probe only
+tried `/usr/bin/cvtsudoers`. This is not evidence of a missing sudo package.
+The reviewed resolution constant is:
+
+```js
+export const CVTSUDOERS_CANDIDATES = Object.freeze(['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws']);
+```
+
+Resolution inspects these paths in that order, without PATH lookup, operator
+path input, configuration, alternatives traversal, directory discovery or shell
+commands. Exactly one path must be present. Both present is always ambiguous,
+even if their conversions would agree; neither ordering nor a successful parser
+can override this refusal. Missing paths are distinguished from inspection errors.
+A sole candidate must be a regular executable with its canonical path identical
+to the approved path. `O_NOFOLLOW | O_NONBLOCK` opens the file; device, inode, mode, size and
+nanosecond modification/change times bind the descriptor to the inspected file.
+Checks before and after conversion detect substitution, changes and a second
+provider appearing during the probe. Conversion
+executes that pinned inode through fixed inherited descriptor `/proc/self/fd/3`,
+not another lookup of the candidate. This is a Linux probe and requires procfs.
+No file permissions or host configuration are changed. A hardlink at an approved
+path is accepted as that sanctioned path's inode; this is path trust, not package
+provenance verification. Creating such a link requires write access to the trusted
+binary directory, which also permits replacing its binaries directly.
+
+The service identity converts the private temporary `root ALL=(ALL) ALL` fixture
+with `-f json`. A spawn error or nonzero exit refuses. Exit zero must produce JSON
+with exactly one `User_Specs` entry, a `User_List` array containing username `root`,
+and exactly one `Cmnd_Specs` entry whose `Commands` array contains command `ALL`.
+Only the documented `User_List` spelling is accepted; `Users` is not an alias.
+The test preserves the operator's actual sudo-rs raw prefix and a complete local
+cvtsudoers capture, and conditionally executes the installed real provider without
+a skip. `Host_List` and `runasusers` are observed but are not validation requirements.
+The parser child receives only `LC_ALL=C`, excluding inherited loader and operator
+variables. Invalid, empty and wrong-shape output all refuse. Temporary data and descriptors
+are cleaned in `finally`; parser output is never included in evidence.
+
+The existing `shu251-host-preflight-v1` result now carries
+`capabilities.cvtsudoers: { available: true, identity: '/usr/bin/cvtsudoers.ws' }`
+(or the conventional path). `shu251-host-suite-v1.preflight` preserves this typed
+result. Other capability values remain `available`. The separate Phase-A driver
+receipt does not wrap A12, so its schema and behavior need no change.
+
+Refusals, raised in `service/host-suite-contract.mjs`:
+
+- `SHU251_PREFLIGHT_CVTSUDOERS`: neither approved path exists, conversion fails,
+  child fails, or preflight lacks valid resolved evidence.
+- `SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS`: both approved paths are present.
+- `SHU251_PREFLIGHT_CVTSUDOERS_SUBSTITUTION`: inspection/access/open failure,
+  nonregular or nonexecutable file, redirected canonical path, changed pathname
+  or descriptor identity, or unapproved identity returned by the child.
+- `SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT`: invalid/empty conversion JSON, wrong
+  fixture shape, or malformed child result.
+
+Positive controls cover conventional and sudo-rs success with exact emitted
+identity, absent candidates, nonzero conversion, invalid and empty JSON, missing
+shape, hostile PATH, unapproved path, dual providers, symlink, nonregular file,
+nonexecutable file, denied execution access, substitution on open and changes
+during conversion. The service-child serialization is executed with injected
+filesystem/process seams. No system parser is needed by these tests.
+
+The named parser mutation matrix lives in `test/host-suite-contract.test.mjs`.
+Each mutant copies only that test and its module from the working tree, runs an
+unmutated control with exactly **1 pass / 0 fail**, applies exactly one unique
+textual replacement, passes `node --check`, then must produce exactly **1 fail**
+with `AssertionError`, `ERR_ASSERTION` and `testCodeFailure`. It covers identity
+loss for both providers, absent/nonzero/invalid-output acceptance, PATH lookup,
+unapproved paths, ambiguity bypass, old single-path regression, missing shape,
+symlink/nonregular/nonexecutable/access guards, opened inode and post-execution
+identity checks, and receipt identity loss, newly appearing providers and removal of pinned execution.
+It needs no Git history or network.
+
+Correction verification (repository-only): focused host-suite and Phase-A-driver
+files: **82 tests / 82 pass / 0 fail / 0 skipped**. Parser-only mutation matrix:
+**19 tests / 19 killed / 0 surviving**, with a separate matched 1-pass control
+for every mutant. Normal complete coordinator suite in a depth-1 single-branch
+local clone: **1357 tests / 1349 pass / 0 fail / 8 skipped**. This run also verifies
+the shallow-clone condition, with only the task branch and its tracking ref; the
+three reserved files were overlaid from the working tree. No history or network
+is required by the new harness.
+
+The first diagnostic full run in the supplied group-writable checkout reported
+**1349 tests / 1331 pass / 10 fail / 8 skipped** before the additional drift
+controls. Existing review-evidence trust checks rejected its group-writable
+source files. No chmod or trust exception was applied. A fresh local clone was
+created under umask 022, and the full final suite passed there as reported above.
+The chmod invocation in the earlier historical verification record was not used
+for this correction. Live host behavior remains untested in this repository-only
+change; no host acceptance, activation or self-approval is claimed.
+
+The final future-clock invocation also completed with **1357 tests / 1349 pass /
+0 fail / 8 skipped**:
+
+```sh
+TMPDIR=/tmp SHU_TEST_CLOCK_OFFSET_MS=31536000000 \
+  NODE_OPTIONS='--import=/tmp/shu251-shallow/.github/coordinator/test/fixture/shift-wall-clock.mjs' \
+  npm --prefix /tmp/shu251-shallow run test:coordinator
+```
+
+The immutable config blob on both sides remains
+`8a0317173d76f4c09811b9365e25b380b38dc93d`. Only this document,
+`host-suite-contract.mjs`, and `test/host-suite-contract.test.mjs` change.
