@@ -1,6 +1,9 @@
-## Linear
+## Related work
 
-Fixes SHU-___
+[Acceptance policy and operating record](docs/acceptance-record.md)
+
+<!-- Put issue references in the repository record, not the PR title/body.
+     Merge is code delivery only. Live acceptance needs a separate owner receipt. -->
 
 ## Outcome
 

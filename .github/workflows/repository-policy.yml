@@ -2,6 +2,7 @@ name: Repository Policy
 
 on:
   pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
   push:
     branches: [main]
 
@@ -14,6 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Measure acceptance reference policy and its mutations
+        run: node --test .github/policy/test/*.test.mjs
+      - name: Reject acceptance references in PR metadata
+        if: github.event_name == 'pull_request'
+        run: node .github/policy/acceptance-metadata.mjs
       - name: Verify repository ownership controls
         run: |
           test -s .github/CODEOWNERS
