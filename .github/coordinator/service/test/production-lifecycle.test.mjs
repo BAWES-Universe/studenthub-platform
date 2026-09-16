@@ -23,6 +23,75 @@ test('PROVIDER complete real provider recorded-boundary lifecycle', async t => {
   assert.ok(f.commands.some(c => c.file === '/usr/bin/git' && c.args.includes('update-ref')));
 });
 
+// Inject completed timer ticks at every recorded syscall/command boundary, not
+// elapsed-time sleeps. The fixture models flock conflict as Result=success/exit 2.
+test('DETERMINISM readiness restart scheduled ticks never conflict with driver custody', async t => {
+  let points = 0, ticks = 0;
+  for (const step of ['readiness', 'restart']) for (const phase of ['before', 'after']) {
+    const f = productionFixture(t, { operations: ['install', 'start', step] });
+    await f.run('install'); await f.run('start');
+    let journalSeen = false, journalReleased = false, commands = new Set(), conflicts = 0;
+    f.faults.boundary = point => {
+      if (point.phase !== phase) return;
+      points++;
+      const journal = f.lockHeld('journal.lock');
+      if (journal) {
+        assert.equal(journalReleased, false, 'DETERMINISTIC_JOURNAL_CUSTODY_REQUIRED');
+        journalSeen = true;
+      } else if (journalSeen) journalReleased = true;
+      if (point.kind === 'command' && journal) commands.add(point.args[0]);
+      const status = f.scheduledTick();
+      if (status !== null) {
+        ticks++;
+        if (status !== '0') conflicts++;
+      }
+    };
+    const [outcome] = await Promise.allSettled([f.run(step)]);
+    f.faults.boundary = null;
+    assert.equal(conflicts, 0, 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED');
+    assert.equal(outcome.status, 'fulfilled', outcome.reason?.stack);
+    assert.equal(outcome.value.evidence.ok, true);
+    assert.ok(journalSeen, 'DETERMINISTIC_JOURNAL_CUSTODY_REQUIRED');
+    if (phase === 'after') assert.ok(journalReleased, 'DETERMINISTIC_JOURNAL_CUSTODY_REQUIRED');
+    for (const command of ['/usr/bin/git', '/usr/bin/gh', '/usr/bin/ss']) assert.ok(commands.has(command));
+    if (step === 'restart') assert.ok(commands.has('/usr/bin/node'));
+    assert.equal(f.lockHeld('host-tick.lock'), false);
+    assert.equal(f.lockHeld('journal.lock'), false);
+  }
+  assert.ok(ticks > 0);
+  t.diagnostic(`Injected ${ticks} scheduled completions at ${points} before/after boundaries across readiness/restart`);
+});
+
+test('DETERMINISM scheduled tick conflict model retains exit-2 refusal', async t => {
+  const f = productionFixture(t, { operations: ['install', 'start'] });
+  await f.run('install'); await f.run('start');
+  await f.provider.withLock(() => {
+    assert.equal(f.scheduledTick(), '2');
+    assert.throws(() => f.provider.serviceReadiness(), named('SHU251_PROVIDER_READINESS'));
+  });
+  assert.equal(f.scheduledTick(), '0');
+  assert.equal(f.provider.serviceReadiness().coordinator, 'ready');
+});
+
+test('DETERMINISM observation custody refuses writer effects and releases on failure', async t => {
+  for (const step of ['readiness', 'restart']) {
+    const f = productionFixture(t);
+    await assert.rejects(() => f.provider.withLock(() => {
+      assert.equal(f.lockHeld('journal.lock'), true);
+      assert.equal(f.lockHeld('host-tick.lock'), false);
+      for (const action of [() => f.provider.place(FILES[0], absent, data),
+        () => f.provider.stage({}), () => f.provider.checkout(f.checkout, f.checkout),
+        () => f.provider.pin('bad', null, null), () => f.provider.systemd('stop', 'shu-supervisor.service')]) {
+        assert.throws(action, named('SHU251_PROVIDER_CUSTODY'));
+      }
+      throw Error('observation failure');
+    }, step), /observation failure/);
+    assert.equal(f.lockHeld('journal.lock'), false);
+    assert.equal(f.lockHeld('host-tick.lock'), false);
+    await f.provider.withLock(() => assert.equal(f.lockHeld('host-tick.lock'), true));
+  }
+});
+
 const approved = f => ({ sha: f.spec.window.approved_sha, head_ref: 'refs/heads/main', main: f.spec.window.approved_sha,
   origin_main: f.spec.window.approved_sha, tree: f.spec.lifecycle.approved_tree, clean: true });
 function stale(f, detached = false) {
@@ -131,6 +200,10 @@ test('PROVIDER default entrypoint wiring and no implementation option', async t 
 
 const mutations = cases.map(([code]) => ({ name: code, pattern: `PROVIDER guard ${code}`, from: 'if (!condition) refuse(code);', to: `if (!condition && code !== '${code}') refuse(code);`, assertion: `${code}_REQUIRED` }));
 mutations.push(
+  { name: 'readiness alone writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart'].includes(step)) locks.push", to: "if (step !== 'restart') locks.push", assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
+  { name: 'restart alone writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart'].includes(step)) locks.push", to: "if (step !== 'readiness') locks.push", assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
+  { name: 'readiness restart writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart'].includes(step)) locks.push", to: 'if (true) locks.push', assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
+  { name: 'executor observation scope', module: 'host-lifecycle', pattern: 'DETERMINISM readiness restart scheduled', from: '}, step);', to: '});', assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
   { name: 'default entrypoint', module: 'phase-a-driver', pattern: 'PROVIDER default entrypoint', from: 'const lifecycleIO = io === defaultIO ?', to: 'const lifecycleIO = false ?', assertion: 'PROVIDER_ENTRYPOINT_REQUIRED' },
   { name: 'production factory', module: 'phase-a-driver', pattern: 'PROVIDER default entrypoint', from: 'return createProductionLifecycle(spec, boundary);', to: 'return {};', assertion: 'PROVIDER_FACTORY_REQUIRED' },
   { name: 'reviewed checkout', module: 'phase-a-driver', pattern: 'PROVIDER default entrypoint', from: 'await defaultIO.pin(spec);', to: 'void spec;', assertion: 'PROVIDER_CHECKOUT_REQUIRED' },

@@ -2,19 +2,21 @@
 
 The repository-only typed lifecycle executor and its fake-only verification are
 documented in [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md). The new actions extend this
-driver; the original track described below retains its staging-only restrictions.
+driver; the legacy Phase-A route is described below.
 
 # SHU-251 Phase A and A12 contract
 
-Repository-only preparation. These entry points are inert on import. Nothing here
-installs packages or units, enables dispatch, or initiates a service start/restart.
+Repository-only preparation. These entry points are inert on import. Importing the modules does not
+install packages or units, enable dispatch, or initiate a service start/restart.
+The lifecycle route can install units and start/restart services when executed.
 No host acceptance is claimed by repository tests.
 
-## Phase A input and execution
+## Legacy Phase A input and execution
 
 `node phase-a-driver.mjs STEP /absolute/driver.json` prints a dry-run plan.
-`--execute` performs observations and writes only the driver custody files described below. A plan is deliberately not an acceptance
-receipt. Mutation steps additionally require **both**
+`--execute` performs the legacy operations described below, including observations,
+driver custody writes and explicitly approved replay/release, cleanup or rollback.
+A plan is deliberately not an acceptance receipt. Mutation steps additionally require **both**
 `SHU251_HOST_MUTATION_APPROVED=true` and
 `--approved-host-mutation <full-40-character-SHA>` matching the spec. Missing,
 partial or mismatched approval gives `SHU251_HOST_MUTATION_APPROVAL`, including
@@ -51,12 +53,17 @@ The driver must itself run from that checkout. Workspace and supervisor render
 paths must agree with the window. The separately read window file must match
 byte-independent canonical JSON before any execution.
 
-Every executed step first invokes reviewed `inventory`, which binds clean local
+Every executed legacy step first invokes reviewed `inventory`, which binds clean local
 HEAD and remote main to the approved SHA. Git trust is passed only to that child
 process for the one checkout, through `GIT_CONFIG_COUNT`; no configuration file
-is written. All nine operations route through
-`shu251-operational-bindings.sh ACTION /absolute/window.json`. No binding logic
-is copied. The driver checks the returned success envelope, binding discriminator
+is written. The nine legacy binding operations route through
+`shu251-operational-bindings.sh ACTION /absolute/window.json`, with exactly two
+arguments. The same wrapper also accepts ten lifecycle actions and routes
+`ACTION /absolute/driver.json [driver flags]` to `phase-a-driver.mjs`. Lifecycle
+flags and the caller's environment are forwarded unchanged; the driver enforces
+its closed flag parser and approval checks. Lifecycle preflight uses its production
+provider, not the legacy inventory binding. The wrapper manufactures no approval.
+No binding logic is copied. The driver checks the returned success envelope, binding discriminator
 and relevant identity fields; malformed/missing evidence is
 `SHU251_BINDING_RECEIPT`.
 

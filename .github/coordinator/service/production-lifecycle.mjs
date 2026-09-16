@@ -110,7 +110,11 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     });
   }
   function held() {
-    guard('SHU251_PROVIDER_CUSTODY', custody !== null && custody.every(l => identity(f.lstatSync(l.p)) === l.inode && identity(f.fstatSync(l.fd)) === l.inode));
+    guard('SHU251_PROVIDER_CUSTODY', custody !== null && custody.some(l => l.p === `${c.evidence_dir}/journal.lock`) && custody.every(l => identity(f.lstatSync(l.p)) === l.inode && identity(f.fstatSync(l.fd)) === l.inode));
+  }
+  function writerHeld() {
+    held();
+    guard('SHU251_PROVIDER_CUSTODY', custody.some(l => l.p === `${w.workspace_state_dir}/host-tick.lock`));
   }
   function git(args) { return command('/usr/bin/git', ['-C', w.repo_dir, ...args]); }
   function pinValue() {
@@ -243,13 +247,15 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         directories: c.directories.map(d => metadata(d.path)), systemd_version: Number(command('/usr/bin/systemctl', ['show', '--property=Version', '--value']).match(/^\d+/)?.[0]),
         capabilities: [...Object.keys(caps.capabilities), 'atomic-rename', 'directory-fsync'],
         evidence: { path: e.path, canonical: f.realpathSync(e.path), uid: e.uid, mode: e.mode, manifest: json('manifest.json') },
-        destination, writer_lock: custody ? 'held-by-driver' : 'free' };
+        destination, writer_lock: custody ? (custody.some(l => l.p === `${w.workspace_state_dir}/host-tick.lock`) ? 'held-by-driver' : 'delegated-to-coordinator') : 'free' };
     },
-    async withLock(fn) {
+    async withLock(fn, step) {
       guard('SHU251_WRITER_LOCK', custody === null);
       const locks = [];
       try {
-        locks.push(acquire(`${w.workspace_state_dir}/host-tick.lock`));
+        // Never contend with scheduled ticks during either complete observation
+        // step, including network preflight and durable evidence finalization.
+        if (!['readiness', 'restart'].includes(step)) locks.push(acquire(`${w.workspace_state_dir}/host-tick.lock`));
         locks.push(acquire(`${c.evidence_dir}/journal.lock`)); custody = locks;
         return await fn();
       } finally { custody = null; for (const l of locks.reverse()) f.closeSync(l.fd); }
@@ -278,7 +284,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         active: Object.fromEntries(UNIT_NAMES.map(n => [n, show(n, 'ActiveState')])), checkout: checkoutTuple(), pin: { ref, sha: pinValue() } };
     },
     stage(units) {
-      held(); guard('SHU251_PROVIDER_ALLOWLIST', equal(Object.keys(units).sort(), [...FILES].sort()));
+      writerHeld(); guard('SHU251_PROVIDER_ALLOWLIST', equal(Object.keys(units).sort(), [...FILES].sort()));
       return evidence(root => {
         const dir = f.mkdtempSync(`${root}/stage-`); f.chmodSync(dir, 0o700);
         try {
@@ -292,7 +298,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       });
     },
     place(name, before, after) {
-      held(); guard('SHU251_PROVIDER_ALLOWLIST', TARGETS.includes(name));
+      writerHeld(); guard('SHU251_PROVIDER_ALLOWLIST', TARGETS.includes(name));
       const p = `${w.unit_directory}/${name}`;
       return directory(path.dirname(p), (root, fd, verify) => {
         const base = path.basename(p), dest = `${root}/${base}`, original = stat(dest);
@@ -314,6 +320,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     },
     systemd(verb, unit) {
       held();
+      if (verb !== 'restart' || unit !== 'shu-supervisor.service') writerHeld();
       const operations = { 'daemon-reload': [null], enable: ['shu-supervisor.service', 'shu-coordinator.timer'],
         start: UNIT_NAMES, restart: ['shu-supervisor.service'], stop: UNIT_NAMES, disable: UNIT_NAMES };
       guard('SHU251_PROVIDER_ARGV', Object.hasOwn(operations, verb) && operations[verb].includes(unit));
@@ -333,7 +340,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return true;
     },
     checkout(before, after) {
-      held();
+      writerHeld();
       guard('SHU251_PROVIDER_CHECKOUT', equal(after, approvedCheckout(spec)) || equal(after, c.checkout_before));
       const detached = { ...before, sha: after.sha, tree: after.tree, head_ref: null };
       const updated = { ...after, head_ref: null };
@@ -365,7 +372,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return true;
     },
     pin(target, before, after) {
-      held(); guard('SHU251_PROVIDER_PIN', target === ref && sha(before) && sha(after) && pinValue() === before);
+      writerHeld(); guard('SHU251_PROVIDER_PIN', target === ref && sha(before) && sha(after) && pinValue() === before);
       git(after === null ? ['update-ref', '-d', ref, before ?? '0'.repeat(40)] : ['update-ref', ref, after, before ?? '0'.repeat(40)]);
       guard('SHU251_PROVIDER_PIN', pinValue() === after); return true;
     },

@@ -27,16 +27,17 @@ export function fixture() {
   let state = { checkout: clone(spec.lifecycle.checkout_before), files: Object.fromEntries(TARGETS.map(n => [n, { kind: 'absent' }])),
     enabled: Object.fromEntries(UNIT_NAMES.map(n => [n, 'disabled'])), active: Object.fromEntries(UNIT_NAMES.map(n => [n, 'inactive'])),
     pin: { ref: 'refs/shu251/activations/shu251-window-001', sha: OLD } };
-  let journal = null, locked = false, invocation = 'd'.repeat(32), saves = 0;
+  let journal = null, locked = false, observing = false, invocation = 'd'.repeat(32), saves = 0;
   const calls = [], faults = { before: null, after: null, save: null, saveAfter: null }, overrides = {};
   const remoteMain = () => ({ remote_sha: SHA, api_sha: SHA, tree: spec.lifecycle.approved_tree });
   const probe = () => ({ checkout_tuple: clone(state.checkout), approved_main: remoteMain(), checkout: { sha: SHA, tree: spec.lifecycle.approved_tree, clean: true }, identity: clone(identity),
     environment: clone(spec.lifecycle.environment), directories: clone(spec.lifecycle.directories), systemd_version: 255,
-    capabilities: clone(spec.lifecycle.capabilities), writer_lock: locked ? 'held-by-driver' : 'free',
+    capabilities: clone(spec.lifecycle.capabilities), writer_lock: locked ? (observing ? 'delegated-to-coordinator' : 'held-by-driver') : 'free',
     destination: { path: '/etc/systemd/system', canonical: '/etc/systemd/system', uid: 0, mode: 0o755, unreviewed_dropins: [] },
     evidence: { path: spec.lifecycle.evidence_dir, canonical: spec.lifecycle.evidence_dir, uid: 0, mode: 0o700, manifest: expectedManifest(spec) } });
   function effect(verb, target, perform) {
-    assert.ok(locked, 'all mutations hold the writer and custody lock');
+    assert.ok(locked, 'all mutations hold custody');
+    assert.ok(!observing || verb === 'restart', 'non-restart mutations hold the writer lock');
     assert.ok(journal, 'backup must be durable before any mutation');
     if (verb === 'restart') assert.equal(journal.restart?.consumed, true, 'restart consumption precedes process boundary');
     else if (!['stop', 'disable', 'mask'].includes(verb) && !(verb === 'daemon-reload' && journal.entries.every(e => e.status === 'undone' || e.verb === 'pin')))
@@ -67,9 +68,10 @@ export function fixture() {
       delete r.worker;
       return r;
     },
-    withLock: async fn => {
+    withLock: async (fn, step) => {
       if (locked) throw Object.assign(new Error('busy'), { code: 'SHU251_WRITER_LOCK' });
-      locked = true; try { return await fn(); } finally { locked = false; }
+      locked = true; observing = ['readiness', 'restart'].includes(step);
+      try { return await fn(); } finally { locked = false; observing = false; }
     },
     load: async () => overrides.load ? overrides.load(clone(journal)) : clone(journal),
     save: async j => {

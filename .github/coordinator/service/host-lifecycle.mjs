@@ -67,7 +67,7 @@ function checkoutShape(v) {
     (v.head_ref === null || v.sha === v.main) && typeof v.clean === 'boolean');
   return v;
 }
-async function preflight(spec, host, recovery = false, initialPin = false) {
+async function preflight(spec, host, recovery = false, initialPin = false, observing = false) {
   const c = configuration(spec), p = await host.probe();
   check('SHU251_LIFECYCLE_CHECKOUT', initialPin
     ? equal(p.checkout, { sha: c.checkout_before.sha, tree: c.checkout_before.tree, clean: true }) || equal(p.checkout, { sha: spec.window.approved_sha, tree: c.approved_tree, clean: true })
@@ -85,7 +85,7 @@ async function preflight(spec, host, recovery = false, initialPin = false) {
   check('SHU251_LIFECYCLE_CAPABILITIES', p.systemd_version === c.systemd_version && equal(p.capabilities, c.capabilities));
   check('SHU251_LIFECYCLE_EVIDENCE', equal(p.evidence, { path: c.evidence_dir, canonical: c.evidence_dir,
     uid: 0, mode: 0o700, manifest: manifest(spec) }));
-  check('SHU251_WRITER_LOCK', p.writer_lock === (recovery ? 'held-by-driver' : 'free'));
+  check('SHU251_WRITER_LOCK', p.writer_lock === (observing ? 'delegated-to-coordinator' : recovery ? 'held-by-driver' : 'free'));
   check('SHU251_DESTINATION', equal(p.destination, { path: '/etc/systemd/system', canonical: '/etc/systemd/system', uid: 0, mode: 0o755, unreviewed_dropins: [] }));
   check('SHU251_CHECKOUT_REMOTE', equal(p.approved_main, { remote_sha: spec.window.approved_sha, api_sha: spec.window.approved_sha, tree: c.approved_tree }));
   return { approved_main: p.approved_main, checkout_tuple: p.checkout_tuple, checkout: p.checkout, identity: p.identity, environment: p.environment, directories: p.directories,
@@ -219,7 +219,7 @@ async function execute(step, spec, options, io) {
     return result;
   }
   // Journal custody lasts through the final durable receipt. The provider
-  // hands off the writer lock only while the reviewed coordinator owns it.
+  // leaves writer custody to scheduled ticks throughout readiness/restart.
   return host.withLock(async () => {
     let j = await host.load();
     if (j !== null) journalValid(j, spec);
@@ -230,7 +230,7 @@ async function execute(step, spec, options, io) {
       await boundary(host, 'SHU251_EVIDENCE_ARCHIVE', () => host.finalize(copy(j)));
       return resumed;
     }
-    if (!['host-rollback', 'pin-restore', 'pin-retain'].includes(step)) await preflight(spec, host, true, step === 'pin');
+    if (!['host-rollback', 'pin-restore', 'pin-retain'].includes(step)) await preflight(spec, host, true, step === 'pin', ['readiness', 'restart'].includes(step));
     const save = async () => { await boundary(host, 'SHU251_LIFECYCLE_DURABILITY', () => host.save(copy(j))); };
     if (j === null) {
       const prior = snapshotShape(await host.snapshot(), spec); priorSafe(prior);
@@ -367,7 +367,7 @@ async function execute(step, spec, options, io) {
     j.receipts.push(result); await save();
     await boundary(host, 'SHU251_EVIDENCE_ARCHIVE', () => host.finalize(copy(j)));
     return result;
-  });
+  }, step);
 }
 function pickBinding(spec) {
   return { activation_id: spec.lifecycle.activation_id, approval_sha256: spec.lifecycle.approval_sha256 };
