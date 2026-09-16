@@ -199,7 +199,16 @@ process-scoped inline Git trust described above.
 
 Probe exceptions also become the corresponding named refusal, never a skip.
 Preflight creates only bounded temporary probes, cleans them up, and never
-installs capabilities. A missing capability requires a separate operator action.
+installs capabilities. A missing privilege/worker capability is allowed only when
+all tests requiring it have an exact authorized skip name and byte-exact reason.
+Any uncovered test fails preflight under the existing capability code, by name.
+The pinned inventory's `requirements` array contains one `{name, capabilities}`
+row per `names` occurrence; each capability is `{name, reason?}`. Unknown or
+incomplete declarations fail `SHU251_PREFLIGHT_REQUIREMENTS`; unauthorized
+name/reason pairs fail `SHU251_PREFLIGHT_SKIP_BINDING`. Empty capability arrays
+are explicit reviewed declarations. Infrastructure capabilities, including
+namespace proof, remain mandatory. No sudo expansion or namespace deferment is
+part of this contract. Outcomes are never synthesized or reclassified.
 
 `PERMITTED_SKIPS` preserves eight exact sanctioned exceptions: the seven historical
 exceptions documented in `ENV-CONTENT-VALIDATION.md` and

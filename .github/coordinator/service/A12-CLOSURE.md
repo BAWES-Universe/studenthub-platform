@@ -9,7 +9,7 @@ is the correction head; no live acceptance or permission to execute is implied.
 | Finding | Disposition | Evidence / remaining requirement |
 | --- | --- | --- |
 | C1 | CLOSED_BY_NEW_HEAD (static) | The actual `shu261-review-findings.test.mjs` policy test calls `resolveCvtsudoers`, including its root-fixture validation, identity checks and inherited descriptor execution. Policy conversion uses that same open descriptor, with checks before/after conversion. A virtual filesystem exposes only `/usr/bin/cvtsudoers.ws`; the loaded real suite body passes. Restoring the hardcoded call dies at `SHU251_SUITE_PARSER_REQUIRED`. Real installed-parser execution was prohibited, not claimed. |
-| C2 | CONFIRMED_BLOCKER | A value-free metadata collector and non-root UID/GID/groups binding exist. No actual host facts were measured. Namespace capability and sudo authority remain unprobed. Exact options below; no policy selected or changed. |
+| C2 | CONTRACT_CORRECTED; HOST_PROOF_UNSUPPORTED | Owner ruling implemented below. Exact capability requirements are revision-bound; namespace proof remains mandatory. No host access or policy change. |
 | C3 | CONFIRMED_BLOCKER (partially implemented) | The runner rejects caller-selected file/count fields, binds HEAD/tree/cleanliness/identity, derives both suite globs from the pinned Git tree, reads outcome names from a pinned inventory, and compares their multiset. Reviewed create/verify/record/remove operations preserve an external durable receipt. **The authoritative inventory has not been produced** because full verification is not green. Interruption coverage is incomplete; see limitations. |
 | C4 | CLOSED_BY_NEW_HEAD (runner precondition); approval-order input outstanding | A12 requires supervisor, coordinator and timer `ActiveState=inactive` before preflight/suite execution. Active, transitional, failed and malformed states refuse. No A12 capability requires these services running. The integrator must place render/identity → A12 create/run/remove → service start in the approval composition. The action does not stop services to manufacture this precondition. |
 
@@ -65,67 +65,94 @@ checks spec digest, owner, mode and inode; it removes only the fixed disposable
 root and leaves the receipt and recorded results. Repeated completed removal is
 idempotent. A failed Git clone is recoverable from the `creating` receipt.
 
-## C2 measured facts and bounded options
+## C2 owner ruling (supersedes the prior options)
 
-**Actual host measurements: none.** In particular, there is no measured target
-caller UID/GID/groups; no measured target checkout/temp owner, mode or traversal;
-no service-identity namespace result; no target AppArmor profile/sysctl state;
-and no measured target sudo grant. Test values such as UID/GID 1234, mode 0755
-and sysctl text `1` are synthetic fixtures, not observations.
+Owner-supplied measurements: shu-coordinator UID 999, GID 982, supplementary
+workspace group 980; shu-reviewer UID 994, GID 979. The reviewer's only sudo grants
+are `ALL=(shu-worker:shu-worker) NOPASSWD /usr/local/sbin/shu-worker-launch` and
+`ALL=(root) NOPASSWD /usr/local/libexec/shu-reviewer-sandbox`. Neither authorizes
+`/usr/bin/id` or `/usr/bin/setpriv`. These facts were supplied by the owner, not
+measured in this repository-only run. Coordinator sudo authority is not inferred
+from the reviewer grants.
 
-`measureSuite` records the caller's UID/GID/groups; each checkout/temp ancestor's
-owner/group/mode, directory/symlink status and service/other-worker traversal;
-and these value-free kernel metadata paths:
+The eight `PERMITTED_SKIPS` entries are preserved byte for byte. No added sudoers
+rule is proposed or assumed. Namespace proof is mandatory, with no deferment or
+skip authorization. The existing service-identity unshare probe remains required;
+its absence fails `SHU251_PREFLIGHT_USER_NAMESPACES`, naming its requiring tests.
 
-- `/proc/sys/kernel/unprivileged_userns_clone`
-- `/proc/sys/user/max_user_namespaces`
-- `/proc/sys/kernel/apparmor_restrict_unprivileged_userns`
-- `/sys/module/apparmor/parameters/enabled`
-- `/proc/self/attr/current`
+The revision-pinned inventory now includes `requirements`, one row for each exact
+name occurrence in `names`: `{name, capabilities: [{name, reason?}]}`. Empty lists
+are explicit reviewed declarations. An omitted, extra, duplicate or unknown
+capability declaration fails `SHU251_PREFLIGHT_REQUIREMENTS`; duplicate test names
+are checked as a multiset. Each optional reason must match that exact test's
+existing authorized skip byte for byte or fail `SHU251_PREFLIGHT_SKIP_BINDING`.
+Missing privilege/worker capability is permitted only when all requiring tests
+have such coverage. Any uncovered test fails under the existing capability code,
+with its name in the error. Infrastructure probes remain required independently
+of test requirements. A probe exception still fails under the existing code.
 
-Read errors remain explicit unavailable values. The measurement action does not
-create a namespace or test sudo. Its namespace and sudo results are explicitly
-`NOT_PROBED`. Existing preflight performs the service-identity namespace probe
-`/usr/bin/unshare --user --map-root-user /bin/true`; exceptions remain named
-refusals, never skips.
+Preflight records potential authorized skips; it does not generate outcomes.
+The suite still executes and its existing failure, reason, name, count and exit
+checks remain authoritative. A failure is never rewritten as a skip. Both `run`
+and CLI `preflight` consume the revision-bound inventory. Direct injected tests
+without an inventory retain conservative unconditional capability requirements.
 
-Source establishes these distinct privilege requirements:
+The exact complete inventory is still absent from this branch (the prior C3
+blocker); no guessed inventory is installed. Production binding therefore still
+refuses until a complete reviewed inventory, including requirements, exists.
+Actual namespace success cannot be established without host access, which is
+prohibited here. This is an unproven mandatory acceptance condition, not a deferral.
+Repository fixtures prove its refusal path and cannot prove host kernel behavior.
 
-1. Legacy preflight asks for `/usr/bin/sudo -n /usr/bin/id -u` → `0` and
-   `/usr/bin/sudo -n /usr/bin/setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/id -u`
-   → `65534` when not root. These exact two probes do not establish authority to
-   execute arbitrary worker commands.
-2. `attempt-workspace.test.mjs` uses
-   `sudo -n --preserve-env=PATH setpriv --reuid=65534 --regid=65534 --groups=<caller-gid>`
-   followed by `id`, Git, Node, and fixture-scoped chmod/removal commands. Its four
-   distinct-identity tests already have exact sanctioned skips.
-3. `shu241-scoped-build.test.mjs` directly attempts
-   `setpriv --reuid=65534 --regid=65534 --groups=0`; its two distinct-identity tests
-   already have exact sanctioned skips. A sudo-id grant cannot make this direct
-   non-root setpriv call succeed.
+## C2 correction verification (current; earlier tables below are historical)
 
-The bounded owner choices are:
+All runs used UID 1000, the existing repository refusal preload, local temporary
+fixtures and local Git only. No host access, sudo changes, root suite execution,
+push, PR, merge, GitHub or Linear action occurred. The eight-entry skip constant
+was compared with the parent revision and its complete source block is byte-identical.
 
-- Keep the existing eight-entry skip contract; in a separately authorized window
-  measure the listed metadata and execute only the exact preflight probes. If
-  those probes already work, no policy change is required. If a grant is absent,
-  any request must name the exact two id-probe argv above, not arbitrary sudo or
-  setpriv. Namespace failure still blocks A12.
-- Require the six distinct-identity tests to execute as well: first review a
-  dedicated fixture-scoped worker helper and its fixed UID/GID/groups/commands.
-  The current source does **not** support satisfying that demand with merely the
-  two id probes or running the whole suite as root. No broader grant is proposed.
-- If namespace creation is denied, wait for authorized host measurements and a
-  profile-specific policy proposal, or explicitly defer A12's namespace proof
-  (`SHU261_NO_SETENV_NAMESPACE_STARTUP`, preflight
-  `SHU251_PREFLIGHT_USER_NAMESPACES`) as a named acceptance gap. There is no
-  authorized namespace skip. An exact AppArmor/sysctl edit cannot responsibly be
-  selected without the prohibited measurements; none is invented here.
+| Run | Tests | Pass | Fail | Skip |
+| --- | ---: | ---: | ---: | ---: |
+| Focused contract/parser/inventory/disposable/C2 | 104 | 104 | 0 | 0 |
+| Phase-A, including its mutation matrix | 35 | 35 | 0 | 0 |
+| Full coordinator + service globs | 1379 | 1263 | 114 | 2 |
+| Full service glob | 274 | 251 | 23 | 0 |
 
-The existing eight sanctioned name/reason pairs remain authoritative in
-`PERMITTED_SKIPS`; namespace, Unix-socket, and systemd-prohibition skips are not
-newly authorized. A scope reduction requires an explicit owner disposition,
-not an agent-created skip allowance.
+All runs have zero cancelled/todo tests. The two full-run skips are the unchanged
+SHU-71 restricted capability and READER operator-owned checkout pairs. Exact
+failure names, counts, skip text and SHA-256 log digests are in
+`test/fixture/c2-correction-results.json`; raw logs are in
+`/tmp/shu251-c2-evidence/{focused,phase-a,full,service}.tap`.
+
+**58/58 mutations killed** in the focused L4 matrices: 29 parser, 12 Phase-A,
+8 prior correction and 9 C2. All have positive controls and syntax checks.
+The new codes and their killing mutations are:
+
+| Code | Killing mutation | Named control |
+| --- | --- | --- |
+| `SHU251_PREFLIGHT_REQUIREMENTS` | `required set omitted` | `SHU251_PREFLIGHT_REQUIREMENTS` |
+| `SHU251_PREFLIGHT_SKIP_BINDING` | `skip binding bypassed` | `SHU251_PREFLIGHT_SKIP_BINDING` |
+
+The other seven new mutations kill: covered absence rejected (`COVERED_ABSENCE`),
+uncovered requirement ignored (`UNCOVERED_BY_NAME`), malformed probe reclassified
+(`MALFORMED_PROBE_NOT_SKIP`), probe failure reclassified (`PROBE_FAILURE_NOT_SKIP`),
+namespace absence waived (`NAMESPACE_REQUIRED`), new outcome failure accepted and
+different outcome reason accepted (both `OUTCOME_NOT_RECLASSIFIED`). Uncovered
+privilege/worker tests retain `SHU251_PREFLIGHT_PRIVILEGE` and
+`SHU251_PREFLIGHT_WORKER_UID`, respectively, and include the uncovered test name.
+
+Both full globs include every test/mutation file in their scope. They **do not
+pass** under the refusal boundary, and not every remaining failure or mutation
+can be certified. Host-dependent modules can fail before registering all tests;
+these observed counts do not establish a complete inventory. No assertion or
+boundary was relaxed to improve the counts. Full host acceptance, every broader
+mutation's kill, the complete reviewed inventory, and actual namespace success
+remain unsupported. Namespace proof is still required, not deferred or waived.
+
+Reproduce with the existing full-run commands below, adding
+`service/test/capability-requirements.test.mjs` and `^SHU251 C2|` to the focused
+file list and name pattern, respectively. Apply the same `L4_REPOSITORY_ROOT` and
+`NODE_OPTIONS` refusal preload to focused and Phase-A runs as to full runs.
 
 ## New named assertions and killing mutations
 
@@ -150,7 +177,7 @@ was removed. Existing parser and Phase-A mutations are rerun below.
 ## Limits that remain blocking
 
 - No full successful suite, authoritative inventory, or exact expected host count.
-- No measured C2 host facts, live namespace/sudo proof, or selected host-policy change.
+- Owner-supplied C2 identity/grant facts are recorded above; live namespace proof remains unsupported and mandatory. No host-policy change is authorized or proposed.
 - Clone failure recovery is tested, but not process death at every boundary.
   In particular, death between root mkdir and inode journaling is ambiguous;
   removal refuses an unbound inode instead of guessing custody. Partial initial

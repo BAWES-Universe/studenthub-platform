@@ -148,8 +148,33 @@ export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
     }
   };
 }
-export async function preflight(spec, probe = hostProbe(spec)) {
+// Requirements are reviewed with the exact revision-pinned inventory, never
+// supplied by the runner caller. Empty capability lists must be explicit.
+export function deriveRequirements(names, requirements) {
+  const fail = detail => halt('SHU251_PREFLIGHT_REQUIREMENTS', detail);
+  if (!Array.isArray(names) || !names.length || !Array.isArray(requirements) ||
+      requirements.length !== names.length) fail('exact required test set');
+  const remaining = [...names];
+  const derived = Object.fromEntries(CAPABILITIES.map(c => [c.name, []]));
+  for (const row of requirements) {
+    const index = remaining.indexOf(row?.name);
+    if (index < 0 || !Array.isArray(row.capabilities)) fail(String(row?.name));
+    remaining.splice(index, 1);
+    const seen = new Set();
+    for (const need of row.capabilities) {
+      if (!need || !Object.hasOwn(derived, need.name) || seen.has(need.name)) fail(row.name);
+      seen.add(need.name);
+      if (Object.hasOwn(need, 'reason') &&
+          (!Object.hasOwn(PERMITTED_SKIPS, row.name) || need.reason !== PERMITTED_SKIPS[row.name]))
+        halt('SHU251_PREFLIGHT_SKIP_BINDING', row.name);
+      derived[need.name].push({ ...need, test: row.name });
+    }
+  }
+  return derived;
+}
+export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
   if (!Number.isInteger(spec?.service_uid) || spec.service_uid <= 0 || !Number.isInteger(spec.service_gid) || spec.service_gid < 0 || !path.isAbsolute(spec.checkout ?? '') || !path.isAbsolute(spec.temp_dir ?? '')) halt('SHU251_PREFLIGHT_SPEC');
+  const derived = requiredSet === undefined ? null : deriveRequirements(requiredSet.names, requiredSet.requirements);
   const evidence = {};
   for (const capability of CAPABILITIES) {
     let available = false;
@@ -161,7 +186,18 @@ export async function preflight(spec, probe = hostProbe(spec)) {
         : resolved === true;
     } catch (error) {
       if (capability.name === 'cvtsudoers' && CVTSUDOERS_REFUSALS.includes(error.code)) throw error;
-      // Other probe exceptions retain their existing capability refusal.
+      // An exception is a new failure, not evidence of an authorized absence.
+      halt(capability.code, capability.name);
+    }
+    if (!available && resolved !== false) halt(capability.code, capability.name);
+    if (!available && derived) {
+      const needs = derived[capability.name];
+      const uncovered = needs.filter(need => !Object.hasOwn(need, 'reason'));
+      // Namespace proof and runner infrastructure have no skip allowance.
+      if (!['privilege', 'worker_uid'].includes(capability.name) || uncovered.length)
+        halt(capability.code, uncovered.map(need => need.test).join(', ') || capability.name);
+      evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: need.reason })) };
+      continue;
     }
     if (!available) halt(capability.code, capability.name);
     evidence[capability.name] = capability.name === 'cvtsudoers' ? resolved : 'available';
@@ -205,7 +241,7 @@ export async function runSuite(spec, io = {}) {
     const bound = bindSuite(spec);
     return { ...bound, quiescence: suiteQuiescence(), record: recordDisposableSuite.bind(null, spec) };
   }))();
-  const capabilities = await preflight(spec, io.probe ?? hostProbe(spec));
+  const capabilities = await preflight(spec, io.probe ?? hostProbe(spec), contract.requirements === undefined ? undefined : contract);
   spec = { ...spec, files: contract.files, expected_tests: contract.expected_tests };
   if (!Array.isArray(spec.files) || !spec.files.length || spec.files.some(f => !path.isAbsolute(f) || !f.startsWith(`${spec.checkout}/`))) halt('SHU251_SUITE_FILES');
   const env = { ...process.env, TMPDIR: spec.temp_dir };
@@ -227,7 +263,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
     const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
     let result;
-    if (action === 'preflight') result = await preflight(spec);
+    if (action === 'preflight') result = await preflight(spec, hostProbe(spec), (await import('./suite-runner-spec.mjs')).bindSuite(spec));
     else if (action === 'run') result = await runSuite(spec);
     else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
     else {

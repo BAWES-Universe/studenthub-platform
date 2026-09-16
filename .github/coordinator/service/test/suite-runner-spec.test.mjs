@@ -22,7 +22,7 @@ function boundary(change = {}) {
       else if (args.includes('HEAD^{tree}')) stdout = spec.tree;
       else if (args.includes('status')) stdout = change.dirty ?? '';
       else if (args.includes('ls-tree')) stdout = files.join('\n');
-      else if (args.includes('show')) stdout = JSON.stringify(change.inventory ?? { version: 'shu251-suite-inventory-v1', files, names: ['one', 'two'] });
+      else if (args.includes('show')) stdout = JSON.stringify(change.inventory ?? { version: 'shu251-suite-inventory-v1', files, names: ['one', 'two'], requirements: ['one', 'two'].map(name => ({ name, capabilities: [] })) });
       return { status: 0, stdout };
     },
     fs: { lstatSync: () => ({ uid: 1234, gid: 1234, mode: 0o40755, isDirectory: () => true, isSymbolicLink: () => false }), readFileSync: () => '1\n' },
@@ -98,7 +98,7 @@ function disposableFixture(t) {
     fs.mkdirSync(path.dirname(path.join(source, file)), { recursive: true });
     fs.writeFileSync(path.join(source, file), "import test from 'node:test'; test('fixture', () => {});\n");
   }
-  fs.writeFileSync(path.join(source, runner.INVENTORY_PATH), JSON.stringify({ version: 'shu251-suite-inventory-v1', files, names: ['one', 'two'] }));
+  fs.writeFileSync(path.join(source, runner.INVENTORY_PATH), JSON.stringify({ version: 'shu251-suite-inventory-v1', files, names: ['one', 'two'], requirements: ['one', 'two'].map(name => ({ name, capabilities: [] })) }));
   git('add', '.'); git('commit', '-m', 'isolated A12 fixture');
   const s = { ...spec, revision: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}'),
     disposable_parent: parent, source_checkout: source, activation_id: 'a12-fixture-001',

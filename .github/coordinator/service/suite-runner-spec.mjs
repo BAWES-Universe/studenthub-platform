@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { halt, suiteNames } from './host-suite-contract.mjs';
+import { halt, suiteNames, deriveRequirements } from './host-suite-contract.mjs';
 
 export const INVENTORY_PATH = '.github/coordinator/service/suite-inventory.json';
 export const SUITE_ROOTS = Object.freeze(['.github/coordinator/test/', '.github/coordinator/service/test/']);
@@ -42,7 +42,8 @@ export function bindSuite(spec, io = suiteBoundary) {
       !equal(files, inventory.files) || !Array.isArray(inventory.names) || !inventory.names.length ||
       inventory.names.some(name => typeof name !== 'string' || !name) ||
       Object.hasOwn(spec, 'files') || Object.hasOwn(spec, 'expected_tests')) halt('SHU251_SUITE_INVENTORY');
-  return { identity, files: files.map(file => path.join(spec.checkout, file)), names: inventory.names, expected_tests: inventory.names.length };
+  deriveRequirements(inventory.names, inventory.requirements);
+  return { requirements: inventory.requirements, identity, files: files.map(file => path.join(spec.checkout, file)), names: inventory.names, expected_tests: inventory.names.length };
 }
 export function suiteQuiescence(io = suiteBoundary) {
   const states = {};
