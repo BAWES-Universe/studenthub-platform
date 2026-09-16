@@ -540,7 +540,15 @@ export function singleRunActivationStatus({
   if (pairRecord?.kind === "two-fixture-v1") {
     const readRef = (ref) => {
       try {
-        return execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-C", dir, "rev-parse", "--verify", ref], {
+        // Match resolveCoordinatorRevision: trust only the real checkout root
+        // containing dir; unresolved roots refuse before invoking Git.
+        let checkoutRoot = fs.realpathSync(dir);
+        while (!fs.existsSync(path.join(checkoutRoot, ".git"))) {
+          const parent = path.dirname(checkoutRoot);
+          if (parent === checkoutRoot) return null;
+          checkoutRoot = parent;
+        }
+        return execFileSync("git", [...BROKER_GIT_CONFIG_ARGS, "-c", `safe.directory=${checkoutRoot}`, "-C", dir, "rev-parse", "--verify", ref], {
           env: brokerGitEnv(process.env), encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"],
         }).trim();
       } catch { return null; }
