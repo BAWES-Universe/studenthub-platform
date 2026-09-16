@@ -1,5 +1,5 @@
-// Typed Phase-A executor. All external effects belong to the injected capability
-// interface described in HOST-LIFECYCLE.md. There is deliberately no ambient host IO.
+// Typed Phase-A executor. Effects use the production provider selected by the
+// reviewed driver, or an explicit test capability boundary (HOST-LIFECYCLE.md).
 import path from 'node:path';
 import { CAPABILITIES } from './host-suite-contract.mjs';
 export const REQUIRED_CAPABILITIES = Object.freeze([...CAPABILITIES.map(c => c.name), 'atomic-rename', 'directory-fsync']);

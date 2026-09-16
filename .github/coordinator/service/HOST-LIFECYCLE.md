@@ -24,12 +24,21 @@ commands and argument passthrough are refused.
 
 ## Execution boundary
 
-The executable API is `drive(action, spec, options, io)`. Supply the existing
-`read` and reviewed `render` capabilities and an explicit `io.lifecycle` object.
-There is **no ambient host adapter** in `defaultIO`: without that explicit object,
-execution refuses `SHU251_LIFECYCLE_IO`. This repository change supplies and tests
-the typed executor, not an unreviewed systemctl/filesystem adapter. No test calls
-a real service manager, pin operation, destination, credential file or host.
+The reviewed CLI is `node .github/coordinator/service/phase-a-driver.mjs ACTION
+/absolute/driver-spec.json --execute --approved-host-mutation APPROVED_SHA`, with
+`SHU251_HOST_MUTATION_APPROVED=true` for mutating actions. The production process
+must run as root. The call path is `main → drive → defaultIO.lifecycleProvider →
+defaultIO.pin → createProductionLifecycle → executeLifecycle`. `defaultIO.pin`
+checks the reviewed checkout path, window schema and render bindings before
+constructing the provider. The executor then checks the approved clean SHA/tree,
+metadata, capabilities and manifest before destination or ref effects.
+
+The CLI accepts no provider/module/command option and no implementation payload.
+The operator supplies approved window data, not JavaScript or an arbitrary
+capability object. The internal factory accepts a syscall/command boundary for
+isolated tests. Explicit `drive(..., io)` injection remains available to tests.
+See [PRODUCTION-LIFECYCLE.md](PRODUCTION-LIFECYCLE.md) for filesystem custody,
+provisioning, production observations and the round-2 validation record.
 
 The capability provider is trusted code, like the existing driver IO layer; it
 is not caller evidence, a command string, a receipt importer or a security
@@ -60,8 +69,9 @@ created or independently authenticated by this executor.
 
 The default renderer and offline installer retain their original writer-lock,
 crossed-environment, destination, owner, private-directory and dispatch-off
-checks. The old nine-action routing test still asserts all nine routes explicitly;
-new lifecycle routing is asserted separately for all nine additions.
+checks. The old nine-action test remains. A registry-wide assertion additionally proves
+disjoint legacy/lifecycle sets, complete union and each intended route. Five
+syntax-clean routing mutations include registering an untested new action.
 
 ## Recovery and receipts
 
@@ -163,11 +173,11 @@ reseeding, activation, dispatch, credential change or host connection.
 
 This does **not** prove physical fsync/rename behavior, kernel locking, actual
 service identity/permissions, real systemd readiness, crash recovery across OS
-processes, or running-host equality. Those require a separately reviewed concrete
-capability provider and a future explicitly authorized host window. An arbitrary
+processes, or running-host equality. Physical host acceptance still requires a future explicitly authorized host
+window. The production provider now exists and is tested at its syscall boundary. An arbitrary
 provider returning fabricated observations is outside the trusted IO model.
 
-## Repository verification commands
+## Original executor verification (commit ab6c634b)
 
 All temporary storage and local clones were placed below this checkout. Some
 existing tests require a literal `/tmp` path and a temporary directory outside

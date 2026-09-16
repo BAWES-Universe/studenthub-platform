@@ -189,6 +189,11 @@ export function assertRollbackSafe(prior, sha) {
 }
 export const defaultIO = {
   read,
+  async lifecycleProvider(spec, boundary) {
+    await defaultIO.pin(spec);
+    const { createProductionLifecycle } = await import('./production-lifecycle.mjs');
+    return createProductionLifecycle(spec, boundary);
+  },
   async render(spec) {
     const { render, serviceParameters, assertPolicy } = await import('./units.mjs');
     const parameters = serviceParameters(spec.render);
@@ -287,7 +292,8 @@ export async function drive(step, spec, options = {}, io = defaultIO) {
     if (options.execute !== true) return { version: 'shu251-phase-a-plan-v1', step, approved_sha: spec.window.approved_sha, dry_run: true };
     if (Object.hasOwn(LIFECYCLE_ACTIONS, step)) {
       const { executeLifecycle } = await import('./host-lifecycle.mjs');
-      return await executeLifecycle(step, spec, options, io);
+      const lifecycleIO = io === defaultIO ? { ...io, lifecycle: await defaultIO.lifecycleProvider(spec) } : io;
+      return await executeLifecycle(step, spec, options, lifecycleIO);
     }
     await io.pin(spec);
     await binding('inventory', spec, options, io);

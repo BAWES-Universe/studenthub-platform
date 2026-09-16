@@ -295,6 +295,7 @@ then report explicit skips; do not count those as successful validations.
 
 [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md) documents the Phase-A driver actions for
 preflight, install, start/readiness, driver-issued restart, host rollback and pin
-disposition. They execute only with explicit injected lifecycle capabilities;
-their tests use controlled fakes. The offline installer above is unchanged, and
+disposition. The reviewed `phase-a-driver.mjs` CLI selects
+`production-lifecycle.mjs` by default. Its syscall and command boundaries are
+replaced in tests; no test invokes the host provider against the real machine. The offline installer above is unchanged, and
 no real-host acceptance is claimed.

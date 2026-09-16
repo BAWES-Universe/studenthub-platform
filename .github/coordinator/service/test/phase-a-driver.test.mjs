@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ACTIONS, UNIT_NAMES, drive, hash, custodyPath, main, receipt, validateReceipt, assertRollbackSafe } from '../phase-a-driver.mjs';
+import { ACTIONS, LIFECYCLE_ACTIONS, UNIT_NAMES, drive, hash, custodyPath, main, receipt, validateReceipt, assertRollbackSafe } from '../phase-a-driver.mjs';
 
 const SHA = 'a'.repeat(40);
 function fixture(t) {
@@ -302,4 +302,50 @@ for (const mutation of mutations) test(`SHU251 phase A mutation: ${mutation.name
   assert.ok(output.includes(mutation.assertion), `must name assertion: ${mutation.assertion}\n${output}`);
   assert.match(output, /^# fail 1$/m);
   t.diagnostic(`${mutation.name}: ${output.match(/^  error: (.*)$/m)?.[1]}`);
+});
+
+const reviewedLegacy = { inventory: 'remote_inventory', quiescence: 'driver_quiescence', transport: 'transport_observation', launch: 'fixture_launch_observation', worker: 'worker_observation', 'replay-release': 'replay_release', cleanup: 'fixture_cleanup', 'capture-prior': 'prior_state_rollback', rollback: 'prior_state_rollback' };
+const reviewedLifecycle = { preflight: 'host_preflight', install: 'host_install', start: 'host_start', readiness: 'host_readiness', restart: 'host_restart', 'host-rollback': 'host_rollback', pin: 'host_pin', 'pin-restore': 'host_pin_restore', 'pin-retain': 'host_pin_retain' };
+test('ROUTING complete disjoint registry and intended routes', async t => {
+  assert.deepEqual(Object.keys(reviewedLegacy).filter(k => Object.hasOwn(reviewedLifecycle, k)), [], 'ROUTING_DISJOINT_REQUIRED');
+  assert.deepEqual(Object.keys({ ...reviewedLegacy, ...reviewedLifecycle }).sort(), Object.keys(ACTIONS).sort(), 'ROUTING_COMPLETE_REQUIRED');
+  assert.deepEqual(LIFECYCLE_ACTIONS, reviewedLifecycle, 'ROUTING_LIFECYCLE_SET_REQUIRED');
+  for (const [step, expected] of Object.entries(reviewedLegacy)) {
+    const { spec, io, calls } = fixture(t);
+    const [outcome] = await Promise.allSettled([drive(step, spec, approved, io)]);
+    assert.equal(outcome.status, 'fulfilled', 'ROUTING_LEGACY_REQUIRED');
+    assert.equal(outcome.value.evidence.binding, expected, 'ROUTING_LEGACY_REQUIRED');
+    assert.deepEqual(calls, step === 'rollback' ? ['inventory', step, 'quiescence'] : ['inventory', step], 'ROUTING_LEGACY_REQUIRED');
+  }
+  const { fixture: lifecycleFixture } = await import('./lifecycle-fixture.mjs');
+  const f = lifecycleFixture(), observed = new Set();
+  for (const step of ['preflight', 'pin', 'pin-retain', 'install', 'start', 'readiness', 'restart', 'host-rollback', 'pin-restore']) {
+    const [outcome] = await Promise.allSettled([f.run(step)]);
+    assert.equal(outcome.status, 'fulfilled', 'ROUTING_LIFECYCLE_REQUIRED');
+    assert.equal(outcome.value.evidence.binding, reviewedLifecycle[step], 'ROUTING_LIFECYCLE_REQUIRED');
+    observed.add(step);
+  }
+  assert.deepEqual([...observed].sort(), Object.keys(reviewedLifecycle).sort(), 'ROUTING_LIFECYCLE_REQUIRED');
+});
+const routingMutations = [
+  ['overlap', 'test/phase-a-driver.test.mjs', "const reviewedLegacy" + " = { inventory:", "const reviewedLegacy = { preflight: 'host_preflight', inventory:", 'ROUTING_DISJOINT_REQUIRED'],
+  ['missing registered action', 'phase-a-driver.mjs', "inventory: 'remote_inventory',", '', 'ROUTING_COMPLETE_REQUIRED'],
+  ['untested new action', 'phase-a-driver.mjs', 'export const ACTIONS = Object.freeze({', "export const ACTIONS = Object.freeze({ untested: 'unreviewed',", 'ROUTING_COMPLETE_REQUIRED'],
+  ['legacy route substitution', 'phase-a-driver.mjs', 'evidence = await binding(step, spec, options, io);', "evidence = await binding(step === 'worker' ? 'launch' : step, spec, options, io);", 'ROUTING_LEGACY_REQUIRED'],
+  ['lifecycle route substitution', 'phase-a-driver.mjs', 'return await executeLifecycle(step, spec, options, lifecycleIO);', "return await executeLifecycle(step === 'readiness' ? 'preflight' : step, spec, options, lifecycleIO);", 'ROUTING_LIFECYCLE_REQUIRED'],
+];
+for (const [name, file, from, to, assertion] of routingMutations) test(`ROUTING named mutation ${name}`, t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-mutation-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'test'));
+  for (const n of ['phase-a-driver', 'host-lifecycle', 'host-suite-contract']) fs.copyFileSync(new URL(`../${n}.mjs`, import.meta.url), path.join(root, `${n}.mjs`));
+  for (const n of ['phase-a-driver.test', 'lifecycle-fixture']) fs.copyFileSync(new URL(`./${n}.mjs`, import.meta.url), path.join(root, `test/${n}.mjs`));
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const run = () => spawnSync(process.execPath, ['--test', '--test-name-pattern=^ROUTING complete', path.join(root, 'test/phase-a-driver.test.mjs')], { env, encoding: 'utf8', timeout: 30000 });
+  const control = run(); assert.equal(control.status, 0, control.stdout + control.stderr); assert.match(control.stdout, /^# pass 1$/m);
+  const target = path.join(root, file), source = fs.readFileSync(target, 'utf8');
+  assert.equal(source.split(from).length, 2); fs.writeFileSync(target, source.replace(from, to));
+  assert.equal(spawnSync(process.execPath, ['--check', target]).status, 0);
+  const result = run(), output = result.stdout + result.stderr;
+  assert.equal(result.status, 1, output); assert.match(output, /^# fail 1$/m); assert.match(output, /code: 'ERR_ASSERTION'/);
+  assert.ok(output.includes(assertion), output); assert.doesNotMatch(output, /TypeError|SyntaxError|ERR_MODULE_NOT_FOUND/);
 });
