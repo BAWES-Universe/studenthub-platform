@@ -16,16 +16,25 @@ acceptance requires host/live proof, an explicit owner-authenticated acceptance
 receipt, then a separately authorized state transition. No unattended agent may
 perform that transition.
 
-The repository check is `.github/policy/acceptance-metadata.mjs`. It measures and
-enforces a conservative **reference ban**, not an assumed list of closing verbs.
-It rejects case-insensitive alphanumeric team IDs followed by a dash and digits,
-including whitespace around the dash, Unicode dash variants, NFKC-normalized
-fullwidth characters and selected zero-width characters. It also rejects
-`linear.app` URLs, including URLs without a readable issue ID. It inspects the
-whole title and body, including examples, comments, negations and neutral references.
-This deliberately also refuses unrelated issue-shaped text such as version-like
-tokens. Put issue references in this repository record; use the neutral repository
-document link from the PR template in PR metadata.
+The repository check is `.github/policy/acceptance-metadata.mjs`. Version 2
+requires a closing verb (`close`, `fix`, `resolve`, `complete`, `finish`, including
+their measured inflections) connected to an issue ID or Linear URL by whitespace,
+punctuation and an explicit vocabulary of connector words. It retains case,
+line-break, Unicode dash, NFKC and zero-width normalization. Negated and quoted
+closing forms still refuse conservatively. Neutral issue mentions, parenthesised
+IDs and related-work URLs pass. This is a measured repository grammar, not proof
+of Linear's private matcher or a guarantee for arbitrary natural language.
+
+The independent verifier reported BLOCK at
+`f4af691b0ec4f8a140db541e0533822a143d6633`: required run `35147803735` refused
+PR #136's own benign title, then skipped both pre-existing checks. This report
+is user-supplied, not independently fetched here. The original blanket-reference
+ban was overbroad. Its old measurements are preserved in
+[f4af691-focused.tap](evidence/board-policy/f4af691-focused.tap) and
+[f4af691-manifest.json](evidence/board-policy/f4af691-manifest.json); those passes
+did not establish usability or workflow independence. The correction changes four
+neutral-reference probe expectations to acceptance and retains every prior
+closing-form refusal, metadata-shape guard and error code.
 
 Measured local probe outputs, including exact input, exit status and JSON output,
 are in [focused.tap](evidence/board-policy/focused.tap). The fixture source is
@@ -34,6 +43,15 @@ proprietary matcher. That matcher has no supplied executable, capture or version
 measurement in this repository. We did not create external PRs or change cards to
 measure it. Unknown encodings, branch-name linking, integration configuration and
 other non-metadata triggers are not proven safe by this check.
+
+All policy steps now have explicit `always()` conditions; the metadata step
+also requires a PR event. Thus a failed matcher or measurement step cannot skip
+either legacy check, and an ownership failure cannot skip the tracked-path check.
+No `continue-on-error` masks any failure. The required job name stays
+`repository-policy`; both legacy shell script bodies are byte-identical to the
+blocked head. The local workflow tests assert these conditions and execute the
+three actual check commands for every combination of pass/fail fixture inputs.
+These measurements are not an execution of GitHub Actions itself.
 
 The workflow runs on PR opened/edited/reopened/synchronize/ready_for_review events;
 metadata is read from the event JSON, never interpolated into shell. It runs the
@@ -145,14 +163,31 @@ remain `CONFIRMED_GAP`. No host access was used to fill missing facts.
 ## Verification and limits
 
 Run `umask 0002` and `node --test .github/policy/test/*.test.mjs` from the repository
-root. Before coordinator suites the requested `chmod -R go-w .github/coordinator`
-was applied. Focused policy result: **30 tests, 30 pass, 0 fail, 0 skipped,
-0 cancelled, 0 todo**. Within those tests, the event-file CLI measures **25 probes:
-19 refused and 6 accepted**. Malformed event JSON is also refused. Two new guard
-codes, `BOARD_METADATA_SHAPE` and `BOARD_ACCEPTANCE_REFERENCE`, each have an
-unmutated positive control and a syntax-clean guard-removal mutation: control
-exit 0, syntax check exit 0, mutant exit 1 with `ERR_ASSERTION` and that exact
-missing-exception assertion. The neutral PR template passes the real check.
+root. Corrected focused result: **78 tests, 78 pass, 0 fail, 0 skipped,
+0 cancelled, 0 todo**. The event-file CLI measures **57 probes: 40 refused and
+17 accepted**, with exact exit status and JSON code assertions. Malformed event
+JSON is also refused. All 20 supported verb inflections are measured individually.
+The supplied exact PR #136 title (B19), parenthesised title ID, neutral body ID,
+and neutral URLs now return exit 0 / `BOARD_METADATA_ACCEPTED`. Closing forms
+return exit 1 / `BOARD_ACCEPTANCE_REFERENCE`, including natural-language
+connectors, punctuation, newlines, quoted/negated forms and normalized Unicode.
+
+**Seven mutations are killed:** the two existing guard removals and a restored
+blanket ban each have passing controls, syntax-clean mutants, and assertion
+failure exit 1; four workflow-condition removals each fail the independence
+assertion after a passing control. Eight failure combinations execute all three
+check commands (24 results), including metadata failure with both legacy checks
+passing and all three checks failing independently. Absolute symlink refusal and
+relative symlink acceptance are measured without dereferencing either target.
+Both legacy commands also pass on this repository. Fixture tests use disposable
+local Git repositories and do not call host services or privileged probes.
+
+The exact metadata of other lane PRs was not supplied or present in repository
+fixtures; PR #136's exact body was also unavailable. Clearly labelled synthetic
+lane title/body examples pass, but **exact
+other-lane PR title/body verification remains unsupported**. No GitHub fetch or
+metadata modification was performed. Hosted required-check green status also
+remains unmeasured because this correction is not pushed.
 
 The new focused suite has no baseline counterpart and no skips. Existing
 coordinator/service test files and skip allowances are unchanged. Full baseline

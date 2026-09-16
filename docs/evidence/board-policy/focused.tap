@@ -1,7 +1,19 @@
 TAP version 13
+# {"name":"B19 own PR title","title":"chore(policy): reject Linear auto-closing references and correct the historical record (SHU-251)","body":"","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"policy body example","title":"Local correction","body":"Related: SHU-251. Reject auto-closing references and preserve the historical record. Live acceptance remains blocked.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"lane title example","title":"fix(coordinator): resolve the trusted parser path (SHU-251)","body":"","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"lane body example","title":"Local correction","body":"Related: SHU-251 and SHU-253. Fixes parser selection. Completes local tests; acceptance remains blocked.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"separate sentences","title":"Local correction","body":"Fixes parser selection. Related: SHU-251","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"keyword substring","title":"Local correction","body":"Encloses (SHU-251)","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"unrelated title verb","title":"Fixes parser selection","body":"Related: SHU-251","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"closing url","title":"Local correction","body":"Closes https://linear.app/team/issue/SHU-253/acceptance","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing opaque url","title":"Local correction","body":"Resolves https://linear.app/team/issue/opaque","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"markdown closing","title":"Local correction","body":"**Fixes** [SHU-253](https://linear.app/team/issue/SHU-253)","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"connector punctuation","title":"Local correction","body":"Closes only: (the issue SHU-253)","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"list closing","title":"Local correction","body":"Fixes: \# SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"completes only","title":"Local correction","body":"Completes only SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"closes only","title":"Local correction","body":"Closes only SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
-# {"name":"title reference","title":"Implement acceptance (SHU-253)","body":"","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"title reference","title":"Implement acceptance (SHU-253)","body":"","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
 # {"name":"title completion","title":"Completes only SHU-253","body":"","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"punctuation","title":"Local correction","body":"Closes: (SHU-253).","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"line break","title":"Local correction","body":"Completes only\\n\\nSHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
@@ -9,209 +21,530 @@ TAP version 13
 # {"name":"case","title":"Local correction","body":"rEsOlVeS shu-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"past tense","title":"Local correction","body":"This has completed the work for SHU-253.","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"future tense","title":"Local correction","body":"This will finish the acceptance work for SHU-253.","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
-# {"name":"neutral reference","title":"Local correction","body":"Related: SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"neutral reference","title":"Local correction","body":"Related: SHU-253","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
 # {"name":"negation","title":"Local correction","body":"Does not close SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"quoted example","title":"Local correction","body":"`Fixes SHU-253`","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
-# {"name":"url","title":"Local correction","body":"Related: https://linear.app/team/issue/SHU-253/acceptance","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
-# {"name":"url without id","title":"Local correction","body":"https://linear.app/team/issue/opaque","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"url","title":"Local correction","body":"Related: https://linear.app/team/issue/SHU-253/acceptance","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"url without id","title":"Local correction","body":"https://linear.app/team/issue/opaque","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
 # {"name":"unicode dash","title":"Local correction","body":"Completes SHU–253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"unicode width","title":"Local correction","body":"Closes ＳＨＵ－２５３","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"zero width","title":"Local correction","body":"Closes SHU-​253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # {"name":"other team","title":"Local correction","body":"Closes ACCEPT-42","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
-# {"name":"neutral repository link","title":"Local correction","body":"Related work: [acceptance record](docs/acceptance-record.md)","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
-# {"name":"completes without issue","title":"Local correction","body":"Completes only the local parser tests.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
-# {"name":"closes without issue","title":"Local correction","body":"Closes only the local file descriptor.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
-# {"name":"neutral title","title":"Add repository acceptance policy","body":"","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
-# {"name":"punctuation without issue","title":"Local correction","body":"Fixes: parsing.\\nResolves local test failures.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
-# {"name":"issue prose without identifier","title":"Local correction","body":"Live acceptance remains pending owner proof.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"neutral repository link","title":"Local correction","body":"Related work: [acceptance record](docs/acceptance-record.md)","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"completes without issue","title":"Local correction","body":"Completes only the local parser tests.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"closes without issue","title":"Local correction","body":"Closes only the local file descriptor.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"neutral title","title":"Add repository acceptance policy","body":"","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"punctuation without issue","title":"Local correction","body":"Fixes: parsing.\\nResolves local test failures.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"issue prose without identifier","title":"Local correction","body":"Live acceptance remains pending owner proof.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-closing-reference-v2","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"closing inflection close","title":"Local correction","body":"close SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection closes","title":"Local correction","body":"closes SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection closed","title":"Local correction","body":"closed SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection closing","title":"Local correction","body":"closing SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection fix","title":"Local correction","body":"fix SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection fixes","title":"Local correction","body":"fixes SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection fixed","title":"Local correction","body":"fixed SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection fixing","title":"Local correction","body":"fixing SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection resolve","title":"Local correction","body":"resolve SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection resolves","title":"Local correction","body":"resolves SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection resolved","title":"Local correction","body":"resolved SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection resolving","title":"Local correction","body":"resolving SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection complete","title":"Local correction","body":"complete SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection completes","title":"Local correction","body":"completes SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection completed","title":"Local correction","body":"completed SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection completing","title":"Local correction","body":"completing SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection finish","title":"Local correction","body":"finish SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection finishes","title":"Local correction","body":"finishes SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection finished","title":"Local correction","body":"finished SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closing inflection finishing","title":"Local correction","body":"finishing SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
 # mutation=BOARD_METADATA_SHAPE control_exit=0 syntax_exit=0 mutant_exit=1 assertion=BOARD_METADATA_SHAPE
 # mutation=BOARD_ACCEPTANCE_REFERENCE control_exit=0 syntax_exit=0 mutant_exit=1 assertion=BOARD_ACCEPTANCE_REFERENCE
-# Subtest: probe completes only
-ok 1 - probe completes only
+# mutation=blanket-reference-ban control_exit=0 syntax_exit=0 mutant_exit=1 assertion=B19
+# Subtest: probe B19 own PR title
+ok 1 - probe B19 own PR title
   ---
-  duration_ms: 1.136573
+  duration_ms: 1.728509
+  type: 'test'
+  ...
+# Subtest: probe policy body example
+ok 2 - probe policy body example
+  ---
+  duration_ms: 0.26484
+  type: 'test'
+  ...
+# Subtest: probe lane title example
+ok 3 - probe lane title example
+  ---
+  duration_ms: 0.056619
+  type: 'test'
+  ...
+# Subtest: probe lane body example
+ok 4 - probe lane body example
+  ---
+  duration_ms: 0.050275
+  type: 'test'
+  ...
+# Subtest: probe separate sentences
+ok 5 - probe separate sentences
+  ---
+  duration_ms: 0.07442
+  type: 'test'
+  ...
+# Subtest: probe keyword substring
+ok 6 - probe keyword substring
+  ---
+  duration_ms: 0.047938
+  type: 'test'
+  ...
+# Subtest: probe unrelated title verb
+ok 7 - probe unrelated title verb
+  ---
+  duration_ms: 0.039428
+  type: 'test'
+  ...
+# Subtest: probe closing url
+ok 8 - probe closing url
+  ---
+  duration_ms: 0.363439
+  type: 'test'
+  ...
+# Subtest: probe closing opaque url
+ok 9 - probe closing opaque url
+  ---
+  duration_ms: 0.185538
+  type: 'test'
+  ...
+# Subtest: probe markdown closing
+ok 10 - probe markdown closing
+  ---
+  duration_ms: 0.187369
+  type: 'test'
+  ...
+# Subtest: probe connector punctuation
+ok 11 - probe connector punctuation
+  ---
+  duration_ms: 0.08092
+  type: 'test'
+  ...
+# Subtest: probe list closing
+ok 12 - probe list closing
+  ---
+  duration_ms: 0.039394
+  type: 'test'
+  ...
+# Subtest: probe completes only
+ok 13 - probe completes only
+  ---
+  duration_ms: 0.029433
   type: 'test'
   ...
 # Subtest: probe closes only
-ok 2 - probe closes only
+ok 14 - probe closes only
   ---
-  duration_ms: 0.16733
+  duration_ms: 0.026275
   type: 'test'
   ...
 # Subtest: probe title reference
-ok 3 - probe title reference
+ok 15 - probe title reference
   ---
-  duration_ms: 0.062212
+  duration_ms: 0.03872
   type: 'test'
   ...
 # Subtest: probe title completion
-ok 4 - probe title completion
+ok 16 - probe title completion
   ---
-  duration_ms: 0.058226
+  duration_ms: 0.032732
   type: 'test'
   ...
 # Subtest: probe punctuation
-ok 5 - probe punctuation
+ok 17 - probe punctuation
   ---
-  duration_ms: 0.056045
+  duration_ms: 0.055449
   type: 'test'
   ...
 # Subtest: probe line break
-ok 6 - probe line break
+ok 18 - probe line break
   ---
-  duration_ms: 0.052297
+  duration_ms: 0.03175
   type: 'test'
   ...
 # Subtest: probe split reference
-ok 7 - probe split reference
+ok 19 - probe split reference
   ---
-  duration_ms: 0.057833
+  duration_ms: 0.026552
   type: 'test'
   ...
 # Subtest: probe case
-ok 8 - probe case
+ok 20 - probe case
   ---
-  duration_ms: 0.052528
+  duration_ms: 0.025012
   type: 'test'
   ...
 # Subtest: probe past tense
-ok 9 - probe past tense
+ok 21 - probe past tense
   ---
-  duration_ms: 0.18728
+  duration_ms: 0.094189
   type: 'test'
   ...
 # Subtest: probe future tense
-ok 10 - probe future tense
+ok 22 - probe future tense
   ---
-  duration_ms: 0.205959
+  duration_ms: 0.101864
   type: 'test'
   ...
 # Subtest: probe neutral reference
-ok 11 - probe neutral reference
+ok 23 - probe neutral reference
   ---
-  duration_ms: 0.184967
+  duration_ms: 0.039023
   type: 'test'
   ...
 # Subtest: probe negation
-ok 12 - probe negation
+ok 24 - probe negation
   ---
-  duration_ms: 0.673494
+  duration_ms: 0.036866
   type: 'test'
   ...
 # Subtest: probe quoted example
-ok 13 - probe quoted example
+ok 25 - probe quoted example
   ---
-  duration_ms: 0.099519
+  duration_ms: 0.031151
   type: 'test'
   ...
 # Subtest: probe url
-ok 14 - probe url
+ok 26 - probe url
   ---
-  duration_ms: 0.042202
+  duration_ms: 0.021728
   type: 'test'
   ...
 # Subtest: probe url without id
-ok 15 - probe url without id
+ok 27 - probe url without id
   ---
-  duration_ms: 0.069676
+  duration_ms: 0.020594
   type: 'test'
   ...
 # Subtest: probe unicode dash
-ok 16 - probe unicode dash
+ok 28 - probe unicode dash
   ---
-  duration_ms: 0.073751
+  duration_ms: 0.312178
   type: 'test'
   ...
 # Subtest: probe unicode width
-ok 17 - probe unicode width
+ok 29 - probe unicode width
   ---
-  duration_ms: 0.032528
+  duration_ms: 0.055285
   type: 'test'
   ...
 # Subtest: probe zero width
-ok 18 - probe zero width
+ok 30 - probe zero width
   ---
-  duration_ms: 0.028914
+  duration_ms: 0.038939
   type: 'test'
   ...
 # Subtest: probe other team
-ok 19 - probe other team
+ok 31 - probe other team
   ---
-  duration_ms: 0.027474
+  duration_ms: 0.06125
   type: 'test'
   ...
 # Subtest: probe neutral repository link
-ok 20 - probe neutral repository link
+ok 32 - probe neutral repository link
   ---
-  duration_ms: 0.086659
+  duration_ms: 0.086067
   type: 'test'
   ...
 # Subtest: probe completes without issue
-ok 21 - probe completes without issue
+ok 33 - probe completes without issue
   ---
-  duration_ms: 0.026299
+  duration_ms: 0.061341
   type: 'test'
   ...
 # Subtest: probe closes without issue
-ok 22 - probe closes without issue
+ok 34 - probe closes without issue
   ---
-  duration_ms: 0.023189
+  duration_ms: 0.058412
   type: 'test'
   ...
 # Subtest: probe neutral title
-ok 23 - probe neutral title
+ok 35 - probe neutral title
   ---
-  duration_ms: 0.021151
+  duration_ms: 0.075607
   type: 'test'
   ...
 # Subtest: probe punctuation without issue
-ok 24 - probe punctuation without issue
+ok 36 - probe punctuation without issue
   ---
-  duration_ms: 0.020615
+  duration_ms: 0.03349
   type: 'test'
   ...
 # Subtest: probe issue prose without identifier
-ok 25 - probe issue prose without identifier
+ok 37 - probe issue prose without identifier
   ---
-  duration_ms: 0.020761
+  duration_ms: 0.022113
+  type: 'test'
+  ...
+# Subtest: probe closing inflection close
+ok 38 - probe closing inflection close
+  ---
+  duration_ms: 0.033613
+  type: 'test'
+  ...
+# Subtest: probe closing inflection closes
+ok 39 - probe closing inflection closes
+  ---
+  duration_ms: 0.026426
+  type: 'test'
+  ...
+# Subtest: probe closing inflection closed
+ok 40 - probe closing inflection closed
+  ---
+  duration_ms: 0.077623
+  type: 'test'
+  ...
+# Subtest: probe closing inflection closing
+ok 41 - probe closing inflection closing
+  ---
+  duration_ms: 0.050553
+  type: 'test'
+  ...
+# Subtest: probe closing inflection fix
+ok 42 - probe closing inflection fix
+  ---
+  duration_ms: 0.031401
+  type: 'test'
+  ...
+# Subtest: probe closing inflection fixes
+ok 43 - probe closing inflection fixes
+  ---
+  duration_ms: 0.066918
+  type: 'test'
+  ...
+# Subtest: probe closing inflection fixed
+ok 44 - probe closing inflection fixed
+  ---
+  duration_ms: 0.035978
+  type: 'test'
+  ...
+# Subtest: probe closing inflection fixing
+ok 45 - probe closing inflection fixing
+  ---
+  duration_ms: 0.028293
+  type: 'test'
+  ...
+# Subtest: probe closing inflection resolve
+ok 46 - probe closing inflection resolve
+  ---
+  duration_ms: 0.025814
+  type: 'test'
+  ...
+# Subtest: probe closing inflection resolves
+ok 47 - probe closing inflection resolves
+  ---
+  duration_ms: 0.025405
+  type: 'test'
+  ...
+# Subtest: probe closing inflection resolved
+ok 48 - probe closing inflection resolved
+  ---
+  duration_ms: 0.026338
+  type: 'test'
+  ...
+# Subtest: probe closing inflection resolving
+ok 49 - probe closing inflection resolving
+  ---
+  duration_ms: 0.025222
+  type: 'test'
+  ...
+# Subtest: probe closing inflection complete
+ok 50 - probe closing inflection complete
+  ---
+  duration_ms: 0.024485
+  type: 'test'
+  ...
+# Subtest: probe closing inflection completes
+ok 51 - probe closing inflection completes
+  ---
+  duration_ms: 0.024717
+  type: 'test'
+  ...
+# Subtest: probe closing inflection completed
+ok 52 - probe closing inflection completed
+  ---
+  duration_ms: 0.024393
+  type: 'test'
+  ...
+# Subtest: probe closing inflection completing
+ok 53 - probe closing inflection completing
+  ---
+  duration_ms: 0.024187
+  type: 'test'
+  ...
+# Subtest: probe closing inflection finish
+ok 54 - probe closing inflection finish
+  ---
+  duration_ms: 0.04069
+  type: 'test'
+  ...
+# Subtest: probe closing inflection finishes
+ok 55 - probe closing inflection finishes
+  ---
+  duration_ms: 0.055338
+  type: 'test'
+  ...
+# Subtest: probe closing inflection finished
+ok 56 - probe closing inflection finished
+  ---
+  duration_ms: 0.043504
+  type: 'test'
+  ...
+# Subtest: probe closing inflection finishing
+ok 57 - probe closing inflection finishing
+  ---
+  duration_ms: 0.027736
   type: 'test'
   ...
 # Subtest: BOARD_METADATA_SHAPE rejects missing or malformed metadata
-ok 26 - BOARD_METADATA_SHAPE rejects missing or malformed metadata
+ok 58 - BOARD_METADATA_SHAPE rejects missing or malformed metadata
   ---
-  duration_ms: 0.093854
+  duration_ms: 0.106188
   type: 'test'
   ...
 # Subtest: template is an accepted positive control
-ok 27 - template is an accepted positive control
+ok 59 - template is an accepted positive control
   ---
-  duration_ms: 0.132057
+  duration_ms: 0.110881
   type: 'test'
   ...
 # Subtest: event-file CLI measures every probe with exact exit and code
-ok 28 - event-file CLI measures every probe with exact exit and code
+ok 60 - event-file CLI measures every probe with exact exit and code
   ---
-  duration_ms: 567.230586
+  duration_ms: 1262.191157
   type: 'test'
   ...
 # Subtest: mutation remove BOARD_METADATA_SHAPE
-ok 29 - mutation remove BOARD_METADATA_SHAPE
+ok 61 - mutation remove BOARD_METADATA_SHAPE
   ---
-  duration_ms: 64.58287
+  duration_ms: 63.706977
   type: 'test'
   ...
 # Subtest: mutation remove BOARD_ACCEPTANCE_REFERENCE
-ok 30 - mutation remove BOARD_ACCEPTANCE_REFERENCE
+ok 62 - mutation remove BOARD_ACCEPTANCE_REFERENCE
   ---
-  duration_ms: 66.783624
+  duration_ms: 60.820539
   type: 'test'
   ...
-1..30
-# tests 30
+# Subtest: mutation restore blanket reference ban is killed by B19 positive control
+ok 63 - mutation restore blanket reference ban is killed by B19 positive control
+  ---
+  duration_ms: 60.395115
+  type: 'test'
+  ...
+# mutation=independence:Measure acceptance reference policy and its mutations control=PASS mutant=KILLED assertion=ERR_ASSERTION
+# mutation=independence:Reject acceptance references in PR metadata control=PASS mutant=KILLED assertion=ERR_ASSERTION
+# mutation=independence:Verify repository ownership controls control=PASS mutant=KILLED assertion=ERR_ASSERTION
+# mutation=independence:Reject tracked dependency trees and host-absolute symlinks control=PASS mutant=KILLED assertion=ERR_ASSERTION
+# {"failure_bits":0,"checks_run":3,"exits":[0,0,0]}
+# {"failure_bits":1,"checks_run":3,"exits":[1,0,0]}
+# {"failure_bits":2,"checks_run":3,"exits":[0,1,0]}
+# {"failure_bits":3,"checks_run":3,"exits":[1,1,0]}
+# {"failure_bits":4,"checks_run":3,"exits":[0,0,1]}
+# {"failure_bits":5,"checks_run":3,"exits":[1,0,1]}
+# {"failure_bits":6,"checks_run":3,"exits":[0,1,1]}
+# {"failure_bits":7,"checks_run":3,"exits":[1,1,1]}
+# Subtest: all policy checks explicitly run despite prior step failure; no error masking
+ok 64 - all policy checks explicitly run despite prior step failure; no error masking
+  ---
+  duration_ms: 2.197701
+  type: 'test'
+  ...
+# Subtest: mutation remove independent condition: Measure acceptance reference policy and its mutations
+ok 65 - mutation remove independent condition: Measure acceptance reference policy and its mutations
+  ---
+  duration_ms: 2.776119
+  type: 'test'
+  ...
+# Subtest: mutation remove independent condition: Reject acceptance references in PR metadata
+ok 66 - mutation remove independent condition: Reject acceptance references in PR metadata
+  ---
+  duration_ms: 0.527353
+  type: 'test'
+  ...
+# Subtest: mutation remove independent condition: Verify repository ownership controls
+ok 67 - mutation remove independent condition: Verify repository ownership controls
+  ---
+  duration_ms: 0.481781
+  type: 'test'
+  ...
+# Subtest: mutation remove independent condition: Reject tracked dependency trees and host-absolute symlinks
+ok 68 - mutation remove independent condition: Reject tracked dependency trees and host-absolute symlinks
+  ---
+  duration_ms: 0.336148
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 0
+ok 69 - three checks report independently: failure bits 0
+  ---
+  duration_ms: 422.460688
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 1
+ok 70 - three checks report independently: failure bits 1
+  ---
+  duration_ms: 520.36387
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 2
+ok 71 - three checks report independently: failure bits 2
+  ---
+  duration_ms: 521.997072
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 3
+ok 72 - three checks report independently: failure bits 3
+  ---
+  duration_ms: 567.874562
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 4
+ok 73 - three checks report independently: failure bits 4
+  ---
+  duration_ms: 491.65154
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 5
+ok 74 - three checks report independently: failure bits 5
+  ---
+  duration_ms: 549.202807
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 6
+ok 75 - three checks report independently: failure bits 6
+  ---
+  duration_ms: 546.554416
+  type: 'test'
+  ...
+# Subtest: three checks report independently: failure bits 7
+ok 76 - three checks report independently: failure bits 7
+  ---
+  duration_ms: 478.346882
+  type: 'test'
+  ...
+# Subtest: tracked-path check preserves absolute-symlink refusal and relative-symlink acceptance
+ok 77 - tracked-path check preserves absolute-symlink refusal and relative-symlink acceptance
+  ---
+  duration_ms: 675.69525
+  type: 'test'
+  ...
+# Subtest: both legacy check scripts pass on the current repository
+ok 78 - both legacy check scripts pass on the current repository
+  ---
+  duration_ms: 347.690971
+  type: 'test'
+  ...
+1..78
+# tests 78
 # suites 0
-# pass 30
+# pass 78
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 751.562158
+# duration_ms 5180.9994

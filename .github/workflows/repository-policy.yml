@@ -19,11 +19,13 @@ jobs:
         with:
           node-version: 22
       - name: Measure acceptance reference policy and its mutations
+        if: always()
         run: node --test .github/policy/test/*.test.mjs
       - name: Reject acceptance references in PR metadata
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         run: node .github/policy/acceptance-metadata.mjs
       - name: Verify repository ownership controls
+        if: always()
         run: |
           test -s .github/CODEOWNERS
           awk '
@@ -55,6 +57,7 @@ jobs:
           ' .github/CODEOWNERS
           test -s .github/pull_request_template.md
       - name: Reject tracked dependency trees and host-absolute symlinks
+        if: always()
         run: |
           # Preserve arbitrary Git path bytes and read symlinks by index blob
           # ID. Command failures propagate; quoting cannot hide unsafe paths.

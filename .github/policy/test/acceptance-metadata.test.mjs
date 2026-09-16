@@ -55,3 +55,23 @@ for (const code of ['BOARD_METADATA_SHAPE', 'BOARD_ACCEPTANCE_REFERENCE']) test(
   assert.ok(result.stderr.includes(`Missing expected exception: ${code}`), result.stderr);
   console.log(`mutation=${code} control_exit=0 syntax_exit=0 mutant_exit=1 assertion=${code}`);
 });
+
+test('mutation restore blanket reference ban is killed by B19 positive control', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'board-mutation-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const source = readFileSync(new URL('../acceptance-metadata.mjs', import.meta.url), 'utf8');
+  const pr = { title: probes.find(([name]) => name === 'B19 own PR title')[1], body: '' };
+  const file = join(dir, 'acceptance-metadata.mjs');
+  const control = join(dir, 'control.mjs');
+  writeFileSync(control, `import assert from 'node:assert/strict';\nimport {checkMetadata} from './acceptance-metadata.mjs';\nassert.doesNotThrow(() => checkMetadata(${JSON.stringify(pr)}), 'B19 benign title must pass');\n`);
+  writeFileSync(file, source);
+  assert.equal(spawnSync(process.execPath, [control]).status, 0);
+  assert.equal(source.split('if (closingReference.test(text)) {').length, 2);
+  writeFileSync(file, source.replace('if (closingReference.test(text)) {', 'if (/[a-z]+-\\d+/iu.test(text)) {'));
+  assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0);
+  const result = spawnSync(process.execPath, [control], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /ERR_ASSERTION/);
+  assert.match(result.stderr, /B19 benign title must pass/);
+  console.log('mutation=blanket-reference-ban control_exit=0 syntax_exit=0 mutant_exit=1 assertion=B19');
+});
