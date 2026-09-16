@@ -46,6 +46,7 @@ export function createDisposableSuite(spec, io = suiteBoundary) {
   io.fs.mkdirSync(spec.temp_dir, { mode: 0o755 });
   const bound = bindSuite(spec, io);
   receipt.state = 'ready'; receipt.identity = bound.identity; receipt.revision = spec.revision; receipt.tree = spec.tree;
+  receipt.suite_binding = bound.binding;
   durable(evidence, receipt, io);
   return receipt;
 }

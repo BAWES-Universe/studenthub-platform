@@ -1,0 +1,165 @@
+{
+  "version": "shu251-a12-amend2-outcome-v1",
+  "ok": false,
+  "code": "A12_DESIGN_BLOCKER",
+  "acceptance_candidate": false,
+  "implementation_complete": false,
+  "preserved_blocker_commit": "5fba51942dcab409ccb2caf8c3d47d48bd46fea8",
+  "pr137": {
+    "head": "3bc169740573f95e68c33a0bcc971db00ae3bc65",
+    "checked_at_utc": "2026-09-16T22:06:34.994382+00:00",
+    "already_ancestor": true
+  },
+  "prerequisites": {
+    "authoritative_complete_inventory": "NOT_IMPLEMENTED",
+    "expected_full_suite_count": null,
+    "reproducible_native_runner": "NOT_IMPLEMENTED",
+    "both_bound": false
+  },
+  "production_changes": [
+    "closed caller spec schema",
+    "checkout realpath check",
+    "revision-object per-file digests including wrappers",
+    "inventory byte digest",
+    "bindings retained in suite and durable disposable receipts"
+  ],
+  "new_codes_and_killing_mutations": {
+    "SHU251_SUITE_CALLER_SELECTION": "caller execution selectors accepted",
+    "SHU251_SUITE_CHECKOUT_REALPATH": "checkout realpath substituted",
+    "SHU251_SUITE_FILE_DIGEST": "checkout bytes substituted"
+  },
+  "logs": {
+    "base-focused": {
+      "path": "/tmp/shu251-amend2-base-focused.tap",
+      "sha256": "bf6bd27c4340b5511db59fc5a18d1ca6ba5c3258b6d0885384d56bb08c18b95a",
+      "counts": {
+        "tests": 93,
+        "pass": 93,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "todo": 0
+      },
+      "skips": []
+    },
+    "focused": {
+      "path": "/tmp/shu251-amend2-focused.tap",
+      "sha256": "5b8f486f9f764d634780e93042e43316755b551f7554de1d9d63679a4623006c",
+      "counts": {
+        "tests": 97,
+        "pass": 97,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "todo": 0
+      },
+      "skips": []
+    },
+    "phase-a": {
+      "path": "/tmp/shu251-amend2-phase-a.tap",
+      "sha256": "cb547ac62b0f3137ad31f6e433bc38c7e05d349c191cc1f6efb6f9935297be1d",
+      "counts": {
+        "tests": 35,
+        "pass": 35,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "todo": 0
+      },
+      "skips": []
+    },
+    "profile": {
+      "path": "/tmp/shu251-amend2-profile.tap",
+      "sha256": "ba50e066a159111d1433465a382be3f2ec8fc73fc46cc831751d4b4114ccec31",
+      "counts": {
+        "tests": 17,
+        "pass": 17,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "todo": 0
+      },
+      "skips": []
+    },
+    "profile-mutations": {
+      "path": "/tmp/shu251-amend2-profile-mutations.txt",
+      "sha256": "016f6f9e32a1b5e3cfa146212425ad130ffdf4b1c066ea6fb5473204bc2b0a8f",
+      "killed": 8
+    }
+  },
+  "mutations": {
+    "focused_killed": 40,
+    "phase_a_killed": 12,
+    "profile_design_killed": 8,
+    "total_killed": 60,
+    "requested_native_production": [
+      {
+        "name": "binary substitution",
+        "status": "UNSUPPORTED",
+        "killed": false
+      },
+      {
+        "name": "wrong digest",
+        "status": "UNSUPPORTED",
+        "killed": false
+      },
+      {
+        "name": "wrong owner or mode",
+        "status": "UNSUPPORTED",
+        "killed": false
+      },
+      {
+        "name": "stale or wrong loaded profile",
+        "status": "UNSUPPORTED",
+        "killed": false
+      },
+      {
+        "name": "interrupted installation",
+        "status": "UNSUPPORTED",
+        "killed": false
+      },
+      {
+        "name": "failed teardown",
+        "status": "UNSUPPORTED",
+        "killed": false
+      }
+    ]
+  },
+  "controls": {
+    "caller_selected_inventory": "suite admission refusal tested",
+    "count_manipulation": "existing suite admission mutation killed",
+    "bash_wrapper_substitution": "tracked wrapper digest refusal tested",
+    "arbitrary_runner_arguments": "suite spec argv refusal only; native control unsupported",
+    "ordinary_node_bash_exception": "production control unsupported; profile design control retained"
+  },
+  "permitted_skips": {
+    "entries": 8,
+    "byte_identical_to": "5fba51942dcab409ccb2caf8c3d47d48bd46fea8",
+    "block_sha256": "4483faac56cdeffd7d4855153b366d8b189011c68bc1226a7d5723958ca2b5fb"
+  },
+  "pinned_boundary_sources": {
+    ".github/coordinator/test/shu261-review-findings.test.mjs": {
+      "revision": "3bc169740573f95e68c33a0bcc971db00ae3bc65",
+      "sha256": "fc3917a1d41e5bf2e368d6649d93ebae2bcb92518f43bff78b846d7822b6b160"
+    },
+    ".github/coordinator/test/shu261-cleanup-network.test.mjs": {
+      "revision": "3bc169740573f95e68c33a0bcc971db00ae3bc65",
+      "sha256": "503da03b11687139204bacd7e5da1bcb15d894fbcea0731eb4eafb3a75dd986e"
+    },
+    ".github/coordinator/test/shu219-rule6-mutation.test.mjs": {
+      "revision": "3bc169740573f95e68c33a0bcc971db00ae3bc65",
+      "sha256": "4d8abac433568928d4f5e7b6c9c608706140104063d74676cec72d82269e7a0d"
+    },
+    ".github/coordinator/test/shu261-mutations.test.mjs": {
+      "revision": "3bc169740573f95e68c33a0bcc971db00ae3bc65",
+      "sha256": "dfab7b566b2e7864b6777f6bb4d879e74dc7f6f664750e1b5834e60a71e02e8f"
+    },
+    ".github/coordinator/reviewer-sandbox.sh": {
+      "revision": "3bc169740573f95e68c33a0bcc971db00ae3bc65",
+      "sha256": "f3526bb20d5c123964c8bf22edec6588a2757a72c77773d08f561835cd6bea08"
+    }
+  },
+  "focused_command": "node --test --test-name-pattern='^SHU251 A12|^SHU251 parser (?!real installed provider)|^SHU251 contract|^SHU251 suite|^SHU251 disposable|^L4_REPOSITORY_BOUNDARY' .github/coordinator/service/test/host-suite-contract.test.mjs .github/coordinator/service/test/suite-runner-spec.test.mjs",
+  "prohibited_actions_performed": [],
+  "host_residue": "NOT_MEASURED; no host installation or activation attempted"
+}
