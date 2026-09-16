@@ -1,5 +1,9 @@
 # B3: receipt-bound two-fixture progression
 
+Amended after the independent exact-head BLOCK: see [B3-RECOVERY.md](B3-RECOVERY.md)
+and `B3-RECOVERY-VERIFICATION.json` for recovery design, current proof and limits.
+The counts below describe the original head, not the amendment.
+
 Scope: repository-only correction on `fix/shu71-two-fixture-progression`, based on
 local `main` / HEAD `00eb979800b5ef6dfb918b57002d167802238612`. No fetch was used
 to infer a newer remote main. No operational host, GitHub or Linear was accessed.
@@ -8,14 +12,13 @@ Test pushes use disposable local bare Git repositories only.
 
 ## Independent reproduction before implementation
 
-The production validator was unchanged when `B3_REPRO_CURRENT_MAIN` ran. A fresh
-Git repository produced seed `0ce4e524314aa9af69eb3c2f669a038ad4fa80e7` and child
-`f6823e31ef8248e9057b2da7d2806bbf3f82fc3f`. `git merge-base --is-ancestor` exited
-zero. The signed seed evaluation returned `armed`; changing only the observed
-branch head to the child returned `ACT_STALE_SEED_HEAD`. Reproduction: 1 test,
-1 pass, no skips. This isolated the equality-only defect without choosing a fix
-or relying on the earlier reconciliation's reproduction. The retained test now
-also proves that a descendant **without progression evidence** still refuses.
+The independent verifier reproduced the base defect on
+`00eb979800b5ef6dfb918b57002d167802238612` using its own signed activation and
+real local broker push (verdict section 4). That is the independent evidence for
+the base claim. The retained `B3_REPRO_CURRENT_MAIN` test runs the current checkout
+and proves refusal of an **unreceipted descendant**; neither its historical name
+nor its output should be read as executing the base. Its output now states that
+scope explicitly. No base rerun is claimed in this amendment.
 
 ## Production path and authority
 
@@ -31,10 +34,12 @@ seed. Each edge requires an authenticated Linear receipt actor (transport
 metadata, never a JSON actor claim), exact activation ID and payload digest,
 valid build/revise role, issue/branch/repository/authorization binding, and the
 broker's private journal for the same attempt, target and result. The broker now
-records its bound target and fast-forward update mode before pushing. The reader
+records its bound target and declared fast-forward policy before pushing.
+The policy field is not measured evidence; the non-force argv and Git enforce it. The reader
 requires same-UID private directory/file custody and rejects symlinks. PENDING
 journals allow the existing crash-after-push/read-back case only when the live
 head matches the exact authorized result; a callback alone cannot supply an edge.
+An unlanded PENDING edge refuses until explicit recovery described in B3-RECOVERY.md.
 
 Every edge additionally requires ancestry. Production reads the configured
 repository's exact GitHub comparison and requires `ahead` with the exact bound
@@ -119,7 +124,8 @@ An intermediate new composition test also failed due to its test API fixture;
 the final test routes comments per issue and supplies the existing API shapes.
 
 This closes the B3 source-level defect only. B1/B2/B4 production composition,
-credential delivery and lifecycle recovery are separate findings. No live Phase-B
+and credential delivery are separate findings. The ambiguous-push lifecycle
+recovery within B3 is addressed by the linked amendment. No live Phase-B
 acceptance or independent-family exact-head approval is claimed. External-service
 Postgres/Typesense integration suites and live privilege/kernel/model behavior
 are not established by these repository tests. An unobserved external ref change
