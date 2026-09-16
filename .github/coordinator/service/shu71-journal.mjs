@@ -50,8 +50,8 @@ export function openActivationJournal(directory, f = fs, name = 'journal.jsonl')
 
 // All effects are idempotent or compare-and-set against the durable intent.
 // Completion is recorded only after read-back; an interrupted intent is retried.
-export async function journalEffect(journal, step, effect) {
-  if (journal.entries.some(e => e.event === 'DONE' && e.step === step)) return;
+export async function journalEffect(journal, step, effect, repeat = false) {
+  if (!repeat && journal.entries.some(e => e.event === 'DONE' && e.step === step)) return;
   if (!journal.entries.some(e => e.event === 'INTENT' && e.step === step)) journal.append({ event: 'INTENT', step });
   await effect();
   journal.append({ event: 'DONE', step });
@@ -65,13 +65,21 @@ export async function teardownActivation(journal, effects, reason) {
   for (const [step, effect] of effects) {
     try {
       if (step === 'observation') await effect();
-      else await journalEffect(journal, `teardown:${step}`, effect);
+      else {
+        // A completed physical effect can drift. Re-establish safety on every
+        // invocation; retain once-only bookkeeping for remote restores/archive.
+        const repeat = ['gate', 'activation', 'workers', 'reload', 'evidence-broker'].includes(step) || step.startsWith('stop-');
+        if (step === 'expiry-timer' && failures.length) throw activationError('ACT_CLEANUP_FAILED');
+        await journalEffect(journal, `teardown:${step}`, effect, repeat);
+      }
     }
     catch {
       failures.push(`ACT_TEARDOWN_${step.toUpperCase().replaceAll('-', '_')}`);
       // If journal storage is unavailable, independent safety effects must still
       // be attempted. They are narrow, idempotent and do not grant authority.
-      try { await effect(); } catch { /* retained as failed, retry next invocation */ }
+      if (step !== 'expiry-timer') {
+        try { await effect(); } catch { /* retained as failed, retry next invocation */ }
+      }
     }
   }
   const event = failures.length ? 'TEARDOWN_INCOMPLETE' : 'TEARDOWN_COMPLETE';

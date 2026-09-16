@@ -1,3 +1,4 @@
+import { gateRecoveryCheck, serviceRecoveryCheck } from './shu71-recovery-checks.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createShu71Production } from '../shu71-production.mjs';
@@ -73,18 +74,7 @@ test('successor receipt is explicitly historical and does not observe or mutate 
   assert.equal(h.read('/srv/shu/state/shu71-activation.json'), 'successor');
   assert.equal(h.events.slice(start).some(e => e.startsWith('command:')), false);
 });
-test('first completion and retry cannot trust successful writes without gate readback', async t => {
-  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
-  await create().execute('run');
-  const rename = h.boundary.fs.renameSync;
-  h.boundary.fs.renameSync = (from, to) => {
-    rename(from, to);
-    if (to.endsWith('90-shu71.conf')) h.write(to, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0o644);
-  };
-  for (const action of ['revoke', 'resume']) {
-    const result = await create().execute(action);
-    assert.equal(result.code, 'ACT_CLEANUP_FAILED', 'B4_COMPLETION_READBACK');
-    assert.ok(result.failures.includes('ACT_TEARDOWN_OBSERVATION'), 'B4_OBSERVATION_FAILURE_RETAINED');
-    assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), false, 'B4_NO_FALSE_COMPLETION_ROW');
-  }
-});
+for (const retry of ['resume', 'revoke', 'expire']) test(`transient gate drift refuses false completion then recovers via ${retry}`, t =>
+  gateRecoveryCheck(createShu71Production, productionFixture(t, keys), retry));
+for (const service of ['shu71-evidence.service', 'shu-supervisor.service']) test(`transient ${service} restart is stopped again on recovery`, t =>
+  serviceRecoveryCheck(createShu71Production, productionFixture(t, keys), service));

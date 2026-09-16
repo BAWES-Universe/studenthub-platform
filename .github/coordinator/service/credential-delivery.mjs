@@ -16,8 +16,9 @@ function checkedSecret(value) {
   return value;
 }
 export function supervisorChildEnvironment(env) {
-  // Exact non-secret runtime keys only; unknown names and credential aliases
-  // cannot acquire authority by being added to the supervisor environment.
+  // Exact runtime keys and the two adapter model credentials only. GitHub,
+  // Linear and supervisor transport authority never cross this boundary.
+  // Unknown names and aliases remain excluded.
   const allowed = new Set([
     'PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR',
     'ENABLE_DISPATCH', 'DISPATCH_BRANCH', 'DISPATCH_TARGET_SHA',
@@ -26,6 +27,10 @@ export function supervisorChildEnvironment(env) {
     'SHU_WORKER_LAUNCH_WRAPPER', 'SHU_REVIEW_EXEC_UID',
     'SHU_REVIEW_EXEC_WRAPPER_JSON', 'SHU_REVIEW_MODEL_WRAPPER_JSON',
     'SHU_REVIEW_EVIDENCE_DIR', 'SHU_REVIEW_TEST_FILES_JSON',
+    'CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN',
+    'WORKSPACE_AGENT_TRIGGER_ID', 'CODEX_HOME', 'HERMES_BIN',
+    'SHU_PUSH_BROKER_ENABLED', 'SHU_PUSH_REMOTE_URL', 'SHU_PUSH_ALLOWED_HOST',
+    'SHU_LANE_BRANCH_PREFIX',
   ]);
   return Object.fromEntries(Object.entries(env).filter(([key]) => allowed.has(key)));
 }

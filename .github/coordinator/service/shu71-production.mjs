@@ -376,16 +376,20 @@ export function createShu71Production(id, b = shu71Boundary) {
       ['fixtures', () => cleanupWorkspaces(spec, journal)],
       ['evidence-broker', () => command('/usr/bin/systemctl', ['stop', 'shu71-evidence.service'])],
       ['archive', () => atomic(`${dir}/activation.json`, JSON.stringify({ activation_id: id, pkg: spec.pkg, retained: true }))],
-      ['expiry-timer', () => {
-        need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
-          .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
-        command('/usr/bin/systemctl', ['disable', '--now', `shu71-expiry-${id}.timer`]);
-      }],
       ['manifest', () => atomic(`${dir}/manifest.json`, JSON.stringify({ activation_id: id,
         journal_sha256: digest(JSON.stringify(journal.entries)), authorization_expired: reason === 'expiry' }))],
     ];
     // Observation must run on every retry, even when earlier DONE rows exist.
     effects.push(['observation', observeTeardown]);
+    // Retire the retry mechanism only after every effect and observation passed.
+    effects.push(
+      ['expiry-timer', () => {
+        need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
+          .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
+        observeTeardown();
+        command('/usr/bin/systemctl', ['disable', '--now', `shu71-expiry-${id}.timer`]);
+      }],
+    );
     const result = await teardownActivation(journal, effects, reason);
     if (result.ok) {
       // A retired episode's periodic wake must never tear down its successor.

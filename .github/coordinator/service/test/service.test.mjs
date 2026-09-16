@@ -116,7 +116,7 @@ for (const [label, after, launches, writes, message] of [
   ['durable state changed', { receipt: 'changed' }, 0, 0, 'SHU251_STATE_DIFF: disabled tick must preserve all fixture state'],
 ]) test(`SHU251 mutation: ${label}`, () => named(() => assertQuiet({}, after, launches, writes), message));
 
-test('SHU251 mutation: rollback restore omitted', noSystemd, async t => {
+test('SHU251 mutation: rollback restore omitted', async t => {
   const root = fixture(t), moduleRoot = fixture(t);
   const source = fs.readFileSync(new URL('../install.mjs', import.meta.url), 'utf8');
   const target = 'else atomic(join(root, name), Buffer.from(item.data, \'base64\'), item.mode);';

@@ -16,62 +16,55 @@
     "full_coordinator_umask": "0002"
   },
   "focused": {
-    "tests": 191,
-    "pass": 191,
+    "tests": 208,
+    "pass": 208,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-focused-final.log",
-    "log_sha256": "fa0251272071cc4e19dca51e8393c29d3fe82b3bd5e02e28b3a2508be4056109",
+    "log_path": "/tmp/l3-r2-focused-final.log",
+    "log_sha256": "4c5793bfef4aeda8806f0d29427e1f1ce7f114886c7940679f3667e403650dc8",
     "failures": [],
+    "skip_names": [],
     "mutation_named_checks": {
-      "total": 71,
-      "pass": 71,
+      "total": 83,
+      "pass": 83,
       "fail": 0,
       "skipped": 0,
-      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
+      "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
     },
-    "skip_names": [],
+    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
     "new_targeted_source_mutants": {
-      "total": 30,
-      "killed": 30,
+      "total": 42,
+      "killed": 42,
       "production": 11,
-      "delivery": 8,
+      "delivery": 17,
       "trust": 11,
-      "added_since_review": 13
+      "recovery": 3,
+      "added_since_r2": 12
     },
     "process_death_injections": {
       "forward": 240,
-      "teardown": 264,
-      "total": 504
-    },
-    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
+      "teardown": 272,
+      "total": 512
+    }
   },
   "coordinator": {
-    "tests": 1682,
-    "pass": 1663,
+    "tests": 1699,
+    "pass": 1681,
     "fail": 0,
     "cancelled": 0,
-    "skipped": 19,
+    "skipped": 18,
     "todo": 0,
-    "log_path": "/tmp/l3-coordinator-final.log",
-    "log_sha256": "6100b1255bf87afd8a48ab12d215eaf79992b19eae501ae419be27334bc06aa2",
+    "log_path": "/tmp/l3-r2-coordinator-final.log",
+    "log_sha256": "73a9b37ce8b7428b35ca22a60e6fd3837f4a91639da40cf90263773a48bd8862",
     "failures": [],
-    "mutation_named_checks": {
-      "total": 506,
-      "pass": 505,
-      "fail": 0,
-      "skipped": 1,
-      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
-    },
     "skip_names": [
       "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
@@ -86,6 +79,13 @@
       "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
       "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
     ],
+    "mutation_named_checks": {
+      "total": 518,
+      "pass": 518,
+      "fail": 0,
+      "skipped": 0,
+      "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
+    },
     "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
   },
   "reviewed_head_comparison": {
@@ -103,7 +103,7 @@
       "pass": 492,
       "fail": 0,
       "skipped": 1,
-      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
+      "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
     },
     "skip_names": [
       "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
@@ -130,13 +130,17 @@
     "method": "Disposable local git clone with real .git; detached reviewed head, source permissions fixed before launch, SHU251_NO_SYSTEMD=1; no network"
   },
   "comparison": {
-    "new_tests": 38,
+    "against": "eb29fc29287ec9d0ff4546158a5127159155b620",
+    "new_tests": 17,
+    "additional_passes": 18,
     "new_failures": 0,
     "new_skips": 0,
-    "skip_names_identical": true,
+    "removed_skips": [
+      "SHU251 mutation: rollback restore omitted"
+    ],
     "skip_classification": {
       "contract_documented": 8,
-      "pre_existing_systemd_gate": 11
+      "remaining_pre_existing_systemd_gate": 10
     }
   },
   "application": {
@@ -146,15 +150,22 @@
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-application.log",
-    "log_sha256": "11e9e4637e57b28739b798b9dd3af0829937f72941b50538721be327e570c65b",
+    "log_path": "/tmp/l3-r2-application.log",
+    "log_sha256": "7f2b496285352e1fd5eb2ac7cc8759e445d9aa984fba27f08391dbd989f35100",
     "failures": [],
     "skip_names": [],
+    "mutation_named_checks": {
+      "total": 30,
+      "pass": 30,
+      "fail": 0,
+      "skipped": 0,
+      "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
+    },
+    "command": "SHU251_NO_SYSTEMD=1 npm test",
     "vitest_tests": 27,
     "vitest_pass": 27,
     "total_tests": 486,
-    "standalone_mutation_kills": 85,
-    "command": "SHU251_NO_SYSTEMD=1 npm test"
+    "standalone_mutation_kills": 85
   },
   "preliminary_run": {
     "tests": 1669,
@@ -182,7 +193,7 @@
       "pass": 503,
       "fail": 2,
       "skipped": 1,
-      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
+      "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
     },
     "skip_names": [
       "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
@@ -209,9 +220,11 @@
   },
   "findings": {
     "F1": "Physical teardown readback required on initial completion/retry and repeated receipt. Drift or unavailable observation refuses. Successor receipt explicitly historical; no shared commands/mutations.",
-    "F4": "Exact non-secret child environment allowlist, tested at helper and fork boundaries, with original assertions retained.",
+    "F4": "Exact child environment allowlist retains GitHub/Linear/transport exclusion and alias/unknown-key refusal; N1 corrects legitimate model credentials/configuration classification.",
     "F5": "Environment and systemd credential paths share secret type, length and character validation.",
-    "F2_F3": "Journal hash/link/sequence/torn/custody refusals, forged-completion recovery, and named kills for all NV1\u2013NV6; fixed durability oracle independent of crash-boundary enumeration."
+    "F2_F3": "Journal hash/link/sequence/torn/custody refusals, forged-completion recovery, and named kills for all NV1\u2013NV6; fixed durability oracle independent of crash-boundary enumeration.",
+    "N1": "Nine required adapter model credential/configuration names now survive the real fork boundary; positive delivery assertion and nine deletion mutation kills. B1 provisioning remains blocked.",
+    "N2": "Physical safety teardown effects replay despite DONE; observation and current-attempt success precede expiry timer retirement; no fallback retirement on failure. Corrected persistent-drift refusal test now demands transient-drift recovery via resume/revoke/expire. Broker/service restart cases and three genuine-assertion mutation kills."
   },
   "verifier_survivor_kills": {
     "NV1": "B1_CODE_BINDING",
@@ -229,7 +242,7 @@
     "F7 callback-library cleanup on invalid package",
     "Verifier minor observations retained in SHU71-L3-CLOSURE.md",
     "Exact new-head independent verification",
-    "One existing systemd-interaction mutation is not executable under the no-host constraint; counted as skipped, not killed"
+    "R1: observation does not inventory higher-priority systemd drop-ins; no host/effective-systemd claim"
   ],
   "assertions_or_skip_allowances_weakened": false,
   "host_or_external_mutations": false,
@@ -370,5 +383,129 @@
       "host_or_external_mutations": false,
       "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed"
     }
+  },
+  "r2_reviewed_head": "eb29fc29287ec9d0ff4546158a5127159155b620",
+  "r2_prior_results": {
+    "focused": {
+      "tests": 191,
+      "pass": 191,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-focused-final.log",
+      "log_sha256": "fa0251272071cc4e19dca51e8393c29d3fe82b3bd5e02e28b3a2508be4056109",
+      "failures": [],
+      "mutation_named_checks": {
+        "total": 71,
+        "pass": 71,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
+      },
+      "skip_names": [],
+      "new_targeted_source_mutants": {
+        "total": 30,
+        "killed": 30,
+        "production": 11,
+        "delivery": 8,
+        "trust": 11,
+        "added_since_review": 13
+      },
+      "process_death_injections": {
+        "forward": 240,
+        "teardown": 264,
+        "total": 504
+      },
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
+    },
+    "coordinator": {
+      "tests": 1682,
+      "pass": 1663,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 19,
+      "todo": 0,
+      "log_path": "/tmp/l3-coordinator-final.log",
+      "log_sha256": "6100b1255bf87afd8a48ab12d215eaf79992b19eae501ae419be27334bc06aa2",
+      "failures": [],
+      "mutation_named_checks": {
+        "total": 506,
+        "pass": 505,
+        "fail": 0,
+        "skipped": 1,
+        "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
+      },
+      "skip_names": [
+        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      ],
+      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
+    },
+    "application": {
+      "tests": 459,
+      "pass": 459,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-application.log",
+      "log_sha256": "11e9e4637e57b28739b798b9dd3af0829937f72941b50538721be327e570c65b",
+      "failures": [],
+      "skip_names": [],
+      "vitest_tests": 27,
+      "vitest_pass": 27,
+      "total_tests": 486,
+      "standalone_mutation_kills": 85,
+      "command": "SHU251_NO_SYSTEMD=1 npm test"
+    },
+    "comparison": {
+      "new_tests": 38,
+      "new_failures": 0,
+      "new_skips": 0,
+      "skip_names_identical": true,
+      "skip_classification": {
+        "contract_documented": 8,
+        "pre_existing_systemd_gate": 11
+      }
+    },
+    "disposition": "Historical measurements at eb29fc2; R2 independently reproduced focused/coordinator counts but could not run application. Prior skip justification retracted: rollback mutation is TMPDIR-only."
+  },
+  "rollback_mutation": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_path": "/tmp/l3-r2-rollback.log",
+    "log_sha256": "cce656b9243382e32583f4cdebb149987ac02e15c6fde21f337dcac357f78eb2",
+    "failures": [],
+    "skip_names": [],
+    "mutation_named_checks": {
+      "total": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0,
+      "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
+    },
+    "command": "SHU251_NO_SYSTEMD=1 node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
   }
 }

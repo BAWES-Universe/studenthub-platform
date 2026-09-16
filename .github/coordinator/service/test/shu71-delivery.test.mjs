@@ -62,7 +62,7 @@ test('B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-
 });
 
 test('B2 allowlist refuses credential aliases and unknown environment keys', () => {
-  const aliases = ['github_token', 'GITHUB_TOKEN ', 'GITHUB_TOKEN_2', 'LINEAR_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_PAT', 'SHU_SUPERVISOR_SECRET_B', 'CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'NODE_OPTIONS', 'UNKNOWN'];
+  const aliases = ['github_token', 'GITHUB_TOKEN ', 'GITHUB_TOKEN_2', 'LINEAR_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_PAT', 'SHU_SUPERVISOR_SECRET_B', 'CLAUDE_CODE_OAUTH_TOKEN_2', 'WORKSPACE_AGENT_ACCESS_TOKEN_2', 'NODE_OPTIONS', 'UNKNOWN'];
   assert.deepEqual(supervisorChildEnvironment({ ...Object.fromEntries(aliases.map(k => [k, 'POISON'])), HOME: '/worker', SHU_REVIEW_EXEC_UID: '994' }), { HOME: '/worker', SHU_REVIEW_EXEC_UID: '994' }, 'B2_EXACT_ALLOWLIST');
 });
 test('B2 environment transport secret has the same strength guard as credentials', () => {
@@ -79,4 +79,22 @@ test('B2 actual supervisor spawner applies allowlist at the fork boundary', asyn
     forkImpl(_file, _argv, options) { observed = options.env; return { pid: -1, send() {} }; } });
   spawn({}, {});
   assert.deepEqual(observed, { PATH: '/usr/bin', SHU71_EVIDENCE_BROKER: 'true' }, 'B2_FORK_TOKENLESS');
+});
+
+test('B2 fork preserves required adapter credentials and push configuration exactly', async () => {
+  const { createSupervisorSpawner } = await import('../../supervisor-worker.mjs');
+  const required = {
+    CLAUDE_CODE_OAUTH_TOKEN: 'model-only', WORKSPACE_AGENT_ACCESS_TOKEN: 'workspace-only',
+    WORKSPACE_AGENT_TRIGGER_ID: 'trigger', CODEX_HOME: '/worker/codex', HERMES_BIN: '/bin/hermes',
+    SHU_PUSH_BROKER_ENABLED: 'false', SHU_PUSH_REMOTE_URL: 'https://example.invalid/repo',
+    SHU_PUSH_ALLOWED_HOST: 'example.invalid', SHU_LANE_BRANCH_PREFIX: 'coordinator/',
+  };
+  const aliases = Object.fromEntries(Object.keys(required).flatMap(k => [[k + '_2', 'POISON'], [k.toLowerCase(), 'POISON'], [k + ' ', 'POISON']]));
+  let observed;
+  createSupervisorSpawner({ stateDir: '/fixture', env: { ...required, ...aliases,
+    GITHUB_TOKEN: 'POISON', GH_TOKEN: 'POISON', LINEAR_API_TOKEN: 'POISON', SHU_SUPERVISOR_SECRET: 'POISON', CREDENTIALS_DIRECTORY: 'POISON' },
+    forkImpl(_file, _argv, options) { observed = options.env; return { pid: -1, send() {} }; },
+  })({}, {});
+  assert.deepEqual(observed, required, 'B2_REQUIRED_ADAPTER_ENVIRONMENT');
+  assert.doesNotMatch(JSON.stringify(observed), /POISON/, 'B2_FORK_TOKENLESS');
 });
