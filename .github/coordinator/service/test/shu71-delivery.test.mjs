@@ -60,3 +60,23 @@ test('B2 coordinator tick keeps Phase-A disabled ticks runnable and binds Phase-
   assert.deepEqual(coordinatorTickArgs(['--activation', ACTIVATION_FILE], { ENABLE_DISPATCH: 'true' }), ['--activation', ACTIVATION_FILE]);
   assert.throws(() => coordinatorTickArgs(['--activation', '/tmp/foreign'], { ENABLE_DISPATCH: 'true' }), /ACT_ACTIVATION_PATH/);
 });
+
+test('B2 allowlist refuses credential aliases and unknown environment keys', () => {
+  const aliases = ['github_token', 'GITHUB_TOKEN ', 'GITHUB_TOKEN_2', 'LINEAR_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_PAT', 'SHU_SUPERVISOR_SECRET_B', 'CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'NODE_OPTIONS', 'UNKNOWN'];
+  assert.deepEqual(supervisorChildEnvironment({ ...Object.fromEntries(aliases.map(k => [k, 'POISON'])), HOME: '/worker', SHU_REVIEW_EXEC_UID: '994' }), { HOME: '/worker', SHU_REVIEW_EXEC_UID: '994' }, 'B2_EXACT_ALLOWLIST');
+});
+test('B2 environment transport secret has the same strength guard as credentials', () => {
+  for (const value of ['', 'short', 'x'.repeat(32) + '$', 'x'.repeat(32) + '\n', 42]) {
+    assert.throws(() => supervisorTransportSecret({ SHU_SUPERVISOR_SECRET: value }, () => assert.fail('no fallback')), /ACT_CREDENTIAL_UNAVAILABLE/, 'B2_ENV_SECRET_STRENGTH');
+  }
+  assert.equal(supervisorTransportSecret({ SHU_SUPERVISOR_SECRET: 'x'.repeat(32) }), 'x'.repeat(32));
+});
+
+test('B2 actual supervisor spawner applies allowlist at the fork boundary', async () => {
+  const { createSupervisorSpawner } = await import('../../supervisor-worker.mjs');
+  let observed;
+  const spawn = createSupervisorSpawner({ stateDir: '/fixture', env: { PATH: '/usr/bin', SHU71_EVIDENCE_BROKER: 'true', GITHUB_PAT: 'POISON', github_token: 'POISON', SHU_SUPERVISOR_SECRET: 'POISON' },
+    forkImpl(_file, _argv, options) { observed = options.env; return { pid: -1, send() {} }; } });
+  spawn({}, {});
+  assert.deepEqual(observed, { PATH: '/usr/bin', SHU71_EVIDENCE_BROKER: 'true' }, 'B2_FORK_TOKENLESS');
+});

@@ -1,7 +1,144 @@
 {
   "base": "0ccee5180e3f63e77028769b89dca226acd19c5c",
-  "candidate": "the commit containing this report; source tests completed before commit",
+  "reviewed_head": "dae594896e65abcafc48f4dc5c8e070fb506fab8",
+  "candidate": "the commit containing this report; final source tests completed before local commit",
   "branch": "chore/shu71-production-composition",
+  "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed",
+  "markers_unchanged": {
+    "B1": "CONFIRMED_BLOCKER",
+    "B2": "CLOSED_BY_NEW_HEAD \u2014 source-level only for the three wiring contradictions",
+    "B4": "CLOSED_BY_NEW_HEAD \u2014 source-level only for the new production command"
+  },
+  "environment": {
+    "SHU251_NO_SYSTEMD": "1",
+    "uid": 1000,
+    "precondition": "chmod -R go-w .github/coordinator",
+    "full_coordinator_umask": "0002"
+  },
+  "focused": {
+    "tests": 191,
+    "pass": 191,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_path": "/tmp/l3-focused-final.log",
+    "log_sha256": "fa0251272071cc4e19dca51e8393c29d3fe82b3bd5e02e28b3a2508be4056109",
+    "failures": [],
+    "mutation_named_checks": {
+      "total": 71,
+      "pass": 71,
+      "fail": 0,
+      "skipped": 0,
+      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
+    },
+    "skip_names": [],
+    "new_targeted_source_mutants": {
+      "total": 30,
+      "killed": 30,
+      "production": 11,
+      "delivery": 8,
+      "trust": 11,
+      "added_since_review": 13
+    },
+    "process_death_injections": {
+      "forward": 240,
+      "teardown": 264,
+      "total": 504
+    },
+    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
+  },
+  "coordinator": {
+    "tests": 1682,
+    "pass": 1663,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 19,
+    "todo": 0,
+    "log_path": "/tmp/l3-coordinator-final.log",
+    "log_sha256": "6100b1255bf87afd8a48ab12d215eaf79992b19eae501ae419be27334bc06aa2",
+    "failures": [],
+    "mutation_named_checks": {
+      "total": 506,
+      "pass": 505,
+      "fail": 0,
+      "skipped": 1,
+      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
+    },
+    "skip_names": [
+      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    ],
+    "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
+  },
+  "reviewed_head_comparison": {
+    "tests": 1644,
+    "pass": 1625,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 19,
+    "todo": 0,
+    "log_path": "/tmp/l3-reviewed-head.log",
+    "log_sha256": "da357ffca73c32631417b87daeec04cb8d35d7fde97967eb3c042d533e1a461a",
+    "failures": [],
+    "mutation_named_checks": {
+      "total": 493,
+      "pass": 492,
+      "fail": 0,
+      "skipped": 1,
+      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
+    },
+    "skip_names": [
+      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    ],
+    "revision": "dae594896e65abcafc48f4dc5c8e070fb506fab8",
+    "method": "Disposable local git clone with real .git; detached reviewed head, source permissions fixed before launch, SHU251_NO_SYSTEMD=1; no network"
+  },
+  "comparison": {
+    "new_tests": 38,
+    "new_failures": 0,
+    "new_skips": 0,
+    "skip_names_identical": true,
+    "skip_classification": {
+      "contract_documented": 8,
+      "pre_existing_systemd_gate": 11
+    }
+  },
   "application": {
     "tests": 459,
     "pass": 459,
@@ -9,48 +146,25 @@
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_sha256": "763ccb803a4ee70573b24c04f92498637ebf25c02c0715d72487d61a66d57021",
+    "log_path": "/tmp/l3-application.log",
+    "log_sha256": "11e9e4637e57b28739b798b9dd3af0829937f72941b50538721be327e570c65b",
     "failures": [],
+    "skip_names": [],
     "vitest_tests": 27,
     "vitest_pass": 27,
-    "standalone_mutation_kills": 85
+    "total_tests": 486,
+    "standalone_mutation_kills": 85,
+    "command": "SHU251_NO_SYSTEMD=1 npm test"
   },
-  "coordinator": {
-    "tests": 1639,
-    "pass": 1620,
-    "fail": 11,
-    "cancelled": 0,
-    "skipped": 8,
-    "todo": 0,
-    "log_sha256": "77f3917b5cf7afa87a532bc25b32454ad62be76f5e44392765ff8c6318499536",
-    "failures": [
-      "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
-      "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
-      "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
-      "SHU-232 mutation M6 restore a posture where execution is never evidenced",
-      "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
-      "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
-      "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
-      "SHU-261 mutation: wrapper environment canary placement removed",
-      "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
-      "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
-      "SHU-250: real tick returns while a long-running supervised child executes"
-    ],
-    "mutation_named_checks": {
-      "total": 493,
-      "pass": 491,
-      "fail": 2,
-      "note": "Names include aggregate/parameter mutations; this is a check count, not a count of unique source mutants."
-    }
-  },
-  "exact_stacked_base": {
-    "tests": 1608,
-    "pass": 1590,
+  "preliminary_run": {
+    "tests": 1669,
+    "pass": 1640,
     "fail": 10,
     "cancelled": 0,
-    "skipped": 8,
+    "skipped": 19,
     "todo": 0,
-    "log_sha256": "d6c97336931f028b19597542b3b716881efaffc78362cb3667be33bec5dafcfa",
+    "log_path": "/tmp/l3-coordinator.log",
+    "log_sha256": "b476cbb6593094f848bea8eb99a3b11b68c815ad581c1fed888c39b527a29505",
     "failures": [
       "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
       "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
@@ -62,68 +176,199 @@
       "SHU-261 mutation: wrapper environment canary placement removed",
       "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
       "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
-    ]
-  },
-  "focused": {
-    "tests": 153,
-    "pass": 153,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 0,
-    "todo": 0,
-    "log_sha256": "69e9360fa6374efdaba67252022c494f5055f94273e0bf24fa58577283e6c328",
-    "failures": [],
+    ],
     "mutation_named_checks": {
-      "total": 58,
-      "pass": 58,
-      "fail": 0
+      "total": 506,
+      "pass": 503,
+      "fail": 2,
+      "skipped": 1,
+      "note": "Named checks, not unique source mutants; pre-existing systemd rollback mutation is skipped under the mandatory no-host constraint."
     },
-    "new_targeted_source_mutants": {
-      "total": 17,
-      "killed": 17
-    },
-    "process_death_injections": {
-      "forward": 240,
-      "teardown": 256,
-      "total": 496
-    }
+    "skip_names": [
+      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    ],
+    "disposition": "Retained unsuccessful preliminary run, not reclassified as skips. Started before the documented chmod -R go-w .github/coordinator precondition; tests were also expanded during that run. Superseded by the final consistent-precondition run. This does not certify historical failures at the prior writer environment."
   },
-  "delivery_and_existing_service_checks": {
-    "tests": 59,
-    "pass": 59,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 0,
-    "todo": 0,
-    "log_sha256": "c6e33a682e55eb95a45c824c3880e24fa8fa31de2942da69da76e88bf1dbbc33",
-    "failures": []
+  "findings": {
+    "F1": "Physical teardown readback required on initial completion/retry and repeated receipt. Drift or unavailable observation refuses. Successor receipt explicitly historical; no shared commands/mutations.",
+    "F4": "Exact non-secret child environment allowlist, tested at helper and fork boundaries, with original assertions retained.",
+    "F5": "Environment and systemd credential paths share secret type, length and character validation.",
+    "F2_F3": "Journal hash/link/sequence/torn/custody refusals, forged-completion recovery, and named kills for all NV1\u2013NV6; fixed durability oracle independent of crash-boundary enumeration."
   },
-  "timing_recheck": {
-    "tests": 1,
-    "pass": 1,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 0,
-    "todo": 0,
-    "log_sha256": "0039968dcf2eb1116280d8132a0e8c725024da218f06f0597c279ecfc5842f43",
-    "failures": []
+  "verifier_survivor_kills": {
+    "NV1": "B1_CODE_BINDING",
+    "NV2": "B1_TRANSITION_READBACK",
+    "NV3": "B4_ATOMIC_DURABILITY",
+    "NV4": "B4_JOURNAL_HASH",
+    "NV5": "B1_ACTIVE_CONFLICT",
+    "NV6": "B1_OWNER_ED25519"
   },
-  "additional_failure_vs_base": [
-    "SHU-250: real tick returns while a long-running supervised child executes"
-  ],
-  "unchanged_baseline_failures": [
-    "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
-    "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
-    "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
-    "SHU-232 mutation M6 restore a posture where execution is never evidenced",
-    "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
-    "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
-    "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
-    "SHU-261 mutation: wrapper environment canary placement removed",
-    "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
-    "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child"
+  "unresolved": [
+    "B1 worker-runtime bindings and concurrent production-entrypoint lane proof",
+    "All host/live system facts and actual filesystem durability",
+    "Broker consumes entire coordinator EnvironmentFile",
+    "F6 owner-approval errors before journal construction",
+    "F7 callback-library cleanup on invalid package",
+    "Verifier minor observations retained in SHU71-L3-CLOSURE.md",
+    "Exact new-head independent verification",
+    "One existing systemd-interaction mutation is not executable under the no-host constraint; counted as skipped, not killed"
   ],
   "assertions_or_skip_allowances_weakened": false,
   "host_or_external_mutations": false,
-  "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed"
+  "remote_actions": {
+    "push": false,
+    "pr_creation_or_modification": false,
+    "merge": false,
+    "github_or_linear_comment": false
+  },
+  "prior_self_report": {
+    "status": "Historical record only; earlier environment and failure/host-effect claims not retroactively certified by this run",
+    "report": {
+      "base": "0ccee5180e3f63e77028769b89dca226acd19c5c",
+      "candidate": "the commit containing this report; source tests completed before commit",
+      "branch": "chore/shu71-production-composition",
+      "application": {
+        "tests": 459,
+        "pass": 459,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "763ccb803a4ee70573b24c04f92498637ebf25c02c0715d72487d61a66d57021",
+        "failures": [],
+        "vitest_tests": 27,
+        "vitest_pass": 27,
+        "standalone_mutation_kills": 85
+      },
+      "coordinator": {
+        "tests": 1639,
+        "pass": 1620,
+        "fail": 11,
+        "cancelled": 0,
+        "skipped": 8,
+        "todo": 0,
+        "log_sha256": "77f3917b5cf7afa87a532bc25b32454ad62be76f5e44392765ff8c6318499536",
+        "failures": [
+          "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+          "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+          "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+          "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+          "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+          "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+          "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+          "SHU-261 mutation: wrapper environment canary placement removed",
+          "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
+          "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
+          "SHU-250: real tick returns while a long-running supervised child executes"
+        ],
+        "mutation_named_checks": {
+          "total": 493,
+          "pass": 491,
+          "fail": 2,
+          "note": "Names include aggregate/parameter mutations; this is a check count, not a count of unique source mutants."
+        }
+      },
+      "exact_stacked_base": {
+        "tests": 1608,
+        "pass": 1590,
+        "fail": 10,
+        "cancelled": 0,
+        "skipped": 8,
+        "todo": 0,
+        "log_sha256": "d6c97336931f028b19597542b3b716881efaffc78362cb3667be33bec5dafcfa",
+        "failures": [
+          "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+          "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+          "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+          "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+          "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+          "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+          "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+          "SHU-261 mutation: wrapper environment canary placement removed",
+          "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
+          "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
+        ]
+      },
+      "focused": {
+        "tests": 153,
+        "pass": 153,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "69e9360fa6374efdaba67252022c494f5055f94273e0bf24fa58577283e6c328",
+        "failures": [],
+        "mutation_named_checks": {
+          "total": 58,
+          "pass": 58,
+          "fail": 0
+        },
+        "new_targeted_source_mutants": {
+          "total": 17,
+          "killed": 17
+        },
+        "process_death_injections": {
+          "forward": 240,
+          "teardown": 256,
+          "total": 496
+        }
+      },
+      "delivery_and_existing_service_checks": {
+        "tests": 59,
+        "pass": 59,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "c6e33a682e55eb95a45c824c3880e24fa8fa31de2942da69da76e88bf1dbbc33",
+        "failures": []
+      },
+      "timing_recheck": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "0039968dcf2eb1116280d8132a0e8c725024da218f06f0597c279ecfc5842f43",
+        "failures": []
+      },
+      "additional_failure_vs_base": [
+        "SHU-250: real tick returns while a long-running supervised child executes"
+      ],
+      "unchanged_baseline_failures": [
+        "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+        "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+        "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+        "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+        "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+        "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+        "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+        "SHU-261 mutation: wrapper environment canary placement removed",
+        "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
+        "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child"
+      ],
+      "assertions_or_skip_allowances_weakened": false,
+      "host_or_external_mutations": false,
+      "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed"
+    }
+  }
 }

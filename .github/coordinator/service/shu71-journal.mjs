@@ -63,7 +63,10 @@ export async function teardownActivation(journal, effects, reason) {
   try { journal.append({ event: reason === 'expiry' ? 'AUTHORIZATION_EXPIRED' : 'REVOKE_REQUESTED' }); }
   catch { failures.push('ACT_EVIDENCE_WRITE_FAILED'); }
   for (const [step, effect] of effects) {
-    try { await journalEffect(journal, `teardown:${step}`, effect); }
+    try {
+      if (step === 'observation') await effect();
+      else await journalEffect(journal, `teardown:${step}`, effect);
+    }
     catch {
       failures.push(`ACT_TEARDOWN_${step.toUpperCase().replaceAll('-', '_')}`);
       // If journal storage is unavailable, independent safety effects must still
