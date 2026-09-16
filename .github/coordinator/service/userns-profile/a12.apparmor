@@ -1,0 +1,25 @@
+# DESIGN CANDIDATE ONLY. Never load without the reviewed platform manifest.
+# No includes, shared interpreter attachment, or execution fallback.
+profile shu251-a12-runner /usr/local/libexec/shu251-a12-suite-runner flags=(enforce) {
+  /usr/local/libexec/shu251-a12-suite-runner mr,
+  owner /proc/[0-9]*/attr/current r,
+  /srv/shu251/a12-disposable/checkout/ r,
+  /usr/bin/unshare rCx -> probe,
+
+  profile probe flags=(enforce) {
+    userns create,
+    capability sys_admin,
+    /usr/bin/unshare mr,
+    /usr/bin/true rix,
+    /etc/ld.so.cache r,
+    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 mr,
+    /usr/lib/x86_64-linux-gnu/libc.so.6 mr,
+    /usr/lib/x86_64-linux-gnu/libmount.so.1 mr,
+    /usr/lib/x86_64-linux-gnu/libblkid.so.1 mr,
+    /usr/lib/x86_64-linux-gnu/libselinux.so.1 mr,
+    /usr/lib/x86_64-linux-gnu/libpcre2-8.so.0 mr,
+    owner /proc/[0-9]*/uid_map w,
+    owner /proc/[0-9]*/gid_map w,
+    owner /proc/[0-9]*/setgroups w,
+  }
+}
