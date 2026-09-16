@@ -30,6 +30,12 @@ const cases = [
     assert.deepEqual(m.coordinatorTickArgs(['--activation', '/srv/shu/state/shu71-activation.json'], { ENABLE_DISPATCH: 'true' }), ['--activation', '/srv/shu/state/shu71-activation.json'], 'B2_ACTIVATION_ARGV');
   }],
 ];
+for (const key of ['CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'WORKSPACE_AGENT_TRIGGER_ID',
+  'CODEX_HOME', 'HERMES_BIN', 'SHU_PUSH_BROKER_ENABLED', 'SHU_PUSH_REMOTE_URL', 'SHU_PUSH_ALLOWED_HOST', 'SHU_LANE_BRANCH_PREFIX']) {
+  cases.push([`required adapter key ${key} stripped`, 'credential-delivery.mjs', `'${key}',`, '', m => {
+    assert.equal(m.supervisorChildEnvironment({ [key]: 'required-value' })[key], 'required-value', 'B2_REQUIRED_ADAPTER_ENVIRONMENT');
+  }]);
+}
 for (const [name, file, before, after, check] of cases) test(`B2 mutation: ${name}`, async t => {
   const url = new URL(`../${file}`, import.meta.url), source = fs.readFileSync(url, 'utf8');
   check(await import(url));
