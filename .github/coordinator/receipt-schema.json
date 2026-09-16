@@ -110,6 +110,7 @@
       "description": "Approved contract reference the dispatch is authorized against. Free text is REJECTED — only real Linear issue refs (SHU-NNNN) or seeded FIXTURE refs.",
       "pattern": "^(SHU-[0-9]+|FIXTURE-[A-Z0-9-]+)$"
     },
+    "activation_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "episode_id": {
       "type": ["string", "null"],
       "description": "SHU-231: the activated episode (the activation record's activation_id) this attempt belongs to. Stamped by the coordinator at RESERVED while an episode is armed; null on the disabled/global path and on receipts written before the episode boundary existed. Immutable for a given attempt_id.",

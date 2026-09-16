@@ -53,7 +53,7 @@ of separately reviewed deployment. They are not exposed by the validator.
 | `ACT_LANE_CROSS` | Wrong pair, crossed paths, changed lane definition, wrong lane ID or branch |
 | `ACT_DUPLICATE_LANE` | Repeated issue or lane in the record, or duplicate configured lane |
 | `ACT_CAPACITY_DRIFT` | Record concurrency is not two, or committed capacity disagrees |
-| `ACT_STALE_SEED_HEAD` | Either lane head is unresolved or differs from its seed SHA |
+| `ACT_STALE_SEED_HEAD` | Either lane head is unresolved, differs from its seed without valid receipt-bound broker ancestry, or rewinds from authorized progress |
 | `ACT_MALFORMED` | Missing/extra/invalid fields, invalid SHA, missing/expired/overlong expiry, false stop-before-merge, or coordinator/main revision mismatch |
 | `ACT_PARTIAL_ARMING` | Only one signed gate is set, either fixture lacks a resolvable Linear identity, or either configured lane is missing |
 | `ACT_MANUAL_GATE_BYPASS` | Missing/invalid signature or trusted key, changed signed payload, manually enabled committed gate, or runtime gate differs from the signed review |

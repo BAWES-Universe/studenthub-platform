@@ -383,10 +383,12 @@ export function prePushRecordPath(stateDir, attempt_id) {
   return `${stateDir}/push-${attempt_id}.json`;
 }
 
-export function persistPrePush({ stateDir, attempt_id, result_sha, branch, repo, worktree, writeImpl = writeFileSync, mkdirImpl = mkdirSync }) {
+export function persistPrePush({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree, writeImpl = writeFileSync, mkdirImpl = mkdirSync }) {
   const path = prePushRecordPath(stateDir, attempt_id);
   const record = JSON.stringify({
     version: 1,
+    target_sha,
+    update_mode: "fast-forward",
     stage: PUSH_STAGES[0], // "PENDING"
     attempt_id,
     result_sha,
@@ -668,7 +670,7 @@ export async function pushExactSha({
   try {
     if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
   } catch { return held("result authorization unavailable"); }
-  const pre = persistImpl({ stateDir, attempt_id, result_sha, branch, repo, worktree: cwd });
+  const pre = persistImpl({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree: cwd });
   if (!pre.ok) {
     // A concurrent broker won the reservation (EEXIST) — HOLD, the winner pushes.
     return held(pre.reason);

@@ -1,0 +1,75 @@
+{
+  "finding": "B3",
+  "verdict": "CLOSED_BY_NEW_HEAD (repository/static scope only)",
+  "base": "00eb979800b5ef6dfb918b57002d167802238612",
+  "branch": "fix/shu71-two-fixture-progression",
+  "runs": {
+    "focused": {
+      "log_sha256": "e8b39a559649d70fb56f2ff801474c5ec2c055da539d2ce4397fd2e67ac81e6c",
+      "tests": 94,
+      "pass": 94,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "named_mutation_tests": 26,
+      "b3_mutations_killed": 12
+    },
+    "coordinator_service": {
+      "log_sha256": "d0453a511fd22531809bdb75b25561fc000847e8abc47a00ee3f9026545661a4",
+      "tests": 1418,
+      "pass": 1410,
+      "fail": 0,
+      "skipped": 8,
+      "cancelled": 0,
+      "skips": [
+        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      ]
+    },
+    "platform": {
+      "log_sha256": "ce07addf798fb0a3472c393217ab49e3dcfe06091dd056a6fead101121c35c29",
+      "tests": 459,
+      "pass": 459,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "vitest_pass": 27,
+      "total_test_pass": 486,
+      "standalone_mutations_killed": 85
+    },
+    "baseline_failures": {
+      "log_sha256": "e1312c4344cc7e8c922828b41555914950845c24c4c042e56365b556df805cf9",
+      "tests": 95,
+      "pass": 85,
+      "fail": 10,
+      "skipped": 0,
+      "cancelled": 0,
+      "failures": [
+        "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+        "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+        "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+        "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+        "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+        "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+        "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+        "SHU-261 mutation: wrapper environment canary placement removed",
+        "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
+        "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
+      ]
+    }
+  },
+  "limits": [
+    "No operational host or live model execution",
+    "No external Postgres or Typesense integration suites",
+    "Eight unchanged environment/capability skips; no skip allowance added",
+    "No independent-family exact-head review",
+    "No detection of unobserved external ref changes that return to the identical authorized SHA",
+    "B1/B2/B4 remain separate findings"
+  ]
+}
