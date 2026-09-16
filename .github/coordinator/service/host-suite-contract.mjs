@@ -174,6 +174,7 @@ export function deriveRequirements(names, requirements) {
 }
 export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
   if (!Number.isInteger(spec?.service_uid) || spec.service_uid <= 0 || !Number.isInteger(spec.service_gid) || spec.service_gid < 0 || !path.isAbsolute(spec.checkout ?? '') || !path.isAbsolute(spec.temp_dir ?? '')) halt('SHU251_PREFLIGHT_SPEC');
+  if (requiredSet === null) halt('SHU251_PREFLIGHT_REQUIREMENTS', 'exact required test set');
   const derived = requiredSet === undefined ? null : deriveRequirements(requiredSet.names, requiredSet.requirements);
   const evidence = {};
   for (const capability of CAPABILITIES) {
@@ -196,7 +197,7 @@ export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
       // Namespace proof and runner infrastructure have no skip allowance.
       if (!['privilege', 'worker_uid'].includes(capability.name) || uncovered.length)
         halt(capability.code, uncovered.map(need => need.test).join(', ') || capability.name);
-      evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: need.reason })) };
+      evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: PERMITTED_SKIPS[need.test] })) };
       continue;
     }
     if (!available) halt(capability.code, capability.name);
@@ -228,7 +229,7 @@ export default async function* reporter(source) {
     if (event.type === 'test:pass' || event.type === 'test:fail') {
       const d = event.data;
       if (d.details?.type === 'suite') continue;
-      yield JSON.stringify({ type: 'outcome', name: d.name, status: d.skip ? 'skip' : d.todo ? 'todo' : event.type === 'test:pass' ? 'pass' : 'fail', reason: d.skip || undefined }) + '\n';
+      yield JSON.stringify({ type: 'outcome', name: d.name, status: event.type === 'test:fail' ? 'fail' : d.skip ? 'skip' : d.todo ? 'todo' : 'pass', reason: d.skip || undefined }) + '\n';
     }
     if (event.type === 'test:summary' && event.data.file === undefined) yield JSON.stringify({ type: 'complete' }) + '\n';
   }

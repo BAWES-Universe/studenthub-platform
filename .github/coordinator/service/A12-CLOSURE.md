@@ -11,7 +11,92 @@ is the correction head; no live acceptance or permission to execute is implied.
 | C1 | CLOSED_BY_NEW_HEAD (static) | The actual `shu261-review-findings.test.mjs` policy test calls `resolveCvtsudoers`, including its root-fixture validation, identity checks and inherited descriptor execution. Policy conversion uses that same open descriptor, with checks before/after conversion. A virtual filesystem exposes only `/usr/bin/cvtsudoers.ws`; the loaded real suite body passes. Restoring the hardcoded call dies at `SHU251_SUITE_PARSER_REQUIRED`. Real installed-parser execution was prohibited, not claimed. |
 | C2 | CONTRACT_CORRECTED; HOST_PROOF_UNSUPPORTED | Owner ruling implemented below. Exact capability requirements are revision-bound; namespace proof remains mandatory. No host access or policy change. |
 | C3 | CONFIRMED_BLOCKER (partially implemented) | The runner rejects caller-selected file/count fields, binds HEAD/tree/cleanliness/identity, derives both suite globs from the pinned Git tree, reads outcome names from a pinned inventory, and compares their multiset. Reviewed create/verify/record/remove operations preserve an external durable receipt. **The authoritative inventory has not been produced** because full verification is not green. Interruption coverage is incomplete; see limitations. |
-| C4 | CLOSED_BY_NEW_HEAD (runner precondition); approval-order input outstanding | A12 requires supervisor, coordinator and timer `ActiveState=inactive` before preflight/suite execution. Active, transitional, failed and malformed states refuse. No A12 capability requires these services running. The integrator must place render/identity → A12 create/run/remove → service start in the approval composition. The action does not stop services to manufacture this precondition. |
+| C4 | CLOSED_BY_NEW_HEAD (runner precondition); approval-order input outstanding | A12 requires supervisor, coordinator and timer `ActiveState=inactive` before capability probes and suite execution in `run`. CLI `preflight` binds the inventory but does not enforce quiescence or disposable custody; C4 remains open for that action. Active, transitional, failed and malformed states refuse. No A12 capability requires these services running. The integrator must place render/identity → A12 create/run/remove → service start in the approval composition. The action does not stop services to manufacture this precondition. |
+
+## Independent-verifier amendments (current)
+
+Applied the mandatory amendments from `/home/bawes/work/verdict-137.md` and
+`.json`, adjudicated at `3bc169740573f95e68c33a0bcc971db00ae3bc65`.
+This record does not claim a new independent PASS or A12 approval.
+
+- **F1, code corrected in this lane:** the reporter now gives `test:fail`
+  precedence over skip/todo flags with the verifier's exact one-line remedy:
+  `status: event.type === 'test:fail' ? 'fail' : d.skip ? 'skip' : d.todo ? 'todo' : 'pass'`.
+  The end-to-end regression runs temporary tests with exact permitted names and
+  reasons: synchronous assertion and async throw after `t.skip()` both reach
+  `SHU251_SUITE_FAILURE`, even though Node exits zero. The option-form skip stays
+  accepted and a changed reason still refuses. Reverting the line kills the
+  regression at `REPORTER_FAILURE_PRECEDENCE`.
+- **F2, claim corrected and comparison remeasured:** historical archive versus
+  checkout rows are explicitly labelled below. The apparent five-failure
+  improvement was a harness artifact. Current base and amended-head runs both
+  use real Git checkouts and have identical failure names and skip pairs.
+- **F3, claim corrected:** C4 guarantees quiescence/custody for `run` only.
+  CLI `preflight` does not enforce those preconditions. This describes the
+  existing code accurately without claiming an additional execution guarantee.
+- **F4 remains open:** C3 is `CONFIRMED_BLOCKER`; C2 is
+  `HOST_PROOF_UNSUPPORTED`. No placeholder inventory was added. Full successful
+  verification, a complete reviewed inventory with requirements, and mandatory
+  host namespace proof remain necessary before acceptance can execute.
+- **F5:** the structural inventory example includes `requirements`.
+- **F6:** explicit null requirements refuse `SHU251_PREFLIGHT_REQUIREMENTS`
+  before probing. Omitted requirements retain strict legacy behavior; null is
+  not treated as authorization to omit the inventory. The removed-guard mutant
+  dies at `NULL_REQUIREMENTS_TYPED`.
+- **F7:** receipts record `PERMITTED_SKIPS[need.test]`, the validated reason,
+  rather than rereading a getter-supplied value. The reverted mutant dies at
+  `VALIDATED_RECEIPT_REASON`. F8's empty-requirement behavior is unchanged and
+  does not establish host capability or authorize an outcome skip.
+
+### Executed amendment verification
+
+All runs used Node v22.22.3, UID 1000, `umask 0002`, coordinator files made
+non-writable by group/other, and the unchanged repository refusal preload.
+No `SHU251_NO_SYSTEMD` override was set. No test executed host commands.
+
+| Run | Tests | Pass | Fail | Skip |
+| --- | ---: | ---: | ---: | ---: |
+| Focused A12 including amendment controls/mutations | 110 | 110 | 0 | 0 |
+| Phase-A including every Phase-A mutation | 35 | 35 | 0 | 0 |
+| Base full, real Git checkout | 1352 | 1236 | 114 | 2 |
+| Amended full, real Git checkout | 1385 | 1269 | 114 | 2 |
+| Base service | 247 | 224 | 23 | 0 |
+| Amended service | 280 | 257 | 23 | 0 |
+
+Cancelled/todo are zero throughout. No tests removed, 33 passing additions
+versus base (six since the verified head), zero new or fixed failures, and
+identical skip names/reasons. **Full suites remain FAIL.** All mutation files
+were included in their full globs; broader mutation success is unsupported.
+The focused matrices kill **61/61** mutations: 29 parser, 12 Phase-A, eight
+prior correction, nine C2, three amendments, with positive controls and syntax
+checks. This includes the verifier's D1–D5 defect shapes through the existing
+binding, cardinality, actual-parser, uncovered-requirement and inventory mutants.
+
+**Behavior preservation:** independently ran the exact verified-head archive
+at the same path twice with the same preload, changing only the external
+reporter's one line. All **1379 outcomes** are byte-identical: **1258 pass,
+119 fail, two skip** each time. Both JSONL files (including the completion
+record) have SHA-256
+`d23939c0ef57d71328cf0ae20ea7816ee49401c607e5b58c31dd932377b45b42`.
+These are archive-harness figures, not checkout figures. Relative to the
+verifier's archive run, 11 systemd-conditional cases fail instead of skipping;
+no systemd-prohibition skip override was introduced here.
+
+The 1093-byte, eight-entry `PERMITTED_SKIPS` source block is byte-identical to
+the verified head and has SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+Exact counts, failure names, skip pairs, mutation names and log digests are in
+`test/fixture/verifier-amendment-results.json`. Raw logs and reporter variants
+are retained in `/tmp/l4-amend-137/`.
+
+Reproduce the focused command below with `^SHU251 C2|` added to its name pattern
+and both `capability-requirements.test.mjs` and `reporter-amendments.test.mjs`
+added to its file list. Every invocation, including focused and Phase-A, must
+use the `L4_REPOSITORY_ROOT` and `NODE_OPTIONS` preload shown in the full-run
+commands. For the preservation comparison, extract the verified head with
+`git archive`, prepare permissions identically, and run both full globs with
+`--test-reporter` selecting separate shipped and one-line-fixed module copies;
+compare the entire JSONL files with `cmp`, without filtering outcomes.
 
 ## Runner spec and production paths
 
@@ -44,9 +129,16 @@ pinned revision. Its required shape is:
 {
   "version": "shu251-suite-inventory-v1",
   "files": ["complete sorted tracked file set matching the two package.json test globs"],
-  "names": ["every reporter outcome name, including duplicate multiplicities"]
+  "names": ["every reporter outcome name, including duplicate multiplicities"],
+  "requirements": [{
+    "name": "every reporter outcome name, including duplicate multiplicities",
+    "capabilities": [{"name": "user_namespaces"}]
+  }]
 }
 ```
+
+The example is structural only: repeat a requirements row for every name occurrence
+and review its exact capabilities; it is not an authoritative inventory.
 
 `expected_tests` is `names.length`. Missing/extra files, caller `files` or
 `expected_tests`, changed identities, dirty checkout, revision/tree mismatch,
@@ -104,7 +196,7 @@ Actual namespace success cannot be established without host access, which is
 prohibited here. This is an unproven mandatory acceptance condition, not a deferral.
 Repository fixtures prove its refusal path and cannot prove host kernel behavior.
 
-## C2 correction verification (current; earlier tables below are historical)
+## C2 correction verification (historical, before verifier amendments)
 
 All runs used UID 1000, the existing repository refusal preload, local temporary
 fixtures and local Git only. No host access, sudo changes, root suite execution,
@@ -184,7 +276,7 @@ was removed. Existing parser and Phase-A mutations are rerun below.
   receipt writes and interrupted fsync/rename need more recovery tests. Failed
   suites currently leave the clone/custody for explicit removal and do not archive
   a complete failed-run outcome report.
-- Inactive systemd state is checked before A12; a durable interlock against an
+- Inactive systemd state is checked by `run`, not CLI `preflight`; a durable interlock against an
   independent actor starting the plane during A12 and integration with the L1
   operation journal remain unproved.
 - The repository test boundary is an injected refusal boundary, not a kernel
@@ -200,7 +292,15 @@ and test fixtures were used for controlled tests only.
 ## Executed verification
 
 Before suites: `chmod -R go-w .github/coordinator`; `umask 0002`.
-All runs were non-root. The base was a local `git archive` of the exact base SHA;
+All runs were non-root. **Harness mismatch:** base used a local `git archive`
+without `.git`; final used a real Git checkout. The apparent 119 → 114 failure
+delta is five archive artifacts, not an improvement from this PR. The affected
+tests are `EXEC_PACKAGE_CHECKOUT_DRIFT`, `EXEC_PACKAGE_MUTANT_CHECKOUT_DRIFT`,
+`EXEC_RUNTIME_CHECKOUT_DRIFT`, `EXEC_RUNTIME_MUTANT_CHECKOUT_DRIFT`, and
+`SHU-63 activation: the RUNNING revision is what bounds an activation, end to end`.
+The verifier measured identical failure-name sets (103 each) using real checkouts
+on both sides; its systemd-less environment also skipped 11 tests that failed here.
+The base was a local `git archive` of the exact base SHA;
 no remote clone, network checkout, or host account change was used.
 
 | Run | Tests | Pass | Fail | Skipped | Cancelled | Todo |
@@ -208,8 +308,8 @@ no remote clone, network checkout, or host account change was used.
 | Base focused, excluding installed-host-parser test | 77 | 77 | 0 | 0 | 0 | 0 |
 | Final focused, including new controls/mutations, excluding installed-host-parser test | 93 | 93 | 0 | 0 | 0 | 0 |
 | Final Phase-A driver, including every Phase-A mutation | 35 | 35 | 0 | 0 | 0 | 0 |
-| Base full coordinator + service, refusal boundary | 1352 | 1231 | 119 | 2 | 0 | 0 |
-| Final full coordinator + service, refusal boundary | 1368 | 1252 | 114 | 2 | 0 | 0 |
+| Base full coordinator + service, archive (no `.git`), refusal boundary | 1352 | 1231 | 119 | 2 | 0 | 0 |
+| Final full coordinator + service, Git checkout, refusal boundary | 1368 | 1252 | 114 | 2 | 0 | 0 |
 | Base full service, refusal boundary | 247 | 224 | 23 | 0 | 0 | 0 |
 | Final full service, refusal boundary | 263 | 240 | 23 | 0 | 0 | 0 |
 
