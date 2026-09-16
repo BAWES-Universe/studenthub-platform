@@ -59,7 +59,7 @@ and relevant identity fields; malformed/missing evidence is
 | `identity` | Fresh rendered bytes versus each of the three installed files; both SHA-256 maps. Any byte, including whitespace, differs: `SHU251_UNIT_IDENTITY`. |
 | `gate-off` | Identity, three inventory/quiescence samples and full local state file hashes/metadata over two complete timer intervals (60+1 seconds each for current template). State differences: `SHU251_GATE_OFF_DIFF`; any filesystem watch event: `SHU251_GATE_OFF_WRITES`; insufficient elapsed time: `SHU251_WAKE_INTERVAL`. |
 | `restart-before` | Reviewed launch, live worker and authenticated transport/status acceptance, installed identity, supervisor systemd InvocationID. |
-| `restart-after --before /absolute/before.json` | Validate prior receipt/spec/digest, require a different supervisor InvocationID with identical launch and live worker PID/start token, and RUNNING status again. Failure: `SHU251_RESTART_ACCEPTANCE` or `SHU251_RESTART_STATUS`. |
+| `restart-after --before /absolute/before.json` | Subject to receipt custody below: validate prior receipt/spec/digest, require a different supervisor InvocationID with identical launch and live worker PID/start token, and RUNNING status again. Failure: `SHU251_RESTART_ACCEPTANCE` or `SHU251_RESTART_STATUS`. |
 | `inventory`, `quiescence`, `transport`, `launch`, `worker` | Individually archived reviewed binding evidence. Transport calls reviewed `check-status.mjs`, which checks full status shape against durable launch/order records. |
 | `capture-prior`, `replay-release`, `cleanup` | Explicitly approved reviewed mutations; no installation or activation. |
 | `rollback` | Explicitly approved reviewed rollback, followed by reviewed quiescence. `SHU251_ROLLBACK_REENABLE` refuses any active/enabled prior unit or dispatch-on service bytes; `SHU251_ROLLBACK_BYTES` refuses prior bytes other than a fresh reviewed render. |
@@ -78,8 +78,17 @@ Restart acceptance is deliberately split around an **externally authorized**
 supervisor restart. The driver never performs that restart: the reviewed nine
 bindings have no restart action, and this track forbids starting services. Run
 `restart-before`, perform the separately authorized operation, then run
-`restart-after` with the first receipt. A new worker PID, reused PID/start token,
-unchanged supervisor invocation, missing launch or invalid status cannot pass.
+`restart-after` with the first receipt.
+Restart acceptance depends on exclusive custody of the original driver-produced
+`restart-before` receipt until `restart-after` consumes it. The driver does not
+persist an independent record: an operator-edited or fabricated `--before` file
+with recomputed digests can pass even when the supervisor invocation is unchanged.
+Only under that custody assumption does an unchanged supervisor invocation fail;
+a changed worker PID/start token, missing launch or invalid status is also refused.
+The current interface supplies no distinct driver identity or protected storage
+outside operator control. A private file owned by the same operator would not
+establish independent custody; provisioning such a boundary is outside this
+repository-only revision.
 `replay-release` remains a separate approved operation, not an implicit part of
 read-only restart acceptance.
 
@@ -129,7 +138,7 @@ UID/GID. No automatic identity escalation is used for the suite itself.
 | Distinct worker UID | root/sudo `setpriv --reuid=65534 --regid=65534 --clear-groups id -u` equals 65534; differs from service UID | `SHU251_PREFLIGHT_WORKER_UID` |
 | cvtsudoers | parse temporary policy into JSON with `cvtsudoers -f json` | `SHU251_PREFLIGHT_CVTSUDOERS` |
 | User namespaces | service identity `unshare --user --map-root-user /bin/true` succeeds | `SHU251_PREFLIGHT_USER_NAMESPACES` |
-| Checkout | root directory owned by service UID; service identity traverses directories and can read every file, including Git metadata; symlinks refused | `SHU251_PREFLIGHT_CHECKOUT` |
+| Checkout (A12 suite run only) | root directory owned by service UID; service identity traverses directories and can read every file, including Git metadata; symlinks refused | `SHU251_PREFLIGHT_CHECKOUT` |
 | Writable temp | service identity creates, writes, reads and removes private temp fixture | `SHU251_PREFLIGHT_TEMP` |
 | systemd | service identity `systemctl --version` and manager `show --property=Version --value` | `SHU251_PREFLIGHT_SYSTEMD` |
 | systemd-analyze | service identity verifies temporary oneshot unit | `SHU251_PREFLIGHT_SYSTEMD_ANALYZE` |
@@ -140,12 +149,17 @@ UID/GID. No automatic identity escalation is used for the suite itself.
 | Unix sockets | service identity binds/closes a temp Unix socket | `SHU251_PREFLIGHT_UNIX_SOCKET` |
 | Node | major version >=22, structured test reporter support | `SHU251_PREFLIGHT_NODE` |
 
+The checkout ownership requirement applies only to the A12 suite run. The deployed
+service plane deliberately reads an operator-owned checkout using the SHU-71
+process-scoped inline Git trust described above.
+
 Probe exceptions also become the corresponding named refusal, never a skip.
 Preflight creates only bounded temporary probes, cleans them up, and never
 installs capabilities. A missing capability requires a separate operator action.
 
-`PERMITTED_SKIPS` preserves the exact seven historical exceptions documented in
-`ENV-CONTENT-VALIDATION.md` and `ACTIVATION-WINDOW-RECONCILIATION.md`:
+`PERMITTED_SKIPS` preserves eight exact sanctioned exceptions: the seven historical
+exceptions documented in `ENV-CONTENT-VALIDATION.md` and
+`ACTIVATION-WINDOW-RECONCILIATION.md`, plus the PR #130 reader exception:
 
 | Test name | Exact reason |
 | --- | --- |
@@ -156,6 +170,16 @@ installs capabilities. A missing capability requires a separate operator action.
 | SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity | host cannot switch to the fixture worker uid |
 | SHU-244 A10: distinct-root scoped handoff production workspace | host cannot switch worker uid |
 | SHU-71 restricted capability refusal | production vocabulary has no undeclared runtime/role pair |
+| READER operator-owned checkout read by non-root account | Not exercisable: non-root account, no passwordless elevation to create root-owned checkout |
+
+A repository test scans every coordinator `.test.mjs` source for literal skip
+reasons. The guard supports the current single-line literal, conjunction and
+ternary forms and fails closed on unsupported expressions; it is not a general
+JavaScript parser. Every discovered reason must be sanctioned, except the explicit
+`SHU251_NO_SYSTEMD` prohibition, which must remain refused by A12. Consequently,
+a literal superset of *all* source reasons would be incorrect: disabling systemd
+is not a sanctioned host run. This exception is checked with its exact environment
+condition. Runtime acceptance still requires the exact test name and reason.
 
 The historical skip allowlist is not a preflight waiver. A missing capability
 prevents any host run, including a run that would have produced those skips.
@@ -170,8 +194,9 @@ exact expected count and exit 0 are mandatory (`SHU251_SUITE_INCOMPLETE`,
 ## Repository tests and mutation controls
 
 The two new test modules use only temporary fixtures and injected runner,
-filesystem, clock and systemd observations. No real checkout is used as runtime
-input, and no existing test/fixture is changed. Mutation harnesses copy only the
+filesystem, clock and systemd observations. The source guard reads repository test
+sources without executing them; the custody regression also reads this document.
+No tests outside `service/` or fixtures are changed by this revision. Mutation harnesses copy only the
 four new module/test sources into a temp directory; they do not consult Git,
 main, another branch, installed units, or host state.
 
@@ -190,7 +215,7 @@ are rejected as kills.
 | rollback implicitly reenables dispatch | Missing expected rejection: ROLLBACK_STAYS_OFF: active or enabled prior state must refuse |
 | installed identity compared leniently | Missing expected rejection: UNIT_BYTES_REQUIRED: trailing newline mismatch must refuse |
 
-All 27 new test names (no baseline names removed):
+All 30 driver/contract test names (no baseline names removed):
 
 - `SHU251 driver dry run invokes no binding`
 - `SHU251 driver approval is explicit for every mutation`
@@ -201,18 +226,21 @@ All 27 new test names (no baseline names removed):
 - `SHU251 driver refuses inventory differences writes and short waits`
 - `SHU251 driver refuses malformed and unbound binding receipts`
 - `SHU251 driver restart accepts new supervisor and same live worker`
+- `SHU251 driver forged before file pins the documented custody limitation`
 - `SHU251 driver rollback cannot restore active or enabled dispatch`
 - `SHU251 driver rollback uses reviewed path and verifies quiescence`
 - `SHU251 driver routes all nine reviewed actions`
 - `SHU251 driver refuses changed window spec before execution`
 - `SHU251 contract missing capabilities never become skips`
 - `SHU251 contract probe errors are named preflight refusals`
-- `SHU251 contract publishes seven exact legacy skips`
+- `SHU251 contract publishes eight exact sanctioned skips`
 - `SHU251 contract refuses outcomes outside the exact permitted set`
 - `SHU251 contract rejects incomplete suite and nonzero exit`
 - `SHU251 contract preflight failure prevents suite execution`
 - `SHU251 contract structured reporter runs only temp fixture tests`
 - `SHU251 contract detects capabilities through injectable command boundaries`
+- `SHU251 contract source skip reasons remain covered or explicitly prohibited`
+- `SHU251 contract source skip guard fails closed on unsupported expressions`
 - `SHU251 phase A mutation: missing capability classified as skip`
 - `SHU251 phase A mutation: out of set skip accepted`
 - `SHU251 phase A mutation: mutation approval bypassed`
@@ -229,17 +257,24 @@ TMPDIR=/tmp node --test .github/coordinator/test/*.test.mjs .github/coordinator/
 TMPDIR=/tmp SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS="--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs" npm run test:coordinator
 ```
 
-Each: **1290 tests / 1283 pass / 0 fail / 7 skipped / 0 cancelled / 0 todo**.
-Compared with the supplied baseline, 27 tests were added; none were removed.
-Only the five new files are added, so baseline test names and assertion lines
-are unchanged (zero removed assertion lines).
+Each: **1305 tests / 1297 pass / 0 fail / 8 skipped / 0 cancelled / 0 todo**.
+The previous branch record was 1290 / 1283 / 0 / 7. PR #130 contributes 12
+reader tests (eight cases and four mutation controls), with 11 passes and one
+skip here. This revision adds three passing regression tests: 1290 + 12 + 3 =
+1305 tests, 1283 + 11 + 3 = 1297 passes, and 7 + 1 = 8 skips.
+
+The allowlist-length assertion moves from 7 to 8. The synthetic all-skipped
+report's expected count moves from 7 to 8, and its exact counts move from
+`{ tests: 7, pass: 0, fail: 0, skipped: 7 }` to
+`{ tests: 8, pass: 0, fail: 0, skipped: 8 }`, because every one of the eight
+sanctioned entries appears once. No other existing test assertion changes.
 
 Before committing, a `file://` clone was created with `--depth 1 --single-branch`
-and `--branch feat/shu251-phase-a-driver-host-suite-contract`. Only the five new
+and `--branch feat/shu251-phase-a-driver-host-suite-contract`. Only the four revised service
 files were overlaid onto that shallow checkout; `rev-parse --is-shallow-repository`
 returned `true`, and `branch -a` showed only that branch and its origin tracking
-ref (no `main`). The full ordinary suite there completed with **1290 tests /
-1283 pass / 0 fail / 7 skipped**. No object from another branch was required.
+ref (no `main`). The full ordinary suite there completed with **1305 tests /
+1297 pass / 0 fail / 8 skipped**. No object from another branch was required.
 
 `config.json` blob OID, before and after, both equal `main`:
 

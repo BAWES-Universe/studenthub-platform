@@ -12,6 +12,7 @@ export const PERMITTED_SKIPS = Object.freeze({
   'SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity': 'host cannot switch to the fixture worker uid',
   'SHU-244 A10: distinct-root scoped handoff production workspace': 'host cannot switch worker uid',
   'SHU-71 restricted capability refusal': 'production vocabulary has no undeclared runtime/role pair',
+  'READER operator-owned checkout read by non-root account': 'Not exercisable: non-root account, no passwordless elevation to create root-owned checkout',
 });
 export const CAPABILITIES = Object.freeze([
   ['privilege', 'SHU251_PREFLIGHT_PRIVILEGE', 'effective UID 0 or sudo -n id -u returns 0'],

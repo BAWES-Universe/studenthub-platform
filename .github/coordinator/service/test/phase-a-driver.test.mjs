@@ -106,6 +106,19 @@ test('SHU251 driver restart accepts new supervisor and same live worker', async 
   assert.ok(calls.includes('transport'));
   assert.match(after.evidence.before_receipt_sha256, /^[a-f0-9]{64}$/);
 });
+test('SHU251 driver forged before file pins the documented custody limitation', async t => {
+  const { root, spec, io } = fixture(t);
+  const observed = await drive('restart-before', spec, { execute: true }, io);
+  const forged = receipt('restart-before', spec, { ...observed.evidence, invocation_id: 'f'.repeat(32) });
+  const file = path.join(root, 'operator-edited-before.json');
+  fs.writeFileSync(file, JSON.stringify(forged));
+  // Same file decoding as --before; invocation() remains unchanged throughout.
+  const after = await drive('restart-after', spec, { execute: true, before: JSON.parse(fs.readFileSync(file, 'utf8')) }, io);
+  assert.equal(after.evidence.invocation_id, observed.evidence.invocation_id);
+  validateReceipt(after, 'restart-after', spec);
+  const documentation = fs.readFileSync(new URL('../PHASE-A-DRIVER.md', import.meta.url), 'utf8');
+  assert.ok(documentation.includes('Restart acceptance depends on exclusive custody of the original driver-produced\n`restart-before` receipt until `restart-after` consumes it. The driver does not\npersist an independent record: an operator-edited or fabricated `--before` file\nwith recomputed digests can pass even when the supervisor invocation is unchanged.'));
+});
 test('SHU251 driver rollback cannot restore active or enabled dispatch', async t => {
   const { spec, io, prior, calls } = fixture(t);
   for (const field of ['active', 'enabled']) {
