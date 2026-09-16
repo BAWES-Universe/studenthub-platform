@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -79,6 +79,80 @@ function read(file) {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink()) refuse('SHU251_INPUT_FILE', file);
   return fs.readFileSync(file);
+}
+// Custody is local durable state, not a signature or a boundary against its owner.
+export function custodyPath(spec) {
+  return path.join(spec.window.workspace_state_dir, '.shu251-phase-a', spec.window.approved_sha, hash(canonical(spec)));
+}
+function syncDirectory(dir) {
+  const fd = fs.openSync(dir, 'r');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+function persist(file, value) {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  try { fs.writeFileSync(fd, canonical(value)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  syncDirectory(path.dirname(file));
+}
+function custodyRead(file) {
+  try { return JSON.parse(read(file)); }
+  catch { refuse('SHU251_RESTART_FORGED', 'missing, unreadable or malformed custody file'); }
+}
+function exactKeys(value, keys) {
+  return value && typeof value === 'object' && !Array.isArray(value) && canonical(Object.keys(value).sort()) === canonical(keys.sort());
+}
+function runIdentity(spec) {
+  return { approved_sha: spec.window.approved_sha, spec_sha256: hash(canonical(spec)), window_sha256: hash(canonical(spec.window)) };
+}
+function recordBefore(spec, before) {
+  const dir = custodyPath(spec);
+  // Create each directory durably; existing symlinks are never followed.
+  const root = spec.window.workspace_state_dir;
+  if (!fs.lstatSync(root).isDirectory() || fs.lstatSync(root).isSymbolicLink()) refuse('SHU251_RESTART_FORGED', 'state directory');
+  let current = root;
+  for (const part of path.relative(root, dir).split(path.sep)) {
+    const parent = current; current = path.join(current, part);
+    try { fs.mkdirSync(current, { mode: 0o700 }); syncDirectory(parent); }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+    if (!fs.lstatSync(current).isDirectory() || fs.lstatSync(current).isSymbolicLink()) refuse('SHU251_RESTART_FORGED', 'custody directory');
+  }
+  const run_id = randomUUID();
+  const record = { version: 'shu251-restart-record-v1', run_id, identity: runIdentity(spec), position: 'restart-before', receipt: before };
+  const custody = { version: 'shu251-restart-custody-v1', run_id, identity: runIdentity(spec), receipt_sha256: hash(canonical(before)) };
+  try {
+    // An incomplete write fails closed; a run can never silently overwrite another.
+    persist(path.join(dir, 'custody.json'), custody);
+    persist(path.join(dir, 'record.json'), record);
+  } catch (error) { if (error.code === 'EEXIST') refuse('SHU251_RESTART_REPLAYED', 'run already recorded'); throw error; }
+}
+function loadBefore(spec) {
+  const dir = custodyPath(spec);
+  // Validate every directory component on read as well as creation.
+  let current = spec.window.workspace_state_dir;
+  for (const part of ['', ...path.relative(current, dir).split(path.sep)]) {
+    current = path.join(current, part);
+    try { const stat = fs.lstatSync(current); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(); }
+    catch { refuse('SHU251_RESTART_FORGED', 'missing or invalid custody directory'); }
+  }
+  const custody = custodyRead(path.join(dir, 'custody.json'));
+  const record = custodyRead(path.join(dir, 'record.json'));
+  if (!exactKeys(custody, ['version', 'run_id', 'identity', 'receipt_sha256']) || custody.version !== 'shu251-restart-custody-v1' ||
+      !/^[0-9a-f-]{36}$/.test(custody.run_id) || !/^[0-9a-f]{64}$/.test(custody.receipt_sha256) ||
+      !exactKeys(record, ['version', 'run_id', 'identity', 'position', 'receipt']) || record.version !== 'shu251-restart-record-v1') refuse('SHU251_RESTART_FORGED', 'custody shape');
+  if (canonical(custody.identity) !== canonical(runIdentity(spec)) || canonical(record.identity) !== canonical(runIdentity(spec)) || record.run_id !== custody.run_id) refuse('SHU251_RESTART_CROSS_RUN', 'run identity');
+  if (record.position !== 'restart-before' || record.receipt?.step !== 'restart-before') refuse('SHU251_RESTART_SUBSTITUTED', 'record position');
+  if (hash(canonical(record.receipt)) !== custody.receipt_sha256) refuse('SHU251_RESTART_FORGED', 'observed receipt differs from custody');
+  try { validateReceipt(record.receipt, 'restart-before', spec); }
+  catch { refuse('SHU251_RESTART_FORGED', 'receipt shape or digest'); }
+  return { before: record.receipt, dir, run_id: custody.run_id, receipt_sha256: custody.receipt_sha256 };
+}
+function consume({ dir, run_id, receipt_sha256 }) {
+  try { persist(path.join(dir, 'consumed.json'), { version: 'shu251-restart-consumed-v1', run_id, receipt_sha256 }); }
+  catch (error) {
+    // Any existing marker, even damaged, is a refusal. Exclusive creation also
+    // arbitrates concurrent consumers before either can emit an acceptance receipt.
+    if (error.code === 'EEXIST') refuse('SHU251_RESTART_REPLAYED', 'record already consumed');
+    throw error;
+  }
 }
 function command(file, args, options = {}) {
   const out = spawnSync(file, args, { encoding: 'utf8', timeout: 30000, ...options });
@@ -192,12 +266,13 @@ export async function drive(step, spec, options = {}, io = defaultIO) {
   try {
     if (!RECEIPT_SCHEMA.properties.step.enum.includes(step) || !/^[a-f0-9]{40}$/.test(spec?.window?.approved_sha) || !path.isAbsolute(spec.window_spec_path ?? '') || spec.render?.workdir !== spec.window.repo_dir) refuse('SHU251_DRIVER_SPEC');
     if (canonical(JSON.parse(io.read(spec.window_spec_path))) !== canonical(spec.window)) refuse('SHU251_SPEC_CHANGED');
+    if (Object.hasOwn(options, 'before')) refuse('SHU251_RESTART_CALLER_BEFORE', 'caller receipt is not custody');
     approve(step, spec, options);
     // A dry run is a plan, never an acceptance receipt and never invokes a binding.
     if (options.execute !== true) return { version: 'shu251-phase-a-plan-v1', step, approved_sha: spec.window.approved_sha, dry_run: true };
     await io.pin(spec);
     await binding('inventory', spec, options, io);
-    let evidence;
+    let evidence, custody;
     if (step === 'identity') evidence = await identity(spec, io);
     else if (step === 'gate-off') {
       const units = await io.render(spec);
@@ -232,7 +307,8 @@ export async function drive(step, spec, options = {}, io = defaultIO) {
       if (status.stage !== 'RUNNING') refuse('SHU251_RESTART_STATUS');
       evidence = { invocation_id, launch, worker, status, identity: await identity(spec, io) };
       if (step === 'restart-after') {
-        const before = validateReceipt(options.before, 'restart-before', spec);
+        custody = loadBefore(spec);
+        const { before } = custody;
         if (!/^[a-f0-9]{32}$/.test(before.evidence.invocation_id ?? '') || before.evidence.invocation_id === invocation_id || canonical(before.evidence.launch) !== canonical(launch) || canonical(before.evidence.worker) !== canonical(worker)) refuse('SHU251_RESTART_ACCEPTANCE');
         evidence.before_receipt_sha256 = hash(canonical(before));
       }
@@ -246,7 +322,10 @@ export async function drive(step, spec, options = {}, io = defaultIO) {
       evidence = await binding(step, spec, options, io);
       if (step === 'rollback') evidence = { ...evidence, quiescence: await binding('quiescence', spec, options, io), dispatch_reenabled: false };
     }
-    return receipt(step, spec, evidence);
+    const result = receipt(step, spec, evidence);
+    if (step === 'restart-before') recordBefore(spec, result);
+    if (custody) consume(custody);
+    return result;
   } catch (error) { if (error.code?.startsWith('SHU251_')) throw error; refuse('SHU251_DRIVER_UNEXPECTED', error.message); }
 }
 export async function main(argv = process.argv.slice(2)) {
@@ -256,7 +335,7 @@ export async function main(argv = process.argv.slice(2)) {
   for (let i = 0; i < flags.length; i++) {
     if (flags[i] === '--execute') options.execute = true;
     else if (flags[i] === '--approved-host-mutation') options.approvedHostMutation = flags[++i];
-    else if (flags[i] === '--before') options.before = JSON.parse(read(flags[++i]));
+    else if (flags[i] === '--before') refuse('SHU251_RESTART_CALLER_BEFORE', '--before is no longer supported');
     else refuse('SHU251_DRIVER_USAGE', flags[i]);
   }
   return drive(step, JSON.parse(read(file)), options);

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ACTIONS, UNIT_NAMES, drive, hash, receipt, validateReceipt, assertRollbackSafe } from '../phase-a-driver.mjs';
+import { ACTIONS, UNIT_NAMES, drive, hash, custodyPath, main, receipt, validateReceipt, assertRollbackSafe } from '../phase-a-driver.mjs';
 
 const SHA = 'a'.repeat(40);
 function fixture(t) {
@@ -12,6 +12,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const window = { approved_sha: SHA, repo_dir: root, remote_ref: 'refs/heads/main', workspace_state_dir: path.join(root, 'state'), supervisor_state_dir: path.join(root, 'supervisor'), unit_directory: path.join(root, 'units'), prior_state_file: path.join(root, 'prior.json'), fixture: { issue_id: 'SHU-251', attempt_id: '12345678-1234-1234-1234-123456789012', target_sha: SHA, pid: 1234, start_token: '456', release_file: path.join(root, 'release'), journal_file: path.join(root, 'journal') } };
   fs.mkdirSync(window.unit_directory);
+  fs.mkdirSync(window.workspace_state_dir);
   const units = Object.fromEntries(UNIT_NAMES.map(n => [n, n.endsWith('.timer') ? '[Timer]\nOnUnitInactiveSec=60s\n' : '[Service]\nEnvironment=ENABLE_DISPATCH=false\n']));
   for (const [name, data] of Object.entries(units)) fs.writeFileSync(path.join(window.unit_directory, name), data);
   const spec = { window, window_spec_path: path.join(root, 'window.json'), render: { workdir: root } };
@@ -89,6 +90,40 @@ test('SHU251 driver refuses inventory differences writes and short waits', async
     assert.equal(closed, true);
   }
 });
+test('SHU251 driver refuses genuine records copied from another run', async t => {
+  const a = fixture(t), b = fixture(t);
+  await drive('restart-before', a.spec, { execute: true }, a.io);
+  await drive('restart-before', b.spec, { execute: true }, b.io);
+  for (const file of ['record.json', 'custody.json']) fs.copyFileSync(path.join(custodyPath(a.spec), file), path.join(custodyPath(b.spec), file));
+  b.io.invocation = () => 'c'.repeat(32);
+  await assert.rejects(() => drive('restart-after', b.spec, { execute: true }, b.io), named('SHU251_RESTART_CROSS_RUN'));
+});
+test('SHU251 driver concurrent consumers emit only one receipt', async t => {
+  const { spec, io } = fixture(t);
+  await drive('restart-before', spec, { execute: true }, io);
+  io.invocation = () => 'c'.repeat(32);
+  const results = await Promise.allSettled([drive('restart-after', spec, { execute: true }, io), drive('restart-after', spec, { execute: true }, io)]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.find(r => r.status === 'rejected').reason.code, 'SHU251_RESTART_REPLAYED');
+});
+test('SHU251 driver restart refuses changed worker missing launch and invalid status', async t => {
+  for (const fault of ['worker', 'launch', 'transport']) {
+    const { spec, io, evidence } = fixture(t);
+    await drive('restart-before', spec, { execute: true }, io);
+    io.invocation = () => 'c'.repeat(32);
+    io.run = async action => {
+      const e = evidence(action);
+      if (action === fault) {
+        if (fault === 'worker') e.start_token = 'reused-pid';
+        if (fault === 'launch') e.ok = false;
+        if (fault === 'transport') e.stage = 'COMPLETED';
+      }
+      return JSON.stringify({ ok: true, evidence: e });
+    };
+    await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named(fault === 'transport' ? 'SHU251_RESTART_STATUS' : 'SHU251_BINDING_RECEIPT'));
+    assert.equal(fs.existsSync(path.join(custodyPath(spec), 'consumed.json')), false);
+  }
+});
 test('SHU251 driver refuses malformed and unbound binding receipts', async t => {
   const { spec, io } = fixture(t);
   for (const raw of ['not json', '{}', JSON.stringify({ ok: true, evidence: { ok: true, binding: 'worker_observation', pid: 999, start_token: '456' } })]) {
@@ -99,25 +134,99 @@ test('SHU251 driver refuses malformed and unbound binding receipts', async t => 
 test('SHU251 driver restart accepts new supervisor and same live worker', async t => {
   const { spec, io, calls } = fixture(t);
   const before = await drive('restart-before', spec, { execute: true }, io);
-  await assert.rejects(() => drive('restart-after', spec, { execute: true, before }, io), named('SHU251_RESTART_ACCEPTANCE'));
+  await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named('SHU251_RESTART_ACCEPTANCE'));
   io.invocation = () => 'c'.repeat(32);
-  const after = await drive('restart-after', spec, { execute: true, before }, io);
+  const after = await drive('restart-after', spec, { execute: true }, io);
+  validateReceipt(after, 'restart-after', spec);
   assert.equal(after.evidence.worker.pid, before.evidence.worker.pid);
   assert.ok(calls.includes('transport'));
   assert.match(after.evidence.before_receipt_sha256, /^[a-f0-9]{64}$/);
 });
-test('SHU251 driver forged before file pins the documented custody limitation', async t => {
+test('SHU251 driver refuses caller supplied before files', async t => {
   const { root, spec, io } = fixture(t);
   const observed = await drive('restart-before', spec, { execute: true }, io);
   const forged = receipt('restart-before', spec, { ...observed.evidence, invocation_id: 'f'.repeat(32) });
   const file = path.join(root, 'operator-edited-before.json');
   fs.writeFileSync(file, JSON.stringify(forged));
-  // Same file decoding as --before; invocation() remains unchanged throughout.
-  const after = await drive('restart-after', spec, { execute: true, before: JSON.parse(fs.readFileSync(file, 'utf8')) }, io);
-  assert.equal(after.evidence.invocation_id, observed.evidence.invocation_id);
-  validateReceipt(after, 'restart-after', spec);
-  const documentation = fs.readFileSync(new URL('../PHASE-A-DRIVER.md', import.meta.url), 'utf8');
-  assert.ok(documentation.includes('Restart acceptance depends on exclusive custody of the original driver-produced\n`restart-before` receipt until `restart-after` consumes it. The driver does not\npersist an independent record: an operator-edited or fabricated `--before` file\nwith recomputed digests can pass even when the supervisor invocation is unchanged.'));
+  io.invocation = () => 'c'.repeat(32);
+  await assert.rejects(() => drive('restart-after', spec, { execute: true, before: forged }, io), named('SHU251_RESTART_CALLER_BEFORE'), 'CALLER_BEFORE_REFUSED: caller receipt must refuse');
+  await assert.rejects(() => main(['restart-after', path.join(root, 'driver.json'), '--execute', '--before', file]), named('SHU251_RESTART_CALLER_BEFORE'), 'CLI_BEFORE_REFUSED: before flag must refuse');
+});
+function editRecord(spec, change) {
+  const file = path.join(custodyPath(spec), 'record.json');
+  const record = JSON.parse(fs.readFileSync(file)); change(record);
+  fs.writeFileSync(file, JSON.stringify(record));
+}
+test('SHU251 driver refuses forged recomputed observed records', async t => {
+  const { spec, io } = fixture(t);
+  await drive('restart-before', spec, { execute: true }, io);
+  editRecord(spec, record => { record.receipt = receipt('restart-before', spec, { ...record.receipt.evidence, invocation_id: 'f'.repeat(32) }); });
+  // The actual supervisor invocation remains unchanged: the former false-PASS.
+  await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named('SHU251_RESTART_FORGED'), 'FORGERY_REFUSED: recomputed invocation must refuse');
+});
+test('SHU251 driver refuses substituted step records', async t => {
+  for (const positionOnly of [true, false]) {
+    const { spec, io } = fixture(t);
+    await drive('restart-before', spec, { execute: true }, io);
+    editRecord(spec, record => {
+      if (positionOnly) record.position = 'restart-after';
+      else record.receipt = receipt('worker', spec, { binding: ACTIONS.worker, ok: true, pid: 1234, start_token: '456' });
+    });
+    io.invocation = () => 'c'.repeat(32);
+    await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named('SHU251_RESTART_SUBSTITUTED'), 'POSITION_REQUIRED: substituted step must refuse');
+  }
+});
+test('SHU251 driver refuses replayed successful restart records', async t => {
+  const { spec, io } = fixture(t);
+  await drive('restart-before', spec, { execute: true }, io);
+  io.invocation = () => 'c'.repeat(32);
+  validateReceipt(await drive('restart-after', spec, { execute: true }, io), 'restart-after', spec);
+  await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named('SHU251_RESTART_REPLAYED'), 'SINGLE_USE_REQUIRED: second consumption must refuse');
+  await assert.rejects(() => drive('restart-before', spec, { execute: true }, io), named('SHU251_RESTART_REPLAYED'));
+});
+test('SHU251 driver refuses cross run custody identities', async t => {
+  for (const field of ['approved_sha', 'spec_sha256', 'window_sha256', 'run_id']) {
+    const { spec, io } = fixture(t);
+    await drive('restart-before', spec, { execute: true }, io);
+    editRecord(spec, record => { if (field === 'run_id') record.run_id = '0'.repeat(36); else record.identity[field] = '0'.repeat(field === 'approved_sha' ? 40 : 64); });
+    io.invocation = () => 'c'.repeat(32);
+    await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named('SHU251_RESTART_CROSS_RUN'), 'RUN_BOUND: another run identity must refuse');
+  }
+});
+test('SHU251 driver refuses malformed missing and symlink custody', async t => {
+  for (const fault of ['missing', 'json', 'shape', 'symlink', 'marker']) {
+    const { spec, io } = fixture(t);
+    await drive('restart-before', spec, { execute: true }, io);
+    const file = path.join(custodyPath(spec), 'record.json');
+    if (fault === 'missing') fs.unlinkSync(file);
+    if (fault === 'json') fs.writeFileSync(file, '{');
+    if (fault === 'shape') editRecord(spec, r => { r.extra = true; });
+    if (fault === 'symlink') { fs.renameSync(file, file + '.saved'); fs.symlinkSync(file + '.saved', file); }
+    if (fault === 'marker') fs.writeFileSync(path.join(custodyPath(spec), 'consumed.json'), '{');
+    io.invocation = () => 'c'.repeat(32);
+    await assert.rejects(() => drive('restart-after', spec, { execute: true }, io), named(fault === 'marker' ? 'SHU251_RESTART_REPLAYED' : 'SHU251_RESTART_FORGED'));
+  }
+});
+test('SHU251 driver custody survives separate processes', async t => {
+  const { spec, units, evidence } = fixture(t);
+  const moduleURL = new URL('../phase-a-driver.mjs', import.meta.url).href;
+  const child = (step, invocation) => {
+    const source = `import fs from 'node:fs'; import { drive, ACTIONS } from ${JSON.stringify(moduleURL)};
+      const spec = ${JSON.stringify(spec)}, units = ${JSON.stringify(units)}, observations = ${JSON.stringify(Object.fromEntries(Object.keys(ACTIONS).map(a => [a, evidence(a)])))};
+      const io = { read: f => fs.readFileSync(f), pin() {}, render: async () => units,
+        invocation: () => ${JSON.stringify(invocation)}, run: async a => JSON.stringify({ok:true,evidence:observations[a]}) };
+      try { console.log(JSON.stringify(await drive(${JSON.stringify(step)}, spec, {execute:true}, io))); }
+      catch (e) { console.error(e.code); process.exitCode = 2; }`;
+    return spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8' });
+  };
+  assert.equal(child('restart-before', 'b'.repeat(32)).status, 0);
+  const good = child('restart-after', 'c'.repeat(32));
+  assert.equal(good.status, 0, good.stderr);
+  validateReceipt(JSON.parse(good.stdout), 'restart-after', spec);
+  const replay = child('restart-after', 'c'.repeat(32));
+  assert.equal(replay.status, 2); assert.match(replay.stderr, /SHU251_RESTART_REPLAYED/);
+  const marker = JSON.parse(fs.readFileSync(path.join(custodyPath(spec), 'consumed.json')));
+  assert.equal(marker.version, 'shu251-restart-consumed-v1');
 });
 test('SHU251 driver rollback cannot restore active or enabled dispatch', async t => {
   const { spec, io, prior, calls } = fixture(t);
@@ -149,6 +258,12 @@ test('SHU251 driver refuses changed window spec before execution', async t => {
 });
 
 const mutations = [
+  {"name": "replay acceptance", "module": "phase-a-driver", "test": "phase-a-driver", "pattern": "SHU251 driver refuses replayed successful restart records", "from": "if (error.code === 'EEXIST') refuse('SHU251_RESTART_REPLAYED', 'record already consumed');", "to": "if (error.code === 'EEXIST') return;", "assertion": "SINGLE_USE_REQUIRED: second consumption must refuse"},
+  {"name": "cross-run acceptance", "module": "phase-a-driver", "test": "phase-a-driver", "pattern": "SHU251 driver refuses cross run custody identities", "from": "if (canonical(custody.identity) !== canonical(runIdentity(spec)) || canonical(record.identity) !== canonical(runIdentity(spec)) || record.run_id !== custody.run_id)", "to": "if (false)", "assertion": "RUN_BOUND: another run identity must refuse"},
+  {"name": "forged record acceptance", "module": "phase-a-driver", "test": "phase-a-driver", "pattern": "SHU251 driver refuses forged recomputed observed records", "from": "if (hash(canonical(record.receipt)) !== custody.receipt_sha256)", "to": "if (false)", "assertion": "FORGERY_REFUSED: recomputed invocation must refuse"},
+  {"name": "substituted record acceptance", "module": "phase-a-driver", "test": "phase-a-driver", "pattern": "SHU251 driver refuses substituted step records", "from": "if (record.position !== 'restart-before' || record.receipt?.step !== 'restart-before')", "to": "if (false)", "assertion": "POSITION_REQUIRED: substituted step must refuse"},
+  {"name": "caller supplied before acceptance", "module": "phase-a-driver", "test": "phase-a-driver", "pattern": "SHU251 driver refuses caller supplied before files", "from": "if (Object.hasOwn(options, 'before')) refuse('SHU251_RESTART_CALLER_BEFORE', 'caller receipt is not custody');", "to": "if (Object.hasOwn(options, 'before')) return receipt('restart-after', spec, { ...options.before.evidence, invocation_id: io.invocation(), before_receipt_sha256: hash(JSON.stringify(options.before)) });", "assertion": "CALLER_BEFORE_REFUSED: caller receipt must refuse"},
+  {"name": "caller before CLI acceptance", "module": "phase-a-driver", "test": "phase-a-driver", "pattern": "SHU251 driver refuses caller supplied before files", "from": "else if (flags[i] === '--before') refuse('SHU251_RESTART_CALLER_BEFORE', '--before is no longer supported');", "to": "else if (flags[i] === '--before') return {};", "assertion": "CLI_BEFORE_REFUSED: before flag must refuse"},
   { name: 'missing capability classified as skip', module: 'host-suite-contract', test: 'host-suite-contract', pattern: 'SHU251 contract missing capabilities never become skips', from: 'if (!available) halt(capability.code, capability.name);', to: "if (!available) { evidence[capability.name] = 'skip'; continue; }", assertion: 'CAPABILITY_REQUIRED: missing privilege must refuse' },
   { name: 'out of set skip accepted', module: 'host-suite-contract', test: 'host-suite-contract', pattern: 'SHU251 contract refuses outcomes outside the exact permitted set', from: "if (status === 'skip' && (!Object.hasOwn(PERMITTED_SKIPS, name) || reason !== PERMITTED_SKIPS[name]))", to: 'if (false)', assertion: 'SKIP_SET_REQUIRED: undocumented skip must refuse' },
   { name: 'mutation approval bypassed', module: 'phase-a-driver', test: 'phase-a-driver', pattern: 'SHU251 driver approval is explicit for every mutation', from: 'if (MUTATIONS.has(action) && !(options.env?.SHU251_HOST_MUTATION_APPROVED', to: 'if (false && MUTATIONS.has(action) && !(options.env?.SHU251_HOST_MUTATION_APPROVED', assertion: 'APPROVAL_REQUIRED: mutation must require both exact approvals' },
