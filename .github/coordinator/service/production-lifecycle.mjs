@@ -253,9 +253,9 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       guard('SHU251_WRITER_LOCK', custody === null);
       const locks = [];
       try {
-        // Never contend with scheduled ticks during either complete observation
+        // Never contend with scheduled ticks during any complete observation
         // step, including network preflight and durable evidence finalization.
-        if (!['readiness', 'restart'].includes(step)) locks.push(acquire(`${w.workspace_state_dir}/host-tick.lock`));
+        if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push(acquire(`${w.workspace_state_dir}/host-tick.lock`));
         locks.push(acquire(`${c.evidence_dir}/journal.lock`)); custody = locks;
         return await fn();
       } finally { custody = null; for (const l of locks.reverse()) f.closeSync(l.fd); }
@@ -401,7 +401,11 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         }
         const before = inventory();
         let last = Number(show('shu-coordinator.service', 'ExecMainExitTimestampMonotonic')), ticks = 0;
-        writer = custody.shift(); f.closeSync(writer.fd);
+        // Direct writer-custody callers still hand off for polling. The
+        // complete running-gate-off action already has journal-only custody.
+        if (custody[0].p === `${w.workspace_state_dir}/host-tick.lock`) {
+          writer = custody.shift(); f.closeSync(writer.fd);
+        }
         for (let polls = 0; polls < 240 && ticks < 3; polls++) {
           await boundary.wait(1000);
           guard('SHU251_PROVIDER_GATE_OFF', show('shu-supervisor.service', 'ActiveState') === 'active' &&

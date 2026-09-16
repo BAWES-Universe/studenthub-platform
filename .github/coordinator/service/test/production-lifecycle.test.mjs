@@ -62,6 +62,74 @@ test('DETERMINISM readiness restart scheduled ticks never conflict with driver c
   t.diagnostic(`Injected ${ticks} scheduled completions at ${points} before/after boundaries across readiness/restart`);
 });
 
+// G1: cover the entire A5 action, including network preflight and both
+// executor readiness calls (the provider also checks readiness inside polling).
+test('DETERMINISM gate-off every boundary has zero modeled conflicts', async t => {
+  for (const phase of ['before', 'after']) {
+    const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+    await f.run('install'); await f.run('start');
+    let ticks = 0, conflicts = 0, journalSeen = false, journalReleased = false;
+    const network = new Set();
+    f.faults.boundary = point => {
+      if (point.phase !== phase) return;
+      const journal = f.lockHeld('journal.lock');
+      if (journal) {
+        assert.equal(journalReleased, false, 'GATE_OFF_JOURNAL_CUSTODY_REQUIRED');
+        journalSeen = true;
+      } else if (journalSeen) journalReleased = true;
+      if (point.kind === 'command' && (point.args.includes('ls-remote') || point.args[0] === '/usr/bin/gh')) {
+        network.add(point.args[0]);
+      }
+      const status = f.scheduledTick();
+      if (status !== null) { ticks++; if (status === '2') conflicts++; }
+    };
+    const [outcome] = await Promise.allSettled([f.run('running-gate-off')]);
+    f.faults.boundary = null;
+    t.diagnostic(`gate-off ${phase}: ticks=${ticks} conflicts=${conflicts} outcome=${outcome.status} code=${outcome.reason?.code ?? 'none'}`);
+    assert.equal(conflicts, 0, 'GATE_OFF_TIMER_CONFLICTS_REQUIRED');
+    assert.equal(outcome.status, 'fulfilled', outcome.reason?.stack);
+    assert.equal(outcome.value.evidence.ok, true);
+    assert.ok(ticks > 0);
+    assert.deepEqual([...network].sort(), ['/usr/bin/gh', '/usr/bin/git']);
+    assert.ok(journalSeen);
+    if (phase === 'after') assert.ok(journalReleased);
+    assert.equal(f.lockHeld('journal.lock'), false);
+    assert.equal(f.lockHeld('host-tick.lock'), false);
+  }
+});
+
+test('DETERMINISM gate-off single tick at network and bracketing readiness', async t => {
+  for (const target of ['gh', 'git', 'readiness-before', 'readiness-after']) {
+    const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+    await f.run('install'); await f.run('start');
+    let ticks = 0, conflicts = 0, readinessCalls = 0;
+    const inject = () => {
+      ticks++;
+      if (f.scheduledTick() === '2') conflicts++;
+    };
+    f.faults.boundary = point => {
+      if (point.phase === 'before' && point.kind === 'command' && ticks === 0 &&
+          (target === 'gh' && point.args[0] === '/usr/bin/gh' || target === 'git' && point.args.includes('ls-remote'))) inject();
+    };
+    const original = f.provider.serviceReadiness;
+    f.provider.serviceReadiness = () => {
+      readinessCalls++;
+      if (target === 'readiness-before' && readinessCalls === 1 || target === 'readiness-after' && readinessCalls === 3) inject();
+      return original();
+    };
+    const [outcome] = await Promise.allSettled([f.run('running-gate-off')]);
+    f.faults.boundary = null;
+    t.diagnostic(`gate-off ${target}: ticks=${ticks} conflicts=${conflicts} outcome=${outcome.status} code=${outcome.reason?.code ?? 'none'}`);
+    assert.equal(ticks, 1, 'GATE_OFF_INJECTION_REQUIRED');
+    assert.equal(conflicts, 0, 'GATE_OFF_SINGLE_TICK_CONFLICTS_REQUIRED');
+    assert.equal(outcome.status, 'fulfilled', outcome.reason?.stack);
+    assert.equal(outcome.value.evidence.ok, true);
+    assert.equal(readinessCalls, 3);
+    assert.equal(f.lockHeld('journal.lock'), false);
+    assert.equal(f.lockHeld('host-tick.lock'), false);
+  }
+});
+
 test('DETERMINISM scheduled tick conflict model retains exit-2 refusal', async t => {
   const f = productionFixture(t, { operations: ['install', 'start'] });
   await f.run('install'); await f.run('start');
@@ -74,7 +142,7 @@ test('DETERMINISM scheduled tick conflict model retains exit-2 refusal', async t
 });
 
 test('DETERMINISM observation custody refuses writer effects and releases on failure', async t => {
-  for (const step of ['readiness', 'restart']) {
+  for (const step of ['readiness', 'restart', 'running-gate-off']) {
     const f = productionFixture(t);
     await assert.rejects(() => f.provider.withLock(() => {
       assert.equal(f.lockHeld('journal.lock'), true);
@@ -200,9 +268,13 @@ test('PROVIDER default entrypoint wiring and no implementation option', async t 
 
 const mutations = cases.map(([code]) => ({ name: code, pattern: `PROVIDER guard ${code}`, from: 'if (!condition) refuse(code);', to: `if (!condition && code !== '${code}') refuse(code);`, assertion: `${code}_REQUIRED` }));
 mutations.push(
-  { name: 'readiness alone writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart'].includes(step)) locks.push", to: "if (step !== 'restart') locks.push", assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
-  { name: 'restart alone writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart'].includes(step)) locks.push", to: "if (step !== 'readiness') locks.push", assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
-  { name: 'readiness restart writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart'].includes(step)) locks.push", to: 'if (true) locks.push', assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
+  { name: 'gate-off whole-step writer contention', pattern: 'DETERMINISM gate-off every boundary', from: "if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push", to: "if (!['readiness', 'restart'].includes(step)) locks.push", assertion: 'GATE_OFF_TIMER_CONFLICTS_REQUIRED' },
+  { name: 'gate-off executor observation scope', module: 'host-lifecycle', pattern: 'DETERMINISM gate-off every boundary', from: '}, step);', to: '});', assertion: 'GATE_OFF_TIMER_CONFLICTS_REQUIRED' },
+  { name: 'gate-off post-poll writer reacquisition', pattern: 'DETERMINISM gate-off every boundary', from: 'if (writer) custody.unshift', to: 'if (true) custody.unshift', assertion: 'GATE_OFF_TIMER_CONFLICTS_REQUIRED' },
+  { name: 'gate-off single network tick contention', pattern: 'DETERMINISM gate-off single tick', from: "if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push", to: "if (!['readiness', 'restart'].includes(step)) locks.push", assertion: 'GATE_OFF_SINGLE_TICK_CONFLICTS_REQUIRED' },
+  { name: 'readiness alone writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push", to: "if (step !== 'restart') locks.push", assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
+  { name: 'restart alone writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push", to: "if (step !== 'readiness') locks.push", assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
+  { name: 'readiness restart writer contention', pattern: 'DETERMINISM readiness restart scheduled', from: "if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push", to: 'if (true) locks.push', assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
   { name: 'executor observation scope', module: 'host-lifecycle', pattern: 'DETERMINISM readiness restart scheduled', from: '}, step);', to: '});', assertion: 'DETERMINISTIC_TIMER_CUSTODY_REQUIRED' },
   { name: 'default entrypoint', module: 'phase-a-driver', pattern: 'PROVIDER default entrypoint', from: 'const lifecycleIO = io === defaultIO ?', to: 'const lifecycleIO = false ?', assertion: 'PROVIDER_ENTRYPOINT_REQUIRED' },
   { name: 'production factory', module: 'phase-a-driver', pattern: 'PROVIDER default entrypoint', from: 'return createProductionLifecycle(spec, boundary);', to: 'return {};', assertion: 'PROVIDER_FACTORY_REQUIRED' },

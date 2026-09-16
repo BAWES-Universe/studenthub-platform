@@ -41,13 +41,18 @@ external Git writer between checkout commands.
 Service readiness and worker-survival acceptance have separate provider methods.
 The existing worker checks remain mandatory for `restart`. The coordinator must
 report Result=success, exit 0 and a strictly newer completion timestamp when
-started. Throughout `readiness` and `restart`, only the journal lock is acquired:
+started. Throughout `readiness`, `restart` and `running-gate-off`, only the journal lock is acquired:
 no driver writer-lock acquisition occurs during preflight, observations, supervisor
 restart or finalization. Scheduled coordinator ticks retain access to their writer
 lock. Other effects still require writer custody; exit 2 is still refused.
-[AMEND-VALIDATION.md](AMEND-VALIDATION.md) records the boundary-interleaving proof
-and the mutations that restore the defect. Running gate-off observes timer completions with the writer lock released;
-the journal lock remains held. A 240-poll, one-second bound refuses missing ticks.
+[R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md) records the boundary-interleaving
+proof and mutations. R3 finding G1 identified a previously undisclosed,
+pre-existing exposure: gate-off held the writer lock across `git ls-remote`,
+`gh api` and both bracketing readiness calls, releasing it only for polling.
+One scheduled tick could conflict-exit 2 and refuse the A5 acceptance step.
+The fix extends journal-only custody across the complete gate-off action,
+including those calls and receipt finalization; it never reacquires the writer
+lock on return from polling. A 240-poll, one-second bound refuses missing ticks.
 The `launches: 0` receipt field is a literal, not a measurement.
 The launch claim relies on zero observed local authoritative-state writes (including durable
 launch receipts), unchanged inventory, dispatch disabled, and no observed children;
@@ -89,10 +94,10 @@ the checkout guard mutations. This classification does not approve live executio
 
 Legacy operational routes retain their earlier contract; the new artifact does
 not authenticate an end-to-end legacy/Phase-B composition. No independent
-exact-head verifier has reviewed this amendment yet. The independent round-2
-AMEND at `5a3c956` adjudicated A2 closed at repository scope; A3/A4/A5/A7
+exact-head verifier has reviewed this G1 amendment yet. The independent R3
+AMEND at `ac67bc1` confirmed F1 and F4 closed and retained A2 closed at repository scope; A3/A4/A5/A7
 partial; A6 open. This amendment does not upgrade those markers. Current counts
-and limitations are in [AMEND-VALIDATION.md](AMEND-VALIDATION.md).
+and limitations are in [R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md).
 
 These limitations are not reclassified as LIVE_ONLY: several require source-level
 composition with the separately scoped credential and disposable-checkout lanes.

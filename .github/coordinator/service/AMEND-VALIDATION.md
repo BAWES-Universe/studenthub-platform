@@ -1,5 +1,9 @@
 # PR #135 round-2 amendment (repository only)
 
+Historical record for `ac67bc1`; R3 independently confirmed F1 and F4 closed.
+The subsequent G1 fix and current results are in
+[R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md).
+
 Starting head: `5a3c95610fce3fd4f90caac55ac19711a430dfdd`. Both independent
 round-2 verdict files (`verdict-135-r2.md` and `.json`) were read before changes.
 This amendment addresses the two requested items: F1 readiness/restart writer-lock

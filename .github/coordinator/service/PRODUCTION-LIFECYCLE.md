@@ -5,7 +5,7 @@ command, time and wait boundaries. Production uses fixed absolute argv and no
 operator command substitution. All test commands are interpreted by the fixture;
 none are forwarded to systemd, Git remotes, GitHub or a host credential store.
 
-The current amendment results are in [AMEND-VALIDATION.md](AMEND-VALIDATION.md).
+The current amendment results are in [R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md).
 The current behavioral contract and remaining blockers are in
 [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md). Do not use historical round-2 results below
 to claim this correction closes every consolidated finding.

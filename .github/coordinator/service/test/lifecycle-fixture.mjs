@@ -70,7 +70,7 @@ export function fixture() {
     },
     withLock: async (fn, step) => {
       if (locked) throw Object.assign(new Error('busy'), { code: 'SHU251_WRITER_LOCK' });
-      locked = true; observing = ['readiness', 'restart'].includes(step);
+      locked = true; observing = ['readiness', 'restart', 'running-gate-off'].includes(step);
       try { return await fn(); } finally { locked = false; observing = false; }
     },
     load: async () => overrides.load ? overrides.load(clone(journal)) : clone(journal),

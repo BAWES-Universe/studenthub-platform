@@ -219,7 +219,7 @@ async function execute(step, spec, options, io) {
     return result;
   }
   // Journal custody lasts through the final durable receipt. The provider
-  // leaves writer custody to scheduled ticks throughout readiness/restart.
+  // leaves writer custody to scheduled ticks throughout readiness/restart/running-gate-off.
   return host.withLock(async () => {
     let j = await host.load();
     if (j !== null) journalValid(j, spec);
@@ -230,7 +230,7 @@ async function execute(step, spec, options, io) {
       await boundary(host, 'SHU251_EVIDENCE_ARCHIVE', () => host.finalize(copy(j)));
       return resumed;
     }
-    if (!['host-rollback', 'pin-restore', 'pin-retain'].includes(step)) await preflight(spec, host, true, step === 'pin', ['readiness', 'restart'].includes(step));
+    if (!['host-rollback', 'pin-restore', 'pin-retain'].includes(step)) await preflight(spec, host, true, step === 'pin', ['readiness', 'restart', 'running-gate-off'].includes(step));
     const save = async () => { await boundary(host, 'SHU251_LIFECYCLE_DURABILITY', () => host.save(copy(j))); };
     if (j === null) {
       const prior = snapshotShape(await host.snapshot(), spec); priorSafe(prior);
