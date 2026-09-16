@@ -127,3 +127,94 @@ writes, fsync and rename; UID/GID and command outputs are simulated. Kernel floc
 custody, physical power-loss durability, live authenticated readiness and host
 rollback equality require an authorized host window and are not claimed here.
 No signing, reseeding, fixture activation, dispatch, push or PR operation was done.
+
+## Round-2 verification record (2026-09-16)
+
+Implementation/test commit: `2f911d2b99fb15e5f4a32e12c82519f0d02af98e`.
+The subsequent evidence-only commit changes this document. The full coordinator
+source tree was compared byte-for-byte with the tested depth-1 clone before
+appending this record. Base was `ab6c634b` on the same branch.
+
+| Run | Tests | Pass | Fail | Skip | Cancelled / Todo |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Base complete coordinator + service | 1489 | 1481 | 0 | 8 | 0 / 0 |
+| Focused lifecycle + driver + production provider | 183 | 183 | 0 | 0 | 0 / 0 |
+| Complete coordinator + service | 1536 | 1528 | 0 | 8 | 0 / 0 |
+| Depth-1 clone, complete coordinator + service, clock +1 year | 1536 | 1528 | 0 | 8 | 0 / 0 |
+
+Focused tests include **74 named mutation tests**: 37 existing lifecycle,
+12 existing Phase-A, 20 provider (14 guard families including reused privilege,
+three durability/lock mutations and three entrypoint mutations), and five routing.
+All 74 permitted controls pass and all 74 syntax-clean mutants are killed by their
+named assertions, with zero survivors. Every coordinator/service test file,
+including all other mutation suites, ran in both complete runs. No new skip was
+introduced and `PERMITTED_SKIPS` is unchanged.
+
+An earlier focused iteration had 175 tests, 174 passes and one failure: the new
+overlap mutation matched its own mutation string as well as the intended source.
+The unique-match assertion detected this harness defect; it was corrected before
+the final successful runs. No production or existing test assertion was relaxed.
+
+Exact base/full/shallow skip profile (names and reasons compared, not just counts):
+
+- SHU-227: worker owns its checkout and recovery preserves descendant commits — requires root or passwordless sudo for distinct-uid proof
+- SHU-227: non-owner service account resolves revision with no global Git trust — requires distinct-uid execution
+- SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches — requires distinct-uid execution
+- SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches — requires distinct-uid execution
+- SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity — host cannot switch to the fixture worker uid
+- SHU-244 A10: distinct-root scoped handoff production workspace — host cannot switch worker uid
+- SHU-71 restricted capability refusal — production vocabulary has no undeclared runtime/role pair
+- READER operator-owned checkout read by non-root account — Not exercisable: non-root account, no passwordless elevation to create root-owned checkout
+
+All temporary storage and clones are beneath this checkout. Suites use a private
+user/mount namespace to bind repository storage over `/tmp` and then drop retained
+capabilities, as in the original validation. Before suites:
+
+```sh
+chmod -R go-w .github/coordinator
+umask 0002
+```
+
+Focused command:
+
+```sh
+TMPDIR="$PWD/node_modules/t" node --test \
+  .github/coordinator/service/test/host-lifecycle.test.mjs \
+  .github/coordinator/service/test/phase-a-driver.test.mjs \
+  .github/coordinator/service/test/production-lifecycle.test.mjs
+```
+
+Complete command:
+
+```sh
+unshare --user --map-current-user --mount --keep-caps /bin/sh -c \
+  'mount --bind "$1" /tmp && TMPDIR=/tmp setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs' \
+  shu251-suite "$PWD/node_modules/t"
+```
+
+Base ran the same complete command in a repository-local archive of `ab6c634b`.
+The shallow clone was made with:
+
+```sh
+git clone --depth 1 --single-branch \
+  --branch fix/shu251-typed-host-lifecycle-executor \
+  "file://$PWD" node_modules/shu251-round2-shallow
+```
+
+It reported `--is-shallow-repository=true` and only this branch plus its origin
+tracking ref/HEAD; no main ref existed. Its complete run used:
+
+```sh
+unshare --user --map-current-user --mount --keep-caps /bin/sh -c \
+  'mount --bind "$1" /tmp && cd "$2" && TMPDIR=/tmp SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS="--import=$2/.github/coordinator/test/fixture/shift-wall-clock.mjs" setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs' \
+  shu251-suite "$PWD/node_modules/u" "$PWD/node_modules/shu251-round2-shallow"
+```
+
+Local TAP logs are retained in `node_modules/.cache/shu251-round2/` (untracked):
+
+| Log | SHA-256 |
+| --- | --- |
+| `base.log` | `b2d85fd818fbd68b3d84bdf6afeac46a7b313ea429d18ad35db60ac83e938cf6` |
+| `focused.log` | `f3ab6c795ca3e96bc8d0b2e8522a1ab44129398f0fe0a76e8d97734765fdc9bb` |
+| `full.log` | `8515a63cac87a6dc117bb036ccf817b8ab48efa1dc8882e0ed8f513b71c8c5b4` |
+| `shallow-future.log` | `c1835c0250836bf48196d9310eb4c62973555db53344fe646a5db8363b23ac15` |
