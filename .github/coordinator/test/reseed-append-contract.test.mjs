@@ -255,3 +255,112 @@ test('RESEED linked worktree resolves real object storage without writes', t => 
   assert.deepEqual(precomputeReseedBinding({ ...f.input, git }), f.binding, 'RESEED linked worktree same binding');
   assert.deepEqual(snapshot(f), before, 'RESEED shared real object store unchanged');
 });
+
+// Keep imports inside this control: isolated manifest mutation tests copy only
+// this test file and the contract, and do not run the integration control.
+test('RESEED command reaches RESEEDED with real append and refuses actual ref drift', async t => {
+  const { sign } = await import('node:crypto');
+  const { canonicalBytes, publicKeyFingerprint, runShu71Command } = await import('../shu71-activation-package.mjs');
+  const { ephemeralPublicSource } = await import('./fixture/ephemeral-public-source.mjs');
+  const testKeys = ephemeralPublicSource();
+  const f = fixture(t); // Includes precomputeReseedBinding against the real temporary repo.
+  const REVISION = f.revision, PARENT = f.parent;
+  const SHU140_SEED = f.binding.expected_seed_head, PATCH = f.binding.patch_sha256;
+  const SHU254_SEED = "6c9c14907189fe3af733969c3d8f3a2c4e21f9b0";
+  const NOW = new Date("2026-09-15T10:00:00.000Z");
+  const TODO = "68ef4514-566d-4ea8-8040-d933575b99d0";
+  const BACKLOG = "d7847882-e3dc-42d3-8a81-4657d6161500";
+  const KHALID = "48918d3d-f843-483f-bb23-2ba6c7ace499";
+  const IDS = {
+    "SHU-140": "3c2b8f0e-9608-477f-beb3-84d51b3dcb0f",
+    "SHU-254": "8254e831-be6b-4d55-a99c-7f9437ac5981",
+  };
+  const { privateKey, publicKey } = testKeys;
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
+  const lanes = {
+    "SHU-140": { id: "SHU-140", authorization_ref: "FIXTURE-OPUS-CONTRACT-20260905", note: "fixture",
+      initial_build_paths: ["tools/fixture/scan-vacuous.mjs", "tools/fixture/test/scan-vacuous.test.mjs"],
+      revision_paths: ["tools/fixture/scan-vacuous.mjs", "tools/fixture/test/scan-vacuous.test.mjs", "tools/fixture-conformance/scan-vacuous.expectations.mjs"],
+      seeded_defect_path: "tools/fixture-conformance/scan-vacuous.expectations.mjs" },
+    "SHU-254": { id: "SHU-254", authorization_ref: "SHU-254", note: "fixture",
+      initial_build_paths: ["tools/fixture-2/scan-unawaited.mjs", "tools/fixture-2/test/scan-unawaited.test.mjs"],
+      revision_paths: ["tools/fixture-2/scan-unawaited.mjs", "tools/fixture-2/test/scan-unawaited.test.mjs", "tools/fixture-2-conformance/scan-unawaited.expectations.mjs"],
+      seeded_defect_path: "tools/fixture-2-conformance/scan-unawaited.expectations.mjs" },
+  };
+  const fixtures = [
+    { issue_id: "SHU-140", linear_id: IDS["SHU-140"], branch: "coordinator/SHU-140", seed_head: SHU140_SEED, lane: lanes["SHU-140"] },
+    { issue_id: "SHU-254", linear_id: IDS["SHU-254"], branch: "coordinator/SHU-254", seed_head: SHU254_SEED, lane: lanes["SHU-254"] },
+  ];
+  const activation = {
+    kind: "two-fixture-v1", activation_id: "shu71-proof-20260915", coordinator_revision: REVISION,
+    slots: 2, expires_at: "2026-09-15T20:00:00.000Z", stop_before_merge: true,
+    fixtures: fixtures.map((entry) => ({ issue_id: entry.issue_id, branch: entry.branch, seed_head: entry.seed_head,
+      lane: structuredClone(entry.lane) })), gates: { reviewed: true, runtime: true }, signature: "",
+  };
+  activation.signature = sign(null, canonicalBytes(activation), privateKey).toString("base64");
+  const pkg = {
+    kind: "shu71-activation-package-v1", activation_id: activation.activation_id, coordinator_revision: REVISION,
+    created_at: "2026-09-15T09:00:00.000Z", expires_at: activation.expires_at, slots: 2,
+    stop_before_merge: true, merge_authority: "none", fixtures,
+    reseed: { issue_id: "SHU-140", branch: "coordinator/SHU-140", expected_parent: PARENT,
+      expected_seed_head: SHU140_SEED, patch_sha256: PATCH, append_only: true, force: false },
+    issue_transitions: [
+      { issue_id: "SHU-140", linear_id: IDS["SHU-140"], before: { state_id: BACKLOG, assignee_id: KHALID },
+        ready: { state_id: TODO, assignee_id: null }, restore: { state_id: BACKLOG, assignee_id: KHALID } },
+      { issue_id: "SHU-254", linear_id: IDS["SHU-254"], before: { state_id: BACKLOG, assignee_id: null },
+        ready: { state_id: TODO, assignee_id: null }, restore: { state_id: BACKLOG, assignee_id: null } },
+    ],
+    cleanup: { worktree_root: "/srv/shu/worktrees", evidence_dir: "/srv/shu/state/shu71-evidence",
+      coordinator_uid: 999, worker_uid: 995, reviewer_uid: 994, identity_bound: true, retain_evidence: true },
+    evidence: { journal_path: "/srv/shu/state/shu71-evidence/shu71-proof-20260915/journal.jsonl",
+      archive_path: "/srv/shu/state/shu71-evidence/shu71-proof-20260915/activation.json", append_only: true, retain_on_failure: true },
+    activation, signature: "",
+  };
+  pkg.signature = sign(null, canonicalBytes(pkg), privateKey).toString("base64");
+  const anchor = { version: "1.0.0", algorithm: "Ed25519", provenance_revision: "e".repeat(40),
+    spki_sha256: publicKeyFingerprint(publicKeyPem), state: "ready" };
+  const issues = fixtures.map((entry) => ({ issue_id: entry.issue_id, linear_id: entry.linear_id }));
+  const preparedHeads = { "coordinator/SHU-140": PARENT, "coordinator/SHU-254": SHU254_SEED };
+  const context = { pkg, anchor, publicKeyPem, revision: REVISION, mainRevision: REVISION, heads: preparedHeads, issues, now: NOW };
+  // Package shape follows shu71-activation-package.test.mjs. /srv paths are
+  // validated strings only; all external effects below remain in memory.
+  const events = [], unexpectedEffects = [];
+  const unused = async () => { unexpectedEffects.push('unexpected non-reseed effect'); };
+  const io = {
+    ...createReseedAppendIo({ git: f.git, binding: f.binding }),
+    appendEvidence: async event => { events.push(structuredClone(event)); },
+    readIssue: unused, updateIssue: unused, installActivation: unused,
+    setRuntimeGate: unused, archiveActivation: unused, cleanupFixtures: unused,
+  };
+  const ref = 'refs/heads/coordinator/SHU-140';
+  assert.equal(context.heads['coordinator/SHU-140'], f.binding.expected_parent);
+  assert.equal(txt(f.git(['rev-parse', ref])), f.binding.expected_parent);
+  const result = await runShu71Command('reseed', { ...context, io });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.state, 'RESEEDED');
+  assert.equal(txt(f.git(['rev-parse', ref])), f.binding.expected_seed_head);
+  assert.deepEqual(events, [{
+    version: '1.0.0', activation_id: pkg.activation_id, at: NOW.toISOString(),
+    event: 'SHU140_RESEEDED', before: f.binding.expected_parent,
+    after: f.binding.expected_seed_head, parent: f.binding.expected_parent,
+    patch_sha256: f.binding.patch_sha256, forced: false,
+  }]);
+
+  // Drift to neither the approved parent nor the successful result. The same
+  // signed context retains prepared heads, forcing the real adapter to refuse;
+  // observeReseed must not recover this unrelated ref as a completed append.
+  f.git(['update-ref', ref, f.base, f.binding.expected_seed_head]);
+  assert.notEqual(f.base, f.binding.expected_parent);
+  assert.notEqual(f.base, f.binding.expected_seed_head);
+  const before = snapshot(f);
+  const refused = await runShu71Command('reseed', { ...context, io });
+  assert.equal(refused.ok, false);
+  assert.notEqual(refused.state, 'RESEEDED');
+  assert.equal(refused.state, 'HALT');
+  assert.equal(refused.code, 'ACT_RESEED_FAILED');
+  assert.equal(refused.detail, 'SHU71_RESEED_PARENT_MISMATCH');
+  assert.equal(txt(f.git(['rev-parse', ref])), f.base);
+  assert.deepEqual(snapshot(f), before, 'RESEED refused command leaves repository unchanged');
+  assert.equal(events.length, 1, 'RESEED refusal appends no success evidence');
+  assert.deepEqual(unexpectedEffects, [], 'RESEED performs no activation or issue effects');
+});

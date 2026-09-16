@@ -262,16 +262,33 @@ Captured from the syntax-clean mutants (TAP `error` fields):
 
 ## Integration limitation
 
-No new `runShu71Command("reseed", ...)` success control is claimed. The real
-validator verifies two Ed25519 signatures over the package and activation,
-including the temporary repository's exact seed SHA. No already-signed package
-binding this new synthetic SHA was supplied. The task also forbids signing and
-keys. Under that restriction, reaching `RESEEDED` would require bypassing or
-changing production signature validation, which this implementation does not do.
-The existing full suites run their already-authorized ephemeral signing helpers;
-permission to use the same helper in a new integration control was requested but
-has not yet been received. Adapter success and observation are exercised against
-real temporary repositories; end-to-end package success remains unproven here.
+The integration control now proves that `runShu71Command("reseed", ...)`
+returns `ok: true` and `state: "RESEEDED"` using the unchanged production
+validator and `createReseedAppendIo` against a real `mkdtemp` Git repository.
+The signed package binds the exact `expected_seed_head` and `patch_sha256`
+from `precomputeReseedBinding`; the resulting branch ref equals that head,
+and the in-memory evidence sink receives `SHU140_RESEEDED` with the bound
+parent, result head and digest. With the actual ref moved to an unrelated
+head while the same signed context still supplies the expected parent,
+the command returns `ACT_RESEED_FAILED` / `HALT`, leaves the repository
+unchanged and appends no success evidence.
+
+This uses the sanctioned `ephemeralPublicSource()` test fixture: the Ed25519
+private key stays in memory, only its public half is written under `/tmp`,
+and `fs.readFileSync` redirects the production public-key path to that public
+fixture. Both signatures cover synthetic test records only. Production
+validation is not weakened. The operational anchor remains owner-provisioned
+at the window; this control does not prove operational key provisioning or
+validate a real owner-signed activation package.
+
+Evidence persistence, live issue transitions, activation installation, runtime
+gates, archival and cleanup on the operational host remain unproven by this
+control. Evidence is captured in memory and non-reseed effects are asserted
+unused. No host, SSH, network, `/srv` or `/etc` access is part of this control;
+the package's `/srv` values are validated strings only. An already-completed
+exact reseed may still be recovered through `observeReseed`; the negative
+control deliberately uses a head that is neither the expected parent nor
+the expected result.
 
 ## Added test-name multiset
 
@@ -293,6 +310,7 @@ real temporary repositories; end-to-end package success remains unproven here.
 - `RESEED real gitlink empty tree and SHA256 repositories refused` (one occurrence)
 - `RESEED all metadata headers and sealed drift refused before CAS` (one occurrence)
 - `RESEED linked worktree resolves real object storage without writes` (one occurrence)
+- `RESEED command reaches RESEEDED with real append and refuses actual ref drift` (one occurrence)
 - `RESEED mutation M1 changed blob` (one occurrence)
 - `RESEED mutation M2 changed mode` (one occurrence)
 - `RESEED mutation M3 changed path` (one occurrence)
@@ -302,7 +320,7 @@ real temporary repositories; end-to-end package success remains unproven here.
 - `RESEED mutation M7 digest convention` (one occurrence)
 - `RESEED mutation M8 extra path` (one occurrence)
 
-Existing test files are byte-identical to main. Multiset delta: +26 names, -0 names; removed `assert|expect|throw`-matching lines: 0.
+Test files that existed on main are byte-identical to main. Multiset delta: +27 names, -0 names; removed `assert|expect|throw`-matching lines: 0.
 
 ## Repository verification
 
@@ -313,10 +331,10 @@ TMPDIR=/tmp node --test .github/coordinator/test/*.test.mjs .github/coordinator/
 TMPDIR=/tmp SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS="--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs" npm run test:coordinator
 ```
 
-Each reported **1,233 tests / 1,226 pass / 0 fail / 7 skipped**. Compared with
-the supplied main baseline, this adds 26 passing tests, removes none and leaves
-all seven existing skips unchanged. Both TAP outputs contain the same 26 new
-names, each exactly once. Existing files are unchanged. `git diff --check`
+Each reported **1,234 tests / 1,227 pass / 0 fail / 7 skipped**. Compared with
+the supplied main baseline, this adds 27 passing tests, removes none and leaves
+all seven existing skips unchanged. Both TAP outputs contain the same 27 new
+names, each exactly once. Files that existed on main are unchanged. `git diff --check`
 passed; removed `assert|expect|throw`-matching lines versus main: **0**.
 
 `chmod -R go-w .github/coordinator` was applied before verification.
