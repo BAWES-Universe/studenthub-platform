@@ -149,3 +149,34 @@ test('SHU251_UNEXPECTED: non-directory unit_directory reaches ENOTDIR', t => {
   assert.match(error.reason, /ENOTDIR/, 'SHU251_UNEXPECTED: CLI preserves reason');
   assert.equal(Object.hasOwn(error, 'binding'), false, 'SHU251_UNEXPECTED: no binding name');
 });
+
+test('SHU251 operational wrapper routes every reviewed lifecycle action without host effects', t => {
+  const { root } = fixture(t);
+  const wrapper = path.resolve('.github/coordinator/service/shu251-operational-bindings.sh');
+  const window = { approved_sha: SHA, repo_dir: root };
+  const windowFile = path.join(root, 'window.json'), driverFile = path.join(root, 'driver.json');
+  fs.writeFileSync(windowFile, JSON.stringify(window));
+  fs.writeFileSync(driverFile, JSON.stringify({ window, window_spec_path: windowFile, render: { workdir: root } }));
+  const actions = ['preflight', 'install', 'start', 'readiness', 'restart', 'host-rollback', 'pin', 'pin-restore', 'pin-retain'];
+  for (const action of actions) {
+    const result = spawnSync(wrapper, [action, driverFile, '--approved-host-mutation', SHA], {
+      encoding: 'utf8', env: { ...process.env, SHU251_HOST_MUTATION_APPROVED: 'true' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).step, action);
+    assert.equal(JSON.parse(result.stdout).dry_run, true);
+    if (action !== 'preflight') {
+      const denied = spawnSync(wrapper, [action, driverFile, '--execute'], {
+        encoding: 'utf8', env: { ...process.env, SHU251_HOST_MUTATION_APPROVED: '' },
+      });
+      assert.equal(denied.status, 2);
+      assert.equal(JSON.parse(denied.stderr).code, 'SHU251_HOST_MUTATION_APPROVAL');
+    }
+  }
+  const unknown = spawnSync(wrapper, ['untested-new-action', driverFile], { encoding: 'utf8' });
+  assert.equal(unknown.status, 64);
+  assert.equal(JSON.parse(unknown.stderr).code, 'SHU251_WINDOW_ACTION');
+  const override = spawnSync(wrapper, ['install', driverFile, '--provider', '/attacker.mjs'], { encoding: 'utf8' });
+  assert.equal(override.status, 2);
+  assert.equal(JSON.parse(override.stderr).code, 'SHU251_DRIVER_USAGE');
+});

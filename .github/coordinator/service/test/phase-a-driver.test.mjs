@@ -330,7 +330,8 @@ test('ROUTING complete disjoint registry and intended routes', async t => {
 const routingMutations = [
   ['overlap', 'test/phase-a-driver.test.mjs', "const reviewedLegacy" + " = { inventory:", "const reviewedLegacy = { preflight: 'host_preflight', inventory:", 'ROUTING_DISJOINT_REQUIRED'],
   ['missing registered action', 'phase-a-driver.mjs', "inventory: 'remote_inventory',", '', 'ROUTING_COMPLETE_REQUIRED'],
-  ['untested new action', 'phase-a-driver.mjs', 'export const ACTIONS = Object.freeze({', "export const ACTIONS = Object.freeze({ untested: 'unreviewed',", 'ROUTING_COMPLETE_REQUIRED'],
+  ['untested new action', 'phase-a-driver.mjs', 'export const ACTIONS = Object.freeze({', "export const ACTIONS = Object.freeze({ 'untested-new-action': 'untested_new_action',", 'ROUTING_COMPLETE_REQUIRED'],
+  ['untested new lifecycle action', 'phase-a-driver.mjs', 'export const LIFECYCLE_ACTIONS = Object.freeze({', "export const LIFECYCLE_ACTIONS = Object.freeze({ 'untested-new-action': 'untested_new_action',", 'ROUTING_COMPLETE_REQUIRED'],
   ['legacy route substitution', 'phase-a-driver.mjs', 'evidence = await binding(step, spec, options, io);', "evidence = await binding(step === 'worker' ? 'launch' : step, spec, options, io);", 'ROUTING_LEGACY_REQUIRED'],
   ['lifecycle route substitution', 'phase-a-driver.mjs', 'return await executeLifecycle(step, spec, options, lifecycleIO);', "return await executeLifecycle(step === 'readiness' ? 'preflight' : step, spec, options, lifecycleIO);", 'ROUTING_LIFECYCLE_REQUIRED'],
 ];
