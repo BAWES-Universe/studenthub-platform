@@ -201,7 +201,7 @@ const parserMutations = [
   ['absence accepted', 'absent', "if (present.length === 0) fail('');", "if (present.length === 0) return {available:true,identity:'/usr/bin/cvtsudoers'};", 'ABSENT_REFUSED'],
   ['nonzero accepted', 'nonzero', "if (!successful(result)) fail('');", 'if (false) fail(\'\');', 'NONZERO_REFUSED'],
   ['invalid JSON accepted', 'invalid JSON', "catch { fail('_OUTPUT'); }", "catch { return {available:true,identity:candidate}; }", 'JSON_REFUSED'],
-  ['PATH search enabled', 'PATH substitution', 'for (const candidate of CVTSUDOERS_CANDIDATES)', "for (const candidate of [...CVTSUDOERS_CANDIDATES, 'cvtsudoers'])", 'PATH_REFUSED'],
+  ['PATH search enabled', 'PATH substitution', 'for (const candidate of CVTSUDOERS_CANDIDATES)', "for (const candidate of [...CVTSUDOERS_CANDIDATES, ...process.env.PATH.split(':').map(dir => path.join(dir, 'cvtsudoers'))])", 'PATH_REFUSED'],
   ['unapproved path admitted', 'unapproved path', 'for (const candidate of CVTSUDOERS_CANDIDATES)', "for (const candidate of [...CVTSUDOERS_CANDIDATES, '/unapproved/parser'])", 'UNAPPROVED_REFUSED'],
   ['dual provider selection', 'ambiguous providers', "if (present.length > 1) fail('_AMBIGUOUS');", "if (present.length > 1) return {available:true,identity:present[0].candidate};", 'AMBIGUITY_REFUSED'],
   ['provider drift unchecked', 'provider appears during execution', 'CVTSUDOERS_CANDIDATES.filter(p => p !== candidate)', '[]', 'PROVIDER_DRIFT_REFUSED'],
