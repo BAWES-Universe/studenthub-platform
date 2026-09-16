@@ -1,3 +1,4 @@
+import { supervisorChildEnvironment } from "./service/credential-delivery.mjs";
 // Adapter execution runs in a separate process owned by the supervisor. Service
 // installation and credential delivery belong to SHU-251.
 import { fork } from "node:child_process";
@@ -11,7 +12,7 @@ import { recordSupervisorCompletion, SUPERVISOR_PROTOCOL_VERSION } from "./super
 export function createSupervisorSpawner({ stateDir, authorizationModule = fileURLToPath(new URL("./supervisor-authorization.mjs", import.meta.url)), env = process.env, forkImpl = fork }) {
   if (!authorizationModule?.startsWith("/")) throw new Error("absolute host authorization module required");
   return (order, contract) => {
-    const child = forkImpl(fileURLToPath(import.meta.url), [], { env,
+    const child = forkImpl(fileURLToPath(import.meta.url), [], { env: supervisorChildEnvironment(env),
       stdio: ["ignore", "pipe", "pipe", "ipc"], detached: true });
     try {
       const stat = readFileSync(`/proc/${child.pid}/stat`, "utf8");

@@ -1,0 +1,129 @@
+{
+  "base": "0ccee5180e3f63e77028769b89dca226acd19c5c",
+  "candidate": "the commit containing this report; source tests completed before commit",
+  "branch": "chore/shu71-production-composition",
+  "application": {
+    "tests": 459,
+    "pass": 459,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_sha256": "763ccb803a4ee70573b24c04f92498637ebf25c02c0715d72487d61a66d57021",
+    "failures": [],
+    "vitest_tests": 27,
+    "vitest_pass": 27,
+    "standalone_mutation_kills": 85
+  },
+  "coordinator": {
+    "tests": 1639,
+    "pass": 1620,
+    "fail": 11,
+    "cancelled": 0,
+    "skipped": 8,
+    "todo": 0,
+    "log_sha256": "77f3917b5cf7afa87a532bc25b32454ad62be76f5e44392765ff8c6318499536",
+    "failures": [
+      "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+      "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+      "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+      "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+      "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+      "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+      "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+      "SHU-261 mutation: wrapper environment canary placement removed",
+      "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
+      "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
+      "SHU-250: real tick returns while a long-running supervised child executes"
+    ],
+    "mutation_named_checks": {
+      "total": 493,
+      "pass": 491,
+      "fail": 2,
+      "note": "Names include aggregate/parameter mutations; this is a check count, not a count of unique source mutants."
+    }
+  },
+  "exact_stacked_base": {
+    "tests": 1608,
+    "pass": 1590,
+    "fail": 10,
+    "cancelled": 0,
+    "skipped": 8,
+    "todo": 0,
+    "log_sha256": "d6c97336931f028b19597542b3b716881efaffc78362cb3667be33bec5dafcfa",
+    "failures": [
+      "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+      "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+      "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+      "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+      "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+      "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+      "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+      "SHU-261 mutation: wrapper environment canary placement removed",
+      "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
+      "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
+    ]
+  },
+  "focused": {
+    "tests": 153,
+    "pass": 153,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_sha256": "69e9360fa6374efdaba67252022c494f5055f94273e0bf24fa58577283e6c328",
+    "failures": [],
+    "mutation_named_checks": {
+      "total": 58,
+      "pass": 58,
+      "fail": 0
+    },
+    "new_targeted_source_mutants": {
+      "total": 17,
+      "killed": 17
+    },
+    "process_death_injections": {
+      "forward": 240,
+      "teardown": 256,
+      "total": 496
+    }
+  },
+  "delivery_and_existing_service_checks": {
+    "tests": 59,
+    "pass": 59,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_sha256": "c6e33a682e55eb95a45c824c3880e24fa8fa31de2942da69da76e88bf1dbbc33",
+    "failures": []
+  },
+  "timing_recheck": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_sha256": "0039968dcf2eb1116280d8132a0e8c725024da218f06f0597c279ecfc5842f43",
+    "failures": []
+  },
+  "additional_failure_vs_base": [
+    "SHU-250: real tick returns while a long-running supervised child executes"
+  ],
+  "unchanged_baseline_failures": [
+    "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
+    "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
+    "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
+    "SHU-232 mutation M6 restore a posture where execution is never evidenced",
+    "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
+    "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
+    "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
+    "SHU-261 mutation: wrapper environment canary placement removed",
+    "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
+    "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child"
+  ],
+  "assertions_or_skip_allowances_weakened": false,
+  "host_or_external_mutations": false,
+  "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed"
+}
