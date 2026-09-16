@@ -1,3 +1,4 @@
+import { ACTIVATION_FILE } from "./credential-delivery.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
@@ -164,5 +165,5 @@ export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE
   return { ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket,
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
-    coordinator: [node, join(workdir, '.github/coordinator/reconcile.mjs')] };
+    coordinator: [node, join(workdir, '.github/coordinator/service/coordinator-tick.mjs'), '--activation', ACTIVATION_FILE] };
 }
