@@ -1,3 +1,9 @@
+# Typed lifecycle extension
+
+The repository-only typed lifecycle executor and its fake-only verification are
+documented in [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md). The new actions extend this
+driver; the original track described below retains its staging-only restrictions.
+
 # SHU-251 Phase A and A12 contract
 
 Repository-only preparation. These entry points are inert on import. Nothing here

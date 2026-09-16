@@ -247,8 +247,9 @@ test('SHU251 driver rollback uses reviewed path and verifies quiescence', async 
 });
 test('SHU251 driver routes all nine reviewed actions', async t => {
   const { spec, io, calls } = fixture(t);
-  for (const step of Object.keys(ACTIONS)) await drive(step, spec, approved, io);
-  for (const action of Object.keys(ACTIONS)) assert.ok(calls.includes(action));
+  const legacy = ['inventory', 'quiescence', 'transport', 'launch', 'worker', 'replay-release', 'cleanup', 'capture-prior', 'rollback'];
+  for (const step of legacy) await drive(step, spec, approved, io);
+  for (const action of legacy) assert.ok(calls.includes(action));
 });
 test('SHU251 driver refuses changed window spec before execution', async t => {
   const { spec, io, calls } = fixture(t);

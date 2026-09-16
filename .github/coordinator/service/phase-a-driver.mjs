@@ -7,10 +7,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const UNIT_NAMES = ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'];
-export const ACTIONS = Object.freeze({ inventory: 'remote_inventory', quiescence: 'driver_quiescence', transport: 'transport_observation', launch: 'fixture_launch_observation', worker: 'worker_observation', 'replay-release': 'replay_release', cleanup: 'fixture_cleanup', 'capture-prior': 'prior_state_rollback', rollback: 'prior_state_rollback' });
-const MUTATIONS = new Set(['replay-release', 'cleanup', 'capture-prior', 'rollback']);
+export const LIFECYCLE_ACTIONS = Object.freeze({ preflight: 'host_preflight', install: 'host_install', start: 'host_start', readiness: 'host_readiness', restart: 'host_restart', 'host-rollback': 'host_rollback', pin: 'host_pin', 'pin-restore': 'host_pin_restore', 'pin-retain': 'host_pin_retain' });
+export const ACTIONS = Object.freeze({ ...LIFECYCLE_ACTIONS, inventory: 'remote_inventory', quiescence: 'driver_quiescence', transport: 'transport_observation', launch: 'fixture_launch_observation', worker: 'worker_observation', 'replay-release': 'replay_release', cleanup: 'fixture_cleanup', 'capture-prior': 'prior_state_rollback', rollback: 'prior_state_rollback' });
+const MUTATIONS = new Set(['replay-release', 'cleanup', 'capture-prior', 'rollback', ...Object.keys(LIFECYCLE_ACTIONS).filter(s => s !== 'preflight')]);
 // Closed per-step evidence shapes. Binding objects retain the reviewed binding vocabulary.
 export const EVIDENCE_FIELDS = Object.freeze({
+  ...Object.fromEntries(Object.keys(LIFECYCLE_ACTIONS).map(step => [step, ['binding', 'ok', 'activation_id', 'approval_sha256', 'installed_sha256', 'before', 'after', 'journal_sha256', 'disposition']])),
   identity: ['rendered_sha256', 'installed_sha256'],
   'gate-off': ['identity', 'interval_ms', 'elapsed_ms', 'samples', 'launches', 'writes'],
   'restart-before': ['invocation_id', 'launch', 'worker', 'status', 'identity'],
@@ -28,7 +30,7 @@ export const EVIDENCE_FIELDS = Object.freeze({
 const evidenceType = key => ['ok', 'released', 'dispatch_reenabled'].includes(key) ? 'boolean'
   : ['interval_ms', 'elapsed_ms', 'launches', 'writes', 'comment_count', 'pid', 'signaled_pid'].includes(key) ? 'number'
   : ['samples', 'removed'].includes(key) ? 'array'
-  : ['rendered_sha256', 'installed_sha256', 'identity', 'launch', 'worker', 'status', 'states', 'credential', 'quiescence'].includes(key) ? 'object' : 'string';
+  : ['before', 'after', 'rendered_sha256', 'installed_sha256', 'identity', 'launch', 'worker', 'status', 'states', 'credential', 'quiescence'].includes(key) ? 'object' : 'string';
 export const RECEIPT_SCHEMA = Object.freeze({
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   type: 'object', additionalProperties: false,
@@ -73,6 +75,11 @@ export function validateReceipt(value, step, spec) {
     return type === 'array' ? !Array.isArray(v) : type === 'object' ? !v || typeof v !== 'object' || Array.isArray(v) : typeof v !== type;
   })) refuse('SHU251_RECEIPT_INVALID', 'evidence shape');
   if (value.evidence_sha256 !== hash(canonical(value.evidence))) refuse('SHU251_EVIDENCE_DIGEST', step);
+  if (Object.hasOwn(LIFECYCLE_ACTIONS, step) && !(value.evidence.binding === LIFECYCLE_ACTIONS[step] &&
+      value.evidence.ok === true && value.evidence.activation_id === spec.lifecycle?.activation_id &&
+      value.evidence.approval_sha256 === spec.lifecycle?.approval_sha256 && /^[a-f0-9]{64}$/.test(value.evidence.journal_sha256) &&
+      value.evidence.disposition === (step === 'preflight' ? 'observed' : step === 'pin-restore' ? 'restored' : step === 'pin-retain' ? 'retained' : 'executed')))
+    refuse('SHU251_LIFECYCLE_RECEIPT', step);
   return value;
 }
 function read(file) {
@@ -103,6 +110,12 @@ function exactKeys(value, keys) {
 function runIdentity(spec) {
   return { approved_sha: spec.window.approved_sha, spec_sha256: hash(canonical(spec)), window_sha256: hash(canonical(spec.window)) };
 }
+export function createRestartCustody(spec, before) {
+  const run_id = randomUUID();
+  const record = { version: 'shu251-restart-record-v1', run_id, identity: runIdentity(spec), position: 'restart-before', receipt: before };
+  const custody = { version: 'shu251-restart-custody-v1', run_id, identity: runIdentity(spec), receipt_sha256: hash(canonical(before)) };
+  return { custody, record };
+}
 function recordBefore(spec, before) {
   const dir = custodyPath(spec);
   // Create each directory durably; existing symlinks are never followed.
@@ -115,9 +128,7 @@ function recordBefore(spec, before) {
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     if (!fs.lstatSync(current).isDirectory() || fs.lstatSync(current).isSymbolicLink()) refuse('SHU251_RESTART_FORGED', 'custody directory');
   }
-  const run_id = randomUUID();
-  const record = { version: 'shu251-restart-record-v1', run_id, identity: runIdentity(spec), position: 'restart-before', receipt: before };
-  const custody = { version: 'shu251-restart-custody-v1', run_id, identity: runIdentity(spec), receipt_sha256: hash(canonical(before)) };
+  const { custody, record } = createRestartCustody(spec, before);
   try {
     // An incomplete write fails closed; a run can never silently overwrite another.
     persist(path.join(dir, 'custody.json'), custody);
@@ -135,6 +146,10 @@ function loadBefore(spec) {
   }
   const custody = custodyRead(path.join(dir, 'custody.json'));
   const record = custodyRead(path.join(dir, 'record.json'));
+  validateRestartCustody(spec, custody, record);
+  return { before: record.receipt, dir, run_id: custody.run_id, receipt_sha256: custody.receipt_sha256 };
+}
+export function validateRestartCustody(spec, custody, record) {
   if (!exactKeys(custody, ['version', 'run_id', 'identity', 'receipt_sha256']) || custody.version !== 'shu251-restart-custody-v1' ||
       !/^[0-9a-f-]{36}$/.test(custody.run_id) || !/^[0-9a-f]{64}$/.test(custody.receipt_sha256) ||
       !exactKeys(record, ['version', 'run_id', 'identity', 'position', 'receipt']) || record.version !== 'shu251-restart-record-v1') refuse('SHU251_RESTART_FORGED', 'custody shape');
@@ -143,7 +158,7 @@ function loadBefore(spec) {
   if (hash(canonical(record.receipt)) !== custody.receipt_sha256) refuse('SHU251_RESTART_FORGED', 'observed receipt differs from custody');
   try { validateReceipt(record.receipt, 'restart-before', spec); }
   catch { refuse('SHU251_RESTART_FORGED', 'receipt shape or digest'); }
-  return { before: record.receipt, dir, run_id: custody.run_id, receipt_sha256: custody.receipt_sha256 };
+  return record.receipt;
 }
 function consume({ dir, run_id, receipt_sha256 }) {
   try { persist(path.join(dir, 'consumed.json'), { version: 'shu251-restart-consumed-v1', run_id, receipt_sha256 }); }
@@ -270,6 +285,10 @@ export async function drive(step, spec, options = {}, io = defaultIO) {
     approve(step, spec, options);
     // A dry run is a plan, never an acceptance receipt and never invokes a binding.
     if (options.execute !== true) return { version: 'shu251-phase-a-plan-v1', step, approved_sha: spec.window.approved_sha, dry_run: true };
+    if (Object.hasOwn(LIFECYCLE_ACTIONS, step)) {
+      const { executeLifecycle } = await import('./host-lifecycle.mjs');
+      return await executeLifecycle(step, spec, options, io);
+    }
     await io.pin(spec);
     await binding('inventory', spec, options, io);
     let evidence, custody;
