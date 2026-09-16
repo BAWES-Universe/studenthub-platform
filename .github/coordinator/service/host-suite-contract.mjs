@@ -72,13 +72,13 @@ export function resolveCvtsudoers(tempDir, io = { fs, run }) {
     verify();
     // Execute the pinned inode, not a second pathname lookup. Only this fixed
     // inherited descriptor is executable; candidate identity remains the path.
-    const result = io.run('/proc/self/fd/3', ['-f', 'json', fixture], { stdio: ['ignore', 'pipe', 'pipe', fd] });
+    const result = io.run('/proc/self/fd/3', ['-f', 'json', fixture], { stdio: ['ignore', 'pipe', 'pipe', fd], env: { LC_ALL: 'C' } });
     verify(); // Recheck the approved pathname and inode metadata after execution.
     if (!successful(result)) fail('');
     let output;
     try { output = JSON.parse(result.stdout); } catch { fail('_OUTPUT'); }
     const validShape = Array.isArray(output?.User_Specs) && output.User_Specs.length === 1 &&
-      Array.isArray(output.User_Specs[0]?.Users) && output.User_Specs[0].Users.some(u => u?.username === 'root') &&
+      Array.isArray(output.User_Specs[0]?.User_List) && output.User_Specs[0].User_List.some(u => u?.username === 'root') &&
       Array.isArray(output.User_Specs[0]?.Cmnd_Specs) && output.User_Specs[0].Cmnd_Specs.length === 1 &&
       Array.isArray(output.User_Specs[0].Cmnd_Specs[0]?.Commands) &&
       output.User_Specs[0].Cmnd_Specs[0].Commands.some(c => c?.command === 'ALL');

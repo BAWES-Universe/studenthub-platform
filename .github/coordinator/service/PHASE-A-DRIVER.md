@@ -364,19 +364,27 @@ commands. Exactly one path must be present. Both present is always ambiguous,
 even if their conversions would agree; neither ordering nor a successful parser
 can override this refusal. Missing paths are distinguished from inspection errors.
 A sole candidate must be a regular executable with its canonical path identical
-to the approved path. `O_NOFOLLOW` opens the file; device, inode, mode, size and
+to the approved path. `O_NOFOLLOW | O_NONBLOCK` opens the file; device, inode, mode, size and
 nanosecond modification/change times bind the descriptor to the inspected file.
 Checks before and after conversion detect substitution, changes and a second
 provider appearing during the probe. Conversion
 executes that pinned inode through fixed inherited descriptor `/proc/self/fd/3`,
 not another lookup of the candidate. This is a Linux probe and requires procfs.
-No file permissions or host configuration are changed.
+No file permissions or host configuration are changed. A hardlink at an approved
+path is accepted as that sanctioned path's inode; this is path trust, not package
+provenance verification. Creating such a link requires write access to the trusted
+binary directory, which also permits replacing its binaries directly.
 
 The service identity converts the private temporary `root ALL=(ALL) ALL` fixture
 with `-f json`. A spawn error or nonzero exit refuses. Exit zero must produce JSON
-with exactly one `User_Specs` entry, a `Users` array containing username `root`,
+with exactly one `User_Specs` entry, a `User_List` array containing username `root`,
 and exactly one `Cmnd_Specs` entry whose `Commands` array contains command `ALL`.
-Invalid, empty and wrong-shape output all refuse. Temporary data and descriptors
+Only the documented `User_List` spelling is accepted; `Users` is not an alias.
+The test preserves the operator's actual sudo-rs raw prefix and a complete local
+cvtsudoers capture, and conditionally executes the installed real provider without
+a skip. `Host_List` and `runasusers` are observed but are not validation requirements.
+The parser child receives only `LC_ALL=C`, excluding inherited loader and operator
+variables. Invalid, empty and wrong-shape output all refuse. Temporary data and descriptors
 are cleaned in `finally`; parser output is never included in evidence.
 
 The existing `shu251-host-preflight-v1` result now carries

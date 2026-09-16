@@ -109,21 +109,97 @@ test('SHU251 contract source skip guard fails closed on unsupported expressions'
   assert.equal(sourceSkipReasons(`{ ${property}'changed reason' }`, 'sample')[0].reason, 'changed reason');
 });
 
-const validConversion = JSON.stringify({ User_Specs: [{ Users: [{ username: 'root' }], Cmnd_Specs: [{ Commands: [{ command: 'ALL' }] }] }] });
+// Target-host cvtsudoers.ws observations supplied by the operator, verbatim.
+// This is a raw prefix, not complete JSON (the ellipsis is in the supplied capture).
+const targetCapture = `{ "User_Specs": [ { "User_List": [ { "username": "root" } ], "Host_List": [ { "hostname": "ALL" } ],
+  "Cmnd_Specs": [ { "runasusers": [ ... ] } ] } ] }`;
+// Complete stdout captured locally from /usr/bin/cvtsudoers -f json with
+// the same root ALL=(ALL) ALL fixture; preserved verbatim, not synthesized.
+const validConversion = `{
+    "User_Specs": [
+        {
+            "User_List": [
+                { "username": "root" }
+            ],
+            "Host_List": [
+                { "hostname": "ALL" }
+            ],
+            "Cmnd_Specs": [
+                {
+                    "runasusers": [
+                        { "username": "ALL" }
+                    ],
+                    "Options": [
+                        { "setenv": true }
+                    ],
+                    "Commands": [
+                        { "command": "ALL" }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+`;
+test('SHU251 parser captured documented shape', () => {
+  const observed = JSON.parse(validConversion).User_Specs[0];
+  assert.deepEqual(Object.keys(observed), ['User_List', 'Host_List', 'Cmnd_Specs']);
+  const capturedUsers = JSON.parse(targetCapture.match(/"User_List": (\[[^\]]+\])/)[1]);
+  assert.deepEqual(observed.User_List, capturedUsers);
+  assert.equal(Object.hasOwn(observed, 'Users'), false);
+  assert.deepEqual(resolveCvtsudoers('/virtual', parserIO({ [sudoRs]: {} }).io), { available: true, identity: sudoRs });
+});
+test('SHU251 parser real installed provider', async t => {
+  const present = CVTSUDOERS_CANDIDATES.filter(file => {
+    try { fs.lstatSync(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'real-parser-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  if (present.length === 0) {
+    assert.throws(() => resolveCvtsudoers(root), named('SHU251_PREFLIGHT_CVTSUDOERS'));
+  } else if (present.length > 1) {
+    assert.throws(() => resolveCvtsudoers(root), named('SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS'));
+  } else {
+    const expected = { available: true, identity: present[0] };
+    assert.deepEqual(resolveCvtsudoers(root), expected, 'REAL_PARSER_ACCEPTED');
+    const probe = hostProbe({ ...spec, service_uid: process.getuid(), temp_dir: root });
+    assert.deepEqual(await probe('cvtsudoers'), expected, 'REAL_CHILD_IDENTITY');
+    t.diagnostic(`real parser accepted: ${present[0]}`);
+  }
+});
+test('SHU251 parser frozen allowlist', () => {
+  assert.ok(Object.isFrozen(CVTSUDOERS_CANDIDATES), 'ALLOWLIST_FROZEN');
+  assert.throws(() => CVTSUDOERS_CANDIDATES.push('/unapproved/parser'), TypeError);
+  assert.throws(() => { CVTSUDOERS_CANDIDATES[0] = '/unapproved/parser'; }, TypeError);
+  assert.deepEqual(CVTSUDOERS_CANDIDATES, ['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws']);
+});
+test('SHU251 parser nonblocking open', () => {
+  const { io } = parserIO({ [conventional]: {} });
+  const open = io.fs.openSync;
+  let flags;
+  io.fs.openSync = (file, value) => { flags = value; return open(file, value); };
+  resolveCvtsudoers('/virtual', io);
+  assert.ok(flags & fs.constants.O_NONBLOCK, 'NONBLOCK_REQUIRED');
+});
+test('SHU251 parser minimal child environment', () => {
+  const { io, calls } = parserIO({ [conventional]: {} });
+  resolveCvtsudoers('/virtual', io);
+  assert.deepEqual(calls[0][2].env, { LC_ALL: 'C' }, 'MINIMAL_ENV_REQUIRED');
+});
 // Virtual filesystem and process boundary: no real system paths are read/written.
 function parserIO(entries = {}, options = {}) {
   const calls = [], looked = [], closed = [], removed = [];
   let executed = false;
-  const stat = entry => ({ dev: 1n, ino: BigInt(entry.ino ?? 2), mode: BigInt(entry.mode ?? 0o100755), size: 42n,
+  const stat = entry => ({ dev: BigInt(entry.dev ?? 1), ino: BigInt(entry.ino ?? 2), mode: BigInt(entry.mode ?? 0o100755), size: 42n,
     mtimeNs: executed && options.changed ? 2n : 1n, ctimeNs: 1n, isFile: () => !entry.nonregular });
   const io = {
     fs: {
       constants: fs.constants,
-      lstatSync(file) { looked.push(file); if (!entries[file]) throw Object.assign(Error('absent'), { code: 'ENOENT' }); return stat(entries[file]); },
+      lstatSync(file) { looked.push(file); if (options.inspectionError && file === sudoRs && (options.lateError ? looked.length > 2 : looked.length <= 2)) throw Object.assign(Error('inspection'), { code: options.inspectionError }); if (!entries[file]) throw Object.assign(Error('absent'), { code: 'ENOENT' }); return stat(entries[file]); },
       realpathSync: file => entries[file].target ?? file,
       accessSync(file) { if (entries[file].denied) throw Error('denied'); },
       openSync(file, flags) { assert.ok(flags & fs.constants.O_NOFOLLOW); io.opened = file; return 17; },
-      fstatSync: () => stat(options.openChanged ? { ino: 3 } : entries[io.opened]),
+      fstatSync: () => stat(options.openChanged ? { ino: 3 } : options.deviceChanged ? { dev: 2 } : entries[io.opened]),
       mkdtempSync: () => '/virtual/fixture',
       writeFileSync(file, data) { assert.equal(data, 'root ALL=(ALL) ALL\n'); },
       closeSync: fd => closed.push(fd), rmSync: dir => removed.push(dir),
@@ -155,7 +231,21 @@ for (const [label, candidate] of [['conventional', conventional], ['sudo-rs', su
     assert.equal(calls.length, 1); assert.deepEqual(closed, [17]); assert.deepEqual(removed, ['/virtual/fixture']);
   });
 }
+const shapeCases = [
+  ['multiple user specs', o => o.User_Specs.push(structuredClone(o.User_Specs[0])), 'ONE_USER_SPEC_REQUIRED'],
+  ['missing root user', o => { o.User_Specs[0].User_List[0].username = 'nobody'; }, 'ROOT_USER_REQUIRED'],
+  ['multiple command specs', o => o.User_Specs[0].Cmnd_Specs.push(structuredClone(o.User_Specs[0].Cmnd_Specs[0])), 'ONE_COMMAND_SPEC_REQUIRED'],
+  ['missing ALL command', o => { o.User_Specs[0].Cmnd_Specs[0].Commands[0].command = '/bin/true'; }, 'ALL_COMMAND_REQUIRED'],
+  ['invented Users key', o => { o.User_Specs[0].Users = o.User_Specs[0].User_List; delete o.User_Specs[0].User_List; }, 'DOCUMENTED_USER_LIST_REQUIRED'],
+];
 const refusalCases = [
+  ...shapeCases.map(([label, change, message]) => {
+    const output = JSON.parse(validConversion); change(output);
+    return [label, { [conventional]: {} }, { result: { status: 0, stdout: JSON.stringify(output) } }, '_OUTPUT', message];
+  }),
+  ...['EACCES', 'EIO', 'EPERM', 'ENOTDIR', 'ELOOP'].flatMap(code => [false, true].map(lateError =>
+    [`inspection ${code} ${lateError ? 'recheck' : 'initial'}`, { [conventional]: {} }, { inspectionError: code, lateError }, '_SUBSTITUTION', 'INSPECTION_ERROR_REFUSED'])),
+  ['device changed on open', { [conventional]: {} }, { deviceChanged: true }, '_SUBSTITUTION', 'DEVICE_IDENTITY_REQUIRED'],
   ['absent', {}, {}, '', 'ABSENT_REFUSED'],
   ['nonzero', { [conventional]: {} }, { result: { status: 1, stdout: validConversion } }, '', 'NONZERO_REFUSED'],
   ['invalid JSON', { [conventional]: {} }, { result: { status: 0, stdout: 'invalid' } }, '_OUTPUT', 'JSON_REFUSED'],
@@ -196,6 +286,16 @@ test('SHU251 parser service child carries only resolved identity', async () => {
 });
 
 const parserMutations = [
+  ['multiple user specs accepted', 'multiple user specs', 'output.User_Specs.length === 1', 'output.User_Specs.length >= 1', 'ONE_USER_SPEC_REQUIRED'],
+  ['root username unchecked', 'missing root user', "output.User_Specs[0].User_List.some(u => u?.username === 'root')", 'true', 'ROOT_USER_REQUIRED'],
+  ['multiple command specs accepted', 'multiple command specs', 'output.User_Specs[0].Cmnd_Specs.length === 1', 'output.User_Specs[0].Cmnd_Specs.length >= 1', 'ONE_COMMAND_SPEC_REQUIRED'],
+  ['ALL command unchecked', 'missing ALL command', "output.User_Specs[0].Cmnd_Specs[0].Commands.some(c => c?.command === 'ALL')", 'true', 'ALL_COMMAND_REQUIRED'],
+  ['inspection error swallowed', 'inspection EACCES initial', "if (error.code !== 'ENOENT') fail('_SUBSTITUTION');", '', 'INSPECTION_ERROR_REFUSED'],
+  ['recheck inspection error swallowed', 'inspection EIO recheck', "if (error.code !== 'ENOENT') throw error;", '', 'INSPECTION_ERROR_REFUSED'],
+  ['nonblocking open removed', 'nonblocking open', ' | io.fs.constants.O_NONBLOCK', '', 'NONBLOCK_REQUIRED'],
+  ['device identity removed', 'device changed on open', "['dev', 'ino',", "['ino',", 'DEVICE_IDENTITY_REQUIRED'],
+  ['allowlist unfrozen', 'frozen allowlist', "Object.freeze(['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws'])", "['/usr/bin/cvtsudoers', '/usr/bin/cvtsudoers.ws']", 'ALLOWLIST_FROZEN'],
+  ['child environment inherited', 'minimal child environment', ", env: { LC_ALL: 'C' }", '', 'MINIMAL_ENV_REQUIRED'],
   ['conventional identity lost', 'conventional identity', 'identity: candidate', "identity: '/usr/bin/cvtsudoers.ws'", 'CONVENTIONAL_IDENTITY'],
   ['sudo-rs identity lost', 'sudo-rs identity', 'identity: candidate', "identity: '/usr/bin/cvtsudoers'", 'SUDO-RS_IDENTITY'],
   ['absence accepted', 'absent', "if (present.length === 0) fail('');", "if (present.length === 0) return {available:true,identity:'/usr/bin/cvtsudoers'};", 'ABSENT_REFUSED'],
