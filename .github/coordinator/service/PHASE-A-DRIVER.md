@@ -165,12 +165,14 @@ not signatures or proof of an untrusted producer's identity. No keys are created
 
 `node host-suite-contract.mjs preflight /absolute/suite.json` detects capabilities.
 `node host-suite-contract.mjs run /absolute/suite.json` always performs that same
-preflight before invoking Node tests. The suite spec contains `service_uid`
-(non-root), `service_gid`, absolute `checkout`, absolute `temp_dir`, absolute
-`files` under the checkout, and positive integer `expected_tests`. Supply the
-complete reviewed test list and its exact reviewed count. The process identity
-is the suite identity; service-specific probes explicitly use the supplied service
-UID/GID. No automatic identity escalation is used for the suite itself.
+preflight before invoking Node tests. The current runner first verifies disposable
+custody, the exact non-root service UID/GID/groups, pinned revision/tree, inventory
+and inactive service/timer states. Caller-selected `files` and `expected_tests`
+are now rejected. The pinned revision supplies the suite inventory and its count.
+See [A12-CLOSURE.md](A12-CLOSURE.md) for the replacement spec, create/remove actions,
+verification evidence and outstanding blockers. No authoritative inventory is yet
+shipped; A12 remains blocked. Historical counts below are not an inventory for
+this revision. No automatic identity escalation is used for the suite itself.
 
 | Capability | Detection | Named refusal |
 | --- | --- | --- |
@@ -197,7 +199,16 @@ process-scoped inline Git trust described above.
 
 Probe exceptions also become the corresponding named refusal, never a skip.
 Preflight creates only bounded temporary probes, cleans them up, and never
-installs capabilities. A missing capability requires a separate operator action.
+installs capabilities. A missing privilege/worker capability is allowed only when
+all tests requiring it have an exact authorized skip name and byte-exact reason.
+Any uncovered test fails preflight under the existing capability code, by name.
+The pinned inventory's `requirements` array contains one `{name, capabilities}`
+row per `names` occurrence; each capability is `{name, reason?}`. Unknown or
+incomplete declarations fail `SHU251_PREFLIGHT_REQUIREMENTS`; unauthorized
+name/reason pairs fail `SHU251_PREFLIGHT_SKIP_BINDING`. Empty capability arrays
+are explicit reviewed declarations. Infrastructure capabilities, including
+namespace proof, remain mandatory. No sudo expansion or namespace deferment is
+part of this contract. Outcomes are never synthesized or reclassified.
 
 `PERMITTED_SKIPS` preserves eight exact sanctioned exceptions: the seven historical
 exceptions documented in `ENV-CONTENT-VALIDATION.md` and
