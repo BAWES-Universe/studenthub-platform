@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { productionFixture } from './production-fixture.mjs';
 import { createProductionLifecycle } from '../production-lifecycle.mjs';
 import { FILES } from '../host-lifecycle.mjs';
-import { main, defaultIO, hash } from '../phase-a-driver.mjs';
+import { main, defaultIO, hash, canonical } from '../phase-a-driver.mjs';
 const named = code => e => e.code === code;
 const absent = { kind: 'absent' };
 const data = { kind: 'file', data: Buffer.from('bytes').toString('base64'), uid: 0, gid: 0, mode: 0o644 };
@@ -128,6 +128,102 @@ test('DETERMINISM gate-off single tick at network and bracketing readiness', asy
     assert.equal(f.lockHeld('journal.lock'), false);
     assert.equal(f.lockHeld('host-tick.lock'), false);
   }
+});
+
+// H1: the write really reaches disposable storage only after a successful
+// modeled scheduled tick. Count bytes written, not a requested injection.
+for (const target of ['initialize', 'git', 'gh', 'readiness', 'poll', 'final-readiness', 'finalize', 'baseline', 'before-watch', 'before-watch-transient', 'capability']) {
+  test(`OBSERVATION gate-off actual writes ${target}`, async t => {
+    for (const rootKey of ['workspace_state_dir', 'supervisor_state_dir']) {
+      const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+      await f.run('install'); await f.run('start');
+      let actualWrites = 0, conflicts = 0, readinessCalls = 0;
+      const filename = `${f.spec.window[rootKey]}/h1-write`;
+      const inject = () => {
+        if (actualWrites || conflicts) return;
+        if (f.scheduledTick() === '2') { conflicts++; return; }
+        f.write(filename, 'actual modeled coordinator write');
+        assert.equal(fs.readFileSync(f.resolve(filename), 'utf8'), 'actual modeled coordinator write');
+        actualWrites++;
+        if (target === 'before-watch-transient' || target === 'capability') fs.unlinkSync(f.resolve(filename));
+      };
+      f.faults.boundary = point => {
+        if (point.phase !== 'before') return;
+        if (target.startsWith('before-watch') && point.kind === 'watch') inject();
+        if (target === 'baseline' && point.kind === 'readdirSync' && point.args[0] === f.spec.window.workspace_state_dir) inject();
+        if (target === 'capability' && point.kind === 'command' && point.args[0] === '/usr/bin/setpriv' && point.args.some(arg => arg.includes('fs.mkdtempSync'))) inject();
+        if (point.kind === 'command' && (target === 'gh' && point.args[0] === '/usr/bin/gh' || target === 'git' && point.args.includes('ls-remote'))) inject();
+      };
+      for (const method of ['initialize', 'serviceReadiness', 'finalize']) {
+        const original = f.provider[method];
+        f.provider[method] = (...args) => {
+          if (method === 'serviceReadiness') readinessCalls++;
+          if (target === method || method === 'serviceReadiness' &&
+              (target === 'readiness' && readinessCalls === 1 || target === 'final-readiness' && readinessCalls === 3)) inject();
+          return original(...args);
+        };
+      }
+      if (target === 'poll') f.faults.wait = inject;
+      const [outcome] = await Promise.allSettled([f.run('running-gate-off')]);
+      f.faults.boundary = null;
+      t.diagnostic(`H1 ${target} ${rootKey}: actualWrites=${actualWrites} conflicts=${conflicts} outcome=${outcome.status} code=${outcome.reason?.code ?? 'none'}`);
+      assert.equal(actualWrites, 1, 'H1_ACTUAL_WRITE_REQUIRED');
+      assert.equal(conflicts, 0, 'H1_NO_WRITER_CONTENTION_REQUIRED');
+      assert.equal(outcome.reason?.code, 'SHU251_PROVIDER_GATE_OFF', 'H1_WRITE_OBSERVATION_REQUIRED');
+      assert.equal(f.lockHeld('journal.lock'), false);
+      assert.equal(f.lockHeld('host-tick.lock'), false);
+    }
+  });
+}
+
+test('OBSERVATION disjoint roots share registration and release on failure', async t => {
+  for (const fault of ['none', 'workspace_state_dir', 'supervisor_state_dir', 'watch-error', 'initialize-error']) {
+    const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+    f.spec.window.supervisor_state_dir = '/srv/shu/state/supervisor';
+    f.spec.render.supervisorStateDir = f.spec.window.supervisor_state_dir;
+    f.spec.lifecycle.directories[1].path = f.spec.window.supervisor_state_dir;
+    f.mkdir(f.spec.window.supervisor_state_dir, 0o700); f.approveFixture();
+    await f.run('install'); await f.run('start'); f.reopen();
+    const watch = f.boundary.fs.watch;
+    let registrations = 0, closes = 0, watcher, actualWrites = 0;
+    f.boundary.fs.watch = (...args) => {
+      registrations++; assert.equal(args[0], '/srv/shu/state');
+      watcher = watch(...args);
+      const close = watcher.close.bind(watcher);
+      watcher.close = () => { closes++; close(); };
+      return watcher;
+    };
+    const initialize = f.provider.initialize;
+    f.provider.initialize = (...args) => {
+      if (fault.endsWith('_state_dir')) {
+        assert.equal(f.scheduledTick(), '0');
+        f.write(`${f.spec.window[fault]}/actual-write`, 'write'); actualWrites++;
+      }
+      if (fault === 'watch-error') watcher.emit('error', Error('watch failed'));
+      if (fault === 'initialize-error') throw Object.assign(Error('initialize failed'), { code: 'SHU251_APPROVAL_TIME' });
+      return initialize(...args);
+    };
+    const [outcome] = await Promise.allSettled([f.run('running-gate-off')]);
+    assert.equal(registrations, 1); assert.equal(closes, 1);
+    assert.equal(actualWrites, fault.endsWith('_state_dir') ? 1 : 0);
+    if (fault === 'none') assert.equal(outcome.value?.evidence.ok, true);
+    else assert.equal(outcome.reason?.code, fault === 'initialize-error' ? 'SHU251_APPROVAL_TIME' : 'SHU251_PROVIDER_GATE_OFF');
+    assert.equal(f.lockHeld('journal.lock'), false); assert.equal(f.lockHeld('host-tick.lock'), false);
+  }
+});
+
+test('OBSERVATION baseline requires writer custody and legacy start refuses', async t => {
+  const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+  await f.run('install'); await f.run('start');
+  await f.provider.withLock(() => assert.throws(() => f.provider.gateOffBaseline(), named('SHU251_PROVIDER_CUSTODY')), 'readiness');
+  const journalPath = `${f.spec.lifecycle.evidence_dir}/journal.json`;
+  const journal = JSON.parse(fs.readFileSync(f.resolve(journalPath), 'utf8'));
+  const baseline = journal.receipts.at(-1).evidence.after.gate_off_baseline;
+  for (const key of ['workspace_state_dir', 'supervisor_state_dir']) assert.equal(baseline[f.spec.window[key]].directory, true);
+  delete journal.receipts.at(-1).evidence.after.gate_off_baseline;
+  journal.receipts.at(-1).evidence_sha256 = hash(canonical(journal.receipts.at(-1).evidence));
+  f.write(journalPath, JSON.stringify(journal)); f.reopen();
+  await assert.rejects(() => f.run('running-gate-off'), named('SHU251_PROVIDER_GATE_OFF'));
 });
 
 test('DETERMINISM scheduled tick conflict model retains exit-2 refusal', async t => {
@@ -268,6 +364,10 @@ test('PROVIDER default entrypoint wiring and no implementation option', async t 
 
 const mutations = cases.map(([code]) => ({ name: code, pattern: `PROVIDER guard ${code}`, from: 'if (!condition) refuse(code);', to: `if (!condition && code !== '${code}') refuse(code);`, assertion: `${code}_REQUIRED` }));
 mutations.push(
+  { name: 'H1 preflight observation omitted', module: 'host-lifecycle', pattern: 'OBSERVATION gate-off actual writes gh$', from: 'await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))', to: 'await execute(step, spec, options, io)', extra: { module: 'host-lifecycle', from: 'await host.gateOffBaseline(baseline);', to: 'void baseline;' }, assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
+  { name: 'H1 first readiness observation omitted', module: 'host-lifecycle', pattern: 'OBSERVATION gate-off actual writes readiness$', from: 'await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))', to: 'await execute(step, spec, options, io)', extra: { module: 'host-lifecycle', from: 'await host.gateOffBaseline(baseline);', to: 'void baseline;' }, assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
+  { name: 'H1 persisted baseline omitted', pattern: 'OBSERVATION gate-off actual writes before-watch$', from: 'gateObservation !== null && equal(before, gateObservation.before)', to: 'gateObservation !== null', assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
+  { name: 'H1 final observation omitted', pattern: 'OBSERVATION gate-off actual writes finalize$', from: 'observation.check();', to: 'void observation;', assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
   { name: 'gate-off whole-step writer contention', pattern: 'DETERMINISM gate-off every boundary', from: "if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push", to: "if (!['readiness', 'restart'].includes(step)) locks.push", assertion: 'GATE_OFF_TIMER_CONFLICTS_REQUIRED' },
   { name: 'gate-off executor observation scope', module: 'host-lifecycle', pattern: 'DETERMINISM gate-off every boundary', from: '}, step);', to: '});', assertion: 'GATE_OFF_TIMER_CONFLICTS_REQUIRED' },
   { name: 'gate-off post-poll writer reacquisition', pattern: 'DETERMINISM gate-off every boundary', from: 'if (writer) custody.unshift', to: 'if (true) custody.unshift', assertion: 'GATE_OFF_TIMER_CONFLICTS_REQUIRED' },
@@ -293,11 +393,22 @@ for (const mutation of mutations) test(`PROVIDER named mutation ${mutation.name}
   const control = run(); assert.equal(control.status, 0, control.stdout + control.stderr); assert.match(control.stdout, /^# pass 1$/m);
   const file = path.join(root, `${mutation.module ?? 'production-lifecycle'}.mjs`), source = fs.readFileSync(file, 'utf8');
   assert.equal(source.split(mutation.from).length, 2); fs.writeFileSync(file, source.replace(mutation.from, mutation.to));
+  if (mutation.extra) {
+    const extraFile = path.join(root, `${mutation.extra.module}.mjs`), extraSource = fs.readFileSync(extraFile, 'utf8');
+    assert.equal(extraSource.split(mutation.extra.from).length, 2);
+    fs.writeFileSync(extraFile, extraSource.replace(mutation.extra.from, mutation.extra.to));
+    assert.equal(spawnSync(process.execPath, ['--check', extraFile]).status, 0);
+  }
   assert.equal(spawnSync(process.execPath, ['--check', file]).status, 0);
   const result = run(), output = result.stdout + result.stderr;
   assert.equal(result.status, 1, output); assert.match(output, /^# fail 1$/m);
   assert.match(output, /code: 'ERR_ASSERTION'/); assert.ok(output.includes(mutation.assertion), output);
   assert.doesNotMatch(output, /TypeError|SyntaxError|ERR_MODULE_NOT_FOUND/);
+  if (mutation.name.startsWith('gate-off ')) t.diagnostic(`${mutation.name}: ${output.match(/# gate-off [^\n]+/)?.[0]}`);
+  if (mutation.name.startsWith('H1 ')) {
+    assert.match(output, /actualWrites=1 conflicts=0 outcome=fulfilled/);
+    t.diagnostic(`${mutation.name}: actualWrites=1 conflicts=0; false receipt killed by H1_WRITE_OBSERVATION_REQUIRED`);
+  }
 });
 
 

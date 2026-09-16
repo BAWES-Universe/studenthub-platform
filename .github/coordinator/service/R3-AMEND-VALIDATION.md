@@ -1,3 +1,6 @@
+> Historical G1 record at `de54fb4`. R4 independently confirmed G1 and found H1;
+> the current H1 correction is recorded in [R4-AMEND-VALIDATION.md](R4-AMEND-VALIDATION.md).
+
 # PR #135 R3 G1 amendment (repository only)
 
 Starting head: `ac67bc1395d0bdd165d61c3675d80ee68d0018bf`. Both full R3

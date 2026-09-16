@@ -49,6 +49,8 @@ export function fixture() {
     return true;
   }
   const host = {
+    observeGateOff: async fn => fn(),
+    gateOffBaseline: async () => ({}),
     remoteMain,
     recordPreflight: async () => true, resumeReceipt: async () => null, initialize: async () => true, authorize: async () => true, finalize: async () => true,
     probe: async () => overrides.probe ? overrides.probe(probe()) : probe(),

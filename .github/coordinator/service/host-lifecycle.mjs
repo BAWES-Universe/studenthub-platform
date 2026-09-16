@@ -196,7 +196,10 @@ async function ready(spec, host) {
 export async function executeLifecycle(step, spec, options, io) {
   try {
     approve(step, spec, options);
-    const result = await execute(step, spec, options, io);
+    if (step === 'running-gate-off') configuration(spec);
+    const result = step === 'running-gate-off'
+      ? await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))
+      : await execute(step, spec, options, io);
     return validateReceipt(result, step, spec);
   } catch (error) {
     if (error.code?.startsWith('SHU251_')) throw error;
@@ -224,6 +227,11 @@ async function execute(step, spec, options, io) {
     let j = await host.load();
     if (j !== null) journalValid(j, spec);
     await host.authorize(step, j);
+    if (step === 'running-gate-off' && j?.receipts.some(r => r.step === 'start')) {
+      const baseline = j?.receipts.findLast(r => r.step === 'start')?.evidence.after.gate_off_baseline;
+      check('SHU251_PROVIDER_GATE_OFF', baseline !== undefined);
+      await host.gateOffBaseline(baseline);
+    }
     const resumed = await host.resumeReceipt(step, j);
     if (resumed) {
       validateReceipt(resumed, step, spec);
@@ -280,7 +288,7 @@ async function execute(step, spec, options, io) {
       // The oneshot coordinator is static; only the supervisor and timer enable.
       for (const n of ['shu-supervisor.service', 'shu-coordinator.timer']) await change('enable', n, 'enabled');
       for (const n of UNIT_NAMES) await change('start', n, n === 'shu-coordinator.service' ? 'inactive' : 'active');
-      after = await serviceReady(spec, host);
+      after = { ...await serviceReady(spec, host), gate_off_baseline: await host.gateOffBaseline() };
     } else if (step === 'readiness') after = await serviceReady(spec, host);
     else if (step === 'running-gate-off') {
       await serviceReady(spec, host);

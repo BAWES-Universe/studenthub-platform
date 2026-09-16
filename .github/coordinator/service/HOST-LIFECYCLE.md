@@ -53,6 +53,20 @@ One scheduled tick could conflict-exit 2 and refuse the A5 acceptance step.
 The fix extends journal-only custody across the complete gate-off action,
 including those calls and receipt finalization; it never reacquires the writer
 lock on return from polling. A 240-poll, one-second bound refuses missing ticks.
+R4 confirmed G1 closed but found H1: preflight and first readiness could write
+before the old observer existed. The observer now wraps initialization through
+finalization, with one recursive watcher covering both state roots before the
+baseline scan. A durable baseline recorded by `start` under its existing writer
+custody also covers the interval before watcher registration. Gate-off compares
+that baseline before preflight; file contents/timestamps and directory timestamps
+must match. Older start receipts without this baseline refuse. A final inventory
+and queued-event check precede successful return; errors close the watcher.
+[R4-AMEND-VALIDATION.md](R4-AMEND-VALIDATION.md) records the reproduction,
+actual-write regressions, mutations and limits. This is conservative: changes
+since start, including the existing capability probes' own temporary writes in
+workspace state, refuse. No exception for those writes or live A5 success is
+claimed. The capability-probe placement/zero-write incompatibility remains a
+limitation of usable host acceptance, not a reason to emit a zero-write receipt.
 The `launches: 0` receipt field is a literal, not a measurement.
 The launch claim relies on zero observed local authoritative-state writes (including durable
 launch receipts), unchanged inventory, dispatch disabled, and no observed children;
@@ -94,10 +108,10 @@ the checkout guard mutations. This classification does not approve live executio
 
 Legacy operational routes retain their earlier contract; the new artifact does
 not authenticate an end-to-end legacy/Phase-B composition. No independent
-exact-head verifier has reviewed this G1 amendment yet. The independent R3
-AMEND at `ac67bc1` confirmed F1 and F4 closed and retained A2 closed at repository scope; A3/A4/A5/A7
-partial; A6 open. This amendment does not upgrade those markers. Current counts
-and limitations are in [R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md).
+exact-head verifier has reviewed this H1 amendment yet. The independent R4
+AMEND at `de54fb4` confirmed G1, F1 and F4 closed and retained A2 closed at repository scope;
+A3/A4/A5/A7 partial; A6 open. This amendment does not upgrade those markers.
+Current counts and limitations are in [R4-AMEND-VALIDATION.md](R4-AMEND-VALIDATION.md).
 
 These limitations are not reclassified as LIVE_ONLY: several require source-level
 composition with the separately scoped credential and disposable-checkout lanes.

@@ -178,7 +178,69 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return true;
     });
   }
+  function stateInventory() {
+    const roots = [...new Set([w.workspace_state_dir, w.supervisor_state_dir])];
+    const entries = {};
+    const visit = p => {
+      const s = f.lstatSync(p);
+      guard('SHU251_PROVIDER_GATE_OFF', !s.isSymbolicLink());
+      if (s.isDirectory()) {
+        entries[p] = { directory: true, mtime: s.mtimeMs, ctime: s.ctimeMs };
+        for (const child of f.readdirSync(p).sort()) visit(`${p}/${child}`);
+      } else if (s.isFile()) entries[p] = { sha256: hash(f.readFileSync(p)), size: s.size, mtime: s.mtimeMs, ctime: s.ctimeMs };
+      else guard('SHU251_PROVIDER_GATE_OFF', s.isSocket());
+    };
+    roots.forEach(visit);
+    return entries;
+  }
+  let gateObservation = null;
+  function observeState() {
+    const roots = [...new Set([w.workspace_state_dir, w.supervisor_state_dir])];
+    // One registration covers both roots, including baseline construction.
+    // No command, await, or action runs between registrations of separate roots.
+    let ancestor = roots[0];
+    while (ancestor !== '/' && !roots.every(root => root === ancestor || root.startsWith(`${ancestor}/`))) ancestor = path.dirname(ancestor);
+    let writes = 0, watchError = false;
+    const watcher = f.watch(ancestor, { recursive: true }, (event, filename) => {
+      if (filename == null) { watchError = true; return; }
+      const changed = path.resolve(ancestor, String(filename));
+      if (roots.some(root => changed === root || changed.startsWith(`${root}/`) || root.startsWith(`${changed}/`))) writes++;
+    });
+    watcher.on('error', () => { watchError = true; });
+    const inventory = stateInventory;
+    try {
+      const before = inventory();
+      return { before, inventory, get writes() { return writes; }, get watchError() { return watchError; },
+        async check() {
+          const after = inventory();
+          await boundary.wait(0);
+          guard('SHU251_PROVIDER_GATE_OFF', !watchError && writes === 0 && equal(before, after));
+        },
+        close() { watcher.close(); } };
+    } catch (error) { watcher.close(); throw error; }
+  }
   const provider = {
+    // Start records this under writer custody. Gate-off compares it before
+    // preflight, so even a write before watch registration cannot become a
+    // fresh trusted baseline. Directory timestamps include create/delete pairs.
+    gateOffBaseline(before) {
+      if (before === undefined) { writerHeld(); return stateInventory(); }
+      held();
+      guard('SHU251_PROVIDER_GATE_OFF', gateObservation !== null && equal(before, gateObservation.before));
+      return true;
+    },
+    async observeGateOff(fn) {
+      guard('SHU251_PROVIDER_GATE_OFF', gateObservation === null);
+      const observation = observeState();
+      gateObservation = observation;
+      try {
+        const result = await fn();
+        // Deliver queued watch events, including transient writes during the
+        // final synchronous evidence commands, before acknowledging success.
+        await observation.check();
+        return result;
+      } finally { gateObservation = null; observation.close(); }
+    },
     initialize(step) {
       const a = approval();
       guard('SHU251_APPROVAL_TIME', ['host-rollback', 'pin-restore', 'pin-retain'].includes(step) || boundary.now() >= a.not_before && boundary.now() < a.expires_at);
@@ -378,28 +440,10 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     },
     async runningGateOff() {
       held();
-      const roots = [...new Set([w.workspace_state_dir, w.supervisor_state_dir])];
-      const inventory = () => {
-        const entries = {};
-        const visit = p => {
-          const s = f.lstatSync(p);
-          guard('SHU251_PROVIDER_GATE_OFF', !s.isSymbolicLink());
-          if (s.isDirectory()) for (const child of f.readdirSync(p).sort()) visit(`${p}/${child}`);
-          else if (s.isFile()) entries[p] = { sha256: hash(f.readFileSync(p)), size: s.size, mtime: s.mtimeMs, ctime: s.ctimeMs };
-          else guard('SHU251_PROVIDER_GATE_OFF', s.isSocket());
-        };
-        roots.forEach(visit);
-        return entries;
-      };
-      let writes = 0, watchError = false;
-      const watchers = [];
+      const observation = gateObservation ?? observeState();
+      const { before, inventory } = observation;
       let writer;
       try {
-        for (const root of roots) {
-          const watcher = f.watch(root, { recursive: true }, () => writes++);
-          watcher.on('error', () => { watchError = true; }); watchers.push(watcher);
-        }
-        const before = inventory();
         let last = Number(show('shu-coordinator.service', 'ExecMainExitTimestampMonotonic')), ticks = 0;
         // Direct writer-custody callers still hand off for polling. The
         // complete running-gate-off action already has journal-only custody.
@@ -421,10 +465,11 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         const pid = Number(show('shu-supervisor.service', 'MainPID'));
         const children = f.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim();
         const after = inventory();
+        const { writes, watchError } = observation;
         guard('SHU251_PROVIDER_GATE_OFF', ticks === 3 && !watchError && writes === 0 && children === '' && equal(before, after));
         return { before, after, ticks, writes, launches: 0 };
       } finally {
-        for (const watcher of watchers) watcher.close();
+        if (observation !== gateObservation) observation.close();
         if (writer) custody.unshift(acquire(`${w.workspace_state_dir}/host-tick.lock`));
       }
     },
