@@ -42,13 +42,15 @@ function fixture(t) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'reseed-contract-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   run(repo, ['init', '--object-format=sha1', '-b', 'base']);
-  for (const [name, hash] of Object.entries(SEALED_SEED_BLOBS)) {
+  for (const name of Object.keys(SEALED_SEED_BLOBS)) {
     fs.mkdirSync(path.dirname(path.join(repo, name)), { recursive: true });
-    fs.writeFileSync(path.join(repo, name), run(process.cwd(), ['cat-file', 'blob', hash]));
+    fs.writeFileSync(path.join(repo, name), `sealed fixture: ${name}\n`);
   }
   fs.writeFileSync(path.join(repo, 'common'), 'base\n');
   run(repo, ['add', '.']); run(repo, ['commit', '-m', 'base']);
   const base = txt(run(repo, ['rev-parse', 'HEAD']));
+  const sealed = Object.fromEntries(Object.keys(SEALED_SEED_BLOBS).map(name =>
+    [name, txt(run(repo, ['rev-parse', `HEAD:${name}`]))]));
   fs.writeFileSync(path.join(repo, 'left'), 'left\n');
   run(repo, ['add', '.']); run(repo, ['commit', '-m', 'left']);
   const parent = txt(run(repo, ['rev-parse', 'HEAD']));
@@ -58,11 +60,11 @@ function fixture(t) {
   run(repo, ['add', '.']); run(repo, ['commit', '-m', 'right']);
   const revision = txt(run(repo, ['rev-parse', 'HEAD']));
   const git = createGitAdapter(repo);
-  const input = { git, branch: 'coordinator/SHU-140', expected_parent: parent, approvedExecutionRevision: revision };
+  const input = { git, sealed, branch: 'coordinator/SHU-140', expected_parent: parent, approvedExecutionRevision: revision };
   const binding = precomputeReseedBinding(input);
   const plan = { issue_id: 'SHU-140', branch: binding.branch, expected_parent: parent,
     expected_seed_head: binding.expected_seed_head, patch_sha256: binding.patch_sha256, append_only: true, force: false };
-  return { repo, git, input, binding, plan, base, parent, revision };
+  return { repo, git, sealed, input, binding, plan, base, parent, revision };
 }
 function rejects(code, fn, message = code) {
   assert.throws(fn, error => error.code === `SHU71_RESEED_${code}` && error.message === error.code, message);
@@ -73,9 +75,17 @@ function snapshot(f) {
 }
 function install(f) { return createReseedAppendIo(f).appendReseed(f.plan); }
 function inspect(f, binding = f.binding, id = binding.expected_seed_head) {
-  return verifyReseedCommit({ git: f.git, binding, oid: id });
+  return verifyReseedCommit({ git: f.git, binding, oid: id, sealed: f.sealed });
 }
 
+test('RESEED sealed seed blob literals', () => {
+  assert.deepEqual(SEALED_SEED_BLOBS, {
+    'tools/fixture-conformance/scan-vacuous.expectations.mjs': '4d19f13e35b592971dc453321a79d1dd6dde4d2d',
+    'tools/fixture/scan-vacuous.mjs': '6b18133a75c24c573892f9e229eb49420cd51466',
+    'tools/fixture/test/scan-vacuous.test.mjs': 'e3abeb362a4d84195f8a3afac82a983930cf50ef',
+    'tools/fixture-conformance/README.md': 'f614ea04e10a455a5ada3a077ff1e604aa8a19bd',
+  });
+});
 test('RESEED independent manifest literal and complete transition', () => {
   const literal = '23fd85b37240a6b4840999ae0861ac7aad7b6e789bcbea4d8f958de59be9d750';
   assert.equal(independentDigest(old, next), literal, 'RESEED independent literal');
@@ -106,7 +116,7 @@ test('RESEED zero footprint precompute and exact append round trip', t => {
   assert.deepEqual(snapshot(f), before, 'RESEED precompute refs objects counts and worktree unchanged');
   const calls = [];
   const git = (args, options) => { calls.push(args); return f.git(args, options); };
-  const result = createReseedAppendIo({ git, binding }).appendReseed(f.plan);
+  const result = createReseedAppendIo({ git, binding, sealed: f.sealed }).appendReseed(f.plan);
   assert.deepEqual(result, { before: f.parent, after: binding.expected_seed_head, parent: f.parent, patch_sha256: binding.patch_sha256, forced: false });
   assert.equal(calls.filter(a => a[0] === 'update-ref').length, 1, 'RESEED exactly one CAS');
   assert.ok(calls.findIndex(a => a[0] === 'hash-object' && a.includes('-w')) < calls.findIndex(a => a[0] === 'update-ref'), 'RESEED install precedes CAS');
@@ -119,7 +129,7 @@ test('RESEED zero footprint precompute and exact append round trip', t => {
   assert.notEqual(f.parent, binding.expected_seed_head, 'RESEED strict fast forward');
   const a = readTreeState(f.git, f.parent), b = readTreeState(f.git, binding.tree);
   assert.equal(independentDigest(a, b), binding.patch_sha256, 'RESEED independent resulting digest');
-  for (const [name, hash] of Object.entries(SEALED_SEED_BLOBS)) {
+  for (const [name, hash] of Object.entries(f.sealed)) {
     assert.equal(txt(f.git(['rev-parse', `${binding.expected_seed_head}:${name}`])), hash);
     assert.deepEqual(f.git(['show', `${f.parent}:${name}`]), f.git(['show', `${binding.expected_seed_head}:${name}`]), 'RESEED sealed bytes preserved');
   }
@@ -327,7 +337,7 @@ test('RESEED command reaches RESEEDED with real append and refuses actual ref dr
   const events = [], unexpectedEffects = [];
   const unused = async () => { unexpectedEffects.push('unexpected non-reseed effect'); };
   const io = {
-    ...createReseedAppendIo({ git: f.git, binding: f.binding }),
+    ...createReseedAppendIo({ git: f.git, binding: f.binding, sealed: f.sealed }),
     appendEvidence: async event => { events.push(structuredClone(event)); },
     readIssue: unused, updateIssue: unused, installActivation: unused,
     setRuntimeGate: unused, archiveActivation: unused, cleanupFixtures: unused,
