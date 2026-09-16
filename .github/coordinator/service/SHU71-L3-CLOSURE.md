@@ -13,7 +13,7 @@ the consolidated A–D gate or authorize a live window.
 | Row | Disposition | Evidence and remaining limit |
 | --- | --- | --- |
 | B1 | `CONFIRMED_BLOCKER` — substantially implemented, not fully closed | `shu71-production.mjs` implements the owner-approved transaction through real filesystem, Git, HTTP and systemctl adapters. Tests exercise signing through teardown and interrupted recovery. A complete production-entrypoint proof of two concurrently running fixture lanes through build, BLOCK, revision and re-review is still missing. In particular, the rendered supervisor environment does not yet bind all non-secret worker/model runtime settings (wrapper, durable account home and push configuration). This must be resolved and composed with L1/L2 before claiming an executable window. Correction owner remains this lane. |
-| B2 | `CLOSED_BY_NEW_HEAD` for the three named wiring contradictions; B1's broader runtime composition remains blocking | Fixed activation argv, a systemd transport credential, and a separate bounded API-evidence process replace the contradictory environment requirements. `shu71-delivery.test.mjs` and six named mutations exercise the actual delivery code. No existing split-environment assertion is removed. This is source-level closure, not a claim that the new unit/identity has been provisioned. |
+| B2 | `CLOSED_BY_NEW_HEAD` for the three named wiring contradictions; B1's broader runtime composition remains blocking | Fixed activation argv, a systemd transport credential, and a separate bounded API-evidence process replace the contradictory environment requirements. `shu71-delivery.test.mjs` and eight named mutations exercise the actual delivery code. No existing split-environment assertion is removed. This is source-level closure, not a claim that the new unit/identity has been provisioned. |
 | B4 | `CLOSED_BY_NEW_HEAD` for the new production command | Durable independent custody, a hashed append-only journal, recovery stream for torn evidence, aggregate cleanup, physical expiry service, and separate expiry/completion events. The crash matrix replaces the process before/after every modeled mutation/durability boundary. Kernel/systemd/disk behavior still requires the eventual authorized live proof. The callback library is sanitized and its gate failure no longer aborts independent teardown; it is not the production recovery entrypoint. |
 
 ## Production entrypoint and authority
@@ -72,7 +72,7 @@ activation IDs from sharing the physical gates.
 | Production signer/teardown | root | Fixed owner artifact/key and signing-key paths; reads only the required GitHub/Linear bindings for its fixed operations. Git runs as 999, with only GitHub authentication passed to that bounded Git process. No command stderr or secret values enter receipts. |
 | Coordinator tick | `shu-coordinator` (package contract UID 999) | Its existing coordinator environment stays separate. `LoadCredential=supervisor-transport:/etc/shu/supervisor.env` exposes only the single-key transport file under `/run/credentials/shu-coordinator.service/`; it is read at the transport call site, never exported into `process.env`. |
 | Supervisor | same existing service identity | Its root-owned `0600` environment still contains only `SHU_SUPERVISOR_SECRET`; no GitHub/Linear token is added. |
-| Trusted supervisor adapter child | same service identity; sandboxed writer/reviewer remain 995/994 | Transport secret, API tokens and `CREDENTIALS_DIRECTORY` are removed from the fork environment. Fixed evidence-client argv sends only an `evidence` or SHA-bounded `ancestry` request to the local broker. |
+| Trusted supervisor adapter child | same service identity; sandboxed writer/reviewer remain 995/994 | Only an exact allowlist of non-secret runtime keys enters the fork environment; transport/API credentials, credential aliases and unknown keys are refused. Fixed evidence-client argv sends only an `evidence` or SHA-bounded `ancestry` request to the local broker. |
 | Fixture evidence broker | numeric UID 996, GID 999 | Separate systemd service reads the existing coordinator environment; its code consumes GitHub/Linear bindings only. Socket `/run/shu71-evidence/fixture.sock`, mode 0660, private runtime directory 0750. The fixed repository and two fixture IDs are compiled into the broker; caller-supplied URLs, queries, writes and executables are rejected. |
 
 No secret files are combined, re-owned or copied into supervisor/worker
@@ -101,7 +101,7 @@ now copy the new dependency alongside `units.mjs`; their assertions are intact.
 
 Outstanding: complete worker-runtime delivery and the production-entrypoint
 concurrent L1/L2/B1 composition; exact-head independent-family verification; the
-10 reproduced baseline coordinator-suite failures; and the directive's later
+historical environment-dependent test claims (not retroactively certified); and the directive's later
 read-only host reconciliation and controlled live proof. Linear state updates
 have before/readback checks, but this code does not claim a server-side Linear
 compare-and-swap primitive. Only Git updates carry expected-old-value semantics.
@@ -110,3 +110,67 @@ No acceptance card is moved to Done by this implementation.
 No target host was accessed, no production signing/reseed/activation occurred,
 no push/PR/main merge happened, and no GitHub or Linear message was sent. No new
 approval block should be issued from this candidate.
+
+
+## Response to independent verifier at dae5948
+
+The full `/home/bawes/work/verdict-140.md` and `.json` were read before editing.
+The B1, B2 and B4 disposition markers above are unchanged: overall **BLOCK**,
+B1 blocked, B2/B4 source-level only. These repairs do not authorize execution.
+The verifier did not upgrade those markers. Its exact-head review does not
+cover this later commit, which still requires independent verification.
+
+- **F1 — stale completion receipt:** a completed journal no longer suffices to
+  attest present teardown. Both fixed gate files must be custody-checked and
+  contain the disabled value, the activation path must be absent, and all three
+  dispatch services plus the evidence broker must report inactive/failed.
+  Missing/unreadable evidence or drift returns `ACT_TEARDOWN_DRIFT`, never a
+  successful physical receipt. First completion and incomplete retries also
+  observe these conditions before `TEARDOWN_COMPLETE`. Drift after a previously
+  completed episode is refused, not automatically repaired. If another episode
+  owns the shared gates, the old episode returns an explicitly historical
+  `retired_episode` receipt with `physical_teardown_observed: false` and performs
+  no service commands or shared-gate mutations.
+- **F4 — credential denylist:** supervisor children now receive exact named
+  non-secret runtime keys only. Case variants, suffixes, whitespace aliases,
+  alternate provider credentials and unknown variables cannot bypass the list.
+  Tests also intercept the actual spawner's fork boundary. The three original
+  secret-removal mutations now introduce those keys into the allowlist; their
+  original assertions remain intact. F5's adjacent environment-secret bypass is
+  repaired by sharing the same type/length/character validation with the fixed
+  systemd credential path.
+- **F2/F3 — trust-guard coverage:** direct tests reject journal payload/hash,
+  previous-link, sequence, torn-record and custody attacks under their named
+  refusal codes. Forged completion evidence is retained byte-for-byte while
+  recovery removes activation. All six verifier survivors now have named
+  assertion kills: NV1 installation binding, NV2 transition readback, NV3 atomic
+  file fsync, NV4 journal hash chain, NV5 active-episode conflict, and NV6 owner
+  Ed25519 verification. The durability oracle enumerates required files and
+  write/file-fsync/rename/parent-fsync order independently of observed crash
+  boundaries. Additional tests name process identity, approval-file custody,
+  fixture-ref binding and remote-ancestry refusals.
+
+The systemd credential, UID-996 broker, separate secret files and bounded,
+credential-free receipts are preserved. No production operator callback was
+added. All edits remain under `.github/coordinator/`; the declared PR base and
+inherited L2 content were not changed.
+
+Still unsupported or open: B1's complete worker runtime and concurrent lane
+proof; every host/live-system property identified by the verifier; broker access
+to the entire coordinator EnvironmentFile; F6's pre-journal owner-approval error
+reporting; F7's callback-library validation-failure cleanup; and the verifier's
+minor observations about installed-file inventory, unconditional restoration,
+expiry operational behavior and the older authorization error path. These are
+not claimed fixed by the guard/coverage repair. Historical test results are
+retained as historical evidence, not retroactively certified.
+
+
+Final consistent-precondition validation: focused 191/191; 30/30 targeted
+source mutants killed (13 added); 504 process-death injections. Coordinator:
+1,682 total, 1,663 pass, zero failures, 19 existing skips. Reviewed-head local
+clone: 1,644 total, 1,625 pass, zero failures, identical skips. Of 506
+mutation-named coordinator checks, 505 pass and one existing systemd rollback
+mutation is skipped by the no-host gate; no kill is claimed for it. Application:
+459 Node tests plus 27 Vitest tests pass, with 85 standalone mutation kills.
+The preliminary inconsistent-precondition run and the earlier self-report are
+retained separately in the JSON. Neither is relabeled as successful or skipped.

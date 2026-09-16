@@ -5,13 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const cases = [
-  ['child retains transport secret', 'credential-delivery.mjs', "'SHU_SUPERVISOR_SECRET', 'GITHUB_TOKEN'", "'UNUSED', 'GITHUB_TOKEN'", m => {
+  ['child allowlist replaced by denylist', 'credential-delivery.mjs', 'allowed.has(key)', "!['SHU_SUPERVISOR_SECRET', 'GITHUB_TOKEN', 'GH_TOKEN', 'LINEAR_API_TOKEN', 'CREDENTIALS_DIRECTORY'].includes(key)", m => {
+    assert.deepEqual(m.supervisorChildEnvironment({ github_token: 'poison', GITHUB_PAT: 'poison', UNKNOWN: 'poison' }), {}, 'B2_EXACT_ALLOWLIST');
+  }],
+  ['environment secret validation bypassed', 'credential-delivery.mjs', 'return checkedSecret(env.SHU_SUPERVISOR_SECRET)', 'return env.SHU_SUPERVISOR_SECRET', m => {
+    assert.throws(() => m.supervisorTransportSecret({ SHU_SUPERVISOR_SECRET: 'short' }), /ACT_CREDENTIAL_UNAVAILABLE/, 'B2_ENV_SECRET_STRENGTH');
+  }],
+  ['child retains transport secret', 'credential-delivery.mjs', "'PATH', 'HOME'", "'SHU_SUPERVISOR_SECRET', 'PATH', 'HOME'", m => {
     assert.equal(m.supervisorChildEnvironment({ SHU_SUPERVISOR_SECRET: 'poison' }).SHU_SUPERVISOR_SECRET, undefined, 'B2_NO_CHILD_TRANSPORT_SECRET');
   }],
-  ['child retains GitHub token', 'credential-delivery.mjs', "'GITHUB_TOKEN', 'GH_TOKEN'", "'UNUSED', 'GH_TOKEN'", m => {
+  ['child retains GitHub token', 'credential-delivery.mjs', "'PATH', 'HOME'", "'GITHUB_TOKEN', 'PATH', 'HOME'", m => {
     assert.equal(m.supervisorChildEnvironment({ GITHUB_TOKEN: 'poison' }).GITHUB_TOKEN, undefined, 'B2_NO_CHILD_GITHUB_TOKEN');
   }],
-  ['child retains Linear token', 'credential-delivery.mjs', "'LINEAR_API_TOKEN', 'CREDENTIALS_DIRECTORY'", "'UNUSED', 'CREDENTIALS_DIRECTORY'", m => {
+  ['child retains Linear token', 'credential-delivery.mjs', "'PATH', 'HOME'", "'LINEAR_API_TOKEN', 'PATH', 'HOME'", m => {
     assert.equal(m.supervisorChildEnvironment({ LINEAR_API_TOKEN: 'poison' }).LINEAR_API_TOKEN, undefined, 'B2_NO_CHILD_LINEAR_TOKEN');
   }],
   ['transport accepts foreign credential directory', 'credential-delivery.mjs', "if (env.CREDENTIALS_DIRECTORY !== '/run/credentials/shu-coordinator.service')", "if (false)", m => {

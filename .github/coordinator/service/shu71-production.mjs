@@ -202,13 +202,16 @@ export function createShu71Production(id, b = shu71Boundary) {
     const initial = journal.entries.find(e => e.event === 'APPROVED');
     try {
       if (!initial) journal.append({ event: 'APPROVED', spec });
-      if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {
-        try { if (JSON.parse(privateRead(`${ROOT}/active.json`)).activation_id === id) remove(`${ROOT}/active.json`); }
-        catch (e) { if (e.code !== 'ENOENT') throw e; }
-        return { ok: true, state: 'REVOKED', activation_id: id };
-      }
       let active;
       try { active = JSON.parse(privateRead(`${ROOT}/active.json`)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {
+        // A successor owns the shared gates. This receipt is historical only.
+        if (active && active.activation_id !== id) return { ok: true, state: 'REVOKED', activation_id: id, receipt_scope: 'retired_episode', physical_teardown_observed: false };
+        try { observeTeardown(); }
+        catch { return { ok: false, state: 'HALT', code: 'ACT_TEARDOWN_DRIFT' }; }
+        if (active) remove(`${ROOT}/active.json`);
+        return { ok: true, state: 'REVOKED', activation_id: id, physical_teardown_observed: true };
+      }
       if (active && active.activation_id !== id) return { ok: false, state: 'HALT', code: 'ACT_ACTIVATION_CONFLICT' };
       if (!active) atomic(`${ROOT}/active.json`, JSON.stringify({ activation_id: id }));
       if (recovered) {
@@ -339,6 +342,22 @@ export function createShu71Production(id, b = shu71Boundary) {
       f.rmSync(target, { recursive: true, force: false });
     }
   }
+  function observeTeardown() {
+    for (const file of GATES) {
+      const fd = f.openSync(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
+      try {
+        const st = f.fstatSync(fd);
+        need(st.isFile() && st.uid === 0 && st.nlink === 1 && !(st.mode & 0o022)
+          && f.readFileSync(fd, 'utf8') === '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'ACT_TEARDOWN_DRIFT');
+      } finally { f.closeSync(fd); }
+    }
+    let absent = false;
+    try { f.lstatSync(ACTIVATION_FILE); } catch (e) { if (e.code !== 'ENOENT') throw e; absent = true; }
+    need(absent, 'ACT_TEARDOWN_DRIFT');
+    for (const name of [...SERVICES, 'shu71-evidence.service']) {
+      need(['inactive', 'failed'].includes(command('/usr/bin/systemctl', ['show', '--property=ActiveState', '--value', name]).trim()), 'ACT_TEARDOWN_DRIFT');
+    }
+  }
   async function cleanup(spec, journal, reason) {
     const effects = [
       ['gate', () => { for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 0, 0, 0o644); } }],
@@ -365,6 +384,8 @@ export function createShu71Production(id, b = shu71Boundary) {
       ['manifest', () => atomic(`${dir}/manifest.json`, JSON.stringify({ activation_id: id,
         journal_sha256: digest(JSON.stringify(journal.entries)), authorization_expired: reason === 'expiry' }))],
     ];
+    // Observation must run on every retry, even when earlier DONE rows exist.
+    effects.push(['observation', observeTeardown]);
     const result = await teardownActivation(journal, effects, reason);
     if (result.ok) {
       // A retired episode's periodic wake must never tear down its successor.
