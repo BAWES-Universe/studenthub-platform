@@ -259,18 +259,21 @@ export async function runSuite(spec, io = {}) {
   return receipt;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const [action, file] = process.argv.slice(2);
-    if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
-    const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
-    let result;
-    if (action === 'preflight') result = await preflight(spec, hostProbe(spec), (await import('./suite-runner-spec.mjs')).bindSuite(spec));
-    else if (action === 'run') result = await runSuite(spec);
-    else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
-    else {
-      const lifecycle = await import('./disposable-suite.mjs');
-      result = action === 'create' ? lifecycle.createDisposableSuite(spec) : lifecycle.removeDisposableSuite(spec);
-    }
-    console.log(JSON.stringify(result));
-  } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
+  // Let this module finish evaluation before cyclic CLI imports settle.
+  void (async () => {
+    try {
+      const [action, file] = process.argv.slice(2);
+      if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
+      const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
+      let result;
+      if (action === 'preflight') result = await preflight(spec, hostProbe(spec), (await import('./suite-runner-spec.mjs')).bindSuite(spec));
+      else if (action === 'run') result = await runSuite(spec);
+      else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
+      else {
+        const lifecycle = await import('./disposable-suite.mjs');
+        result = action === 'create' ? lifecycle.createDisposableSuite(spec) : lifecycle.removeDisposableSuite(spec);
+      }
+      console.log(JSON.stringify(result));
+    } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
+  })();
 }

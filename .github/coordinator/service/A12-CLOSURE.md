@@ -11,9 +11,79 @@ is the correction head; no live acceptance or permission to execute is implied.
 | C1 | CLOSED_BY_NEW_HEAD (static) | The actual `shu261-review-findings.test.mjs` policy test calls `resolveCvtsudoers`, including its root-fixture validation, identity checks and inherited descriptor execution. Policy conversion uses that same open descriptor, with checks before/after conversion. A virtual filesystem exposes only `/usr/bin/cvtsudoers.ws`; the loaded real suite body passes. Restoring the hardcoded call dies at `SHU251_SUITE_PARSER_REQUIRED`. Real installed-parser execution was prohibited, not claimed. |
 | C2 | CONTRACT_CORRECTED; HOST_PROOF_UNSUPPORTED | Owner ruling implemented below. Exact capability requirements are revision-bound; namespace proof remains mandatory. No host access or policy change. |
 | C3 | CONFIRMED_BLOCKER (partially implemented) | The runner rejects caller-selected file/count fields, binds HEAD/tree/cleanliness/identity, derives both suite globs from the pinned Git tree, reads outcome names from a pinned inventory, and compares their multiset. Reviewed create/verify/record/remove operations preserve an external durable receipt. **The authoritative inventory has not been produced** because full verification is not green. Interruption coverage is incomplete; see limitations. |
-| C4 | CLOSED_BY_NEW_HEAD (runner precondition); approval-order input outstanding | A12 requires supervisor, coordinator and timer `ActiveState=inactive` before capability probes and suite execution in `run`. CLI `preflight` binds the inventory but does not enforce quiescence or disposable custody; C4 remains open for that action. Active, transitional, failed and malformed states refuse. No A12 capability requires these services running. The integrator must place render/identity → A12 create/run/remove → service start in the approval composition. The action does not stop services to manufacture this precondition. |
+| C4 | PARTIAL (run precondition only); approval-order input outstanding | A12 requires supervisor, coordinator and timer `ActiveState=inactive` before capability probes and suite execution in `run`. CLI `preflight` binds the inventory but does not enforce quiescence or disposable custody; C4 remains open for that action. Active, transitional, failed and malformed states refuse. No A12 capability requires these services running. The integrator must place render/identity → A12 create/run/remove → service start in the approval composition. The action does not stop services to manufacture this precondition. |
 
-## Independent-verifier amendments (current)
+## R2 verifier amendments (current)
+
+Read both `/home/bawes/work/verdict-137-r2.md` and `.json`, adjudicated at
+`a2dfe80352bfc0f8dae7d069381a25d4fad7be88`. G1 is corrected by the verified
+minimal remedy: the existing CLI try/catch runs inside `void (async () => { … })()`.
+Module evaluation can finish before its dynamic imports await modules that
+statically import this module. All existing guards, error codes and assertions
+remain intact. This is not a new independent PASS or host acceptance.
+
+`cli-amendments.test.mjs` spawns the shipped entrypoint for all five actions.
+Each deliberately invalid-identity spec reaches the real imported identity
+check and returns exactly one JSON error on stderr, no stdout, and exit **2**:
+`{"ok":false,"code":"SHU251_SUITE_IDENTITY","reason":"SHU251_SUITE_IDENTITY: "}`.
+The test explicitly loads the repository refusal boundary; no host command or
+host metadata access is required. For each action, a syntax-valid mutant
+restores top-level await while retaining both real back-imports. All five
+mutants reproduce exit **13**, emit no receipt, and die at `CLI_TYPED_REFUSAL`.
+Library controls continue to cover successful injected paths; these subprocess
+refusals prove CLI dispatch/error behavior, not a successful host run.
+
+The two added F1 shapes use exact permitted names/reasons: `t.skip()` followed
+by a failing `t.after` hook, and `t.skip()` followed by a 50ms timeout during a
+400ms await. Each still has Node exit **0**, emits a failure outcome, and refuses
+`SHU251_SUITE_FAILURE`. Each has its own old-precedence mutant, killed at
+`REPORTER_FAILURE_SHAPE`. The prior F1/F6/F7 controls and mutants still pass.
+
+All runs below use Node v22.22.3, non-root, `umask 0002`, coordinator files
+non-writable by group/other, and the same unchanged repository refusal preload.
+Base and current source were run as real Git checkouts. No systemd skip override
+was set. Both full globs include every test/mutation file in their scope.
+
+| Run | Tests | Pass | Fail | Skip |
+| --- | ---: | ---: | ---: | ---: |
+| Focused A12, including all R1/R2 controls and mutants | 124 | 124 | 0 | 0 |
+| Phase-A, including all its mutants | 35 | 35 | 0 | 0 |
+| Base full coordinator + service | 1352 | 1236 | 114 | 2 |
+| Current full coordinator + service | 1399 | 1283 | 114 | 2 |
+| Base service | 247 | 224 | 23 | 0 |
+| Current service | 294 | 271 | 23 | 0 |
+
+Zero cancelled/todo in all six runs. Failure-name lists and skip name/reason
+pairs match base exactly: zero new failures or skips, 47 passing additions
+versus base, 14 versus the R2-adjudicated head. **Full suites remain FAIL.**
+Broader mutation kills and unrestricted suite success remain unsupported.
+The focused and Phase-A matrices contain **69 passing mutation-named tests**:
+56 focused source mutants, 12 Phase-A source mutants, and one Phase-A approval
+control. Thus **68/68 source mutants are killed**, including all seven added
+here. G4's historical 62-versus-61 discrepancy is reconciled explicitly below
+and in the historical fixture; no extra mutant is invented from a control name.
+
+G5's C4 label is now `PARTIAL`, matching its run-only scope. F4 remains open
+by design: no authoritative inventory is shipped; C3 is `CONFIRMED_BLOCKER`
+and C2 is `HOST_PROOF_UNSUPPORTED`. No host capability, actual namespace
+success, complete interruption recovery, durable interlock, or other Node
+version is proved here. G2's corpus-only preservation scope is explicit below.
+
+`PERMITTED_SKIPS` is byte-identical to base: 1093 bytes, eight entries, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+The reporter itself is unchanged from the R2-adjudicated head, preserving the
+verified F1 remedy. Exact counts, failure names, skip pairs, mutation names,
+CLI envelopes and log digests are in `test/fixture/r2-amendment-results.json`;
+raw logs are retained in `/tmp/l4-r2-amend/`.
+
+Reproduce focused verification with the same refusal preload used for full
+runs below, adding `^SHU251 C2|` to the focused pattern and adding
+`capability-requirements.test.mjs`, `reporter-amendments.test.mjs` and
+`cli-amendments.test.mjs` to the focused file list. No assertion, guard, error
+code, skip allowance or boundary was weakened. No host access, push, PR action,
+merge, GitHub comment or Linear comment occurred.
+
+## Independent-verifier amendments (R1 historical)
 
 Applied the mandatory amendments from `/home/bawes/work/verdict-137.md` and
 `.json`, adjudicated at `3bc169740573f95e68c33a0bcc971db00ae3bc65`.
@@ -67,9 +137,12 @@ Cancelled/todo are zero throughout. No tests removed, 33 passing additions
 versus base (six since the verified head), zero new or fixed failures, and
 identical skip names/reasons. **Full suites remain FAIL.** All mutation files
 were included in their full globs; broader mutation success is unsupported.
-The focused matrices kill **61/61** mutations: 29 parser, 12 Phase-A, eight
-prior correction, nine C2, three amendments, with positive controls and syntax
-checks. This includes the verifier's D1–D5 defect shapes through the existing
+The focused matrices contain **62/62 passing mutation-named tests**: 49 focused
+and 13 Phase-A. Of these, **61 are mutation kills** (29 parser, 12 Phase-A,
+eight prior correction, nine C2, three amendments); the thirteenth Phase-A
+name is `SHU251 driver approval is explicit for every mutation`, a positive
+approval control rather than a source mutant. All source mutants have positive
+controls and syntax checks. This includes the verifier's D1–D5 defect shapes through the existing
 binding, cardinality, actual-parser, uncovered-requirement and inventory mutants.
 
 **Behavior preservation:** independently ran the exact verified-head archive
@@ -102,8 +175,11 @@ compare the entire JSONL files with `cmp`, without filtering outcomes.
 
 `host-suite-contract.mjs` retains `preflight` and `run` and adds `measure`,
 `create` and `remove`. The argument is an absolute JSON spec path. These are
-production actions for a future authorized window; none was executed on a host
-in this correction. Tests call the production modules with controlled boundaries.
+production actions for a future authorized window. The R2 correction removes
+the CLI top-level-await deadlock; subprocess tests execute all five actions
+against a deliberately invalid identity and assert a structured
+`SHU251_SUITE_IDENTITY` refusal (exit 2). No host action was executed. Library
+controls separately exercise successful paths through injected boundaries.
 
 The spec binds:
 
@@ -185,7 +261,10 @@ of test requirements. A probe exception still fails under the existing code.
 
 Preflight records potential authorized skips; it does not generate outcomes.
 The suite still executes and its existing failure, reason, name, count and exit
-checks remain authoritative. A failure is never rewritten as a skip. Both `run`
+checks remain authoritative. A failure is never rewritten as a skip. Failure precedence also reports an
+option-form skip inside a suite with a failing `before` hook as a failure;
+byte preservation above applies to that measured corpus, not every possible
+test program. Both `run`
 and CLI `preflight` consume the revision-bound inventory. Direct injected tests
 without an inventory retain conservative unconditional capability requirements.
 

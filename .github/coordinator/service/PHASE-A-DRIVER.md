@@ -163,9 +163,10 @@ not signatures or proof of an untrusted producer's identity. No keys are created
 
 ## A12 host contract
 
-`node host-suite-contract.mjs preflight /absolute/suite.json` detects capabilities.
-`node host-suite-contract.mjs run /absolute/suite.json` always performs that same
-preflight before invoking Node tests. The current runner first verifies disposable
+`node host-suite-contract.mjs preflight /absolute/suite.json` binds identity,
+revision and inventory before detecting capabilities. It does not check custody
+or quiescence. `node host-suite-contract.mjs run /absolute/suite.json` performs
+capability preflight before invoking Node tests. Its runner first verifies disposable
 custody, the exact non-root service UID/GID/groups, pinned revision/tree, inventory
 and inactive service/timer states. Caller-selected `files` and `expected_tests`
 are now rejected. The pinned revision supplies the suite inventory and its count.
@@ -173,6 +174,11 @@ See [A12-CLOSURE.md](A12-CLOSURE.md) for the replacement spec, create/remove act
 verification evidence and outstanding blockers. No authoritative inventory is yet
 shipped; A12 remains blocked. Historical counts below are not an inventory for
 this revision. No automatic identity escalation is used for the suite itself.
+The R2 CLI correction allows cyclic imports to finish before awaiting actions.
+Subprocess regressions for `preflight`, `run`, `measure`, `create` and `remove`
+prove structured identity refusals (exit 2), with the restored top-level-await
+mutant caught for every action. These repository controls do not prove host
+capability or successful A12 execution.
 
 | Capability | Detection | Named refusal |
 | --- | --- | --- |
