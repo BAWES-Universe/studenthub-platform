@@ -5,7 +5,7 @@ const SHA = 'a'.repeat(40), OLD = 'b'.repeat(40);
 const approved = { execute: true, approvedHostMutation: SHA, env: { SHU251_HOST_MUTATION_APPROVED: 'true' } };
 const clone = v => structuredClone(v);
 export function fixture() {
-  const window = { approved_sha: SHA, repo_dir: '/reviewed/repo', unit_directory: '/etc/systemd/system',
+  const window = { remote_url: 'https://github.com/BAWES-Universe/studenthub-platform.git', approved_sha: SHA, repo_dir: '/reviewed/repo', unit_directory: '/etc/systemd/system',
     workspace_state_dir: '/srv/shu/state/workspaces', supervisor_state_dir: '/srv/shu/state/workspaces/supervisor',
     supervisor_socket: '/srv/shu/state/workspaces/supervisor.sock' };
   const render = { workdir: window.repo_dir, serviceUser: 'shu-coordinator', serviceGroup: 'shu-coordinator',
@@ -16,23 +16,25 @@ export function fixture() {
   const rendered = { ...units, ...Object.fromEntries(FILES.filter(n => !UNIT_NAMES.includes(n)).map(n => [n, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'])) };
   const identity = { user: 'shu-coordinator', group: 'shu-coordinator', uid: 1001, gid: 1001, groups: [1001, 1002] };
   const spec = { window, render, window_spec_path: '/reviewed/window.json', lifecycle: {
+    checkout_before: { sha: SHA, head_ref: 'refs/heads/main', main: SHA, origin_main: SHA, tree: 'c'.repeat(40), clean: true },
     activation_id: 'shu251-window-001', approval_sha256: hash('review approval'), approved_tree: 'c'.repeat(40), identity,
-    environment: Object.fromEntries(['supervisor', 'coordinator'].map(n => [n, { path: render[`${n}EnvironmentFile`], uid: 1001, gid: 1001, mode: 0o600, kind: 'file' }])),
+    environment: Object.fromEntries(['supervisor', 'coordinator'].map(n => [n, { path: render[`${n}EnvironmentFile`], uid: n === 'supervisor' ? 0 : 1001, gid: n === 'supervisor' ? 0 : 1001, mode: 0o600, kind: 'file' }])),
     directories: [window.workspace_state_dir, window.supervisor_state_dir].map(p => ({ path: p, kind: 'directory', uid: 1001, gid: 1001, mode: 0o700 })),
     systemd_version: 255, capabilities: [...REQUIRED_CAPABILITIES],
     evidence_root: '/srv/shu/evidence', evidence_dir: '/srv/shu/evidence/shu251-window-001',
     rendered_sha256: Object.fromEntries(FILES.map(n => [n, hash(rendered[n])])),
   } };
-  let state = { files: Object.fromEntries(TARGETS.map(n => [n, { kind: 'absent' }])),
+  let state = { checkout: clone(spec.lifecycle.checkout_before), files: Object.fromEntries(TARGETS.map(n => [n, { kind: 'absent' }])),
     enabled: Object.fromEntries(UNIT_NAMES.map(n => [n, 'disabled'])), active: Object.fromEntries(UNIT_NAMES.map(n => [n, 'inactive'])),
     pin: { ref: 'refs/shu251/activations/shu251-window-001', sha: OLD } };
   let journal = null, locked = false, invocation = 'd'.repeat(32), saves = 0;
   const calls = [], faults = { before: null, after: null, save: null, saveAfter: null }, overrides = {};
-  const probe = () => ({ checkout: { sha: SHA, tree: spec.lifecycle.approved_tree, clean: true }, identity: clone(identity),
+  const remoteMain = () => ({ remote_sha: SHA, api_sha: SHA, tree: spec.lifecycle.approved_tree });
+  const probe = () => ({ checkout_tuple: clone(state.checkout), approved_main: remoteMain(), checkout: { sha: SHA, tree: spec.lifecycle.approved_tree, clean: true }, identity: clone(identity),
     environment: clone(spec.lifecycle.environment), directories: clone(spec.lifecycle.directories), systemd_version: 255,
     capabilities: clone(spec.lifecycle.capabilities), writer_lock: locked ? 'held-by-driver' : 'free',
     destination: { path: '/etc/systemd/system', canonical: '/etc/systemd/system', uid: 0, mode: 0o755, unreviewed_dropins: [] },
-    evidence: { path: spec.lifecycle.evidence_dir, canonical: spec.lifecycle.evidence_dir, uid: 1001, mode: 0o700, manifest: expectedManifest(spec) } });
+    evidence: { path: spec.lifecycle.evidence_dir, canonical: spec.lifecycle.evidence_dir, uid: 0, mode: 0o700, manifest: expectedManifest(spec) } });
   function effect(verb, target, perform) {
     assert.ok(locked, 'all mutations hold the writer and custody lock');
     assert.ok(journal, 'backup must be durable before any mutation');
@@ -46,6 +48,8 @@ export function fixture() {
     return true;
   }
   const host = {
+    remoteMain,
+    recordPreflight: async () => true, resumeReceipt: async () => null, initialize: async () => true, authorize: async () => true, finalize: async () => true,
     probe: async () => overrides.probe ? overrides.probe(probe()) : probe(),
     snapshot: async () => overrides.snapshot ? overrides.snapshot(clone(state)) : clone(state),
     stage: async u => {
@@ -56,6 +60,12 @@ export function fixture() {
       const r = { identity: clone(identity), listeners: [window.supervisor_socket], supervisor: 'ready', coordinator: 'ready',
         committed_dispatch: false, runtime_dispatch: false, invocation_id: invocation, worker: { pid: 4321, start_token: '12345' } };
       return overrides.readiness ? overrides.readiness(r) : r;
+    },
+    runningGateOff: async () => ({ before: {}, after: {}, ticks: 3, writes: 0, launches: 0 }),
+    serviceReadiness: async () => {
+      const r = await host.readiness();
+      delete r.worker;
+      return r;
     },
     withLock: async fn => {
       if (locked) throw Object.assign(new Error('busy'), { code: 'SHU251_WRITER_LOCK' });
@@ -87,6 +97,7 @@ export function fixture() {
       }
       if (verb === 'restart') invocation = 'e'.repeat(32);
     }),
+    checkout: async (before, after) => effect('checkout', window.repo_dir, () => { assert.deepEqual(state.checkout, before); state.checkout = clone(after); }),
     pin: async (ref, before, after) => effect('pin', ref, () => {
       assert.equal(ref, state.pin.ref); assert.equal(before, state.pin.sha); state.pin.sha = after;
     }),

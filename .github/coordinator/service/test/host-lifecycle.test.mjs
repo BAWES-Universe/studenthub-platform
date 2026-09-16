@@ -18,7 +18,7 @@ async function started(f) { await installed(f); await f.run('start'); }
 test('LIFECYCLE complete fake-only typed action control', async () => {
   const f = fixture(), prior = clone(f.state);
   const pre = await f.run('preflight'); validateReceipt(pre, 'preflight', f.spec);
-  await f.run('pin'); await f.run('pin-retain'); await started(f); await f.run('readiness');
+  await f.run('pin'); await f.run('pin-retain'); await started(f); await f.run('readiness'); await f.run('running-gate-off');
   const restart = await f.run('restart');
   assert.equal(restart.evidence.after.readiness.invocation_id, 'e'.repeat(32));
   assert.equal(f.journal.restart.record.receipt.evidence.invocation_id, 'd'.repeat(32));
@@ -40,6 +40,14 @@ test('LIFECYCLE dry run and all mutation approvals have zero effects', async () 
 // Every row runs a permitted control, then changes one input/observation/effect.
 // The separate mutation harness removes only the named invariant family.
 const guards = [
+  ['SHU251_CHECKOUT_TUPLE', 'preflight', f => { f.spec.lifecycle.checkout_before.head_ref = 'refs/heads/other'; }],
+  ['SHU251_CHECKOUT_BASELINE', 'preflight', f => { f.spec.lifecycle.checkout_before.clean = false; }],
+  ['SHU251_CHECKOUT_EFFECT', 'pin', f => { f.host.checkout = async () => false; }, f => {
+    f.spec.lifecycle.checkout_before.origin_main = OLD; f.state.checkout.origin_main = OLD;
+  }],
+  ['SHU251_CHECKOUT_RESTORE', 'pin-restore', f => { f.state.checkout.origin_main = 'f'.repeat(40); }, async f => { await f.run('pin'); await f.run('host-rollback'); }],
+  ['SHU251_RUNNING_GATE_OFF', 'running-gate-off', f => { f.host.runningGateOff = async () => ({ before: {}, after: {}, ticks: 3, writes: 1, launches: 0 }); }, started],
+  ['SHU251_EVIDENCE_ARCHIVE', 'pin', f => { f.host.finalize = async () => false; }],
   ['SHU251_LIFECYCLE_SPEC', 'preflight', f => { f.spec.window.unit_directory = '/unreviewed'; }],
   ['SHU251_LIFECYCLE_PATHS', 'preflight', f => { f.spec.lifecycle.evidence_dir = f.spec.lifecycle.evidence_root; }],
   ['SHU251_LIFECYCLE_INPUT', 'preflight', f => {}, null, { ...approved, command: 'systemctl anything' }],
@@ -288,4 +296,22 @@ test('LIFECYCLE internal executor also enforces approval and execute intent', as
   await assert.rejects(() => executeLifecycle('install', f.spec, {}, f.io), named('SHU251_HOST_MUTATION_APPROVAL'));
   await assert.rejects(() => executeLifecycle('install', f.spec, { ...approved, execute: false }, f.io), named('SHU251_LIFECYCLE_INPUT'));
   assert.deepEqual(f.calls, []); assert.equal(f.journal, null);
+});
+
+test('CLOSURE cleanup survives forward drift and aggregates independent undo failures', async () => {
+  const f = fixture(); await started(f);
+  f.overrides.probe = () => { throw Error('forward eligibility unavailable'); };
+  const failed = new Set();
+  f.faults.before = (verb, target) => {
+    if (verb === 'stop' && target === 'shu-coordinator.timer' || verb === 'place' && target === FILES[1]) { failed.add(target); return true; }
+    return false;
+  };
+  await assert.rejects(() => f.run('host-rollback'), e => e.code === 'SHU251_LIFECYCLE_ROLLBACK' && e.failures.length >= 2);
+  assert.equal(failed.size, 2);
+  assert.ok(f.journal.cleanup_failures.length >= 2);
+  assert.ok(f.journal.entries.some(e => e.status === 'undone'));
+  assert.ok(f.calls.some(c => c.verb === 'stop' && c.target === 'shu-supervisor.service'));
+  f.faults.before = null;
+  await f.run('host-rollback'); await f.run('pin-restore');
+  assert.deepEqual(f.state, f.journal.prior);
 });

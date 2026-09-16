@@ -157,7 +157,7 @@ test('SHU251 operational wrapper routes every reviewed lifecycle action without 
   const windowFile = path.join(root, 'window.json'), driverFile = path.join(root, 'driver.json');
   fs.writeFileSync(windowFile, JSON.stringify(window));
   fs.writeFileSync(driverFile, JSON.stringify({ window, window_spec_path: windowFile, render: { workdir: root } }));
-  const actions = ['preflight', 'install', 'start', 'readiness', 'restart', 'host-rollback', 'pin', 'pin-restore', 'pin-retain'];
+  const actions = ['preflight', 'install', 'start', 'readiness', 'running-gate-off', 'restart', 'host-rollback', 'pin', 'pin-restore', 'pin-retain'];
   for (const action of actions) {
     const result = spawnSync(wrapper, [action, driverFile, '--approved-host-mutation', SHA], {
       encoding: 'utf8', env: { ...process.env, SHU251_HOST_MUTATION_APPROVED: 'true' },

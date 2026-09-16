@@ -305,7 +305,7 @@ for (const mutation of mutations) test(`SHU251 phase A mutation: ${mutation.name
 });
 
 const reviewedLegacy = { inventory: 'remote_inventory', quiescence: 'driver_quiescence', transport: 'transport_observation', launch: 'fixture_launch_observation', worker: 'worker_observation', 'replay-release': 'replay_release', cleanup: 'fixture_cleanup', 'capture-prior': 'prior_state_rollback', rollback: 'prior_state_rollback' };
-const reviewedLifecycle = { preflight: 'host_preflight', install: 'host_install', start: 'host_start', readiness: 'host_readiness', restart: 'host_restart', 'host-rollback': 'host_rollback', pin: 'host_pin', 'pin-restore': 'host_pin_restore', 'pin-retain': 'host_pin_retain' };
+const reviewedLifecycle = { preflight: 'host_preflight', install: 'host_install', start: 'host_start', readiness: 'host_readiness', 'running-gate-off': 'host_running_gate_off', restart: 'host_restart', 'host-rollback': 'host_rollback', pin: 'host_pin', 'pin-restore': 'host_pin_restore', 'pin-retain': 'host_pin_retain' };
 test('ROUTING complete disjoint registry and intended routes', async t => {
   assert.deepEqual(Object.keys(reviewedLegacy).filter(k => Object.hasOwn(reviewedLifecycle, k)), [], 'ROUTING_DISJOINT_REQUIRED');
   assert.deepEqual(Object.keys({ ...reviewedLegacy, ...reviewedLifecycle }).sort(), Object.keys(ACTIONS).sort(), 'ROUTING_COMPLETE_REQUIRED');
@@ -319,7 +319,7 @@ test('ROUTING complete disjoint registry and intended routes', async t => {
   }
   const { fixture: lifecycleFixture } = await import('./lifecycle-fixture.mjs');
   const f = lifecycleFixture(), observed = new Set();
-  for (const step of ['preflight', 'pin', 'pin-retain', 'install', 'start', 'readiness', 'restart', 'host-rollback', 'pin-restore']) {
+  for (const step of ['preflight', 'pin', 'pin-retain', 'install', 'start', 'readiness', 'running-gate-off', 'restart', 'host-rollback', 'pin-restore']) {
     const [outcome] = await Promise.allSettled([f.run(step)]);
     assert.equal(outcome.status, 'fulfilled', 'ROUTING_LIFECYCLE_REQUIRED');
     assert.equal(outcome.value.evidence.binding, reviewedLifecycle[step], 'ROUTING_LIFECYCLE_REQUIRED');

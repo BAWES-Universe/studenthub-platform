@@ -1,132 +1,190 @@
-# Reviewed production lifecycle provider
+# Reviewed production lifecycle provider — current L1 correction
 
-`phase-a-driver.mjs` is the executable entrypoint. Its default lifecycle path
-constructs `createProductionLifecycle` from `production-lifecycle.mjs`, after
-`defaultIO.pin` validates the entrypoint's checkout location and window bindings.
-It then enters the existing typed executor, including mutation approval, exact
-preflight, durable intents, restart custody, receipt validation and rollback.
-No CLI option loads a provider, command, module or caller receipt. The internal
-boundary is for tests; this is not a sandbox against someone who can edit the
-reviewed program or control its Node runtime.
+The shipped CLI constructs the real provider; tests replace only filesystem,
+command, time and wait boundaries. Production uses fixed absolute argv and no
+operator command substitution. All test commands are interpreted by the fixture;
+none are forwarded to systemd, Git remotes, GitHub or a host credential store.
 
-The authorized operator runs the reviewed checkout as root with the existing
-approved spec and two-part mutation approval. The evidence root and private
-activation directory must already exist, owned by the approved service identity.
-The activation directory contains the reviewed `manifest.json` (0600), matching
-`expectedManifest(spec)`, and a regular private `journal.lock`. The state directory
-contains the existing regular private `host-tick.lock`; the provider never creates
-or replaces that writer lock. These are window provisioning artifacts, not new
-implementation code. The provider refuses writable-by-group/other or symlinked
-ancestors. Unit destinations must be `/etc/systemd/system`.
+The current behavioral contract and remaining blockers are in
+[HOST-LIFECYCLE.md](HOST-LIFECYCLE.md). Do not use historical round-2 results below
+to claim this correction closes every consolidated finding.
 
-The production boundary uses Node filesystem syscalls and `spawnSync` with fixed
-absolute executable paths, a sanitized environment and no shell. Unit operations
-are restricted to exported unit names and the two reviewed drop-in paths. No
-systemctl flags or arbitrary arguments pass through from the operator. The
-existing dispatch-off renderer and environment guards remain in place.
+## Owner approval artifact
 
-Directory descriptors pin filesystem parents; writes use `/proc/self/fd/N` paths.
-Ancestors, inode identity, no-follow regular files and destination preconditions
-are checked. Only a prior `/dev/null` masking symlink is supported. Placement is
-same-directory atomic rename, or explicit directory creation/removal. File data,
-ownership and mode are persisted before rename; the containing directory is
-fsynced after rename, creation and removal. Rollback restores original bytes,
-mode, ownership, masking or absence, then the executor compares a fresh snapshot.
-Unreviewed drop-in contents cause preflight refusal. Nonempty directories cannot
-be removed. This relies on Linux `/proc` and on the trust of root and the approved
-service account; it does not promise a transaction against a malicious root.
+The owner must provision `/etc/shu/approvals/owner.pub` (root:root 0644, public PEM)
+and `/etc/shu/approvals/<activation_id>.json` (root:root 0600). Both must be regular,
+non-hardlinked files beneath canonical non-symlink, non-group/world-writable
+ancestors. The driver consumes these files; it has no signing operation or CLI key
+selection. Root/key provisioning remains an external authority prerequisite.
 
-`flock --exclusive --nonblock 3` operates on an inherited open-file description.
-The parent retains the descriptor across the complete callback and final journal
-receipt, and closes it in `finally`. The provider holds both the existing writer
-lock and the activation journal lock. Probe reports free only after acquiring and
-releasing the writer lock; inside custody it verifies the retained descriptors.
-The rendered coordinator oneshot uses the same nonblocking writer lock and
-accepts lock-conflict exit code 2. While the driver holds custody, the oneshot
-cannot launch work; its completed Result and exit status are observed. The
-dispatch-off gate also remains in the rendered service configuration.
+The JSON envelope has exactly `payload` and `signature`. Signature is base64 over
+the canonical JSON payload and is verified with Node's `verify(null, ...)`; tests
+use disposable Ed25519 owner keys. The payload has exactly:
 
-Journal storage is activation-scoped, no-follow, private, atomic and fsynced.
-Probe exercises rename and file/directory fsync in that evidence filesystem and
-runs the existing host capability detectors through the same injectable boundary.
-Preflight environment inspection reads metadata only. Render retains the existing
-coordinator environment-content guard; readiness reads the supervisor process's
-environment to verify its actual dispatch gate, without returning secret values.
+- `version`: `shu251-owner-approval-v1`.
+- `spec_sha256`: SHA-256 of canonical complete driver spec with only
+  `lifecycle.approval_sha256` removed, avoiding a circular digest.
+- `not_before`, `expires_at`: integer epoch milliseconds, an ordered interval.
+- `operations`: exact ordered lifecycle action names, excluding `preflight`.
+- `teardown`: `restore` or `retain`.
 
-Git uses an activation-specific ref and `update-ref` with an expected old SHA
-(including all-zero absence), never `--force`, reset, fetch or remote operations.
-Fresh ref observations verify the operation. The executor emits typed retain and
-restore receipts and requires host rollback before restoration. Retention emits
-an observation without a ref write.
+`lifecycle.approval_sha256` must equal SHA-256 of the exact envelope bytes. Thus
+window revision, approved tree, activation ID, real checkout baseline, paths,
+rendered digests and all other spec fields are authenticated together. Existing
+window-spec consistency and CLI mutation-approval checks remain enforced.
+Cleanup authority is allowed after expiry and out of forward order; it remains
+restricted by authenticated spec, journal binding, rollback safety and teardown
+policy. No implicit admission, signing, activation or expiry scheduler is added.
 
-Readiness observes systemd MainPID, ActiveState, SubState, InvocationID and the
-coordinator's Result, ExecMainStatus and nonzero exit timestamp. It reads that
-process's UID/GID/groups and actual environment, matches the exact Unix listener
-and PID using `ss`, invokes the existing authenticated transport and live-worker
-bindings, and reads committed dispatch configuration from the approved Git blob.
-A restart must change InvocationID while preserving the live worker identity.
-These are observations made by the provider, not booleans supplied by the operator.
+The evidence root must already exist, root-owned and safe. The provider creates
+the activation directory (0700), `journal.lock`, `manifest.json`, `journal.json`
+and `archive.json` (0600); preflight has its own durable `preflight.json`. Evidence creation and file/parent fsync failures cannot
+acknowledge success. Journals and archives are digested, not signed. Approval
+signatures must not be described as signed execution receipts.
 
-## Tests and load-bearing mutations
+## Checkout and service boundary
 
-`production-fixture.mjs` translates every filesystem operation into disposable
-repository-backed storage and interprets every command with recorded outputs.
-Unrecognized commands fail; no command is forwarded to the actual machine.
-Tests run the real provider through the entire typed lifecycle, compare exact
-before/after state, verify syscall ordering and inject failures and substitutions.
-The existing executor's per-effect/per-save recovery matrix remains unchanged;
-its shared fixture moved to `lifecycle-fixture.mjs` without weakening assertions.
+Git trust retains the existing exact-checkout `safe.directory` setting; no global
+trust or additional safe directory is installed. Pin reads exact remote main and
+API commit/tree, fetches the immutable object without updating refs or FETCH_HEAD,
+checks the tree, and uses a transaction with expected old main/origin-main plus
+HEAD verification. The approved HTTPS repository and API endpoint are fixed.
+The API command receives only the narrow command environment plus GH_TOKEN from
+the production boundary; its provisioning and least-privilege scope are not proved
+by these local tests. Ref objects fetched into the object store are not removed
+on restore. The activation ref remains separate from real checkout custody.
 
-Every row below has a successful control and a syntax-clean mutant that disables
-only that code's guard family. The mutant must die in the matching
-`PROVIDER guard CODE` test with `CODE_REQUIRED`, an AssertionError and exactly one
-failure. Syntax/module/type crashes do not count as kills.
+Journal custody spans all lifecycle effects. The writer descriptor is released
+and reacquired when the coordinator must own it, including timer observation. Service-identity capability probes use the service-owned
+workspace-state directory for disposable probes, not the root-only evidence
+directory.
+Tick success requires exit 0; systemd's accepted lock-conflict exit 2 is refused.
+Service readiness checks UID/GID/groups, socket/listener PID, service status,
+committed/runtime gates and invocation without an acceptance worker. Worker and
+authenticated transport observations remain required by restart acceptance.
 
-| New code (`SHU251_PROVIDER_` prefix) | Perturbation / killed mutation |
+Directory descriptors, no-follow file operations, destination identity checks,
+exact byte/mode/owner restoration, private staging and existing error vocabulary
+remain. Rollback's modeled equality must not be described as full host equality.
+
+## New named codes and killing mutations
+
+Every row runs a successful control, perturbs one condition, syntax-checks the
+mutant, and requires exactly one assertion failure containing `CODE_REQUIRED`.
+The named mutation removes only that code's guard family. Existing mutation
+families and their assertions remain in the suite.
+
+| New code | Killing mutation test |
 | --- | --- |
-| SCOPE | Evidence directory escapes activation scope / disable SCOPE |
-| PATH | Group/world-writable destination / disable PATH |
-| SUBSTITUTION | Pinned descriptor inode differs / disable SUBSTITUTION |
-| SYMLINK | Arbitrary destination symlink / disable SYMLINK |
-| FILE | Hardlinked destination / disable FILE |
-| STORAGE | Cross-activation journal / disable STORAGE |
-| CUSTODY | Save outside writer custody / disable CUSTODY |
-| ALLOWLIST | Unreviewed unit placement / disable ALLOWLIST |
-| COMPARE | Destination differs from expected before / disable COMPARE |
-| ARGV | Unreviewed systemd unit / disable ARGV |
-| PIN | Ref outside activation / disable PIN |
-| COMMAND | Nonzero systemctl result / disable COMMAND |
-| READINESS | Missing observed listener / disable READINESS |
+| `SHU251_APPROVAL_BINDING` | `PROVIDER named mutation SHU251_APPROVAL_BINDING` → `SHU251_APPROVAL_BINDING_REQUIRED` |
+| `SHU251_APPROVAL_CUSTODY` | `PROVIDER named mutation SHU251_APPROVAL_CUSTODY` → `SHU251_APPROVAL_CUSTODY_REQUIRED` |
+| `SHU251_APPROVAL_DIGEST` | `PROVIDER named mutation SHU251_APPROVAL_DIGEST` → `SHU251_APPROVAL_DIGEST_REQUIRED` |
+| `SHU251_APPROVAL_ORDER` | `PROVIDER named mutation SHU251_APPROVAL_ORDER` → `SHU251_APPROVAL_ORDER_REQUIRED` |
+| `SHU251_APPROVAL_SIGNATURE` | `PROVIDER named mutation SHU251_APPROVAL_SIGNATURE` → `SHU251_APPROVAL_SIGNATURE_REQUIRED` |
+| `SHU251_APPROVAL_TEARDOWN` | `PROVIDER named mutation SHU251_APPROVAL_TEARDOWN` → `SHU251_APPROVAL_TEARDOWN_REQUIRED` |
+| `SHU251_APPROVAL_TIME` | `PROVIDER named mutation SHU251_APPROVAL_TIME` → `SHU251_APPROVAL_TIME_REQUIRED` |
+| `SHU251_CHECKOUT_BASELINE` | `LIFECYCLE named mutation SHU251_CHECKOUT_BASELINE` → `SHU251_CHECKOUT_BASELINE_REQUIRED` |
+| `SHU251_CHECKOUT_CAS` | `PROVIDER named mutation SHU251_CHECKOUT_CAS` → `SHU251_CHECKOUT_CAS_REQUIRED` |
+| `SHU251_CHECKOUT_EFFECT` | `LIFECYCLE named mutation SHU251_CHECKOUT_EFFECT` → `SHU251_CHECKOUT_EFFECT_REQUIRED` |
+| `SHU251_CHECKOUT_REMOTE` | `PROVIDER named mutation SHU251_CHECKOUT_REMOTE` → `SHU251_CHECKOUT_REMOTE_REQUIRED` |
+| `SHU251_CHECKOUT_RESTORE` | `LIFECYCLE named mutation SHU251_CHECKOUT_RESTORE` → `SHU251_CHECKOUT_RESTORE_REQUIRED` |
+| `SHU251_CHECKOUT_TREE` | `PROVIDER named mutation SHU251_CHECKOUT_TREE` → `SHU251_CHECKOUT_TREE_REQUIRED` |
+| `SHU251_CHECKOUT_TUPLE` | `LIFECYCLE named mutation SHU251_CHECKOUT_TUPLE` → `SHU251_CHECKOUT_TUPLE_REQUIRED` |
+| `SHU251_EVIDENCE_ARCHIVE` | `LIFECYCLE named mutation SHU251_EVIDENCE_ARCHIVE` → `SHU251_EVIDENCE_ARCHIVE_REQUIRED` |
+| `SHU251_PROVIDER_CHECKOUT` | `PROVIDER named mutation SHU251_PROVIDER_CHECKOUT` → `SHU251_PROVIDER_CHECKOUT_REQUIRED` |
+| `SHU251_PROVIDER_GATE_OFF` | `PROVIDER named mutation SHU251_PROVIDER_GATE_OFF` → `SHU251_PROVIDER_GATE_OFF_REQUIRED` |
+| `SHU251_PROVIDER_TICK` | `PROVIDER named mutation SHU251_PROVIDER_TICK` → `SHU251_PROVIDER_TICK_REQUIRED` |
+| `SHU251_RUNNING_GATE_OFF` | `LIFECYCLE named mutation SHU251_RUNNING_GATE_OFF` → `SHU251_RUNNING_GATE_OFF_REQUIRED` |
 
-The reused `SHU251_PREFLIGHT_PRIVILEGE` also has a positive/negative control and
-named guard mutation. Further mutants remove file fsync, directory fsync, flock
-success checking, default entrypoint selection, production factory construction,
-and reviewed-checkout validation. Each has its own named assertion. Existing
-executor, driver and service mutations continue to run.
+## L1 repository-only verification record (2026-09-17)
 
-The routing test uses explicit independent reviewed legacy and lifecycle maps.
-It asserts their disjointness, their union equals `Object.keys(ACTIONS)`, the
-exported lifecycle set equals the reviewed set, and every action completes through
-its intended route with the expected binding. Legacy command sequences are exact;
-lifecycle tests fail if the legacy shell/pin route is invoked. Mutations:
+Base: `885914c22f26b279e6c29b088e4c46d44037759c`, branch
+`fix/shu251-typed-host-lifecycle-executor`. Authorship: this Codex correction;
+no independent exact-head verdict is claimed. FINAL_HEAD is reported after the
+local commit. **The overall L1 verdict remains BLOCKED**, as detailed in
+[HOST-LIFECYCLE.md](HOST-LIFECYCLE.md#finding-disposition-and-unsupported-claims).
 
-| Property | Mutation | Named killing assertion |
-| --- | --- | --- |
-| Disjoint sets | Insert lifecycle preflight in legacy map | ROUTING_DISJOINT_REQUIRED |
-| Complete union | Remove exported inventory action | ROUTING_COMPLETE_REQUIRED |
-| Every intended legacy route | Route worker to launch | ROUTING_LEGACY_REQUIRED |
-| Every intended lifecycle route | Route readiness to preflight | ROUTING_LIFECYCLE_REQUIRED |
-| Untested additions fail | Register new `untested` action | ROUTING_COMPLETE_REQUIRED |
+All runs used `chmod -R go-w .github/coordinator` and `umask 0002`. No existing
+skip allowance or assertion was removed. The final source adds 45 tests:
+19 guard controls, 19 named killing mutations, and seven composition/recovery
+cases. Existing named errors, worker-adoption guards and mutation assertions
+remain. The explicit mutation-only run includes the existing binding/driver
+mutations as well as every lifecycle/provider mutation. The full combined run
+also executes the other coordinator and service mutation suites.
 
-## Scope of evidence
+| Run | Tests | Pass | Fail | Skip | Cancelled | Todo |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Base service | 397 | 397 | 0 | 0 | 0 | 0 |
+| Base combined coordinator + service | 1538 | 1530 | 0 | 8 | 0 | 0 |
+| Final focused four test files | 241 | 241 | 0 | 0 | 0 | 0 |
+| Final explicit mutation-only four test files | 105 | 105 | 0 | 0 | 0 | 0 |
+| Final service | 442 | 442 | 0 | 0 | 0 | 0 |
+| Final combined coordinator + service | 1583 | 1575 | 0 | 8 | 0 | 0 |
 
-No tests contact a host, service manager, credential store or remote Git server.
-Recorded responses prove provider interpretation and fixed argv, not the behavior
-of a real systemd installation. Repository-backed syscalls exercise real file
-writes, fsync and rename; UID/GID and command outputs are simulated. Kernel flock
-custody, physical power-loss durability, live authenticated readiness and host
-rollback equality require an authorized host window and are not claimed here.
-No signing, reseeding, fixture activation, dispatch, push or PR operation was done.
+Exact commands (each redirected to the corresponding retained TAP log):
+
+```sh
+node --test .github/coordinator/service/test/host-lifecycle.test.mjs .github/coordinator/service/test/production-lifecycle.test.mjs .github/coordinator/service/test/phase-a-driver.test.mjs .github/coordinator/service/test/host-window-bindings.test.mjs
+node --test --test-name-pattern=mutation .github/coordinator/service/test/host-lifecycle.test.mjs .github/coordinator/service/test/production-lifecycle.test.mjs .github/coordinator/service/test/phase-a-driver.test.mjs .github/coordinator/service/test/host-window-bindings.test.mjs
+node --test .github/coordinator/service/test/*.test.mjs
+npm run test:coordinator
+```
+
+The eight combined-suite skip **names and reasons match the base exactly**;
+service/focused/mutation runs have no skips. No skip was added, renamed or relaxed:
+
+- READER operator-owned checkout read by non-root account — Not exercisable: non-root account, no passwordless elevation to create root-owned checkout
+- SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches — requires distinct-uid execution
+- SHU-227: non-owner service account resolves revision with no global Git trust — requires distinct-uid execution
+- SHU-227: worker owns its checkout and recovery preserves descendant commits — requires root or passwordless sudo for distinct-uid proof
+- SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches — requires distinct-uid execution
+- SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity — host cannot switch to the fixture worker uid
+- SHU-244 A10: distinct-root scoped handoff production workspace — host cannot switch worker uid
+- SHU-71 restricted capability refusal — production vocabulary has no undeclared runtime/role pair
+
+Changed files (all within the L1 implementation, associated fixtures/tests and documentation):
+
+- `.github/coordinator/service/HOST-LIFECYCLE.md`
+- `.github/coordinator/service/PRODUCTION-LIFECYCLE.md`
+- `.github/coordinator/service/host-lifecycle.mjs`
+- `.github/coordinator/service/phase-a-driver.mjs`
+- `.github/coordinator/service/production-lifecycle.mjs`
+- `.github/coordinator/service/shu251-operational-bindings.sh`
+- `.github/coordinator/service/test/host-lifecycle.test.mjs`
+- `.github/coordinator/service/test/host-window-bindings.test.mjs`
+- `.github/coordinator/service/test/lifecycle-fixture.mjs`
+- `.github/coordinator/service/test/phase-a-driver.test.mjs`
+- `.github/coordinator/service/test/production-fixture.mjs`
+- `.github/coordinator/service/test/production-lifecycle.test.mjs`
+
+Retained local logs under `node_modules/.cache/shu251-l1/` (untracked):
+
+| Log | SHA-256 |
+| --- | --- |
+| `l1-base-service.tap` | `4a460ae23dee5649f67cc12fee1b7fa9cc1da5c1813969529ded86386dd397e4` |
+| `l1-base-coordinator.tap` | `7c3badd75b9689a2613b8179a5796eb1758392ff53ad5d57f875b95c9cc9e926` |
+| `focused.tap` | `424a551f9873c26cee9141cc37ac4cb8abeefcf6c1b1a768b085d805b7f5b564` |
+| `mutations.tap` | `c56b1fbf2f3139a05f5cc682acf244c3be137644b490dceb0d0f1d11c7b9e0cd` |
+| `service.tap` | `5d1284f5cc75d56d50302661d8061997261dfad90dc131703afea9c2d08259f5` |
+| `coordinator.tap` | `c17df6411b08cb576059aedd00acda5bd07ad4f94d66c7e2e8d0fcaa5eddc24b` |
+
+The seven new `CLOSURE` cases execute the production provider through recorded
+boundaries where applicable: fresh worker-free readiness/split metadata; stale
+and detached checkout restore/retain; before/after Git-command interruption with
+provider reconstruction; dirty/drift/tree/fetch refusal; stopped/timer/write/child
+rejection; evidence creation/expiry/absent-archive reconstruction; aggregate cleanup
+with forward eligibility unavailable. Prior per-effect and per-journal-save matrices
+continue to run. This does **not** establish failure recovery at every new evidence
+creation/archive syscall or expiry enforcement at every individual effect boundary.
+An approval is checked before the action, not continuously throughout it.
+
+No real host, live service manager, credential store, remote repository or external
+API was accessed by the new tests. No real owner key was used; only disposable test
+approval envelopes were signed. No push, PR, merge, GitHub/Linear comment, reseed,
+activation or dispatch occurred. No independent verifier, real-host acceptance,
+complete A6 cleanup inventory, remote-authoritative write proof, or physical-expiry
+teardown is claimed. Those gaps keep this commit out of any approval/activation
+closure packet marked PASS.
 
 ## Round-2 verification record (2026-09-16)
 

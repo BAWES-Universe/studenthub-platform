@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const UNIT_NAMES = ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'];
-export const LIFECYCLE_ACTIONS = Object.freeze({ preflight: 'host_preflight', install: 'host_install', start: 'host_start', readiness: 'host_readiness', restart: 'host_restart', 'host-rollback': 'host_rollback', pin: 'host_pin', 'pin-restore': 'host_pin_restore', 'pin-retain': 'host_pin_retain' });
+export const LIFECYCLE_ACTIONS = Object.freeze({ preflight: 'host_preflight', install: 'host_install', start: 'host_start', readiness: 'host_readiness', 'running-gate-off': 'host_running_gate_off', restart: 'host_restart', 'host-rollback': 'host_rollback', pin: 'host_pin', 'pin-restore': 'host_pin_restore', 'pin-retain': 'host_pin_retain' });
 export const ACTIONS = Object.freeze({ ...LIFECYCLE_ACTIONS, inventory: 'remote_inventory', quiescence: 'driver_quiescence', transport: 'transport_observation', launch: 'fixture_launch_observation', worker: 'worker_observation', 'replay-release': 'replay_release', cleanup: 'fixture_cleanup', 'capture-prior': 'prior_state_rollback', rollback: 'prior_state_rollback' });
 const MUTATIONS = new Set(['replay-release', 'cleanup', 'capture-prior', 'rollback', ...Object.keys(LIFECYCLE_ACTIONS).filter(s => s !== 'preflight')]);
 // Closed per-step evidence shapes. Binding objects retain the reviewed binding vocabulary.

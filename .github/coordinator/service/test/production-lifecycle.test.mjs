@@ -7,13 +7,13 @@ import { spawnSync } from 'node:child_process';
 import { productionFixture } from './production-fixture.mjs';
 import { createProductionLifecycle } from '../production-lifecycle.mjs';
 import { FILES } from '../host-lifecycle.mjs';
-import { main, defaultIO } from '../phase-a-driver.mjs';
+import { main, defaultIO, hash } from '../phase-a-driver.mjs';
 const named = code => e => e.code === code;
 const absent = { kind: 'absent' };
 const data = { kind: 'file', data: Buffer.from('bytes').toString('base64'), uid: 0, gid: 0, mode: 0o644 };
 
 test('PROVIDER complete real provider recorded-boundary lifecycle', async t => {
-  const f = productionFixture(t), prior = f.provider.snapshot();
+  const f = productionFixture(t, { operations: ['pin', 'pin-retain', 'install', 'start', 'readiness', 'restart', 'host-rollback', 'pin-restore'] }), prior = f.provider.snapshot();
   assert.equal((await f.run('preflight')).evidence.after.writer_lock, undefined);
   await f.run('pin'); await f.run('pin-retain'); await f.run('install'); await f.run('start'); await f.run('readiness'); await f.run('restart');
   await f.run('host-rollback'); await f.run('pin-restore');
@@ -23,7 +23,38 @@ test('PROVIDER complete real provider recorded-boundary lifecycle', async t => {
   assert.ok(f.commands.some(c => c.file === '/usr/bin/git' && c.args.includes('update-ref')));
 });
 
+const approved = f => ({ sha: f.spec.window.approved_sha, head_ref: 'refs/heads/main', main: f.spec.window.approved_sha,
+  origin_main: f.spec.window.approved_sha, tree: f.spec.lifecycle.approved_tree, clean: true });
+function stale(f, detached = false) {
+  Object.assign(f.checkout, { sha: 'b'.repeat(40), head_ref: detached ? null : 'refs/heads/main', main: 'b'.repeat(40), origin_main: 'd'.repeat(40), tree: 'e'.repeat(40), clean: true });
+  f.spec.lifecycle.checkout_before = structuredClone(f.checkout); f.approveFixture();
+}
 const cases = [
+  ['SHU251_PROVIDER_TICK', f => { f.faults.command = (file,args) => args.includes('--property=ExecMainStatus') ? { status: 0, stdout: '2' } : null; return () => f.provider.withLock(() => f.provider.systemd('start', 'shu-coordinator.service')); }],
+  ['SHU251_PROVIDER_CHECKOUT', f => () => f.provider.withLock(() => f.provider.checkout(f.checkout, { ...f.checkout, origin_main: 'f'.repeat(40) }))],
+  ['SHU251_CHECKOUT_CAS', f => { const before = structuredClone(f.checkout); f.checkout.origin_main = 'f'.repeat(40); return () => f.provider.withLock(() => f.provider.checkout(before, before)); }],
+  ['SHU251_CHECKOUT_TREE', f => {
+    stale(f); f.faults.command = (file,args) => args.includes(`${f.spec.window.approved_sha}^{tree}`) ? { status: 0, stdout: 'f'.repeat(40) } : null;
+    return () => f.provider.withLock(() => f.provider.checkout(f.spec.lifecycle.checkout_before, approved(f)));
+  }],
+  ['SHU251_CHECKOUT_REMOTE', f => {
+    stale(f); f.faults.command = (file,args) => args.includes('ls-remote') ? { status: 0, stdout: `${f.spec.window.approved_sha}\trefs/heads/main\n${f.spec.window.approved_sha}\trefs/heads/main` } : null;
+    return () => f.provider.withLock(() => f.provider.checkout(f.spec.lifecycle.checkout_before, approved(f)));
+  }],
+  ['SHU251_APPROVAL_CUSTODY', f => { f.faults.stat = (p,s) => String(p).endsWith(`${f.spec.lifecycle.activation_id}.json`) ? new Proxy(s, { get(t,k) { return k === 'uid' ? 1001 : Reflect.get(t,k); } }) : s; return () => f.provider.authorize('preflight', null); }],
+  ['SHU251_APPROVAL_DIGEST', f => { f.spec.lifecycle.approval_sha256 = '0'.repeat(64); return () => f.provider.authorize('preflight', null); }],
+  ['SHU251_APPROVAL_SIGNATURE', f => {
+    const file = `/etc/shu/approvals/${f.spec.lifecycle.activation_id}.json`, v = JSON.parse(fs.readFileSync(f.resolve(file), 'utf8'));
+    v.signature = Buffer.alloc(64).toString('base64'); const bytes = JSON.stringify(v); f.write(file, bytes); f.spec.lifecycle.approval_sha256 = hash(bytes);
+    return () => f.provider.authorize('preflight', null);
+  }],
+  ['SHU251_APPROVAL_BINDING', f => { f.spec.render.workdir = '/other'; return () => f.provider.authorize('preflight', null); }],
+  ['SHU251_APPROVAL_TIME', f => { f.boundary.now = () => 10000; return () => f.provider.authorize('preflight', null); }],
+  ['SHU251_APPROVAL_ORDER', f => () => f.provider.authorize('start', null)],
+  ['SHU251_APPROVAL_TEARDOWN', f => () => f.provider.authorize('pin-retain', { rolled_back: true })],
+  ['SHU251_PROVIDER_GATE_OFF', f => { f.faults.wait = () => {}; return async () => {
+    await f.run('install'); await f.run('start'); return f.provider.withLock(() => f.provider.runningGateOff());
+  }; }],
   ['SHU251_PREFLIGHT_PRIVILEGE', f => () => createProductionLifecycle(f.spec, { ...f.boundary, uid: () => 1001 })],
   ['SHU251_PROVIDER_SCOPE', f => { const s = structuredClone(f.spec); s.lifecycle.evidence_dir += '/elsewhere'; return () => createProductionLifecycle(s, f.boundary); }],
   ['SHU251_PROVIDER_PATH', f => { fs.chmodSync(f.resolve('/etc/systemd/system'), 0o777); return () => f.provider.snapshot(); }],
@@ -40,8 +71,15 @@ const cases = [
   ['SHU251_PROVIDER_READINESS', f => { f.faults.command = file => file === '/usr/bin/ss' ? { status: 0, stdout: '' } : null; return () => f.provider.readiness(); }],
 ];
 for (const [code, change] of cases) test(`PROVIDER guard ${code}`, async t => {
+  if (['SHU251_PROVIDER_CHECKOUT', 'SHU251_CHECKOUT_CAS', 'SHU251_CHECKOUT_TREE', 'SHU251_CHECKOUT_REMOTE'].includes(code)) {
+    const positive = productionFixture(t); stale(positive);
+    await positive.provider.withLock(() => positive.provider.checkout(positive.spec.lifecycle.checkout_before, approved(positive)));
+    assert.deepEqual(positive.checkout, approved(positive));
+  }
   const control = productionFixture(t);
-  await control.run('install'); await control.run('start'); await control.run('pin'); await control.run('host-rollback'); await control.run('pin-restore');
+  await control.run('install'); await control.run('start');
+  if (code === 'SHU251_PROVIDER_GATE_OFF') await control.provider.withLock(() => control.provider.runningGateOff());
+  await control.run('pin'); await control.run('host-rollback'); await control.run('pin-restore');
   const f = productionFixture(t);
   if (code === 'SHU251_PROVIDER_READINESS') { await f.run('install'); await f.run('start'); }
   const action = change(f);
@@ -147,10 +185,104 @@ test('PROVIDER substituted destination and symlink ancestor cannot redirect plac
 });
 test('PROVIDER observations reject listener identity runtime gate and oneshot drift', async t => {
   for (const fault of ['uid', 'gate', 'oneshot', 'invocation']) {
-    const f = productionFixture(t); await f.run('install'); await f.run('start');
+    const f = productionFixture(t, { operations: ['install', 'start', 'readiness'] }); await f.run('install'); await f.run('start');
     if (fault === 'uid') f.write('/proc/123/status', 'Uid: 0 0 0 0\nGid: 1001 1001 1001 1001\nGroups: 1001 1002\n');
     if (fault === 'gate') f.write('/proc/123/environ', 'ENABLE_DISPATCH=true\0');
     if (fault === 'oneshot' || fault === 'invocation') f.faults.command = (file,args) => args.includes(fault === 'oneshot' ? '--property=ExecMainExitTimestampMonotonic' : '--property=InvocationID') ? { status: 0, stdout: '0' } : null;
     await assert.rejects(() => f.run('readiness'), named(fault === 'invocation' ? 'SHU251_LIFECYCLE_READINESS' : 'SHU251_PROVIDER_READINESS'));
   }
+});
+
+test('CLOSURE split ownership and fresh service readiness require no acceptance worker', async t => {
+  const f = productionFixture(t, { operations: ['install', 'start', 'readiness', 'running-gate-off'] });
+  delete f.spec.window.fixture; f.approveFixture();
+  await f.run('install'); await f.run('start'); await f.run('readiness');
+  const proof = await f.run('running-gate-off');
+  assert.equal(proof.evidence.after.proof.ticks, 3);
+  assert.equal(proof.evidence.after.proof.launches, 0);
+  assert.equal(proof.evidence.after.proof.writes, 0);
+  assert.ok(!f.commands.some(c => c.file === '/usr/bin/node' && ['worker', 'transport'].includes(c.args[1])));
+  assert.ok(!f.events.some(e => e[0] === 'read' && Object.values(f.spec.lifecycle.environment).some(v => v.path === e[1])));
+  const probes = f.commands.filter(c => c.file === '/usr/bin/setpriv').flatMap(c => c.args).filter(a => a.includes('fs.mkdtempSync'));
+  assert.ok(probes.length > 0 && probes.every(p => p.includes(JSON.stringify(f.spec.window.workspace_state_dir)) && !p.includes(JSON.stringify(f.spec.lifecycle.evidence_dir))), 'service probes use writable service storage, never root-only evidence');
+  assert.equal(f.spec.lifecycle.environment.supervisor.uid, 0);
+  assert.equal(f.spec.lifecycle.environment.coordinator.uid, 1001);
+});
+
+test('CLOSURE stale local main stale origin main detached HEAD restore and retain', async t => {
+  for (const detached of [false, true]) for (const teardown of ['restore', 'retain']) {
+    const f = productionFixture(t, { operations: ['pin'], teardown }); stale(f, detached);
+    const before = structuredClone(f.checkout);
+    await f.run('pin'); assert.deepEqual(f.checkout, approved(f));
+    const journal = JSON.parse(fs.readFileSync(f.resolve(`${f.spec.lifecycle.evidence_dir}/journal.json`), 'utf8'));
+    assert.deepEqual(journal.prior.checkout, before);
+    assert.ok(journal.entries.some(e => e.verb === 'checkout' && e.status === 'done'));
+    await f.run('host-rollback'); await f.run(`pin-${teardown}`);
+    assert.deepEqual(f.checkout, teardown === 'restore' ? before : approved(f));
+    const archive = JSON.parse(fs.readFileSync(f.resolve(`${f.spec.lifecycle.evidence_dir}/archive.json`), 'utf8'));
+    assert.equal(archive.receipts.at(-1).step, `pin-${teardown}`);
+    assert.equal(archive.rolled_back, true);
+  }
+});
+
+test('CLOSURE pin and restore recover every Git command boundary with a new provider', async t => {
+  const predicates = [
+    a => a.includes('fetch'), a => a.includes('--detach'), a => a.includes('--stdin'), a => a.at(-1) === 'main' && a.includes('checkout'),
+  ];
+  for (const step of ['pin', 'pin-restore']) for (const side of ['command', 'afterCommand']) for (const match of predicates.slice(step === 'pin' ? 0 : 1)) {
+    const f = productionFixture(t, { operations: ['pin'] }); stale(f);
+    if (step === 'pin-restore') { await f.run('pin'); await f.run('host-rollback'); }
+    let injected = false;
+    f.faults[side] = (file,args) => {
+      if (!injected && file === '/usr/bin/git' && match(args)) { injected = true; return { status: 1, stdout: '' }; }
+    };
+    await assert.rejects(() => f.run(step), named('SHU251_CHECKOUT_EFFECT'));
+    assert.equal(injected, true);
+    f.faults[side] = null; f.reopen();
+    await f.run(step);
+    assert.deepEqual(f.checkout, step === 'pin' ? approved(f) : f.spec.lifecycle.checkout_before);
+  }
+});
+
+test('CLOSURE dirty checkout independent drift wrong tree and ambiguous fetch refuse', async t => {
+  for (const fault of ['dirty', 'main', 'origin', 'tree', 'fetch']) {
+    const f = productionFixture(t, { operations: ['pin'] }); stale(f);
+    if (fault === 'dirty') f.checkout.clean = false;
+    if (fault === 'main') { f.checkout.head_ref = null; f.checkout.main = 'f'.repeat(40); }
+    if (fault === 'origin') f.checkout.origin_main = 'f'.repeat(40);
+    if (fault === 'tree') f.checkout.tree = 'f'.repeat(40);
+    if (fault === 'fetch') f.faults.command = (file,args) => args.includes('fetch') ? { status: 1, stdout: '' } : null;
+    await assert.rejects(() => f.run('pin'));
+    assert.ok(!f.commands.some(c => c.args.includes('checkout')));
+  }
+  const f = productionFixture(t, { operations: ['pin'] }); stale(f); await f.run('pin'); await f.run('host-rollback');
+  f.checkout.origin_main = 'f'.repeat(40);
+  await assert.rejects(() => f.run('pin-restore'), named('SHU251_CHECKOUT_RESTORE'));
+  assert.equal(f.checkout.origin_main, 'f'.repeat(40));
+});
+
+test('CLOSURE gate proof rejects stopped silence missing timer wake writes and children', async t => {
+  for (const fault of ['stopped', 'timer', 'oneshot', 'writes', 'children']) {
+    const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+    await f.run('install'); await f.run('start');
+    if (fault === 'stopped') f.faults.command = (file,args) => args.includes('--property=ActiveState') ? { status: 0, stdout: 'inactive' } : null;
+    if (fault === 'timer') f.faults.wait = () => {};
+    if (fault === 'oneshot') f.faults.command = (file,args) => args.includes('--property=ExecMainStatus') ? { status: 0, stdout: '2' } : null;
+    if (fault === 'writes') f.faults.wait = () => f.write(`${f.spec.window.workspace_state_dir}/unexpected`, 'write');
+    if (fault === 'children') f.write('/proc/123/task/123/children', '4321');
+    await assert.rejects(() => f.run('running-gate-off'));
+  }
+});
+
+test('CLOSURE evidence creation authenticated approval expiry cleanup and archive resume', async t => {
+  const f = productionFixture(t, { operations: ['pin'] });
+  fs.rmSync(f.resolve(f.spec.lifecycle.evidence_dir), { recursive: true });
+  await f.run('pin');
+  const receipt = JSON.parse(fs.readFileSync(f.resolve(`${f.spec.lifecycle.evidence_dir}/journal.json`), 'utf8')).receipts.at(-1);
+  fs.unlinkSync(f.resolve(`${f.spec.lifecycle.evidence_dir}/archive.json`));
+  f.reopen(); assert.deepEqual(await f.run('pin'), receipt);
+  assert.ok(fs.existsSync(f.resolve(`${f.spec.lifecycle.evidence_dir}/archive.json`)));
+  f.boundary.now = () => 10000;
+  await assert.rejects(() => f.run('install'), named('SHU251_APPROVAL_TIME'));
+  await f.run('host-rollback'); await f.run('pin-restore');
 });

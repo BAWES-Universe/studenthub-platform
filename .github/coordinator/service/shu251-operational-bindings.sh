@@ -14,14 +14,14 @@ case "$1" in
       exit 64
     fi
     ;;
-  preflight|install|start|readiness|restart|host-rollback|pin|pin-restore|pin-retain) ;;
+  preflight|install|start|readiness|running-gate-off|restart|host-rollback|pin|pin-restore|pin-retain) ;;
   *) echo '{"ok":false,"code":"SHU251_WINDOW_ACTION","reason":"unknown typed action"}' >&2; exit 64 ;;
 esac
 case "$2" in /*) ;; *) echo '{"ok":false,"code":"SHU251_WINDOW_SPEC","reason":"spec path must be absolute"}' >&2; exit 64 ;; esac
 # Lifecycle actions take a driver spec and the driver's closed approval flags.
 # The driver defaults to a dry run; this wrapper never manufactures approval.
 case "$1" in
-  preflight|install|start|readiness|restart|host-rollback|pin|pin-restore|pin-retain)
+  preflight|install|start|readiness|running-gate-off|restart|host-rollback|pin|pin-restore|pin-retain)
     exec /usr/bin/node "$(dirname "$0")/phase-a-driver.mjs" "$@" ;;
 esac
 exec /usr/bin/node "$(dirname "$0")/host-window-bindings.mjs" "$1" "$2"

@@ -1,181 +1,95 @@
-# Typed Phase-A host lifecycle
+# Typed Phase-A host lifecycle — L1 correction
 
-This extends `phase-a-driver.mjs` (`ACTIONS`, mutation approval and
-`shu251-phase-a-receipt-v1`). It does not change the existing offline installer
-or the legacy `rollback` action's staged-file-only meaning.
+This repository-only correction extends branch `fix/shu251-typed-host-lifecycle-executor`
+from `885914c22f26b279e6c29b088e4c46d44037759c`. It is **not a complete L1 closure
+or an authorization to operate a host**. The remaining gaps below keep the
+static execution-closure gate blocked. Historical verification follows this
+current contract and does not establish acceptance for this revision.
 
-| Action | Executed operation and receipt |
+## Actions and evidence
+
+The reviewed path remains `main → drive → defaultIO.lifecycleProvider →
+createProductionLifecycle → executeLifecycle`. The CLI accepts no replacement
+provider or command boundary. Existing mutation flags remain necessary; a
+signature-verified owner artifact is additionally required in production.
+
+| Action | Current behavior |
 | --- | --- |
-| `preflight` | Check the approved clean SHA/tree, exact identity and supplementary groups, environment **metadata only**, owned state directories, exact systemd version, all existing host-suite capability names plus atomic rename/directory fsync, destination, writer lock, activation evidence path and manifest. |
-| `install` | Render, stage privately, compare every staged byte/hash, capture the full prior state, journal and atomically replace the three units, two literal dispatch-off drop-ins and their two directories, reload, and compare installed bytes. |
-| `start` | Enable the supervisor and timer; start the supervisor, the static coordinator oneshot, and timer. Prove identity, socket listener, supervisor/coordinator readiness and both dispatch gates off. A completed coordinator oneshot is inactive. |
-| `readiness` | Repeat the installed-identity and readiness proof with a typed receipt. |
-| `restart` | Record driver-observed before evidence using the existing restart custody format/validators; durably consume it **before** issuing the supervisor restart; require a new invocation with the same worker PID/start token. |
-| `host-rollback` | Reconcile pending intents; undo changed active/enabled state and destinations in reverse order; reload and compare the complete prior host state. The pin has its own explicit disposition below. |
-| `pin` | Compare-and-set `refs/shu251/activations/<activation_id>` to the approved SHA, capturing its prior SHA or absence. |
-| `pin-restore` | After verified host rollback, compare-and-set that exact ref back to its prior SHA or absence. |
-| `pin-retain` | Verify the ref still names the approval and emit an explicit retention receipt without changing it. |
+| `preflight` | Verify approval, approved remote/API main, clean approved checkout, identity, split environment metadata, capabilities and evidence custody. It may create the approved evidence directory; it is not a read-only host probe. |
+| `pin` | Accept the explicitly recorded stale checkout baseline. Journal the real checkout tuple and activation ref before changes. Fetch the approved object without changing tracking refs, verify its tree, detach without force, CAS local main and origin/main together while verifying HEAD, then attach main. Recheck remote/API main and emit durable evidence. |
+| `install` | Preserve existing rendering, destination, dispatch-off, staging and exact-byte placement guards; journal every placement and reload. |
+| `start` / `readiness` | Prove service readiness without requiring an acceptance worker. Starting the coordinator hands off its writer lock while retaining journal custody; exit 2 is not a successful tick. |
+| `running-gate-off` | Observe three new successful timer ticks with supervisor and timer active. Watch state directories, compare contents and file timestamps, require no supervisor children and both dispatch gates off. The legacy `gate-off` remains a separate stopped-quiescence observation and is not production running-system acceptance. |
+| `restart` | Keep the original live-worker, transport, single-use custody and adoption checks. No new acceptance-worker bootstrap is provided. |
+| `host-rollback` | Validate durable journal/approval custody independently of forward preflight, attempt independent reverse operations after errors, persist bounded aggregate failures, and retain the first named refusal. |
+| `pin-restore` | After host rollback, reject checkout drift and restore the recorded real tuple and activation ref. Compare the full *modeled* snapshot afterward. |
+| `pin-retain` | Verify the approved real tuple and activation ref. Final retention after rollback must match the approved teardown policy. An earlier retention observation does not prohibit a later owner-approved restore. |
 
-All actions except preflight require the existing two-part mutation approval,
-including receipt-producing observations that write journal custody. A dry run
-never invokes lifecycle capabilities or returns acceptance. Caller-provided
-`before` still fails with `SHU251_RESTART_CALLER_BEFORE`; additional caller options,
-commands and argument passthrough are refused.
+`spec.lifecycle.checkout_before` is required and closed: `sha`, `head_ref`
+(`refs/heads/main` or null for detached), `main`, `origin_main`, `tree`, `clean`.
+The baseline must be clean. Other lifecycle fields retain their prior shape.
+Supervisor environment metadata is root:root 0600; coordinator metadata is the
+approved service UID/GID 0600. Metadata probes never read either file's values.
 
-## Execution boundary
+The journal stores pending intents before effects and done/undone state after
+durable completion. Checkout recovery recognizes only the exact recorded before,
+detached, ref-updated, and final tuples. Git expected-old-value transactions guard
+both branch refs and HEAD. No force checkout or hard reset is used. Independent
+observed drift blocks restore. This is not proof of atomicity against a concurrent
+external Git writer between checkout commands.
 
-The reviewed CLI is `node .github/coordinator/service/phase-a-driver.mjs ACTION
-/absolute/driver-spec.json --execute --approved-host-mutation APPROVED_SHA`, with
-`SHU251_HOST_MUTATION_APPROVED=true` for mutating actions. The production process
-must run as root. The call path is `main → drive → defaultIO.lifecycleProvider →
-defaultIO.pin → createProductionLifecycle → executeLifecycle`. `defaultIO.pin`
-checks the reviewed checkout path, window schema and render bindings before
-constructing the provider. The executor then checks the approved clean SHA/tree,
-metadata, capabilities and manifest before destination or ref effects.
+Service readiness and worker-survival acceptance have separate provider methods.
+The existing worker checks remain mandatory for `restart`. The coordinator must
+report Result=success, exit 0 and a strictly newer completion timestamp when
+started. Running gate-off observes timer completions with the writer lock released;
+the journal lock remains held. A 240-poll, one-second bound refuses missing ticks.
+The launch claim relies on zero authoritative-state writes (including durable
+launch receipts), unchanged inventory, dispatch disabled, and no observed children;
+it does not independently observe every possible transient kernel process.
 
-The CLI accepts no provider/module/command option and no implementation payload.
-The operator supplies approved window data, not JavaScript or an arbitrary
-capability object. The internal factory accepts a syscall/command boundary for
-isolated tests. Explicit `drive(..., io)` injection remains available to tests.
-See [PRODUCTION-LIFECYCLE.md](PRODUCTION-LIFECYCLE.md) for filesystem custody,
-provisioning, production observations and the round-2 validation record.
+## Approval and archive contract
 
-The capability provider is trusted code, like the existing driver IO layer; it
-is not caller evidence, a command string, a receipt importer or a security
-boundary against its owner. Its contract is:
+See [PRODUCTION-LIFECYCLE.md](PRODUCTION-LIFECYCLE.md) for the exact signed artifact,
+public-key custody and executable test evidence. The driver verifies revision,
+tree, activation, scope and operation order through the whole-spec digest, and
+checks the approval interval before forward work. Cleanup may run after expiry;
+expiry itself does not schedule physical teardown. It cannot substitute for a
+completed cleanup receipt.
 
-| Capability | Required behavior |
-| --- | --- |
-| `probe()` | Return observed metadata matching the closed preflight shapes. Inspect environment paths/owners/modes without reading their values. Prove existing regular writer-lock custody (`free` outside the lock, `held-by-driver` inside). Prove capabilities, not merely their names from the spec. Return the manifest read from the activation-specific evidence directory. |
-| `withLock(callback)` | Exclusively hold both activation-journal custody and the existing writer lock for the entire callback, including final receipt persistence. Refuse contention. Never create a replacement writer lock or silently omit the callback. |
-| `snapshot()` | Observe only the fixed destinations, effective enabled/active states of the fixed units, and the exact activation ref. The two drop-in directories are also captured as `{kind:'directory', mode:0o755, uid:0, gid:0}` or absence. A file is `{kind:'file', data:<canonical base64>, mode, uid, gid}`; absence is `{kind:'absent'}`; the only permitted prior symlink is `{kind:'symlink', target:'/dev/null', uid:0, gid:0}`. Base64 preserves arbitrary prior bytes. |
-| `stage(units)` | Own a private temporary staging directory; safely write/read back and clean its files; return its path/canonical path, caller UID/owner, mode and byte-exact unit map. No host destination changes. |
-| `load()` / `save(journal)` | Read driver-owned durable state, or `null` only for genuine absence. Reject symlinks/path substitutions, malformed state and storage failures. Save atomically, fsync the file and directory, and return `true` only once durable. In-memory sharing without durable persistence is sufficient **only for controlled tests**. |
-| `place(name, before, after)` | Atomically compare and replace a fixed destination by basename, without following target or ancestor symlinks. Pin/verify destination directory identity; preserve exact bytes, modes, ownership, symlink target or absence. Reject races. Return `true` only after durable placement. The executor journals creation/restoration of the two allowlisted drop-in directories as explicit placements, before their children and in reverse order on rollback. Refuse nonempty directory removal or unreviewed directory contents. |
-| `systemd(verb, unit)` | Execute only the driver-issued verbs: `enable`, `start`, `restart`, `stop`, `disable`, `daemon-reload`. Only `UNIT_NAMES` are eligible; reload uses `null`. Use fixed argv, no shell, interpolation, flags from callers or `--` passthrough. Return `true` only on successful completion. |
-| `pin(ref, before, after)` | Compare-and-set the exact activation ref, including absence, using fixed Git argv and expected-old-value protection. No checkout reset, remote fetch, other ref or implicit retention. |
-| `readiness()` | Observe service identity/groups, the exact supervisor listener, recovered/ready supervisor, successfully completed coordinator oneshot, committed/runtime dispatch-off, supervisor invocation ID, and a live worker PID/start token. No secret values belong in the result. |
+Evidence is root-owned under `<evidence_root>/<activation_id>`. Initialization
+creates that directory, journal lock and binding manifest safely. Preflight persists `preflight.json`. Other actions
+persist their receipts in `journal.json`, then write/fsync `archive.json` containing
+the manifest, journal digest and receipt digests. Stdout is not the archive.
+When an archive is absent or behind the journal, completed non-restart actions
+can recover their existing receipt after modeled-snapshot equality and rewrite the
+archive without repeating effects. An archive rename that succeeded before an
+ambiguous directory-fsync failure is not covered by that retry proof. Restart retains its no-replay rule.
 
-`spec.lifecycle` is a closed object. Its fields are `activation_id`,
-`approval_sha256`, `approved_tree`, `identity`, `environment`, `directories`,
-`systemd_version`, `capabilities`, `evidence_root`, `evidence_dir`, and
-`rendered_sha256`. The executable fake fixture in `test/host-lifecycle.test.mjs`
-shows every field and exact observation shape. The directory must be
-`<evidence_root>/<activation_id>`, never the generic root.
-`expectedManifest(spec)` defines the manifest: activation, approval, approved
-SHA/tree, complete spec digest, and hashes for all five reviewed destinations.
-The approval hash is a binding supplied by the reviewed window, not a signature
-created or independently authenticated by this executor.
+## Finding disposition and unsupported claims
 
-The default renderer and offline installer retain their original writer-lock,
-crossed-environment, destination, owner, private-directory and dispatch-off
-checks. The old nine-action test remains. A registry-wide assertion additionally proves
-disjoint legacy/lifecycle sets, complete union and each intended route. Five
-syntax-clean routing mutations include registering an untested new action.
+| Finding | Evidence delivered | Remaining limitation / disposition |
+| --- | --- | --- |
+| A2 (`CLOSED_BY_NEW_HEAD`, static command-boundary scope) | Actual tuple pin/restore/retain, signed baseline, remote/API equality, dirty/tree/ambiguous-fetch refusals, provider reconstruction at every Git command boundary | Source/fake-boundary correction; no live Git/host proof or concurrent external checkout-writer atomicity claim. |
+| A3 (`CONFIRMED_BLOCKER`) | Approved split ownership accepted; metadata remains value-free | **CONFIRMED_BLOCKER** for complete per-process credential isolation: units still share a UID, and transport/child credential delivery belongs to B2. File metadata alone cannot establish the requested process isolation. |
+| A4 (`CONFIRMED_GAP`) | Fresh baseline starts without a worker; writer handoff, exit-2 rejection, timer observation; original restart adoption guards retained | No live systemd proof. Worker-survival acceptance still needs a separately reviewed bootstrap/composition. |
+| A5 (`CONFIRMED_BLOCKER`) | Distinct running timer proof, filesystem watchers/inventory, stopped/no-tick/write/child negative controls | No remote-authoritative-write inventory is included; full end-to-end zero-write/zero-launch acceptance remains unproved. |
+| A6 (`CONFIRMED_BLOCKER`) | Cleanup bypasses forward preflight, continues independent undo, aggregates durable errors | **CONFIRMED_BLOCKER**: writer-lock acquisition can still prevent cleanup; runtime-gate disable/admission stop are not an unconditional first phase. Snapshot omits enablement-link topology, full process/listener and state-path inventory, and L4 disposable-checkout custody. |
+| A7 (`CONFIRMED_BLOCKER`) | Signature/digest-bound spec, time/order/teardown guards, evidence creation, durable receipts/archive and restart of archive finalization | **CONFIRMED_BLOCKER** for complete execution closure: no expiry-triggered physical teardown; remaining A6 recovery/inventory gaps; canonical owner artifact/key provisioning and executing the corrected tool from a stale deployed checkout are unproved. |
 
-## Recovery and receipts
+The A2 production path is `executeLifecycle(pin/pin-restore/pin-retain)` →
+`provider.checkout`, verified by `CLOSURE stale local main stale origin main
+detached HEAD restore and retain`, the every-Git-command interruption test and
+the checkout guard mutations. This classification does not approve live execution.
 
-The full prior snapshot is durable before the first destination/ref operation.
-Each journal entry contains an ID, allowlisted verb/target, expected before and
-after values, and `pending`/`done`/`undone` status. A pending entry is saved before
-effect execution. An interrupted effect may have left either its before or after
-value; neither is silently assumed. Any third value is substitution and refuses.
-Journal replay checks that intents follow from the prior state and approved
-render/ref values, so a forged journal cannot inject an arbitrary placement.
+Legacy operational routes retain their earlier contract; the new artifact does
+not authenticate an end-to-end legacy/Phase-B composition. No independent
+exact-head verifier was run in this lane.
 
-Every effect and completion-save boundary is recoverable by retrying the same
-action or rolling back. Rollback checks pending operations too, restores in
-reverse order and saves each completion. Effective `masked`, `static`, `indirect`
-and `not-found` enablement is proved after original configuration is restored
-and reloaded. The oneshot tick is explicitly issued even though successful
-completion returns it to the same inactive state. A pending oneshot may be
-reissued after interruption; dispatch remains off.
-
-Restart is deliberately different: its before custody and consumed marker are
-saved together before the restart. An ambiguous restart or later save failure
-cannot authorize another restart. Recovery is host rollback, not replay. The
-existing `SHU251_RESTART_FORGED`, `SHU251_RESTART_CROSS_RUN`,
-`SHU251_RESTART_SUBSTITUTED`, `SHU251_RESTART_REPLAYED`, and
-`SHU251_RESTART_ACCEPTANCE` checks remain in use.
-
-Prior active/enabled service state and prior bytes that could re-enable dispatch
-are refused **before mutation**. This preserves the existing rollback safety
-boundary; this change does not authorize restoring a previously dispatching
-service. Only masking symlinks are accepted; arbitrary linked unit targets are
-refused. These are conservative exclusions, not claims to restore every possible
-systemd configuration.
-
-Receipts retain the existing version, spec/approved-SHA binding and evidence
-digest, with closed lifecycle evidence fields: binding, success, activation ID,
-approval hash, installed hashes, before/after, journal hash and disposition.
-The journal hash identifies the state immediately before appending that receipt.
-Acceptance is returned only after saving the receipt. Rollback receipts prove
-host state equality excluding the explicitly separate pin; `pin-restore` closes
-full equality, or `pin-retain` documents the retained pin.
-
-## Named guard mutations
-
-Each row has a successful permitted control and a failing perturbation. The
-mutation named `LIFECYCLE named mutation <CODE>` disables only that invariant
-family. Each mutant must pass `node --check`, then fail exactly one test by an
-`AssertionError` containing `<CODE>_REQUIRED`; crashes and module/syntax errors
-are not kills. Mutants use copied source, not Git history or a baseline branch.
-
-All new codes have the prefix `SHU251_LIFECYCLE_`:
-
-| Code suffix | Perturbation that the named mutation exposes |
-| --- | --- |
-| `SPEC` | Unreviewed destination directory. |
-| `PATHS` | Generic evidence directory instead of activation directory. |
-| `INPUT` | Caller-supplied command option. |
-| `IO` | Missing required durable-save capability. |
-| `CHECKOUT` | Dirty checkout (also separately tests wrong SHA/tree). |
-| `IDENTITY` | Wrong service UID (also tests extra groups). |
-| `ENVIRONMENT` | Extra environment value field (also wrong owner/mode/path/type). |
-| `DIRECTORIES` | Missing owned state directories. |
-| `CAPABILITIES` | Missing host capabilities (also wrong systemd version). |
-| `EVIDENCE` | Generic observed evidence path (also wrong approval manifest). |
-| `SNAPSHOT` | Socket substituted for a destination file. |
-| `ROLLBACK_REENABLE` | Previously enabled service. |
-| `JOURNAL` | Forged activation binding in stored journal. |
-| `INTENT` | Forged pending/completed pin target value. |
-| `DURABILITY` | Journal persistence fails. |
-| `RENDER` | Changed rendered bytes. |
-| `STAGE` | Changed staged bytes. |
-| `PLACE` | Second placement fails after partial installation. |
-| `RELOAD` | Daemon reload fails. |
-| `ENABLE` | Service enable fails. |
-| `START` | Service start fails. |
-| `PIN` | Ref compare-and-set fails. |
-| `SUBSTITUTION` | Masking symlink replaces a pending destination. |
-| `EFFECT` | Provider reports success without applying the pin. |
-| `ORDER` | Attempt to install after services have started. |
-| `INSTALLED` | Installed bytes drift before start. |
-| `READINESS` | Runtime dispatch becomes true. |
-| `RESTART` | Restart process boundary fails. |
-| `ROLLBACK` | Stop fails during rollback. |
-| `ROLLBACK_EQUALITY` | Stop reports success without restoring state. |
-| `PIN_RESTORE` | Restore requested before verified host rollback. |
-| `PIN_RETAIN` | Ref no longer names the approved SHA. |
-| `RECEIPT` | Forged activation in receipt with recomputed evidence digest. |
-
-The new matrix also mutates reused `SHU251_WRITER_LOCK`, `SHU251_DESTINATION`,
-`SHU251_OWNER`, and `SHU251_PRIVATE` checks. The pre-existing Phase-A mutations
-continue to verify approval, custody, evidence digests and legacy rollback.
-
-## Verification scope
-
-Tests use a controlled in-memory filesystem/service/ref model, explicit injected
-process boundaries, faults before and after every install/start/rollback/pin
-operation, and faults at every journal-save boundary. New process spawning is
-limited to syntax checks and copied fake-only mutation tests. There is no signing,
-reseeding, activation, dispatch, credential change or host connection.
-
-This does **not** prove physical fsync/rename behavior, kernel locking, actual
-service identity/permissions, real systemd readiness, crash recovery across OS
-processes, or running-host equality. Physical host acceptance still requires a future explicitly authorized host
-window. The production provider now exists and is tested at its syscall boundary. An arbitrary
-provider returning fabricated observations is outside the trusted IO model.
+These limitations are not reclassified as LIVE_ONLY: several require source-level
+composition with the separately scoped credential and disposable-checkout lanes.
+No host access, push, PR, merge, external comment, real-key signing, reseed,
+activation, fixture mutation or dispatch was performed. Tests sign only disposable
+local test approval envelopes. No skip allowance was changed.
 
 ## Original executor verification (commit ab6c634b)
 
