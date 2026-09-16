@@ -165,12 +165,14 @@ not signatures or proof of an untrusted producer's identity. No keys are created
 
 `node host-suite-contract.mjs preflight /absolute/suite.json` detects capabilities.
 `node host-suite-contract.mjs run /absolute/suite.json` always performs that same
-preflight before invoking Node tests. The suite spec contains `service_uid`
-(non-root), `service_gid`, absolute `checkout`, absolute `temp_dir`, absolute
-`files` under the checkout, and positive integer `expected_tests`. Supply the
-complete reviewed test list and its exact reviewed count. The process identity
-is the suite identity; service-specific probes explicitly use the supplied service
-UID/GID. No automatic identity escalation is used for the suite itself.
+preflight before invoking Node tests. The current runner first verifies disposable
+custody, the exact non-root service UID/GID/groups, pinned revision/tree, inventory
+and inactive service/timer states. Caller-selected `files` and `expected_tests`
+are now rejected. The pinned revision supplies the suite inventory and its count.
+See [A12-CLOSURE.md](A12-CLOSURE.md) for the replacement spec, create/remove actions,
+verification evidence and outstanding blockers. No authoritative inventory is yet
+shipped; A12 remains blocked. Historical counts below are not an inventory for
+this revision. No automatic identity escalation is used for the suite itself.
 
 | Capability | Detection | Named refusal |
 | --- | --- | --- |

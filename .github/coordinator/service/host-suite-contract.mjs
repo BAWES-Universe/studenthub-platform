@@ -40,7 +40,7 @@ export const CVTSUDOERS_REFUSALS = Object.freeze([
   'SHU251_PREFLIGHT_CVTSUDOERS_SUBSTITUTION', 'SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT',
 ]);
 // Serialized into the service-identity Node probe; IO injection is test-only.
-export function resolveCvtsudoers(tempDir, io = { fs, run }) {
+export function resolveCvtsudoers(tempDir, io = { fs, run }, policyFile = null) {
   const fail = code => halt(`SHU251_PREFLIGHT_CVTSUDOERS${code}`);
   const present = [];
   for (const candidate of CVTSUDOERS_CANDIDATES) {
@@ -83,6 +83,16 @@ export function resolveCvtsudoers(tempDir, io = { fs, run }) {
       Array.isArray(output.User_Specs[0].Cmnd_Specs[0]?.Commands) &&
       output.User_Specs[0].Cmnd_Specs[0].Commands.some(c => c?.command === 'ALL');
     if (!validShape) fail('_OUTPUT');
+    if (policyFile !== null) {
+      verify();
+      const policyEnvironment = { LC_ALL: 'C' };
+      const policy = io.run("/proc/self/fd/3", ['-f', 'json', policyFile], { stdio: ['ignore', 'pipe', 'pipe', fd], env: policyEnvironment });
+      verify();
+      if (!successful(policy)) fail('');
+      let parsed;
+      try { parsed = JSON.parse(policy.stdout); } catch (error) { fail('_OUTPUT'); }
+      return { available: true, identity: String(candidate), parsed };
+    }
     return { available: true, identity: candidate };
   } catch (error) {
     if (CVTSUDOERS_REFUSALS.includes(error.code)) throw error;
@@ -172,6 +182,10 @@ export function evaluateSuite(report, expectedTests) {
   if (report.exit_code !== 0) halt('SHU251_SUITE_EXIT', String(report.exit_code));
   return { version: 'shu251-host-suite-v1', counts };
 }
+export function suiteNames(outcomes, names) {
+  const sorted = values => JSON.stringify([...values].sort());
+  if (!Array.isArray(names) || sorted(outcomes.map(o => o.name)) !== sorted(names)) halt('SHU251_SUITE_NAMES');
+}
 // Node's reporter protocol avoids interpreting human TAP, nested diagnostics or forged summary text.
 export default async function* reporter(source) {
   for await (const event of source) {
@@ -184,7 +198,15 @@ export default async function* reporter(source) {
   }
 }
 export async function runSuite(spec, io = {}) {
+  const contract = await (io.contract ?? (async () => {
+    const { bindSuite, suiteQuiescence } = await import('./suite-runner-spec.mjs');
+    const { verifyDisposableSuite, recordDisposableSuite } = await import('./disposable-suite.mjs');
+    verifyDisposableSuite(spec);
+    const bound = bindSuite(spec);
+    return { ...bound, quiescence: suiteQuiescence(), record: recordDisposableSuite.bind(null, spec) };
+  }))();
   const capabilities = await preflight(spec, io.probe ?? hostProbe(spec));
+  spec = { ...spec, files: contract.files, expected_tests: contract.expected_tests };
   if (!Array.isArray(spec.files) || !spec.files.length || spec.files.some(f => !path.isAbsolute(f) || !f.startsWith(`${spec.checkout}/`))) halt('SHU251_SUITE_FILES');
   const env = { ...process.env, TMPDIR: spec.temp_dir };
   delete env.NODE_TEST_CONTEXT;
@@ -192,14 +214,26 @@ export async function runSuite(spec, io = {}) {
   let events;
   try { events = result.stdout.trim().split('\n').map(line => JSON.parse(line)); } catch { halt('SHU251_SUITE_MALFORMED'); }
   if (events.some(e => !['outcome', 'complete'].includes(e.type))) halt('SHU251_SUITE_MALFORMED');
+  const outcomes = events.filter(e => e.type === 'outcome');
   const summary = evaluateSuite({ outcomes: events.filter(e => e.type === 'outcome'), complete: events.at(-1)?.type === 'complete' && events.filter(e => e.type === 'complete').length === 1, exit_code: result.status }, spec.expected_tests);
-  return { ...summary, preflight: capabilities };
+  suiteNames(outcomes, contract.names);
+  const receipt = { ...summary, preflight: capabilities, identity: contract.identity, quiescence: contract.quiescence };
+  if (contract.record) await contract.record(receipt);
+  return receipt;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const [action, file] = process.argv.slice(2);
-    if (!['preflight', 'run'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
+    if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
     const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
-    console.log(JSON.stringify(action === 'preflight' ? await preflight(spec) : await runSuite(spec)));
+    let result;
+    if (action === 'preflight') result = await preflight(spec);
+    else if (action === 'run') result = await runSuite(spec);
+    else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
+    else {
+      const lifecycle = await import('./disposable-suite.mjs');
+      result = action === 'create' ? lifecycle.createDisposableSuite(spec) : lifecycle.removeDisposableSuite(spec);
+    }
+    console.log(JSON.stringify(result));
   } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
 }
