@@ -1,0 +1,273 @@
+{
+  "version": "shu251-a12-amend-outcome-v1",
+  "ok": false,
+  "code": "A12_DESIGN_BLOCKER",
+  "acceptance_candidate": false,
+  "closes_userns_requirement": false,
+  "base_revision": "a6626f6425623f57c6db7eca384c3db5bdc8915b",
+  "branch": "feat/shu251-a12-userns-profile",
+  "disposition": "BLOCKED_WITHOUT_ACTIVATION",
+  "reasons": [
+    {
+      "kind": "operation_coverage",
+      "required_test": "SHU261_NO_SETENV_NAMESPACE_STARTUP",
+      "documented_argv": [
+        "/usr/bin/unshare",
+        "--user",
+        "--map-root-user",
+        "/bin/true"
+      ],
+      "required_argv": [
+        "/usr/bin/unshare",
+        "--user",
+        "--map-root-user",
+        "/bin/bash",
+        "<checkout>/.github/coordinator/reviewer-sandbox.sh"
+      ],
+      "detail": "The fixed permitted operation cannot perform the required namespace-root wrapper test. Substituting only the documented preflight call would not close the requirement. No broader permitted operation or shared interpreter exception is implemented."
+    },
+    {
+      "kind": "inventory_missing",
+      "path": ".github/coordinator/service/suite-inventory.json",
+      "detail": "Absent from the merged base. bindSuite requires the revision-pinned exact inventory and capability requirements. No partial inventory or new skip allowance is substituted."
+    },
+    {
+      "kind": "implementation_missing",
+      "detail": "No reproducible native suite runner, authenticated evidence collector, or production install/load/execute/teardown implementation is delivered by this amendment. Existing lifecycle receipts remain design-simulation and cannot authorize execution."
+    }
+  ],
+  "source_sha256": {
+    ".github/coordinator/service/host-suite-contract.mjs": "7544678b1027c48c27b2c34d89001a4b84e44aa65625c45a660fd29a6cb7feac",
+    ".github/coordinator/service/suite-runner-spec.mjs": "409346bc857d7ef9021022d1872a46c802f76e04c0e4e0c0ec53e2b979aa3cdb",
+    ".github/coordinator/test/shu261-review-findings.test.mjs": "fc3917a1d41e5bf2e368d6649d93ebae2bcb92518f43bff78b846d7822b6b160",
+    ".github/coordinator/service/userns-profile/contract.mjs": "bccf910e452997e2dc9c827e0ac1af5f84f0a19cc69167074dde6a5532d02d53",
+    ".github/coordinator/service/userns-profile/a12.apparmor": "4e229ce4faef8e6b0303e84052b466b7dc0b297a3b6a662b53bc7cf424d6f63b"
+  },
+  "verification": {
+    "runs": [
+      {
+        "command": "node --test --test-name-pattern='^SHU251 A12|^SHU251 parser (?!real installed provider)|^SHU251 contract|^SHU251 suite|^SHU251 disposable|^L4_REPOSITORY_BOUNDARY|^SHU251 C2' .github/coordinator/service/test/host-suite-contract.test.mjs .github/coordinator/service/test/suite-runner-spec.test.mjs .github/coordinator/service/test/capability-requirements.test.mjs",
+        "tests": 104,
+        "pass": 104,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "command": "node --test .github/coordinator/service/test/phase-a-driver.test.mjs",
+        "tests": 35,
+        "pass": 35,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "command": "node --test .github/coordinator/service/test/userns-profile.test.mjs",
+        "scope": "existing design model; not production exception implementation",
+        "tests": 17,
+        "pass": 17,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    ],
+    "total_tests": 156,
+    "total_pass": 156,
+    "total_fail": 0,
+    "total_skipped": 0,
+    "mutations": {
+      "l4_parser": 29,
+      "l4_phase_a": 12,
+      "l4_suite_custody_boundary": 8,
+      "l4_capability_requirements": 9,
+      "a12_existing_model": 8,
+      "total_existing_killed": 66,
+      "survivors": 0,
+      "a12_command": "node .github/coordinator/service/userns-profile/mutations.mjs",
+      "a12_controls": [
+        {
+          "name": "missing-userns",
+          "code": "A12_USERNS_REQUIRED",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "wrong-executable",
+          "code": "A12_EXECUTABLE_REQUIRED",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "bypassed-transition",
+          "code": "A12_TRANSITION_REQUIRED",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "profile-name-substitution",
+          "code": "A12_PROFILE_NAME_REQUIRED",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "widened-path",
+          "code": "A12_PATH_SCOPE_REQUIRED",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "global-sysctl-relaxation",
+          "code": "A12_NO_SYSCTL_RELAXATION",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "ordinary-execution-exception",
+          "code": "A12_ORDINARY_EXCLUDED",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        },
+        {
+          "name": "teardown-residue",
+          "code": "A12_TEARDOWN_NO_RESIDUE",
+          "positive": "PASS",
+          "mutant": "KILLED",
+          "scope": "design model only"
+        }
+      ],
+      "unsupported_requested_production_mutations": [
+        "binary-substitution",
+        "wrong-digest",
+        "wrong-owner-mode",
+        "stale-loaded-profile",
+        "interrupted-installation",
+        "failed-teardown"
+      ],
+      "unsupported_reason": "No production exception implementation exists to mutate. No fake verifier or parallel lifecycle is counted as production coverage.",
+      "new_named_codes": []
+    },
+    "syntax": {
+      "parser": "/usr/sbin/apparmor_parser",
+      "parser_sha256": "a89b5f2ed99e6c6427a2645ba556d8aad508c6a04808ed337d32c0e45de7e6ad",
+      "argv": [
+        "--config-file",
+        "/dev/null",
+        "--skip-kernel-load",
+        "--skip-cache",
+        "--features-file",
+        "/dev/null",
+        "--stdout"
+      ],
+      "feature_abi": "empty offline ABI; syntax only, not userns enforcement or target ABI compatibility",
+      "checks": [
+        {
+          "name": "reviewed-profile",
+          "status": 0,
+          "profile_sha256": "4e229ce4faef8e6b0303e84052b466b7dc0b297a3b6a662b53bc7cf424d6f63b",
+          "compiled_sha256": "7fda37b40846a341f67d2666567842ccedc5f2607d0604bf542a830680c26a8d",
+          "compiled_bytes": 9742
+        },
+        {
+          "name": "missing-userns",
+          "status": 0,
+          "profile_sha256": "81dbc362d7f6e3dd58f243330e2566b559ac0ba3b8d157b25e5c857f166f6c9d",
+          "compiled_sha256": "7fda37b40846a341f67d2666567842ccedc5f2607d0604bf542a830680c26a8d",
+          "compiled_bytes": 9742
+        },
+        {
+          "name": "wrong-executable",
+          "status": 0,
+          "profile_sha256": "e5e08861515d8bd9c85cfa4bbf4c4f9dea72d46a68e982fdc696c22aec83beb7",
+          "compiled_sha256": "a8f3ff396279cd1881fe7a029b2fb84ebdfb65069f8be564d654ef6940dfe4c9",
+          "compiled_bytes": 9230
+        },
+        {
+          "name": "bypassed-transition",
+          "status": 0,
+          "profile_sha256": "c461af294109284fca86771b848a2405bbffd035120a46ad4ed926acc6df94b9",
+          "compiled_sha256": "3a88394f65d085051624bb8fe765ea05904075baaca43ea2f785d8a68306b13b",
+          "compiled_bytes": 9698
+        },
+        {
+          "name": "profile-name-substitution",
+          "status": 0,
+          "profile_sha256": "aed5e03667205145913df229c348240bcfa3cab312b2a4e83719bcf004934ad0",
+          "compiled_sha256": "498c90aa0a167a96a1605f9de59134b900c552dbcaab88768d79b0488fdf0c02",
+          "compiled_bytes": 9750
+        },
+        {
+          "name": "widened-path",
+          "status": 0,
+          "profile_sha256": "9cce00874e9fb0aaf114b4f386158bdaf6efcd8dbe49b6550ff2079fab270417",
+          "compiled_sha256": "f803f7598a6feb13481c37ba25780b909d99faf07cbe3981804c8c95112c4a9c",
+          "compiled_bytes": 9646
+        }
+      ]
+    },
+    "syntax_limit": "The empty offline feature ABI compiles the reviewed policy and missing-userns variant to the same bytes. This validates grammar only and supplies no userns permission, transition, target feature ABI, parser-authentication or loaded-policy proof.",
+    "raw_logs": {
+      "focused.tap": {
+        "local_path": "/tmp/shu251-a12-amend-evidence/focused.tap",
+        "sha256": "3b9b28532a17c02dc6b812a4245f0837367c82c70ee032ad777c16dbd100032f"
+      },
+      "phase-a.tap": {
+        "local_path": "/tmp/shu251-a12-amend-evidence/phase-a.tap",
+        "sha256": "71c48c8ef8949514a0ff9ace0eeac476606fc89705a57a4432add27c24a0272e"
+      },
+      "profile.tap": {
+        "local_path": "/tmp/shu251-a12-amend-evidence/profile.tap",
+        "sha256": "4c4296228ee567cfbfdf4b64f436741c59109da5e5918dad94783906c62487f5"
+      },
+      "profile-mutations.txt": {
+        "local_path": "/tmp/shu251-a12-amend-evidence/profile-mutations.txt",
+        "sha256": "016f6f9e32a1b5e3cfa146212425ad130ffdf4b1c066ea6fb5473204bc2b0a8f"
+      },
+      "syntax.json": {
+        "local_path": "/tmp/shu251-a12-amend-evidence/syntax.json",
+        "sha256": "2c428e156626de8b63d7d098986e0302145986a7664b43360a478a1dbc3f45c7"
+      }
+    }
+  },
+  "unsupported_delivery": [
+    "reproducible dedicated executable",
+    "enforced argv/identity/checkout/operation boundary",
+    "verified explicit profile transition",
+    "authenticated verifier including runner metadata/digest and loaded identity",
+    "production install/load/verify/execute/teardown",
+    "authenticated lifecycle receipts and rollback journal",
+    "production exclusion proof for Node/coordinator/supervisor/arbitrary commands",
+    "complete L4 inventory and exception capability integration",
+    "failure-atomic cleanup and host residue verification",
+    "six new production mutation controls"
+  ],
+  "rollback": {
+    "activation_attempted": false,
+    "host_mutations_performed": false,
+    "host_rollback_required_for_this_amendment": false,
+    "host_residue_observed": false,
+    "host_residue_claim": "NOT_MEASURED; no installation, profile load or namespace probe was attempted"
+  },
+  "preserved": {
+    "existing_assertions": true,
+    "existing_guards": true,
+    "existing_error_codes": true,
+    "existing_skip_allowances": true
+  },
+  "external_actions": {
+    "push": false,
+    "pr_create_or_modify": false,
+    "merge": false,
+    "github_comment": false,
+    "linear_comment": false
+  }
+}
