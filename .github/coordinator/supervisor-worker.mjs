@@ -1,3 +1,4 @@
+import { readAdapterLaunchEnvironment } from "./service/units.mjs";
 import { supervisorChildEnvironment } from "./service/credential-delivery.mjs";
 // Adapter execution runs in a separate process owned by the supervisor. Service
 // installation and credential delivery belong to SHU-251.
@@ -61,7 +62,11 @@ export async function executeSupervisedOrder({ order, contract, stateDir, author
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.send) {
   process.once("message", async message => {
-    try { await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
+    try {
+      if (process.env.SHU71_EVIDENCE_BROKER === 'true') {
+        Object.assign(process.env, readAdapterLaunchEnvironment());
+      }
+      await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
     catch { process.exit(1); }
   });
 }

@@ -225,7 +225,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       if (action === 'expire' && !expired && !teardownStarted) return { ok: true, state: 'NOT_EXPIRED' };
       if (action === 'revoke' || expired || teardownStarted || action === 'resume' && journal.entries.some(e => e.event === 'ARMED')) return await cleanup(spec, journal, expired ? 'expiry' : 'revoke', action === 'expire');
       need(b.now() >= Date.parse(spec.pkg.created_at) && !expired, 'ACT_ID_OR_EXPIRY_INVALID');
-      assertSupervisorLaunchEnvironment(privateRead('/etc/shu/supervisor.env', 0, 0o600));
+      assertSupervisorLaunchEnvironment(privateRead('/etc/shu/supervisor.env', 0, 0o600), privateRead('/srv/shu/coordinator.env', 999, 0o600));
       verifyInstallation(spec);
       const step = (name, fn) => journalEffect(journal, name, async () => {
         need(b.now() < Date.parse(spec.pkg.expires_at), 'ACT_ID_OR_EXPIRY_INVALID'); await fn();
@@ -295,7 +295,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
       return { ok: true, state: 'ARMED', activation_id: id };
     } catch (error) {
-      const code = ['SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
+      const code = ['SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';

@@ -73,21 +73,45 @@ function environmentEntries(source) {
   return result;
 }
 
-// Staging may contain only the transport secret. Arming requires the complete
-// adapter configuration in the supervisor's own file; coordinator env is not
-// inherited by this unit. Semantic/identity checks remain in the adapters.
-export function assertSupervisorLaunchEnvironment(source) {
-  return requireSupervisorAdapterEntries(environmentEntries(source));
+// Arming validates both independently owned sources. No combined file is valid.
+export function assertSupervisorLaunchEnvironment(source, coordinatorSource) {
+  const supervisor = environmentEntries(source);
+  assert.ok(supervisor.size === 1 && supervisor.has('SHU_SUPERVISOR_SECRET'),
+    Object.assign(new Error('SHU251_ENV_CROSSED: supervisor file contains only its transport secret'), { code: 'SHU251_ENV_CROSSED' }));
+  assert.ok(Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
+    'SHU251_ENV_SUPERVISOR: transport secret required');
+  const coordinator = environmentEntries(coordinatorSource);
+  assert.ok(!coordinator.has('SHU_SUPERVISOR_SECRET'), Object.assign(new Error('SHU251_ENV_CROSSED: secret in coordinator file'), { code: 'SHU251_ENV_CROSSED' }));
+  requireSupervisorAdapterEntries(coordinator);
+  assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
+    'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
+  return Object.fromEntries([...supervisor, ...[...coordinator].filter(([key]) => supervisorAdapterKeys.includes(key))]);
 }
 function requireSupervisorAdapterEntries(entries) {
   for (const key of supervisorAdapterKeys) {
     if (!entries.has(key)) throw Object.assign(new Error(`SHU71_SUPERVISOR_ENV_REQUIRED: ${key}`),
       { code: 'SHU71_SUPERVISOR_ENV_REQUIRED', key });
   }
-  assert.ok(Buffer.byteLength(entries.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32
-    && [...entries.keys()].every(key => key === 'SHU_SUPERVISOR_SECRET' || supervisorAdapterKeys.includes(key)),
-    'SHU251_ENV_SUPERVISOR: transport secret and reviewed adapter settings only');
-  return Object.fromEntries(entries);
+}
+// Adapter children read the coordinator source, never the supervisor secret.
+// The allowlist excludes coordinator API credentials as well as unknown keys.
+export function adapterLaunchEnvironment(source) {
+  const entries = environmentEntries(source);
+  assert.ok(!entries.has('SHU_SUPERVISOR_SECRET'), 'SHU251_ENV_CROSSED: secret in coordinator file');
+  requireSupervisorAdapterEntries(entries);
+  return Object.fromEntries([...entries].filter(([key]) => supervisorAdapterKeys.includes(key)
+    || ['CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'WORKSPACE_AGENT_TRIGGER_ID'].includes(key)));
+}
+
+export function readAdapterLaunchEnvironment(io = fs, uid = process.getuid()) {
+  const fd = io.openSync('/srv/shu/coordinator.env', io.constants.O_RDONLY | io.constants.O_NOFOLLOW | io.constants.O_NONBLOCK);
+  try {
+    const stat = io.fstatSync(fd);
+    assert.ok(stat.isFile() && stat.nlink === 1 && stat.uid === uid && stat.gid === uid
+      && (stat.mode & 0o777) === 0o600 && stat.size <= 1024 * 1024,
+      'SHU251_ENV_CUSTODY: private coordinator source required');
+    return adapterLaunchEnvironment(io.readFileSync(fd, 'utf8'));
+  } finally { io.closeSync(fd); }
 }
 
 // Inspect key names and nonempty values only; never include contents in errors.
@@ -109,11 +133,10 @@ function environmentBindings(identity) {
     return environmentEntries(source);
   });
   const [supervisor, coordinator] = entries;
-  assert.ok(!supervisor.has('GITHUB_TOKEN') && !supervisor.has('LINEAR_API_TOKEN') && !coordinator.has('SHU_SUPERVISOR_SECRET'),
+  assert.ok(!supervisor.has('GITHUB_TOKEN') && !supervisor.has('LINEAR_API_TOKEN') && !supervisorAdapterKeys.some(key => supervisor.has(key)) && !coordinator.has('SHU_SUPERVISOR_SECRET'),
     'SHU251_ENV_CROSSED: environment contents belong to the other unit');
-  assert.ok([...supervisor.keys()].every(key => key === 'SHU_SUPERVISOR_SECRET' || supervisorAdapterKeys.includes(key)) && Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
+  assert.ok([...supervisor.keys()].every(key => key === 'SHU_SUPERVISOR_SECRET') && Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
     'SHU251_ENV_SUPERVISOR: transport secret and reviewed adapter settings only');
-  if (supervisor.size > 1) requireSupervisorAdapterEntries(supervisor);
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
 }

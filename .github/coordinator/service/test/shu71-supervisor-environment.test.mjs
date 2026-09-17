@@ -11,7 +11,7 @@ import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
 import { preflightActivation } from '../../activation.mjs';
 import { reviewWrapper, reviewTestFiles, runReviewEvidence } from '../../review-execution.mjs';
-import { supervisorEnvironment, environmentText } from './shu71-supervisor-environment-fixture.mjs';
+import { supervisorEnvironment, environmentText, secretText, coordinatorText } from './shu71-supervisor-environment-fixture.mjs';
 const keys = ephemeralPublicSource();
 // Independent inventory of what the adapters read. Existing refusals keep their
 // semantic responsibility; the new assertion binds presence to the actual file.
@@ -31,7 +31,8 @@ test('B1_ENV_BINDING: exact per-unit file and nine effective adapter values', t 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-env-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const params = fixtureParameters(root);
-  fs.writeFileSync(params.supervisorEnvironmentFile, environmentText());
+  fs.writeFileSync(params.supervisorEnvironmentFile, secretText());
+  fs.writeFileSync(params.coordinatorEnvironmentFile, coordinatorText());
   const units = render(params); assertPolicy(units, params);
   const defaults = serviceParameters({ workdir: root });
   assert.equal(defaults.supervisorEnvironmentFile, '/etc/shu/supervisor.env', 'B1_ENV_DEFAULT_SUPERVISOR');
@@ -39,7 +40,7 @@ test('B1_ENV_BINDING: exact per-unit file and nine effective adapter values', t 
   for (const [unit, file] of [['shu-supervisor.service', params.supervisorEnvironmentFile], ['shu-coordinator.service', params.coordinatorEnvironmentFile]]) {
     assert.deepEqual(units[unit].split('\n').filter(l => l.startsWith('EnvironmentFile=')), [`EnvironmentFile=${file}`], 'SHU251_SECRET_FILE');
   }
-  const env = assertSupervisorLaunchEnvironment(fs.readFileSync(params.supervisorEnvironmentFile, 'utf8'));
+  const env = assertSupervisorLaunchEnvironment(fs.readFileSync(params.supervisorEnvironmentFile, 'utf8'), fs.readFileSync(params.coordinatorEnvironmentFile, 'utf8'));
   assert.deepEqual(Object.keys(contracts), supervisorAdapterKeys, 'B1_ENV_NINE_KEYS');
   assert.deepEqual(env, supervisorEnvironment, 'B1_ENV_EFFECTIVE_VALUES');
   const child = supervisorChildEnvironment(env);
@@ -51,10 +52,10 @@ test('B1_ENV_BINDING: exact per-unit file and nine effective adapter values', t 
 
 for (const [key, responsibility] of Object.entries(contracts)) test(`B1_ENV_REQUIRED_${key}: ${responsibility}`, async t => {
   const env = { ...supervisorEnvironment }; delete env[key];
-  const text = environmentText(env);
-  assert.throws(() => assertSupervisorLaunchEnvironment(text), e => e.code === 'SHU71_SUPERVISOR_ENV_REQUIRED' && e.key === key,
+  const text = coordinatorText(env);
+  assert.throws(() => assertSupervisorLaunchEnvironment(secretText(), text), e => e.code === 'SHU71_SUPERVISOR_ENV_REQUIRED' && e.key === key,
     `B1_ENV_NAMED_ABSENCE_${key}`);
-  const p = productionFixture(t, keys); p.write('/etc/shu/supervisor.env', text);
+  const p = productionFixture(t, keys); p.write('/srv/shu/coordinator.env', text, 0o600, 999);
   const result = await createShu71Production(p.id, p.boundary).execute('run');
   assert.equal(result.code, 'SHU71_SUPERVISOR_ENV_REQUIRED', `B1_ENV_PRODUCTION_REFUSAL_${key}`);
   assert.equal(p.signatures(), 0, `B1_ENV_BEFORE_SIGN_${key}`);
@@ -98,7 +99,7 @@ test('B1_EXISTING_REVIEW_GUARDS: missing reviewer UID, wrappers and tests refuse
 test('B1_ENV_CUSTODY: production requires modeled root root 0600 on the opened file', async t => {
   for (const [label, uid, mode, gid] of [['OWNER', 999, 0o600, 0], ['GROUP', 0, 0o600, 999], ['PUBLIC', 0, 0o644, 0], ['MODE', 0, 0o400, 0]]) {
     const p = productionFixture(t, keys);
-    p.write('/etc/shu/supervisor.env', environmentText(), mode, uid);
+    p.write('/etc/shu/supervisor.env', secretText(), mode, uid);
     // writeFileSync preserves an existing file's mode, so set it in the disposable tree.
     fs.chmodSync(`${p.root}/etc/shu/supervisor.env`, mode);
     if (gid) {
@@ -108,5 +109,16 @@ test('B1_ENV_CUSTODY: production requires modeled root root 0600 on the opened f
     const result = await createShu71Production(p.id, p.boundary).execute('run');
     assert.equal(result.code, 'ACT_FILE_CUSTODY', `B1_ENV_CUSTODY_${label}`);
     assert.equal(p.signatures(), 0, `B1_ENV_CUSTODY_BEFORE_SIGN_${label}`);
+  }
+});
+
+test('CLOSURE_ENV production combined and crossed sources refuse before signing', async t => {
+  for (const crossed of [false, true]) {
+    const p = productionFixture(t, keys);
+    if (crossed) p.write('/srv/shu/coordinator.env', coordinatorText() + secretText(), 0o600, 999);
+    else p.write('/etc/shu/supervisor.env', environmentText());
+    const result = await createShu71Production(p.id, p.boundary).execute('run');
+    assert.equal(result.code, 'SHU251_ENV_CROSSED', 'CLOSURE_ENV_NAMED_PRODUCTION_REFUSAL');
+    assert.equal(p.signatures(), 0, 'CLOSURE_ENV_BEFORE_SIGN');
   }
 });

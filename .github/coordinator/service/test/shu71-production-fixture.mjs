@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { environmentText } from './shu71-supervisor-environment-fixture.mjs';
+import { secretText, coordinatorText } from './shu71-supervisor-environment-fixture.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { sign } from 'node:crypto';
@@ -68,8 +68,8 @@ export function productionFixture(t, keys) {
   write('/etc/shu/approvals/shu71-owner.pub', keys.publicKey.export({ type: 'spki', format: 'pem' }));
   write('/etc/shu/keys/shu71-signing.pem', keys.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   write('/usr/local/lib/shu71/coordinator/service/shu71-production.mjs', 'reviewed artifact', 0o644);
-  write('/etc/shu/supervisor.env', environmentText());
-  write('/srv/shu/coordinator.env', 'GITHUB_TOKEN=GITHUB_POISON\nLINEAR_API_TOKEN=LINEAR_POISON\n', 0o600, 999);
+  write('/etc/shu/supervisor.env', secretText());
+  write('/srv/shu/coordinator.env', coordinatorText(), 0o600, 999);
   let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
   let signatures = 0;
   const active = new Map();

@@ -2,7 +2,8 @@
 // reviewed driver, or an explicit test capability boundary (HOST-LIFECYCLE.md).
 import path from 'node:path';
 import { CAPABILITIES } from './host-suite-contract.mjs';
-export const REQUIRED_CAPABILITIES = Object.freeze([...CAPABILITIES.map(c => c.name), 'atomic-rename', 'directory-fsync']);
+export const LIFECYCLE_PROBE_CAPABILITIES = Object.freeze(CAPABILITIES.filter(c => c.name !== 'user_namespaces').map(c => c.name));
+export const REQUIRED_CAPABILITIES = Object.freeze([...LIFECYCLE_PROBE_CAPABILITIES, 'atomic-rename', 'directory-fsync']);
 import { canonical, hash, refuse, approve, receipt, validateReceipt, createRestartCustody, validateRestartCustody, LIFECYCLE_ACTIONS, UNIT_NAMES } from './phase-a-driver.mjs';
 
 export const FILES = Object.freeze([...UNIT_NAMES,

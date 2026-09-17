@@ -216,6 +216,12 @@ export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
   const derived = requiredSet === undefined ? null : deriveRequirements(requiredSet.names, requiredSet.requirements);
   const evidence = {};
   for (const capability of CAPABILITIES) {
+    // Inventory-derived absence is not an authorized test skip. Do not execute
+    // an unrelated probe (including one that throws) as a suite prerequisite.
+    if (derived && derived[capability.name].length === 0) {
+      evidence[capability.name] = { required: false };
+      continue;
+    }
     let available = false;
     let resolved;
     try {
@@ -232,7 +238,7 @@ export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
     if (!available && derived) {
       const needs = derived[capability.name];
       const uncovered = needs.filter(need => !Object.hasOwn(need, 'reason'));
-      // Namespace proof and runner infrastructure have no skip allowance.
+      // Required capabilities other than the two identity proofs have no skip allowance.
       if (!['privilege', 'worker_uid'].includes(capability.name) || uncovered.length)
         halt(capability.code, uncovered.map(need => need.test).join(', ') || capability.name);
       evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: PERMITTED_SKIPS[need.test] })) };
