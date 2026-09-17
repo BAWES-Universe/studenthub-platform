@@ -229,3 +229,8 @@ for (const s of stateSpace.filter(s => !unreachable(s))) test(`R8 state transiti
   const observed = await stateTransitionCheck(createShu71Production, productionFixture(t, keys), s);
   t.diagnostic(JSON.stringify({ state: s, before: observed.before, after: observed.after }));
 });
+
+import { exhaustedVariants, exhaustedInvariant } from './shu71-exhausted-invariants.mjs';
+for (const variant of exhaustedVariants) test(`exhausted invariant: ${variant.axis}: ${variant.label}`, t =>
+  exhaustedInvariant(createShu71Production, () => productionFixture(t, keys), variant,
+    snapshot => t.diagnostic(JSON.stringify(snapshot))));

@@ -863,16 +863,19 @@
     "R6_M7_M8_M9": "Credential removal before gate loop, deletion of redundant settlement counter read, and settlement marker after counter write survive. No additional security closure claimed."
   },
   "constraints": {
-    "permitted_skips_sha256": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f",
+    "permitted_skips_sha256": "c66cc3c8f199ca249fcdca8c3e4c47c87fc9dbec16c0cef4eb47f7f47500f099",
     "permitted_skips_byte_identical_lane_wide": true,
     "ci_workflow_unchanged": true,
-    "production_modules_unchanged": true,
+    "production_modules_unchanged": false,
     "host_access": false,
     "push": false,
     "pr_changes": false,
     "github_or_linear_comments": false,
-    "merge": false,
-    "new_head_ci_status": "UNVERIFIED; orchestrator will verify after pushing"
+    "merge": true,
+    "new_head_ci_status": "UNVERIFIED; orchestrator will verify after pushing",
+    "production_modules_note": "B1 commit 007b1a8 changed units.mjs and shu71-production.mjs. The 2026-09-17 FINAL response changes tests and documentation only after merging main.",
+    "merge_scope": "Local base-update merge of origin/main only; no PR merge or remote action.",
+    "permitted_skips_sha256_scope": "SHA-256 of the complete host-suite-contract.mjs at merged main 8a613c42d166, not of the PERMITTED_SKIPS block alone."
   },
   "limitations": [
     "All execution proofs use disposable boundary doubles, not a host.",
@@ -897,7 +900,7 @@
   "final_head_confirmation_directory": "/tmp/l3-r7-results/final-head",
   "reviewed_head_meaning": "Starting head from the full R7 BLOCK verdict; current measurements below apply to the source hashes in tested_changed_sources, committed with this report.",
   "r7_response": {
-    "stopping_rule": "No demonstrated mutant reproducing the armed-gate / credential-present / near-zero-effect signature may survive the genuine assertions, including V12 and V14; every retained control-content property must fail by name when individually deleted, otherwise remove it and record why. The unchanged ORDERED root-forgery residual remains explicitly expected and grants no closure upgrade.",
+    "stopping_rule": "Every demonstrated shape must die by name under the genuine whole-system assertions, including W7/W13/W1b/W15, V12/V14 and N1/N2/N3/N6. Imagined shapes outside the enumerated states and irrelevant-input representatives remain disclosed, not universally proved. Every retained control-content property must fail by name when individually deleted, otherwise remove it and record why. The unchanged ORDERED root-forgery residual remains explicitly expected and grants no closure upgrade.",
     "R7-B": {
       "before": [
         {

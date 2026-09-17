@@ -149,14 +149,33 @@ chore/shu71-production-composition`, with origin/main at the requested
 was aborted because it replayed already-squashed L1 commits. No merge or remote
 write was performed. Later movement of the shared origin/main ref was not chased.
 
-Production source and the complete host-suite-contract, including PERMITTED_SKIPS,
-are byte-identical to the starting head. No workflow was edited: ci.yml inherited
-#135's prerequisite-parity changes and is byte-identical to requested main.
-All #135 L1 files match that requested base. The existing L2 history was replayed;
-no #138 integration work was attempted.
+The preceding rebase and unchanged-source statements describe the historical R9
+pass only. As of 2026-09-17, B1 commit `007b1a8` changed `units.mjs` and
+`shu71-production.mjs`, and #138 was integrated at `a1de27b`. The FINAL response
+merges main at `8a613c42d166`, including #139's host-suite receipt binding.
+The complete host-suite-contract and ci.yml are byte-identical to that main.
 
-After committing, the final-head rerun writes `.local-test-results/r8/final-run.json`
-with the commit ID, source digests, all suite counts, log digests, and mutant
-snapshots. `.local-test-results/r8/state-table.json` contains all 720 measured
-whole-system rows; the 144 unreachable rows are enumerated separately in
-`unreachable-states.json`. These local execution artifacts are not claims about CI.
+The executable `stateSpace` and `unreachable` definitions enumerate all 720
+reachable and 144 unreachable rows; trust-test diagnostics emit each measured
+whole-system row. No untracked local evidence files are required for this claim.
+
+## FINAL response: irrelevant-input invariants (2026-09-17)
+
+The exhausted/armed/intact/unconsumed row now asserts three negative invariants:
+`B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS` (real-writer HALTED and
+FIXTURE_REMOVE_INTENT, separately), `B4_EXHAUSTED_IRRELEVANT_EXTRA_COUNTER_FIELDS`
+(extra settled and arbitrary_metadata fields), and
+`B4_EXHAUSTED_IRRELEVANT_CLOCK_PAST_EXPIRY` (+365 days relative to expiry).
+Each compares the whole-system tuple with an untransformed execution and pins
+that baseline to the existing transition oracle. Expected: both gate files exactly
+`[Service]\nEnvironment=ENABLE_DISPATCH=false\n`, credential absent, lease held,
+7 effects, ACT_RETRY_BUDGET_UNAVAILABLE, completion false.
+
+These are representatives of irrelevant-input classes, not a proof over every
+possible event, field, value or clock offset. Imagined predicates selecting other
+representatives or combinations remain outside the finite proof. Every demonstrated
+shape must die by name; the fixed N1/N2/N3/N6 witnesses check that requirement.
+Their unsafe snapshots remain unsafe: test changes detect them, not repair production.
+See `SHU71-FINAL-VALIDATION.json` for current counts and individual snapshots.
+All prior residuals, composition range/depth limits and the
+`skipActivationPreflight: true` scope note remain in force unchanged.

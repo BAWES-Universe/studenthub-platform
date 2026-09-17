@@ -12,7 +12,7 @@ export function unreachable(s) {
 }
 const activation = '/srv/shu/state/shu71-activation.json';
 const lease = '/srv/shu/state/shu71-evidence/active.json';
-export async function stateTransition(createProduction, h, s) {
+export async function stateTransition(createProduction, h, s, transform = () => {}) {
   assert.equal(unreachable(s), null);
   const create = () => createProduction(h.id, h.boundary);
   assert.equal((await create().execute('run')).state, 'ARMED', 'B4_R8_SETUP_ARMED');
@@ -50,6 +50,7 @@ export async function stateTransition(createProduction, h, s) {
   const budget = `${dir}/automatic-teardown.json`;
   if (s.counter === 'absent' && h.exists(budget)) h.boundary.fs.unlinkSync(budget);
   if (s.counter !== 'absent') h.write(budget, s.counter === 'invalid' ? '{' : JSON.stringify({ attempts: s.counter.startsWith('valid-') ? Number(s.counter.slice(6)) : 32, ...(s.counter === 'settlement-started-set' ? { settlement_started: true } : {}) }));
+  transform(h, dir);
   const snapshot = (result, start) => ({
     gates: gates.map(g => h.read(g)), credential: h.exists(activation), lease: h.exists(lease),
     effects: h.events.slice(start).filter(e => /^(write:|rename:|unlink:|remove:|command:|api:)/.test(e)).length,

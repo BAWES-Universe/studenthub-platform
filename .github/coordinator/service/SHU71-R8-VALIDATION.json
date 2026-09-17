@@ -315,7 +315,7 @@
   },
   "integrity": {
     ".github/coordinator/service/shu71-production.mjs": {
-      "current_sha256": "bd304b83b270478a33fe565f2be493384c4081226d1eb0bcd6600dfaed987091",
+      "current_sha256": "b3d9182489eb56be276af744240713805ab9605df8ef30f1f76808263b3e2591",
       "starting_sha256": "bd304b83b270478a33fe565f2be493384c4081226d1eb0bcd6600dfaed987091"
     },
     ".github/coordinator/service/shu71-journal.mjs": {
@@ -323,7 +323,7 @@
       "starting_sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0"
     },
     ".github/coordinator/service/host-suite-contract.mjs": {
-      "current_sha256": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f",
+      "current_sha256": "c66cc3c8f199ca249fcdca8c3e4c47c87fc9dbec16c0cef4eb47f7f47500f099",
       "starting_sha256": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f"
     },
     ".github/workflows/ci.yml": {
@@ -332,14 +332,14 @@
     }
   },
   "unchanged_skip_names": true,
-  "integrity_note": "Production and journal plus full host-suite-contract (including PERMITTED_SKIPS) match starting head. ci.yml matches dc01f84 exactly; the only inherited change is prerequisite parity in both jobs. All files changed by #135 match dc01f84.",
-  "measurement_scope": "First local pass before final commit; final-head execution and log hashes are recorded in .local-test-results/r8/final-run.json. This report does not claim those future executions.",
+  "integrity_note": "Current digests refreshed 2026-09-17 after merging 8a613c42d166. Starting digests and suite measurements are historical R9-pass evidence. B1 subsequently changed production; #138 was integrated at a1de27b. The complete host-suite-contract and ci.yml match origin/main; PERMITTED_SKIPS is unchanged.",
+  "measurement_scope": "Historical first local R9 pass; no untracked local artifact is cited as shipped evidence. Current FINAL response evidence is in SHU71-FINAL-VALIDATION.json.",
   "limits": [
     "B1 BLOCKED",
     "B2/B4 source-level only",
     "CI unverified",
     "No live/host/independent verdict",
-    "No #138 convergence",
+    "No #138 convergence during the historical R9 pass; subsequently merged at a1de27b",
     "Known ordered-forgery residual unchanged",
     "Application suite and older exploratory mutation sweeps not rerun in R8"
   ]
