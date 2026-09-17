@@ -216,12 +216,12 @@ export function createShu71Production(id, b = shu71Boundary) {
       if (!active) atomic(`${ROOT}/active.json`, JSON.stringify({ activation_id: id }));
       if (recovered) {
         journal.recovered = true;
-        return await cleanup(spec, journal, 'recovery');
+        return await cleanup(spec, journal, 'recovery', action === 'expire');
       }
       const expired = b.now() >= Date.parse(spec.pkg.expires_at);
       const teardownStarted = journal.entries.some(e => ['REVOKE_REQUESTED', 'AUTHORIZATION_EXPIRED', 'TEARDOWN_INCOMPLETE', 'TEARDOWN_COMPLETE'].includes(e.event));
       if (action === 'expire' && !expired && !teardownStarted) return { ok: true, state: 'NOT_EXPIRED' };
-      if (action === 'revoke' || expired || teardownStarted || action === 'resume' && journal.entries.some(e => e.event === 'ARMED')) return await cleanup(spec, journal, expired ? 'expiry' : 'revoke');
+      if (action === 'revoke' || expired || teardownStarted || action === 'resume' && journal.entries.some(e => e.event === 'ARMED')) return await cleanup(spec, journal, expired ? 'expiry' : 'revoke', action === 'expire');
       need(b.now() >= Date.parse(spec.pkg.created_at) && !expired, 'ACT_ID_OR_EXPIRY_INVALID');
       verifyInstallation(spec);
       const step = (name, fn) => journalEffect(journal, name, async () => {
@@ -297,7 +297,7 @@ export function createShu71Production(id, b = shu71Boundary) {
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';
       try { journal.append({ event: 'HALTED', code }); } catch { /* safety effects still run */ }
-      if (spec) return { ok: false, state: 'HALT', code, teardown: await cleanup(spec, journal, 'failure') };
+      if (spec) return { ok: false, state: 'HALT', code, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
       return { ok: false, state: 'HALT', code: 'ACT_OWNER_APPROVAL' };
     } finally { journal.close(); }
   }
@@ -358,7 +358,23 @@ export function createShu71Production(id, b = shu71Boundary) {
       need(['inactive', 'failed'].includes(command('/usr/bin/systemctl', ['show', '--property=ActiveState', '--value', name]).trim()), 'ACT_TEARDOWN_DRIFT');
     }
   }
-  async function cleanup(spec, journal, reason) {
+  async function cleanup(spec, journal, reason, automatic = false) {
+    // Separate from either journal so damaged-log recovery cannot reset the
+    // automatic budget. Reserve durably BEFORE effects, including crash retries.
+    // Explicit resume/revoke remain available without resetting this budget.
+    if (automatic) {
+      try {
+        let attempts = 0;
+        try { attempts = JSON.parse(privateRead(`${dir}/automatic-teardown.json`)).attempts; }
+        catch (e) { if (e.code !== 'ENOENT') throw e; }
+        need(Number.isSafeInteger(attempts) && attempts >= 0 && attempts <= 32, 'ACT_RETRY_BUDGET_INVALID');
+        if (attempts >= 32) return { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_EXHAUSTED', operator_action: 'resume_or_revoke' };
+        atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: attempts + 1 }));
+      } catch {
+        return { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_UNAVAILABLE', operator_action: 'resume_or_revoke' };
+      }
+    }
+
     const effects = [
       ['gate', () => { for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 0, 0, 0o644); } }],
       ['activation', () => remove(ACTIVATION_FILE)],

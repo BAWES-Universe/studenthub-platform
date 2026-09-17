@@ -207,3 +207,76 @@ R2's minor R1 (higher-priority drop-in inventory) remains open, as do F6/F7,
 broker whole-EnvironmentFile scope, B1 concurrent production-entrypoint proof,
 and all host/live-system properties. This correction does not support claims
 about real systemd, real durability, deployed custody, or live adapter execution.
+
+## Response to R3 at 5e25c65
+
+Both R3 verdict files were read in full. Overall remains **BLOCK**; B1 remains
+blocked and B2/B4 remain **source-level only**. The confirmed N1 delivery fix,
+pre-completion drift recovery and un-gated rollback mutation are preserved.
+
+- **P1:** the genuine assertion suite now re-arms a real fixture gate when the
+  expiry-timer INTENT is written, after the first observation and before timer
+  retirement. It requires `ACT_CLEANUP_FAILED`, retained ownership and timer,
+  and no completion row, then demonstrates recovery. Removing only the second
+  `observeTeardown()` is killed by `B4_RETIREMENT_REOBSERVATION`.
+- **P4:** a fixture re-creates the activation file after unlink. It asserts
+  refusal during drift and recovery via resume/revoke/expire after the fault
+  clears. Removing only activation from the replay list is killed by
+  `B4_ACTIVATION_DRIFT_RECOVERED`.
+- **P5:** repeated wedged wakes must issue zero further remote API calls and
+  zero archive replacements after their first successful completion. Forcing
+  every effect to repeat is killed by `B4_RESTORES_ONCE_ONLY`. These are
+  once-only rules for completed journal steps, not an exactly-once guarantee
+  for a remote effect interrupted before its DONE record.
+- **P3:** automatic cleanup is limited to **32 reserved attempts per activation
+  ID**, including the initial automatic teardown. The counter is a root-owned
+  private atomic file, `shu71-evidence/<id>/automatic-teardown.json`, fsync'd
+  before cleanup effects. It survives process replacement and is independent
+  of both journal streams, so damaged-journal recovery cannot renew the budget.
+  Manual run/resume/revoke do not reset the counter. The genuine test drives all
+  32 attempts and 40 further wakes, requiring no more cleanup commands, remote
+  calls, file writes or journal rows after exhaustion. Removing the cap is
+  killed by `B4_AUTOMATIC_REPLAY_BOUNDED`. Interrupted reservation and invalid
+  counter tests also require refusal and subsequent explicit manual recovery.
+
+### Retry cost, exhaustion and operator recovery
+
+Previously, sustained drift produced an **unbounded 1 Hz replay**. R3 measured
+10 journal rows, 9 systemctl calls and 27 modeled fsyncs per wedged wake; the
+whole hash chain was re-read on each wake. That cost was omitted from the prior
+correction record. The 32-attempt budget bounds automatic cleanup replay and its
+journal growth; reserving each attempt adds an atomic counter write and its
+file/parent fsyncs. Explicit operator invocations remain independently retryable.
+
+At exhaustion, `expire` returns `HALT / ACT_RETRY_BUDGET_EXHAUSTED` with
+`operator_action: resume_or_revoke`. It does **not** claim teardown succeeded,
+append TEARDOWN_COMPLETE, release ownership or retire the timer. Physical drift
+may still be present, including an armed gate. Automatic repair no longer runs
+after the budget is spent, even if the original drift later clears. An operator
+must resolve the drift and explicitly invoke the installed production entrypoint
+with `resume <activation-id>` or `revoke <activation-id>`. Those commands retain
+all cleanup/readback guards and can complete and retire the timer without
+resetting or deleting the counter. Do not delete custody, ownership or budget
+files to obtain a fresh automatic allowance.
+
+Unreadable, malformed or non-durable budget storage returns
+`ACT_RETRY_BUDGET_UNAVAILABLE` before automatic cleanup effects; explicit
+resume/revoke remain available using the existing independent cleanup path.
+A reservation interrupted after persistence consumes an attempt, conservatively.
+The cap is not a time guarantee: crashes can consume attempts without completing
+any cleanup. The retained expiry timer and service restart policy still produce
+1 Hz process wakes/refusal receipts and fixed-size journal verification/fsync
+work after exhaustion; this change bounds **effect replay and evidence-journal
+growth**, not process wakes or system journal retention. No host wake rate,
+operator alert delivery, systemd behavior or disk durability was measured.
+
+**P2 scope limit:** replay applies only before TEARDOWN_COMPLETE. Out-of-band
+drift after completion returns ACT_TEARDOWN_DRIFT without repair; the timer has
+already been retired. This pre-existing limitation remains open, as does R1's
+lack of effective-systemd/higher-priority drop-in observation. The second
+observation narrows the completion race; it cannot exclude a privileged writer
+changing files after the final observation. P6's worker/reload/failure-guard and
+fallback survivors are not claimed killed or equivalent by this correction.
+F6/F7, B1 provisioning/concurrency, broker whole-EnvironmentFile scope and all
+host/live-system proof obligations remain open. Exact current suite counts and
+mutation results are recorded in SHU71-L3-TESTS.json.
