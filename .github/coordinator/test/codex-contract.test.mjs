@@ -497,12 +497,20 @@ test("authentication expiry -> visible re-auth HOLD + pause; quota stays FAILED;
 });
 
 test("thread.started is persisted atomically before process exit, and crash recovery never spawns before receipt persistence", async () => {
+  const waitFor = async (condition, description) => {
+    const deadline = performance.now() + 30_000;
+    while (!condition()) {
+      assert.ok(performance.now() < deadline, `Timed out after 30 seconds waiting for ${description}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
   const stateDir = mkdtempSync(join(tmpdir(), "codex-stream-"));
   const worktree = mkdtempSync(join(tmpdir(), "codex-worktree-"));
   const fakeBin = mkdtempSync(join(tmpdir(), "codex-bin-"));
   const fakeCodex = join(fakeBin, "codex");
   const aliveMarker = join(worktree, "codex-child-alive");
-  writeFileSync(fakeCodex, `#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); setTimeout(() => { fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); }, 1000);\n`);
+  const exitMarker = join(worktree, "codex-child-may-exit");
+  writeFileSync(fakeCodex, `#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); const deadline = performance.now() + 30_000; const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(exitMarker)})) { clearInterval(poll); fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); } else if (performance.now() >= deadline) { console.error("Timed out after 30 seconds waiting for recovery checks to release the Codex child"); process.exit(1); } }, 20);\n`);
   chmodSync(fakeCodex, 0o755);
   const adapterUrl = new URL("../adapters/codex-cli.mjs", import.meta.url).href;
   const runner = join(worktree, "runner.mjs");
@@ -517,13 +525,13 @@ test("thread.started is persisted atomically before process exit, and crash reco
   })}, io: { codexStateDir: ${JSON.stringify(stateDir)}, hostname: () => "fixture-host", processStartToken: () => "100", pushBrokerEnabled: false }, readHeadImpl: async () => ${JSON.stringify(SHA)} });\n`);
   const coordinator = spawn(process.execPath, [runner], { stdio: "ignore" });
   const sidecar = join(stateDir, `${ATTEMPT}.json`);
-  const deadline = Date.now() + 5000;
-  while (!existsSync(sidecar) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitFor(() => existsSync(sidecar), "the durable thread sidecar");
+  assert.ok(existsSync(aliveMarker), "the Codex child is still running when its sidecar becomes durable");
   assert.ok(existsSync(sidecar), "thread identity is durable while the Codex child is still running");
   assert.equal(JSON.parse(readFileSync(sidecar, "utf8")).thread_id, THREAD);
   coordinator.kill("SIGKILL");
   coordinator.unref();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await waitFor(() => coordinator.signalCode !== null || coordinator.exitCode !== null, "the killed coordinator to exit");
 
   let spawns = 0;
   const recovered = await launchBuilder({
@@ -548,7 +556,9 @@ test("thread.started is persisted atomically before process exit, and crash reco
   assert.match(stillRunning.reason, /still alive/);
   assert.equal(spawns, 0, "the exact session is not resumed concurrently with its orphaned process");
 
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  // Release the orphan only after both recovery positions prove they cannot spawn.
+  writeFileSync(exitMarker, "exit");
+  await waitFor(() => !existsSync(aliveMarker), "the original Codex child to finish");
   const afterExit = await launchBuilder({
     ...launchInput(),
     resume: true,
