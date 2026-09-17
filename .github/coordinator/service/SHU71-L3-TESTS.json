@@ -16,32 +16,32 @@
     "full_coordinator_umask": "0002"
   },
   "focused": {
-    "tests": 245,
-    "pass": 245,
+    "tests": 260,
+    "pass": 260,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r4-results/focused-final.log",
-    "log_sha256": "67c01830bc53de63a25acc7a8ba8e7d921086f2de124d408331ca7d696de7368",
+    "log_path": "/tmp/l3-r5-results/focused-final.log",
+    "log_sha256": "f23c8216427376621096904c4bcfcd5d35563d89b15b3f2f1f716746632c6f42",
     "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
     "failures": [],
     "skip_names": [],
     "mutation_named_checks": {
-      "total": 90,
-      "pass": 90,
+      "total": 94,
+      "pass": 94,
       "fail": 0,
       "skipped": 0,
       "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
     },
     "new_targeted_source_mutants": {
-      "total": 49,
-      "killed": 49,
+      "total": 53,
+      "killed": 53,
       "production": 11,
       "delivery": 17,
       "trust": 11,
-      "recovery": 10,
-      "added_since_r4": 3
+      "recovery": 14,
+      "added_since_r5": 4
     },
     "process_death_injections": {
       "forward": 240,
@@ -50,14 +50,14 @@
     }
   },
   "coordinator": {
-    "tests": 1736,
-    "pass": 1718,
+    "tests": 1751,
+    "pass": 1733,
     "fail": 0,
     "cancelled": 0,
     "skipped": 18,
     "todo": 0,
-    "log_path": "/tmp/l3-r4-results/coordinator-final.log",
-    "log_sha256": "7612d9fc734347a1cadc01f44099a675b8fdea6ff8b4370c912e3751ae8af3ae",
+    "log_path": "/tmp/l3-r5-results/coordinator-final.log",
+    "log_sha256": "221b1d6f29eeadc0bbaaec62e5605de1d957b31d7636ab85b97da927965be1ad",
     "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
     "failures": [],
     "skip_names": [
@@ -81,8 +81,8 @@
       "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
     ],
     "mutation_named_checks": {
-      "total": 525,
-      "pass": 525,
+      "total": 529,
+      "pass": 529,
       "fail": 0,
       "skipped": 0,
       "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
@@ -496,8 +496,8 @@
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r4-results/rollback.log",
-    "log_sha256": "7e1caa3d7ffd8bb80d348ab5087e27e01fa1d9bc6a3b72c49cf1bc4ab6c140b9",
+    "log_path": "/tmp/l3-r5-results/rollback-final.log",
+    "log_sha256": "e526e138a5054b739e99c5b1772fc75dcdb721e856760415f79851511fb7338a",
     "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
     "failures": [],
     "skip_names": [],
@@ -669,14 +669,14 @@
     "timing_basis": "Rendered timer/restart text; not a host scheduling measurement."
   },
   "genuine_assertion_baseline": {
-    "tests": 196,
-    "pass": 196,
+    "tests": 207,
+    "pass": 207,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r4-results/genuine-final.log",
-    "log_sha256": "3268b9e7864f95fc367ad03e073e9c73b44ed29ec64eab165d03baaa8c44afb7",
+    "log_path": "/tmp/l3-r5-results/genuine-final.log",
+    "log_sha256": "4754e5c80be086d945f290fd61c04de19976e3ef69cff89ba5452593507fad41",
     "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
     "failures": [],
     "skip_names": [],
@@ -848,7 +848,7 @@
       "after_log": "/tmp/l3-r4-results/after.jsonl"
     },
     "Q2": "About 32 seconds nominal, possibly about 16 seconds with independent restart/timer wakes, disclosed explicitly.",
-    "Q3": "PARTIAL: automatic safe-episode settlement and lease release restored; parent-style repair after exhaustion is not restored because it conflicts with preserved no-repair contract. Gate remaining armed still requires explicit recovery.",
+    "Q3": "PARTIAL: automatic safe-episode settlement and lease release restored. Declining parent-style repair after exhaustion is a scope choice, not a constraint imposed by the no-repair policy. An armed gate still requires explicit recovery.",
     "Q4": "Existing unavailable code preserved; budget_error distinguishes invalid from storage/custody failure.",
     "Q5": "Counter preservation asserted after failed run/resume/revoke and successful recovery; MX3 killed.",
     "Q6": "run recovery and intact-journal scope clarified; counter remains outside manifest/archive digest.",
@@ -1013,5 +1013,1022 @@
       "All host/systemd/effective-drop-in/disk-durability facts",
       "Live production worker composition and concurrent progression"
     ]
+  },
+  "r5_reviewed_head": "0eeadd5f05abc8cd82968a855b2bff8cc137c65a",
+  "r5_prior_results": {
+    "focused": {
+      "tests": 245,
+      "pass": 245,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r4-results/focused-final.log",
+      "log_sha256": "67c01830bc53de63a25acc7a8ba8e7d921086f2de124d408331ca7d696de7368",
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 90,
+        "pass": 90,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      },
+      "new_targeted_source_mutants": {
+        "total": 49,
+        "killed": 49,
+        "production": 11,
+        "delivery": 17,
+        "trust": 11,
+        "recovery": 10,
+        "added_since_r4": 3
+      },
+      "process_death_injections": {
+        "forward": 240,
+        "teardown": 272,
+        "total": 512
+      }
+    },
+    "coordinator": {
+      "tests": 1736,
+      "pass": 1718,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 18,
+      "todo": 0,
+      "log_path": "/tmp/l3-r4-results/coordinator-final.log",
+      "log_sha256": "7612d9fc734347a1cadc01f44099a675b8fdea6ff8b4370c912e3751ae8af3ae",
+      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
+      "failures": [],
+      "skip_names": [
+        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      ],
+      "mutation_named_checks": {
+        "total": 525,
+        "pass": 525,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      }
+    },
+    "genuine_assertion_baseline": {
+      "tests": 196,
+      "pass": 196,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r4-results/genuine-final.log",
+      "log_sha256": "3268b9e7864f95fc367ad03e073e9c73b44ed29ec64eab165d03baaa8c44afb7",
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 41,
+        "pass": 41,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      }
+    },
+    "rollback_mutation": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r4-results/rollback.log",
+      "log_sha256": "7e1caa3d7ffd8bb80d348ab5087e27e01fa1d9bc6a3b72c49cf1bc4ab6c140b9",
+      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 1,
+        "pass": 1,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      }
+    }
+  },
+  "r5_response": {
+    "before_head": "0eeadd5f05abc8cd82968a855b2bff8cc137c65a",
+    "parent_control": "5e25c651254a72adbb46fa8f950df95248b640e9",
+    "reproduced_before_production_edits": true,
+    "before_logs": [
+      {
+        "path": "/tmp/l3-r5-results/before.log",
+        "sha256": "dbded84c370d0621a920d8be8888022934c5579915c271af34974cc124340fa9"
+      },
+      {
+        "path": "/tmp/l3-r5-results/my6-before.log",
+        "sha256": "ec61b895e82a52b2ebb9bfac54675680c5c6185f7c5f86905a9c002285fd8157"
+      }
+    ],
+    "before_MY6": {
+      "id": "MY6",
+      "verdict": "SURVIVED",
+      "assertions": [],
+      "tests": 56,
+      "pass": 56,
+      "fail": 0
+    },
+    "focused": {
+      "tests": 260,
+      "pass": 260,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r5-results/focused-final.log",
+      "log_sha256": "f23c8216427376621096904c4bcfcd5d35563d89b15b3f2f1f716746632c6f42",
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 94,
+        "pass": 94,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      },
+      "new_targeted_source_mutants": {
+        "total": 53,
+        "killed": 53,
+        "production": 11,
+        "delivery": 17,
+        "trust": 11,
+        "recovery": 14,
+        "added_since_r5": 4
+      },
+      "process_death_injections": {
+        "forward": 240,
+        "teardown": 272,
+        "total": 512
+      }
+    },
+    "genuine": {
+      "tests": 207,
+      "pass": 207,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r5-results/genuine-final.log",
+      "log_sha256": "4754e5c80be086d945f290fd61c04de19976e3ef69cff89ba5452593507fad41",
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 41,
+        "pass": 41,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      }
+    },
+    "coordinator": {
+      "tests": 1751,
+      "pass": 1733,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 18,
+      "todo": 0,
+      "log_path": "/tmp/l3-r5-results/coordinator-final.log",
+      "log_sha256": "221b1d6f29eeadc0bbaaec62e5605de1d957b31d7636ab85b97da927965be1ad",
+      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
+      "failures": [],
+      "skip_names": [
+        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      ],
+      "mutation_named_checks": {
+        "total": 529,
+        "pass": 529,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      }
+    },
+    "rollback": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r5-results/rollback-final.log",
+      "log_sha256": "e526e138a5054b739e99c5b1772fc75dcdb721e856760415f79851511fb7338a",
+      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 1,
+        "pass": 1,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+      }
+    },
+    "differential": [
+      {
+        "scenario": "counter-fault",
+        "label": "parent",
+        "results": [
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": false,
+        "complete": true,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": true,
+        "writes": 44,
+        "commands": 34
+      },
+      {
+        "scenario": "counter-fault",
+        "label": "blocked",
+        "results": [
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": true,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "active",
+          "shu-supervisor.service": "active",
+          "shu-coordinator.timer": "active"
+        },
+        "timerRetired": false,
+        "writes": 30,
+        "commands": 0
+      },
+      {
+        "scenario": "counter-fault",
+        "label": "candidate",
+        "results": [
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "active",
+          "shu-supervisor.service": "active",
+          "shu-coordinator.timer": "active"
+        },
+        "timerRetired": false,
+        "writes": 35,
+        "commands": 0
+      },
+      {
+        "scenario": "counter-plant",
+        "label": "parent",
+        "results": [
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": false,
+        "complete": true,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": true,
+        "writes": 44,
+        "commands": 34
+      },
+      {
+        "scenario": "counter-plant",
+        "label": "blocked",
+        "results": [
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "ARMED",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "ARMED"
+        },
+        "activation": true,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "active",
+          "shu-supervisor.service": "active",
+          "shu-coordinator.timer": "active"
+        },
+        "timerRetired": false,
+        "writes": 0,
+        "commands": 0
+      },
+      {
+        "scenario": "counter-plant",
+        "label": "candidate",
+        "results": [
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_UNAVAILABLE"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "active",
+          "shu-supervisor.service": "active",
+          "shu-coordinator.timer": "active"
+        },
+        "timerRetired": false,
+        "writes": 35,
+        "commands": 0
+      },
+      {
+        "scenario": "settlement-plant",
+        "label": "parent",
+        "results": [
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": false,
+        "complete": true,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": true,
+        "writes": 20,
+        "commands": 34
+      },
+      {
+        "scenario": "settlement-plant",
+        "label": "blocked",
+        "results": [
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": false,
+        "writes": 0,
+        "commands": 0
+      },
+      {
+        "scenario": "settlement-plant",
+        "label": "candidate",
+        "results": [
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ],
+          [
+            "REVOKED",
+            null
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": false,
+        "complete": true,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": true,
+        "writes": 9,
+        "commands": 29
+      },
+      {
+        "scenario": "settlement-interrupt",
+        "label": "parent",
+        "results": [
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ],
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ],
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ],
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ],
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": false,
+        "writes": 86,
+        "commands": 85
+      },
+      {
+        "scenario": "settlement-interrupt",
+        "label": "blocked",
+        "results": [
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": false,
+        "writes": 6,
+        "commands": 12
+      },
+      {
+        "scenario": "settlement-interrupt",
+        "label": "candidate",
+        "results": [
+          [
+            "HALT",
+            "ACT_CLEANUP_FAILED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ],
+          [
+            "HALT",
+            "ACT_RETRY_BUDGET_EXHAUSTED"
+          ]
+        ],
+        "gates": {
+          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
+          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
+        },
+        "activation": false,
+        "lease": true,
+        "complete": false,
+        "services": {
+          "shu71-evidence.service": "inactive",
+          "shu-supervisor.service": "inactive",
+          "shu-coordinator.timer": "inactive",
+          "shu-coordinator.service": "inactive"
+        },
+        "timerRetired": false,
+        "writes": 7,
+        "commands": 12
+      }
+    ],
+    "R5-A": "Independent activation credential removal after per-gate disarm on counter faults. Removal failure reported. Running units and lease retained, no completion claim; explicit recovery still required for full teardown.",
+    "R5-B": "Exhaustion requires ordered journal reservation history 1..32. Unsupported 32 takes safety fallback, not silent zero-effect exhaustion. Settlement allowance consumed by journal SETTLEMENT_STARTED, not counter boolean. Recovered/damaged evidence preserves EXHAUSTED refusal code but takes safety fallback; never resets counter.",
+    "R5-C": "MY6 survived 56/56 before; now killed by B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED. Failed settlement asserts lease/timer retention immediately and after 40 wakes.",
+    "Q3": "Scope choice: no automatic gate repair after evidence-supported exhaustion. This is not impossible or imposed by an external contract. Already-safe settlement remains supported. Existing assertions retained.",
+    "independent_mutants": [
+      {
+        "id": "MX-P1",
+        "status": 1,
+        "assertions": [
+          "B4_RETIREMENT_REOBSERVATION"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX1",
+        "status": 1,
+        "assertions": [
+          "B4_AUTOMATIC_REPLAY_BOUNDED",
+          "B4_RECOVERY_NO_BUDGET_RESET",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION"
+        ],
+        "tests": 67,
+        "pass": 55,
+        "fail": 12,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX2",
+        "status": 1,
+        "assertions": [
+          "B4_BUDGET_RESERVATION_INTERRUPTED",
+          "B4_COUNTER_REFUSAL",
+          "B4_MANUAL_BUDGET_RETAINED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION"
+        ],
+        "tests": 67,
+        "pass": 52,
+        "fail": 15,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX5",
+        "status": 1,
+        "assertions": [
+          "B4_BUDGET_RESERVATION_INTERRUPTED",
+          "B4_INVALID_BUDGET_REFUSED",
+          "B4_COUNTER_REFUSAL",
+          "B4_MANUAL_BUDGET_RETAINED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION",
+          "B4_COUNTER_CREDENTIAL_FAILURE_REPORTED",
+          "B4_COUNTER_RANGE_WITH_EVIDENCE"
+        ],
+        "tests": 67,
+        "pass": 36,
+        "fail": 31,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX6",
+        "status": 1,
+        "assertions": [
+          "B4_RECOVERY_NO_BUDGET_RESET"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX7",
+        "status": 1,
+        "assertions": [
+          "B4_COUNTER_RANGE_WITH_EVIDENCE"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX10",
+        "status": 1,
+        "assertions": [
+          "B4_ACTIVATION_DRIFT_RECOVERED"
+        ],
+        "tests": 67,
+        "pass": 64,
+        "fail": 3,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX11",
+        "status": 1,
+        "assertions": [
+          "B4_RESTORES_ONCE_ONLY"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX12",
+        "status": 1,
+        "assertions": [
+          "B4_ARCHIVE_ONCE_ONLY"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX3",
+        "status": 1,
+        "assertions": [
+          "B4_MANUAL_BUDGET_RETAINED"
+        ],
+        "tests": 67,
+        "pass": 64,
+        "fail": 3,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX13",
+        "status": 0,
+        "assertions": [],
+        "tests": 67,
+        "pass": 67,
+        "fail": 0,
+        "skipped": 0,
+        "expected": "survived"
+      },
+      {
+        "id": "MX14",
+        "status": 0,
+        "assertions": [],
+        "tests": 67,
+        "pass": 67,
+        "fail": 0,
+        "skipped": 0,
+        "expected": "survived"
+      }
+    ],
+    "r5_verifier_mutants": [
+      {
+        "id": "MY1 fallback disarms only the first gate",
+        "verdict": "KILLED",
+        "assertions": [
+          "B4_COUNTER_FAULT_DISARMS",
+          "B4_R5_BOTH_GATES_"
+        ],
+        "tests": 67,
+        "pass": 53,
+        "fail": 14
+      },
+      {
+        "id": "MY2 fallback writes the ARMED value",
+        "verdict": "KILLED",
+        "assertions": [
+          "B4_COUNTER_FAULT_DISARMS",
+          "B4_Q1_DIFFERENTIAL_",
+          "B4_R5_BOTH_GATES_"
+        ],
+        "tests": 67,
+        "pass": 52,
+        "fail": 15
+      },
+      {
+        "id": "MY3 settlement pre-check observeGateFiles deleted",
+        "verdict": "SURVIVED",
+        "assertions": [],
+        "tests": 67,
+        "pass": 67,
+        "fail": 0
+      },
+      {
+        "id": "MY4 settlement ignores an unfinished remote restore",
+        "verdict": "KILLED",
+        "assertions": [
+          "B4_SETTLEMENT_UNFINISHED_REFUSED"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1
+      },
+      {
+        "id": "MY5 settlement allowance never checked",
+        "verdict": "KILLED",
+        "assertions": [
+          "B4_SETTLEMENT_JOURNAL_ALLOWANCE"
+        ],
+        "tests": 67,
+        "pass": 65,
+        "fail": 2
+      },
+      {
+        "id": "MY6 settlement releases the lease unconditionally",
+        "verdict": "KILLED",
+        "assertions": [
+          "B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED"
+        ],
+        "tests": 67,
+        "pass": 66,
+        "fail": 1
+      },
+      {
+        "id": "MY7 exhausted settlement skips the final observation",
+        "verdict": "SURVIVED",
+        "assertions": [],
+        "tests": 67,
+        "pass": 67,
+        "fail": 0
+      }
+    ],
+    "mutation_logs": [
+      {
+        "path": "/tmp/l3-r5-results/independent-final.log",
+        "sha256": "39b7775cb277f64e66ea9ddd311d12485ccf312ee6dc7e5d9ae1976b0b168a93"
+      },
+      {
+        "path": "/tmp/l3-r5-results/r5-independent-final.log",
+        "sha256": "00d3a2c17724bc63afcfeaa50e07d3363b290755ca77e72711527f065a516247"
+      }
+    ],
+    "survivors": "MX13/MX14 remain acceptable disclosed survivors, not killed or equivalent. MY3/MY7 remain redundant-observation survivors as adjudicated by R5.",
+    "permitted_skips_sha256": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f",
+    "permitted_skips_byte_identical_lane_wide": true,
+    "skip_names_unchanged": true,
+    "suite_delta_vs_r5": {
+      "tests": 15,
+      "pass": 15,
+      "fail": 0,
+      "skip": 0
+    },
+    "production_source_sha256": "bd304b83b270478a33fe565f2be493384c4081226d1eb0bcd6600dfaed987091",
+    "limitations": [
+      "All execution proofs use disposable boundary doubles, not a host.",
+      "No host/systemd effective-environment, cgroup, durability or scheduling proof.",
+      "No real second signed activation or two-lane production progression.",
+      "No application-suite rerun this round; prior application results remain historical.",
+      "Pre-existing evidence-directory mode veto and custody-invalid foreign-lease residual unchanged.",
+      "A root writer who rewrites journal and counter is outside this single-counter cross-check.",
+      "Missing reservation evidence, including legacy exhaustion, takes narrow safety fallback and requires explicit recovery; narrow fallback writes may recur.",
+      "B1 BLOCKED; B2/B4 source-level only; overall execution BLOCK."
+    ],
+    "constraints": "Repository-only. No host access, external writes, push, PR modification, merge or comments. No existing assertion, guard, error code or skip allowance weakened."
   }
 }

@@ -154,3 +154,67 @@ test('Q3 exhaustion cannot settle unfinished remote restoration', async t => {
   assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), false);
   assert.equal((await create().execute('resume')).state, 'REVOKED');
 });
+
+import { r5Differential, gates } from './shu71-r5-checks.mjs';
+for (const scenario of ['counter-fault', 'counter-plant', 'settlement-plant', 'settlement-interrupt'])
+  test(`R5 parent/blocked/candidate differential: ${scenario}`, t => r5Differential(t, keys, createShu71Production, scenario));
+for (const value of ['{}', '{"attempts":32}', '{"attempts":32,"settlement_started":true}']) test(`R5 clean successor protected with counter ${value}`, async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, value);
+  h.write('/srv/shu/state/shu71-evidence/active.json', '{"activation_id":"successor"}');
+  const start = h.events.length;
+  assert.equal((await create().execute('expire')).code, 'ACT_ACTIVATION_CONFLICT', 'B4_R5_SUCCESSOR_CONFLICT');
+  assert.equal(h.events.slice(start).filter(e => /^(write:|rename:|unlink:|remove:|command:|api:)/.test(e)).length, 0, 'B4_R5_SUCCESSOR_ZERO_EFFECTS');
+  for (const gate of gates) assert.match(h.read(gate), /ENABLE_DISPATCH=true/);
+  assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), true);
+});
+test('R5 credential unlink failure is reported while both gates disarm', async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, '{}');
+  h.faults.before = e => e === 'unlink:/srv/shu/state/shu71-activation.json';
+  const r = await create().execute('expire');
+  assert.deepEqual(r.failures, ['ACT_TEARDOWN_ACTIVATION'], 'B4_COUNTER_CREDENTIAL_FAILURE_REPORTED');
+  for (const gate of gates) assert.match(h.read(gate), /ENABLE_DISPATCH=false/);
+  h.faults.before = undefined;
+  await create().execute('expire');
+  assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false, 'B4_COUNTER_CREDENTIAL_RETRIED');
+});
+
+import { safeExhausted } from './shu71-r5-checks.mjs';
+for (const timing of ['before', 'after']) test(`R5 settlement journal reservation interruption ${timing} write`, async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await safeExhausted(createShu71Production, h);
+  const write = h.boundary.fs.writeFileSync;
+  h.boundary.fs.writeFileSync = (file, data) => {
+    const marker = String(data).includes('"event":"SETTLEMENT_STARTED"');
+    if (marker && timing === 'before') throw new Error('reservation fault');
+    write(file, data);
+    if (marker && timing === 'after') throw new Error('reservation fault');
+  };
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
+  assert.equal(h.exists('/srv/shu/state/shu71-evidence/active.json'), true, 'B4_SETTLEMENT_RESERVATION_OWNERSHIP');
+  assert.equal(h.events.some(e => e.includes('disable --now shu71-expiry-')), false, 'B4_SETTLEMENT_RESERVATION_TIMER');
+  h.boundary.fs.writeFileSync = write;
+  if (timing === 'before') assert.equal((await create().execute('expire')).state, 'REVOKED');
+  else {
+    // The counter boolean is still absent; the persisted journal marker alone
+    // must prevent reuse after process death or a planted false boolean.
+    const rows = h.journal().length;
+    for (let n = 0; n < 5; n++) assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED', 'B4_SETTLEMENT_JOURNAL_ALLOWANCE');
+    assert.equal(h.journal().length, rows, 'B4_SETTLEMENT_RESERVATION_BOUNDED');
+    assert.equal((await create().execute('resume')).state, 'REVOKED');
+  }
+});
+
+test('R5 supporting history cannot excuse an out-of-range counter', async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await safeExhausted(createShu71Production, h);
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, '{"attempts":33}');
+  const result = await create().execute('expire');
+  assert.equal(result.code, 'ACT_RETRY_BUDGET_UNAVAILABLE', 'B4_COUNTER_RANGE_WITH_EVIDENCE');
+  assert.equal(result.budget_error, 'ACT_RETRY_BUDGET_INVALID');
+  assert.equal(h.exists('/srv/shu/state/shu71-evidence/active.json'), true);
+  assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), false);
+});
