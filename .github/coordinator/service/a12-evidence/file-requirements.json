@@ -110,6 +110,16 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/mint-shu71.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Actual checkout objects, tree and reseed derivation use Git; remote observation is doubled. Other mint controls use Node core only.",
+    "call_sites": [
+      ".github/coordinator/service/test/mint-shu71-controls.mjs:repositoryControls"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/phase-a-driver.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
