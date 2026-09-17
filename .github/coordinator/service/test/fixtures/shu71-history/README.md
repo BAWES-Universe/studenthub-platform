@@ -32,3 +32,43 @@ To exercise both differential modules without history, clone this branch via
 `git clone --depth 1 --branch chore/shu71-production-composition <repository>`
 (use a `file://` URL for a local repository), then run the entire
 `shu71-trust.test.mjs` file. No test-name filtering or skip allowance is needed.
+
+## R6 control-content and provenance boundary
+
+The Git cross-check **cannot run in the shallow CI checkout**. There, provenance
+rests on the recorded digests plus the unconditional control-content guard;
+only a full clone re-establishes provenance against Git. Each load prints
+`SHU71_HISTORY_GIT_UNAVAILABLE` or `SHU71_HISTORY_GIT_VERIFIED`, with the exact
+revision and module. Missing history is not a passing claim of Git provenance.
+The synthetic-repository test checks only the Git comparison mechanism.
+
+`controlContent` checks executable cleanup structure before the Git comparison:
+
+- Parent `5e25c65`: gate disarm is the first ordinary cleanup effect, before
+  credential removal; there is no budget reservation or counter-fault fallback
+  ahead of those effects. This is why the poisoned counter cannot veto cleanup.
+- R4 blocked `e9a68c1`: reservation precedes ordinary disarm, and counter failure
+  returns directly without a gate loop or credential removal. This is the
+  zero-effect, armed-gate control on which the R4 differential depends.
+- R5 blocked `0eeadd5`: reservation still precedes ordinary disarm; its fault
+  fallback writes disabled gates but cannot remove the activation credential.
+  Settlement trusts the counter boolean. These are the R5 differential's two
+  distinguishing behaviors. None of these production controls has the later
+  reservation-evidence binding or credential-removing fallback.
+- All three journal controls validate sequence/hash links, repeat physical
+  teardown effects, and veto retirement after failure. The production controls
+  depend on those journal semantics. Their journal bytes are identical to the
+  candidate's journal, so substitution of those identical bytes is harmless.
+
+These properties follow from the control revisions' cleanup behavior, rather
+than comments, version labels or unrelated strings. Tests also execute the real
+vendored production/journal pairs with disposable boundaries to check reservation
+versus disarm ordering and poisoned-counter outcomes. Separate negative tests
+pass candidate production source directly to the guard for every control slot,
+without consulting Git, and alter journal replay to demonstrate its guard.
+
+This is a narrow semantic guard, not authentication: a coordinated adversary who
+rewrites fixtures, digests and tests can defeat repository-local checks. Even an
+unrelated substitution that preserves the checked properties is not proven to be
+the historical source. Full-history byte comparison remains necessary for that
+stronger claim. No workflow, skip allowance or historical fixture was changed.

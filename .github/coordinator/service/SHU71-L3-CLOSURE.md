@@ -345,15 +345,11 @@ counter remains outside the archive/manifest digest; no bundled retry-count
 attestation is claimed. No existing assertion, guard, error code or skip
 allowance was weakened.
 
-R4-response validation: focused **245/245**, genuine assertions **196/196**,
-coordinator **1736 total / 1718 pass / 0 fail / 18 unchanged skips**, application
-**486/486** (459 Node + 27 Vitest), **85/85** standalone application kills,
-**49/49** targeted source mutants, **512** process-death injections, and the
-un-gated rollback mutant **1/1**. Mutation-named TAP checks: focused **90**,
-coordinator **525**, all passing. The standalone independent-site recheck runs
-56 genuine trust tests per mutant: **10 killed / 2 surviving** (MX13/MX14,
-worker/reload, unchanged and not claimed equivalent). Logs and hashes are in
-SHU71-L3-TESTS.json; raw local logs are under `/tmp/l3-r4-results/`.
+Historical R4 validation is retained in the report at the R4-response commit,
+not declared as current-head measurements. MX13/MX14 (worker/reload) remain
+unclaimed kills and are not claimed equivalent. Current counts and mutation
+results are in SHU71-L3-TESTS.json.
+
 
 
 ### Response to R5 (repository-only)
@@ -434,18 +430,86 @@ The one-shot settlement of already-safe episodes remains available, now protecte
 against a planted counter boolean. B1 remains BLOCKED, B2/B4 source-level only,
 and overall execution closure remains BLOCK.
 
-Current R5 validation counts, commands, hashes, differential snapshots and
-limitations are recorded in `SHU71-L3-TESTS.json` under `r5_response`. Historical
-R4 counts above are retained as historical evidence. MX13 and MX14 remain the
+Historical R5 measurements and differential snapshots remain in the report
+at `58527b2`. Current measurements replace those older declarations in
+`SHU71-L3-TESTS.json`. MX13 and MX14 remain the
 two disclosed acceptable survivors, neither killed nor claimed equivalent.
 
 
-R5 validation: focused **260/260**, genuine **207/207**, coordinator **1751 total /
-1733 pass / 0 fail / 18 unchanged skips**; **53/53** targeted mutants;
-**512** crash injections (240 forward + 272 teardown); rollback **1/1**.
-Mutation-named checks: focused **94**, coordinator **529**. Independent sites:
-**10 killed / 2 disclosed survivors**, 67 genuine trust tests per site. R5 MY
-sites: **5 killed / 2 redundant-observation survivors** (MY3/MY7); MY6 now dies
-on the named ownership assertion. The application suite was not rerun this round.
+R5 measurements are historical, not current-head counts. The current R6
+measurements are recorded below and in SHU71-L3-TESTS.json. The application
+suite was not rerun this round.
 `PERMITTED_SKIPS` remains byte-identical lane-wide (SHA-256
 `37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f`).
+
+
+### Response to R6 (repository-only)
+
+R6-A and R6-B were reproduced before edits at `58527b27b15fc3c817b2cb978285688e6fee69f0`:
+each independently written evidence mutant (length >= 1; length == 32 without
+ordering) passed all 67 genuine trust tests. A fresh depth-1 clone accepted
+candidate production source in the parent slot with a re-recorded manifest
+digest: all three custody tests passed. Logs are under `/tmp/l3-r6-results/`.
+
+**R6-A:** genuine tests now produce reservation rows through real automatic
+cleanup, with a disposable remote-restore fault preventing completion. They
+exercise every partial length 1..31, a duplicate, reordered rows, a gap and an
+extra row. Tampered histories are rebuilt with the real journal writer so their
+hash chain is valid, then consumed by a fresh production instance. Each malformed
+history must return INVALID/UNAVAILABLE, disarm both gates, revoke the credential
+and retain ownership without claiming completion. R6-M2 dies on
+`B4_R6_PARTIAL_1_EVIDENCE_REFUSED`; R6-M1 dies on
+`B4_R6_REORDERED_EVIDENCE_REFUSED` (and duplicate/gap assertions).
+An append-interruption assertion also checks that the durable counter was
+consumed before the reservation append. Moving that append ahead of the counter
+dies on `B4_R6_APPEND_INTERRUPTION_COUNTER_CONSUMED`. A positive 32-ordered-row
+control explicitly retains the R5-B root-forgery residual. The production evidence check and other production behavior are unchanged.
+
+**R6-B:** unconditional control-content guards check the actual cleanup ordering
+and fault/settlement behavior of all production controls, and chain/replay/
+retirement semantics of their journal controls. Additional boundary executions
+verify the behavioral premises. Candidate production substitution is rejected
+by `SHU71_HISTORY_CONTROL_CONTENT`, including without Git. The fixture README
+explains why each property is required by the differential.
+The Git cross-check cannot run in the shallow CI checkout: CI provenance rests
+on recorded digests plus the control-content guard. Only a full clone
+re-establishes it against Git. Loads explicitly print `SHU71_HISTORY_GIT_UNAVAILABLE`
+or `SHU71_HISTORY_GIT_VERIFIED`. The synthetic Git test is named as a mechanism
+test. No CI workflow, fixture bytes, assertion, guard, error code or skip
+allowance was weakened.
+
+**R5-B disposition (b):** this evidence check bounds accidents and non-root
+tampering, but **not a root adversary**. The chain is unkeyed and shares the
+0700/uid-0 evidence directory with the counter. Existing signing material is a
+root-readable local private key; authenticating with that same trust domain
+would not exclude root. Protecting against that adversary requires an external
+trust boundary unavailable in this repository-only lane. Root can rewrite a
+valid 32-row chain and counter to obtain the armed-gate, credential-present,
+zero-effect exhaustion signature; the positive test demonstrates that limit.
+No root-tamper protection is claimed. R5-A containment residuals, Q3's scope
+choice and all other open limitations above remain unchanged. B1 stays BLOCKED;
+B2/B4 remain source-level only; overall execution closure stays BLOCK.
+
+**R6-C measured validation:** focused **309/309**, genuine baseline **254/254**,
+full coordinator **1800 total / 1782 pass / 0 fail / 18 unchanged skips**.
+Focused and genuine commands now include the custody test file. All **55/55**
+targeted production/delivery/trust/recovery mutants are killed; **512** crash
+injections remain **240 forward + 272 teardown**. Mutation-named TAP checks:
+focused **96**, genuine **41**, coordinator **531**. Un-gated rollback: **1/1**.
+Standalone genuine trust baseline: **104/104**. R6-M1: **101 pass / 3 named
+failures**; R6-M2: **69 pass / 35 named failures**. All other R6 sites were also
+run: five kills, three disclosed survivors (M7/M8/M9). The actual append-before-
+counter mutation is killed by the new interruption assertion. R4 independent
+sites: **10 killed / 2 disclosed survivors**; R5 MY sites: **5 killed / 2
+disclosed survivors**; each runs all **104** genuine trust tests. No survivor
+is counted as a kill.
+
+Full-clone and fresh depth-1 custody-plus-trust controls each pass **114/114**;
+coordinated candidate-source/manifest substitution fails **7** named-dependent
+tests in each (**107 pass**), with `SHU71_HISTORY_CONTROL_CONTENT`. All six
+Git comparisons are byte-identical in the full clone. Each missing historical
+object is disclosed by name in the depth-1 output. Digests, commands, complete
+mutant results and local artifact paths are in `SHU71-L3-TESTS.json`. Historical
+suite totals are retained in Git and are not current-head declarations. The
+application suite and new-head CI were not verified. No host access, push, PR
+change, merge, GitHub comment or Linear comment occurred.

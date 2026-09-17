@@ -218,3 +218,24 @@ test('R5 supporting history cannot excuse an out-of-range counter', async t => {
   assert.equal(h.exists('/srv/shu/state/shu71-evidence/active.json'), true);
   assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), false);
 });
+
+import { reservationHistories, reservationHistoryCheck } from './shu71-r6-checks.mjs';
+for (const [kind, count] of reservationHistories)
+  test(`R6 reservation evidence: ${kind}`, t => reservationHistoryCheck(createShu71Production, productionFixture(t, keys), kind, count));
+
+test('R6 reservation append interruption cannot precede durable counter consumption', async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  const dir = `/srv/shu/state/shu71-evidence/${h.id}`;
+  const write = h.boundary.fs.writeFileSync;
+  h.boundary.fs.writeFileSync = (file, data) => {
+    write(file, data);
+    if (String(data).includes('"event":"AUTOMATIC_TEARDOWN_RESERVED"')) throw new Error('reservation append interrupted');
+  };
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_UNAVAILABLE');
+  assert.equal(h.exists(`${dir}/automatic-teardown.json`), true, 'B4_R6_APPEND_INTERRUPTION_COUNTER_CONSUMED');
+  assert.equal(JSON.parse(h.read(`${dir}/automatic-teardown.json`)).attempts, 1, 'B4_R6_APPEND_INTERRUPTION_ATTEMPT_CONSUMED');
+  for (const gate of gates) assert.match(h.read(gate), /ENABLE_DISPATCH=false/);
+  assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false);
+  h.boundary.fs.writeFileSync = write;
+});
