@@ -2,12 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 import { activationId, validateIdLedger, validateObservations, derive, validateMint, optionsCheck, repositoryFacts, RETAINED_PARENT } from '../mint-shu71-package.mjs';
 import { hash } from '../phase-a-driver.mjs';
 import { canonicalBytes } from '../../shu71-activation-package.mjs';
 import { REQUIRED_CAPABILITIES } from '../host-lifecycle.mjs';
-import { createGitAdapter } from '../../reseed-append-contract.mjs';
+import { createGitAdapter, SEALED_SEED_BLOBS } from '../../reseed-append-contract.mjs';
 import { composeApproval } from '../compose-shu71-approval.mjs';
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const bytes = v => canonicalBytes(v, false);
@@ -89,18 +88,24 @@ export function runMintControls() {
   return { outputMutants: outputMutants.map(([name,,code]) => ({ name, assertion: code })), result };
 }
 
-// Actual local object database and checkout, with only the network observation doubled.
+// Actual local checkout bytes; remote refs and historical reseed objects are doubled.
 // Does not rewrite refs, consume credentials, or contact a host.
 export function repositoryControls() {
   const repo = root.replace(/\/$/, ''), real = createGitAdapter(repo);
   const revision = real(['rev-parse', 'HEAD']).toString().trim();
-  const main = real(['rev-parse', 'refs/remotes/origin/main']).toString().trim();
+  const tree = real(['rev-parse', 'HEAD^{tree}']).toString().trim();
   const remote = `${revision}\trefs/heads/main\n${RETAINED_PARENT}\trefs/heads/coordinator/SHU-140\n6c9c14907189fe3af733969c3d8f3a2c4e21f9b0\trefs/heads/coordinator/SHU-254\n`;
   // All actual bytes checked; git status may include the test runner's scratch files.
   const boundary = change => () => (args, opts) => {
     const key = args.join(' ');
     const changed = change?.(key);
     if (changed !== undefined) return Buffer.from(changed);
+    if (key === 'remote get-url origin') return Buffer.from('https://github.com/BAWES-Universe/studenthub-platform.git');
+    if (key.startsWith('rev-parse refs/') && key.endsWith('coordinator/SHU-140')) return Buffer.from(RETAINED_PARENT);
+    if (key.startsWith('rev-parse refs/') && key.endsWith('coordinator/SHU-254')) return Buffer.from('6c9c14907189fe3af733969c3d8f3a2c4e21f9b0');
+    if (args[0] === 'merge-base') return Buffer.from('');
+    if (args[0] === 'merge-tree') return Buffer.from(tree);
+    if (args[0] === 'ls-tree' && args.includes('-t')) return Buffer.from(Object.entries(SEALED_SEED_BLOBS).map(([name, oid]) => `100644 blob ${oid}\t${name}\0`).join(''));
     if (args[0] === 'ls-remote') return Buffer.from(remote);
     if (key === 'rev-parse refs/remotes/origin/main') return Buffer.from(revision);
     if (args[0] === 'status') return Buffer.from('');
@@ -116,5 +121,5 @@ export function repositoryControls() {
     ['wrong actual tree', key => key === 'rev-parse HEAD^{tree}' ? 'f'.repeat(40) : undefined, 'MINT_TREE'],
     ['wrong remote', key => key === 'remote get-url origin' ? 'https://example.invalid/repo' : undefined, 'MINT_REMOTE'],
   ]) assert.throws(() => repositoryFacts(repo, boundary(changed)), e => e.code === code, `${name}: ${code}`);
-  return { revision, observedLocalMain: main, binding: good.binding };
+  return { revision, binding: good.binding };
 }
