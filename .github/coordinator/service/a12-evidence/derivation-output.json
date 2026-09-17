@@ -17,11 +17,11 @@
     "systemd_notify": 0,
     "git": 337,
     "bash": 129,
-    "shell_toolchain": 163,
+    "shell_toolchain": 291,
     "linux_proc": 410,
     "loopback_socket": 28,
     "unix_socket": 50,
     "node": 0
   },
-  "empty_requirements": 1005
+  "empty_requirements": 983
 }

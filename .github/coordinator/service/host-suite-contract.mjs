@@ -24,7 +24,8 @@ export const PERMITTED_SKIPS = Object.freeze({
 // (temp, parser, unit verification, flock, Unix socket) retain their explicit
 // temporary-resource detection claims.
 // shell_toolchain groups the actual wrapper/policy dependencies: /bin/sh,
-// dirname, env, true, chmod, mktemp and rm. Test-only conveniences use Node.
+// dirname, env (including PATH resolution of node), true, chmod, mktemp, rm,
+// touch and cat. Restored shell fixtures retain their real tool dependencies.
 export const CAPABILITIES = Object.freeze([
   ['privilege', 'SHU251_PREFLIGHT_PRIVILEGE', 'effective UID 0 or sudo -n id -u returns 0'],
   ['worker_uid', 'SHU251_PREFLIGHT_WORKER_UID', 'setpriv to fixture UID/GID 65534; id -u returns 65534; distinct from service UID'],
@@ -38,7 +39,7 @@ export const CAPABILITIES = Object.freeze([
   ['systemd_notify', 'SHU251_PREFLIGHT_SYSTEMD_NOTIFY', 'systemd-notify --version succeeds'],
   ['git', 'SHU251_PREFLIGHT_GIT', 'git --version succeeds'],
   ['bash', 'SHU251_PREFLIGHT_BASH', 'bash --noprofile --norc -c exit succeeds'],
-  ['shell_toolchain', 'SHU251_PREFLIGHT_SHELL_TOOLCHAIN', 'fixed argv: sh exit, dirname /suite/wrapper, env true, and chmod/mktemp/rm --version; no filesystem mutation'],
+  ['shell_toolchain', 'SHU251_PREFLIGHT_SHELL_TOOLCHAIN', 'fixed argv as service identity: /bin/sh -c exit 0, /usr/bin/dirname /suite/wrapper, /usr/bin/env /usr/bin/true, /usr/bin/env node --version (child PATH resolution), and /usr/bin/{chmod,mktemp,rm,touch,cat} --version; no filesystem mutation'],
   ['linux_proc', 'SHU251_PREFLIGHT_LINUX_PROC', 'service identity reads its proc stat, cmdline, environ and inherited file descriptor'],
   ['loopback_socket', 'SHU251_PREFLIGHT_LOOPBACK_SOCKET', 'service identity binds and closes an IPv4 loopback TCP socket'],
   ['unix_socket', 'SHU251_PREFLIGHT_UNIX_SOCKET', 'service identity binds and closes a temporary Unix socket'],
@@ -165,6 +166,9 @@ export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
         invoke('/usr/bin/chmod',['--version']);
         invoke('/usr/bin/mktemp',['--version']);
         invoke('/usr/bin/rm',['--version']);
+        invoke('/usr/bin/touch',['--version']);
+        invoke('/usr/bin/cat',['--version']);
+        invoke('/usr/bin/env',['node','--version']);
       `);
       case 'linux_proc': return nodeProbe(`
         import fs from 'node:fs';

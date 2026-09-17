@@ -229,10 +229,12 @@
   {
     "file": ".github/coordinator/test/codex-contract.test.mjs",
     "capabilities": [
-      "linux_proc"
+      "linux_proc",
+      "shell_toolchain"
     ],
-    "justification": "real orphan-process lifecycle exercises adapters/codex-cli.mjs proc identity; generated executable pins process.execPath",
+    "justification": "real orphan-process lifecycle and procfs; restored executable uses #!/usr/bin/env node and requires node resolution on the child PATH",
     "call_sites": [
+      ".github/coordinator/test/codex-contract.test.mjs:505",
       ".github/coordinator/test/codex-contract.test.mjs:518"
     ]
   },
@@ -272,8 +274,10 @@
   },
   {
     "file": ".github/coordinator/test/episode-successor-dispatch.test.mjs",
-    "capabilities": [],
-    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "execFileSync(\"node\", ...) resolves child node on PATH; shell_toolchain establishes this resolution via /usr/bin/env node --version; no shell interpreter used by this call",
     "call_sites": [
       ".github/coordinator/test/episode-successor-dispatch.test.mjs:610"
     ]
@@ -338,11 +342,14 @@
   {
     "file": ".github/coordinator/test/push-broker-gitconfig.test.mjs",
     "capabilities": [
-      "git"
+      "git",
+      "shell_toolchain"
     ],
-    "justification": "promisified execFile Git helper and real broker/filter fixture controls",
+    "justification": "real Git broker/filter controls; restored /bin/sh marker and clean-filter scripts execute touch and cat",
     "call_sites": [
-      ".github/coordinator/test/push-broker-gitconfig.test.mjs:43"
+      ".github/coordinator/test/push-broker-gitconfig.test.mjs:43",
+      ".github/coordinator/test/push-broker-gitconfig.test.mjs:164",
+      ".github/coordinator/test/push-broker-gitconfig.test.mjs:432"
     ]
   },
   {
@@ -806,10 +813,13 @@
     "file": ".github/coordinator/test/workspace-result-mutations.test.mjs",
     "capabilities": [
       "git",
-      "linux_proc"
+      "linux_proc",
+      "shell_toolchain"
     ],
-    "justification": "selected workspace-result subprocess controls inherit Git and descriptor-relative reads",
+    "justification": "selected workspace-result mutation children inherit Git, procfs and the restored shell filter/hook controls (M2/M3)",
     "call_sites": [
+      ".github/coordinator/test/workspace-result-mutations.test.mjs:12",
+      ".github/coordinator/test/workspace-result-mutations.test.mjs:13",
       ".github/coordinator/test/workspace-result-mutations.test.mjs:35"
     ]
   },
@@ -817,11 +827,14 @@
     "file": ".github/coordinator/test/workspace-result.test.mjs",
     "capabilities": [
       "git",
-      "linux_proc"
+      "linux_proc",
+      "shell_toolchain"
     ],
-    "justification": "real Git fixtures and workspace-result descriptor-relative /proc/self/fd snapshot reads",
+    "justification": "real Git and /proc/self/fd snapshot reads; restored shell clean filter and pre-commit hook use touch, including negative security controls",
     "call_sites": [
-      ".github/coordinator/test/workspace-result.test.mjs:22"
+      ".github/coordinator/test/workspace-result.test.mjs:22",
+      ".github/coordinator/test/workspace-result.test.mjs:67",
+      ".github/coordinator/test/workspace-result.test.mjs:70"
     ]
   }
 ]

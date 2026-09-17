@@ -6239,6 +6239,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6247,6 +6250,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6255,6 +6261,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6263,6 +6272,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6271,6 +6283,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6279,6 +6294,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6287,6 +6305,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6295,6 +6316,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6303,6 +6327,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6311,6 +6338,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6319,6 +6349,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6327,6 +6360,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6335,6 +6371,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6343,6 +6382,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6351,6 +6393,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6359,6 +6404,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6367,6 +6415,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6375,6 +6426,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6383,6 +6437,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6391,6 +6448,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6399,6 +6459,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6407,6 +6470,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6415,6 +6481,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6423,6 +6492,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6431,6 +6503,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6439,6 +6514,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6447,6 +6525,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6455,6 +6536,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6463,6 +6547,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6471,6 +6558,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6479,6 +6569,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6487,6 +6580,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6495,6 +6591,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6503,6 +6602,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6511,6 +6613,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6519,6 +6624,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6527,6 +6635,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6535,6 +6646,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6543,6 +6657,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6551,6 +6668,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6559,6 +6679,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6567,6 +6690,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6575,6 +6701,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6583,6 +6712,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6591,6 +6723,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6599,6 +6734,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6607,6 +6745,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6615,6 +6756,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6623,6 +6767,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6631,6 +6778,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6639,6 +6789,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6647,6 +6800,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6655,6 +6811,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6663,6 +6822,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6671,6 +6833,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6679,6 +6844,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6687,6 +6855,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6695,6 +6866,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6703,6 +6877,9 @@
       "capabilities": [
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -6980,91 +7157,179 @@
     },
     {
       "name": "SHU-225 I1/I2: without an armed activation the parking rule is byte-for-byte unchanged",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor is supplied",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I3: a successor never takes a second slot — capacity stays global",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I3: a successor is only selectable once its predecessor's receipt is terminal",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I3: a paused successor adapter is skipped, exactly like a first dispatch",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I2 (M2): the episode's exception covers only its own bound issue",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I8 (M7): a spent episode is never re-selectable",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I8: exhaustion and capped failures still end the episode (termination unchanged)",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I4: the successor is the same issue as the activation target and the committed scope",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I5 (M4) / I10: the bootstrap is one-shot, and lineage owns routing afterwards",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused — independence is CHECKED",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I5/I6 (M9): an unrecognised reviewer lane is refused, never inferred from card text",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I6: the activation record's reviewer_lane shape is validated, and stays an exact-key-set surface",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I6: the bootstrap lane comes from the record ONLY — never from card labels or comment text",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 MUTATIONS: every invariant, live-head boundary, and HOLD stop has a load-bearing guard (M1..M15)",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I9: a refused successor path writes nothing (activation refused -> exit 2, zero writes)",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review -> PASS with NO seeded successor receipts",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I7: replay at every boundary cannot duplicate a successor",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-225 I10: with no activation the successor path is unreachable and parking is unchanged",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     },
     {
       "name": "SHU-230: future clock ticks, preserves explicit dates and reaches subprocesses",
@@ -7719,6 +7984,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7727,6 +7995,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7735,6 +8006,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7743,6 +8017,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7751,6 +8028,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7759,6 +8039,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7767,6 +8050,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7775,6 +8061,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7783,6 +8072,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7791,6 +8083,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7799,6 +8094,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7807,6 +8105,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7815,6 +8116,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7823,6 +8127,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7831,6 +8138,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7839,6 +8149,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7847,6 +8160,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7855,6 +8171,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -7863,6 +8182,9 @@
       "capabilities": [
         {
           "name": "git"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13433,6 +13755,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13444,6 +13769,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13455,6 +13783,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13466,6 +13797,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13477,6 +13811,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13488,6 +13825,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13499,6 +13839,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13510,6 +13853,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13521,6 +13867,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13532,6 +13881,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13543,6 +13895,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13554,6 +13909,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13565,6 +13923,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13576,6 +13937,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13587,6 +13951,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13598,6 +13965,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13609,6 +13979,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13620,6 +13993,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13631,6 +14007,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13642,6 +14021,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13653,6 +14035,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13664,6 +14049,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13675,6 +14063,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13686,6 +14077,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13697,6 +14091,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13708,6 +14105,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13719,6 +14119,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     },
@@ -13730,6 +14133,9 @@
         },
         {
           "name": "linux_proc"
+        },
+        {
+          "name": "shell_toolchain"
         }
       ]
     }

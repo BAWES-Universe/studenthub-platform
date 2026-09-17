@@ -25,6 +25,13 @@ const rows = read('file-requirements.json');
 assert.deepEqual(rows.map(r => r.file), files, 'A12_AUDIT_EXACT_FILES');
 assert.deepEqual([...new Set(provenance.map(o => o.file))].sort(), files, 'A12_PROVENANCE_EXACT_FILES');
 const mapping = new Map(rows.map(r => [r.file, r.capabilities]));
+// These executable fixtures and mutation children are retained, not rewritten.
+for (const file of ['push-broker-gitconfig', 'workspace-result', 'codex-contract',
+  'workspace-result-mutations', 'episode-successor-dispatch']) {
+  assert.ok(mapping.get(`.github/coordinator/test/${file}.test.mjs`)?.includes('shell_toolchain'),
+    `A12_RESTORED_SHELL_REQUIREMENT: ${file}`);
+}
+
 const names = outcomes.map(o => o.name);
 const requirements = names.map((name, i) => {
   let capabilities = mapping.get(provenance[i].file).map(name => ({ name }));

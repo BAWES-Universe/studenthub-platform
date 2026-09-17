@@ -1,87 +1,38 @@
-# A12 inventory derivation and inertness
+# A12 corrected inventory derivation
 
-This record supersedes the historical refusal at `d26db39`. The rejected capture remains retained as rejected evidence. Inventory names come only from this pass's `successful-run.jsonl`; the provenance run supplies only file attribution and must have the identical ordered names.
+The restored fixtures at `d09f50d6c597ca1d27ea237f2fb342981816b993` remain byte-identical. This correction declares their dependencies; it does not rewrite them. `correction-name-comparison.json` compares the starting committed inventory with the corrected derivation, including multiplicities for every changed file and the whole inventory.
 
-## Capture and derivation
+The original `successful-run.jsonl`, `successful-run-summary.json` and `outcome-files.jsonl` are retained historical capture inputs, not measurements of this correction. `derive-inventory.mjs` checks their ordered name equality and uses the provenance solely for file attribution. It derives 85 files from `git ls-tree -r --name-only HEAD` and the exported literal `SUITE_ROOTS` rule. A fresh committed-revision run and admission are recorded separately in `authoritative-run-summary.json` and `admission-proof.txt`; revision-specific evidence will be refreshed after committing the corrected inputs.
 
-```sh
-node --test --test-reporter=./.github/coordinator/service/host-suite-contract.mjs .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs > /tmp/a12-inert-post-change.jsonl 2> /tmp/a12-inert-post-change.stderr
-node --test --test-reporter=/tmp/a12-provenance-reporter.mjs .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs > /tmp/a12-provenance-run.jsonl 2> /tmp/a12-provenance-run.stderr
-node .github/coordinator/service/a12-evidence/derive-inventory.mjs
-```
+All 85 files were re-audited; source hashes, command/fixture candidates and dispositions are in `head-dependency-audit.json`. Requirements are conservative file execution unions, including selected mutation children, not assertions that each callback executes every member. The existing three Option A overrides remain intact. Only authorized identity proofs receive their byte-identical absence reasons.
 
-Both runs exited 0 with **1,736 pass / 0 fail / 8 skip**, **1,744 outcomes**, **1,742 distinct names**, exactly one terminal `{"type":"complete"}`, and empty stderr. Node v22.22.3. The temporary provenance reporter delegates unchanged to the contract reporter and records event file/line metadata; its portable equivalent is `provenance-reporter.mjs`. `outcome-files.jsonl` stores checkout-relative file paths. The derivation asserts exact ordered name equality before using that attribution. No name is derived from a source regex or deduplicated.
+The three restored files gain shell_toolchain: push-broker-gitconfig (19 names), workspace-result (15), codex-contract (59). The remaining 82-file audit also declares workspace-result-mutations (13 names, selected restored controls) and episode-successor-dispatch (22 names, literal node resolved on PATH). No test names change. The inventory has 1,744 names and requirements; expected_tests is computed from names.length. shell_toolchain has 291 occurrences; 983 rows have empty requirements. Other capability counts are unchanged; `derivation-output.json` records all counts.
 
-The file derivation command is `git ls-tree -r --name-only HEAD`, filtered using imported `SUITE_ROOTS` with the literal filter/sort from `suite-runner-spec.mjs`. Executable derivation: `derive-inventory.mjs`; file output: `required-files.json`; count output: `derivation-output.json`. **files=85, names=1744, expected_tests=1744**. Duplicate names retained twice each: `activation fails closed when codex_sandbox_network is missing`, `activation fails closed when worker_identity_split is missing`.
+## Dependency disposition
 
-`file-requirements.json` is the reviewed per-file mapping and call-site record; the full table is in `DEPENDENCY-AUDIT.md`. File-level execution unions include selected mutation subprocess dependencies. Pure Node files map to `[]`; the three previously reviewed Option A proofs keep their individual overrides. The seven optional identity proofs alone receive `privilege` and `worker_uid` with the exact existing permitted reason. The restricted-runtime skip needs no missing host capability. These are conservative file requirements, not claims of per-callback execution tracing.
+The earlier blanket claim that all incidental touch calls were removed was false after d09f50d. The retained removals are cp in durable-handoff/merge-readiness, cleanup chmod/rm in attempt-workspace, chmod/grep in shu241-scoped-build, and touch/true in service lock controls. Their existing assertions, expected values, names and mutation lists remain unchanged.
 
-## Dependency disposition and preserved assertions
+| Dependency | Actual disposition |
+|---|---|
+| touch / cat in push-broker-gitconfig and workspace-result | Restored shell fixtures stay; shell_toolchain declares them and probes their --version argv |
+| env node in codex-contract | Restored #!/usr/bin/env node stays; shell_toolchain probes node resolution on the service child's PATH |
+| literal node in episode-successor-dispatch | Same child-PATH requirement; now declared shell_toolchain |
+| sh / dirname / chmod / mktemp / rm | Retained wrapper, production permission and policy dependencies; existing six probe calls preserved |
 
-The 85-file re-audit found no remaining incidental external chmod/rm/touch/grep/cp call. Source literals, mutation replacements, command doubles and shipped production commands are distinguished from actual fixture helpers.
+## Probe contract and controls
 
-| Removed convenience | Native implementation | Assertions retained |
-|---|---|---|
-| cp (earlier fix) | fs.cpSync in durable-handoff and merge-readiness | Existing named mutation assertions, positive cases and mutation lists unchanged |
-| chmod / rm (earlier fix) | attempt-workspace worker-identity child Node fs.chmodSync/fs.rmSync; same switchCommand and worker identity | Ownership, metadata protection, recovery and real-adapter assertions unchanged |
-| chmod (earlier fix) | shu241-scoped-build recursive owner-write via fs.chmodSync | Scoped-workspace, base transport and handoff assertions unchanged |
-| grep (earlier fix) | shu241-scoped-build recursive Buffer matching | `assert.equal(grep.status, 1, sentinel bytes reached worker metadata…)`, expected 1, unchanged |
-| touch (earlier fix) | service lock second writer uses fs.appendFileSync | SHU251_LOCK exclusion assertions unchanged |
-| touch / cat (earlier fix) | push-broker-gitconfig marker appendFileSync and stdin.pipe(stdout); workspace-result marker scripts | Sentinel nonexistence, clean-filter pass-through and publication assertions unchanged; failing marker still exits 1 |
-| env node (this pass) | codex-contract fixture shebang pins process.execPath | Real orphan-process lifecycle assertions unchanged |
-| /usr/bin/true (this pass) | service lock-release executes process.execPath -e '' | `SHU251_LOCK_RELEASE: writer exit must release the lock`, expected status 0, unchanged |
+The shell probe uses nodeProbe → asService, with absolute process.execPath and fixed `--input-type=module -e` source. Every launched command has an absolute literal path and fixed argv:
 
-Git and its local transports, shipped Bash policy/wrappers, production chmod, policy mktemp/rm, systemd-analyze verification, flock, optional distinct identity commands, parser execution, procfs and Unix sockets retain the dispositions in the audit. Fixture network and privileged command doubles are not evidence for installed host capabilities. Generated shell wrapper fixtures that actually execute remain covered by shell_toolchain; source-only shell bytes create no requirement.
+- `/bin/sh ['-c','exit 0']`
+- `/usr/bin/dirname ['/suite/wrapper']`
+- `/usr/bin/env ['/usr/bin/true']`
+- `/usr/bin/chmod`, `/usr/bin/mktemp`, `/usr/bin/rm`, `/usr/bin/touch`, `/usr/bin/cat`: each `['--version']`
+- `/usr/bin/env ['node','--version']`
 
-## Capability entries and inertness
+The last call intentionally resolves node on the inherited child PATH; it does not assert a particular node pathname. Version output, pathname computation and exit-only execution use no scratch or filesystem writes. Probe success establishes these exact availability/exit claims, not correctness of every shell operation. No capability is added and no detection claim is weakened.
 
-No vocabulary entry was added relative to `1fe68f8`; the predecessor's three entries were repaired without deleting their tests. There is **one grouped shell entry**, not separate entries for each executable. Removing inherited probe tests or their named refusal cases to reduce the vocabulary would discard existing coverage. `/bin/sh` and `dirname` in the shipped operational wrapper remain unchanged. No production wrapper edit was made or is needed.
+Existing named probe controls now exercise touch, cat and env-node failures inside the existing test name. Fixed-argv controls allow exactly the two env forms. `prove-restored-dependencies.mjs` removes each added invocation, substitutes absolute node, changes version argv, weakens detection prose and removes each corrected shell requirement; every mutant must die by ERR_ASSERTION and its named control. `prove-inert-mutations.mjs` preserves the existing filesystem-side-effect mutations. Positive cases run before mutations.
 
-All three probes use `nodeProbe` → `asService`, absolute process.execPath, fixed `--input-type=module -e` source, and absolute child paths with literal argv. No source interpolation, shell path interpolation, scratch allocation, filesystem creation/write/removal, or watched-root access is used. Existing infrastructure temporary probes retain their documented behavior and five-directory fixture count.
+## Scope
 
-| Entry | Inert detection | Named refusal |
-|---|---|---|
-| shell_toolchain | /bin/sh -c 'exit 0'; /usr/bin/dirname /suite/wrapper; /usr/bin/env /usr/bin/true; /usr/bin/chmod, mktemp, rm each with --version | SHU251_PREFLIGHT_SHELL_TOOLCHAIN |
-| linux_proc | Read nonempty /proc/self/stat, cmdline, environ; open /proc/version read-only and compare through /proc/self/fd/N; close descriptor | SHU251_PREFLIGHT_LINUX_PROC |
-| loopback_socket | Bind and close 127.0.0.1 ephemeral TCP socket; no Unix-socket pathname | SHU251_PREFLIGHT_LOOPBACK_SOCKET |
-
-Version/exit checks establish executable availability, not correctness of every operation. The inherited env/true positive and fault controls remain preserved even though the two incidental fixtures now use Node. The TCP capability is exercised by its preserved real positive control; reviewer tests otherwise inject their TCP listener. No new capability is inferred solely from an unused default import.
-
-Before: **1,732 pass / 4 fail / 8 skip**, 1,744 outcomes. After: **1,736 pass / 0 fail / 8 skip**, 1,744 outcomes. Name multisets are identical. Focused lifecycle/probe suites: **134 pass / 0 fail / 0 skip** (`inertness.tap`). All four original failures pass:
-
-- J1 prerequisite scratch permits a clean gate-off receipt
-- J1 prerequisite scratch preserves all 18 H1 interleavings
-- PROVIDER named mutation J1 scratch restored to watched root
-- CLOSURE split ownership and fresh service readiness require no acceptance worker
-
-The original scratch-count assertions are unchanged. Probe controls disable filesystem mutation APIs and permit only fixed child argv before running real probe bodies. `prove-inert-mutations.mjs` restores directory creation, file writes, removal, and mutating child argv separately: each is killed by `A12_DEPENDENCY_PROBE: shell_toolchain positive` / ERR_ASSERTION; positive passes (`inert-mutation-proof.txt`). These controls cover the implemented APIs and child-command boundary, not every possible future JavaScript side-effect mechanism.
-
-The seven preserved probe mutations also pass: bypass shell_toolchain/linux_proc/loopback_socket → `A12_DEPENDENCY_FAILURE`; ignore tool exit/spawn error or proc content/descriptor mismatch → `A12_DEPENDENCY_GUARD`. Existing inventory/name/digest/requirements mutation suites remain in the full capture. No production admission guard was relaxed or newly introduced.
-
-## Requirement counts
-
-Counts are name occurrences, including duplicates; a name may require more than one capability.
-
-| Capability | Occurrences |
-|---|---:|
-| privilege | 7 |
-| worker_uid | 7 |
-| cvtsudoers | 135 |
-| systemd_analyze | 60 |
-| flock | 64 |
-| git | 337 |
-| bash | 129 |
-| shell_toolchain | 163 |
-| linux_proc | 410 |
-| loopback_socket | 28 |
-| unix_socket | 50 |
-
-1005 rows have an explicit empty capability list. Other vocabulary entries have zero mapped occurrences and remain existing infrastructure preconditions.
-
-## Scope and preservation
-
-This inventory binds required files, captured names with multiplicities, and reviewed dependency declarations. It does not prove deployment, systemd activation, host service authorization, arbitrary sudo worker commands, namespace isolation, ACL enforcement, remote credentials, CI, a settled upstream revision, an independent verdict, or universal filesystem/socket semantics. Passing absence controls are not proof that an optional identity operation ran.
-
-PERMITTED_SKIPS is byte-identical to starting revision 1fe68f8, all eight entries retained. No new skip was introduced. `.github/workflows/ci.yml`, operational wrapper and all production behavior outside the declared capability probes are unchanged. No host window, network publication, push, PR, merge or external comment occurred.
-
-Admission, explicit named refusals and authoritative repeat-run evidence passed and are recorded in `admission-proof.txt` and `authoritative-run-summary.json`. The authoritative rerun at `52e5f01906a21f67d4578b8aa06839edc7544168` exited 0, emitted one terminal complete marker, and again produced 1,736 pass / 0 fail / 8 skip. `A12_COMMITTED_INVENTORY_ADMITTED` and `A12_AUTHORITATIVE_SUITE_NAMES` both passed. The authoritative call is `suiteNames(outcomes, contract.names)` against `bindSuite` read from committed Git objects; it did not halt. Exact missing/partial/extra-file, missing-inventory, version, missing-requirement, outside-vocabulary, hidden-byte-tampering and name-drift refusals all passed. `preservation-proof.json` records unchanged skip bytes, wrapper/workflow hashes and the complete unchanged name multiset. `prove-inventory.mjs` uses real committed Git objects for admission and a disposable local clone for hidden byte tampering; inventory-content faults use an explicit test-only Git boundary. It does not run preflight host/lifecycle commands.
+PERMITTED_SKIPS, all eight reasons, ci.yml, the operational wrapper, and the three restored test files are unchanged from d09f50d. No production behavior outside the capability probe/detection changes. No host access, push, PR, merge or external comment. Local probe identity evidence concerns only the repository workstation uid, not deployment authorization.
