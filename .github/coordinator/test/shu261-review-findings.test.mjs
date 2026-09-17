@@ -10,6 +10,8 @@ import { inheritedDescriptorDenied, processInspectionDenied } from '../review-ex
 import { PROTECTED_CLASSES } from '../service/reviewer-isolation.mjs';
 import { finalizeHostValidation } from '../service/reviewer-host-validation.mjs';
 
+import { resolveCvtsudoers } from '../service/host-suite-contract.mjs';
+
 const mutation = process.env.SHU261_MUTATION;
 function source(relative) {
   const file = new URL(relative, import.meta.url);
@@ -117,9 +119,9 @@ function parsedReviewerPolicy(t) {
   if (mutation === 'SHU261_NO_SETENV') policy = policy.replace('NOPASSWD:NOSETENV:', 'NOPASSWD:SETENV:');
   if (mutation === 'SHU261_OAUTH_ENV_KEEP') policy = policy.replace('env_keep += "CLAUDE_CODE_OAUTH_TOKEN"', 'env_keep += "UNRELATED"');
   const file = path.join(root, 'sudoers'); fs.writeFileSync(file, policy);
-  const parsed = spawnSync('/usr/bin/cvtsudoers', ['-f', 'json', file], { encoding: 'utf8' });
-  assert.equal(parsed.status, 0, parsed.stderr);
-  const config = JSON.parse(parsed.stdout);
+  const resolved = resolveCvtsudoers(root, undefined, file);
+  assert.equal(resolved.available, true, 'SHU251_SUITE_PARSER_REQUIRED');
+  const config = resolved.parsed;
   const options = config.User_Specs[0].Cmnd_Specs[0].Options;
   const setenv = options.some((option) => option.setenv === true);
   const keep = config.Defaults.filter((entry) => entry.Binding.some((binding) => binding.command === '/usr/local/libexec/shu-reviewer-sandbox'))

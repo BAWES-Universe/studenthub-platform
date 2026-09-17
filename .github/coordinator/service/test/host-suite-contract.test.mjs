@@ -41,7 +41,7 @@ test('SHU251 contract rejects incomplete suite and nonzero exit', () => {
 });
 test('SHU251 contract preflight failure prevents suite execution', async () => {
   let ran = false;
-  await assert.rejects(() => runSuite(spec, { probe: async () => false, run() { ran = true; } }), named('SHU251_PREFLIGHT_PRIVILEGE'));
+  await assert.rejects(() => runSuite(spec, { contract: async () => ({}), probe: async () => false, run() { ran = true; } }), named('SHU251_PREFLIGHT_PRIVILEGE'));
   assert.equal(ran, false);
 });
 test('SHU251 contract structured reporter runs only temp fixture tests', async t => {
@@ -49,7 +49,7 @@ test('SHU251 contract structured reporter runs only temp fixture tests', async t
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const file = path.join(root, 'fixture.test.mjs');
   fs.writeFileSync(file, "import test from 'node:test'; test('fixture one',()=>{}); test('fixture two',()=>{});\n");
-  const result = await runSuite({ ...spec, checkout: root, temp_dir: root, files: [file], expected_tests: 2 }, { probe: async name => available(name) });
+  const result = await runSuite({ ...spec, checkout: root, temp_dir: root, files: [file], expected_tests: 2 }, { probe: async name => available(name), contract: async () => ({ files: [file], expected_tests: 2, names: ['fixture one', 'fixture two'] }) });
   assert.deepEqual(result.counts, { tests: 2, pass: 2, fail: 0, skipped: 0 });
 });
 test('SHU251 contract detects capabilities through injectable command boundaries', async () => {
@@ -225,6 +225,7 @@ for (const [label, candidate] of [['conventional', conventional], ['sudo-rs', su
     assert.deepEqual(receipt.capabilities.cvtsudoers, result, 'RECEIPT_IDENTITY');
     const suite = await runSuite({ ...spec, files: [spec.checkout + '/example.test.mjs'], expected_tests: 1 }, {
       probe: async name => name === 'cvtsudoers' ? result : true,
+      contract: async () => ({ files: [spec.checkout + '/example.test.mjs'], expected_tests: 1, names: ['example'] }),
       run: () => ({ status: 0, stdout: '{"type":"outcome","name":"example","status":"pass"}\n{"type":"complete"}' }),
     });
     assert.deepEqual(suite.preflight.capabilities.cvtsudoers, result, 'SUITE_RECEIPT_IDENTITY');
@@ -340,4 +341,49 @@ for (const [name, controlName, from, to, message] of parserMutations) test(`SHU2
   assert.ok(output.includes(message), output);
   const error = output.match(/^  error: ([\s\S]*?)\n  code: 'ERR_ASSERTION'/m)?.[1].trim();
   t.diagnostic(`${name}: AssertionError: ${error}`);
+});
+
+// Load the actual A12 test body; only its OS parser boundary is virtual.
+function realPolicySuite(code) {
+  const registered = new Map(), cleanup = [];
+  const virtual = parserIO({ [sudoRs]: {} }).io;
+  const originalRun = virtual.run;
+  virtual.run = (file, args, options) => {
+    originalRun(file, args, options); // Retain descriptor and argv checks.
+    if (args[2] === '/virtual/fixture/sudoers') return { status: 0, stdout: validConversion };
+    assert.equal(fs.readFileSync(args[2], 'utf8'), fs.readFileSync(new URL('../shu-reviewer.sudoers', import.meta.url), 'utf8'));
+    return { status: 0, stdout: JSON.stringify({
+      User_Specs: [{ Cmnd_Specs: [{ Options: [{ setenv: false }] }] }],
+      Defaults: [{ Binding: [{ command: '/usr/local/libexec/shu-reviewer-sandbox' }], Options: [{ env_keep: ['CLAUDE_CODE_OAUTH_TOKEN'] }] }],
+    }) };
+  };
+  const suiteURL = new URL('../../test/shu261-review-findings.test.mjs', import.meta.url);
+  code = code.replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', JSON.stringify(suiteURL.href));
+  runInNewContext('const resolveCvtsudoers = (...args) => JSON.parse(resolveImpl(...args));\n' + code, { test: (name, fn) => registered.set(name, fn), assert, fs, os, path, URL,
+    process: { env: {} },
+    resolveImpl: (dir, ignored, policy) => JSON.stringify(resolveCvtsudoers(dir, virtual, policy)),
+    spawnSync: () => assert.fail('SHU251_SUITE_PARSER_REQUIRED: hardcoded executable bypassed identity-checked resolver'),
+  });
+  try { registered.get('SHU261_NO_SETENV_POLICY')({ after: fn => cleanup.push(fn) }); }
+  finally { for (const fn of cleanup) fn(); }
+}
+test('SHU251 A12 real policy suite accepts packaged parser', () => {
+  realPolicySuite(fs.readFileSync(new URL('../../test/shu261-review-findings.test.mjs', import.meta.url), 'utf8'));
+});
+test('SHU251 A12 mutation hardcoded parser dies in real suite', () => {
+  const code = fs.readFileSync(new URL('../../test/shu261-review-findings.test.mjs', import.meta.url), 'utf8');
+  const from = 'resolveCvtsudoers(root, undefined, file)';
+  assert.equal(code.split(from).length, 2);
+  const mutant = code.replace(from, "spawnSync('/usr/bin/cvtsudoers', ['-f', 'json', file], { encoding: 'utf8' })");
+  // VM compilation is syntax validation of the full mutated suite, before execution.
+  assert.throws(() => realPolicySuite(mutant), error => error.code === 'ERR_ASSERTION' && error.message.includes('SHU251_SUITE_PARSER_REQUIRED'));
+});
+test('SHU251 parser policy conversion preserves refusal and custody', () => {
+  for (const result of [{ status: 1, stdout: '{}' }, { status: 0, stdout: 'invalid' }]) {
+    const { io, closed, removed } = parserIO({ [sudoRs]: {} });
+    const run = io.run;
+    io.run = (file, args, options) => { const fixture = run(file, args, options); return args[2] === '/policy' ? result : fixture; };
+    assert.throws(() => resolveCvtsudoers('/virtual', io, '/policy'), named(result.status ? 'SHU251_PREFLIGHT_CVTSUDOERS' : 'SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT'));
+    assert.deepEqual(closed, [17]); assert.deepEqual(removed, ['/virtual/fixture']);
+  }
 });
