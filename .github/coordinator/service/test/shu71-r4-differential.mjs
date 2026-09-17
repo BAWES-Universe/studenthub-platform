@@ -1,10 +1,10 @@
-// Read historical repository objects only; every execution uses the disposable
+// Read custody-checked historical fixtures; every execution uses the disposable
 // production boundary. No checkout, host command, API or real key is used.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { historicalSource } from './shu71-history.mjs';
 import { pathToFileURL } from 'node:url';
 import { productionFixture } from './shu71-production-fixture.mjs';
 export async function counterDifferential(t, keys, candidate) {
@@ -14,7 +14,7 @@ export async function counterDifferential(t, keys, candidate) {
     if (revision) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-r4-differential-'));
       t.after(() => fs.rmSync(root, {recursive: true, force: true}));
-      const read = name => execFileSync('git', ['show', `${revision}:.github/coordinator/service/${name}`], {cwd: new URL('../../../../', import.meta.url), encoding: 'utf8'});
+      const read = name => historicalSource(revision, name);
       fs.writeFileSync(path.join(root, 'journal.mjs'), read('shu71-journal.mjs'));
       const source = read('shu71-production.mjs').replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
         (_, p, q, r) => `${p}${q}${r === './shu71-journal.mjs' ? pathToFileURL(path.join(root, 'journal.mjs')).href : new URL(r, url).href}${q}`);
@@ -28,7 +28,9 @@ export async function counterDifferential(t, keys, candidate) {
       const start=h.events.length, result=await create(h.id,h.boundary).execute('expire');
       const gate=h.read('/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf');
       assert.equal(gate.includes('ENABLE_DISPATCH=true'), label === 'blocked', `B4_Q1_DIFFERENTIAL_${label}`);
+      assert.equal(h.read('/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf').includes('ENABLE_DISPATCH=true'), label === 'blocked', `B4_Q1_SECOND_GATE_${label}`);
       assert.equal(result.state, label === 'parent' ? 'REVOKED' : 'HALT');
+      assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), label === 'parent', `B4_Q1_COMPLETION_${label}`);
       if (label !== 'parent') assert.equal(result.code, 'ACT_RETRY_BUDGET_UNAVAILABLE');
       if (label === 'blocked') assert.equal(h.events.slice(start).filter(e=>/^(command:|api:|write:|rename:)/.test(e)).length,0);
     }
