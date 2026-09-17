@@ -327,9 +327,9 @@ before settlement reservation persistence can retry that reservation write.
 This restores automatic lease release for an already-safe exhausted episode;
 it does **not** restore the parent's ability to repair an armed gate after the
 budget is spent. Merely stopping a drift writer can leave the gate armed and
-still block all successor activations until explicit recovery. Restoring that
-broader self-healing property conflicts with the preserved no-repair exhaustion
-contract, so it is not claimed here. Successor protection is exercised with a
+still block all successor activations until explicit recovery. Declining that
+broader self-healing property is a scope choice. A bounded post-exhaustion repair
+allowance is possible, but is not implemented here. Successor protection is exercised with a
 foreign lease after settlement; a genuine second signed activation remains
 unproved. B1 remains BLOCKED; B2/B4 remain source-level only; overall BLOCK.
 
@@ -354,3 +354,98 @@ coordinator **525**, all passing. The standalone independent-site recheck runs
 56 genuine trust tests per mutant: **10 killed / 2 surviving** (MX13/MX14,
 worker/reload, unchanged and not claimed equivalent). Logs and hashes are in
 SHU71-L3-TESTS.json; raw local logs are under `/tmp/l3-r4-results/`.
+
+
+### Response to R5 (repository-only)
+
+R5-A/B/C were reproduced at `0eeadd5f05abc8cd82968a855b2bff8cc137c65a`
+before production edits, including MY6 surviving all 56 genuine trust tests.
+The new genuine differential loads parent `5e25c65`, blocked head `0eeadd5`,
+and candidate source into the same disposable boundary and applies identical
+inputs. Both named gates are `/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf`
+and `/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf`.
+
+**R5-A:** counter-fault fallback now independently attempts activation credential
+removal after attempting each gate. It needs neither a journal append nor a
+command reservation. An unlink/fsync failure is reported as
+`ACT_TEARDOWN_ACTIVATION`; failure of a gate does not skip credential removal.
+With the same mode-0644 counter, parent disarms both gates, removes the credential,
+stops the services, releases ownership and completes. Blocked head disarms both
+gates but keeps the credential. Candidate disarms both gates and removes the
+credential on every wake. This revokes the credential checked by the running
+supervisor even though its start-time environment remains unchanged.
+
+Candidate intentionally still retains the lease, leaves the supervisor,
+coordinator timer and evidence broker running, and does not record completion
+on this fallback. Explicit recovery remains necessary for those effects. Narrow
+file effects can repeat on every persistent fault; no bounded-fallback-cost or
+host-effective-systemd claim is made. Filesystem failures can prevent removal
+and are surfaced, not treated as success. Clean foreign leases refuse with
+`ACT_ACTIVATION_CONFLICT` and zero writes/commands for invalid counters, planted
+exhaustion and planted settlement. The evidence-directory-mode veto and
+custody-invalid foreign-lease residual remain pre-existing and outside scope.
+
+**R5-B:** each successful automatic reservation now appends its attempt number
+to the hash-linked journal before ordinary effects. Zero-effect exhaustion
+requires all 32 ordered reservation records (1 through 32). A counter with 32
+but no supporting history is an invalid budget, takes the credential/gate safety
+fallback and returns `ACT_RETRY_BUDGET_UNAVAILABLE` with
+`budget_error: ACT_RETRY_BUDGET_INVALID`. It cannot silently enter zero-effect
+exhaustion. Parent completes the identical planted-counter input; blocked head
+leaves both gates armed and credential present; candidate disarms both gates and
+removes the credential, retaining ownership and incomplete evidence.
+
+A reservation whose journal append was interrupted still consumes its counter
+attempt. Missing proof never resets the counter or grants ordinary retries.
+Damaged-journal recovery conservatively retains the existing
+`ACT_RETRY_BUDGET_EXHAUSTED` code for a counter of 32, but now takes the same
+independent safety fallback and exposes invalid/missing evidence via
+`budget_error`. It does not enter the zero-effect settlement branch. Old exhausted
+episodes lacking the new reservation records likewise take the safety fallback
+and need explicit recovery. This is a local journal cross-check, not a signature,
+remote attestation or protection against root rewriting both counter and journal.
+The earlier zero-effect exhaustion disclosures concern evidence-supported
+exhaustion; unsupported counters are now faults.
+
+Settlement consumption now requires a `SETTLEMENT_STARTED` journal record,
+written before the counter marker and before settlement effects. The counter's
+boolean alone grants or consumes no allowance. For an already-safe episode,
+the identical planted `settlement_started:true` leaves blocked head frozen but
+parent and candidate complete and release ownership. Interruptions before and
+after the reservation append are tested: an absent reservation may retry, a
+persisted reservation cannot. Clearing the boolean cannot replenish it.
+
+**R5-C:** failed settlement now explicitly asserts incomplete evidence, retained
+lease and unretired timer, both immediately and after 40 exhausted wakes. MY6
+is killed on `B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED`. The same interrupted
+retirement input retains ownership at parent, blocked head and candidate; the
+old suite's failure was coverage. The new assertion detects the mutant's release
+on that same failure. No production ownership guard was removed or relaxed.
+
+**Q3 disposition:** retaining no automatic gate repair after evidence-supported
+exhaustion is a **scope choice**, not an impossibility or external constraint.
+The existing armed-gate refusal and its assertions remain unchanged. Stopping a
+drift writer alone can still leave a disk gate armed and ownership blocked until
+explicit recovery. In the reproduced gate-drift case the activation credential was removed by
+the earlier cleanup attempts; disk-gate restoration and automatic successor
+admission are not claimed. Persistent failures of credential removal throughout
+the ordinary allowance likewise require explicit recovery after exhaustion.
+The one-shot settlement of already-safe episodes remains available, now protected
+against a planted counter boolean. B1 remains BLOCKED, B2/B4 source-level only,
+and overall execution closure remains BLOCK.
+
+Current R5 validation counts, commands, hashes, differential snapshots and
+limitations are recorded in `SHU71-L3-TESTS.json` under `r5_response`. Historical
+R4 counts above are retained as historical evidence. MX13 and MX14 remain the
+two disclosed acceptable survivors, neither killed nor claimed equivalent.
+
+
+R5 validation: focused **260/260**, genuine **207/207**, coordinator **1751 total /
+1733 pass / 0 fail / 18 unchanged skips**; **53/53** targeted mutants;
+**512** crash injections (240 forward + 272 teardown); rollback **1/1**.
+Mutation-named checks: focused **94**, coordinator **529**. Independent sites:
+**10 killed / 2 disclosed survivors**, 67 genuine trust tests per site. R5 MY
+sites: **5 killed / 2 redundant-observation survivors** (MY3/MY7); MY6 now dies
+on the named ownership assertion. The application suite was not rerun this round.
+`PERMITTED_SKIPS` remains byte-identical lane-wide (SHA-256
+`37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f`).

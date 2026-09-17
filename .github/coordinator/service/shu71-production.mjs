@@ -367,6 +367,7 @@ export function createShu71Production(id, b = shu71Boundary) {
     // retries; counter failure has its own independent gate-disarm fallback.
     // Explicit resume/revoke remain available without resetting this budget.
     let exhausted = false;
+    let evidenceUnavailable = false;
     if (automatic) {
       try {
         let attempts = 0;
@@ -375,6 +376,14 @@ export function createShu71Production(id, b = shu71Boundary) {
         need(Number.isSafeInteger(attempts) && attempts >= 0 && attempts <= 32, 'ACT_RETRY_BUDGET_INVALID');
         if (attempts >= 32) exhausted = true;
         else atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: attempts + 1 }));
+        if (exhausted === true) {
+          // A counter alone cannot prove that the allowance was spent. Missing
+          // evidence (including damaged-log recovery) takes the safety fallback,
+          // never permission to reset the counter or replay ordinary effects.
+          evidenceUnavailable = journal.recovered;
+          const reservations = journal.entries.filter(e => e.event === 'AUTOMATIC_TEARDOWN_RESERVED');
+          need(reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1), 'ACT_RETRY_BUDGET_INVALID');
+        } else journal.append({ event: 'AUTOMATIC_TEARDOWN_RESERVED', attempts: attempts + 1 });
       } catch (error) {
         // Counter storage must never veto the independent disk gate disarm.
         // Do not rely on journal availability or issue commands without a reservation.
@@ -383,7 +392,9 @@ export function createShu71Production(id, b = shu71Boundary) {
           try { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 0, 0, 0o644); }
           catch { failures.push('ACT_TEARDOWN_GATE'); }
         }
-        return { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_UNAVAILABLE',
+        try { remove(ACTIVATION_FILE); }
+        catch { failures.push('ACT_TEARDOWN_ACTIVATION'); }
+        return { ok: false, state: 'HALT', code: evidenceUnavailable ? 'ACT_RETRY_BUDGET_EXHAUSTED' : 'ACT_RETRY_BUDGET_UNAVAILABLE',
           budget_error: error.code === 'ACT_RETRY_BUDGET_INVALID' || error instanceof SyntaxError ? 'ACT_RETRY_BUDGET_INVALID' : 'ACT_RETRY_BUDGET_UNAVAILABLE',
           failures, operator_action: 'resume_or_revoke' };
       }
@@ -429,9 +440,12 @@ export function createShu71Production(id, b = shu71Boundary) {
         observeGateFiles();
         need(effects.filter(([step]) => !['observation', 'expiry-timer'].includes(step))
           .every(([step]) => journal.entries.some(e => e.event === 'DONE' && e.step === `teardown:${step}`)), 'ACT_CLEANUP_FAILED');
-        const budget = JSON.parse(privateRead(`${dir}/automatic-teardown.json`));
-        if (budget.settlement_started) return refusal;
+        JSON.parse(privateRead(`${dir}/automatic-teardown.json`));
+        if (journal.entries.some(e => e.event === 'SETTLEMENT_STARTED')) return refusal;
         observeTeardown();
+        // The journal, not a plantable counter boolean, consumes this allowance.
+        // Reserve there first: interruption at either durable write cannot reuse it.
+        journal.append({ event: 'SETTLEMENT_STARTED' });
         // One durable settlement allowance; interruption requires explicit recovery.
         atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: 32, settlement_started: true }));
       } catch { return refusal; }

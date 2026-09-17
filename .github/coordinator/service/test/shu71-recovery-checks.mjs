@@ -174,6 +174,7 @@ export async function counterFaultCheck(createProduction, h, fault = 'mode') {
     assert.equal(result.code, 'ACT_RETRY_BUDGET_UNAVAILABLE', 'B4_COUNTER_REFUSAL');
     for (const service of ['shu-coordinator', 'shu-supervisor'])
       assert.equal(h.read(`/etc/systemd/system/${service}.service.d/90-shu71.conf`), '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'B4_COUNTER_FAULT_DISARMS');
+    assert.equal(h.exists(activation), false, 'B4_COUNTER_CREDENTIAL_REVOKED');
     incomplete(h, 'B4_COUNTER');
   }
 }
@@ -211,13 +212,24 @@ export async function exhaustedSettlementCheck(createProduction, h, interrupt = 
   assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED', 'B4_SETTLEMENT_ACTIVATION_GUARD');
   assert.equal(h.exists(lease), true);
   h.boundary.fs.unlinkSync(activation);
-  if (interrupt) h.faults.before = e => e.includes(':disable --now shu71-expiry-');
+  if (interrupt) {
+    const run = h.boundary.run;
+    // Fail before the modeled command executes, so timer retirement is observable.
+    h.boundary.run = (exe, argv, opts) => {
+      if (argv[0] === 'disable') throw new Error('interrupted retirement');
+      return run(exe, argv, opts);
+    };
+    h.restoreSettlementRun = () => { h.boundary.run = run; };
+  }
   const start = h.events.length, result = await create().execute('expire');
   if (interrupt) {
     assert.equal(result.code, 'ACT_CLEANUP_FAILED');
+    incomplete(h, 'B4_SETTLEMENT_FAILED');
     const rows = h.journal().length;
     for (let n = 0; n < 40; n++) assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
     assert.equal(h.journal().length, rows, 'B4_SETTLEMENT_BOUNDED');
+    incomplete(h, 'B4_SETTLEMENT_FAILED');
+    h.restoreSettlementRun();
     h.faults.before = undefined;
     assert.equal((await create().execute('resume')).state, 'REVOKED');
   } else {

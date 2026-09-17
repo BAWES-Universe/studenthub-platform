@@ -8,6 +8,7 @@ import { createShu71Production } from '../shu71-production.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
 import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck } from './shu71-recovery-checks.mjs';
+import { plantedCounterCheck, plantedSettlementCheck } from './shu71-r5-checks.mjs';
 const keys = ephemeralPublicSource();
 for (const [name, before, after, check, target = 'journal', assertion = /B4_/] of [
   ['gate DONE suppresses repair', "['gate', 'activation', 'workers', 'reload', 'evidence-broker']", "['activation', 'workers', 'reload', 'evidence-broker']", gateRecoveryCheck],
@@ -19,6 +20,10 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   ['Q1 counter fault skips disarm', 'for (const file of GATES) {\n          try', 'for (const file of []) {\n          try', counterFaultCheck, 'production', /B4_COUNTER_FAULT_DISARMS/],
   ['Q3 safe exhausted lease never settles', 'if (exhausted) {', "if (exhausted) return { code: 'ACT_RETRY_BUDGET_EXHAUSTED' };\n    if (exhausted) {", exhaustedSettlementCheck, 'production', /B4_EXHAUSTED_SELF_HEAL/],
   ['Q5 explicit cleanup resets counter', 'let exhausted = false;', "if (!automatic) remove(`${dir}/automatic-teardown.json`);\n    let exhausted = false;", manualBudgetCheck, 'production', /B4_MANUAL_BUDGET_RETAINED/],
+  ['R5-A counter fault retains credential', 'try { remove(ACTIVATION_FILE); }', 'try {}', counterFaultCheck, 'production', /B4_COUNTER_CREDENTIAL_REVOKED/],
+  ['R5-B unsupported exhaustion accepted', "need(reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1), 'ACT_RETRY_BUDGET_INVALID');", '', plantedCounterCheck, 'production', /B4_COUNTER_EVIDENCE_REQUIRED/],
+  ['R5-B planted settlement boolean trusted', "if (journal.entries.some(e => e.event === 'SETTLEMENT_STARTED')) return refusal;", 'if (JSON.parse(privateRead(`${dir}/automatic-teardown.json`)).settlement_started) return refusal;', plantedSettlementCheck, 'production', /B4_SETTLEMENT_BOOLEAN_NOT_AUTHORITY/],
+  ['R5-C MY6 failed settlement releases ownership', 'if (result.ok) remove(`${ROOT}/active.json`);', 'remove(`${ROOT}/active.json`);', (create, h) => exhaustedSettlementCheck(create, h, true), 'production', /B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED/],
   ['P3 automatic budget removed', 'if (attempts >= 32)', 'if (false)', boundedReplayCheck, 'production', /B4_AUTOMATIC_REPLAY_BOUNDED/],
 ]) test(`recovery mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));
