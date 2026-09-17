@@ -42,3 +42,23 @@ export function readTwoFixtureEvidence(config, env, run = execFileSync) {
     }));
   } catch { return { heads: {}, issues: [] }; }
 }
+
+// Exact commit comparison from the configured repository. Unknown/missing API
+// evidence never substitutes for ancestry. Credentials remain on stdin.
+export function readFixtureAncestry(config, env, base, head, run = execFileSync) {
+  if (!env.GITHUB_TOKEN || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(config.pilot_repo ?? '') ||
+      !/^[0-9a-f]{40}$/.test(base ?? '') || !/^[0-9a-f]{40}$/.test(head ?? '') || base === head) return false;
+  try {
+    return run(process.execPath, ['--input-type=module', '-e', `
+      let text = ''; for await (const chunk of process.stdin) text += chunk;
+      const input = JSON.parse(text);
+      const response = await fetch('https://api.github.com/repos/' + input.repo + '/compare/' + input.base + '...' + input.head,
+        { headers: { Authorization: 'Bearer ' + input.token, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error('comparison unavailable');
+      const result = await response.json();
+      process.stdout.write(String(result.status === 'ahead' && result.merge_base_commit?.sha === input.base));
+    `], { input: JSON.stringify({ repo: config.pilot_repo, token: env.GITHUB_TOKEN, base, head }),
+      env: { PATH: process.env.PATH }, encoding: 'utf8', timeout: 10000, maxBuffer: 1024,
+      stdio: ['pipe', 'pipe', 'ignore'] }).trim() === 'true';
+  } catch { return false; }
+}

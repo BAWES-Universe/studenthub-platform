@@ -17,8 +17,18 @@ This package replaces the nine free-form command parameters named by the
 approved host window; adding it does not install a unit, access a credential,
 change host permissions, start a worker, arm dispatch, or authorize SHU-71.
 
-`shu251-operational-bindings.sh` accepts exactly one enumerated action and one
-absolute JSON-spec path. The Node implementation uses fixed executable paths and
+`shu251-operational-bindings.sh` admits 19 actions on two routes. The nine legacy
+binding actions listed below require exactly `ACTION /absolute/window.json` and
+route to `host-window-bindings.mjs`; extra arguments are refused. The ten lifecycle
+actions (`preflight`, `install`, `start`, `readiness`, `running-gate-off`, `restart`,
+`host-rollback`, `pin`, `pin-restore`, `pin-retain`) take
+`ACTION /absolute/driver.json [driver flags]` and route to `phase-a-driver.mjs`.
+The wrapper forwards those flags and the caller's environment unchanged. The
+driver's closed parser and approval checks apply; the wrapper supplies no approval.
+Lifecycle execution can install units and start/restart services; repository
+preparation alone does none of those things. See [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md).
+
+For the legacy route below, the Node implementation uses fixed executable paths and
 fixed argv. There is no `eval`, `sh -c`, command field, executable field, or
 operator-provided argument array. Unknown fields fail the closed manifest before
 an operation runs. Failures emit machine-readable JSON with `ok:false` on stderr

@@ -200,3 +200,20 @@ test('EXEC_RUNTIME_PROVENANCE_ONLY: signed provenance SHA cannot substitute for 
   signed(x);
   assert.equal(validateTwoFixtureActivation(x).valid, false, 'EXEC_RUNTIME_PROVENANCE_ONLY: anchor cannot supply execution authority');
 });
+
+test('B3_REPRO_CURRENT_MAIN: real descendant invalidates armed activation', () => {
+  const dir = fs.mkdtempSync(path.join(tmpdir(), 'b3-repro-'));
+  const git = (...args) => { const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  try {
+    git('init'); git('config', 'user.name', 'B3 isolated test'); git('config', 'user.email', 'b3@example.invalid');
+    git('commit', '--allow-empty', '-m', 'signed seed'); const seed = git('rev-parse', 'HEAD');
+    const x = fixture(); x.record.fixtures[0].seed_head = seed; x.heads[x.record.fixtures[0].branch] = seed;
+    x.record.gates = { reviewed: true, runtime: true }; x.env.ENABLE_DISPATCH = 'true'; signed(x);
+    assert.equal(validateTwoFixtureActivation(x).state, 'armed', 'B3_REPRO_SEED_ARMED');
+    git('commit', '--allow-empty', '-m', 'authorized build descendant'); const descendant = git('rev-parse', 'HEAD');
+    git('merge-base', '--is-ancestor', seed, descendant); x.heads[x.record.fixtures[0].branch] = descendant;
+    const result = validateTwoFixtureActivation(x);
+    assert.equal(result.code, 'ACT_STALE_SEED_HEAD', 'B3_REPRO_DESCENDANT_REFUSED');
+    console.log(JSON.stringify({ scope: 'current checkout: unreceipted descendant refusal, not a base reproduction', seed, descendant, ancestry: true, first: 'armed', next: result.code }));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

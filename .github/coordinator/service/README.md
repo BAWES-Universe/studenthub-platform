@@ -290,3 +290,12 @@ These are sandbox proofs; installed-service acceptance remains host-pending.
 For a window that prohibits all systemd interaction, export `SHU251_NO_SYSTEMD=1`
 before the full coordinator test command. Eleven existing syntax/staging tests
 then report explicit skips; do not count those as successful validations.
+
+## Typed lifecycle executor
+
+[HOST-LIFECYCLE.md](HOST-LIFECYCLE.md) documents the Phase-A driver actions for
+preflight, install, start/readiness, driver-issued restart, host rollback and pin
+disposition. The reviewed `phase-a-driver.mjs` CLI selects
+`production-lifecycle.mjs` by default. Its syscall and command boundaries are
+replaced in tests; no test invokes the host provider against the real machine. The offline installer above is unchanged, and
+no real-host acceptance is claimed.

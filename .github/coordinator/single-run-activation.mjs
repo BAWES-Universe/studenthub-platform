@@ -82,6 +82,8 @@
 // Failing that way round is the cheaper mistake.
 
 import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
+import { readProgressionPush } from './two-fixture-progression.mjs';
+import { readFixtureAncestry } from './two-fixture-evidence.mjs';
 import { validateTwoFixtureActivation } from "./two-fixture-activation.mjs";
 import { resolveFixtureLane } from "./workspace-scope.mjs";
 import fs from "node:fs";
@@ -558,15 +560,17 @@ export function singleRunActivationStatus({
       : readTwoFixtureEvidence(config, env);
     const status = validateTwoFixtureActivation({ record: pairRecord, config,
       revision: resolveCoordinatorRevision({ dir, gitHead, io }),
-      mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now });
+      mainRevision: io.mainRevision ?? readRef("refs/heads/main"), heads: evidence.heads, issues: evidence.issues, env, now,
+      receipts, readPush: io.readProgressionPush ?? (receipt => readProgressionPush(receipt, env)),
+      isAncestor: io.fixtureAncestryResolver ?? ((base, head) => readFixtureAncestry(config, env, base, head)) });
     if (!status.valid || status.state !== "armed") return status;
     const episodes = status.fixtures.map(fixture => ({ fixture, episode: episodeVerdict({ receipts,
-      targetIssueId: fixture.issue_id, config, episodeScope: episodeScopeFor(status) }) }));
+      targetIssueId: fixture.issue_id, config, bootstrapReviewer: fixture.lane.reviewer_lane ? { lane: fixture.lane.reviewer_lane } : null, episodeScope: episodeScopeFor(status) }) }));
     const ongoing = episodes.filter(entry => !entry.episode.ended);
     if (!ongoing.length) return refused("activation is spent: both fixture episodes ended");
     const selected = ongoing.find(entry => !receipts.some(r => r.issue_id === entry.fixture.issue_id && !TERMINAL_RECEIPT_STAGES.includes(r.stage))) ?? ongoing[0];
     return { ...status, target_issue_id: selected.fixture.issue_id,
-      authorization_ref: selected.fixture.lane.authorization_ref, initial_target_sha: selected.fixture.seed_head,
+      authorization_ref: selected.fixture.lane.authorization_ref, reviewer_lane: selected.fixture.lane.reviewer_lane, initial_target_sha: selected.fixture.seed_head,
       successor: selected.episode.successor ?? null, episode: selected.episode.reason,
       target_issue_ids: ongoing.map(entry => entry.fixture.issue_id) };
   }

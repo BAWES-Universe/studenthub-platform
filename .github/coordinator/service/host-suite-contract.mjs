@@ -174,6 +174,7 @@ export function deriveRequirements(names, requirements) {
 }
 export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
   if (!Number.isInteger(spec?.service_uid) || spec.service_uid <= 0 || !Number.isInteger(spec.service_gid) || spec.service_gid < 0 || !path.isAbsolute(spec.checkout ?? '') || !path.isAbsolute(spec.temp_dir ?? '')) halt('SHU251_PREFLIGHT_SPEC');
+  if (requiredSet === null) halt('SHU251_PREFLIGHT_REQUIREMENTS', 'exact required test set');
   const derived = requiredSet === undefined ? null : deriveRequirements(requiredSet.names, requiredSet.requirements);
   const evidence = {};
   for (const capability of CAPABILITIES) {
@@ -196,7 +197,7 @@ export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
       // Namespace proof and runner infrastructure have no skip allowance.
       if (!['privilege', 'worker_uid'].includes(capability.name) || uncovered.length)
         halt(capability.code, uncovered.map(need => need.test).join(', ') || capability.name);
-      evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: need.reason })) };
+      evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: PERMITTED_SKIPS[need.test] })) };
       continue;
     }
     if (!available) halt(capability.code, capability.name);
@@ -228,7 +229,7 @@ export default async function* reporter(source) {
     if (event.type === 'test:pass' || event.type === 'test:fail') {
       const d = event.data;
       if (d.details?.type === 'suite') continue;
-      yield JSON.stringify({ type: 'outcome', name: d.name, status: d.skip ? 'skip' : d.todo ? 'todo' : event.type === 'test:pass' ? 'pass' : 'fail', reason: d.skip || undefined }) + '\n';
+      yield JSON.stringify({ type: 'outcome', name: d.name, status: event.type === 'test:fail' ? 'fail' : d.skip ? 'skip' : d.todo ? 'todo' : 'pass', reason: d.skip || undefined }) + '\n';
     }
     if (event.type === 'test:summary' && event.data.file === undefined) yield JSON.stringify({ type: 'complete' }) + '\n';
   }
@@ -259,18 +260,21 @@ export async function runSuite(spec, io = {}) {
   return receipt;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const [action, file] = process.argv.slice(2);
-    if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
-    const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
-    let result;
-    if (action === 'preflight') result = await preflight(spec, hostProbe(spec), (await import('./suite-runner-spec.mjs')).bindSuite(spec));
-    else if (action === 'run') result = await runSuite(spec);
-    else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
-    else {
-      const lifecycle = await import('./disposable-suite.mjs');
-      result = action === 'create' ? lifecycle.createDisposableSuite(spec) : lifecycle.removeDisposableSuite(spec);
-    }
-    console.log(JSON.stringify(result));
-  } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
+  // Let this module finish evaluation before cyclic CLI imports settle.
+  void (async () => {
+    try {
+      const [action, file] = process.argv.slice(2);
+      if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
+      const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
+      let result;
+      if (action === 'preflight') result = await preflight(spec, hostProbe(spec), (await import('./suite-runner-spec.mjs')).bindSuite(spec));
+      else if (action === 'run') result = await runSuite(spec);
+      else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
+      else {
+        const lifecycle = await import('./disposable-suite.mjs');
+        result = action === 'create' ? lifecycle.createDisposableSuite(spec) : lifecycle.removeDisposableSuite(spec);
+      }
+      console.log(JSON.stringify(result));
+    } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
+  })();
 }
