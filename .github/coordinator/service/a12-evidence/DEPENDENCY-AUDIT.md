@@ -1,4 +1,4 @@
-# A12 dependency derivation (work in progress)
+# A12 dependency audit — capture refused
 
 The required-file derivation is the literal `SUITE_ROOTS` filter and sort from `suite-runner-spec.mjs:42-43`, applied to `git ls-tree -r --name-only HEAD`. Its output is committed in `required-files.json`: **85 files**. No glob narrowing is used.
 
@@ -1579,3 +1579,5 @@ Do not derive suite-inventory.json unless exit status is zero, outcomes are none
 ## Preserved findings
 
 deriveRequirements retains its closed vocabulary rejection SHU251_PREFLIGHT_REQUIREMENTS. The earlier cp replacements stay intact. The direct /bin/sh shebang and dirname dependency are declared rather than rewritten. Incidental chmod/rm/grep/touch calls are removed. PERMITTED_SKIPS and ci.yml are not edited.
+
+The capture failed; see REFUSAL.md and rejected-run-summary.json. No per-name requirement mapping or inventory was produced.
