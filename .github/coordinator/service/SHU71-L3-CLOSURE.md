@@ -522,13 +522,13 @@ only tests, the history test helper, and documentation changed. All R5-B
 root-adversary disclosure and `B4_R6_ORDERED_ZERO_EFFECTS_RESIDUAL` remain intact.
 B1 is BLOCKED; B2/B4 are source-level ONLY; overall execution closure is BLOCK.
 
-**Lane stopping rule:** no demonstrated mutant that reproduces the armed-gate /
-credential-present / near-zero-effect signature may survive the genuine suite,
-including the verifier's V12 and V14 shapes. Every property remaining in the
-control-content diagnostic must fail by name when deleted individually; if one
-cannot be pinned, remove it and record why. This is a mutation-coverage stopping
-rule, not a claim to eliminate the explicitly accepted ORDERED root-forgery
-residual or to close B1 or host execution.
+**R8 replacement of the lane stopping rule:** every demonstrated shape must die
+by name. Acceptance is a total transition function over the explicitly bounded
+state domain in [SHU71-R8-STATE-MODEL.md](SHU71-R8-STATE-MODEL.md), not an open-ended
+bypass-shape enumeration. The four R8 witnesses are W7, W13, W1b and W15; existing
+V12/V14 kills and individually pinned control properties remain required. This
+supersedes the unachievable universal mutant-signature criterion while retaining
+the accepted ORDERED root-forgery residual and all B1/host scope limits.
 
 **R7-B reproduction and closure:** before edits, V12 and V14 each survived
 104/104 genuine trust assertions. Whole-state probes reproduced V12's two armed
@@ -588,7 +588,7 @@ The text guard remains only a diagnostic aid; the behavioral historical-control
 executions and differentials are the load-bearing backstop, unchanged. No
 uniqueness, arbitrary rewrite resistance, or security-control claim is made.
 
-**Current measurements:** focused 331/331; genuine baseline 274/274; full
+**Historical R7 measurements:** focused 331/331; genuine baseline 274/274; full
 coordinator 1822 total, 1804 passed, zero failed, 18 unchanged skips. Mutation-named
 TAP checks (`/mutation|mutant/i`, every nesting depth): 98 focused, 41 genuine,
 533 coordinator. Targeted mutations: 57/57 killed (11 production, 17 delivery,

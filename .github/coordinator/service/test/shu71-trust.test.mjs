@@ -216,3 +216,16 @@ test('R6 reservation append interruption cannot precede durable counter consumpt
   assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false);
   h.boundary.fs.writeFileSync = write;
 });
+
+// R8 finite acceptance table; fixed mutation witnesses live in the mutation suite.
+import { stateSpace, stateName, unreachable, requiredTransition, stateTransitionCheck } from './shu71-r8-state-model.mjs';
+test('R8 state domain is total and unreachable combinations are explicit', () => {
+  assert.equal(stateSpace.length, 864, 'B4_R8_TOTAL_DOMAIN');
+  assert.equal(new Set(stateSpace.map(stateName)).size, 864, 'B4_R8_UNIQUE_DOMAIN');
+  assert.equal(stateSpace.filter(s => !unreachable(s)).length, 720, 'B4_R8_REACHABLE_DOMAIN');
+  for (const s of stateSpace) assert.equal(Boolean(requiredTransition(s).unreachable), Boolean(unreachable(s)), 'B4_R8_TOTAL_CLASSIFICATION');
+});
+for (const s of stateSpace.filter(s => !unreachable(s))) test(`R8 state transition: ${stateName(s)}`, async t => {
+  const observed = await stateTransitionCheck(createShu71Production, productionFixture(t, keys), s);
+  t.diagnostic(JSON.stringify({ state: s, before: observed.before, after: observed.after }));
+});
