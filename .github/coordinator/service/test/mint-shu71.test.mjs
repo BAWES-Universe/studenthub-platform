@@ -54,6 +54,26 @@ test('SHU71 mint source mutants die at named assertions', t => {
     assert.notEqual(out.status, 0, `${name}: survived`);
     assert.ok(out.stderr.includes('AssertionError') && out.stderr.includes(assertion), `${name}: wrong death ${out.stderr}`);
   }
+  for (const [name, from, to, assertion, control] of [
+    ['tree byte guard removed', "need(actual === oid, 'MINT_TREE')", "need(true, 'MINT_TREE')", 'index-hidden tracked bytes: MINT_TREE', 'repositoryControls'],
+    ['double-derive cross-check aliased', 'second = derive(options, facts, now)', 'second = first', 'in-process double derive: MINT_NONDETERMINISTIC', 'repositoryControls'],
+    ['exclusive directory creation removed', '{ mode: 0o700 }', '{ mode: 0o700, recursive: true }', 'CLI existing empty directory: EEXIST', 'repositoryControls'],
+    ['exclusive artifact writes removed', "flag: 'wx'", "flag: 'w'", 'CLI exclusive package write: EEXIST', 'repositoryControls'],
+    ['output directory mode widened', '{ mode: 0o700 }', '{ mode: 0o755 }', 'MINT_OUTPUT_DIRECTORY_MODE', 'repositoryControls'],
+    ['output file modes widened', "flag: 'wx', mode: 0o600", "flag: 'wx', mode: 0o644", 'MINT_OUTPUT_FILE_MODE: package', 'repositoryControls'],
+    ['completion exclusive write removed', "window_sha256: hash(bytes(expected.window)) }), { flag: 'wx'", "window_sha256: hash(bytes(expected.window)) }), { flag: 'w'", 'CLI exclusive complete write: EEXIST', 'repositoryControls'],
+    ['prior checkout SHA equality removed', '&& c.sha === c.main &&', '&& true &&', 'main capture SHA mismatch: MINT_PRIOR_GIT', 'runMintControls'],
+    ['prior checkout equality reverted', '&& c.sha === c.main &&', '&& (c.head_ref === null || c.sha === c.main) &&', 'detached capture SHA mismatch: MINT_PRIOR_GIT', 'runMintControls'],
+  ]) {
+    const changed = original.replaceAll(from, to);
+    assert.notEqual(changed, original, `${name}: MINT_MUTATION_APPLIED`);
+    fs.writeFileSync(modulePath, changed);
+    fs.writeFileSync(runner, controls.replace(moduleURL.href, new URL(`file://${modulePath}`).href) + `\n${control}();\n`);
+    const out = spawnSync(process.execPath, [runner], { encoding: 'utf8', timeout: 120000 });
+    assert.notEqual(out.status, 0, `${name}: survived`);
+    assert.ok(out.stderr.includes('AssertionError') && out.stderr.includes(assertion), `${name}: wrong death ${out.stderr}`);
+  }
+  fs.writeFileSync(runner, controls.replace(moduleURL.href, new URL(`file://${modulePath}`).href) + '\nrunMintControls();\n');
   fs.writeFileSync(modulePath, original.replace('created_at: new Date(at).toISOString()', 'created_at: new Date(now).toISOString()'));
   const random = run();
   assert.notEqual(random.status, 0, 'clock-dependent output: survived');

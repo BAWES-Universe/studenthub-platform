@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { activationId, validateIdLedger, validateObservations, derive, validateMint, optionsCheck, repositoryFacts, RETAINED_PARENT } from '../mint-shu71-package.mjs';
+import { activationId, validateIdLedger, validateObservations, derive, validateMint, optionsCheck, repositoryFacts, mint, main, RETAINED_PARENT } from '../mint-shu71-package.mjs';
 import { hash } from '../phase-a-driver.mjs';
 import { canonicalBytes } from '../../shu71-activation-package.mjs';
 import { REQUIRED_CAPABILITIES } from '../host-lifecycle.mjs';
@@ -97,6 +99,8 @@ export function runMintControls() {
     ['environment', o => o.environment.supervisor.mode = 511, 'MINT_ENVIRONMENT'],
     ['directories', o => o.directories[0].path = '/tmp', 'MINT_DIRECTORIES'],
     ['dirty prior git', o => o.checkout_before.clean = false, 'MINT_PRIOR_GIT'],
+    ['main capture SHA mismatch', o => { o.checkout_before.head_ref = 'refs/heads/main'; o.checkout_before.sha = 'f'.repeat(40); }, 'MINT_PRIOR_GIT'],
+    ['detached capture SHA mismatch', o => o.checkout_before.sha = 'f'.repeat(40), 'MINT_PRIOR_GIT'],
     ['capabilities', o => o.capabilities.pop(), 'MINT_CAPABILITIES'],
     ['observed fixture', o => o.issues[0].issue_id = 'SHU-999', 'MINT_ISSUES'],
   ]) { const v = structuredClone(options.observations); delete v.sha256; mutate(v.observations); v.sha256 = hash(bytes(v)); kill(name, () => validateObservations(v), code); }
@@ -145,6 +149,113 @@ export function repositoryControls() {
     ['wrong actual tree', key => key === 'rev-parse HEAD^{tree}' ? 'f'.repeat(40) : undefined, 'MINT_TREE'],
     ['wrong remote', key => key === 'remote get-url origin' ? 'https://example.invalid/repo' : undefined, 'MINT_REMOTE'],
   ]) assert.throws(() => repositoryFacts(repo, boundary(changed)), e => e.code === code, `${name}: ${code}`);
+  const tracked = '.github/coordinator/config.json', file = path.join(repo, tracked);
+  real(['update-index', '--skip-worktree', tracked]);
+  fs.appendFileSync(file, '\n ');
+  assert.equal(real(['status', '--porcelain=v1', '--untracked-files=all']).toString(), '', 'MINT_HIDDEN_TREE_STATUS_CLEAN');
+  assert.throws(() => repositoryFacts(repo, boundary()), e => e.code === 'MINT_TREE', 'index-hidden tracked bytes: MINT_TREE');
+  fs.writeFileSync(file, real(['show', `HEAD:${tracked}`]));
+  real(['update-index', '--no-skip-worktree', tracked]);
+  runEntrypointControls(repo, boundary()(repo));
   return { revision, binding: good.binding };
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+}
+
+// Exercise the unmodified mint()/main() through the synchronous Git IO boundary.
+// Only remote authority and historical objects use the existing repository double.
+export function runEntrypointControls(repo, git) {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'mint-cli-control-'));
+  const spawn = childProcess.spawnSync, mkdir = fs.mkdirSync, oldMask = process.umask(0o022);
+  let inside = false;
+  childProcess.spawnSync = (command, args, options) => {
+    if (inside) return spawn(command, args, options);
+    assert.equal(command, 'git', 'MINT_CLI_GIT_ONLY');
+    assert.equal(options.cwd, repo, 'MINT_CLI_GIT_CHECKOUT');
+    inside = true;
+    try {
+      const gitOptions = { input: options.input };
+      if (options.env.GIT_OBJECT_DIRECTORY) gitOptions.objectDirectory = {
+        directory: options.env.GIT_OBJECT_DIRECTORY, alternates: options.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+      };
+      return { status: 0, stdout: git(args.slice(2), gitOptions), stderr: Buffer.alloc(0) };
+    }
+    finally { inside = false; }
+  };
+  syncBuiltinESMExports();
+  try {
+    const { options } = controls();
+    const idFile = path.join(temp, 'ids.json'), observationsFile = path.join(temp, 'observations.json'), output = path.join(temp, 'output');
+    fs.writeFileSync(idFile, bytes(options.idLedger));
+    fs.writeFileSync(observationsFile, bytes(options.observations));
+    const argv = ['mint', repo, options.checkout, idFile, observationsFile, output, '3600000', '60000'];
+    const kill = (name, fn, code) => assert.throws(fn, e => e.code === code, `${name}: ${code}`);
+    for (const action of ['', 'sign', 'compose', '--help']) kill(`CLI action ${action}`, () => main([action, ...argv.slice(1)]), 'MINT_USAGE');
+    for (let n = 0; n < 8; n++) kill(`CLI arity ${n}`, () => main(argv.slice(0, n)), 'MINT_USAGE');
+    kill('CLI extra argument', () => main([...argv, 'revision']), 'MINT_USAGE');
+    for (let n = 1; n <= 5; n++) { const a = [...argv]; a[n] = 'relative'; kill(`CLI path ${n}`, () => main(a), 'MINT_PATH'); }
+    for (const n of [6, 7]) for (const value of ['0', '-1', '1.5', '01', '1e3', '43200001']) {
+      const a = [...argv]; a[n] = value; kill(`CLI bound ${n} ${value}`, () => main(a), 'MINT_EXPIRY');
+    }
+    for (const [n, code] of [[3, 'MINT_ID_LEDGER'], [4, 'MINT_OBSERVATIONS_REQUIRED']]) {
+      const target = argv[n], saved = fs.readFileSync(target);
+      fs.unlinkSync(target);
+      kill(`CLI missing input ${n}`, () => main(argv), code);
+      fs.writeFileSync(target, '{');
+      kill(`CLI malformed input ${n}`, () => main(argv), code);
+      fs.unlinkSync(target); fs.mkdirSync(target);
+      kill(`CLI directory input ${n}`, () => main(argv), code);
+      fs.rmdirSync(target);
+      const backing = `${target}.backing`; fs.writeFileSync(backing, saved); fs.symlinkSync(backing, target);
+      kill(`CLI symlink input ${n}`, () => main(argv), code);
+      fs.unlinkSync(target); fs.writeFileSync(target, saved);
+    }
+    assert.equal(fs.existsSync(output), false, 'MINT_CLI_REFUSAL_NO_OUTPUT');
+    const empty = path.join(temp, 'existing-empty'); fs.mkdirSync(empty);
+    kill('CLI existing empty directory', () => main([...argv.slice(0, 5), empty, ...argv.slice(6)]), 'EEXIST');
+    const result = main(argv);
+    assert.deepEqual(result, { ok: true, signed: false, activation_id: 'shu71-mint-00000002', revision: git(['rev-parse', 'HEAD']).toString().trim() }, 'MINT_CLI_SUCCESS');
+    assert.equal(fs.statSync(output).mode & 0o777, 0o700, 'MINT_OUTPUT_DIRECTORY_MODE');
+    const names = ['package', 'spec', 'window', 'complete'];
+    assert.deepEqual(fs.readdirSync(output).sort(), names.map(n => `${n}.json`).sort(), 'MINT_COMPLETE_FILE_SET');
+    const saved = Object.fromEntries(names.map(n => [n, fs.readFileSync(`${output}/${n}.json`)]));
+    for (const n of names) assert.equal(fs.statSync(`${output}/${n}.json`).mode & 0o777, 0o600, `MINT_OUTPUT_FILE_MODE: ${n}`);
+    assert.deepEqual(JSON.parse(saved.complete), Object.fromEntries(names.slice(0, 3).map(n => [`${n}_sha256`, hash(saved[n])])), 'MINT_COMPLETE_DIGESTS');
+    assert.deepEqual(main(['validate', ...argv.slice(1)]), result, 'MINT_CLI_VALIDATE_ROUND_TRIP');
+    kill('CLI existing output directory', () => main(argv), 'EEXIST');
+    for (const n of names) assert.deepEqual(fs.readFileSync(`${output}/${n}.json`), saved[n], `MINT_EXISTING_OUTPUT_PRESERVED: ${n}`);
+    for (const n of names.slice(0, 3)) {
+      const file = `${output}/${n}.json`, backing = `${temp}/${n}.backing`;
+      fs.renameSync(file, backing); fs.symlinkSync(backing, file);
+      kill(`CLI symlink artifact ${n}`, () => main(['validate', ...argv.slice(1)]), 'MINT_REQUIRED');
+      fs.unlinkSync(file); fs.renameSync(backing, file);
+    }
+    const pkg = JSON.parse(saved.package); pkg.signature = 'substitution';
+    fs.writeFileSync(`${output}/package.json`, bytes(pkg));
+    kill('CLI validate substitution', () => main(['validate', ...argv.slice(1)]), 'MINT_SIGNATURE');
+    fs.writeFileSync(`${output}/package.json`, saved.package);
+    // Race a file into the freshly created directory, before each exclusive write.
+    for (const n of names) {
+      const race = path.join(temp, `race-${n}`), target = `${race}/${n}.json`;
+      fs.mkdirSync = (dir, opts) => { const value = mkdir(dir, opts); if (dir === race) fs.writeFileSync(target, 'sentinel'); return value; };
+      try { kill(`CLI exclusive ${n} write`, () => main([...argv.slice(0, 5), race, ...argv.slice(6)]), 'EEXIST'); }
+      finally { fs.mkdirSync = mkdir; }
+      assert.equal(fs.readFileSync(target, 'utf8'), 'sentinel', `MINT_EXCLUSIVE_WRITE_PRESERVED: ${n}`);
+      if (n !== 'complete') assert.equal(fs.existsSync(`${race}/complete.json`), false, 'MINT_FAILED_WRITE_NO_COMPLETE');
+    }
+    // The two derivations receive individually valid captures that differ by 1ms.
+    // No derive implementation is replaced: aliasing second=first must survive
+    // the stimulus and therefore fail the named refusal assertion below.
+    const baseline = structuredClone(options.observations);
+    options.idLedger.captured_at = new Date(Date.parse(baseline.captured_at) - 2).toISOString();
+    let reads = 0;
+    const varying = { ...options, repo, get observations() {
+      const v = structuredClone(baseline); delete v.sha256;
+      v.captured_at = new Date(Date.parse(baseline.captured_at) - (++reads >= 3 ? 1 : 0)).toISOString();
+      v.sha256 = hash(bytes(v)); return v;
+    } };
+    kill('in-process double derive', () => mint(varying), 'MINT_NONDETERMINISTIC');
+  } finally {
+    childProcess.spawnSync = spawn; fs.mkdirSync = mkdir; syncBuiltinESMExports();
+    process.umask(oldMask); fs.rmSync(temp, { recursive: true, force: true });
+  }
 }

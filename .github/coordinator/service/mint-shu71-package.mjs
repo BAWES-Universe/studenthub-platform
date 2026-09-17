@@ -66,7 +66,7 @@ export function validateObservations(l) {
   need(same(o.directories, [WORKSPACE_STATE_DIR, `${WORKSPACE_STATE_DIR}/supervisor`].map(p => ({ path: p, kind: 'directory', uid: i.uid, gid: i.gid, mode: 0o700 }))), 'MINT_DIRECTORIES');
   const c = o.checkout_before;
   need(exact(c, ['sha', 'head_ref', 'main', 'origin_main', 'tree', 'clean']) && [c.sha, c.main, c.origin_main, c.tree].every(sha)
-    && [null, 'refs/heads/main'].includes(c.head_ref) && (c.head_ref === null || c.sha === c.main) && c.clean === true, 'MINT_PRIOR_GIT');
+    && [null, 'refs/heads/main'].includes(c.head_ref) && c.sha === c.main && c.clean === true, 'MINT_PRIOR_GIT');
   need(Number.isSafeInteger(o.systemd_version) && o.systemd_version >= 250 && same(o.capabilities, REQUIRED_CAPABILITIES), 'MINT_CAPABILITIES');
   need(Array.isArray(o.issues) && o.issues.length === 2 && same(o.issues.map(v => v.issue_id).sort(), PAIR)
     && o.issues.every(v => exact(v, ['issue_id', 'linear_id', 'state_id', 'assignee_id']) && uuid(v.linear_id) && uuid(v.state_id) && (v.assignee_id === null || uuid(v.assignee_id)))

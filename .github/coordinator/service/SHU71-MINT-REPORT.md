@@ -190,3 +190,119 @@ a fresh unused-ID ledger, and a clean checkout matching current remote main.
 
 Final diff stat versus base is recorded alongside this report as
 `mint-evidence/diff-stat.txt` (including the report/evidence additions).
+
+## Narrow verifier remediation at a721cb9c
+
+Scope: F1, F2 and F4 from `/home/bawes/work/verdict-mint.md` and its JSON
+verdict. The only production edit makes `checkout_before.sha === main`
+unconditional for both permitted HEAD forms. No host/Linear capture, signing,
+remote contact, push, PR or external comment was performed for this remediation.
+
+The existing three top-level test names and inventory remain unchanged. New
+named controls extend `SHU71 mint positive controls and named refusals` and
+`SHU71 mint actual Git derivation and named remote mutations`; new source mutants
+extend `SHU71 mint source mutants die at named assertions`.
+
+F2's `index-hidden tracked bytes: MINT_TREE` control sets `--skip-worktree` on
+`.github/coordinator/config.json` in a disposable local clone, changes its bytes,
+asserts `MINT_HIDDEN_TREE_STATUS_CLEAN`, then requires `MINT_TREE`. It restores
+the original bytes and index flag before the entrypoint controls. The mutant
+removes only `need(actual === oid, 'MINT_TREE')`, not the other tree guards.
+
+F1's new `runEntrypointControls` executes the real `main()` and `mint()` with
+synchronous Git IO doubled for remote authority and historical reseed objects;
+local checkout reads, output files and derivation remain real. The boundary
+preserves Git stdin and temporary object-store options. It is restored in a
+`finally` block, along with the controlled umask and filesystem race hook.
+Named controls cover:
+
+- `CLI action ${action}`, `CLI arity ${n}`, `CLI extra argument`, `CLI path ${n}`
+  and `CLI bound ${n} ${value}`: closed vocabulary, exact arity, absolute paths
+  and integer policy bounds.
+- `CLI missing input ${n}`, `CLI malformed input ${n}`, `CLI directory input ${n}`
+  and `CLI symlink input ${n}` for both captured input files; `CLI symlink artifact
+  ${n}` for package, spec and window; `MINT_CLI_REFUSAL_NO_OUTPUT`.
+- `MINT_CLI_SUCCESS`, `MINT_CLI_VALIDATE_ROUND_TRIP` and `CLI validate substitution:
+  MINT_SIGNATURE`: mint success, validation success and refusal of substituted output.
+- `MINT_OUTPUT_DIRECTORY_MODE`, `MINT_OUTPUT_FILE_MODE: ${n}`,
+  `MINT_COMPLETE_FILE_SET` and `MINT_COMPLETE_DIGESTS`: 0700 directory, all four
+  files at 0600, exact file set and completion hashes recomputed from actual bytes.
+- `CLI existing empty directory: EEXIST`, `CLI existing output directory: EEXIST`,
+  `MINT_EXISTING_OUTPUT_PRESERVED: ${n}`, `CLI exclusive ${n} write: EEXIST`,
+  `MINT_EXCLUSIVE_WRITE_PRESERVED: ${n}` and `MINT_FAILED_WRITE_NO_COMPLETE`:
+  directory exclusivity and a preexisting sentinel raced into each of the four
+  file paths immediately after mkdir, with no overwrite or premature completion.
+- `in-process double derive: MINT_NONDETERMINISTIC`: a programmatic observations
+  getter supplies individually valid captures differing by one millisecond to
+  the two real derivations. Aliasing `second = first` defeats the refusal and
+  fails this assertion; neither derivation implementation is replaced.
+
+F4 adds re-digested capture controls for both HEAD forms. Exact assertions are
+`main capture SHA mismatch: MINT_PRIOR_GIT` and
+`detached capture SHA mismatch: MINT_PRIOR_GIT`.
+
+All new source mutants must exit nonzero with `AssertionError` and the exact
+named assertion below; death elsewhere fails the mutation harness:
+
+| New mutant | Exact killing assertion |
+|---|---|
+| tree byte guard removed | `index-hidden tracked bytes: MINT_TREE` |
+| double-derive cross-check aliased | `in-process double derive: MINT_NONDETERMINISTIC` |
+| exclusive directory creation removed | `CLI existing empty directory: EEXIST` |
+| exclusive artifact writes removed | `CLI exclusive package write: EEXIST` |
+| output directory mode widened | `MINT_OUTPUT_DIRECTORY_MODE` |
+| output file modes widened | `MINT_OUTPUT_FILE_MODE: package` |
+| completion exclusive write removed | `CLI exclusive complete write: EEXIST` |
+| prior checkout SHA equality removed | `main capture SHA mismatch: MINT_PRIOR_GIT` |
+| prior checkout equality reverted | `detached capture SHA mismatch: MINT_PRIOR_GIT` |
+
+F3: both fixture-pair guards remain untouched as deliberate defence in depth.
+The pair is covered jointly by the existing fixture controls; no claim is made
+that removal of either duplicate alone is independently detectable, and no
+second mutation was added for the duplicate line.
+
+F5: disclosed hardening note only; the Git adapter is unchanged. Evidence is the
+independent verdict's observation that repository-local `http.proxy` preserves
+the canonical `get-url` result, and its explicit statement that no MITM was
+built. This remediation does not independently claim a demonstrated exploit or
+resistance to an owner of checkout Git configuration. No proxy hardening or
+legitimate-transport network experiment was added. F6 remains the disclosed,
+fail-closed native `EEXIST` behavior.
+
+Preservation checks compare complete files directly with `git show a721cb9c:`.
+`host-suite-contract.mjs` remains SHA-256
+`1ef14175b91071c095cddea074f51aa5b25cb6aa29099cc329e5480c866df731`, with
+exactly eight `PERMITTED_SKIPS` entries. `.github/workflows/ci.yml` remains
+`138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46`.
+The suite inventory and Git adapter are also byte-identical. Existing assertion
+texts, expected values, test names and mutation lists are preserved; changes
+only add controls/mutants and extend the test imports.
+
+The targeted mint suite passed all three existing test groups, zero failures
+and zero skips. Development runs exposed test-double argument forwarding and
+an overbroad output-mode mutant replacement; both were corrected before the
+full-suite verification, without changing production behavior or old tests.
+
+Remediation full-suite verification used the two full test globs and unchanged
+`host-suite-contract.mjs` reporter, with the commands above. Plain explicitly
+unset `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; exact CI set
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=/home/bawes/work/settled/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Remediation run | Tests | Pass | Fail | Authorized skips | Terminal markers | Exit |
+|---|---:|---:|---:|---:|---:|---:|
+| Plain | 2803 | 2795 | 0 | 8 | 1 | 0 |
+| Exact CI clock | 2803 | 2795 | 0 | 8 | 1 | 0 |
+
+Both fresh streams passed `evaluateSuite`, `suiteNames`, exact equality of all
+eight skip names/reasons, and the requirement for exactly one completion marker
+at the end. Raw streams and checked summaries are retained at
+`/tmp/shu71-narrow-verification-PngeLa/{plain,clock}.jsonl` and
+`{plain,clock}-summary.json`. Both raw SHA-256 values are
+`f1463c42600ba132db45190d33f0f099f8c291eb433b2fb9c12b7833cf3000cc`.
+The unchanged top-level names/outcomes explain equality with earlier streams;
+new controls and mutations execute inside those existing test groups.
+
+No F1/F2/F4 remediation remains open. F5 remains a disclosed, unproven hardening
+concern. The earlier missing authoritative host/Linear capture and lack of a
+live approval remain unchanged; these synthetic tests do not close them.
