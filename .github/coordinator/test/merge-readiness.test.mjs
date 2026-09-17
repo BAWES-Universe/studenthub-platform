@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -254,7 +254,10 @@ if (!process.env.MERGE_MUTANT_CHILD) test('SHU-259 named mutation controls', (t)
   ];
   const dir = mkdtempSync(join(tmpdir(), 'shu259-mutants-'));
   try {
-    const copy = spawnSync('cp', ['-R', new URL('..', import.meta.url).pathname, join(dir, 'coordinator')]);
+    const copy = (() => {
+      cpSync(new URL('..', import.meta.url).pathname, join(dir, 'coordinator'), { recursive: true, verbatimSymlinks: true });
+      return { status: 0 }; // cpSync throws on failure; preserve the existing success assertion.
+    })();
     assert.equal(copy.status, 0);
     for (const [name, from, to, pattern] of mutations) {
       assert.equal(original.split(from).length - 1, 1, `mutation anchor ${name}`);
