@@ -64,10 +64,12 @@ test("SHU-228: host commits raw files with one bound parent and leaves worker me
 test("SHU-228: filters, hooks, worker index and URL rewrites cannot influence host snapshot or push", async () => {
   const f=fixture(); try {
     const sentinel=path.join(f.root,"executed");
-    f.git(f.wt,"config","filter.evil.clean",`touch ${sentinel}`);
+    const markerScript = path.join(f.root, "marker.cjs");
+    fs.writeFileSync(markerScript, `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(sentinel)}, "");\n`, { mode: 0o755 });
+    f.git(f.wt,"config","filter.evil.clean",markerScript);
     f.git(f.wt,"config","core.hooksPath",path.join(f.root,"hooks"));
     fs.mkdirSync(path.join(f.root,"hooks"));
-    fs.writeFileSync(path.join(f.root,"hooks/pre-commit"),`#!/bin/sh\ntouch ${sentinel}\n`,{mode:0o755});
+    fs.writeFileSync(path.join(f.root,"hooks/pre-commit"),`#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(sentinel)}, "");\n`,{mode:0o755});
     f.git(f.wt,"config",`url.file:///foreign/.insteadOf`,f.options.remoteUrl);
     fs.writeFileSync(path.join(f.wt,".gitattributes"),"*.txt filter=evil\n");
     // Corrupting the worker index is harmless: only the broker index is read.

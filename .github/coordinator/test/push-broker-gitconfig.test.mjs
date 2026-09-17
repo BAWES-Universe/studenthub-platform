@@ -161,7 +161,7 @@ test("real git: an insteadOf rewrite cannot make post-push confirmation accept a
 function markerScript(dir, name) {
   const marker = join(dir, name);
   const script = join(dir, `${name}.sh`);
-  writeFileSync(script, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 1\n`, { mode: 0o755 });
+  writeFileSync(script, `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(marker)}, ""); process.exit(1);\n`, { mode: 0o755 });
   chmodSync(script, 0o755);
   return { marker, script };
 }
@@ -429,7 +429,7 @@ test("real git: a worker clean filter never executes during the cleanliness chec
   const f = await fixture();
   const marker = join(f.root, "filter-marker");
   const script = join(f.root, "filter.sh");
-  writeFileSync(script, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\ncat\n`, { mode: 0o755 });
+  writeFileSync(script, `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(marker)}, ""); process.stdin.pipe(process.stdout);\n`, { mode: 0o755 });
   chmodSync(script, 0o755);
 
   // The attribute is COMMITTED (worker owns its tree) and the driver is in the

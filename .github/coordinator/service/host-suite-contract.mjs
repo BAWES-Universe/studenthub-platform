@@ -14,6 +14,13 @@ export const PERMITTED_SKIPS = Object.freeze({
   'SHU-71 restricted capability refusal': 'production vocabulary has no undeclared runtime/role pair',
   'READER operator-owned checkout read by non-root account': 'Not exercisable: non-root account, no passwordless elevation to create root-owned checkout',
 });
+// A capability names a host precondition required by the suite, not merely a
+// binary or a test label. Its probe executes fixed argv at absolute executable
+// paths as the service identity (except the explicit privilege/worker identity
+// probes). A successful probe establishes only its documented detection claim;
+// it does not prove every operation, host deployment, or the suite verdict.
+// shell_toolchain groups the actual wrapper/policy dependencies: /bin/sh,
+// dirname, env, true, chmod, mktemp and rm. Test-only conveniences use Node.
 export const CAPABILITIES = Object.freeze([
   ['privilege', 'SHU251_PREFLIGHT_PRIVILEGE', 'effective UID 0 or sudo -n id -u returns 0'],
   ['worker_uid', 'SHU251_PREFLIGHT_WORKER_UID', 'setpriv to fixture UID/GID 65534; id -u returns 65534; distinct from service UID'],
@@ -27,6 +34,9 @@ export const CAPABILITIES = Object.freeze([
   ['systemd_notify', 'SHU251_PREFLIGHT_SYSTEMD_NOTIFY', 'systemd-notify --version succeeds'],
   ['git', 'SHU251_PREFLIGHT_GIT', 'git --version succeeds'],
   ['bash', 'SHU251_PREFLIGHT_BASH', 'bash --noprofile --norc -c exit succeeds'],
+  ['shell_toolchain', 'SHU251_PREFLIGHT_SHELL_TOOLCHAIN', 'service identity executes /bin/sh and dirname, env, true, chmod, mktemp and rm with fixed argv in a private temporary directory'],
+  ['linux_proc', 'SHU251_PREFLIGHT_LINUX_PROC', 'service identity reads its proc stat, cmdline, environ and inherited file descriptor'],
+  ['loopback_socket', 'SHU251_PREFLIGHT_LOOPBACK_SOCKET', 'service identity binds and closes an IPv4 loopback TCP socket'],
   ['unix_socket', 'SHU251_PREFLIGHT_UNIX_SOCKET', 'service identity binds and closes a temporary Unix socket'],
   ['node', 'SHU251_PREFLIGHT_NODE', 'Node major version at least 22'],
 ].map(([name, code, detection]) => Object.freeze({ name, code, detection })));
@@ -142,6 +152,22 @@ export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
       case 'systemd_notify': return successful(asService('/usr/bin/systemd-notify', ['--version']));
       case 'git': return successful(asService('/usr/bin/git', ['--version']));
       case 'bash': return successful(asService('/bin/bash', ['--noprofile', '--norc', '-c', 'exit 0']));
+      case 'shell_toolchain': return temporary(`
+        const invoke=(file,args)=>{const r=spawnSync(file,args,{cwd:dir,encoding:'utf8'});if(r.error||r.status!==0)throw Error('shell toolchain');return r.stdout;};
+        invoke('/bin/sh',['-c','exit 0']);
+        invoke('/usr/bin/dirname',['/suite/wrapper']);
+        invoke('/usr/bin/env',['/usr/bin/true']);
+        fs.writeFileSync(path.join(dir,'mode'),'probe');
+        invoke('/usr/bin/chmod',['0750','mode']);
+        invoke('/usr/bin/mktemp',['probe.XXXXXX']);
+        invoke('/usr/bin/rm',['-f','mode']);
+      `);
+      case 'linux_proc': return temporary(`
+        for(const name of ['stat','cmdline','environ'])if(!fs.readFileSync('/proc/self/'+name).length)throw Error('proc');
+        const file=path.join(dir,'descriptor');fs.writeFileSync(file,'proof');const fd=fs.openSync(file,'r');
+        try{if(fs.readFileSync('/proc/self/fd/'+fd,'utf8')!=='proof')throw Error('proc fd');}finally{fs.closeSync(fd);}
+      `);
+      case 'loopback_socket': return temporary(`const s=net.createServer(); await new Promise((resolve,reject)=>{s.once('error',reject);s.listen(0,'127.0.0.1',resolve)}); await new Promise((resolve,reject)=>s.close(e=>e?reject(e):resolve()));`);
       case 'unix_socket': return temporary(`const s=net.createServer(); await new Promise((resolve,reject)=>{s.once('error',reject);s.listen(path.join(dir,'socket'),resolve)}); await new Promise((resolve,reject)=>s.close(e=>e?reject(e):resolve()));`);
       case 'node': return Number(process.versions.node.split('.')[0]) >= 22;
       default: return false;

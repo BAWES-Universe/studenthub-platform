@@ -87,7 +87,7 @@ test('SHU251 common flock excludes overlapping writers and releases after exit',
     '-e', "process.stdout.write('ready'); process.stdin.resume();"], { stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(() => holder.stdin.end());
   await once(holder.stdout, 'data');
-  const rejected = spawnSync('/usr/bin/flock', ['--nonblock', '--conflict-exit-code', '2', lock, '/usr/bin/touch', join(root, 'second-writer')]);
+  const rejected = spawnSync('/usr/bin/flock', ['--nonblock', '--conflict-exit-code', '2', lock, process.execPath, '-e', "require('node:fs').appendFileSync(process.argv[1], '');", join(root, 'second-writer')]);
   assert.equal(rejected.status, 2, 'SHU251_LOCK: concurrent writer must be refused');
   assert.equal(fs.existsSync(join(root, 'second-writer')), false, 'SHU251_LOCK: concurrent writer must be refused');
   const exited = once(holder, 'exit');
