@@ -67,7 +67,7 @@ function checkoutShape(v) {
     (v.head_ref === null || v.sha === v.main) && typeof v.clean === 'boolean');
   return v;
 }
-async function preflight(spec, host, recovery = false, initialPin = false) {
+async function preflight(spec, host, recovery = false, initialPin = false, observing = false) {
   const c = configuration(spec), p = await host.probe();
   check('SHU251_LIFECYCLE_CHECKOUT', initialPin
     ? equal(p.checkout, { sha: c.checkout_before.sha, tree: c.checkout_before.tree, clean: true }) || equal(p.checkout, { sha: spec.window.approved_sha, tree: c.approved_tree, clean: true })
@@ -85,7 +85,7 @@ async function preflight(spec, host, recovery = false, initialPin = false) {
   check('SHU251_LIFECYCLE_CAPABILITIES', p.systemd_version === c.systemd_version && equal(p.capabilities, c.capabilities));
   check('SHU251_LIFECYCLE_EVIDENCE', equal(p.evidence, { path: c.evidence_dir, canonical: c.evidence_dir,
     uid: 0, mode: 0o700, manifest: manifest(spec) }));
-  check('SHU251_WRITER_LOCK', p.writer_lock === (recovery ? 'held-by-driver' : 'free'));
+  check('SHU251_WRITER_LOCK', p.writer_lock === (observing ? 'delegated-to-coordinator' : recovery ? 'held-by-driver' : 'free'));
   check('SHU251_DESTINATION', equal(p.destination, { path: '/etc/systemd/system', canonical: '/etc/systemd/system', uid: 0, mode: 0o755, unreviewed_dropins: [] }));
   check('SHU251_CHECKOUT_REMOTE', equal(p.approved_main, { remote_sha: spec.window.approved_sha, api_sha: spec.window.approved_sha, tree: c.approved_tree }));
   return { approved_main: p.approved_main, checkout_tuple: p.checkout_tuple, checkout: p.checkout, identity: p.identity, environment: p.environment, directories: p.directories,
@@ -196,7 +196,10 @@ async function ready(spec, host) {
 export async function executeLifecycle(step, spec, options, io) {
   try {
     approve(step, spec, options);
-    const result = await execute(step, spec, options, io);
+    if (step === 'running-gate-off') configuration(spec);
+    const result = step === 'running-gate-off'
+      ? await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))
+      : await execute(step, spec, options, io);
     return validateReceipt(result, step, spec);
   } catch (error) {
     if (error.code?.startsWith('SHU251_')) throw error;
@@ -219,18 +222,23 @@ async function execute(step, spec, options, io) {
     return result;
   }
   // Journal custody lasts through the final durable receipt. The provider
-  // hands off the writer lock only while the reviewed coordinator owns it.
+  // leaves writer custody to scheduled ticks throughout readiness/restart/running-gate-off.
   return host.withLock(async () => {
     let j = await host.load();
     if (j !== null) journalValid(j, spec);
     await host.authorize(step, j);
+    if (step === 'running-gate-off' && j?.receipts.some(r => r.step === 'start')) {
+      const baseline = j?.receipts.findLast(r => r.step === 'start')?.evidence.after.gate_off_baseline;
+      check('SHU251_PROVIDER_GATE_OFF', baseline !== undefined);
+      await host.gateOffBaseline(baseline);
+    }
     const resumed = await host.resumeReceipt(step, j);
     if (resumed) {
       validateReceipt(resumed, step, spec);
       await boundary(host, 'SHU251_EVIDENCE_ARCHIVE', () => host.finalize(copy(j)));
       return resumed;
     }
-    if (!['host-rollback', 'pin-restore', 'pin-retain'].includes(step)) await preflight(spec, host, true, step === 'pin');
+    if (!['host-rollback', 'pin-restore', 'pin-retain'].includes(step)) await preflight(spec, host, true, step === 'pin', ['readiness', 'restart', 'running-gate-off'].includes(step));
     const save = async () => { await boundary(host, 'SHU251_LIFECYCLE_DURABILITY', () => host.save(copy(j))); };
     if (j === null) {
       const prior = snapshotShape(await host.snapshot(), spec); priorSafe(prior);
@@ -280,7 +288,7 @@ async function execute(step, spec, options, io) {
       // The oneshot coordinator is static; only the supervisor and timer enable.
       for (const n of ['shu-supervisor.service', 'shu-coordinator.timer']) await change('enable', n, 'enabled');
       for (const n of UNIT_NAMES) await change('start', n, n === 'shu-coordinator.service' ? 'inactive' : 'active');
-      after = await serviceReady(spec, host);
+      after = { ...await serviceReady(spec, host), gate_off_baseline: await host.gateOffBaseline() };
     } else if (step === 'readiness') after = await serviceReady(spec, host);
     else if (step === 'running-gate-off') {
       await serviceReady(spec, host);
@@ -367,7 +375,7 @@ async function execute(step, spec, options, io) {
     j.receipts.push(result); await save();
     await boundary(host, 'SHU251_EVIDENCE_ARCHIVE', () => host.finalize(copy(j)));
     return result;
-  });
+  }, step);
 }
 function pickBinding(spec) {
   return { activation_id: spec.lifecycle.activation_id, approval_sha256: spec.lifecycle.approval_sha256 };

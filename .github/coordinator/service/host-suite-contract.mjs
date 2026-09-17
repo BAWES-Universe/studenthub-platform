@@ -40,7 +40,7 @@ export const CVTSUDOERS_REFUSALS = Object.freeze([
   'SHU251_PREFLIGHT_CVTSUDOERS_SUBSTITUTION', 'SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT',
 ]);
 // Serialized into the service-identity Node probe; IO injection is test-only.
-export function resolveCvtsudoers(tempDir, io = { fs, run }) {
+export function resolveCvtsudoers(tempDir, io = { fs, run }, policyFile = null) {
   const fail = code => halt(`SHU251_PREFLIGHT_CVTSUDOERS${code}`);
   const present = [];
   for (const candidate of CVTSUDOERS_CANDIDATES) {
@@ -83,6 +83,16 @@ export function resolveCvtsudoers(tempDir, io = { fs, run }) {
       Array.isArray(output.User_Specs[0].Cmnd_Specs[0]?.Commands) &&
       output.User_Specs[0].Cmnd_Specs[0].Commands.some(c => c?.command === 'ALL');
     if (!validShape) fail('_OUTPUT');
+    if (policyFile !== null) {
+      verify();
+      const policyEnvironment = { LC_ALL: 'C' };
+      const policy = io.run("/proc/self/fd/3", ['-f', 'json', policyFile], { stdio: ['ignore', 'pipe', 'pipe', fd], env: policyEnvironment });
+      verify();
+      if (!successful(policy)) fail('');
+      let parsed;
+      try { parsed = JSON.parse(policy.stdout); } catch (error) { fail('_OUTPUT'); }
+      return { available: true, identity: String(candidate), parsed };
+    }
     return { available: true, identity: candidate };
   } catch (error) {
     if (CVTSUDOERS_REFUSALS.includes(error.code)) throw error;
@@ -138,8 +148,34 @@ export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
     }
   };
 }
-export async function preflight(spec, probe = hostProbe(spec)) {
+// Requirements are reviewed with the exact revision-pinned inventory, never
+// supplied by the runner caller. Empty capability lists must be explicit.
+export function deriveRequirements(names, requirements) {
+  const fail = detail => halt('SHU251_PREFLIGHT_REQUIREMENTS', detail);
+  if (!Array.isArray(names) || !names.length || !Array.isArray(requirements) ||
+      requirements.length !== names.length) fail('exact required test set');
+  const remaining = [...names];
+  const derived = Object.fromEntries(CAPABILITIES.map(c => [c.name, []]));
+  for (const row of requirements) {
+    const index = remaining.indexOf(row?.name);
+    if (index < 0 || !Array.isArray(row.capabilities)) fail(String(row?.name));
+    remaining.splice(index, 1);
+    const seen = new Set();
+    for (const need of row.capabilities) {
+      if (!need || !Object.hasOwn(derived, need.name) || seen.has(need.name)) fail(row.name);
+      seen.add(need.name);
+      if (Object.hasOwn(need, 'reason') &&
+          (!Object.hasOwn(PERMITTED_SKIPS, row.name) || need.reason !== PERMITTED_SKIPS[row.name]))
+        halt('SHU251_PREFLIGHT_SKIP_BINDING', row.name);
+      derived[need.name].push({ ...need, test: row.name });
+    }
+  }
+  return derived;
+}
+export async function preflight(spec, probe = hostProbe(spec), requiredSet) {
   if (!Number.isInteger(spec?.service_uid) || spec.service_uid <= 0 || !Number.isInteger(spec.service_gid) || spec.service_gid < 0 || !path.isAbsolute(spec.checkout ?? '') || !path.isAbsolute(spec.temp_dir ?? '')) halt('SHU251_PREFLIGHT_SPEC');
+  if (requiredSet === null) halt('SHU251_PREFLIGHT_REQUIREMENTS', 'exact required test set');
+  const derived = requiredSet === undefined ? null : deriveRequirements(requiredSet.names, requiredSet.requirements);
   const evidence = {};
   for (const capability of CAPABILITIES) {
     let available = false;
@@ -151,7 +187,18 @@ export async function preflight(spec, probe = hostProbe(spec)) {
         : resolved === true;
     } catch (error) {
       if (capability.name === 'cvtsudoers' && CVTSUDOERS_REFUSALS.includes(error.code)) throw error;
-      // Other probe exceptions retain their existing capability refusal.
+      // An exception is a new failure, not evidence of an authorized absence.
+      halt(capability.code, capability.name);
+    }
+    if (!available && resolved !== false) halt(capability.code, capability.name);
+    if (!available && derived) {
+      const needs = derived[capability.name];
+      const uncovered = needs.filter(need => !Object.hasOwn(need, 'reason'));
+      // Namespace proof and runner infrastructure have no skip allowance.
+      if (!['privilege', 'worker_uid'].includes(capability.name) || uncovered.length)
+        halt(capability.code, uncovered.map(need => need.test).join(', ') || capability.name);
+      evidence[capability.name] = { available: false, authorized_skips: needs.map(need => ({ name: need.test, reason: PERMITTED_SKIPS[need.test] })) };
+      continue;
     }
     if (!available) halt(capability.code, capability.name);
     evidence[capability.name] = capability.name === 'cvtsudoers' ? resolved : 'available';
@@ -172,19 +219,31 @@ export function evaluateSuite(report, expectedTests) {
   if (report.exit_code !== 0) halt('SHU251_SUITE_EXIT', String(report.exit_code));
   return { version: 'shu251-host-suite-v1', counts };
 }
+export function suiteNames(outcomes, names) {
+  const sorted = values => JSON.stringify([...values].sort());
+  if (!Array.isArray(names) || sorted(outcomes.map(o => o.name)) !== sorted(names)) halt('SHU251_SUITE_NAMES');
+}
 // Node's reporter protocol avoids interpreting human TAP, nested diagnostics or forged summary text.
 export default async function* reporter(source) {
   for await (const event of source) {
     if (event.type === 'test:pass' || event.type === 'test:fail') {
       const d = event.data;
       if (d.details?.type === 'suite') continue;
-      yield JSON.stringify({ type: 'outcome', name: d.name, status: d.skip ? 'skip' : d.todo ? 'todo' : event.type === 'test:pass' ? 'pass' : 'fail', reason: d.skip || undefined }) + '\n';
+      yield JSON.stringify({ type: 'outcome', name: d.name, status: event.type === 'test:fail' ? 'fail' : d.skip ? 'skip' : d.todo ? 'todo' : 'pass', reason: d.skip || undefined }) + '\n';
     }
     if (event.type === 'test:summary' && event.data.file === undefined) yield JSON.stringify({ type: 'complete' }) + '\n';
   }
 }
 export async function runSuite(spec, io = {}) {
-  const capabilities = await preflight(spec, io.probe ?? hostProbe(spec));
+  const contract = await (io.contract ?? (async () => {
+    const { bindSuite, suiteQuiescence } = await import('./suite-runner-spec.mjs');
+    const { verifyDisposableSuite, recordDisposableSuite } = await import('./disposable-suite.mjs');
+    verifyDisposableSuite(spec);
+    const bound = bindSuite(spec);
+    return { ...bound, quiescence: suiteQuiescence(), record: recordDisposableSuite.bind(null, spec) };
+  }))();
+  const capabilities = await preflight(spec, io.probe ?? hostProbe(spec), contract.requirements === undefined ? undefined : contract);
+  spec = { ...spec, files: contract.files, expected_tests: contract.expected_tests };
   if (!Array.isArray(spec.files) || !spec.files.length || spec.files.some(f => !path.isAbsolute(f) || !f.startsWith(`${spec.checkout}/`))) halt('SHU251_SUITE_FILES');
   const env = { ...process.env, TMPDIR: spec.temp_dir };
   delete env.NODE_TEST_CONTEXT;
@@ -192,14 +251,29 @@ export async function runSuite(spec, io = {}) {
   let events;
   try { events = result.stdout.trim().split('\n').map(line => JSON.parse(line)); } catch { halt('SHU251_SUITE_MALFORMED'); }
   if (events.some(e => !['outcome', 'complete'].includes(e.type))) halt('SHU251_SUITE_MALFORMED');
+  const outcomes = events.filter(e => e.type === 'outcome');
   const summary = evaluateSuite({ outcomes: events.filter(e => e.type === 'outcome'), complete: events.at(-1)?.type === 'complete' && events.filter(e => e.type === 'complete').length === 1, exit_code: result.status }, spec.expected_tests);
-  return { ...summary, preflight: capabilities };
+  suiteNames(outcomes, contract.names);
+  const receipt = { ...summary, preflight: capabilities, identity: contract.identity, quiescence: contract.quiescence };
+  if (contract.record) await contract.record(receipt);
+  return receipt;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const [action, file] = process.argv.slice(2);
-    if (!['preflight', 'run'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
-    const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
-    console.log(JSON.stringify(action === 'preflight' ? await preflight(spec) : await runSuite(spec)));
-  } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
+  // Let this module finish evaluation before cyclic CLI imports settle.
+  void (async () => {
+    try {
+      const [action, file] = process.argv.slice(2);
+      if (!['preflight', 'run', 'measure', 'create', 'remove'].includes(action) || !path.isAbsolute(file ?? '')) halt('SHU251_SUITE_USAGE');
+      const spec = JSON.parse(fs.readFileSync(file, 'utf8'));
+      let result;
+      if (action === 'preflight') result = await preflight(spec, hostProbe(spec), (await import('./suite-runner-spec.mjs')).bindSuite(spec));
+      else if (action === 'run') result = await runSuite(spec);
+      else if (action === 'measure') result = (await import('./suite-runner-spec.mjs')).measureSuite(spec);
+      else {
+        const lifecycle = await import('./disposable-suite.mjs');
+        result = action === 'create' ? lifecycle.createDisposableSuite(spec) : lifecycle.removeDisposableSuite(spec);
+      }
+      console.log(JSON.stringify(result));
+    } catch (error) { console.error(JSON.stringify({ ok: false, code: error.code?.startsWith('SHU251_') ? error.code : 'SHU251_SUITE_UNEXPECTED', reason: error.message })); process.exitCode = 2; }
+  })();
 }

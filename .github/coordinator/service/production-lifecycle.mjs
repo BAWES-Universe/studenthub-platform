@@ -110,7 +110,11 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     });
   }
   function held() {
-    guard('SHU251_PROVIDER_CUSTODY', custody !== null && custody.every(l => identity(f.lstatSync(l.p)) === l.inode && identity(f.fstatSync(l.fd)) === l.inode));
+    guard('SHU251_PROVIDER_CUSTODY', custody !== null && custody.some(l => l.p === `${c.evidence_dir}/journal.lock`) && custody.every(l => identity(f.lstatSync(l.p)) === l.inode && identity(f.fstatSync(l.fd)) === l.inode));
+  }
+  function writerHeld() {
+    held();
+    guard('SHU251_PROVIDER_CUSTODY', custody.some(l => l.p === `${w.workspace_state_dir}/host-tick.lock`));
   }
   function git(args) { return command('/usr/bin/git', ['-C', w.repo_dir, ...args]); }
   function pinValue() {
@@ -174,7 +178,69 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return true;
     });
   }
+  function stateInventory() {
+    const roots = [...new Set([w.workspace_state_dir, w.supervisor_state_dir])];
+    const entries = {};
+    const visit = p => {
+      const s = f.lstatSync(p);
+      guard('SHU251_PROVIDER_GATE_OFF', !s.isSymbolicLink());
+      if (s.isDirectory()) {
+        entries[p] = { directory: true, mtime: s.mtimeMs, ctime: s.ctimeMs };
+        for (const child of f.readdirSync(p).sort()) visit(`${p}/${child}`);
+      } else if (s.isFile()) entries[p] = { sha256: hash(f.readFileSync(p)), size: s.size, mtime: s.mtimeMs, ctime: s.ctimeMs };
+      else guard('SHU251_PROVIDER_GATE_OFF', s.isSocket());
+    };
+    roots.forEach(visit);
+    return entries;
+  }
+  let gateObservation = null;
+  function observeState() {
+    const roots = [...new Set([w.workspace_state_dir, w.supervisor_state_dir])];
+    // One registration covers both roots, including baseline construction.
+    // No command, await, or action runs between registrations of separate roots.
+    let ancestor = roots[0];
+    while (ancestor !== '/' && !roots.every(root => root === ancestor || root.startsWith(`${ancestor}/`))) ancestor = path.dirname(ancestor);
+    let writes = 0, watchError = false;
+    const watcher = f.watch(ancestor, { recursive: true }, (event, filename) => {
+      if (filename == null) { watchError = true; return; }
+      const changed = path.resolve(ancestor, String(filename));
+      if (roots.some(root => changed === root || changed.startsWith(`${root}/`) || root.startsWith(`${changed}/`))) writes++;
+    });
+    watcher.on('error', () => { watchError = true; });
+    const inventory = stateInventory;
+    try {
+      const before = inventory();
+      return { before, inventory, get writes() { return writes; }, get watchError() { return watchError; },
+        async check() {
+          const after = inventory();
+          await boundary.wait(0);
+          guard('SHU251_PROVIDER_GATE_OFF', !watchError && writes === 0 && equal(before, after));
+        },
+        close() { watcher.close(); } };
+    } catch (error) { watcher.close(); throw error; }
+  }
   const provider = {
+    // Start records this under writer custody. Gate-off compares it before
+    // preflight, so even a write before watch registration cannot become a
+    // fresh trusted baseline. Directory timestamps include create/delete pairs.
+    gateOffBaseline(before) {
+      if (before === undefined) { writerHeld(); return stateInventory(); }
+      held();
+      guard('SHU251_PROVIDER_GATE_OFF', gateObservation !== null && equal(before, gateObservation.before));
+      return true;
+    },
+    async observeGateOff(fn) {
+      guard('SHU251_PROVIDER_GATE_OFF', gateObservation === null);
+      const observation = observeState();
+      gateObservation = observation;
+      try {
+        const result = await fn();
+        // Deliver queued watch events, including transient writes during the
+        // final synchronous evidence commands, before acknowledging success.
+        await observation.check();
+        return result;
+      } finally { gateObservation = null; observation.close(); }
+    },
     initialize(step) {
       const a = approval();
       guard('SHU251_APPROVAL_TIME', ['host-rollback', 'pin-restore', 'pin-retain'].includes(step) || boundary.now() >= a.not_before && boundary.now() < a.expires_at);
@@ -221,7 +287,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     remoteMain,
     async probe() {
       const approved_main = remoteMain();
-      const probeSpec = { service_uid: c.identity.uid, service_gid: c.identity.gid, checkout: w.repo_dir, temp_dir: w.workspace_state_dir };
+      const probeSpec = { service_uid: c.identity.uid, service_gid: c.identity.gid, checkout: w.repo_dir, temp_dir: '/tmp' };
       const caps = await capabilityPreflight(probeSpec, hostProbe(probeSpec, boundary));
       // Prove file+directory fsync and rename on this actual evidence filesystem.
       evidence((root, fd, verify) => {
@@ -243,13 +309,15 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         directories: c.directories.map(d => metadata(d.path)), systemd_version: Number(command('/usr/bin/systemctl', ['show', '--property=Version', '--value']).match(/^\d+/)?.[0]),
         capabilities: [...Object.keys(caps.capabilities), 'atomic-rename', 'directory-fsync'],
         evidence: { path: e.path, canonical: f.realpathSync(e.path), uid: e.uid, mode: e.mode, manifest: json('manifest.json') },
-        destination, writer_lock: custody ? 'held-by-driver' : 'free' };
+        destination, writer_lock: custody ? (custody.some(l => l.p === `${w.workspace_state_dir}/host-tick.lock`) ? 'held-by-driver' : 'delegated-to-coordinator') : 'free' };
     },
-    async withLock(fn) {
+    async withLock(fn, step) {
       guard('SHU251_WRITER_LOCK', custody === null);
       const locks = [];
       try {
-        locks.push(acquire(`${w.workspace_state_dir}/host-tick.lock`));
+        // Never contend with scheduled ticks during any complete observation
+        // step, including network preflight and durable evidence finalization.
+        if (!['readiness', 'restart', 'running-gate-off'].includes(step)) locks.push(acquire(`${w.workspace_state_dir}/host-tick.lock`));
         locks.push(acquire(`${c.evidence_dir}/journal.lock`)); custody = locks;
         return await fn();
       } finally { custody = null; for (const l of locks.reverse()) f.closeSync(l.fd); }
@@ -278,7 +346,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         active: Object.fromEntries(UNIT_NAMES.map(n => [n, show(n, 'ActiveState')])), checkout: checkoutTuple(), pin: { ref, sha: pinValue() } };
     },
     stage(units) {
-      held(); guard('SHU251_PROVIDER_ALLOWLIST', equal(Object.keys(units).sort(), [...FILES].sort()));
+      writerHeld(); guard('SHU251_PROVIDER_ALLOWLIST', equal(Object.keys(units).sort(), [...FILES].sort()));
       return evidence(root => {
         const dir = f.mkdtempSync(`${root}/stage-`); f.chmodSync(dir, 0o700);
         try {
@@ -292,7 +360,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       });
     },
     place(name, before, after) {
-      held(); guard('SHU251_PROVIDER_ALLOWLIST', TARGETS.includes(name));
+      writerHeld(); guard('SHU251_PROVIDER_ALLOWLIST', TARGETS.includes(name));
       const p = `${w.unit_directory}/${name}`;
       return directory(path.dirname(p), (root, fd, verify) => {
         const base = path.basename(p), dest = `${root}/${base}`, original = stat(dest);
@@ -314,6 +382,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     },
     systemd(verb, unit) {
       held();
+      if (verb !== 'restart' || unit !== 'shu-supervisor.service') writerHeld();
       const operations = { 'daemon-reload': [null], enable: ['shu-supervisor.service', 'shu-coordinator.timer'],
         start: UNIT_NAMES, restart: ['shu-supervisor.service'], stop: UNIT_NAMES, disable: UNIT_NAMES };
       guard('SHU251_PROVIDER_ARGV', Object.hasOwn(operations, verb) && operations[verb].includes(unit));
@@ -333,7 +402,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return true;
     },
     checkout(before, after) {
-      held();
+      writerHeld();
       guard('SHU251_PROVIDER_CHECKOUT', equal(after, approvedCheckout(spec)) || equal(after, c.checkout_before));
       const detached = { ...before, sha: after.sha, tree: after.tree, head_ref: null };
       const updated = { ...after, head_ref: null };
@@ -365,36 +434,22 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return true;
     },
     pin(target, before, after) {
-      held(); guard('SHU251_PROVIDER_PIN', target === ref && sha(before) && sha(after) && pinValue() === before);
+      writerHeld(); guard('SHU251_PROVIDER_PIN', target === ref && sha(before) && sha(after) && pinValue() === before);
       git(after === null ? ['update-ref', '-d', ref, before ?? '0'.repeat(40)] : ['update-ref', ref, after, before ?? '0'.repeat(40)]);
       guard('SHU251_PROVIDER_PIN', pinValue() === after); return true;
     },
     async runningGateOff() {
       held();
-      const roots = [...new Set([w.workspace_state_dir, w.supervisor_state_dir])];
-      const inventory = () => {
-        const entries = {};
-        const visit = p => {
-          const s = f.lstatSync(p);
-          guard('SHU251_PROVIDER_GATE_OFF', !s.isSymbolicLink());
-          if (s.isDirectory()) for (const child of f.readdirSync(p).sort()) visit(`${p}/${child}`);
-          else if (s.isFile()) entries[p] = { sha256: hash(f.readFileSync(p)), size: s.size, mtime: s.mtimeMs, ctime: s.ctimeMs };
-          else guard('SHU251_PROVIDER_GATE_OFF', s.isSocket());
-        };
-        roots.forEach(visit);
-        return entries;
-      };
-      let writes = 0, watchError = false;
-      const watchers = [];
+      const observation = gateObservation ?? observeState();
+      const { before, inventory } = observation;
       let writer;
       try {
-        for (const root of roots) {
-          const watcher = f.watch(root, { recursive: true }, () => writes++);
-          watcher.on('error', () => { watchError = true; }); watchers.push(watcher);
-        }
-        const before = inventory();
         let last = Number(show('shu-coordinator.service', 'ExecMainExitTimestampMonotonic')), ticks = 0;
-        writer = custody.shift(); f.closeSync(writer.fd);
+        // Direct writer-custody callers still hand off for polling. The
+        // complete running-gate-off action already has journal-only custody.
+        if (custody[0].p === `${w.workspace_state_dir}/host-tick.lock`) {
+          writer = custody.shift(); f.closeSync(writer.fd);
+        }
         for (let polls = 0; polls < 240 && ticks < 3; polls++) {
           await boundary.wait(1000);
           guard('SHU251_PROVIDER_GATE_OFF', show('shu-supervisor.service', 'ActiveState') === 'active' &&
@@ -410,10 +465,11 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
         const pid = Number(show('shu-supervisor.service', 'MainPID'));
         const children = f.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim();
         const after = inventory();
+        const { writes, watchError } = observation;
         guard('SHU251_PROVIDER_GATE_OFF', ticks === 3 && !watchError && writes === 0 && children === '' && equal(before, after));
         return { before, after, ticks, writes, launches: 0 };
       } finally {
-        for (const watcher of watchers) watcher.close();
+        if (observation !== gateObservation) observation.close();
         if (writer) custody.unshift(acquire(`${w.workspace_state_dir}/host-tick.lock`));
       }
     },

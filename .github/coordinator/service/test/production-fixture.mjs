@@ -20,6 +20,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
   spec.lifecycle.approval_sha256 = hash(signed());
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const locks = new Set();
   const descriptors = new Map(), owners = new Map(), events = [], faults = {};
   const resolve = p => {
     if (typeof p === 'number') return p;
@@ -33,7 +34,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
   };
   function mkdir(p, mode = 0o755) { fs.mkdirSync(resolve(p), { recursive: true, mode }); }
   function write(p, bytes, mode = 0o600) { mkdir(path.dirname(p)); fs.writeFileSync(resolve(p), bytes, { mode }); }
-  for (const p of ['/etc/systemd/system', spec.lifecycle.evidence_dir, spec.window.workspace_state_dir, spec.window.supervisor_state_dir, '/reviewed/repo']) mkdir(p);
+  for (const p of ['/etc/systemd/system', spec.lifecycle.evidence_dir, spec.window.workspace_state_dir, spec.window.supervisor_state_dir, '/reviewed/repo', '/tmp']) mkdir(p);
   for (const p of [spec.lifecycle.evidence_dir, spec.window.workspace_state_dir, spec.window.supervisor_state_dir]) fs.chmodSync(resolve(p), 0o700);
   for (const v of Object.values(spec.lifecycle.environment)) { write(v.path, 'NO_ENV_VALUES_READ'); owners.set(v.path, [v.uid, v.gid]); }
   write('/etc/shu/approvals/owner.pub', owner.publicKey.export({ format: 'pem', type: 'spki' }), 0o644);
@@ -43,7 +44,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
   write('/proc/123/status', 'Uid:\t1001 1001 1001 1001\nGid:\t1001 1001 1001 1001\nGroups:\t1001 1002\n');
   write('/proc/123/task/123/children', '');
   write('/proc/123/environ', 'ENABLE_DISPATCH=false\0');
-  let invocation = 'd'.repeat(32), pin = 'b'.repeat(40), tick = 500;
+  let invocation = 'd'.repeat(32), pin = 'b'.repeat(40), tick = 500, tickStatus = '0';
   const checkout = structuredClone(spec.lifecycle.checkout_before);
   const enabled = Object.fromEntries(UNIT_NAMES.map(n => [n, 'disabled'])), active = Object.fromEntries(UNIT_NAMES.map(n => [n, 'inactive']));
   const boundaryFS = {
@@ -53,7 +54,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
     fstatSync(fd) { return stats(fd, fs.fstatSync(fd)); },
     realpathSync(p) { return fs.realpathSync(resolve(p)).slice(root.length) || '/'; },
     openSync(p, flags, mode) { events.push(['open', logical(p), flags]); const fd = fs.openSync(resolve(p), flags, mode); descriptors.set(fd, resolve(p)); return fd; },
-    closeSync(fd) { events.push(['close', descriptors.get(fd)]); fs.closeSync(fd); descriptors.delete(fd); },
+    closeSync(fd) { events.push(['close', descriptors.get(fd)]); fs.closeSync(fd); descriptors.delete(fd); locks.delete(fd); },
     readFileSync(p, encoding) { events.push(['read', logical(p)]); assert.ok(!Object.values(spec.lifecycle.environment).some(v => v.path === logical(p)), 'never read environment secrets in probe'); return fs.readFileSync(resolve(p), encoding); },
     writeFileSync(p, bytes, options) { events.push(['write', logical(p)]); fs.writeFileSync(resolve(p), bytes, options); },
     fsyncSync(fd) { events.push(['fsync', logical(fd), fs.fstatSync(fd).isDirectory() ? 'directory' : 'file']); if (faults.fsync) throw new Error('fsync'); fs.fsyncSync(fd); },
@@ -73,7 +74,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
     commands.push({ file, args, opts });
     if (faults.command) { const result = faults.command(file,args,opts); if (result) return result; }
     const out = stdout => ({ status: 0, stdout: String(stdout), stderr: '' });
-    if (file === '/usr/bin/flock') { assert.ok(descriptors.has(opts.stdio[3]), 'lock owns a live descriptor'); return out(''); }
+    if (file === '/usr/bin/flock') { assert.ok(descriptors.has(opts.stdio[3]), 'lock owns a live descriptor'); locks.add(opts.stdio[3]); return out(''); }
     if (file === '/usr/bin/id') return out({ '-un': 'shu-coordinator', '-gn': 'shu-coordinator', '-u': '1001', '-g': '1001', '-G': '1001 1002' }[args[0]]);
     if (file === '/usr/bin/git') {
       const a = args.slice(2);
@@ -103,7 +104,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
       if (args[0] === 'show') {
         if (args[1] === '--property=Version') return out('255');
         const property = args[2].slice('--property='.length), unit = args[1];
-        return out({ UnitFileState: enabled[unit], ActiveState: active[unit], SubState: 'running', MainPID: '123', Result: 'success', ExecMainStatus: '0', ExecMainExitTimestampMonotonic: String(tick), InvocationID: invocation }[property]);
+        return out({ UnitFileState: enabled[unit], ActiveState: active[unit], SubState: 'running', MainPID: '123', Result: 'success', ExecMainStatus: tickStatus, ExecMainExitTimestampMonotonic: String(tick), InvocationID: invocation }[property]);
       }
       if (args[0] === 'enable') enabled[args[1]] = 'enabled';
       if (args[0] === 'disable') enabled[args[1]] = 'disabled';
@@ -121,14 +122,51 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
     if (file === '/usr/bin/ss') return out(`u_str LISTEN 0 10 ${spec.window.supervisor_socket} 1 * 0 users:(("node",pid=123,fd=5))`);
     if (file === '/usr/bin/node') return out(JSON.stringify({ evidence: args[1] === 'worker' ? { ok: true, pid: 4321, start_token: '12345' } : { ok: true, stage: 'RUNNING' } }));
     if (file === '/usr/bin/setpriv') {
+      // Opt-in model of the five shipped probes' real scratch-directory effects.
+      // Read the destination from the actual generated script; never run host commands.
+      const source = args[args.indexOf('-e') + 1];
+      if (faults.capabilityScratch && args.includes('-e')) {
+        const match = source.match(/const dir=fs\.mkdtempSync\(path\.join\(("(?:[^"\\]|\\.)*"),/)
+          ?? source.match(/console\.log\(JSON\.stringify\(resolveCvtsudoers\(("(?:[^"\\]|\\.)*")\)/);
+        if (match) {
+          const parent = JSON.parse(match[1]);
+          const dir = fs.mkdtempSync(path.join(resolve(parent), 'shu251-cap-'));
+          fs.writeFileSync(path.join(dir, 'probe'), 'real prerequisite scratch');
+          assert.equal(fs.readFileSync(path.join(dir, 'probe'), 'utf8'), 'real prerequisite scratch');
+          fs.rmSync(dir, { recursive: true });
+          faults.capabilityScratch.push(parent);
+        }
+      }
       if (args.includes('/usr/bin/id')) return out('65534');
       if (args.some(a => a.includes('resolveCvtsudoers'))) return out('{"available":true,"identity":"/usr/bin/cvtsudoers"}');
       return out(''); // recorded service-identity capability probe outputs
     }
     assert.fail(`unrecorded command: ${file} ${args.join(' ')}`);
   }
-  function run(file, args, opts) { const result = commandImpl(file, args, opts); return faults.afterCommand?.(file, args, opts) ?? result; }
-  const boundary = { fs: boundaryFS, uid: () => 0, now: () => 2000, run, async wait() { if (faults.wait) await faults.wait(); else tick++; await new Promise(resolve => setImmediate(resolve)); } };
+  const lockHeld = name => [...locks].some(fd => descriptors.get(fd)?.endsWith(`/${name}`));
+  const scheduledTick = () => {
+    if (active['shu-coordinator.timer'] !== 'active') return null;
+    tickStatus = lockHeld('host-tick.lock') ? '2' : '0'; tick++;
+    return tickStatus;
+  };
+  const point = (phase, kind, args) => faults.boundary?.({ phase, kind, args });
+  function run(file, args, opts) {
+    point('before', 'command', [file, ...args]);
+    const result = commandImpl(file, args, opts);
+    point('after', 'command', [file, ...args]);
+    return faults.afterCommand?.(file, args, opts) ?? result;
+  }
+  const observedFS = new Proxy(boundaryFS, { get(target, key) {
+    const value = target[key];
+    if (typeof value !== 'function') return value;
+    return (...args) => {
+      point('before', key, args);
+      const result = value(...args);
+      point('after', key, args);
+      return result;
+    };
+  } });
+  const boundary = { fs: observedFS, uid: () => 0, now: () => 2000, run, async wait() { if (faults.wait) await faults.wait(); else tick++; await new Promise(resolve => setImmediate(resolve)); } };
   const provider = createProductionLifecycle(spec, boundary);
   const io = { ...base.io, lifecycle: provider };
   function approveFixture() {
@@ -138,6 +176,6 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
     write(`/etc/shu/approvals/${spec.lifecycle.activation_id}.json`, bytes);
     write(`${spec.lifecycle.evidence_dir}/manifest.json`, JSON.stringify(expectedManifest(spec)));
   }
-  return { reopen() { io.lifecycle = createProductionLifecycle(spec, boundary); }, approveFixture, spec, approval, checkout, get provider() { return io.lifecycle; }, boundary, events, commands, faults, write, mkdir, resolve, root,
+  return { lockHeld, scheduledTick, reopen() { io.lifecycle = createProductionLifecycle(spec, boundary); }, approveFixture, spec, approval, checkout, get provider() { return io.lifecycle; }, boundary, events, commands, faults, write, mkdir, resolve, root,
     run: step => drive(step, spec, { execute: true, approvedHostMutation: spec.window.approved_sha, env: { SHU251_HOST_MUTATION_APPROVED: 'true' } }, io) };
 }

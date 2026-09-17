@@ -245,7 +245,7 @@ test('SHU251 driver rollback uses reviewed path and verifies quiescence', async 
   prior.units[UNIT_NAMES[0]].data = Buffer.from('Environment=ENABLE_DISPATCH=true\n').toString('base64');
   assert.throws(() => assertRollbackSafe(prior, SHA), named('SHU251_ROLLBACK_REENABLE'));
 });
-test('SHU251 driver routes all nine reviewed actions', async t => {
+test('SHU251 driver routes all nine legacy reviewed actions', async t => {
   const { spec, io, calls } = fixture(t);
   const legacy = ['inventory', 'quiescence', 'transport', 'launch', 'worker', 'replay-release', 'cleanup', 'capture-prior', 'rollback'];
   for (const step of legacy) await drive(step, spec, approved, io);

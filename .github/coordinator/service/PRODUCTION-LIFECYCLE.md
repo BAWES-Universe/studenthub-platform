@@ -5,6 +5,7 @@ command, time and wait boundaries. Production uses fixed absolute argv and no
 operator command substitution. All test commands are interpreted by the fixture;
 none are forwarded to systemd, Git remotes, GitHub or a host credential store.
 
+The current amendment results are in [R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md).
 The current behavioral contract and remaining blockers are in
 [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md). Do not use historical round-2 results below
 to claim this correction closes every consolidated finding.
@@ -55,7 +56,9 @@ by these local tests. Ref objects fetched into the object store are not removed
 on restore. The activation ref remains separate from real checkout custody.
 
 Journal custody spans all lifecycle effects. The writer descriptor is released
-and reacquired when the coordinator must own it, including timer observation. Service-identity capability probes use the service-owned
+and reacquired when the coordinator must own it, including timer observation.
+For the entire readiness/restart step the provider acquires only journal custody,
+so network preflight and evidence finalization cannot conflict with scheduled ticks. Service-identity capability probes use the service-owned
 workspace-state directory for disposable probes, not the root-only evidence
 directory.
 Tick success requires exit 0; systemd's accepted lock-conflict exit 2 is refused.
@@ -96,7 +99,7 @@ families and their assertions remain in the suite.
 | `SHU251_PROVIDER_TICK` | `PROVIDER named mutation SHU251_PROVIDER_TICK` → `SHU251_PROVIDER_TICK_REQUIRED` |
 | `SHU251_RUNNING_GATE_OFF` | `LIFECYCLE named mutation SHU251_RUNNING_GATE_OFF` → `SHU251_RUNNING_GATE_OFF_REQUIRED` |
 
-## L1 repository-only verification record (2026-09-17)
+## Historical L1 repository-only verification record (head `5a3c956`, 2026-09-17)
 
 Base: `885914c22f26b279e6c29b088e4c46d44037759c`, branch
 `fix/shu251-typed-host-lifecycle-executor`. Authorship: this Codex correction;

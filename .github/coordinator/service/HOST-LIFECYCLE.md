@@ -1,7 +1,7 @@
 # Typed Phase-A host lifecycle — L1 correction
 
 This repository-only correction extends branch `fix/shu251-typed-host-lifecycle-executor`
-from `885914c22f26b279e6c29b088e4c46d44037759c`. It is **not a complete L1 closure
+from the independently reviewed head `5a3c95610fce3fd4f90caac55ac19711a430dfdd`. It is **not a complete L1 closure
 or an authorization to operate a host**. The remaining gaps below keep the
 static execution-closure gate blocked. Historical verification follows this
 current contract and does not establish acceptance for this revision.
@@ -41,9 +41,38 @@ external Git writer between checkout commands.
 Service readiness and worker-survival acceptance have separate provider methods.
 The existing worker checks remain mandatory for `restart`. The coordinator must
 report Result=success, exit 0 and a strictly newer completion timestamp when
-started. Running gate-off observes timer completions with the writer lock released;
-the journal lock remains held. A 240-poll, one-second bound refuses missing ticks.
-The launch claim relies on zero authoritative-state writes (including durable
+started. Throughout `readiness`, `restart` and `running-gate-off`, only the journal lock is acquired:
+no driver writer-lock acquisition occurs during preflight, observations, supervisor
+restart or finalization. Scheduled coordinator ticks retain access to their writer
+lock. Other effects still require writer custody; exit 2 is still refused.
+[R3-AMEND-VALIDATION.md](R3-AMEND-VALIDATION.md) records the boundary-interleaving
+proof and mutations. R3 finding G1 identified a previously undisclosed,
+pre-existing exposure: gate-off held the writer lock across `git ls-remote`,
+`gh api` and both bracketing readiness calls, releasing it only for polling.
+One scheduled tick could conflict-exit 2 and refuse the A5 acceptance step.
+The fix extends journal-only custody across the complete gate-off action,
+including those calls and receipt finalization; it never reacquires the writer
+lock on return from polling. A 240-poll, one-second bound refuses missing ticks.
+R4 confirmed G1 closed but found H1: preflight and first readiness could write
+before the old observer existed. The observer now wraps initialization through
+finalization, with one recursive watcher covering both state roots before the
+baseline scan. A durable baseline recorded by `start` under its existing writer
+custody also covers the interval before watcher registration. Gate-off compares
+that baseline before preflight or receipt resumption when a start receipt exists;
+file contents/timestamps and directory timestamps must match. Older start receipts without this baseline refuse. A final inventory
+and queued-event check precede successful return; errors close the watcher.
+[R4-AMEND-VALIDATION.md](R4-AMEND-VALIDATION.md) records the reproduction,
+actual-write regressions, mutations and limits. Changes in watched state since
+start still refuse. R5 found that the observer's own capability probes always
+created scratch directories there, making clean A5 acceptance impossible.
+The probes now use `/tmp`; their checks and the complete observation window are
+unchanged, and no watched writes are exempted. If a spec places a watched root
+at or above `/tmp`, those scratch writes still refuse. Repository boundary tests
+model all five probes' real create/write/remove effects and prove a clean receipt
+plus continued refusal of scheduled writes in both state roots; this is not live
+A5 acceptance. See [R5-AMEND-VALIDATION.md](R5-AMEND-VALIDATION.md).
+The `launches: 0` receipt field is a literal, not a measurement.
+The launch claim relies on zero observed local authoritative-state writes (including durable
 launch receipts), unchanged inventory, dispatch disabled, and no observed children;
 it does not independently observe every possible transient kernel process.
 
@@ -69,12 +98,12 @@ ambiguous directory-fsync failure is not covered by that retry proof. Restart re
 
 | Finding | Evidence delivered | Remaining limitation / disposition |
 | --- | --- | --- |
-| A2 (`CLOSED_BY_NEW_HEAD`, static command-boundary scope) | Actual tuple pin/restore/retain, signed baseline, remote/API equality, dirty/tree/ambiguous-fetch refusals, provider reconstruction at every Git command boundary | Source/fake-boundary correction; no live Git/host proof or concurrent external checkout-writer atomicity claim. |
-| A3 (`CONFIRMED_BLOCKER`) | Approved split ownership accepted; metadata remains value-free | **CONFIRMED_BLOCKER** for complete per-process credential isolation: units still share a UID, and transport/child credential delivery belongs to B2. File metadata alone cannot establish the requested process isolation. |
-| A4 (`CONFIRMED_GAP`) | Fresh baseline starts without a worker; writer handoff, exit-2 rejection, timer observation; original restart adoption guards retained | No live systemd proof. Worker-survival acceptance still needs a separately reviewed bootstrap/composition. |
-| A5 (`CONFIRMED_BLOCKER`) | Distinct running timer proof, filesystem watchers/inventory, stopped/no-tick/write/child negative controls | No remote-authoritative-write inventory is included; full end-to-end zero-write/zero-launch acceptance remains unproved. |
-| A6 (`CONFIRMED_BLOCKER`) | Cleanup bypasses forward preflight, continues independent undo, aggregates durable errors | **CONFIRMED_BLOCKER**: writer-lock acquisition can still prevent cleanup; runtime-gate disable/admission stop are not an unconditional first phase. Snapshot omits enablement-link topology, full process/listener and state-path inventory, and L4 disposable-checkout custody. |
-| A7 (`CONFIRMED_BLOCKER`) | Signature/digest-bound spec, time/order/teardown guards, evidence creation, durable receipts/archive and restart of archive finalization | **CONFIRMED_BLOCKER** for complete execution closure: no expiry-triggered physical teardown; remaining A6 recovery/inventory gaps; canonical owner artifact/key provisioning and executing the corrected tool from a stale deployed checkout are unproved. |
+| A2 (CLOSED at repository scope; OPEN at host scope) | Actual tuple pin/restore/retain, signed baseline, remote/API equality, dirty/tree/ambiguous-fetch refusals, provider reconstruction at every Git command boundary | Source/fake-boundary correction; no live Git/host proof or concurrent external checkout-writer atomicity claim. |
+| A3 (PARTIAL) | Approved split ownership accepted; metadata remains value-free | **CONFIRMED_BLOCKER** for complete per-process credential isolation: units still share a UID, and transport/child credential delivery belongs to B2. File metadata alone cannot establish the requested process isolation. |
+| A4 (PARTIAL) | Fresh baseline starts without a worker; writer handoff, exit-2 rejection, timer observation; original restart adoption guards retained | No live systemd proof or transitional-state coverage. Worker-survival acceptance still needs a separately reviewed bootstrap/composition; the strictly-newer timestamp conjunct remains an F3 coverage gap. |
+| A5 (PARTIAL) | Distinct running timer proof, filesystem watchers/inventory, stopped/no-tick/write/child negative controls | No remote-authoritative-write inventory is included; inventory equality remains an F3 coverage gap and `launches` is a literal (F5). Full end-to-end zero-write/zero-launch acceptance remains unproved. |
+| A6 (OPEN) | Cleanup bypasses forward preflight, continues independent undo, aggregates durable errors | **CONFIRMED_BLOCKER**: writer-lock acquisition can still prevent cleanup; runtime-gate disable/admission stop are not an unconditional first phase. Snapshot omits enablement-link topology, full process/listener and state-path inventory, and L4 disposable-checkout custody. |
+| A7 (PARTIAL) | Signature/digest-bound spec, time/order/teardown guards, evidence creation, durable receipts/archive and restart of archive finalization | **CONFIRMED_BLOCKER** for complete execution closure: no expiry-triggered physical teardown; remaining A6 recovery/inventory gaps; canonical owner artifact/key provisioning and executing the corrected tool from a stale deployed checkout are unproved. Preflight mutation-approval classification remains F2; approval is checked before an action, not continuously. |
 
 The A2 production path is `executeLifecycle(pin/pin-restore/pin-retain)` →
 `provider.checkout`, verified by `CLOSURE stale local main stale origin main
@@ -83,7 +112,10 @@ the checkout guard mutations. This classification does not approve live executio
 
 Legacy operational routes retain their earlier contract; the new artifact does
 not authenticate an end-to-end legacy/Phase-B composition. No independent
-exact-head verifier was run in this lane.
+exact-head verifier has reviewed this J1/J2 amendment yet. The independent R5
+AMEND at `7b3cdc3` confirmed H1, G1, F1 and F4 closed and retained A2 closed at repository scope;
+A3/A4/A5/A7 partial; A6 open. This amendment does not upgrade those markers.
+Current counts and limitations are in [R5-AMEND-VALIDATION.md](R5-AMEND-VALIDATION.md).
 
 These limitations are not reclassified as LIVE_ONLY: several require source-level
 composition with the separately scoped credential and disposable-checkout lanes.

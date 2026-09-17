@@ -214,6 +214,6 @@ test('B3_REPRO_CURRENT_MAIN: real descendant invalidates armed activation', () =
     git('merge-base', '--is-ancestor', seed, descendant); x.heads[x.record.fixtures[0].branch] = descendant;
     const result = validateTwoFixtureActivation(x);
     assert.equal(result.code, 'ACT_STALE_SEED_HEAD', 'B3_REPRO_DESCENDANT_REFUSED');
-    console.log(JSON.stringify({ base: '00eb979800b5ef6dfb918b57002d167802238612', seed, descendant, ancestry: true, first: 'armed', next: result.code }));
+    console.log(JSON.stringify({ scope: 'current checkout: unreceipted descendant refusal, not a base reproduction', seed, descendant, ancestry: true, first: 'armed', next: result.code }));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
