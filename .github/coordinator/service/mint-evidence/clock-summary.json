@@ -1,0 +1,67 @@
+{
+  "revision": "a37f48d8754c982afd51b40afc50d908008afa36",
+  "mode": "clock",
+  "exit_code": 0,
+  "tests": 2803,
+  "pass": 2795,
+  "fail": 0,
+  "skipped": 8,
+  "complete_markers": 1,
+  "terminal_complete": true,
+  "exact_authorized_skip_names_and_reasons": true,
+  "raw_sha256": "f1463c42600ba132db45190d33f0f099f8c291eb433b2fb9c12b7833cf3000cc",
+  "environment": {
+    "SHU_TEST_CLOCK_OFFSET_MS": "31536000000",
+    "NODE_OPTIONS": "--import=/home/bawes/work/settled/.github/coordinator/test/fixture/shift-wall-clock.mjs"
+  },
+  "skips": [
+    {
+      "type": "outcome",
+      "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+      "status": "skip",
+      "reason": "requires root or passwordless sudo for distinct-uid proof"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+      "status": "skip",
+      "reason": "requires distinct-uid execution"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+      "status": "skip",
+      "reason": "requires distinct-uid execution"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+      "status": "skip",
+      "reason": "requires distinct-uid execution"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+      "status": "skip",
+      "reason": "host cannot switch to the fixture worker uid"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+      "status": "skip",
+      "reason": "host cannot switch worker uid"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-71 restricted capability refusal",
+      "status": "skip",
+      "reason": "production vocabulary has no undeclared runtime/role pair"
+    },
+    {
+      "type": "outcome",
+      "name": "READER operator-owned checkout read by non-root account",
+      "status": "skip",
+      "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    }
+  ]
+}
