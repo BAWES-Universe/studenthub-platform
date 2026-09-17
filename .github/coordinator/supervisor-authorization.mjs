@@ -4,7 +4,8 @@ import { resolveFixtureLane, validateFixtureAttemptScope } from "./workspace-sco
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dispatchEnabledFor, resolveDispatchScope } from "./reconcile.mjs";
+import { readTwoFixtureEvidence } from "./two-fixture-evidence.mjs";
+import { dispatchEnabledFor, resolveDispatchScope, parseReceiptsFromComments } from "./reconcile.mjs";
 import { singleRunActivationStatus, activationAllowsTarget } from "./single-run-activation.mjs";
 
 export function authorizeWorkOrder(order) {
@@ -14,7 +15,9 @@ export function authorizeWorkOrder(order) {
     const scope = resolveDispatchScope(config);
     if (!scope.valid || (scope.issueIds && !scope.issueIds.has(order.issue_id)) || config.adapter_pause_map?.[order.runtime]) return false;
     const filePath = process.env.SHU_SUPERVISOR_ACTIVATION_FILE;
-    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts: [], dir, env: process.env,
+    const evidence = process.env.SHU71_EVIDENCE_BROKER === 'true' ? readTwoFixtureEvidence(config, process.env) : null;
+    const receipts = evidence ? parseReceiptsFromComments(evidence.comments, config.linear_receipt_actor_ids) : [];
+    const activation = filePath ? singleRunActivationStatus({ filePath, config, receipts, dir, env: process.env,
       initialTargetSha: process.env.DISPATCH_TARGET_SHA }) : null;
     if (!dispatchEnabledFor(process.env, config, activation)) return false;
     if (activation && !activationAllowsTarget(activation, order.issue_id)) return false;

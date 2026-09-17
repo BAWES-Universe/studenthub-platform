@@ -9,6 +9,7 @@ StartLimitBurst=3
 User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
 EnvironmentFile=@COORDINATOR_ENVIRONMENT_FILE@
+LoadCredential=supervisor-transport:@SUPERVISOR_ENVIRONMENT_FILE@
 Type=oneshot
 WorkingDirectory=@WORKDIR@
 Environment=ENABLE_DISPATCH=false

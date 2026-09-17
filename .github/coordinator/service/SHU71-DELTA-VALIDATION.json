@@ -1,0 +1,660 @@
+{
+  "head": "ef8729347f9a869c705de03defec7bf4d8350886",
+  "date": "2026-09-17",
+  "scope": "Repository-only fixtures; no host/live claims",
+  "shape_snapshots": [
+    {
+      "id": "N1",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS"
+    },
+    {
+      "id": "N2",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK"
+    },
+    {
+      "id": "N3",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY"
+    },
+    {
+      "id": "N6",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS"
+    },
+    {
+      "id": "A1",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS"
+    },
+    {
+      "id": "A2",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS"
+    },
+    {
+      "id": "A5",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS"
+    },
+    {
+      "id": "A6",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS"
+    },
+    {
+      "id": "B1",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY"
+    },
+    {
+      "id": "B2",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY"
+    },
+    {
+      "id": "B3",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY"
+    },
+    {
+      "id": "B4",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY"
+    },
+    {
+      "id": "C1",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK"
+    },
+    {
+      "id": "C2",
+      "fixed": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK"
+    }
+  ],
+  "full_trust_differential": [
+    {
+      "id": "CONTROL",
+      "status": 0,
+      "counts": {
+        "tests": 866,
+        "pass": 866,
+        "fail": 0,
+        "skipped": 0
+      },
+      "assertion": null,
+      "killed": false
+    },
+    {
+      "id": "N1",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 863,
+        "fail": 3,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true
+    },
+    {
+      "id": "N2",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 857,
+        "fail": 9,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK",
+      "killed": true
+    },
+    {
+      "id": "N3",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 864,
+        "fail": 2,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY",
+      "killed": true
+    },
+    {
+      "id": "N6",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 863,
+        "fail": 3,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true
+    },
+    {
+      "id": "A1",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 864,
+        "fail": 2,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true
+    },
+    {
+      "id": "A2",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 864,
+        "fail": 2,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true
+    },
+    {
+      "id": "A5",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 864,
+        "fail": 2,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true
+    },
+    {
+      "id": "A6",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS",
+      "killed": true
+    },
+    {
+      "id": "B1",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY",
+      "killed": true
+    },
+    {
+      "id": "B2",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY",
+      "killed": true
+    },
+    {
+      "id": "B3",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY",
+      "killed": true
+    },
+    {
+      "id": "B4",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY",
+      "killed": true
+    },
+    {
+      "id": "C1",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 861,
+        "fail": 5,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK",
+      "killed": true
+    },
+    {
+      "id": "C2",
+      "status": 1,
+      "counts": {
+        "tests": 866,
+        "pass": 864,
+        "fail": 2,
+        "skipped": 0
+      },
+      "assertion": "SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK",
+      "killed": true
+    }
+  ],
+  "journal_cases": {
+    "call_sites": 11,
+    "classes": 13,
+    "non_terminal_classes": 12,
+    "rows": [
+      "intact",
+      "recovered"
+    ],
+    "real_payload_cases": 24,
+    "terminal_cases": 2,
+    "clock_deltas_ms": [
+      86400001,
+      172800000,
+      604800000,
+      2505600000,
+      31536000000,
+      34560000000,
+      315360000000
+    ]
+  },
+  "unchanged_files": {
+    ".github/coordinator/service/shu71-production.mjs": {
+      "sha256": "b3d9182489eb56be276af744240713805ab9605df8ef30f1f76808263b3e2591",
+      "byte_identical_to_starting_head": true
+    },
+    ".github/coordinator/service/shu71-journal.mjs": {
+      "sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0",
+      "byte_identical_to_starting_head": true
+    },
+    ".github/coordinator/service/host-suite-contract.mjs": {
+      "sha256": "c66cc3c8f199ca249fcdca8c3e4c47c87fc9dbec16c0cef4eb47f7f47500f099",
+      "byte_identical_to_starting_head": true
+    },
+    ".github/workflows/ci.yml": {
+      "sha256": "138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46",
+      "byte_identical_to_starting_head": true
+    }
+  },
+  "suites": {
+    "coordinator": {
+      "tests": 2740,
+      "pass": 2722,
+      "fail": 0,
+      "skipped": 18
+    },
+    "trust": {
+      "tests": 866,
+      "pass": 866,
+      "fail": 0,
+      "skipped": 0
+    },
+    "delta_mutations": {
+      "tests": 18,
+      "pass": 18,
+      "fail": 0,
+      "skipped": 0
+    },
+    "final_and_delta_mutations": {
+      "tests": 22,
+      "pass": 22,
+      "fail": 0,
+      "skipped": 0
+    },
+    "policy": {
+      "tests": 78,
+      "pass": 78,
+      "fail": 0,
+      "skipped": 0
+    },
+    "history": {
+      "tests": 29,
+      "pass": 29,
+      "fail": 0,
+      "skipped": 0
+    },
+    "composition": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0
+    },
+    "environment": {
+      "tests": 13,
+      "pass": 13,
+      "fail": 0,
+      "skipped": 0
+    },
+    "coordinator_plus_365_days": {
+      "tests": 2740,
+      "pass": 2722,
+      "fail": 0,
+      "skipped": 18
+    }
+  },
+  "skip_set_unchanged": true,
+  "execution_counts_each_coordinator": {
+    "state_rows": 720,
+    "real_payload_invariants": 24,
+    "clock_sweep": 7,
+    "terminal_positive": 2
+  },
+  "test_source_sha256": {
+    ".github/coordinator/service/test/shu71-delta-differential.mjs": "aefd32d1930afb27be6063c0e074875952be8a35d3f583de14fd3ff76a143bda",
+    ".github/coordinator/service/test/shu71-delta-mutants.mjs": "599a1d6d2516d5488604ace75960c285e94084f0212bf36bdc0fad29f01be0bf",
+    ".github/coordinator/service/test/shu71-delta-mutations.test.mjs": "9e9f958be45c00dbe7c415d02162d6c454fdcdee0d5c50a9671160c950ae3e1e",
+    ".github/coordinator/service/test/shu71-delta-properties.mjs": "1bd4bec1b9e60aa112c1c392d2d4ff0f79c264e27ece20146c0f55dc4ca4bc55"
+  }
+}

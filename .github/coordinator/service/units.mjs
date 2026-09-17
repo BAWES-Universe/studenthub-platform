@@ -1,3 +1,4 @@
+import { ACTIVATION_FILE } from "./credential-delivery.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
@@ -54,6 +55,41 @@ function environmentValue(raw) {
   return value;
 }
 
+export const supervisorAdapterKeys = Object.freeze([
+  'SHU_WORKER_UID', 'SHU_WORKER_LAUNCH_WRAPPER', 'SHU_WORKTREE_ROOT',
+  'SHU_PUSH_REMOTE_URL', 'SHU_REVIEW_EVIDENCE_DIR', 'SHU_REVIEW_EXEC_UID',
+  'SHU_REVIEW_EXEC_WRAPPER_JSON', 'SHU_REVIEW_MODEL_WRAPPER_JSON', 'SHU_REVIEW_TEST_FILES_JSON',
+]);
+function environmentEntries(source) {
+  const result = new Map();
+  for (const line of source.split(/\r?\n/)) {
+    if (/^\s*(?:[#;].*)?$/.test(line)) continue;
+    const match = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+    assert.ok(match && !result.has(match[1]), 'SHU251_ENV_CONTENT: unique single-line assignments required');
+    const value = environmentValue(match[2]);
+    assert.ok(value !== undefined && value.trim().length > 0, 'SHU251_ENV_CONTENT: well-formed nonempty unambiguous effective values required');
+    result.set(match[1], value);
+  }
+  return result;
+}
+
+// Staging may contain only the transport secret. Arming requires the complete
+// adapter configuration in the supervisor's own file; coordinator env is not
+// inherited by this unit. Semantic/identity checks remain in the adapters.
+export function assertSupervisorLaunchEnvironment(source) {
+  return requireSupervisorAdapterEntries(environmentEntries(source));
+}
+function requireSupervisorAdapterEntries(entries) {
+  for (const key of supervisorAdapterKeys) {
+    if (!entries.has(key)) throw Object.assign(new Error(`SHU71_SUPERVISOR_ENV_REQUIRED: ${key}`),
+      { code: 'SHU71_SUPERVISOR_ENV_REQUIRED', key });
+  }
+  assert.ok(Buffer.byteLength(entries.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32
+    && [...entries.keys()].every(key => key === 'SHU_SUPERVISOR_SECRET' || supervisorAdapterKeys.includes(key)),
+    'SHU251_ENV_SUPERVISOR: transport secret and reviewed adapter settings only');
+  return Object.fromEntries(entries);
+}
+
 // Inspect key names and nonempty values only; never include contents in errors.
 // Restrict the accepted format to unambiguous single-line systemd assignments.
 function environmentBindings(identity) {
@@ -70,22 +106,14 @@ function environmentBindings(identity) {
     let source;
     try { source = fs.readFileSync(file, 'utf8'); }
     catch { assert.fail('SHU251_ENV_UNREADABLE: required environment file cannot be read'); }
-    const result = new Map();
-    for (const line of source.split(/\r?\n/)) {
-      if (/^\s*(?:[#;].*)?$/.test(line)) continue;
-      const match = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
-      assert.ok(match && !result.has(match[1]), 'SHU251_ENV_CONTENT: unique single-line assignments required');
-      const value = environmentValue(match[2]);
-      assert.ok(value !== undefined && value.trim().length > 0, 'SHU251_ENV_CONTENT: well-formed nonempty unambiguous effective values required');
-      result.set(match[1], value);
-    }
-    return result;
+    return environmentEntries(source);
   });
   const [supervisor, coordinator] = entries;
   assert.ok(!supervisor.has('GITHUB_TOKEN') && !supervisor.has('LINEAR_API_TOKEN') && !coordinator.has('SHU_SUPERVISOR_SECRET'),
     'SHU251_ENV_CROSSED: environment contents belong to the other unit');
-  assert.ok(supervisor.size === 1 && Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
-    'SHU251_ENV_SUPERVISOR: only SHU_SUPERVISOR_SECRET of at least 32 bytes is required');
+  assert.ok([...supervisor.keys()].every(key => key === 'SHU_SUPERVISOR_SECRET' || supervisorAdapterKeys.includes(key)) && Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
+    'SHU251_ENV_SUPERVISOR: transport secret and reviewed adapter settings only');
+  if (supervisor.size > 1) requireSupervisorAdapterEntries(supervisor);
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
     'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
 }
@@ -164,5 +192,5 @@ export function serviceParameters({ workdir, workspaceStateDir = WORKSPACE_STATE
   return { ...serviceConfiguration({ serviceUser, serviceGroup, supervisorEnvironmentFile, coordinatorEnvironmentFile }), workdir, workspaceStateDir, allowWorkspaceStateDirOverride, supervisorStateDir, supervisorSocket,
     writerLock: join(workspaceStateDir, 'host-tick.lock'),
     supervisor: [node, join(workdir, '.github/coordinator/service/supervisor-service.mjs')],
-    coordinator: [node, join(workdir, '.github/coordinator/reconcile.mjs')] };
+    coordinator: [node, join(workdir, '.github/coordinator/service/coordinator-tick.mjs'), '--activation', ACTIVATION_FILE] };
 }

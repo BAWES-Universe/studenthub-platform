@@ -22,6 +22,7 @@ for (const [name, before, after, pattern, assertions] of mutations) test(`ENV_CO
   const root = fs.mkdtempSync(join(tmpdir(), 'shu-env-mutation-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(join(root, 'test'));
+  fs.copyFileSync(new URL('../credential-delivery.mjs', import.meta.url), join(root, 'credential-delivery.mjs'));
   fs.writeFileSync(join(root, 'test/environment-content.test.mjs'), cases);
   for (const unit of ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer']) {
     fs.copyFileSync(new URL(`../${unit}.in`, import.meta.url), join(root, `${unit}.in`));

@@ -41,8 +41,31 @@ commit.
 | # | Channel | Expected | Observed |
 |---|---|---|---|
 | A | Closing magic word in PR body | required check `repository-policy` FAILS | **FAILURE** (check 105113010425) — confirmed |
-| B | Branch-name linkage + non-closing `refs` reference, then merge | merges; the card does NOT reach Done; the PR attaches to the card | _pending observation_ |
-| C | Explicit authorized transition to Done | reaches Done and holds | _pending_ |
+| B | Branch-name linkage + non-closing `refs` reference, then merge | merges; the card does NOT reach Done; the PR attaches to the card | **PASS** — merged as `3133fdf5a18e5dd56959be9c43a4764cb029686a` at `2026-09-17T07:26:52Z`; landed tree == PR head tree; all three PRs attached to the card; **no Done transition** at +2m or +63m |
+| C | Explicit authorized transition to Done | reaches Done and holds | **PASS** — deliberate transition at `2026-09-17T08:30:27Z`; still Done at `2026-09-17T08:33:03Z` with no reversion |
 
-Observation window for B: +2m, +15m and +60m after the merge, covering the slowest historical
-false transition (8m28s) with margin.
+**Channel B detail.** After the merge the card's state history remained `Backlog (07:19:46 → 07:20:47)` →
+`In Progress (07:20:47 → …)`. The `In Progress` transition at 07:20:47 occurred on the **branch push**,
+before the merge, and is the documented behaviour of a *non-closing* reference: linkage still applies the
+team's other workflow statuses while the **merge-status** mapping stays off. There was no completion
+transition at or after the merge, checked live at +2m and re-read at +63m — which covers the slowest
+historical false transition (8m28s) with margin.
+
+**Channel C detail.** The historical false completions were reversed within 1–8 minutes (1m46s, 1m16s,
+8m28s, 2m45s); this deliberate transition held for the whole re-check interval, which is the observable
+difference between automation and explicit acceptance.
+
+## Recording
+
+- Disposable card `SHU-274`; Linear comment `7be7249a-50d7-43f3-8626-1d28ad2d0f3e` (2026-09-17T08:33:18Z)
+  carries this result set; the card is Done and may be archived.
+- Harness: `/tmp/linear_proof_d.py` (final form) — the three earlier defects listed above are recorded
+  because a proof is only credible if its harness is.
+- This file is the in-repository record; the mechanism and the exact setting change are documented in
+  the guard package referenced on the card.
+
+## What this does NOT establish
+
+That no other unmeasured channel exists — a custom automation, another integration, or a manual
+transition by any actor holding the shared Linear identity. Those remain disclosed exactly as the
+repository-policy audit listed them.

@@ -1,0 +1,548 @@
+{
+  "starting_head": "de5b4a260ad8c00f72b024dbe072bacdc2713b85",
+  "origin_main": "8a613c42d166fcab5497060ead168d7941542b60",
+  "merge_required": false,
+  "scope": "Local repository only. CI, publication, the settled revision and independent verdict are subsequent orchestrator steps.",
+  "suites": {
+    "coordinator": {
+      "counts": {
+        "tests": 2745,
+        "pass": 2727,
+        "fail": 0,
+        "skipped": 18
+      },
+      "log": "/tmp/shu71-canonical-coordinator.tap",
+      "log_sha256": "99fa594fe9f494752085bca233625dfd38363dc0da7bd73acc8bf4ff663c727d"
+    },
+    "coordinator_plus_365_days": {
+      "counts": {
+        "tests": 2745,
+        "pass": 2727,
+        "fail": 0,
+        "skipped": 18
+      },
+      "log": "/tmp/shu71-canonical-future.tap",
+      "log_sha256": "cd98847f09659e3fcb71103f2c0c745562ef6f4a63f4aeac0602e2aee951a049"
+    },
+    "trust": {
+      "counts": {
+        "tests": 866,
+        "pass": 866,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "/tmp/shu71-canonical-trust.tap",
+      "log_sha256": "0e82599312d7ddd4c4d128cf795f064de3850e4a7c421c029cca5ff691051d3a"
+    },
+    "delta_mutations": {
+      "counts": {
+        "tests": 23,
+        "pass": 23,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "/tmp/shu71-canonical-mutations.tap",
+      "log_sha256": "2c80363dc4a67eb88c3a768214b0a8a0bd028b3447e5a991d506cbdf78651464"
+    }
+  },
+  "reproductions": [
+    {
+      "id": "CONTROL",
+      "counts": {
+        "tests": 866,
+        "pass": 866,
+        "fail": 0,
+        "skipped": 0
+      },
+      "killer": null,
+      "snapshots": [
+        {
+          "id": "X1",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "budget_error": "ACT_RETRY_BUDGET_INVALID",
+            "failures": [],
+            "operator_action": "resume_or_revoke"
+          },
+          "events": [
+            "unlink:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+            "unlink:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+            "unlink:/srv/shu/state/shu71-activation.json"
+          ]
+        },
+        {
+          "id": "X3",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "budget_error": "ACT_RETRY_BUDGET_INVALID",
+            "failures": [],
+            "operator_action": "resume_or_revoke"
+          },
+          "events": [
+            "unlink:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+            "unlink:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+            "unlink:/srv/shu/state/shu71-activation.json"
+          ]
+        },
+        {
+          "id": "X5",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "budget_error": "ACT_RETRY_BUDGET_INVALID",
+            "failures": [],
+            "operator_action": "resume_or_revoke"
+          },
+          "events": [
+            "unlink:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+            "unlink:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+            "unlink:/srv/shu/state/shu71-activation.json"
+          ]
+        },
+        {
+          "id": "X6",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "budget_error": "ACT_RETRY_BUDGET_INVALID",
+            "failures": [],
+            "operator_action": "resume_or_revoke"
+          },
+          "events": [
+            "unlink:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+            "unlink:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+            "unlink:/srv/shu/state/shu71-activation.json"
+          ]
+        },
+        {
+          "id": "X7",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+            ],
+            "credential": false,
+            "lease": true,
+            "effects": 7,
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+            "budget_error": "ACT_RETRY_BUDGET_INVALID",
+            "failures": [],
+            "operator_action": "resume_or_revoke"
+          },
+          "events": [
+            "unlink:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+            "unlink:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "write:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf.pending",
+            "rename:/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+            "unlink:/srv/shu/state/shu71-activation.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "X1",
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+      "snapshots": [
+        {
+          "id": "X1",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "operator_action": "resume_or_revoke"
+          },
+          "events": []
+        }
+      ]
+    },
+    {
+      "id": "X3",
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+      "snapshots": [
+        {
+          "id": "X3",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "operator_action": "resume_or_revoke"
+          },
+          "events": []
+        }
+      ]
+    },
+    {
+      "id": "X5",
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+      "snapshots": [
+        {
+          "id": "X5",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "operator_action": "resume_or_revoke"
+          },
+          "events": []
+        }
+      ]
+    },
+    {
+      "id": "X6",
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+      "snapshots": [
+        {
+          "id": "X6",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "operator_action": "resume_or_revoke"
+          },
+          "events": []
+        }
+      ]
+    },
+    {
+      "id": "X7",
+      "counts": {
+        "tests": 866,
+        "pass": 865,
+        "fail": 1,
+        "skipped": 0
+      },
+      "killer": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+      "snapshots": [
+        {
+          "id": "X7",
+          "before": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": null,
+            "complete": false
+          },
+          "after": {
+            "gates": [
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+              "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+            ],
+            "credential": true,
+            "lease": true,
+            "effects": 0,
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "complete": false
+          },
+          "result": {
+            "ok": false,
+            "state": "HALT",
+            "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+            "operator_action": "resume_or_revoke"
+          },
+          "events": []
+        }
+      ]
+    },
+    {
+      "id": "GUARD_DELETED",
+      "counts": {
+        "tests": 23,
+        "pass": 13,
+        "fail": 10,
+        "skipped": 0
+      },
+      "killers": [
+        "X1_MUST_DIE_BY_NAME",
+        "X3_MUST_DIE_BY_NAME",
+        "X5_MUST_DIE_BY_NAME",
+        "X6_MUST_DIE_BY_NAME",
+        "X7_MUST_DIE_BY_NAME"
+      ]
+    },
+    {
+      "id": "GUARD_WEAKENED",
+      "counts": {
+        "tests": 23,
+        "pass": 18,
+        "fail": 5,
+        "skipped": 0
+      },
+      "killers": [
+        "X1_MUST_DIE_BY_NAME",
+        "X3_MUST_DIE_BY_NAME",
+        "X5_MUST_DIE_BY_NAME",
+        "X6_MUST_DIE_BY_NAME",
+        "X7_MUST_DIE_BY_NAME"
+      ]
+    }
+  ],
+  "direct_guard_checks": {
+    "positive": "PASS",
+    "projection_frozen": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+    "projection_attempts_or_true": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY",
+    "duplicate_pinned_write": "SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY"
+  },
+  "tested_source_sha256": {
+    "test/shu71-delta-properties.mjs": "0f618a38f8fd49f0d9801346951e2a2c5ea64754f7f0e53de1c50b48d658e29c",
+    "test/shu71-delta-mutants.mjs": "d54ce5951e0eac9e99fd8612286d317154c64d4566035815b6155237e3978852",
+    "test/shu71-trust.test.mjs": "ea0d6153e08638567b193a99915d24908c34b1700f0bdae4a579d9bf69b43b96",
+    "test/shu71-canonical-differential.mjs": "ed5053f28f3f65ace723582cb5b99ce2850796cb8c32f2fac389cfac1489cf79"
+  },
+  "unchanged_production_sha256": "b3d9182489eb56be276af744240713805ab9605df8ef30f1f76808263b3e2591",
+  "constraints": {
+    "production_changed": false,
+    "ci_yml_changed": false,
+    "permitted_skips_changed": false,
+    "new_skips": false,
+    "host_access": false,
+    "push": false,
+    "pr_action": false,
+    "comments": false
+  },
+  "X4": "Disclosed, not closed or re-run: operator-override file outside the four-axis state model; requires root write into the 0700/uid-0 evidence directory, as with the W13/B-family residual."
+}

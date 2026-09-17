@@ -1,0 +1,346 @@
+{
+  "requested_start": "33f04364b1c3a342c326b7b3a295ad708a334f60",
+  "requested_main": "dc01f84a57d50781ae726959f2962dfd6403726a",
+  "rebase_command": "git rebase --onto origin/main 5a3c956 chore/shu71-production-composition",
+  "rebased_head": "68fa34d49bcf2c27719c011fac465e0b8bf57e7d",
+  "suites": {
+    "focused": {
+      "tests": 1056,
+      "pass": 1056,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_sha256": "72f7b250d794b4221f33f8c2b39b37b843ead7e7bd9db9c61b71faa7d898ab29",
+      "skip_names": [],
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations,history,state-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
+    },
+    "genuine": {
+      "tests": 995,
+      "pass": 995,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_sha256": "07ca9ac283e5aa3ce2c9cf84f06b2da63468213fd5b917bbfdf3a7bfc705098f",
+      "skip_names": [],
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust,history}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
+    },
+    "coordinator": {
+      "tests": 2580,
+      "pass": 2562,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 18,
+      "todo": 0,
+      "log_sha256": "86903a8761ca6cf9896230df54743dec26478df6df038a7f4a4e320b3e8d1a3e",
+      "skip_names": [
+        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      ],
+      "command": "umask 0002; SHU251_NO_SYSTEMD=1 npm run test:coordinator"
+    },
+    "rollback": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_sha256": "85fcbeb2b72de56f2a20bee61607a239ab7d08046f662fa04b3ffab656a49416",
+      "skip_names": [],
+      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
+    }
+  },
+  "targeted_mutants": {
+    "total": 61,
+    "killed": 61,
+    "production": 11,
+    "delivery": 17,
+    "trust": 11,
+    "recovery": 18,
+    "state": 4
+  },
+  "crash_injections": {
+    "forward": 240,
+    "teardown": 272,
+    "total": 512
+  },
+  "model": {
+    "domain": 864,
+    "executed": 720,
+    "unreachable": 144,
+    "table": "SHU71-R8-STATE-MODEL.md",
+    "scope": "Explicit bounded fixture states; no abstraction proof for arbitrary concrete histories."
+  },
+  "mutants": [
+    {
+      "id": "W7",
+      "baseline": "current",
+      "status": 1,
+      "tests": 826,
+      "pass": 816,
+      "fail": 10,
+      "skipped": 0,
+      "assertions": [
+        "B4_R8_STATE_EXHAUSTED_INTACT_CONSUMED",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_CONSUMED",
+        "B4_R8_STATE_EXHAUSTED_FORGED_PARTIAL_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_INTACT_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_FORGED_PARTIAL_CONSUMED",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_CONSUMED_READY",
+        "B4_R8_STATE_EXHAUSTED_FORGED_PARTIAL_CONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_FORGED_PARTIAL_CONSUMED_READY"
+      ],
+      "before_suite": {
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "97f66edb1d81c17f9321c5681b468276c9e23c464f1bbfd4c22a0a49a76f60ed",
+        "skip_names": []
+      }
+    },
+    {
+      "id": "W13",
+      "baseline": "current",
+      "status": 1,
+      "tests": 826,
+      "pass": 812,
+      "fail": 14,
+      "skipped": 0,
+      "assertions": [
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_ABSENT_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_INTACT_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_INTACT_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_TRUNCATED_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_FORGED_PARTIAL_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_FORGED_PARTIAL_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_ABSENT_UNCONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_TRUNCATED_UNCONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_UNCONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_FORGED_PARTIAL_UNCONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_FORGED_PARTIAL_CONSUMED_READY"
+      ],
+      "before_suite": {
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "cae6e122f731e2f3aba0bb99cbab3322b12be1d2697e6f20573597004ae0504c",
+        "skip_names": []
+      }
+    },
+    {
+      "id": "W1b",
+      "baseline": "current",
+      "status": 1,
+      "tests": 826,
+      "pass": 818,
+      "fail": 8,
+      "skipped": 0,
+      "assertions": [
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_UNCONSUMED",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_UNCONSUMED_READY",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_CONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_UNCONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED_READY"
+      ],
+      "before_suite": {
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "6322cb88338d12b2717740159243b84bba3b6b194c6ca9096b26f7231bba82a6",
+        "skip_names": []
+      }
+    },
+    {
+      "id": "W15",
+      "baseline": "current",
+      "status": 1,
+      "tests": 826,
+      "pass": 818,
+      "fail": 8,
+      "skipped": 0,
+      "assertions": [
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_UNCONSUMED",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_CONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_UNCONSUMED",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_UNCONSUMED_READY",
+        "B4_R8_STATE_EXHAUSTED_RECOVERED_CONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_UNCONSUMED_READY",
+        "B4_R8_STATE_SETTLEMENT_STARTED_SET_RECOVERED_CONSUMED_READY"
+      ],
+      "before_suite": {
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_sha256": "830bddc1517bcfba9e63cbf5535458158c357a6321686c84db23c2e6e2a050c2",
+        "skip_names": []
+      }
+    }
+  ],
+  "witness_snapshots": {
+    "W7": {
+      "candidate": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      }
+    },
+    "W13": {
+      "candidate": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      }
+    },
+    "W1b": {
+      "candidate": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      }
+    },
+    "W15": {
+      "candidate": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=false\n"
+        ],
+        "credential": false,
+        "lease": true,
+        "effects": 7,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      },
+      "mutant": {
+        "gates": [
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n",
+          "[Service]\nEnvironment=ENABLE_DISPATCH=true\n"
+        ],
+        "credential": true,
+        "lease": true,
+        "effects": 0,
+        "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+        "complete": false
+      }
+    }
+  },
+  "integrity": {
+    ".github/coordinator/service/shu71-production.mjs": {
+      "current_sha256": "b3d9182489eb56be276af744240713805ab9605df8ef30f1f76808263b3e2591",
+      "starting_sha256": "bd304b83b270478a33fe565f2be493384c4081226d1eb0bcd6600dfaed987091"
+    },
+    ".github/coordinator/service/shu71-journal.mjs": {
+      "current_sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0",
+      "starting_sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0"
+    },
+    ".github/coordinator/service/host-suite-contract.mjs": {
+      "current_sha256": "c66cc3c8f199ca249fcdca8c3e4c47c87fc9dbec16c0cef4eb47f7f47500f099",
+      "starting_sha256": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f"
+    },
+    ".github/workflows/ci.yml": {
+      "current_sha256": "138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46",
+      "starting_sha256": "2787dfaf14892ee12c662a13359f5439ff3182dd72c58c39a2df6cfbb30eda0c"
+    }
+  },
+  "unchanged_skip_names": true,
+  "integrity_note": "Current digests refreshed 2026-09-17 after merging 8a613c42d166. Starting digests and suite measurements are historical R9-pass evidence. B1 subsequently changed production; #138 was integrated at a1de27b. The complete host-suite-contract and ci.yml match origin/main; PERMITTED_SKIPS is unchanged.",
+  "measurement_scope": "Historical first local R9 pass; no untracked local artifact is cited as shipped evidence. Current FINAL response evidence is in SHU71-FINAL-VALIDATION.json.",
+  "limits": [
+    "B1 BLOCKED",
+    "B2/B4 source-level only",
+    "CI unverified",
+    "No live/host/independent verdict",
+    "No #138 convergence during the historical R9 pass; subsequently merged at a1de27b",
+    "Known ordered-forgery residual unchanged",
+    "Application suite and older exploratory mutation sweeps not rerun in R8"
+  ]
+}

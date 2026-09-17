@@ -13,6 +13,7 @@ import { baseBundlePath } from "./base-bundle.mjs";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
 const BINDINGS = ["receipt_version", "role", "runtime", "attempt_id", "issue_id", "authorization_ref", "requested_worker", "repo", "branch", "target_sha", "workspace_scope", "scope_phase", "scoped_base_sha"];
+BINDINGS.push("episode_id", "activation_digest");
 const SCOPED_IDENTITY_ENV = Object.freeze({
   GIT_AUTHOR_NAME: "StudentHub coordinator",
   GIT_AUTHOR_EMAIL: "coordinator@users.noreply.github.com",
