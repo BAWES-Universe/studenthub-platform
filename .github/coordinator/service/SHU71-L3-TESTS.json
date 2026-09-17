@@ -16,32 +16,32 @@
     "full_coordinator_umask": "0002"
   },
   "focused": {
-    "tests": 224,
-    "pass": 224,
+    "tests": 245,
+    "pass": 245,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r3-focused.log",
-    "log_sha256": "f1f5113a2d679490289718c3207807ce877c6b1e010c7eca1ddd10c1085c9d3e",
+    "log_path": "/tmp/l3-r4-results/focused-final.log",
+    "log_sha256": "67c01830bc53de63a25acc7a8ba8e7d921086f2de124d408331ca7d696de7368",
+    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
     "failures": [],
     "skip_names": [],
     "mutation_named_checks": {
-      "total": 87,
-      "pass": 87,
+      "total": 90,
+      "pass": 90,
       "fail": 0,
       "skipped": 0,
-      "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
+      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
     },
-    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
     "new_targeted_source_mutants": {
-      "total": 46,
-      "killed": 46,
+      "total": 49,
+      "killed": 49,
       "production": 11,
       "delivery": 17,
       "trust": 11,
-      "recovery": 7,
-      "added_since_r3": 4
+      "recovery": 10,
+      "added_since_r4": 3
     },
     "process_death_injections": {
       "forward": 240,
@@ -50,14 +50,15 @@
     }
   },
   "coordinator": {
-    "tests": 1715,
-    "pass": 1697,
+    "tests": 1736,
+    "pass": 1718,
     "fail": 0,
     "cancelled": 0,
     "skipped": 18,
     "todo": 0,
-    "log_path": "/tmp/l3-r3-coordinator.log",
-    "log_sha256": "36ddac198ee52a600e17ed587fde4d3ffe8b33b6bf2acff0e284ce369905bfc0",
+    "log_path": "/tmp/l3-r4-results/coordinator-final.log",
+    "log_sha256": "7612d9fc734347a1cadc01f44099a675b8fdea6ff8b4370c912e3751ae8af3ae",
+    "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
     "failures": [],
     "skip_names": [
       "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
@@ -80,13 +81,12 @@
       "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
     ],
     "mutation_named_checks": {
-      "total": 522,
-      "pass": 522,
+      "total": 525,
+      "pass": 525,
       "fail": 0,
       "skipped": 0,
-      "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
-    },
-    "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
+      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+    }
   },
   "reviewed_head_comparison": {
     "tests": 1644,
@@ -130,18 +130,12 @@
     "method": "Disposable local git clone with real .git; detached reviewed head, source permissions fixed before launch, SHU251_NO_SYSTEMD=1; no network"
   },
   "comparison": {
-    "against": "5e25c651254a72adbb46fa8f950df95248b640e9",
-    "new_tests": 16,
-    "additional_passes": 16,
+    "against": "e9a68c156a0b8631b314d8d14c626ba31014a882",
+    "new_tests": 21,
+    "additional_passes": 21,
     "new_failures": 0,
     "new_skips": 0,
-    "removed_skips": [],
-    "skip_names_identical": true,
-    "skip_classification": {
-      "contract_documented": 8,
-      "remaining_pre_existing_systemd_gate": 10
-    },
-    "method": "Current worktree result versus R3 independently reproduced same-worktree baseline; no new historical-head run claimed."
+    "removed_skips": []
   },
   "application": {
     "tests": 459,
@@ -150,8 +144,9 @@
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r3-application.log",
-    "log_sha256": "9e2510965d3e9c8f1243adb945b76e1c928ed7b946ae5f1c882100bf57077a83",
+    "log_path": "/tmp/l3-r4-results/application.log",
+    "log_sha256": "b4fb3e287714617de96150e62ed0de7563e230e2ea34a077510315b33cef970b",
+    "command": "SHU251_NO_SYSTEMD=1 npm test",
     "failures": [],
     "skip_names": [],
     "mutation_named_checks": {
@@ -159,9 +154,8 @@
       "pass": 30,
       "fail": 0,
       "skipped": 0,
-      "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
+      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
     },
-    "command": "SHU251_NO_SYSTEMD=1 npm test",
     "vitest_tests": 27,
     "vitest_pass": 27,
     "total_tests": 486,
@@ -502,8 +496,9 @@
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r3-rollback.log",
-    "log_sha256": "a29e0049ff9fbd29be01149ba5ff6f454e62f5f936fa195267504258901f940a",
+    "log_path": "/tmp/l3-r4-results/rollback.log",
+    "log_sha256": "7e1caa3d7ffd8bb80d348ab5087e27e01fa1d9bc6a3b72c49cf1bc4ab6c140b9",
+    "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
     "failures": [],
     "skip_names": [],
     "mutation_named_checks": {
@@ -511,9 +506,8 @@
       "pass": 1,
       "fail": 0,
       "skipped": 0,
-      "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
-    },
-    "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
+      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+    }
   },
   "r3_reviewed_head": "5e25c651254a72adbb46fa8f950df95248b640e9",
   "r3_prior_results": {
@@ -654,7 +648,7 @@
     "automatic_action": "expire",
     "maximum_reserved_attempts_per_activation": 32,
     "counter": "/srv/shu/state/shu71-evidence/<id>/automatic-teardown.json",
-    "reservation": "atomic file plus file and parent fsync before effects; interrupted persisted reservation consumes attempt",
+    "reservation": "Atomic file plus file/parent fsync before ordinary effects; counter fault independently attempts both disk gate disarms before refusal.",
     "journal_recovery_resets_budget": false,
     "exhaustion_code": "ACT_RETRY_BUDGET_EXHAUSTED",
     "unavailable_code": "ACT_RETRY_BUDGET_UNAVAILABLE",
@@ -662,21 +656,362 @@
     "ownership_retained_on_exhaustion": true,
     "completion_claimed_on_exhaustion": false,
     "manual_recovery": [
+      "run",
       "resume",
       "revoke"
     ],
-    "automatic_recovery_after_exhaustion": false,
+    "automatic_recovery_after_exhaustion": "Observation-only settlement of already-safe, durably cleaned episodes; no automatic repair.",
     "residual_cost": "Existing 1 Hz process wakes, refusal output and fixed-size journal verification/open fsync remain; system journal retention not bounded here. Cleanup effects and evidence-journal growth are capped under sustained drift.",
-    "disclosure": "SHU71-L3-CLOSURE.md: Response to R3; Retry cost, exhaustion and operator recovery"
+    "disclosure": "SHU71-L3-CLOSURE.md: Response to R3; Retry cost, exhaustion and operator recovery",
+    "settlement_budget": "One durably reserved settlement attempt; failed/interrupted persisted reservation requires explicit recovery.",
+    "nominal_grace_seconds": 32,
+    "possible_combined_wake_grace_seconds": 16,
+    "timing_basis": "Rendered timer/restart text; not a host scheduling measurement."
   },
   "genuine_assertion_baseline": {
-    "tests": 178,
-    "pass": 178,
+    "tests": 196,
+    "pass": 196,
     "fail": 0,
+    "cancelled": 0,
     "skipped": 0,
-    "log_path": "/tmp/l3-r3-genuine.log",
-    "log_sha256": "7c1ce1a2635a4bfc4eea34166a8eaae703d9fc781db4a713096d3765a170d515",
+    "todo": 0,
+    "log_path": "/tmp/l3-r4-results/genuine-final.log",
+    "log_sha256": "3268b9e7864f95fc367ad03e073e9c73b44ed29ec64eab165d03baaa8c44afb7",
     "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-    "scope": "All four targeted source mutation harness files excluded; new assertions are imported into the genuine trust suite."
+    "failures": [],
+    "skip_names": [],
+    "mutation_named_checks": {
+      "total": 41,
+      "pass": 41,
+      "fail": 0,
+      "skipped": 0,
+      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+    }
+  },
+  "r4_reviewed_head": "e9a68c156a0b8631b314d8d14c626ba31014a882",
+  "r4_prior_results": {
+    "focused": {
+      "tests": 224,
+      "pass": 224,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r3-focused.log",
+      "log_sha256": "f1f5113a2d679490289718c3207807ce877c6b1e010c7eca1ddd10c1085c9d3e",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 87,
+        "pass": 87,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
+      },
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+      "new_targeted_source_mutants": {
+        "total": 46,
+        "killed": 46,
+        "production": 11,
+        "delivery": 17,
+        "trust": 11,
+        "recovery": 7,
+        "added_since_r3": 4
+      },
+      "process_death_injections": {
+        "forward": 240,
+        "teardown": 272,
+        "total": 512
+      }
+    },
+    "coordinator": {
+      "tests": 1715,
+      "pass": 1697,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 18,
+      "todo": 0,
+      "log_path": "/tmp/l3-r3-coordinator.log",
+      "log_sha256": "36ddac198ee52a600e17ed587fde4d3ffe8b33b6bf2acff0e284ce369905bfc0",
+      "failures": [],
+      "skip_names": [
+        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      ],
+      "mutation_named_checks": {
+        "total": 522,
+        "pass": 522,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
+      },
+      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
+    },
+    "application": {
+      "tests": 459,
+      "pass": 459,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r3-application.log",
+      "log_sha256": "9e2510965d3e9c8f1243adb945b76e1c928ed7b946ae5f1c882100bf57077a83",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 30,
+        "pass": 30,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
+      },
+      "command": "SHU251_NO_SYSTEMD=1 npm test",
+      "vitest_tests": 27,
+      "vitest_pass": 27,
+      "total_tests": 486,
+      "standalone_mutation_kills": 85
+    },
+    "rollback_mutation": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "log_path": "/tmp/l3-r3-rollback.log",
+      "log_sha256": "a29e0049ff9fbd29be01149ba5ff6f454e62f5f936fa195267504258901f940a",
+      "failures": [],
+      "skip_names": [],
+      "mutation_named_checks": {
+        "total": 1,
+        "pass": 1,
+        "fail": 0,
+        "skipped": 0,
+        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
+      },
+      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
+    },
+    "genuine_assertion_baseline": {
+      "tests": 178,
+      "pass": 178,
+      "fail": 0,
+      "skipped": 0,
+      "log_path": "/tmp/l3-r3-genuine.log",
+      "log_sha256": "7c1ce1a2635a4bfc4eea34166a8eaae703d9fc781db4a713096d3765a170d515",
+      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+      "scope": "All four targeted source mutation harness files excluded; new assertions are imported into the genuine trust suite."
+    },
+    "replay_policy": {
+      "automatic_action": "expire",
+      "maximum_reserved_attempts_per_activation": 32,
+      "counter": "/srv/shu/state/shu71-evidence/<id>/automatic-teardown.json",
+      "reservation": "atomic file plus file and parent fsync before effects; interrupted persisted reservation consumes attempt",
+      "journal_recovery_resets_budget": false,
+      "exhaustion_code": "ACT_RETRY_BUDGET_EXHAUSTED",
+      "unavailable_code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+      "timer_retained_on_exhaustion": true,
+      "ownership_retained_on_exhaustion": true,
+      "completion_claimed_on_exhaustion": false,
+      "manual_recovery": [
+        "resume",
+        "revoke"
+      ],
+      "automatic_recovery_after_exhaustion": false,
+      "residual_cost": "Existing 1 Hz process wakes, refusal output and fixed-size journal verification/open fsync remain; system journal retention not bounded here. Cleanup effects and evidence-journal growth are capped under sustained drift.",
+      "disclosure": "SHU71-L3-CLOSURE.md: Response to R3; Retry cost, exhaustion and operator recovery"
+    }
+  },
+  "r4_response": {
+    "Q1": "Fixed at source level: independent disk gate disarm on counter refusal, with separate gate failures surfaced.",
+    "Q1_differential": {
+      "parent": "5e25c65: four poisoned-counter wakes, DISARMED, REVOKED, lease released",
+      "blocked": "e9a68c1: four identical wakes, ARMED, ACT_RETRY_BUDGET_UNAVAILABLE, zero effects",
+      "candidate": "four identical wakes, both gates DISARMED, ACT_RETRY_BUDGET_UNAVAILABLE, lease retained pending explicit completion",
+      "genuine_test": "Q1 identical counter fault at parent, blocked head and candidate",
+      "before_log": "/tmp/l3-r4-results/before.jsonl",
+      "after_log": "/tmp/l3-r4-results/after.jsonl"
+    },
+    "Q2": "About 32 seconds nominal, possibly about 16 seconds with independent restart/timer wakes, disclosed explicitly.",
+    "Q3": "PARTIAL: automatic safe-episode settlement and lease release restored; parent-style repair after exhaustion is not restored because it conflicts with preserved no-repair contract. Gate remaining armed still requires explicit recovery.",
+    "Q4": "Existing unavailable code preserved; budget_error distinguishes invalid from storage/custody failure.",
+    "Q5": "Counter preservation asserted after failed run/resume/revoke and successful recovery; MX3 killed.",
+    "Q6": "run recovery and intact-journal scope clarified; counter remains outside manifest/archive digest.",
+    "independent_mutants": [
+      {
+        "id": "MX-P1",
+        "status": 1,
+        "assertions": [
+          "B4_RETIREMENT_REOBSERVATION"
+        ],
+        "tests": 56,
+        "pass": 55,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX1",
+        "status": 1,
+        "assertions": [
+          "B4_AUTOMATIC_REPLAY_BOUNDED",
+          "B4_RECOVERY_NO_BUDGET_RESET",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED"
+        ],
+        "tests": 56,
+        "pass": 47,
+        "fail": 9,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX2",
+        "status": 1,
+        "assertions": [
+          "B4_BUDGET_RESERVATION_INTERRUPTED",
+          "B4_COUNTER_REFUSAL",
+          "B4_MANUAL_BUDGET_RETAINED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED"
+        ],
+        "tests": 56,
+        "pass": 44,
+        "fail": 12,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX5",
+        "status": 1,
+        "assertions": [
+          "B4_BUDGET_RESERVATION_INTERRUPTED",
+          "B4_INVALID_BUDGET_REFUSED",
+          "B4_COUNTER_REFUSAL",
+          "B4_MANUAL_BUDGET_RETAINED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED"
+        ],
+        "tests": 56,
+        "pass": 31,
+        "fail": 25,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX6",
+        "status": 1,
+        "assertions": [
+          "B4_RECOVERY_NO_BUDGET_RESET"
+        ],
+        "tests": 56,
+        "pass": 55,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX7",
+        "status": 1,
+        "assertions": [
+          "B4_INVALID_BUDGET_REFUSED",
+          "B4_COUNTER_REFUSAL"
+        ],
+        "tests": 56,
+        "pass": 54,
+        "fail": 2,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX10",
+        "status": 1,
+        "assertions": [
+          "B4_ACTIVATION_DRIFT_RECOVERED"
+        ],
+        "tests": 56,
+        "pass": 53,
+        "fail": 3,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX11",
+        "status": 1,
+        "assertions": [
+          "B4_RESTORES_ONCE_ONLY"
+        ],
+        "tests": 56,
+        "pass": 55,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX12",
+        "status": 1,
+        "assertions": [
+          "B4_ARCHIVE_ONCE_ONLY"
+        ],
+        "tests": 56,
+        "pass": 55,
+        "fail": 1,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX3",
+        "status": 1,
+        "assertions": [
+          "B4_MANUAL_BUDGET_RETAINED"
+        ],
+        "tests": 56,
+        "pass": 53,
+        "fail": 3,
+        "skipped": 0,
+        "expected": "killed"
+      },
+      {
+        "id": "MX13",
+        "status": 0,
+        "assertions": [],
+        "tests": 56,
+        "pass": 56,
+        "fail": 0,
+        "skipped": 0,
+        "expected": "survived"
+      },
+      {
+        "id": "MX14",
+        "status": 0,
+        "assertions": [],
+        "tests": 56,
+        "pass": 56,
+        "fail": 0,
+        "skipped": 0,
+        "expected": "survived"
+      }
+    ],
+    "independent_mutant_scope": "Genuine 56-test trust suite only, no mutation harnesses; 10 killed, 2 disclosed survivors MX13/MX14.",
+    "hardlink_supplement": "10/10 Q1 fault tests passed after replacing simulated nlink with a real hard link inside disposable fixture; /tmp/l3-r4-results/hardlink-final.log",
+    "constraints": "No host access, push, PR modification, merge, GitHub/Linear comment or existing assertion/guard/error-code/skip allowance weakening.",
+    "unproved": [
+      "Parent-style automatic repair after exhaustion",
+      "Real second signed activation",
+      "All host/systemd/effective-drop-in/disk-durability facts",
+      "Live production worker composition and concurrent progression"
+    ]
   }
 }

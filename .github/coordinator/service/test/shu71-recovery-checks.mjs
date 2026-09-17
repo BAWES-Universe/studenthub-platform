@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 export async function gateRecoveryCheck(createProduction, h, retry = 'resume') {
   const create = () => createProduction(h.id, h.boundary);
   await create().execute('run');
@@ -153,4 +154,80 @@ export async function boundedReplayCheck(createProduction, h, retry = 'resume') 
   assert.equal(h.read(gate), '[Service]\nEnvironment=ENABLE_DISPATCH=false\n');
   assert.ok(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'));
   assert.ok(h.events.some(e => e.includes('disable --now shu71-expiry-')));
+}
+
+export async function counterFaultCheck(createProduction, h, fault = 'mode') {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
+  const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
+  if (fault === 'mode') h.write(budget, '{"attempts":0}', 0o644);
+  else if (fault === 'write') h.faults.before = e => e === `write:${budget}.pending`;
+  else if (fault === 'fsync') h.faults.before = e => e === `fsync:${budget}.pending`;
+  else if (fault === 'rename') h.faults.before = e => e === `rename:${budget}`;
+  else if (fault === 'nlink') {
+    h.write(budget, '{"attempts":0}');
+    fs.linkSync(h.root + budget, h.root + budget + '.link');
+    assert.equal(fs.statSync(h.root + budget).nlink, 2, 'B4_COUNTER_REAL_HARDLINK');
+  } else h.write(budget, fault);
+  for (let n = 0; n < 4; n++) {
+    const result = await create().execute('expire');
+    assert.equal(result.code, 'ACT_RETRY_BUDGET_UNAVAILABLE', 'B4_COUNTER_REFUSAL');
+    for (const service of ['shu-coordinator', 'shu-supervisor'])
+      assert.equal(h.read(`/etc/systemd/system/${service}.service.d/90-shu71.conf`), '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'B4_COUNTER_FAULT_DISARMS');
+    incomplete(h, 'B4_COUNTER');
+  }
+}
+
+export async function manualBudgetCheck(createProduction, h, action = 'revoke') {
+  const create = () => createProduction(h.id, h.boundary);
+  await create().execute('run'); h.expire(); const clear = sustainGateDrift(h);
+  const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
+  for (let n = 0; n < 10; n++) assert.equal((await create().execute('expire')).code, 'ACT_CLEANUP_FAILED');
+  for (let n = 0; n < 3; n++) {
+    assert.equal((await create().execute(action)).code, 'ACT_CLEANUP_FAILED');
+    assert.equal(h.exists(budget), true, 'B4_MANUAL_BUDGET_RETAINED');
+    assert.equal(JSON.parse(h.read(budget)).attempts, 10, 'B4_MANUAL_BUDGET_UNCHANGED');
+  }
+  for (let n = 0; n < 22; n++) assert.equal((await create().execute('expire')).code, 'ACT_CLEANUP_FAILED');
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
+  clear(); assert.equal((await create().execute(action)).state, 'REVOKED');
+  assert.equal(JSON.parse(h.read(budget)).attempts, 32, 'B4_MANUAL_BUDGET_UNCHANGED');
+}
+
+export async function exhaustedSettlementCheck(createProduction, h, interrupt = false) {
+  const create = () => createProduction(h.id, h.boundary);
+  await create().execute('run'); h.expire(); const clear = sustainGateDrift(h);
+  for (let n = 0; n < 32; n++) assert.equal((await create().execute('expire')).code, 'ACT_CLEANUP_FAILED');
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
+  clear();
+  // Clearing the writer alone does not restore the file: this must still refuse.
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
+  h.write(gate, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 0o644);
+  h.active.set('shu-supervisor.service', 'active');
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED', 'B4_SETTLEMENT_SERVICE_GUARD');
+  assert.equal(h.exists(lease), true);
+  h.active.set('shu-supervisor.service', 'inactive');
+  h.write(activation, 'drift', 0o640);
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED', 'B4_SETTLEMENT_ACTIVATION_GUARD');
+  assert.equal(h.exists(lease), true);
+  h.boundary.fs.unlinkSync(activation);
+  if (interrupt) h.faults.before = e => e.includes(':disable --now shu71-expiry-');
+  const start = h.events.length, result = await create().execute('expire');
+  if (interrupt) {
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED');
+    const rows = h.journal().length;
+    for (let n = 0; n < 40; n++) assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
+    assert.equal(h.journal().length, rows, 'B4_SETTLEMENT_BOUNDED');
+    h.faults.before = undefined;
+    assert.equal((await create().execute('resume')).state, 'REVOKED');
+  } else {
+    assert.equal(result.state, 'REVOKED', 'B4_EXHAUSTED_SELF_HEAL');
+    assert.equal(h.events.slice(start).some(e => /^api:|:stop |:kill |:daemon-reload/.test(e)), false, 'B4_SETTLEMENT_NO_REPAIR');
+  }
+  assert.equal(h.exists(lease), false, 'B4_EXHAUSTED_LEASE_RELEASED');
+  assert.ok(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'));
+  h.write(lease, JSON.stringify({activation_id: 'successor'}));
+  h.write(activation, 'successor');
+  assert.equal((await create().execute('expire')).receipt_scope, 'retired_episode', 'B4_SETTLED_SUCCESSOR_PROTECTED');
+  assert.equal(h.read(activation), 'successor');
 }

@@ -260,8 +260,10 @@ resetting or deleting the counter. Do not delete custody, ownership or budget
 files to obtain a fresh automatic allowance.
 
 Unreadable, malformed or non-durable budget storage returns
-`ACT_RETRY_BUDGET_UNAVAILABLE` before automatic cleanup effects; explicit
-resume/revoke remain available using the existing independent cleanup path.
+`ACT_RETRY_BUDGET_UNAVAILABLE`; R4 now attempts both disk gate disarms
+independently before returning that refusal, even if counter storage or the
+journal is unavailable. A separate gate-write fault is surfaced in `failures`.
+Explicit resume/revoke remain available using the existing independent cleanup path.
 A reservation interrupted after persistence consumes an attempt, conservatively.
 The cap is not a time guarantee: crashes can consume attempts without completing
 any cleanup. The retained expiry timer and service restart policy still produce
@@ -280,3 +282,75 @@ fallback survivors are not claimed killed or equivalent by this correction.
 F6/F7, B1 provisioning/concurrency, broker whole-EnvironmentFile scope and all
 host/live-system proof obligations remain open. Exact current suite counts and
 mutation results are recorded in SHU71-L3-TESTS.json.
+
+
+### Response to R4 (repository-only)
+
+The eleven confirmed retry/exhaustion statements above are retained. Their
+no-completion/no-release statements describe the exhausted, physically drifting
+case. No automatic **repair** is introduced after the 32-attempt budget.
+
+**Q1 differential:** the genuine assertion suite executes the same mode-0644
+counter input four times against repository objects at parent `5e25c65`, blocked
+head `e9a68c1`, and this candidate. The parent disarms and completes; the blocked
+head returns ACT_RETRY_BUDGET_UNAVAILABLE with zero effects and an armed gate on
+every wake; the candidate disarms both disk gates and returns that refusal.
+Counter failure now has an independent, non-journalled gate-disarm fallback.
+Ordinary cleanup retains durable reservation before effects. Tests also cover
+hard-link custody, malformed/range-invalid counters, and counter write, fsync
+and rename failures. A simultaneous gate-write failure is separately surfaced,
+and does not skip the other gate. Disk disarm does not establish systemd's
+effective value: the pre-existing R1 host/effective-drop-in limitation remains.
+A persistent counter fault can repeat these narrow gate writes; the zero-write
+exhaustion claim concerns a valid exhausted counter, not broken counter storage.
+
+**Q2:** the rendered `OnUnitActiveSec=1s` / `AccuracySec=1s` timer implies a
+nominal grace of **about 32 seconds** for 32 attempts. Its accompanying
+`Restart=on-failure` / `RestartSec=1s` loop can bring that to **about 16 seconds**
+if the two wake sources contribute independently. These are artifact-derived
+estimates, not measured host scheduling guarantees. A roughly forty-second drift
+can outlast the entire automatic repair allowance. The failing restart loop
+also contributes process wakes and system-journal churn after exhaustion.
+
+**Q3:** automatic observation can now settle an exhausted episode after physical
+safety has been restored, provided every non-observational cleanup step already
+has a durable DONE row. It checks gate files before commands, observes activation
+absence and stopped services, reserves one durable settlement attempt, repeats
+the existing final observation/retirement guards, then records completion and
+releases ownership. It performs no gate, worker, service, restore or archive
+repair. An armed gate still yields zero commands/writes and unchanged evidence.
+A failed/interrupted reserved settlement requires explicit recovery; this does
+not open another unbounded effect/journal replay. Observational service queries
+may recur while gates are disarmed but a service remains active. Storage failures
+before settlement reservation persistence can retry that reservation write.
+
+This restores automatic lease release for an already-safe exhausted episode;
+it does **not** restore the parent's ability to repair an armed gate after the
+budget is spent. Merely stopping a drift writer can leave the gate armed and
+still block all successor activations until explicit recovery. Restoring that
+broader self-healing property conflicts with the preserved no-repair exhaustion
+contract, so it is not claimed here. Successor protection is exercised with a
+foreign lease after settlement; a genuine second signed activation remains
+unproved. B1 remains BLOCKED; B2/B4 remain source-level only; overall BLOCK.
+
+**Q4–Q6:** the existing unavailable refusal code is preserved; `budget_error`
+now distinguishes ACT_RETRY_BUDGET_INVALID from storage/custody failure. Genuine
+tests read the counter after three failed explicit run/resume/revoke attempts
+and prove only 22 automatic attempts remain after ten spent attempts. The
+counter-deleting mutant is killed by B4_MANUAL_BUDGET_RETAINED. `run <id>` is
+also an explicit recovery path, in addition to the two commands named above.
+B4_BUDGET_NOT_SPENT_BEFORE_EXPIRY applies to the intact-journal, not-yet-started
+teardown case; damaged-journal expiry still tears down early, fail-safe. The
+counter remains outside the archive/manifest digest; no bundled retry-count
+attestation is claimed. No existing assertion, guard, error code or skip
+allowance was weakened.
+
+R4-response validation: focused **245/245**, genuine assertions **196/196**,
+coordinator **1736 total / 1718 pass / 0 fail / 18 unchanged skips**, application
+**486/486** (459 Node + 27 Vitest), **85/85** standalone application kills,
+**49/49** targeted source mutants, **512** process-death injections, and the
+un-gated rollback mutant **1/1**. Mutation-named TAP checks: focused **90**,
+coordinator **525**, all passing. The standalone independent-site recheck runs
+56 genuine trust tests per mutant: **10 killed / 2 surviving** (MX13/MX14,
+worker/reload, unchanged and not claimed equivalent). Logs and hashes are in
+SHU71-L3-TESTS.json; raw local logs are under `/tmp/l3-r4-results/`.

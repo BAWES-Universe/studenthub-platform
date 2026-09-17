@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { createShu71Production } from '../shu71-production.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
-import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck } from './shu71-recovery-checks.mjs';
+import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck } from './shu71-recovery-checks.mjs';
 const keys = ephemeralPublicSource();
 for (const [name, before, after, check, target = 'journal', assertion = /B4_/] of [
   ['gate DONE suppresses repair', "['gate', 'activation', 'workers', 'reload', 'evidence-broker']", "['activation', 'workers', 'reload', 'evidence-broker']", gateRecoveryCheck],
@@ -16,6 +16,9 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   ['P1 retirement re-observation removed', '        observeTeardown();\n        command', '        command', retirementWindowCheck, 'production', /B4_RETIREMENT_REOBSERVATION/],
   ['P4 activation DONE suppresses repair', "'gate', 'activation', 'workers'", "'gate', 'workers'", activationRecoveryCheck, 'journal', /B4_ACTIVATION_DRIFT_RECOVERED/],
   ['P5 all effects repeat', 'effect, repeat);', 'effect, true);', onceOnlyRestoreCheck, 'journal', /B4_RESTORES_ONCE_ONLY/],
+  ['Q1 counter fault skips disarm', 'for (const file of GATES) {\n          try', 'for (const file of []) {\n          try', counterFaultCheck, 'production', /B4_COUNTER_FAULT_DISARMS/],
+  ['Q3 safe exhausted lease never settles', 'if (exhausted) {', "if (exhausted) return { code: 'ACT_RETRY_BUDGET_EXHAUSTED' };\n    if (exhausted) {", exhaustedSettlementCheck, 'production', /B4_EXHAUSTED_SELF_HEAL/],
+  ['Q5 explicit cleanup resets counter', 'let exhausted = false;', "if (!automatic) remove(`${dir}/automatic-teardown.json`);\n    let exhausted = false;", manualBudgetCheck, 'production', /B4_MANUAL_BUDGET_RETAINED/],
   ['P3 automatic budget removed', 'if (attempts >= 32)', 'if (false)', boundedReplayCheck, 'production', /B4_AUTOMATIC_REPLAY_BOUNDED/],
 ]) test(`recovery mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));
