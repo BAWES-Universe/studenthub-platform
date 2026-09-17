@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // One typed composition of the existing signed, journaled lifecycle. No hooks,
 // caller commands, provider selection or unsigned fallback in the CLI.
-import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { drive, defaultIO, canonical, hash, refuse, approve } from './phase-a-driver.mjs';
@@ -48,7 +47,7 @@ export async function main(argv = process.argv.slice(2)) {
   const [action, file, ...flags] = argv;
   if (!path.isAbsolute(file ?? '') || ![0, 3].includes(flags.length)
     || flags.length && (flags[0] !== '--execute' || flags[1] !== '--approved-host-mutation' || !/^[a-f0-9]{40}$/.test(flags[2]))) refuse('CLOSURE_SERVICE_PLANE_USAGE');
-  const spec = JSON.parse(fs.readFileSync(file));
+  const spec = JSON.parse(defaultIO.read(file));
   return servicePlane(action, spec, { execute: flags.length === 3, approvedHostMutation: flags[2], env: process.env });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { servicePlane } from '../service-plane.mjs';
+import { servicePlane, main } from '../service-plane.mjs';
 import { drive } from '../phase-a-driver.mjs';
 import { productionFixture } from './production-fixture.mjs';
 const options = f => ({ execute: true, approvedHostMutation: f.spec.window.approved_sha, env: { SHU251_HOST_MUTATION_APPROVED: 'true' } });
@@ -16,6 +16,10 @@ function ioFor(f) {
 test('CLOSURE_SERVICE_PLANE complete install start readiness rollback', async t => {
   const f = productionFixture(t, { operations: ['pin', 'install', 'start', 'readiness'] });
   const before = f.provider.snapshot(), io = ioFor(f);
+  const fs = await import('node:fs');
+  const input = `${f.root}/driver.json`, link = `${f.root}/driver-link.json`;
+  fs.writeFileSync(input, JSON.stringify(f.spec)); fs.symlinkSync(input, link);
+  await assert.rejects(() => main(['start', link]), { code: 'SHU251_INPUT_FILE' }, 'CLOSURE_DRIVER_INPUT_CUSTODY');
   const plan = await servicePlane('start', f.spec, {}, io);
   assert.equal(plan.acceptance, false, 'CLOSURE_DRY_RUN_NOT_ACCEPTANCE');
   const result = await servicePlane('start', f.spec, options(f), io);

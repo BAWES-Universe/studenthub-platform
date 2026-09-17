@@ -13,7 +13,8 @@ const same = (a, b) => canonicalBytes(a, false).equals(canonicalBytes(b, false))
 export function composeApproval({ pkg, revision, activationId, checkout, tree, binding, anchor, publicKeyPem }) {
   need(pkg?.coordinator_revision === revision && pkg?.activation?.coordinator_revision === revision
     && binding?.approvedExecutionRevision === revision, 'CLOSURE_APPROVAL_STALE_REVISION');
-  need(pkg?.activation_id === activationId && pkg?.activation?.activation_id === activationId,
+  need(/^[A-Za-z0-9_-]{8,64}$/.test(activationId) && activationId !== 'shu71abproof0007'
+    && pkg?.activation_id === activationId && pkg?.activation?.activation_id === activationId,
     'CLOSURE_APPROVAL_ACTIVATION');
   need(Array.isArray(pkg.fixtures) && pkg.fixtures.length === 2
     && same(pkg.fixtures.map(f => f.issue_id).sort(), ['SHU-140', 'SHU-254']), 'CLOSURE_APPROVAL_MISSING_FIXTURE');
@@ -28,6 +29,9 @@ export function composeApproval({ pkg, revision, activationId, checkout, tree, b
     phase: 'revocation', now: new Date(pkg.created_at), issues: pkg.fixtures });
   need(validation.ok || (pkg.signature === '' && pkg.activation.signature === '' && validation.code === 'ACT_FORGED_ENVELOPE'),
     validation.code ?? 'CLOSURE_APPROVAL_PACKAGE');
+  const episode = `/srv/shu/state/shu71-evidence/${activationId}`;
+  need(pkg.evidence.journal_path === `${episode}/journal.jsonl` && pkg.evidence.archive_path === `${episode}/activation.json`,
+    'CLOSURE_APPROVAL_EVIDENCE');
   const unsigned = structuredClone(pkg); unsigned.signature = ''; unsigned.activation.signature = '';
   const payload = { kind: 'shu71-production-v1', checkout, tree, pkg: unsigned, binding: structuredClone(binding) };
   const bytes = canonicalBytes(payload, false);

@@ -32,6 +32,11 @@ function controls(module = api) {
   assert.throws(() => module.composeApproval({ ...input, revision: 'f'.repeat(40) }), { code: 'CLOSURE_APPROVAL_STALE_REVISION' }, 'CLOSURE_STALE_REVISION');
   const missing = structuredClone(input); missing.pkg.fixtures.pop();
   assert.throws(() => module.composeApproval(missing), { code: 'CLOSURE_APPROVAL_MISSING_FIXTURE' }, 'CLOSURE_MISSING_FIXTURE');
+  const retired = structuredClone(input); retired.activationId = 'shu71abproof0007';
+  retired.pkg.activation_id = retired.activationId; retired.pkg.activation.activation_id = retired.activationId;
+  assert.throws(() => module.composeApproval(retired), { code: 'CLOSURE_APPROVAL_ACTIVATION' }, 'CLOSURE_RETIRED_ACTIVATION');
+  const paths = structuredClone(unsigned); paths.pkg.evidence.journal_path += '.foreign';
+  assert.throws(() => module.composeApproval(paths), { code: 'CLOSURE_APPROVAL_EVIDENCE' }, 'CLOSURE_EXACT_PRODUCTION_PATHS');
   return expected;
 }
 test('CLOSURE_APPROVAL deterministic canonical artifact and named refusals', t => {
