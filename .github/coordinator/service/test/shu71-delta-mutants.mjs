@@ -17,8 +17,13 @@ export const deltaMutants = [
   { id: 'B4', bypass: `typeof ${read}.settlement_started === 'string'`, plant: counter({ settlement_started: 'yes' }) },
   { id: 'C1', bypass: 'b.now() - Date.parse(spec.pkg.expires_at) > 86400000 && b.now() - Date.parse(spec.pkg.expires_at) < 30 * 86400000', plant: clockSweep[1] },
   { id: 'C2', bypass: 'b.now() - Date.parse(spec.pkg.expires_at) > 400 * 86400000', plant: clockSweep.at(-1) },
+  { id: 'X1', bypass: "JSON.parse(privateRead(dir + '/automatic-teardown.json')).note === 'operator-touched'", plant: counter({ note: 'operator-touched' }) },
+  { id: 'X3', bypass: "(({frozen}) => frozen === true)(JSON.parse(privateRead(dir + '/automatic-teardown.json')))", plant: counter({ frozen: true }) },
+  { id: 'X5', bypass: `privateRead(dir + '/automatic-teardown.json').includes('"note"')`, plant: counter({ note: 'operator-touched' }) },
+  { id: 'X6', bypass: 'privateRead(`${dir}/automatic-teardown.json`).includes(\'"note"\')', plant: counter({ note: 'operator-touched' }) },
+  { id: 'X7', bypass: '((s) => JSON.parse(s).frozen === true)(privateRead(`${dir}/automatic-teardown.json`))', plant: counter({ frozen: true }) },
 ];
-export const deltaKiller = m => m.id.startsWith('B') ? 'SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY'
+export const deltaKiller = m => (m.id.startsWith('B') || m.id.startsWith('X')) ? 'SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY'
   : m.id.startsWith('C') || m.id === 'N2' ? 'SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK'
-  : m.id === 'N3' ? 'SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY'
+  : m.id === 'N3' ? 'SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY'
   : 'B4_EXHAUSTED_IRRELEVANT_NON_RESERVATION_ROWS';

@@ -872,7 +872,7 @@
     "pr_changes": false,
     "github_or_linear_comments": false,
     "merge": true,
-    "new_head_ci_status": "GREEN at ef8729347f9a869c705de03defec7bf4d8350886: delta verifier recorded 4 successful workflow runs and 11 check runs, zero failures. This repository-only revision is not pushed; no CI claim for the new working tree.",
+    "new_head_ci_status": "This file makes no CI claim for its containing revision. CI status is recorded separately at publication.",
     "production_modules_note": "B1 commit 007b1a8 changed units.mjs and shu71-production.mjs. The 2026-09-17 FINAL response changes tests and documentation only after merging main.",
     "merge_scope": "Local base-update merge of origin/main only; no PR merge or remote action.",
     "permitted_skips_sha256_scope": "SHA-256 of the complete host-suite-contract.mjs at merged main 8a613c42d166, not of the PERMITTED_SKIPS block alone."
@@ -887,7 +887,7 @@
     "Missing reservation evidence, including legacy exhaustion, takes narrow safety fallback and requires explicit recovery; narrow fallback writes may recur.",
     "B1 BLOCKED; B2/B4 source-level only; overall execution BLOCK.",
     "Git provenance cannot be established in shallow CI. The text guard is only a diagnostic aid; executed historical control semantics tests are the load-bearing backstop, not a provenance proof.",
-    "No current-head CI claim."
+    "CI status for the published revision is recorded separately at publication, not in this file."
   ],
   "tested_changed_sources": {
     ".github/coordinator/service/test/shu71-history.mjs": "c2b44678203b5ac6d771caffaf7f674a6f52effaf7faed4504783989989ca92d",

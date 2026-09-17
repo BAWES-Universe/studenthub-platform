@@ -8,8 +8,15 @@ export function exhaustedControl(source = productionSource()) {
   const prefix = body.slice(0, body.indexOf('const effects = ['));
   assert.ok(prefix.includes('const reservations ='), 'SHU71_CONTROL_PROPERTY_EXHAUSTED_REGION');
   assert.ok(!/b\s*\.\s*now\s*\(/.test(prefix), 'SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK');
-  const reads = [...prefix.matchAll(/JSON\.parse\(privateRead\(`\$\{dir\}\/automatic-teardown\.json`\)\)([^;\n]*)/g)];
-  assert.deepEqual(reads.map(m => m[1].trim()), ['.attempts'], 'SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_ATTEMPTS_ONLY');
+  const name = 'SHU71_CONTROL_PROPERTY_EXHAUSTED_COUNTER_CANONICAL_READ_ATTEMPTS_ONLY';
+  // The prefix also contains this one reservation write. Pin it exactly before
+  // excluding it; every other occurrence of the filename is inspected as a read.
+  const write = 'else atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: attempts + 1 }));';
+  assert.equal(prefix.split(write).length, 2, name);
+  const reads = prefix.replace(write, '');
+  assert.equal([...reads.matchAll(/automatic-teardown\.json/g)].length, 1, name);
+  const line = reads.split('\n').find(line => line.includes('automatic-teardown.json'));
+  assert.equal(line?.trim(), 'try { attempts = JSON.parse(privateRead(`${dir}/automatic-teardown.json`)).attempts; }', name);
 }
 export function completionOrdering(source = productionSource()) {
   const start = source.indexOf("if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {");

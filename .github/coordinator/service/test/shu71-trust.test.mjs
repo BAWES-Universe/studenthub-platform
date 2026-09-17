@@ -237,7 +237,7 @@ for (const variant of exhaustedVariants) test(`exhausted invariant: ${variant.ax
 
 import { exhaustedControl, completionOrdering, inventoryGuard } from './shu71-delta-properties.mjs';
 import { journalInventory, appendReal } from './shu71-exhausted-invariants.mjs';
-test('SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK and COUNTER_ATTEMPTS_ONLY', () => exhaustedControl());
+test('SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK and COUNTER_CANONICAL_READ_ATTEMPTS_ONLY', () => exhaustedControl());
 test('SHU71_CONTROL_PROPERTY_COMPLETION_BEFORE_EXHAUSTED', () => completionOrdering());
 test('SHU71_CONTROL_PROPERTY_JOURNAL_APPEND_INVENTORY', () => inventoryGuard(journalInventory));
 for (const journal of ['intact', 'recovered']) test(`B4_TEARDOWN_COMPLETE_LEGITIMATE_TERMINAL_${journal}`, async t => {
