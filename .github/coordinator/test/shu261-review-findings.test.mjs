@@ -137,39 +137,10 @@ test('SHU261_NO_SETENV_POLICY', (t) => {
   assert.deepEqual(keep, ['CLAUDE_CODE_OAUTH_TOKEN'], 'SHU261_OAUTH_ENV_KEEP: command-specific env_keep must preserve only OAuth');
 });
 
-test('SHU261_NO_SETENV_NAMESPACE_STARTUP', (t) => {
-  // Probe a known-good command separately; wrapper failures must never skip.
-  const probe = spawnSync('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/true'],
-    { env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' }, encoding: 'utf8' });
-  assert.ifError(probe.error);
-  if (probe.status === 1 && probe.signal === null &&
-      /^unshare: (?:unshare failed|write failed \/proc\/self\/uid_map): Operation not permitted$/.test(probe.stderr.trim())) {
-    t.skip(`requires unprivileged user namespaces (unshare --user --map-root-user): ${probe.stderr.trim()}`);
-    return;
-  }
-  assert.equal(probe.status, 0, `SHU261_NAMESPACE_CAPABILITY_PROBE: ${probe.stderr}`);
-  const { root, setenv, keep } = parsedReviewerPolicy(t);
-  const marker = path.join(root, 'startup');
-  const bashEnv = path.join(root, 'bash-env');
-  fs.writeFileSync(bashEnv, `printf '%s' "$(id -u):$CLAUDE_CODE_OAUTH_TOKEN" > '${marker}'\n`);
-  // Model sudo's environment admission using its real parsed policy, then run
-  // the wrapper as namespace root. Empty argv exits before locks, ACLs, /srv
-  // access, or systemd. The separate direct-exec test exercises its shebang.
-  const supplied = { BASH_ENV: bashEnv, CLAUDE_CODE_OAUTH_TOKEN: 'local-oauth-canary' };
-  const env = { PATH: root };
-  for (const [key, value] of Object.entries(supplied)) if (setenv || keep.includes(key)) env[key] = value;
-  const wrapper = new URL('../reviewer-sandbox.sh', import.meta.url).pathname;
-  const result = spawnSync('/usr/bin/unshare', ['--user', '--map-root-user', '/bin/bash', wrapper], { env, encoding: 'utf8' });
-  assert.ifError(result.error);
-  assert.equal(result.status, 64, `SHU261_NAMESPACE_STARTUP: wrapper must reject missing arguments: ${result.stderr}`);
-  const observed = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null;
-  console.log(`parsed_setenv=${setenv} namespace_root_startup=${observed} oauth_preserved=${env.CLAUDE_CODE_OAUTH_TOKEN === supplied.CLAUDE_CODE_OAUTH_TOKEN}`);
-  assert.equal(setenv, false, 'SHU261_NO_SETENV: sudo policy must reject caller-selected environment values');
-  assert.equal(observed, null, 'SHU261_NO_SETENV: uncontrolled BASH_ENV must not execute in privileged wrapper startup');
-  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, supplied.CLAUDE_CODE_OAUTH_TOKEN, 'SHU261_OAUTH_ENV_KEEP: command-specific env_keep must preserve OAuth');
-  assert.deepEqual(keep, ['CLAUDE_CODE_OAUTH_TOKEN']);
-});
-
+// Option A: the former namespace-root startup technique is replaced by
+// SHU261_NO_SETENV_POLICY above, SHU261 wrapper contract, and
+// SHU261 root wrapper startup ignores PATH and BASH_ENV before parsing in
+// shu261-reviewer-isolation.test.mjs. The real sudo/EUID-0 proof belongs to M3.
 
 test('SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu261-caller-'));

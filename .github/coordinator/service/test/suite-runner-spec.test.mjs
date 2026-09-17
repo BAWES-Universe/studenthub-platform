@@ -22,10 +22,12 @@ function boundary(change = {}) {
       else if (args.includes('HEAD^{tree}')) stdout = spec.tree;
       else if (args.includes('status')) stdout = change.dirty ?? '';
       else if (args.includes('ls-tree')) stdout = files.join('\n');
-      else if (args.includes('show')) stdout = JSON.stringify(change.inventory ?? { version: 'shu251-suite-inventory-v1', files, names: ['one', 'two'], requirements: ['one', 'two'].map(name => ({ name, capabilities: [] })) });
+      else if (args.includes('show')) stdout = args.at(-1).endsWith(runner.INVENTORY_PATH)
+        ? JSON.stringify(change.inventory ?? { version: 'shu251-suite-inventory-v1', files, names: ['one', 'two'], requirements: ['one', 'two'].map(name => ({ name, capabilities: [] })) }) : '1\n';
       return { status: 0, stdout };
     },
-    fs: { lstatSync: () => ({ uid: 1234, gid: 1234, mode: 0o40755, isDirectory: () => true, isSymbolicLink: () => false }), readFileSync: () => '1\n' },
+    fs: { lstatSync: () => ({ uid: 1234, gid: 1234, mode: 0o40755, isDirectory: () => true, isFile: () => true, isSymbolicLink: () => false }),
+      realpathSync: file => file, readFileSync: () => '1\n' },
   };
   return { io, calls };
 }
@@ -34,6 +36,19 @@ export function controls(api = runner) {
   const valid = api.bindSuite(spec, io);
   assert.equal(valid.expected_tests, 2);
   assert.deepEqual(valid.files, files.map(f => `${spec.checkout}/${f}`));
+  assert.equal(valid.binding.checkout, spec.checkout);
+  assert.equal(valid.binding.revision, spec.revision);
+  assert.equal(valid.binding.expected_tests, 2);
+  assert.equal(valid.binding.entries.length, 2);
+  assert.match(valid.binding.inventory_sha256, /^[a-f0-9]{64}$/);
+  for (const field of ['inventory', 'inventory_path', 'inventory_digest', 'names', 'requirements',
+    'wrappers', 'wrapper', 'paths', 'command', 'commands', 'argv', 'executable', 'expected_count']) {
+    assert.throws(() => api.bindSuite({ ...spec, [field]: [] }, io), { code: 'SHU251_SUITE_CALLER_SELECTION' }, 'SHU251_SUITE_CALLER_SELECTION');
+  }
+  assert.throws(() => api.bindSuite(spec, { ...io, fs: { ...io.fs, realpathSync: file => file === spec.checkout ? '/replacement' : file } }),
+    { code: 'SHU251_SUITE_CHECKOUT_REALPATH' }, 'SHU251_SUITE_CHECKOUT_REALPATH');
+  assert.throws(() => api.bindSuite(spec, { ...io, fs: { ...io.fs, readFileSync: () => 'changed despite clean git status\n' } }),
+    { code: 'SHU251_SUITE_FILE_DIGEST' }, 'SHU251_SUITE_FILE_DIGEST');
   assert.throws(() => api.suiteIdentity(spec, { ...io, identity: () => ({ uid: 0, gid: 1234, groups: [1234] }) }), { code: 'SHU251_SUITE_IDENTITY' }, 'SHU251_SUITE_IDENTITY');
   assert.throws(() => api.bindSuite(spec, boundary({ revision: 'c'.repeat(40) }).io), { code: 'SHU251_SUITE_REVISION' }, 'SHU251_SUITE_REVISION');
   assert.throws(() => api.bindSuite({ ...spec, expected_tests: 1 }, io), { code: 'SHU251_SUITE_INVENTORY' }, 'SHU251_SUITE_INVENTORY');
@@ -50,8 +65,39 @@ test('SHU251 suite exact file and identity shapes', () => {
     { version: 'shu251-suite-inventory-v1', files: [...files, '.github/coordinator/test/extra.test.mjs'], names: ['one'] }])
     assert.throws(() => runner.bindSuite(spec, boundary({ inventory }).io), { code: 'SHU251_SUITE_INVENTORY' });
   assert.throws(() => runner.bindSuite(spec, boundary({ dirty: '?? extra.test.mjs' }).io), { code: 'SHU251_SUITE_REVISION' });
+  const { io } = boundary();
+  assert.throws(() => runner.bindSuite(spec, { ...io, run(file, args, options) {
+    if (args.includes('show') && args.at(-1).endsWith(runner.INVENTORY_PATH)) return { status: 128, stdout: '' };
+    return io.run(file, args, options);
+  } }), { code: 'SHU251_SUITE_INVENTORY' }, 'missing revision inventory still refuses production binding');
   for (const active of ['activating', 'deactivating', 'failed', 'active\ninactive', ''])
     assert.throws(() => runner.suiteQuiescence(boundary({ active }).io), { code: 'SHU251_SUITE_QUIESCENCE' });
+});
+test('SHU251 suite binds wrapper bytes and refuses hidden changes and unsupported entries', () => {
+  const wrapper = '.github/coordinator/reviewer-sandbox.sh';
+  const { io } = boundary();
+  const withWrapper = { ...io, run(file, args, options) {
+    const result = io.run(file, args, options);
+    return args.includes('ls-tree') ? { ...result, stdout: [...files, wrapper].join('\n') } : result;
+  } };
+  const bound = runner.bindSuite(spec, withWrapper);
+  assert.ok(bound.binding.entries.some(entry => entry.file === wrapper));
+  for (const fault of ['changed', 'missing', 'symlink', 'directory', 'alias']) {
+    const absolute = `${spec.checkout}/${wrapper}`;
+    const fakeFs = { ...io.fs,
+      readFileSync(file) {
+        if (file !== absolute) return io.fs.readFileSync(file);
+        if (fault === 'missing') throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        return fault === 'changed' ? 'unreviewed wrapper' : '1\n';
+      },
+      lstatSync(file) {
+        const stat = io.fs.lstatSync(file);
+        return file === absolute ? { ...stat, isFile: () => fault !== 'directory', isSymbolicLink: () => fault === 'symlink' } : stat;
+      },
+      realpathSync: file => file === absolute && fault === 'alias' ? '/unreviewed-wrapper' : file,
+    };
+    assert.throws(() => runner.bindSuite(spec, { ...withWrapper, fs: fakeFs }), { code: 'SHU251_SUITE_FILE_DIGEST' });
+  }
 });
 test('SHU251 suite measures metadata through controlled boundary without probing host policy', () => {
   const { io, calls } = boundary();
@@ -70,6 +116,9 @@ const mutations = [
   ['caller count accepted', "Object.hasOwn(spec, 'expected_tests')", 'false', 'SHU251_SUITE_INVENTORY'],
   ['live timer accepted', "result.stdout.trim() !== 'inactive'", 'false', 'SHU251_SUITE_QUIESCENCE'],
   ['duplicate name accepted', "!Array.isArray(names) || sorted(outcomes.map(o => o.name)) !== sorted(names)", 'false', 'SHU251_SUITE_NAMES'],
+  ['caller execution selectors accepted', 'Object.keys(spec).some(key => !fields.includes(key))', 'false', 'SHU251_SUITE_CALLER_SELECTION'],
+  ['checkout realpath substituted', 'checkout !== spec.checkout', 'false', 'SHU251_SUITE_CHECKOUT_REALPATH'],
+  ['checkout bytes substituted', 'digest(io.fs.readFileSync(absolute)) !== expected', 'false', 'SHU251_SUITE_FILE_DIGEST'],
 ];
 for (const [name, from, to, code] of mutations) test(`SHU251 suite mutation ${name}`, async t => {
   controls();
@@ -115,7 +164,7 @@ function disposableFixture(t) {
   }, run(file, args, options) {
     assert.equal(file, '/usr/bin/git');
     assert.ok(args[1].startsWith(root + '/'), 'only disposable fixture Git commands');
-    return spawnSync(file, args, { ...options, encoding: 'utf8' });
+    return spawnSync(file, args, { encoding: 'utf8', ...options });
   } };
   return { s, io, root, evidence: `${parent}/a12-fixture-001.a12.json` };
 }
@@ -125,6 +174,8 @@ test('SHU251 disposable clone create verify remove preserves durable receipt', a
   assert.equal(verifyDisposableSuite(s, io).state, 'ready');
   recordDisposableSuite(s, { counts: { tests: 2, pass: 2 } }, io);
   assert.equal(ready.state, 'ready'); assert.equal(ready.revision, s.revision);
+  assert.equal(ready.suite_binding.checkout, s.checkout);
+  assert.equal(ready.suite_binding.revision, s.revision);
   assert.equal(fs.readFileSync(path.join(s.checkout, runner.INVENTORY_PATH), 'utf8'), fs.readFileSync(path.join(s.source_checkout, runner.INVENTORY_PATH), 'utf8'));
   assert.throws(() => createDisposableSuite(s, io), { code: 'SHU251_SUITE_DISPOSABLE' });
   const suite = await runSuite(s, {
@@ -133,6 +184,7 @@ test('SHU251 disposable clone create verify remove preserves durable receipt', a
     run: () => ({ status: 0, stdout: '{"type":"outcome","name":"one","status":"pass"}\n{"type":"outcome","name":"two","status":"pass"}\n{"type":"complete"}' }),
   });
   assert.deepEqual(suite.counts, { tests: 2, pass: 2, fail: 0, skipped: 0 });
+  assert.deepEqual(suite.binding, ready.suite_binding);
   const removed = removeDisposableSuite(s, io);
   assert.equal(removed.state, 'removed'); assert.equal(fs.existsSync(path.dirname(s.checkout)), false);
   assert.equal(JSON.parse(fs.readFileSync(evidence, 'utf8')).state, 'removed');

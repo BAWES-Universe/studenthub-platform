@@ -254,7 +254,8 @@ export async function runSuite(spec, io = {}) {
   const outcomes = events.filter(e => e.type === 'outcome');
   const summary = evaluateSuite({ outcomes: events.filter(e => e.type === 'outcome'), complete: events.at(-1)?.type === 'complete' && events.filter(e => e.type === 'complete').length === 1, exit_code: result.status }, spec.expected_tests);
   suiteNames(outcomes, contract.names);
-  const receipt = { ...summary, preflight: capabilities, identity: contract.identity, quiescence: contract.quiescence };
+  const receipt = { ...summary, preflight: capabilities, identity: contract.identity, quiescence: contract.quiescence,
+    ...(contract.binding ? { binding: contract.binding } : {}) };
   if (contract.record) await contract.record(receipt);
   return receipt;
 }
