@@ -9,6 +9,7 @@ import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
 import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck } from './shu71-recovery-checks.mjs';
 import { plantedCounterCheck, plantedSettlementCheck } from './shu71-r5-checks.mjs';
+import { reservationHistoryCheck } from './shu71-r6-checks.mjs';
 const keys = ephemeralPublicSource();
 for (const [name, before, after, check, target = 'journal', assertion = /B4_/] of [
   ['gate DONE suppresses repair', "['gate', 'activation', 'workers', 'reload', 'evidence-broker']", "['activation', 'workers', 'reload', 'evidence-broker']", gateRecoveryCheck],
@@ -24,6 +25,8 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   ['R5-B unsupported exhaustion accepted', "need(reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1), 'ACT_RETRY_BUDGET_INVALID');", '', plantedCounterCheck, 'production', /B4_COUNTER_EVIDENCE_REQUIRED/],
   ['R5-B planted settlement boolean trusted', "if (journal.entries.some(e => e.event === 'SETTLEMENT_STARTED')) return refusal;", 'if (JSON.parse(privateRead(`${dir}/automatic-teardown.json`)).settlement_started) return refusal;', plantedSettlementCheck, 'production', /B4_SETTLEMENT_BOOLEAN_NOT_AUTHORITY/],
   ['R5-C MY6 failed settlement releases ownership', 'if (result.ok) remove(`${ROOT}/active.json`);', 'remove(`${ROOT}/active.json`);', (create, h) => exhaustedSettlementCheck(create, h, true), 'production', /B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED/],
+  ['R6-M2 partial reservation evidence accepted', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'reservations.length >= 1', reservationHistoryCheck, 'production', /B4_R6_PARTIAL_1_EVIDENCE_REFUSED/],
+  ['R6-M1 unordered reservation evidence accepted', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'reservations.length === 32', (create, h) => reservationHistoryCheck(create, h, 'REORDERED', 32), 'production', /B4_R6_REORDERED_EVIDENCE_REFUSED/],
   ['P3 automatic budget removed', 'if (attempts >= 32)', 'if (false)', boundedReplayCheck, 'production', /B4_AUTOMATIC_REPLAY_BOUNDED/],
 ]) test(`recovery mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

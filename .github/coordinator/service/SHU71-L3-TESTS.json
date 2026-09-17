@@ -1,7 +1,5 @@
 {
   "base": "0ccee5180e3f63e77028769b89dca226acd19c5c",
-  "reviewed_head": "dae594896e65abcafc48f4dc5c8e070fb506fab8",
-  "candidate": "the commit containing this report; final source tests completed before local commit",
   "branch": "chore/shu71-production-composition",
   "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed",
   "markers_unchanged": {
@@ -15,203 +13,6 @@
     "precondition": "chmod -R go-w .github/coordinator",
     "full_coordinator_umask": "0002"
   },
-  "focused": {
-    "tests": 260,
-    "pass": 260,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 0,
-    "todo": 0,
-    "log_path": "/tmp/l3-r5-results/focused-final.log",
-    "log_sha256": "f23c8216427376621096904c4bcfcd5d35563d89b15b3f2f1f716746632c6f42",
-    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-    "failures": [],
-    "skip_names": [],
-    "mutation_named_checks": {
-      "total": 94,
-      "pass": 94,
-      "fail": 0,
-      "skipped": 0,
-      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-    },
-    "new_targeted_source_mutants": {
-      "total": 53,
-      "killed": 53,
-      "production": 11,
-      "delivery": 17,
-      "trust": 11,
-      "recovery": 14,
-      "added_since_r5": 4
-    },
-    "process_death_injections": {
-      "forward": 240,
-      "teardown": 272,
-      "total": 512
-    }
-  },
-  "coordinator": {
-    "tests": 1751,
-    "pass": 1733,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 18,
-    "todo": 0,
-    "log_path": "/tmp/l3-r5-results/coordinator-final.log",
-    "log_sha256": "221b1d6f29eeadc0bbaaec62e5605de1d957b31d7636ab85b97da927965be1ad",
-    "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
-    "failures": [],
-    "skip_names": [
-      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
-    ],
-    "mutation_named_checks": {
-      "total": 529,
-      "pass": 529,
-      "fail": 0,
-      "skipped": 0,
-      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-    }
-  },
-  "reviewed_head_comparison": {
-    "tests": 1644,
-    "pass": 1625,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 19,
-    "todo": 0,
-    "log_path": "/tmp/l3-reviewed-head.log",
-    "log_sha256": "da357ffca73c32631417b87daeec04cb8d35d7fde97967eb3c042d533e1a461a",
-    "failures": [],
-    "mutation_named_checks": {
-      "total": 493,
-      "pass": 492,
-      "fail": 0,
-      "skipped": 1,
-      "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
-    },
-    "skip_names": [
-      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
-    ],
-    "revision": "dae594896e65abcafc48f4dc5c8e070fb506fab8",
-    "method": "Disposable local git clone with real .git; detached reviewed head, source permissions fixed before launch, SHU251_NO_SYSTEMD=1; no network"
-  },
-  "comparison": {
-    "against": "e9a68c156a0b8631b314d8d14c626ba31014a882",
-    "new_tests": 21,
-    "additional_passes": 21,
-    "new_failures": 0,
-    "new_skips": 0,
-    "removed_skips": []
-  },
-  "application": {
-    "tests": 459,
-    "pass": 459,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 0,
-    "todo": 0,
-    "log_path": "/tmp/l3-r4-results/application.log",
-    "log_sha256": "b4fb3e287714617de96150e62ed0de7563e230e2ea34a077510315b33cef970b",
-    "command": "SHU251_NO_SYSTEMD=1 npm test",
-    "failures": [],
-    "skip_names": [],
-    "mutation_named_checks": {
-      "total": 30,
-      "pass": 30,
-      "fail": 0,
-      "skipped": 0,
-      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-    },
-    "vitest_tests": 27,
-    "vitest_pass": 27,
-    "total_tests": 486,
-    "standalone_mutation_kills": 85
-  },
-  "preliminary_run": {
-    "tests": 1669,
-    "pass": 1640,
-    "fail": 10,
-    "cancelled": 0,
-    "skipped": 19,
-    "todo": 0,
-    "log_path": "/tmp/l3-coordinator.log",
-    "log_sha256": "b476cbb6593094f848bea8eb99a3b11b68c815ad581c1fed888c39b527a29505",
-    "failures": [
-      "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
-      "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
-      "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
-      "SHU-232 mutation M6 restore a posture where execution is never evidenced",
-      "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
-      "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
-      "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
-      "SHU-261 mutation: wrapper environment canary placement removed",
-      "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
-      "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
-    ],
-    "mutation_named_checks": {
-      "total": 506,
-      "pass": 503,
-      "fail": 2,
-      "skipped": 1,
-      "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
-    },
-    "skip_names": [
-      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
-    ],
-    "disposition": "Retained unsuccessful preliminary run, not reclassified as skips. Started before the documented chmod -R go-w .github/coordinator precondition; tests were also expanded during that run. Superseded by the final consistent-precondition run. This does not certify historical failures at the prior writer environment."
-  },
   "findings": {
     "F1": "Physical teardown readback required on initial completion/retry and repeated receipt. Drift or unavailable observation refuses. Successor receipt explicitly historical; no shared commands/mutations.",
     "F4": "Exact child environment allowlist retains GitHub/Linear/transport exclusion and alias/unknown-key refusal; N1 corrects legitimate model credentials/configuration classification.",
@@ -223,14 +24,6 @@
     "P3": "32 durable automatic expire cleanup reservations per episode, persisted separately from both journals before effects. Exhaustion retains lease/timer and returns HALT/ACT_RETRY_BUDGET_EXHAUSTED; explicit resume/revoke recovery asserted. 40 additional wakes cause no cleanup effects or journal growth. Cap-removal mutant killed by B4_AUTOMATIC_REPLAY_BOUNDED. Counter interruption/corruption and journal-recovery behavior asserted.",
     "P4": "Activation re-created after unlink: genuine recovery assertions across resume/revoke/expire. Deleting activation replay killed by B4_ACTIVATION_DRIFT_RECOVERED.",
     "P5": "Completed restores and archive must not repeat on three wedged wake actions. Forcing repeat=true killed by B4_RESTORES_ONCE_ONLY."
-  },
-  "verifier_survivor_kills": {
-    "NV1": "B1_CODE_BINDING",
-    "NV2": "B1_TRANSITION_READBACK",
-    "NV3": "B4_ATOMIC_DURABILITY",
-    "NV4": "B4_JOURNAL_HASH",
-    "NV5": "B1_ACTIVE_CONFLICT",
-    "NV6": "B1_OWNER_ED25519"
   },
   "unresolved": [
     "B1 worker-runtime bindings and concurrent production-entrypoint lane proof",
@@ -252,397 +45,6 @@
     "pr_creation_or_modification": false,
     "merge": false,
     "github_or_linear_comment": false
-  },
-  "prior_self_report": {
-    "status": "Historical record only; earlier environment and failure/host-effect claims not retroactively certified by this run",
-    "report": {
-      "base": "0ccee5180e3f63e77028769b89dca226acd19c5c",
-      "candidate": "the commit containing this report; source tests completed before commit",
-      "branch": "chore/shu71-production-composition",
-      "application": {
-        "tests": 459,
-        "pass": 459,
-        "fail": 0,
-        "cancelled": 0,
-        "skipped": 0,
-        "todo": 0,
-        "log_sha256": "763ccb803a4ee70573b24c04f92498637ebf25c02c0715d72487d61a66d57021",
-        "failures": [],
-        "vitest_tests": 27,
-        "vitest_pass": 27,
-        "standalone_mutation_kills": 85
-      },
-      "coordinator": {
-        "tests": 1639,
-        "pass": 1620,
-        "fail": 11,
-        "cancelled": 0,
-        "skipped": 8,
-        "todo": 0,
-        "log_sha256": "77f3917b5cf7afa87a532bc25b32454ad62be76f5e44392765ff8c6318499536",
-        "failures": [
-          "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
-          "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
-          "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
-          "SHU-232 mutation M6 restore a posture where execution is never evidenced",
-          "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
-          "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
-          "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
-          "SHU-261 mutation: wrapper environment canary placement removed",
-          "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
-          "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
-          "SHU-250: real tick returns while a long-running supervised child executes"
-        ],
-        "mutation_named_checks": {
-          "total": 493,
-          "pass": 491,
-          "fail": 2,
-          "note": "Names include aggregate/parameter mutations; this is a check count, not a count of unique source mutants."
-        }
-      },
-      "exact_stacked_base": {
-        "tests": 1608,
-        "pass": 1590,
-        "fail": 10,
-        "cancelled": 0,
-        "skipped": 8,
-        "todo": 0,
-        "log_sha256": "d6c97336931f028b19597542b3b716881efaffc78362cb3667be33bec5dafcfa",
-        "failures": [
-          "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
-          "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
-          "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
-          "SHU-232 mutation M6 restore a posture where execution is never evidenced",
-          "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
-          "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
-          "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
-          "SHU-261 mutation: wrapper environment canary placement removed",
-          "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child",
-          "SHU261 canaries are mandatory, propagated, and validated before assigned tests"
-        ]
-      },
-      "focused": {
-        "tests": 153,
-        "pass": 153,
-        "fail": 0,
-        "cancelled": 0,
-        "skipped": 0,
-        "todo": 0,
-        "log_sha256": "69e9360fa6374efdaba67252022c494f5055f94273e0bf24fa58577283e6c328",
-        "failures": [],
-        "mutation_named_checks": {
-          "total": 58,
-          "pass": 58,
-          "fail": 0
-        },
-        "new_targeted_source_mutants": {
-          "total": 17,
-          "killed": 17
-        },
-        "process_death_injections": {
-          "forward": 240,
-          "teardown": 256,
-          "total": 496
-        }
-      },
-      "delivery_and_existing_service_checks": {
-        "tests": 59,
-        "pass": 59,
-        "fail": 0,
-        "cancelled": 0,
-        "skipped": 0,
-        "todo": 0,
-        "log_sha256": "c6e33a682e55eb95a45c824c3880e24fa8fa31de2942da69da76e88bf1dbbc33",
-        "failures": []
-      },
-      "timing_recheck": {
-        "tests": 1,
-        "pass": 1,
-        "fail": 0,
-        "cancelled": 0,
-        "skipped": 0,
-        "todo": 0,
-        "log_sha256": "0039968dcf2eb1116280d8132a0e8c725024da218f06f0597c279ecfc5842f43",
-        "failures": []
-      },
-      "additional_failure_vs_base": [
-        "SHU-250: real tick returns while a long-running supervised child executes"
-      ],
-      "unchanged_baseline_failures": [
-        "SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid",
-        "SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence",
-        "SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests",
-        "SHU-232 mutation M6 restore a posture where execution is never evidenced",
-        "SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets",
-        "SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence",
-        "SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper",
-        "SHU-261 mutation: wrapper environment canary placement removed",
-        "SHU261 canaries are mandatory, propagated, and validated before assigned tests",
-        "SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child"
-      ],
-      "assertions_or_skip_allowances_weakened": false,
-      "host_or_external_mutations": false,
-      "overall_execution_closure": "BLOCK: B1 full production worker-runtime composition is not established; no independent-family verdict or live acceptance claimed"
-    }
-  },
-  "r2_reviewed_head": "eb29fc29287ec9d0ff4546158a5127159155b620",
-  "r2_prior_results": {
-    "focused": {
-      "tests": 191,
-      "pass": 191,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-focused-final.log",
-      "log_sha256": "fa0251272071cc4e19dca51e8393c29d3fe82b3bd5e02e28b3a2508be4056109",
-      "failures": [],
-      "mutation_named_checks": {
-        "total": 71,
-        "pass": 71,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
-      },
-      "skip_names": [],
-      "new_targeted_source_mutants": {
-        "total": 30,
-        "killed": 30,
-        "production": 11,
-        "delivery": 8,
-        "trust": 11,
-        "added_since_review": 13
-      },
-      "process_death_injections": {
-        "forward": 240,
-        "teardown": 264,
-        "total": 504
-      },
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
-    },
-    "coordinator": {
-      "tests": 1682,
-      "pass": 1663,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 19,
-      "todo": 0,
-      "log_path": "/tmp/l3-coordinator-final.log",
-      "log_sha256": "6100b1255bf87afd8a48ab12d215eaf79992b19eae501ae419be27334bc06aa2",
-      "failures": [],
-      "mutation_named_checks": {
-        "total": 506,
-        "pass": 505,
-        "fail": 0,
-        "skipped": 1,
-        "note": "Historical named-check count. Rollback mutation was gated, but R2 disproved the no-host justification; current candidate runs it un-gated."
-      },
-      "skip_names": [
-        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 mutation: rollback restore omitted # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
-      ],
-      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
-    },
-    "application": {
-      "tests": 459,
-      "pass": 459,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-application.log",
-      "log_sha256": "11e9e4637e57b28739b798b9dd3af0829937f72941b50538721be327e570c65b",
-      "failures": [],
-      "skip_names": [],
-      "vitest_tests": 27,
-      "vitest_pass": 27,
-      "total_tests": 486,
-      "standalone_mutation_kills": 85,
-      "command": "SHU251_NO_SYSTEMD=1 npm test"
-    },
-    "comparison": {
-      "new_tests": 38,
-      "new_failures": 0,
-      "new_skips": 0,
-      "skip_names_identical": true,
-      "skip_classification": {
-        "contract_documented": 8,
-        "pre_existing_systemd_gate": 11
-      }
-    },
-    "disposition": "Historical measurements at eb29fc2; R2 independently reproduced focused/coordinator counts but could not run application. Prior skip justification retracted: rollback mutation is TMPDIR-only."
-  },
-  "rollback_mutation": {
-    "tests": 1,
-    "pass": 1,
-    "fail": 0,
-    "cancelled": 0,
-    "skipped": 0,
-    "todo": 0,
-    "log_path": "/tmp/l3-r5-results/rollback-final.log",
-    "log_sha256": "e526e138a5054b739e99c5b1772fc75dcdb721e856760415f79851511fb7338a",
-    "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
-    "failures": [],
-    "skip_names": [],
-    "mutation_named_checks": {
-      "total": 1,
-      "pass": 1,
-      "fail": 0,
-      "skipped": 0,
-      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-    }
-  },
-  "r3_reviewed_head": "5e25c651254a72adbb46fa8f950df95248b640e9",
-  "r3_prior_results": {
-    "focused": {
-      "tests": 208,
-      "pass": 208,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r2-focused-final.log",
-      "log_sha256": "4c5793bfef4aeda8806f0d29427e1f1ce7f114886c7940679f3667e403650dc8",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 83,
-        "pass": 83,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "new_targeted_source_mutants": {
-        "total": 42,
-        "killed": 42,
-        "production": 11,
-        "delivery": 17,
-        "trust": 11,
-        "recovery": 3,
-        "added_since_r2": 12
-      },
-      "process_death_injections": {
-        "forward": 240,
-        "teardown": 272,
-        "total": 512
-      }
-    },
-    "coordinator": {
-      "tests": 1699,
-      "pass": 1681,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 18,
-      "todo": 0,
-      "log_path": "/tmp/l3-r2-coordinator-final.log",
-      "log_sha256": "73a9b37ce8b7428b35ca22a60e6fd3837f4a91639da40cf90263773a48bd8862",
-      "failures": [],
-      "skip_names": [
-        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
-      ],
-      "mutation_named_checks": {
-        "total": 518,
-        "pass": 518,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
-    },
-    "application": {
-      "tests": 459,
-      "pass": 459,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r2-application.log",
-      "log_sha256": "7f2b496285352e1fd5eb2ac7cc8759e445d9aa984fba27f08391dbd989f35100",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 30,
-        "pass": 30,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 npm test",
-      "vitest_tests": 27,
-      "vitest_pass": 27,
-      "total_tests": 486,
-      "standalone_mutation_kills": 85
-    },
-    "comparison": {
-      "against": "eb29fc29287ec9d0ff4546158a5127159155b620",
-      "new_tests": 17,
-      "additional_passes": 18,
-      "new_failures": 0,
-      "new_skips": 0,
-      "removed_skips": [
-        "SHU251 mutation: rollback restore omitted"
-      ],
-      "skip_classification": {
-        "contract_documented": 8,
-        "remaining_pre_existing_systemd_gate": 10
-      }
-    },
-    "rollback_mutation": {
-      "tests": 1,
-      "pass": 1,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r2-rollback.log",
-      "log_sha256": "cce656b9243382e32583f4cdebb149987ac02e15c6fde21f337dcac357f78eb2",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 1,
-        "pass": 1,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks with mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
-    },
-    "disposition": "Historical measurements at 5e25c65; R3 independently reproduced focused/coordinator counts but could not run application. Current results below were run in this worktree with existing node_modules."
   },
   "replay_policy": {
     "automatic_action": "expire",
@@ -668,1367 +70,806 @@
     "possible_combined_wake_grace_seconds": 16,
     "timing_basis": "Rendered timer/restart text; not a host scheduling measurement."
   },
-  "genuine_assertion_baseline": {
-    "tests": 207,
-    "pass": 207,
+  "round": 6,
+  "reviewed_head": "58527b27b15fc3c817b2cb978285688e6fee69f0",
+  "candidate": "commit containing this report; tested source unchanged by report/closure edits; final-head reruns must reproduce these counts",
+  "historical_reports": "Historical measurements are retained in Git at their original commits, including 58527b2. They are not current-head claims.",
+  "focused": {
+    "tests": 309,
+    "pass": 309,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r5-results/genuine-final.log",
-    "log_sha256": "4754e5c80be086d945f290fd61c04de19976e3ef69cff89ba5452593507fad41",
-    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-    "failures": [],
+    "log_path": "/tmp/l3-r6-results/focused-final.log",
+    "log_sha256": "8733c0ea618711a417f6569f84b60203e80bf2313b4ad378b99d814208fd85ce",
     "skip_names": [],
-    "mutation_named_checks": {
-      "total": 41,
-      "pass": 41,
-      "fail": 0,
-      "skipped": 0,
-      "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+    "mutation_named_checks": 96,
+    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations,history}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
+    "targeted_source_mutants": {
+      "total": 55,
+      "killed": 55,
+      "production": 11,
+      "delivery": 17,
+      "trust": 11,
+      "recovery": 16,
+      "added_in_r6": 2
+    },
+    "process_death_injections": {
+      "forward": 240,
+      "teardown": 272,
+      "total": 512
     }
   },
-  "r4_reviewed_head": "e9a68c156a0b8631b314d8d14c626ba31014a882",
-  "r4_prior_results": {
-    "focused": {
-      "tests": 224,
-      "pass": 224,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r3-focused.log",
-      "log_sha256": "f1f5113a2d679490289718c3207807ce877c6b1e010c7eca1ddd10c1085c9d3e",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 87,
-        "pass": 87,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "new_targeted_source_mutants": {
-        "total": 46,
-        "killed": 46,
-        "production": 11,
-        "delivery": 17,
-        "trust": 11,
-        "recovery": 7,
-        "added_since_r3": 4
-      },
-      "process_death_injections": {
-        "forward": 240,
-        "teardown": 272,
-        "total": 512
-      }
-    },
-    "coordinator": {
-      "tests": 1715,
-      "pass": 1697,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 18,
-      "todo": 0,
-      "log_path": "/tmp/l3-r3-coordinator.log",
-      "log_sha256": "36ddac198ee52a600e17ed587fde4d3ffe8b33b6bf2acff0e284ce369905bfc0",
-      "failures": [],
-      "skip_names": [
-        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
-      ],
-      "mutation_named_checks": {
-        "total": 522,
-        "pass": 522,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
-    },
-    "application": {
-      "tests": 459,
-      "pass": 459,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r3-application.log",
-      "log_sha256": "9e2510965d3e9c8f1243adb945b76e1c928ed7b946ae5f1c882100bf57077a83",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 30,
-        "pass": 30,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "SHU251_NO_SYSTEMD=1 npm test",
-      "vitest_tests": 27,
-      "vitest_pass": 27,
-      "total_tests": 486,
-      "standalone_mutation_kills": 85
-    },
-    "rollback_mutation": {
-      "tests": 1,
-      "pass": 1,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r3-rollback.log",
-      "log_sha256": "a29e0049ff9fbd29be01149ba5ff6f454e62f5f936fa195267504258901f940a",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 1,
-        "pass": 1,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing/failing TAP checks containing mutation or mutant in the name, not unique source mutants."
-      },
-      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
-    },
-    "genuine_assertion_baseline": {
-      "tests": 178,
-      "pass": 178,
-      "fail": 0,
-      "skipped": 0,
-      "log_path": "/tmp/l3-r3-genuine.log",
-      "log_sha256": "7c1ce1a2635a4bfc4eea34166a8eaae703d9fc781db4a713096d3765a170d515",
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "scope": "All four targeted source mutation harness files excluded; new assertions are imported into the genuine trust suite."
-    },
-    "replay_policy": {
-      "automatic_action": "expire",
-      "maximum_reserved_attempts_per_activation": 32,
-      "counter": "/srv/shu/state/shu71-evidence/<id>/automatic-teardown.json",
-      "reservation": "atomic file plus file and parent fsync before effects; interrupted persisted reservation consumes attempt",
-      "journal_recovery_resets_budget": false,
-      "exhaustion_code": "ACT_RETRY_BUDGET_EXHAUSTED",
-      "unavailable_code": "ACT_RETRY_BUDGET_UNAVAILABLE",
-      "timer_retained_on_exhaustion": true,
-      "ownership_retained_on_exhaustion": true,
-      "completion_claimed_on_exhaustion": false,
-      "manual_recovery": [
-        "resume",
-        "revoke"
-      ],
-      "automatic_recovery_after_exhaustion": false,
-      "residual_cost": "Existing 1 Hz process wakes, refusal output and fixed-size journal verification/open fsync remain; system journal retention not bounded here. Cleanup effects and evidence-journal growth are capped under sustained drift.",
-      "disclosure": "SHU71-L3-CLOSURE.md: Response to R3; Retry cost, exhaustion and operator recovery"
-    }
+  "genuine_assertion_baseline": {
+    "tests": 254,
+    "pass": 254,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_path": "/tmp/l3-r6-results/genuine-final.log",
+    "log_sha256": "0908b6056d23e0d39c7242f77e9d857186be30662e5994f46b7cba4c15c8fe5a",
+    "skip_names": [],
+    "mutation_named_checks": 41,
+    "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust,history}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
   },
-  "r4_response": {
-    "Q1": "Fixed at source level: independent disk gate disarm on counter refusal, with separate gate failures surfaced.",
-    "Q1_differential": {
-      "parent": "5e25c65: four poisoned-counter wakes, DISARMED, REVOKED, lease released",
-      "blocked": "e9a68c1: four identical wakes, ARMED, ACT_RETRY_BUDGET_UNAVAILABLE, zero effects",
-      "candidate": "four identical wakes, both gates DISARMED, ACT_RETRY_BUDGET_UNAVAILABLE, lease retained pending explicit completion",
-      "genuine_test": "Q1 identical counter fault at parent, blocked head and candidate",
-      "before_log": "/tmp/l3-r4-results/before.jsonl",
-      "after_log": "/tmp/l3-r4-results/after.jsonl"
-    },
-    "Q2": "About 32 seconds nominal, possibly about 16 seconds with independent restart/timer wakes, disclosed explicitly.",
-    "Q3": "PARTIAL: automatic safe-episode settlement and lease release restored. Declining parent-style repair after exhaustion is a scope choice, not a constraint imposed by the no-repair policy. An armed gate still requires explicit recovery.",
-    "Q4": "Existing unavailable code preserved; budget_error distinguishes invalid from storage/custody failure.",
-    "Q5": "Counter preservation asserted after failed run/resume/revoke and successful recovery; MX3 killed.",
-    "Q6": "run recovery and intact-journal scope clarified; counter remains outside manifest/archive digest.",
-    "independent_mutants": [
-      {
-        "id": "MX-P1",
-        "status": 1,
-        "assertions": [
-          "B4_RETIREMENT_REOBSERVATION"
-        ],
-        "tests": 56,
-        "pass": 55,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX1",
-        "status": 1,
-        "assertions": [
-          "B4_AUTOMATIC_REPLAY_BOUNDED",
-          "B4_RECOVERY_NO_BUDGET_RESET",
-          "B4_SETTLEMENT_UNFINISHED_REFUSED"
-        ],
-        "tests": 56,
-        "pass": 47,
-        "fail": 9,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX2",
-        "status": 1,
-        "assertions": [
-          "B4_BUDGET_RESERVATION_INTERRUPTED",
-          "B4_COUNTER_REFUSAL",
-          "B4_MANUAL_BUDGET_RETAINED",
-          "B4_SETTLEMENT_UNFINISHED_REFUSED"
-        ],
-        "tests": 56,
-        "pass": 44,
-        "fail": 12,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX5",
-        "status": 1,
-        "assertions": [
-          "B4_BUDGET_RESERVATION_INTERRUPTED",
-          "B4_INVALID_BUDGET_REFUSED",
-          "B4_COUNTER_REFUSAL",
-          "B4_MANUAL_BUDGET_RETAINED",
-          "B4_SETTLEMENT_UNFINISHED_REFUSED"
-        ],
-        "tests": 56,
-        "pass": 31,
-        "fail": 25,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX6",
-        "status": 1,
-        "assertions": [
-          "B4_RECOVERY_NO_BUDGET_RESET"
-        ],
-        "tests": 56,
-        "pass": 55,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX7",
-        "status": 1,
-        "assertions": [
-          "B4_INVALID_BUDGET_REFUSED",
-          "B4_COUNTER_REFUSAL"
-        ],
-        "tests": 56,
-        "pass": 54,
-        "fail": 2,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX10",
-        "status": 1,
-        "assertions": [
-          "B4_ACTIVATION_DRIFT_RECOVERED"
-        ],
-        "tests": 56,
-        "pass": 53,
-        "fail": 3,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX11",
-        "status": 1,
-        "assertions": [
-          "B4_RESTORES_ONCE_ONLY"
-        ],
-        "tests": 56,
-        "pass": 55,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX12",
-        "status": 1,
-        "assertions": [
-          "B4_ARCHIVE_ONCE_ONLY"
-        ],
-        "tests": 56,
-        "pass": 55,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX3",
-        "status": 1,
-        "assertions": [
-          "B4_MANUAL_BUDGET_RETAINED"
-        ],
-        "tests": 56,
-        "pass": 53,
-        "fail": 3,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX13",
-        "status": 0,
-        "assertions": [],
-        "tests": 56,
-        "pass": 56,
-        "fail": 0,
-        "skipped": 0,
-        "expected": "survived"
-      },
-      {
-        "id": "MX14",
-        "status": 0,
-        "assertions": [],
-        "tests": 56,
-        "pass": 56,
-        "fail": 0,
-        "skipped": 0,
-        "expected": "survived"
-      }
+  "coordinator": {
+    "tests": 1800,
+    "pass": 1782,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 18,
+    "todo": 0,
+    "log_path": "/tmp/l3-r6-results/coordinator-final.log",
+    "log_sha256": "cc4f703b9a7897c8361452e555490f7741bfaedb514584be3d5f70d3eac533d6",
+    "skip_names": [
+      "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
+      "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
+      "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
+      "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
+      "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
+      "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
+      "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
+      "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
     ],
-    "independent_mutant_scope": "Genuine 56-test trust suite only, no mutation harnesses; 10 killed, 2 disclosed survivors MX13/MX14.",
-    "hardlink_supplement": "10/10 Q1 fault tests passed after replacing simulated nlink with a real hard link inside disposable fixture; /tmp/l3-r4-results/hardlink-final.log",
-    "constraints": "No host access, push, PR modification, merge, GitHub/Linear comment or existing assertion/guard/error-code/skip allowance weakening.",
-    "unproved": [
-      "Parent-style automatic repair after exhaustion",
-      "Real second signed activation",
-      "All host/systemd/effective-drop-in/disk-durability facts",
-      "Live production worker composition and concurrent progression"
-    ]
+    "mutation_named_checks": 531,
+    "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
   },
-  "r5_reviewed_head": "0eeadd5f05abc8cd82968a855b2bff8cc137c65a",
-  "r5_prior_results": {
-    "focused": {
-      "tests": 245,
-      "pass": 245,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r4-results/focused-final.log",
-      "log_sha256": "67c01830bc53de63a25acc7a8ba8e7d921086f2de124d408331ca7d696de7368",
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 90,
-        "pass": 90,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
+  "rollback_mutation": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "log_path": "/tmp/l3-r6-results/rollback-final.log",
+    "log_sha256": "4ba7cfc2322c2ea6ab2d80d77d36bd56a53adf60beb331306bb1326b77f248ee",
+    "skip_names": [],
+    "mutation_named_checks": 1,
+    "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
+  },
+  "application": {
+    "status": "NOT_RERUN_AT_THIS_HEAD",
+    "reason": "Outside this coordinator-only change; no current application-suite or standalone application mutation count claimed."
+  },
+  "r6_response": {
+    "R6-A": {
+      "before": {
+        "control": {
+          "tests": 67,
+          "pass": 67,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "log_path": "/tmp/l3-r6-results/control-before.log",
+          "log_sha256": "3ad437c7e6760041ea644921b25658a856499bdd524eb396170fa984b8bc4499",
+          "skip_names": [],
+          "mutation_named_checks": 0
+        },
+        "R6-M1": {
+          "tests": 67,
+          "pass": 67,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "log_path": "/tmp/l3-r6-results/R6-M1-before.log",
+          "log_sha256": "5d28380370a5f7cf66a0518d76e0ad8366295a112abe6922b5d5cf8e2d86da0a",
+          "skip_names": [],
+          "mutation_named_checks": 0
+        },
+        "R6-M2": {
+          "tests": 67,
+          "pass": 67,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "log_path": "/tmp/l3-r6-results/R6-M2-before.log",
+          "log_sha256": "b35442a497d710ccf4a57114c174b8cd43826f5e3782489c0b19d5992c543e20",
+          "skip_names": [],
+          "mutation_named_checks": 0
+        }
       },
-      "new_targeted_source_mutants": {
-        "total": 49,
-        "killed": 49,
-        "production": 11,
-        "delivery": 17,
-        "trust": 11,
-        "recovery": 10,
-        "added_since_r4": 3
-      },
-      "process_death_injections": {
-        "forward": 240,
-        "teardown": 272,
-        "total": 512
-      }
-    },
-    "coordinator": {
-      "tests": 1736,
-      "pass": 1718,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 18,
-      "todo": 0,
-      "log_path": "/tmp/l3-r4-results/coordinator-final.log",
-      "log_sha256": "7612d9fc734347a1cadc01f44099a675b8fdea6ff8b4370c912e3751ae8af3ae",
-      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
-      "failures": [],
-      "skip_names": [
-        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+      "after": [
+        {
+          "id": "control",
+          "status": 0,
+          "tests": 104,
+          "pass": 104,
+          "fail": 0,
+          "skipped": 0,
+          "assertions": []
+        },
+        {
+          "id": "R6-M1",
+          "status": 1,
+          "tests": 104,
+          "pass": 101,
+          "fail": 3,
+          "skipped": 0,
+          "assertions": [
+            "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+            "B4_R6_GAP_EVIDENCE_REFUSED",
+            "B4_R6_REORDERED_EVIDENCE_REFUSED"
+          ]
+        },
+        {
+          "id": "R6-M2",
+          "status": 1,
+          "tests": 104,
+          "pass": 69,
+          "fail": 35,
+          "skipped": 0,
+          "assertions": [
+            "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+            "B4_R6_EXTRA_EVIDENCE_REFUSED",
+            "B4_R6_GAP_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_10_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_11_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_12_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_13_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_14_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_15_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_16_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_17_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_18_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_19_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_1_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_20_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_21_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_22_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_23_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_24_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_25_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_26_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_27_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_28_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_29_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_2_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_30_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_31_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_3_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_4_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_5_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_6_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_7_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_8_EVIDENCE_REFUSED",
+            "B4_R6_PARTIAL_9_EVIDENCE_REFUSED",
+            "B4_R6_REORDERED_EVIDENCE_REFUSED"
+          ]
+        }
       ],
-      "mutation_named_checks": {
-        "total": 525,
-        "pass": 525,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      }
+      "cases": "Real automatic reservations for every partial length 1..31, duplicate, reordered, gap, extra, and positive ordered chain; journal writer rebuilds valid hash links before fresh production read. Append interruption separately proves prior durable counter consumption.",
+      "genuine_trust_tests": 104
     },
-    "genuine_assertion_baseline": {
-      "tests": 196,
-      "pass": 196,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r4-results/genuine-final.log",
-      "log_sha256": "3268b9e7864f95fc367ad03e073e9c73b44ed29ec64eab165d03baaa8c44afb7",
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 41,
-        "pass": 41,
+    "R6-B": {
+      "before_shallow_substitution": {
+        "tests": 3,
+        "pass": 3,
         "fail": 0,
+        "cancelled": 0,
         "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      }
-    },
-    "rollback_mutation": {
-      "tests": 1,
-      "pass": 1,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r4-results/rollback.log",
-      "log_sha256": "7e1caa3d7ffd8bb80d348ab5087e27e01fa1d9bc6a3b72c49cf1bc4ab6c140b9",
-      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 1,
-        "pass": 1,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      }
-    }
-  },
-  "r5_response": {
-    "before_head": "0eeadd5f05abc8cd82968a855b2bff8cc137c65a",
-    "parent_control": "5e25c651254a72adbb46fa8f950df95248b640e9",
-    "reproduced_before_production_edits": true,
-    "before_logs": [
-      {
-        "path": "/tmp/l3-r5-results/before.log",
-        "sha256": "dbded84c370d0621a920d8be8888022934c5579915c271af34974cc124340fa9"
+        "todo": 0,
+        "log_path": "/tmp/l3-r6-results/substitution-before.log",
+        "log_sha256": "715d5010e833f0a8df82d4d8cd7d70cd853911529b45a4b439317e84d38cd53e",
+        "skip_names": [],
+        "mutation_named_checks": 0
       },
-      {
-        "path": "/tmp/l3-r5-results/my6-before.log",
-        "sha256": "ec61b895e82a52b2ebb9bfac54675680c5c6185f7c5f86905a9c002285fd8157"
-      }
-    ],
-    "before_MY6": {
-      "id": "MY6",
+      "full_clone_clean": {
+        "tests": 114,
+        "pass": 114,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_path": "/tmp/l3-r6-results/full-guard-clean.log",
+        "log_sha256": "ca0fa1df0440a45870619fa883008637bdcba4ea9b901dce14ada480e4608569",
+        "skip_names": [],
+        "mutation_named_checks": 0
+      },
+      "full_clone_substitution": {
+        "tests": 114,
+        "pass": 107,
+        "fail": 7,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_path": "/tmp/l3-r6-results/full-guard-substituted.log",
+        "log_sha256": "6cc3935719c1be1688fbd0179329e914c75cefa11f38c9b3cd4f80b12bf6b1f1",
+        "skip_names": [],
+        "mutation_named_checks": 0
+      },
+      "depth1_clone_clean": {
+        "tests": 114,
+        "pass": 114,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_path": "/tmp/l3-r6-results/shallow-guard-clean.log",
+        "log_sha256": "5eea1e9f800731328e413f1b78c7ea77f80622ab114143393c69abd34723b9c6",
+        "skip_names": [],
+        "mutation_named_checks": 0
+      },
+      "depth1_clone_substitution": {
+        "tests": 114,
+        "pass": 107,
+        "fail": 7,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "log_path": "/tmp/l3-r6-results/shallow-guard-substituted.log",
+        "log_sha256": "9a7e575b2d8b0ae8b59b3df13857879d8bc1e4eead6888eaab7819d01eab736e",
+        "skip_names": [],
+        "mutation_named_checks": 0
+      },
+      "substitution_error": "SHU71_HISTORY_CONTROL_CONTENT: NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK",
+      "provenance": "All six actual fixtures checked byte-for-byte against Git in the full clone. The Git cross-check cannot run in shallow CI: recorded digests plus unconditional control-content guard only; only a full clone re-establishes Git provenance. Named SHU71_HISTORY_GIT_UNAVAILABLE/SHU71_HISTORY_GIT_VERIFIED output discloses which ran.",
+      "guard_scope": "Structural cleanup ordering, absence of later fault credential revocation/evidence binding, blocked reservation ordering and settlement authority; all journal chain/replay/retirement prerequisites. Real historical-pair executions check the ordering and counter-fault outcomes. Candidate production substitution tested in every slot without Git. This is not authentication of arbitrary semantics-preserving substitutions."
+    },
+    "R6-C": {
+      "coordinator_total": 1800,
+      "coordinator_pass": 1782,
+      "coordinator_fail": 0,
+      "coordinator_skips": 18,
+      "current_counts_only": "All current suite records above derive from the listed logs. Superseded historical suite records remain in Git rather than duplicated as current declarations."
+    },
+    "R5-B": {
+      "disposition": "b",
+      "claim": "Bounds accidents and non-root tampering, but not a root adversary.",
+      "limitation": "The SHA-256 chain is unkeyed and shares the 0700/uid-0 directory with the counter. Existing local signing material is root-readable, so using it would not establish a trust boundary against root. External trust is outside this repository-only lane.",
+      "positive_control": "B4_R6_ORDERED_LOCAL_CHAIN_ACCEPTED and B4_R6_ORDERED_ZERO_EFFECTS_RESIDUAL demonstrate that root-rewritten ordered evidence plus the counter can retain both armed gates, activation credential and lease at zero effects."
+    },
+    "unchanged": "R5-A credential revocation and containment residuals; R5-C ownership guard and named kill; Q3 scope choice; B1 BLOCKED, B2/B4 source-level only. Production modules, historical fixture bytes, CI workflow and PERMITTED_SKIPS unchanged."
+  },
+  "independent_mutants": [
+    {
+      "id": "MX-P1",
+      "status": 1,
+      "assertions": [
+        "B4_RETIREMENT_REOBSERVATION"
+      ],
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX1",
+      "status": 1,
+      "assertions": [
+        "B4_AUTOMATIC_REPLAY_BOUNDED",
+        "B4_RECOVERY_NO_BUDGET_RESET",
+        "B4_SETTLEMENT_UNFINISHED_REFUSED",
+        "B4_R5_COMPLETION",
+        "B4_R6_PARTIAL_1_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_2_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_3_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_4_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_5_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_6_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_7_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_8_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_9_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_10_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_11_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_12_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_13_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_14_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_15_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_16_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_17_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_18_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_19_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_20_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_21_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_22_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_23_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_24_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_25_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_26_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_27_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_28_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_29_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_30_EVIDENCE_REFUSED",
+        "B4_R6_PARTIAL_31_EVIDENCE_REFUSED",
+        "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+        "B4_R6_REORDERED_EVIDENCE_REFUSED",
+        "B4_R6_GAP_EVIDENCE_REFUSED",
+        "B4_R6_EXTRA_EVIDENCE_REFUSED",
+        "B4_R6_ORDERED_LOCAL_CHAIN_ACCEPTED"
+      ],
+      "tests": 104,
+      "pass": 56,
+      "fail": 48,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX2",
+      "status": 1,
+      "assertions": [
+        "B4_BUDGET_RESERVATION_INTERRUPTED",
+        "B4_COUNTER_REFUSAL",
+        "B4_MANUAL_BUDGET_RETAINED",
+        "B4_SETTLEMENT_UNFINISHED_REFUSED",
+        "B4_R5_COMPLETION",
+        "B4_R6_REAL_RESERVATIONS",
+        "B4_R6_APPEND_INTERRUPTION_COUNTER_CONSUMED"
+      ],
+      "tests": 104,
+      "pass": 53,
+      "fail": 51,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX5",
+      "status": 1,
+      "assertions": [
+        "B4_BUDGET_RESERVATION_INTERRUPTED",
+        "B4_INVALID_BUDGET_REFUSED",
+        "B4_COUNTER_REFUSAL",
+        "B4_MANUAL_BUDGET_RETAINED",
+        "B4_SETTLEMENT_UNFINISHED_REFUSED",
+        "B4_R5_COMPLETION",
+        "B4_COUNTER_CREDENTIAL_FAILURE_REPORTED",
+        "B4_COUNTER_RANGE_WITH_EVIDENCE",
+        "B4_R6_REAL_RESERVATIONS"
+      ],
+      "tests": 104,
+      "pass": 36,
+      "fail": 68,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX6",
+      "status": 1,
+      "assertions": [
+        "B4_RECOVERY_NO_BUDGET_RESET"
+      ],
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX7",
+      "status": 1,
+      "assertions": [
+        "B4_COUNTER_RANGE_WITH_EVIDENCE"
+      ],
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX10",
+      "status": 1,
+      "assertions": [
+        "B4_ACTIVATION_DRIFT_RECOVERED"
+      ],
+      "tests": 104,
+      "pass": 101,
+      "fail": 3,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX11",
+      "status": 1,
+      "assertions": [
+        "B4_RESTORES_ONCE_ONLY"
+      ],
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX12",
+      "status": 1,
+      "assertions": [
+        "B4_ARCHIVE_ONCE_ONLY"
+      ],
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX3",
+      "status": 1,
+      "assertions": [
+        "B4_MANUAL_BUDGET_RETAINED"
+      ],
+      "tests": 104,
+      "pass": 101,
+      "fail": 3,
+      "skipped": 0,
+      "expected": "killed"
+    },
+    {
+      "id": "MX13",
+      "status": 0,
+      "assertions": [],
+      "tests": 104,
+      "pass": 104,
+      "fail": 0,
+      "skipped": 0,
+      "expected": "survived"
+    },
+    {
+      "id": "MX14",
+      "status": 0,
+      "assertions": [],
+      "tests": 104,
+      "pass": 104,
+      "fail": 0,
+      "skipped": 0,
+      "expected": "survived"
+    }
+  ],
+  "r5_verifier_mutants": [
+    {
+      "id": "MY1 fallback disarms only the first gate",
+      "verdict": "KILLED",
+      "assertions": [
+        "B4_COUNTER_FAULT_DISARMS",
+        "B4_Q1_SECOND_GATE_",
+        "B4_R5_BOTH_GATES_",
+        "B4_R6_PARTIAL_1_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_2_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_3_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_4_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_5_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_6_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_7_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_8_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_9_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_10_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_11_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_12_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_13_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_14_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_15_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_16_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_17_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_18_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_19_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_20_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_21_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_22_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_23_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_24_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_25_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_26_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_27_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_28_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_29_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_30_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_31_BOTH_GATES_DISARMED",
+        "B4_R6_DUPLICATE_BOTH_GATES_DISARMED",
+        "B4_R6_REORDERED_BOTH_GATES_DISARMED",
+        "B4_R6_GAP_BOTH_GATES_DISARMED",
+        "B4_R6_EXTRA_BOTH_GATES_DISARMED"
+      ],
+      "tests": 104,
+      "pass": 53,
+      "fail": 51
+    },
+    {
+      "id": "MY2 fallback writes the ARMED value",
+      "verdict": "KILLED",
+      "assertions": [
+        "B4_COUNTER_FAULT_DISARMS",
+        "B4_Q1_DIFFERENTIAL_",
+        "B4_R5_BOTH_GATES_",
+        "B4_R6_PARTIAL_1_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_2_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_3_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_4_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_5_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_6_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_7_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_8_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_9_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_10_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_11_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_12_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_13_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_14_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_15_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_16_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_17_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_18_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_19_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_20_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_21_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_22_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_23_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_24_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_25_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_26_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_27_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_28_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_29_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_30_BOTH_GATES_DISARMED",
+        "B4_R6_PARTIAL_31_BOTH_GATES_DISARMED",
+        "B4_R6_DUPLICATE_BOTH_GATES_DISARMED",
+        "B4_R6_REORDERED_BOTH_GATES_DISARMED",
+        "B4_R6_GAP_BOTH_GATES_DISARMED",
+        "B4_R6_EXTRA_BOTH_GATES_DISARMED"
+      ],
+      "tests": 104,
+      "pass": 53,
+      "fail": 51
+    },
+    {
+      "id": "MY3 settlement pre-check observeGateFiles deleted",
       "verdict": "SURVIVED",
       "assertions": [],
-      "tests": 56,
-      "pass": 56,
+      "tests": 104,
+      "pass": 104,
       "fail": 0
     },
-    "focused": {
-      "tests": 260,
-      "pass": 260,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r5-results/focused-final.log",
-      "log_sha256": "f23c8216427376621096904c4bcfcd5d35563d89b15b3f2f1f716746632c6f42",
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 94,
-        "pass": 94,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      },
-      "new_targeted_source_mutants": {
-        "total": 53,
-        "killed": 53,
-        "production": 11,
-        "delivery": 17,
-        "trust": 11,
-        "recovery": 14,
-        "added_since_r5": 4
-      },
-      "process_death_injections": {
-        "forward": 240,
-        "teardown": 272,
-        "total": 512
-      }
-    },
-    "genuine": {
-      "tests": 207,
-      "pass": 207,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r5-results/genuine-final.log",
-      "log_sha256": "4754e5c80be086d945f290fd61c04de19976e3ef69cff89ba5452593507fad41",
-      "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 41,
-        "pass": 41,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      }
-    },
-    "coordinator": {
-      "tests": 1751,
-      "pass": 1733,
-      "fail": 0,
-      "cancelled": 0,
-      "skipped": 18,
-      "todo": 0,
-      "log_path": "/tmp/l3-r5-results/coordinator-final.log",
-      "log_sha256": "221b1d6f29eeadc0bbaaec62e5605de1d957b31d7636ab85b97da927965be1ad",
-      "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator",
-      "failures": [],
-      "skip_names": [
-        "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 staging is idempotent and preserves original backup # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 drift requires rollback and symlinks are refused # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 invalid executable fails syntax before staging changes # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 partial staging failure restores prior state # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 deployed workspace state directory accepted by installer # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 explicit workspace override stages a visible two-writer hazard # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 configured identity and external secret file survive staging # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU251 concrete merged service argv renders valid units # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
-        "SHU-227: worker owns its checkout and recovery preserves descendant commits # SKIP requires root or passwordless sudo for distinct-uid proof",
-        "SHU-227: non-owner service account resolves revision with no global Git trust # SKIP requires distinct-uid execution",
-        "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches # SKIP requires distinct-uid execution",
-        "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity # SKIP host cannot switch to the fixture worker uid",
-        "SHU-244 A10: distinct-root scoped handoff production workspace # SKIP host cannot switch worker uid",
-        "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
-        "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    {
+      "id": "MY4 settlement ignores an unfinished remote restore",
+      "verdict": "KILLED",
+      "assertions": [
+        "B4_SETTLEMENT_UNFINISHED_REFUSED"
       ],
-      "mutation_named_checks": {
-        "total": 529,
-        "pass": 529,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      }
+      "tests": 104,
+      "pass": 103,
+      "fail": 1
     },
-    "rollback": {
-      "tests": 1,
-      "pass": 1,
-      "fail": 0,
-      "cancelled": 0,
+    {
+      "id": "MY5 settlement allowance never checked",
+      "verdict": "KILLED",
+      "assertions": [
+        "B4_SETTLEMENT_JOURNAL_ALLOWANCE"
+      ],
+      "tests": 104,
+      "pass": 102,
+      "fail": 2
+    },
+    {
+      "id": "MY6 settlement releases the lease unconditionally",
+      "verdict": "KILLED",
+      "assertions": [
+        "B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED"
+      ],
+      "tests": 104,
+      "pass": 103,
+      "fail": 1
+    },
+    {
+      "id": "MY7 exhausted settlement skips the final observation",
+      "verdict": "SURVIVED",
+      "assertions": [],
+      "tests": 104,
+      "pass": 104,
+      "fail": 0
+    }
+  ],
+  "additional_r6_mutants": [
+    {
+      "id": "R6-M3",
+      "status": 1,
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
       "skipped": 0,
-      "todo": 0,
-      "log_path": "/tmp/l3-r5-results/rollback-final.log",
-      "log_sha256": "e526e138a5054b739e99c5b1772fc75dcdb721e856760415f79851511fb7338a",
-      "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs",
-      "failures": [],
-      "skip_names": [],
-      "mutation_named_checks": {
-        "total": 1,
-        "pass": 1,
-        "fail": 0,
-        "skipped": 0,
-        "note": "Passing TAP check names containing mutation or mutant; not unique source mutants."
-      }
+      "assertions": [
+        "B4_RECOVERY_NO_BUDGET_RESET"
+      ]
     },
-    "differential": [
-      {
-        "scenario": "counter-fault",
-        "label": "parent",
-        "results": [
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": false,
-        "complete": true,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": true,
-        "writes": 44,
-        "commands": 34
-      },
-      {
-        "scenario": "counter-fault",
-        "label": "blocked",
-        "results": [
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": true,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "active",
-          "shu-supervisor.service": "active",
-          "shu-coordinator.timer": "active"
-        },
-        "timerRetired": false,
-        "writes": 30,
-        "commands": 0
-      },
-      {
-        "scenario": "counter-fault",
-        "label": "candidate",
-        "results": [
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "active",
-          "shu-supervisor.service": "active",
-          "shu-coordinator.timer": "active"
-        },
-        "timerRetired": false,
-        "writes": 35,
-        "commands": 0
-      },
-      {
-        "scenario": "counter-plant",
-        "label": "parent",
-        "results": [
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": false,
-        "complete": true,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": true,
-        "writes": 44,
-        "commands": 34
-      },
-      {
-        "scenario": "counter-plant",
-        "label": "blocked",
-        "results": [
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "ARMED",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "ARMED"
-        },
-        "activation": true,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "active",
-          "shu-supervisor.service": "active",
-          "shu-coordinator.timer": "active"
-        },
-        "timerRetired": false,
-        "writes": 0,
-        "commands": 0
-      },
-      {
-        "scenario": "counter-plant",
-        "label": "candidate",
-        "results": [
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_UNAVAILABLE"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "active",
-          "shu-supervisor.service": "active",
-          "shu-coordinator.timer": "active"
-        },
-        "timerRetired": false,
-        "writes": 35,
-        "commands": 0
-      },
-      {
-        "scenario": "settlement-plant",
-        "label": "parent",
-        "results": [
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": false,
-        "complete": true,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": true,
-        "writes": 20,
-        "commands": 34
-      },
-      {
-        "scenario": "settlement-plant",
-        "label": "blocked",
-        "results": [
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": false,
-        "writes": 0,
-        "commands": 0
-      },
-      {
-        "scenario": "settlement-plant",
-        "label": "candidate",
-        "results": [
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ],
-          [
-            "REVOKED",
-            null
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": false,
-        "complete": true,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": true,
-        "writes": 9,
-        "commands": 29
-      },
-      {
-        "scenario": "settlement-interrupt",
-        "label": "parent",
-        "results": [
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ],
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ],
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ],
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ],
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": false,
-        "writes": 86,
-        "commands": 85
-      },
-      {
-        "scenario": "settlement-interrupt",
-        "label": "blocked",
-        "results": [
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": false,
-        "writes": 6,
-        "commands": 12
-      },
-      {
-        "scenario": "settlement-interrupt",
-        "label": "candidate",
-        "results": [
-          [
-            "HALT",
-            "ACT_CLEANUP_FAILED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ],
-          [
-            "HALT",
-            "ACT_RETRY_BUDGET_EXHAUSTED"
-          ]
-        ],
-        "gates": {
-          "/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf": "DIS",
-          "/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf": "DIS"
-        },
-        "activation": false,
-        "lease": true,
-        "complete": false,
-        "services": {
-          "shu71-evidence.service": "inactive",
-          "shu-supervisor.service": "inactive",
-          "shu-coordinator.timer": "inactive",
-          "shu-coordinator.service": "inactive"
-        },
-        "timerRetired": false,
-        "writes": 7,
-        "commands": 12
-      }
-    ],
-    "R5-A": "Independent activation credential removal after per-gate disarm on counter faults. Removal failure reported. Running units and lease retained, no completion claim; explicit recovery still required for full teardown.",
-    "R5-B": "Exhaustion requires ordered journal reservation history 1..32. Unsupported 32 takes safety fallback, not silent zero-effect exhaustion. Settlement allowance consumed by journal SETTLEMENT_STARTED, not counter boolean. Recovered/damaged evidence preserves EXHAUSTED refusal code but takes safety fallback; never resets counter.",
-    "R5-C": "MY6 survived 56/56 before; now killed by B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED. Failed settlement asserts lease/timer retention immediately and after 40 wakes.",
-    "Q3": "Scope choice: no automatic gate repair after evidence-supported exhaustion. This is not impossible or imposed by an external contract. Already-safe settlement remains supported. Existing assertions retained.",
-    "independent_mutants": [
-      {
-        "id": "MX-P1",
-        "status": 1,
-        "assertions": [
-          "B4_RETIREMENT_REOBSERVATION"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX1",
-        "status": 1,
-        "assertions": [
-          "B4_AUTOMATIC_REPLAY_BOUNDED",
-          "B4_RECOVERY_NO_BUDGET_RESET",
-          "B4_SETTLEMENT_UNFINISHED_REFUSED",
-          "B4_R5_COMPLETION"
-        ],
-        "tests": 67,
-        "pass": 55,
-        "fail": 12,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX2",
-        "status": 1,
-        "assertions": [
-          "B4_BUDGET_RESERVATION_INTERRUPTED",
-          "B4_COUNTER_REFUSAL",
-          "B4_MANUAL_BUDGET_RETAINED",
-          "B4_SETTLEMENT_UNFINISHED_REFUSED",
-          "B4_R5_COMPLETION"
-        ],
-        "tests": 67,
-        "pass": 52,
-        "fail": 15,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX5",
-        "status": 1,
-        "assertions": [
-          "B4_BUDGET_RESERVATION_INTERRUPTED",
-          "B4_INVALID_BUDGET_REFUSED",
-          "B4_COUNTER_REFUSAL",
-          "B4_MANUAL_BUDGET_RETAINED",
-          "B4_SETTLEMENT_UNFINISHED_REFUSED",
-          "B4_R5_COMPLETION",
-          "B4_COUNTER_CREDENTIAL_FAILURE_REPORTED",
-          "B4_COUNTER_RANGE_WITH_EVIDENCE"
-        ],
-        "tests": 67,
-        "pass": 36,
-        "fail": 31,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX6",
-        "status": 1,
-        "assertions": [
-          "B4_RECOVERY_NO_BUDGET_RESET"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX7",
-        "status": 1,
-        "assertions": [
-          "B4_COUNTER_RANGE_WITH_EVIDENCE"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX10",
-        "status": 1,
-        "assertions": [
-          "B4_ACTIVATION_DRIFT_RECOVERED"
-        ],
-        "tests": 67,
-        "pass": 64,
-        "fail": 3,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX11",
-        "status": 1,
-        "assertions": [
-          "B4_RESTORES_ONCE_ONLY"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX12",
-        "status": 1,
-        "assertions": [
-          "B4_ARCHIVE_ONCE_ONLY"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX3",
-        "status": 1,
-        "assertions": [
-          "B4_MANUAL_BUDGET_RETAINED"
-        ],
-        "tests": 67,
-        "pass": 64,
-        "fail": 3,
-        "skipped": 0,
-        "expected": "killed"
-      },
-      {
-        "id": "MX13",
-        "status": 0,
-        "assertions": [],
-        "tests": 67,
-        "pass": 67,
-        "fail": 0,
-        "skipped": 0,
-        "expected": "survived"
-      },
-      {
-        "id": "MX14",
-        "status": 0,
-        "assertions": [],
-        "tests": 67,
-        "pass": 67,
-        "fail": 0,
-        "skipped": 0,
-        "expected": "survived"
-      }
-    ],
-    "r5_verifier_mutants": [
-      {
-        "id": "MY1 fallback disarms only the first gate",
-        "verdict": "KILLED",
-        "assertions": [
-          "B4_COUNTER_FAULT_DISARMS",
-          "B4_R5_BOTH_GATES_"
-        ],
-        "tests": 67,
-        "pass": 53,
-        "fail": 14
-      },
-      {
-        "id": "MY2 fallback writes the ARMED value",
-        "verdict": "KILLED",
-        "assertions": [
-          "B4_COUNTER_FAULT_DISARMS",
-          "B4_Q1_DIFFERENTIAL_",
-          "B4_R5_BOTH_GATES_"
-        ],
-        "tests": 67,
-        "pass": 52,
-        "fail": 15
-      },
-      {
-        "id": "MY3 settlement pre-check observeGateFiles deleted",
-        "verdict": "SURVIVED",
-        "assertions": [],
-        "tests": 67,
-        "pass": 67,
-        "fail": 0
-      },
-      {
-        "id": "MY4 settlement ignores an unfinished remote restore",
-        "verdict": "KILLED",
-        "assertions": [
-          "B4_SETTLEMENT_UNFINISHED_REFUSED"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1
-      },
-      {
-        "id": "MY5 settlement allowance never checked",
-        "verdict": "KILLED",
-        "assertions": [
-          "B4_SETTLEMENT_JOURNAL_ALLOWANCE"
-        ],
-        "tests": 67,
-        "pass": 65,
-        "fail": 2
-      },
-      {
-        "id": "MY6 settlement releases the lease unconditionally",
-        "verdict": "KILLED",
-        "assertions": [
-          "B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED"
-        ],
-        "tests": 67,
-        "pass": 66,
-        "fail": 1
-      },
-      {
-        "id": "MY7 exhausted settlement skips the final observation",
-        "verdict": "SURVIVED",
-        "assertions": [],
-        "tests": 67,
-        "pass": 67,
-        "fail": 0
-      }
-    ],
-    "mutation_logs": [
-      {
-        "path": "/tmp/l3-r5-results/independent-final.log",
-        "sha256": "39b7775cb277f64e66ea9ddd311d12485ccf312ee6dc7e5d9ae1976b0b168a93"
-      },
-      {
-        "path": "/tmp/l3-r5-results/r5-independent-final.log",
-        "sha256": "00d3a2c17724bc63afcfeaa50e07d3363b290755ca77e72711527f065a516247"
-      }
-    ],
-    "survivors": "MX13/MX14 remain acceptable disclosed survivors, not killed or equivalent. MY3/MY7 remain redundant-observation survivors as adjudicated by R5.",
+    {
+      "id": "R6-M4",
+      "status": 1,
+      "tests": 104,
+      "pass": 57,
+      "fail": 47,
+      "skipped": 0,
+      "assertions": [
+        "B4_AUTOMATIC_REPLAY_BOUNDED",
+        "B4_R5_COMPLETION",
+        "B4_R6_REAL_RESERVATIONS",
+        "B4_SETTLEMENT_UNFINISHED_REFUSED"
+      ]
+    },
+    {
+      "id": "R6-M5-order-swap",
+      "status": 1,
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "assertions": [
+        "B4_R6_APPEND_INTERRUPTION_COUNTER_CONSUMED"
+      ]
+    },
+    {
+      "id": "R6-M6",
+      "status": 1,
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "assertions": [
+        "B4_COUNTER_CREDENTIAL_FAILURE_REPORTED"
+      ]
+    },
+    {
+      "id": "R6-M7",
+      "status": 0,
+      "tests": 104,
+      "pass": 104,
+      "fail": 0,
+      "skipped": 0,
+      "assertions": []
+    },
+    {
+      "id": "R6-M8",
+      "status": 0,
+      "tests": 104,
+      "pass": 104,
+      "fail": 0,
+      "skipped": 0,
+      "assertions": []
+    },
+    {
+      "id": "R6-M9",
+      "status": 0,
+      "tests": 104,
+      "pass": 104,
+      "fail": 0,
+      "skipped": 0,
+      "assertions": []
+    },
+    {
+      "id": "R6-M10",
+      "status": 1,
+      "tests": 104,
+      "pass": 103,
+      "fail": 1,
+      "skipped": 0,
+      "assertions": [
+        "B4_RECOVERY_NO_BUDGET_RESET"
+      ]
+    }
+  ],
+  "fixture_git_comparison": [
+    {
+      "revision": "5e25c651254a72adbb46fa8f950df95248b640e9",
+      "name": "shu71-journal.mjs",
+      "sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0",
+      "byte_identical": true
+    },
+    {
+      "revision": "5e25c651254a72adbb46fa8f950df95248b640e9",
+      "name": "shu71-production.mjs",
+      "sha256": "a627b470f1215403c6da23064a15d3b62b64abc871e6e7a2d9e01da6cf34129e",
+      "byte_identical": true
+    },
+    {
+      "revision": "e9a68c156a0b8631b314d8d14c626ba31014a882",
+      "name": "shu71-journal.mjs",
+      "sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0",
+      "byte_identical": true
+    },
+    {
+      "revision": "e9a68c156a0b8631b314d8d14c626ba31014a882",
+      "name": "shu71-production.mjs",
+      "sha256": "55fef305a551a1af64dfd7b74138790acf798d2dd6b564f586b888c3a38d96ef",
+      "byte_identical": true
+    },
+    {
+      "revision": "0eeadd5f05abc8cd82968a855b2bff8cc137c65a",
+      "name": "shu71-journal.mjs",
+      "sha256": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0",
+      "byte_identical": true
+    },
+    {
+      "revision": "0eeadd5f05abc8cd82968a855b2bff8cc137c65a",
+      "name": "shu71-production.mjs",
+      "sha256": "e4989c9fa3ab0459492c37db21fd92a3199b9b4cefc58119b249f151b3844a14",
+      "byte_identical": true
+    }
+  ],
+  "mutation_logs": [
+    {
+      "path": "/tmp/l3-r6-results/independent-final.log",
+      "sha256": "3bcf73ce5a9d5228dadb54074b52dd589c5ec318600450baeb5a53f01482756e"
+    },
+    {
+      "path": "/tmp/l3-r6-results/r5-independent-final.log",
+      "sha256": "151ec6b62f79530403ea3713182da2a90092bcd7bf75b5adbfaa36ad362f81c9"
+    },
+    {
+      "path": "/tmp/l3-r6-results/after-summary.log",
+      "sha256": "261dc0ee0d74abbb637e5eb4acddf17e23b2ca7a0832925ea2f9210215f2dbfc"
+    },
+    {
+      "path": "/tmp/l3-r6-results/other-r6-summary.log",
+      "sha256": "fb9d47e322281f28eb66fa2e5ea653b9a79662196a2f2aa290f47c2341f42ebe"
+    }
+  ],
+  "survivors": {
+    "MX13_MX14": "Worker/cgroup and effective-systemd limitations; not killed or claimed equivalent.",
+    "MY3_MY7": "Redundant-observation survivors; no kill claim.",
+    "R6_M7_M8_M9": "Credential removal before gate loop, deletion of redundant settlement counter read, and settlement marker after counter write survive. No additional security closure claimed."
+  },
+  "constraints": {
     "permitted_skips_sha256": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f",
     "permitted_skips_byte_identical_lane_wide": true,
-    "skip_names_unchanged": true,
-    "suite_delta_vs_r5": {
-      "tests": 15,
-      "pass": 15,
-      "fail": 0,
-      "skip": 0
-    },
-    "production_source_sha256": "bd304b83b270478a33fe565f2be493384c4081226d1eb0bcd6600dfaed987091",
-    "limitations": [
-      "All execution proofs use disposable boundary doubles, not a host.",
-      "No host/systemd effective-environment, cgroup, durability or scheduling proof.",
-      "No real second signed activation or two-lane production progression.",
-      "No application-suite rerun this round; prior application results remain historical.",
-      "Pre-existing evidence-directory mode veto and custody-invalid foreign-lease residual unchanged.",
-      "A root writer who rewrites journal and counter is outside this single-counter cross-check.",
-      "Missing reservation evidence, including legacy exhaustion, takes narrow safety fallback and requires explicit recovery; narrow fallback writes may recur.",
-      "B1 BLOCKED; B2/B4 source-level only; overall execution BLOCK."
-    ],
-    "constraints": "Repository-only. No host access, external writes, push, PR modification, merge or comments. No existing assertion, guard, error code or skip allowance weakened."
-  }
+    "ci_workflow_unchanged": true,
+    "production_modules_unchanged": true,
+    "host_access": false,
+    "push": false,
+    "pr_changes": false,
+    "github_or_linear_comments": false,
+    "merge": false,
+    "new_head_ci_status": "UNVERIFIED; orchestrator will verify after pushing"
+  },
+  "limitations": [
+    "All execution proofs use disposable boundary doubles, not a host.",
+    "No host/systemd effective-environment, cgroup, durability or scheduling proof.",
+    "No real second signed activation or two-lane production progression.",
+    "No application-suite rerun this round; prior application results remain historical.",
+    "Pre-existing evidence-directory mode veto and custody-invalid foreign-lease residual unchanged.",
+    "A root writer who rewrites journal and counter is outside this single-counter cross-check.",
+    "Missing reservation evidence, including legacy exhaustion, takes narrow safety fallback and requires explicit recovery; narrow fallback writes may recur.",
+    "B1 BLOCKED; B2/B4 source-level only; overall execution BLOCK.",
+    "Git provenance cannot be established in shallow CI. Control-content guard checks specific differential prerequisites, not arbitrary source equivalence.",
+    "No current-head CI claim."
+  ],
+  "tested_changed_sources": {
+    ".github/coordinator/service/test/shu71-history.mjs": "4302bd16b68f69d5dfbbcc8578ae442365359dfc015c1add9ada24dbcd3e8a92",
+    ".github/coordinator/service/test/shu71-history.test.mjs": "059ad27463f1702607e13745cae9b3e910613355aea0bffdc997d092498947d9",
+    ".github/coordinator/service/test/shu71-r6-checks.mjs": "068c2bfb95406c852d12aca28eb6cc8d9f25bd66dbb085bf103cdf690cd4becc",
+    ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs": "97f303b9c1d0c48e56c9284f74a5010b55f2f09bf2ce55b48f3a11d6518dd0d6",
+    ".github/coordinator/service/test/shu71-trust.test.mjs": "a590f644b477fdaebd652561fee5ad3d83a02fb37264697fcd4945c2cd2366ab"
+  },
+  "final_head_confirmation_directory": "/tmp/l3-r6-results/final-head"
 }
