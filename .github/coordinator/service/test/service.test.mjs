@@ -116,7 +116,7 @@ for (const [label, after, launches, writes, message] of [
   ['durable state changed', { receipt: 'changed' }, 0, 0, 'SHU251_STATE_DIFF: disabled tick must preserve all fixture state'],
 ]) test(`SHU251 mutation: ${label}`, () => named(() => assertQuiet({}, after, launches, writes), message));
 
-test('SHU251 mutation: rollback restore omitted', noSystemd, async t => {
+test('SHU251 mutation: rollback restore omitted', async t => {
   const root = fixture(t), moduleRoot = fixture(t);
   const source = fs.readFileSync(new URL('../install.mjs', import.meta.url), 'utf8');
   const target = 'else atomic(join(root, name), Buffer.from(item.data, \'base64\'), item.mode);';
@@ -257,10 +257,11 @@ test('SHU251 canonical workspace constant matches literal deployment and activat
   assertDeployedWorkspaceState(WORKSPACE_STATE_DIR);
 });
 test('SHU251 mutation: canonical workspace constant repointed', async t => {
-  const file = join(fixture(t), 'units-mutant.mjs');
+  const root = fixture(t), file = join(root, 'units-mutant.mjs');
   const source = fs.readFileSync(new URL('../units.mjs', import.meta.url), 'utf8');
   const declaration = "export const WORKSPACE_STATE_DIR = '/srv/shu/state/workspaces';";
   assert.ok(source.includes(declaration));
+  fs.copyFileSync(new URL('../credential-delivery.mjs', import.meta.url), join(root, 'credential-delivery.mjs'));
   fs.writeFileSync(file, source.replace(declaration, "export const WORKSPACE_STATE_DIR = '/tmp/elsewhere';"));
   const mutant = await import(pathToFileURL(file));
   named(() => assertDeployedWorkspaceState(mutant.WORKSPACE_STATE_DIR), 'SHU251_WRITER_LOCK: WORKSPACE_STATE_DIR must equal literal deployed /srv/shu/state/workspaces');

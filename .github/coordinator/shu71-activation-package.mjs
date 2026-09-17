@@ -52,7 +52,7 @@ function fail(code, detail, phase = "validation") {
 
 export function validateAnchor(anchor, publicKeyPem, revision, publicKeyPath = SHU71_PUBLIC_KEY_PATH, authorization = {}) {
   try { publicKeyPem = loadShu71PublicKey(publicKeyPath, publicKeyPem); }
-  catch (error) { return fail(error.message.startsWith("ACT_PUBLIC_KEY_PATH:") ? "ACT_PUBLIC_KEY_PATH" : "ACT_TRUST_ANCHOR_MISMATCH", error.message); }
+  catch (error) { return fail(String(error?.message).startsWith("ACT_PUBLIC_KEY_PATH:") ? "ACT_PUBLIC_KEY_PATH" : "ACT_TRUST_ANCHOR_MISMATCH", "activation operation refused"); }
   if (!exactObject(anchor, ["version", "algorithm", "provenance_revision", "spki_sha256", "state"])) {
     return fail("ACT_TRUST_ANCHOR_INVALID", "trust-anchor manifest shape is not exact");
   }
@@ -66,7 +66,7 @@ export function validateAnchor(anchor, publicKeyPem, revision, publicKeyPath = S
       return fail("ACT_TRUST_ANCHOR_MISMATCH", "public key fingerprint differs from the reviewed anchor");
     }
   } catch (error) {
-    return fail("ACT_TRUST_ANCHOR_INVALID", error.message);
+    return fail("ACT_TRUST_ANCHOR_INVALID", "activation operation refused");
   }
   // Provenance identifies the reviewed key; only the separate record binds execution.
   const binding = executionBindingError(authorization.record, revision, authorization.mainRevision);
@@ -203,6 +203,20 @@ export function validateShu71Package({ pkg, anchor, publicKeyPem, publicKeyPath 
   return { ok: true, state: phase === "prepared" ? "PREPARED" : "VERIFIED", phase, activation_id: pkg.activation_id };
 }
 
+// Callback exceptions are untrusted input: even a code-shaped value may contain
+// credentials. Only these module-owned codes may cross the evidence boundary.
+function boundedReseedCode(error) {
+  const names = ['RESULT_SHA_MISMATCH', 'UNEXPECTED_TREE', 'HASH_ALGORITHM', 'NOT_APPEND_ONLY',
+    'UNSUPPORTED_MODE', 'UNEXPECTED_PATH', 'SEED_BLOB_CHANGED', 'CONFLICT', 'PARENT_MISMATCH',
+    'UNEXPECTED_PARENT', 'METADATA_DRIFT', 'DIGEST_MISMATCH'];
+  return names.map(name => `SHU71_RESEED_${name}`).includes(error?.code) ? error.code : 'ACT_RESEED_FAILED';
+}
+
+function boundedActivationCode(error) {
+  return ["ACT_PRIOR_STATE_DRIFT", "ACT_PARTIAL_ARMING", "ACT_EVIDENCE_WRITE_FAILED"].includes(error?.code)
+    ? error.code : "ACT_PARTIAL_ARMING";
+}
+
 async function safelyRestore(pkg, io, changed) {
   const failures = [];
   for (const transition of [...pkg.issue_transitions].reverse()) {
@@ -214,7 +228,7 @@ async function safelyRestore(pkg, io, changed) {
         failures.push(`${transition.issue_id}: restore verification mismatch`);
       }
     } catch (error) {
-      failures.push(`${transition.issue_id}: ${error.message}`);
+      failures.push(`${transition.issue_id}: ACT_RESTORE_FAILED`);
     }
   }
   return failures;
@@ -223,16 +237,17 @@ async function safelyRestore(pkg, io, changed) {
 export async function runShu71Command(command, context) {
   const { pkg, io } = context;
   if (!["reseed", "activate", "revoke"].includes(command)) return fail("ACT_COMMAND_INVALID", "expected reseed, activate, or revoke", "command");
+  const revokeFailures = [];
   if (command === "revoke") {
     try { await io.setRuntimeGate({ activation_id: pkg?.activation_id ?? null, enabled: false }); }
-    catch (error) { return fail("ACT_REVOCATION_FAILED", `runtime gate could not be disabled: ${error.message}`, command); }
+    catch { revokeFailures.push("ACT_REVOCATION_FAILED"); }
   }
   const phase = command === "reseed" ? "prepared" : command === "revoke" ? "revocation" : "seeded";
   const checked = validateShu71Package({ ...context, phase });
   if (!checked.ok) return checked;
   const append = async (event) => {
     try { await io.appendEvidence({ version: "1.0.0", activation_id: pkg.activation_id, at: new Date(context.now ?? Date.now()).toISOString(), ...event }); }
-    catch (error) { return fail("ACT_EVIDENCE_WRITE_FAILED", error.message, command); }
+    catch (error) { return fail("ACT_EVIDENCE_WRITE_FAILED", "activation operation refused", command); }
     return null;
   };
 
@@ -241,7 +256,7 @@ export async function runShu71Command(command, context) {
     try { result = await io.appendReseed(structuredClone(pkg.reseed)); }
     catch (error) {
       try { result = await io.observeReseed(structuredClone(pkg.reseed)); }
-      catch { return fail("ACT_RESEED_FAILED", error.message, command); }
+      catch { return fail("ACT_RESEED_FAILED", boundedReseedCode(error), command); }
     }
     if (!exactObject(result, ["before", "after", "parent", "patch_sha256", "forced"])
         || result.before !== pkg.reseed.expected_parent || result.parent !== pkg.reseed.expected_parent
@@ -279,16 +294,16 @@ export async function runShu71Command(command, context) {
       return { ok: true, state: "ARMED", phase: command, activation_id: pkg.activation_id };
     } catch (error) {
       const rollback = [];
-      if (runtimeArmed) try { await io.setRuntimeGate({ activation_id: pkg.activation_id, enabled: false }); } catch (gateError) { rollback.push(`runtime gate: ${gateError.message}`); }
-      if (activationInstalled) try { await io.archiveActivation(pkg.activation_id); } catch (archiveError) { rollback.push(`activation archive: ${archiveError.message}`); }
+      if (runtimeArmed) try { await io.setRuntimeGate({ activation_id: pkg.activation_id, enabled: false }); } catch (gateError) { rollback.push("ACT_REVOCATION_FAILED"); }
+      if (activationInstalled) try { await io.archiveActivation(pkg.activation_id); } catch (archiveError) { rollback.push("ACT_ARCHIVE_FAILED"); }
       rollback.push(...await safelyRestore(pkg, io, changed));
-      try { await append({ event: "ACTIVATION_HALTED", code: error.code ?? "ACT_PARTIAL_ARMING", rollback }); } catch { /* append() already normalizes */ }
-      return fail(rollback.length ? "ACT_ROLLBACK_FAILED" : (error.code ?? "ACT_PARTIAL_ARMING"), `${error.message}${rollback.length ? `; ${rollback.join("; ")}` : ""}`, command);
+      try { await append({ event: "ACTIVATION_HALTED", code: boundedActivationCode(error), rollback }); } catch { /* append() already normalizes */ }
+      return fail(rollback.length ? "ACT_ROLLBACK_FAILED" : (boundedActivationCode(error)), `activation operation refused${rollback.length ? `; ${rollback.join("; ")}` : ""}`, command);
     }
   }
 
-  const failures = [];
-  try { await io.archiveActivation(pkg.activation_id); } catch (error) { failures.push(`activation archive: ${error.message}`); }
+  const failures = [...revokeFailures];
+  try { await io.archiveActivation(pkg.activation_id); } catch (error) { failures.push("ACT_ARCHIVE_FAILED"); }
   const changed = new Set(FIXTURES);
   failures.push(...await safelyRestore(pkg, io, changed));
   try {
@@ -299,11 +314,11 @@ export async function runShu71Command(command, context) {
       identity_bound: true,
     });
     if (!cleanup || cleanup.failed !== 0 || cleanup.retained_evidence !== true) failures.push("fixture cleanup verification failed");
-  } catch (error) { failures.push(`fixture cleanup: ${error.message}`); }
+  } catch (error) { failures.push("ACT_FIXTURE_CLEANUP_FAILED"); }
   const eventFailure = await append({ event: failures.length ? "REVOCATION_HALTED" : "REVOKED", failures, evidence_retained: true });
   if (eventFailure) failures.push(`evidence: ${eventFailure.detail}`);
   return failures.length
-    ? fail("ACT_CLEANUP_FAILED", failures.join("; "), command)
+    ? fail(revokeFailures.length ? "ACT_REVOCATION_FAILED" : "ACT_CLEANUP_FAILED", failures.join("; "), command)
     : { ok: true, state: "REVOKED", phase: command, activation_id: pkg.activation_id, evidence_retained: true };
 }
 

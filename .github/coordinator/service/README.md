@@ -35,8 +35,10 @@ Before the coordinator-controlled host re-run, the operator must provide:
   group/other permission bits; preserve the existing assertion. Supervisor state
   must also be accessible to that user. Ownership changes are a host operation.
 - Supervisor `EnvironmentFile=/etc/shu/supervisor.env`, parameter
-  `supervisorEnvironmentFile`: root:root **0600**, containing only
-  `SHU_SUPERVISOR_SECRET` of at least 32 bytes.
+  `supervisorEnvironmentFile`: root:root **0600**, containing
+  `SHU_SUPERVISOR_SECRET` of at least 32 bytes. Gate-off staging permits this
+  secret alone; SHU-71 arming additionally requires all nine adapter settings
+  listed in [the B1 content contract](SHU71-B1-COMPOSITION.md).
 - Coordinator `EnvironmentFile=/srv/shu/coordinator.env`, parameter
   `coordinatorEnvironmentFile`: as provisioned, containing nonempty
   `GITHUB_TOKEN` and `LINEAR_API_TOKEN`. These are distinct required absolute

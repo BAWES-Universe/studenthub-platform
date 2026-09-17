@@ -1,3 +1,4 @@
+import { supervisorTransportSecret } from "./service/credential-delivery.mjs";
 import { hasLaunchReceipt, requireHoldCode } from './intended-work.mjs';
 // Coordinator-side transport. Injected legacy adapters are reserved for existing
 // unit fixtures; production always uses the durable supervisor socket.
@@ -54,7 +55,7 @@ export function carriedSupervisorOutcome(response, receipt, { current_head, head
 export function supervisorAdapter(receipt, env, io = {}) {
   const contact = async (operation, options = {}) => {
     try {
-      const request = signedSupervisorRequest(supervisorOrder(receipt, options), env.SHU_SUPERVISOR_SECRET, operation);
+      const request = signedSupervisorRequest(supervisorOrder(receipt, options), supervisorTransportSecret(env), operation);
       return await (io.supervisorTransport ?? submitToSupervisor)({ socketPath: env.SHU_SUPERVISOR_SOCKET, request });
     } catch { return { ok: false, stage: "HOLD", reason: "supervisor configuration unavailable" }; }
   };
