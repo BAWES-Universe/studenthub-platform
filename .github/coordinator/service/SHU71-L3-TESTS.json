@@ -70,30 +70,30 @@
     "possible_combined_wake_grace_seconds": 16,
     "timing_basis": "Rendered timer/restart text; not a host scheduling measurement."
   },
-  "round": 6,
-  "reviewed_head": "58527b27b15fc3c817b2cb978285688e6fee69f0",
+  "round": 7,
+  "reviewed_head": "569024577c8c96c0ef161798c3c541ea14b309d5",
   "candidate": "commit containing this report; tested source unchanged by report/closure edits; final-head reruns must reproduce these counts",
   "historical_reports": "Historical measurements are retained in Git at their original commits, including 58527b2. They are not current-head claims.",
   "focused": {
-    "tests": 309,
-    "pass": 309,
+    "tests": 331,
+    "pass": 331,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r6-results/focused-final.log",
-    "log_sha256": "8733c0ea618711a417f6569f84b60203e80bf2313b4ad378b99d814208fd85ce",
+    "log_path": "/tmp/l3-r7-results/focused-final.log",
+    "log_sha256": "f71ec0b317b2baf49c4992759c71c126a7a54361b4352d6353f08e04a0d39a75",
     "skip_names": [],
-    "mutation_named_checks": 96,
+    "mutation_named_checks": 98,
     "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,production-mutations,delivery,delivery-mutations,trust,trust-mutations,recovery-mutations,history}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs",
     "targeted_source_mutants": {
-      "total": 55,
-      "killed": 55,
+      "total": 57,
+      "killed": 57,
       "production": 11,
       "delivery": 17,
       "trust": 11,
-      "recovery": 16,
-      "added_in_r6": 2
+      "recovery": 18,
+      "added_in_r7": 2
     },
     "process_death_injections": {
       "forward": 240,
@@ -102,27 +102,27 @@
     }
   },
   "genuine_assertion_baseline": {
-    "tests": 254,
-    "pass": 254,
+    "tests": 274,
+    "pass": 274,
     "fail": 0,
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r6-results/genuine-final.log",
-    "log_sha256": "0908b6056d23e0d39c7242f77e9d857186be30662e5994f46b7cba4c15c8fe5a",
+    "log_path": "/tmp/l3-r7-results/genuine-final.log",
+    "log_sha256": "21629cc39b8540a5d763e9ac576abd54ed3358c0fe5abeafe39665b5e6eb5c82",
     "skip_names": [],
     "mutation_named_checks": 41,
     "command": "SHU251_NO_SYSTEMD=1 node --test .github/coordinator/service/test/shu71-{production,delivery,trust,history}.test.mjs .github/coordinator/test/{shu71-activation-package,reseed-append-contract,two-fixture-activation,two-fixture-progression}.test.mjs"
   },
   "coordinator": {
-    "tests": 1800,
-    "pass": 1782,
+    "tests": 1822,
+    "pass": 1804,
     "fail": 0,
     "cancelled": 0,
     "skipped": 18,
     "todo": 0,
-    "log_path": "/tmp/l3-r6-results/coordinator-final.log",
-    "log_sha256": "cc4f703b9a7897c8361452e555490f7741bfaedb514584be3d5f70d3eac533d6",
+    "log_path": "/tmp/l3-r7-results/coordinator-final.log",
+    "log_sha256": "27bcf35fbfc43a97080a9db27125991a3f53b7bf027927770e312a0d6e0dad2a",
     "skip_names": [
       "SHU251 local kill-switch, syntax and rollback harness # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
       "SHU251 parameterised argv and unit syntax # SKIP SHU251_NO_SYSTEMD: systemd interaction prohibited in this window",
@@ -143,7 +143,7 @@
       "SHU-71 restricted capability refusal # SKIP production vocabulary has no undeclared runtime/role pair",
       "READER operator-owned checkout read by non-root account # SKIP Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
     ],
-    "mutation_named_checks": 531,
+    "mutation_named_checks": 533,
     "command": "SHU251_NO_SYSTEMD=1 npm run test:coordinator"
   },
   "rollback_mutation": {
@@ -153,8 +153,8 @@
     "cancelled": 0,
     "skipped": 0,
     "todo": 0,
-    "log_path": "/tmp/l3-r6-results/rollback-final.log",
-    "log_sha256": "4ba7cfc2322c2ea6ab2d80d77d36bd56a53adf60beb331306bb1326b77f248ee",
+    "log_path": "/tmp/l3-r7-results/rollback-final.log",
+    "log_sha256": "f83f97894933cb092b984d4f533475221593c84a238a994bc32dfaa3190302ae",
     "skip_names": [],
     "mutation_named_checks": 1,
     "command": "env -u SHU251_NO_SYSTEMD node --test --test-name-pattern='SHU251 mutation: rollback restore omitted' .github/coordinator/service/test/service.test.mjs"
@@ -337,15 +337,15 @@
         "mutation_named_checks": 0
       },
       "substitution_error": "SHU71_HISTORY_CONTROL_CONTENT: NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK",
-      "provenance": "All six actual fixtures checked byte-for-byte against Git in the full clone. The Git cross-check cannot run in shallow CI: recorded digests plus unconditional control-content guard only; only a full clone re-establishes Git provenance. Named SHU71_HISTORY_GIT_UNAVAILABLE/SHU71_HISTORY_GIT_VERIFIED output discloses which ran.",
-      "guard_scope": "Structural cleanup ordering, absence of later fault credential revocation/evidence binding, blocked reservation ordering and settlement authority; all journal chain/replay/retirement prerequisites. Real historical-pair executions check the ordering and counter-fault outcomes. Candidate production substitution tested in every slot without Git. This is not authentication of arbitrary semantics-preserving substitutions."
+      "provenance": "All six actual fixtures matched Git in the full clone. Git cross-check cannot run in shallow CI. Recorded digests establish local consistency only; executed historical control semantics tests and downstream differentials are the load-bearing backstop. The text diagnostic is not provenance. Named SHU71_HISTORY_GIT_UNAVAILABLE/SHU71_HISTORY_GIT_VERIFIED output discloses which comparison ran.",
+      "guard_scope": "R7 clarification: pure text matching over comment/whitespace-stripped source, a diagnostic aid rather than a security control. Neither unique to the intended revision nor resistant to equivalent rewrites. Behavioral control executions and downstream differentials remain the load-bearing backstop."
     },
     "R6-C": {
       "coordinator_total": 1800,
       "coordinator_pass": 1782,
       "coordinator_fail": 0,
       "coordinator_skips": 18,
-      "current_counts_only": "All current suite records above derive from the listed logs. Superseded historical suite records remain in Git rather than duplicated as current declarations."
+      "current_counts_only": "Historical R6 measurements at 5690245; superseded by the top-level R7 suite records."
     },
     "R5-B": {
       "disposition": "b",
@@ -353,7 +353,8 @@
       "limitation": "The SHA-256 chain is unkeyed and shares the 0700/uid-0 directory with the counter. Existing local signing material is root-readable, so using it would not establish a trust boundary against root. External trust is outside this repository-only lane.",
       "positive_control": "B4_R6_ORDERED_LOCAL_CHAIN_ACCEPTED and B4_R6_ORDERED_ZERO_EFFECTS_RESIDUAL demonstrate that root-rewritten ordered evidence plus the counter can retain both armed gates, activation credential and lease at zero effects."
     },
-    "unchanged": "R5-A credential revocation and containment residuals; R5-C ownership guard and named kill; Q3 scope choice; B1 BLOCKED, B2/B4 source-level only. Production modules, historical fixture bytes, CI workflow and PERMITTED_SKIPS unchanged."
+    "unchanged": "R5-A credential revocation and containment residuals; R5-C ownership guard and named kill; Q3 scope choice; B1 BLOCKED, B2/B4 source-level only. Production modules, historical fixture bytes, CI workflow and PERMITTED_SKIPS unchanged.",
+    "measurement_scope": "Historical measurements at 5690245, preserved unchanged; R7 current measurements are in top-level suites and r7_response. R5-B disclosure remains verbatim and current."
   },
   "independent_mutants": [
     {
@@ -362,8 +363,8 @@
       "assertions": [
         "B4_RETIREMENT_REOBSERVATION"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "expected": "killed"
@@ -407,15 +408,16 @@
         "B4_R6_PARTIAL_29_EVIDENCE_REFUSED",
         "B4_R6_PARTIAL_30_EVIDENCE_REFUSED",
         "B4_R6_PARTIAL_31_EVIDENCE_REFUSED",
+        "B4_R6_DESCENDING_EVIDENCE_REFUSED",
         "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
         "B4_R6_REORDERED_EVIDENCE_REFUSED",
         "B4_R6_GAP_EVIDENCE_REFUSED",
         "B4_R6_EXTRA_EVIDENCE_REFUSED",
         "B4_R6_ORDERED_LOCAL_CHAIN_ACCEPTED"
       ],
-      "tests": 104,
+      "tests": 105,
       "pass": 56,
-      "fail": 48,
+      "fail": 49,
       "skipped": 0,
       "expected": "killed"
     },
@@ -431,9 +433,9 @@
         "B4_R6_REAL_RESERVATIONS",
         "B4_R6_APPEND_INTERRUPTION_COUNTER_CONSUMED"
       ],
-      "tests": 104,
+      "tests": 105,
       "pass": 53,
-      "fail": 51,
+      "fail": 52,
       "skipped": 0,
       "expected": "killed"
     },
@@ -451,9 +453,9 @@
         "B4_COUNTER_RANGE_WITH_EVIDENCE",
         "B4_R6_REAL_RESERVATIONS"
       ],
-      "tests": 104,
+      "tests": 105,
       "pass": 36,
-      "fail": 68,
+      "fail": 69,
       "skipped": 0,
       "expected": "killed"
     },
@@ -463,8 +465,8 @@
       "assertions": [
         "B4_RECOVERY_NO_BUDGET_RESET"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "expected": "killed"
@@ -475,8 +477,8 @@
       "assertions": [
         "B4_COUNTER_RANGE_WITH_EVIDENCE"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "expected": "killed"
@@ -487,8 +489,8 @@
       "assertions": [
         "B4_ACTIVATION_DRIFT_RECOVERED"
       ],
-      "tests": 104,
-      "pass": 101,
+      "tests": 105,
+      "pass": 102,
       "fail": 3,
       "skipped": 0,
       "expected": "killed"
@@ -499,8 +501,8 @@
       "assertions": [
         "B4_RESTORES_ONCE_ONLY"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "expected": "killed"
@@ -511,8 +513,8 @@
       "assertions": [
         "B4_ARCHIVE_ONCE_ONLY"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "expected": "killed"
@@ -523,8 +525,8 @@
       "assertions": [
         "B4_MANUAL_BUDGET_RETAINED"
       ],
-      "tests": 104,
-      "pass": 101,
+      "tests": 105,
+      "pass": 102,
       "fail": 3,
       "skipped": 0,
       "expected": "killed"
@@ -533,8 +535,8 @@
       "id": "MX13",
       "status": 0,
       "assertions": [],
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0,
       "skipped": 0,
       "expected": "survived"
@@ -543,8 +545,8 @@
       "id": "MX14",
       "status": 0,
       "assertions": [],
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0,
       "skipped": 0,
       "expected": "survived"
@@ -555,6 +557,7 @@
       "id": "MY1 fallback disarms only the first gate",
       "verdict": "KILLED",
       "assertions": [
+        "B4_R7_RECOVERY_BOTH_GATES_DISARMED",
         "B4_COUNTER_FAULT_DISARMS",
         "B4_Q1_SECOND_GATE_",
         "B4_R5_BOTH_GATES_",
@@ -589,19 +592,21 @@
         "B4_R6_PARTIAL_29_BOTH_GATES_DISARMED",
         "B4_R6_PARTIAL_30_BOTH_GATES_DISARMED",
         "B4_R6_PARTIAL_31_BOTH_GATES_DISARMED",
+        "B4_R6_DESCENDING_BOTH_GATES_DISARMED",
         "B4_R6_DUPLICATE_BOTH_GATES_DISARMED",
         "B4_R6_REORDERED_BOTH_GATES_DISARMED",
         "B4_R6_GAP_BOTH_GATES_DISARMED",
         "B4_R6_EXTRA_BOTH_GATES_DISARMED"
       ],
-      "tests": 104,
-      "pass": 53,
-      "fail": 51
+      "tests": 105,
+      "pass": 52,
+      "fail": 53
     },
     {
       "id": "MY2 fallback writes the ARMED value",
       "verdict": "KILLED",
       "assertions": [
+        "B4_R7_RECOVERY_BOTH_GATES_DISARMED",
         "B4_COUNTER_FAULT_DISARMS",
         "B4_Q1_DIFFERENTIAL_",
         "B4_R5_BOTH_GATES_",
@@ -636,21 +641,22 @@
         "B4_R6_PARTIAL_29_BOTH_GATES_DISARMED",
         "B4_R6_PARTIAL_30_BOTH_GATES_DISARMED",
         "B4_R6_PARTIAL_31_BOTH_GATES_DISARMED",
+        "B4_R6_DESCENDING_BOTH_GATES_DISARMED",
         "B4_R6_DUPLICATE_BOTH_GATES_DISARMED",
         "B4_R6_REORDERED_BOTH_GATES_DISARMED",
         "B4_R6_GAP_BOTH_GATES_DISARMED",
         "B4_R6_EXTRA_BOTH_GATES_DISARMED"
       ],
-      "tests": 104,
-      "pass": 53,
-      "fail": 51
+      "tests": 105,
+      "pass": 52,
+      "fail": 53
     },
     {
       "id": "MY3 settlement pre-check observeGateFiles deleted",
       "verdict": "SURVIVED",
       "assertions": [],
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0
     },
     {
@@ -659,8 +665,8 @@
       "assertions": [
         "B4_SETTLEMENT_UNFINISHED_REFUSED"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1
     },
     {
@@ -669,8 +675,8 @@
       "assertions": [
         "B4_SETTLEMENT_JOURNAL_ALLOWANCE"
       ],
-      "tests": 104,
-      "pass": 102,
+      "tests": 105,
+      "pass": 103,
       "fail": 2
     },
     {
@@ -679,16 +685,16 @@
       "assertions": [
         "B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED"
       ],
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1
     },
     {
       "id": "MY7 exhausted settlement skips the final observation",
       "verdict": "SURVIVED",
       "assertions": [],
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0
     }
   ],
@@ -696,8 +702,8 @@
     {
       "id": "R6-M3",
       "status": 1,
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "assertions": [
@@ -707,9 +713,9 @@
     {
       "id": "R6-M4",
       "status": 1,
-      "tests": 104,
+      "tests": 105,
       "pass": 57,
-      "fail": 47,
+      "fail": 48,
       "skipped": 0,
       "assertions": [
         "B4_AUTOMATIC_REPLAY_BOUNDED",
@@ -721,8 +727,8 @@
     {
       "id": "R6-M5-order-swap",
       "status": 1,
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "assertions": [
@@ -732,8 +738,8 @@
     {
       "id": "R6-M6",
       "status": 1,
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "assertions": [
@@ -743,8 +749,8 @@
     {
       "id": "R6-M7",
       "status": 0,
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0,
       "skipped": 0,
       "assertions": []
@@ -752,8 +758,8 @@
     {
       "id": "R6-M8",
       "status": 0,
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0,
       "skipped": 0,
       "assertions": []
@@ -761,8 +767,8 @@
     {
       "id": "R6-M9",
       "status": 0,
-      "tests": 104,
-      "pass": 104,
+      "tests": 105,
+      "pass": 105,
       "fail": 0,
       "skipped": 0,
       "assertions": []
@@ -770,8 +776,8 @@
     {
       "id": "R6-M10",
       "status": 1,
-      "tests": 104,
-      "pass": 103,
+      "tests": 105,
+      "pass": 104,
       "fail": 1,
       "skipped": 0,
       "assertions": [
@@ -819,20 +825,36 @@
   ],
   "mutation_logs": [
     {
-      "path": "/tmp/l3-r6-results/independent-final.log",
-      "sha256": "3bcf73ce5a9d5228dadb54074b52dd589c5ec318600450baeb5a53f01482756e"
+      "path": "/tmp/l3-r7-results/after-progress.log",
+      "sha256": "e7ccdb97de6bd4c251515f0033cd1aa1ac308533a56ef48abe21e1c0d4395d49"
     },
     {
-      "path": "/tmp/l3-r6-results/r5-independent-final.log",
-      "sha256": "151ec6b62f79530403ea3713182da2a90092bcd7bf75b5adbfaa36ad362f81c9"
+      "path": "/tmp/l3-r7-results/before-progress.log",
+      "sha256": "3d78e66b1c83bae82484b0b62500b32ac38eec0c7f9fabb35ccbc0a4dedded8e"
     },
     {
-      "path": "/tmp/l3-r6-results/after-summary.log",
-      "sha256": "261dc0ee0d74abbb637e5eb4acddf17e23b2ca7a0832925ea2f9210215f2dbfc"
+      "path": "/tmp/l3-r7-results/independent-final.log",
+      "sha256": "2ef1f488ac73cab3dce4fb228d6c564ca99d8b97519d6ebd19fd28a06851c713"
     },
     {
-      "path": "/tmp/l3-r6-results/other-r6-summary.log",
-      "sha256": "fb9d47e322281f28eb66fa2e5ea653b9a79662196a2f2aa290f47c2341f42ebe"
+      "path": "/tmp/l3-r7-results/other-r6-summary.log",
+      "sha256": "0111232dc6a39a687ab5d2ec483d1a9d7eff661c6ac3afa82ef877d33fe305c0"
+    },
+    {
+      "path": "/tmp/l3-r7-results/r5-independent-final.log",
+      "sha256": "53c2d5d21e123e80c768b26ec54b694c6b39001645ced5d972260bdbf55e5dd1"
+    },
+    {
+      "path": "/tmp/l3-r7-results/r6-first-two.log",
+      "sha256": "c05725fc6941548b2a620537312fe01f0353aded02c554423e1bce6618fc35e0"
+    },
+    {
+      "path": "/tmp/l3-r7-results/shallow-progress.log",
+      "sha256": "af6d1754899aff09d0f419b71f5180081197e9e537c327f6a328e0e4758f0a72"
+    },
+    {
+      "path": "/tmp/l3-r7-results/verifier-mutants.log",
+      "sha256": "59bf33a530c9bd62a2ea490e93bd015a4c4998a6a7b2dc8b4daf376b5d67f53f"
     }
   ],
   "survivors": {
@@ -861,15 +883,1160 @@
     "A root writer who rewrites journal and counter is outside this single-counter cross-check.",
     "Missing reservation evidence, including legacy exhaustion, takes narrow safety fallback and requires explicit recovery; narrow fallback writes may recur.",
     "B1 BLOCKED; B2/B4 source-level only; overall execution BLOCK.",
-    "Git provenance cannot be established in shallow CI. Control-content guard checks specific differential prerequisites, not arbitrary source equivalence.",
+    "Git provenance cannot be established in shallow CI. The text guard is only a diagnostic aid; executed historical control semantics tests are the load-bearing backstop, not a provenance proof.",
     "No current-head CI claim."
   ],
   "tested_changed_sources": {
-    ".github/coordinator/service/test/shu71-history.mjs": "4302bd16b68f69d5dfbbcc8578ae442365359dfc015c1add9ada24dbcd3e8a92",
-    ".github/coordinator/service/test/shu71-history.test.mjs": "059ad27463f1702607e13745cae9b3e910613355aea0bffdc997d092498947d9",
-    ".github/coordinator/service/test/shu71-r6-checks.mjs": "068c2bfb95406c852d12aca28eb6cc8d9f25bd66dbb085bf103cdf690cd4becc",
-    ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs": "97f303b9c1d0c48e56c9284f74a5010b55f2f09bf2ce55b48f3a11d6518dd0d6",
-    ".github/coordinator/service/test/shu71-trust.test.mjs": "a590f644b477fdaebd652561fee5ad3d83a02fb37264697fcd4945c2cd2366ab"
+    ".github/coordinator/service/test/shu71-history.mjs": "c2b44678203b5ac6d771caffaf7f674a6f52effaf7faed4504783989989ca92d",
+    ".github/coordinator/service/test/shu71-history.test.mjs": "dad6c211460d2621f36d1c7f547bfcae80926288ba480bf005e4a460f3dbcc95",
+    ".github/coordinator/service/test/shu71-r6-checks.mjs": "465b4b767451631c62b0bd2368733c60431b3b13eb3fabf5be7dd68989010618",
+    ".github/coordinator/service/test/shu71-r7-checks.mjs": "6df98ba4851812622ddb834f69d50411ee5e9bbdc68fd490593a6a645b400d11",
+    ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs": "22fdf2da6b3b1335d2a25ff81ece1726de0be1d4358080861d3ea7d17983cb81",
+    ".github/coordinator/service/test/shu71-trust.test.mjs": "878f4fca5da5b17b1d331c3af92a75198fe5dbac2db694a2070c802339326528"
   },
-  "final_head_confirmation_directory": "/tmp/l3-r6-results/final-head"
+  "final_head_confirmation_directory": "/tmp/l3-r7-results/final-head",
+  "reviewed_head_meaning": "Starting head from the full R7 BLOCK verdict; current measurements below apply to the source hashes in tested_changed_sources, committed with this report.",
+  "r7_response": {
+    "stopping_rule": "No demonstrated mutant reproducing the armed-gate / credential-present / near-zero-effect signature may survive the genuine assertions, including V12 and V14; every retained control-content property must fail by name when individually deleted, otherwise remove it and record why. The unchanged ORDERED root-forgery residual remains explicitly expected and grants no closure upgrade.",
+    "R7-B": {
+      "before": [
+        {
+          "id": "V12",
+          "status": 0,
+          "tests": 104,
+          "pass": 104,
+          "fail": 0,
+          "skipped": 0,
+          "assertions": []
+        },
+        {
+          "id": "V14",
+          "status": 0,
+          "tests": 104,
+          "pass": 104,
+          "fail": 0,
+          "skipped": 0,
+          "assertions": []
+        }
+      ],
+      "whole_state_reproductions_before_test_edits": [
+        {
+          "id": "HEAD-descending",
+          "scenario": "descending",
+          "code": "ACT_RETRY_BUDGET_UNAVAILABLE",
+          "state": "HALT",
+          "budget_error": "ACT_RETRY_BUDGET_INVALID",
+          "gates": [
+            "DIS",
+            "DIS"
+          ],
+          "credential": false,
+          "lease": true,
+          "effects": 7,
+          "complete": false
+        },
+        {
+          "id": "V12",
+          "scenario": "descending",
+          "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+          "state": "HALT",
+          "budget_error": null,
+          "gates": [
+            "ARMED",
+            "ARMED"
+          ],
+          "credential": true,
+          "lease": true,
+          "effects": 0,
+          "complete": false
+        },
+        {
+          "id": "HEAD-damaged",
+          "scenario": "damaged-journal",
+          "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+          "state": "HALT",
+          "budget_error": "ACT_RETRY_BUDGET_INVALID",
+          "gates": [
+            "DIS",
+            "DIS"
+          ],
+          "credential": false,
+          "lease": true,
+          "effects": 8,
+          "complete": "unreadable"
+        },
+        {
+          "id": "V14",
+          "scenario": "damaged-journal",
+          "code": "ACT_RETRY_BUDGET_EXHAUSTED",
+          "state": "HALT",
+          "budget_error": null,
+          "gates": [
+            "ARMED",
+            "ARMED"
+          ],
+          "credential": true,
+          "lease": true,
+          "effects": 1,
+          "complete": "unreadable"
+        }
+      ],
+      "after": [
+        {
+          "id": "V12",
+          "status": 1,
+          "tests": 105,
+          "pass": 104,
+          "fail": 1,
+          "skipped": 0,
+          "assertions": [
+            "B4_R6_DESCENDING_EVIDENCE_REFUSED"
+          ]
+        },
+        {
+          "id": "V14",
+          "status": 1,
+          "tests": 105,
+          "pass": 104,
+          "fail": 1,
+          "skipped": 0,
+          "assertions": [
+            "B4_R7_RECOVERY_BOTH_GATES_DISARMED"
+          ]
+        }
+      ],
+      "coverage": "Both exact gate contents, credential absence, lease retention, exact effects (damaged journal 8, descending 7), no TEARDOWN_COMPLETE, result code and budget_error. Damaged-journal check retains all original interruption/manual-recovery assertions; restores armed inputs after the earlier fallback to prevent masking the safety-state check."
+    },
+    "R7-A": {
+      "properties_retained": 18,
+      "properties_removed": [],
+      "before_undetected": 17,
+      "before_detected": 1,
+      "verdict_count_correction": "The verdict says 16 undetected but lists 17. Own all-18 sweep measures 17 survivors and JOURNAL_APPLIES_REPEAT detected.",
+      "after_individually_killed": 18,
+      "deletion_sweep": [
+        {
+          "property": "JOURNAL_VALIDATES_CHAIN",
+          "before": {
+            "id": "JOURNAL_VALIDATES_CHAIN",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "JOURNAL_VALIDATES_CHAIN",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_JOURNAL_VALIDATES_CHAIN"
+            ]
+          }
+        },
+        {
+          "property": "JOURNAL_REPEATS_PHYSICAL_EFFECTS",
+          "before": {
+            "id": "JOURNAL_REPEATS_PHYSICAL_EFFECTS",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "JOURNAL_REPEATS_PHYSICAL_EFFECTS",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_JOURNAL_REPEATS_PHYSICAL_EFFECTS"
+            ]
+          }
+        },
+        {
+          "property": "JOURNAL_APPLIES_REPEAT",
+          "before": {
+            "id": "JOURNAL_APPLIES_REPEAT",
+            "status": 1,
+            "tests": 114,
+            "pass": 113,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "JOURNAL_APPLIES_REPEAT",
+            "status": 1,
+            "tests": 134,
+            "pass": 132,
+            "fail": 2,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_JOURNAL_APPLIES_REPEAT"
+            ]
+          }
+        },
+        {
+          "property": "JOURNAL_FAILURE_VETOES_RETIREMENT",
+          "before": {
+            "id": "JOURNAL_FAILURE_VETOES_RETIREMENT",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "JOURNAL_FAILURE_VETOES_RETIREMENT",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_JOURNAL_FAILURE_VETOES_RETIREMENT"
+            ]
+          }
+        },
+        {
+          "property": "KNOWN_CONTROL_MODULE",
+          "before": {
+            "id": "KNOWN_CONTROL_MODULE",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "KNOWN_CONTROL_MODULE",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_KNOWN_CONTROL_MODULE"
+            ]
+          }
+        },
+        {
+          "property": "CLEANUP_BODY_PRESENT",
+          "before": {
+            "id": "CLEANUP_BODY_PRESENT",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "CLEANUP_BODY_PRESENT",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_CLEANUP_BODY_PRESENT"
+            ]
+          }
+        },
+        {
+          "property": "ORDERED_EFFECTS_PRESENT",
+          "before": {
+            "id": "ORDERED_EFFECTS_PRESENT",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "ORDERED_EFFECTS_PRESENT",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_ORDERED_EFFECTS_PRESENT"
+            ]
+          }
+        },
+        {
+          "property": "GATE_FIRST_ORDINARY_EFFECT",
+          "before": {
+            "id": "GATE_FIRST_ORDINARY_EFFECT",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "GATE_FIRST_ORDINARY_EFFECT",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_GATE_FIRST_ORDINARY_EFFECT"
+            ]
+          }
+        },
+        {
+          "property": "DISARM_BEFORE_CREDENTIAL_REMOVAL",
+          "before": {
+            "id": "DISARM_BEFORE_CREDENTIAL_REMOVAL",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "DISARM_BEFORE_CREDENTIAL_REMOVAL",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_DISARM_BEFORE_CREDENTIAL_REMOVAL"
+            ]
+          }
+        },
+        {
+          "property": "NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK",
+          "before": {
+            "id": "NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK"
+            ]
+          }
+        },
+        {
+          "property": "NO_RESERVATION_EVIDENCE_BINDING",
+          "before": {
+            "id": "NO_RESERVATION_EVIDENCE_BINDING",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "NO_RESERVATION_EVIDENCE_BINDING",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_NO_RESERVATION_EVIDENCE_BINDING"
+            ]
+          }
+        },
+        {
+          "property": "PARENT_NO_RESERVATION_BEFORE_DISARM",
+          "before": {
+            "id": "PARENT_NO_RESERVATION_BEFORE_DISARM",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "PARENT_NO_RESERVATION_BEFORE_DISARM",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_PARENT_NO_RESERVATION_BEFORE_DISARM"
+            ]
+          }
+        },
+        {
+          "property": "PARENT_NO_COUNTER_FAULT_FALLBACK",
+          "before": {
+            "id": "PARENT_NO_COUNTER_FAULT_FALLBACK",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "PARENT_NO_COUNTER_FAULT_FALLBACK",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_PARENT_NO_COUNTER_FAULT_FALLBACK"
+            ]
+          }
+        },
+        {
+          "property": "BLOCKED_RESERVATION_BEFORE_DISARM",
+          "before": {
+            "id": "BLOCKED_RESERVATION_BEFORE_DISARM",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "BLOCKED_RESERVATION_BEFORE_DISARM",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_BLOCKED_RESERVATION_BEFORE_DISARM"
+            ]
+          }
+        },
+        {
+          "property": "R4_FAULT_RETURNS_WITHOUT_DISARM",
+          "before": {
+            "id": "R4_FAULT_RETURNS_WITHOUT_DISARM",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "R4_FAULT_RETURNS_WITHOUT_DISARM",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_R4_FAULT_RETURNS_WITHOUT_DISARM"
+            ]
+          }
+        },
+        {
+          "property": "R4_NO_FAULT_GATE_LOOP",
+          "before": {
+            "id": "R4_NO_FAULT_GATE_LOOP",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "R4_NO_FAULT_GATE_LOOP",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_R4_NO_FAULT_GATE_LOOP"
+            ]
+          }
+        },
+        {
+          "property": "R5_FAULT_DISARMS_GATES_ONLY",
+          "before": {
+            "id": "R5_FAULT_DISARMS_GATES_ONLY",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "R5_FAULT_DISARMS_GATES_ONLY",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_R5_FAULT_DISARMS_GATES_ONLY"
+            ]
+          }
+        },
+        {
+          "property": "R5_COUNTER_BOOLEAN_SETTLEMENT_AUTHORITY",
+          "before": {
+            "id": "R5_COUNTER_BOOLEAN_SETTLEMENT_AUTHORITY",
+            "status": 0,
+            "tests": 114,
+            "pass": 114,
+            "fail": 0,
+            "skipped": 0,
+            "assertions": []
+          },
+          "after": {
+            "id": "R5_COUNTER_BOOLEAN_SETTLEMENT_AUTHORITY",
+            "status": 1,
+            "tests": 134,
+            "pass": 133,
+            "fail": 1,
+            "skipped": 0,
+            "assertions": [
+              "SHU71_CONTROL_PROPERTY_R5_COUNTER_BOOLEAN_SETTLEMENT_AUTHORITY"
+            ]
+          }
+        }
+      ],
+      "revision_bypass_kill": "SHU71_CONTROL_UNREGISTERED_VENDOR_REFUSED",
+      "guard_scope": "Pure text matching after whole-line comment and whitespace stripping. Diagnostic aid, not a security control or uniqueness/provenance proof; equivalent rewrites evade it. Older real eb29fc2 and dae5948 meet the same properties and behavioral premises. Executed historical control semantics tests and downstream differentials are the load-bearing backstop; unchanged.",
+      "shallow_results": [
+        {
+          "id": "shallow-clean",
+          "status": 0,
+          "tests": 134,
+          "pass": 134,
+          "fail": 0,
+          "skipped": 0,
+          "git_unavailable": 35,
+          "named_errors": []
+        },
+        {
+          "id": "shallow-sub-5e25c65",
+          "status": 1,
+          "tests": 134,
+          "pass": 117,
+          "fail": 17,
+          "skipped": 0,
+          "git_unavailable": 14,
+          "named_errors": [
+            "SHU71_HISTORY_CONTROL_CONTENT"
+          ]
+        },
+        {
+          "id": "shallow-sub-e9a68c1",
+          "status": 1,
+          "tests": 134,
+          "pass": 128,
+          "fail": 6,
+          "skipped": 0,
+          "git_unavailable": 30,
+          "named_errors": [
+            "SHU71_HISTORY_CONTROL_CONTENT"
+          ]
+        },
+        {
+          "id": "shallow-sub-0eeadd5",
+          "status": 1,
+          "tests": 134,
+          "pass": 126,
+          "fail": 8,
+          "skipped": 0,
+          "git_unavailable": 29,
+          "named_errors": [
+            "SHU71_HISTORY_CONTROL_CONTENT"
+          ]
+        },
+        {
+          "id": "unregistered-bypass-mutant",
+          "status": 1,
+          "tests": 134,
+          "pass": 133,
+          "fail": 1,
+          "skipped": 0,
+          "git_unavailable": 36,
+          "named_errors": [
+            "SHU71_CONTROL_UNREGISTERED_VENDOR_REFUSED",
+            "SHU71_HISTORY_CONTROL_UNREGISTERED"
+          ]
+        }
+      ]
+    },
+    "verifier_V1_V22": [
+      {
+        "id": "V1  >= 2 rows (ordered)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 74,
+        "fail": 31,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: PARTIAL_2",
+          "R6 reservation evidence: PARTIAL_3",
+          "R6 reservation evidence: PARTIAL_4",
+          "R6 reservation evidence: PARTIAL_5",
+          "R6 reservation evidence: PARTIAL_6",
+          "R6 reservation evidence: PARTIAL_7"
+        ],
+        "named": [
+          "B4_R6_PARTIAL_2_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_3_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_4_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_5_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_6_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_7_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_8_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_9_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V2  >= 31 rows (accept 31 or 33)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 103,
+        "fail": 2,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: PARTIAL_31",
+          "R6 reservation evidence: EXTRA"
+        ],
+        "named": [
+          "B4_R6_PARTIAL_31_EVIDENCE_REFUSED",
+          "B4_R6_EXTRA_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V3  length 31..33 window",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 103,
+        "fail": 2,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: PARTIAL_31",
+          "R6 reservation evidence: EXTRA"
+        ],
+        "named": [
+          "B4_R6_PARTIAL_31_EVIDENCE_REFUSED",
+          "B4_R6_EXTRA_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V4  accept duplicated/adjacent attempt (|d|<=1)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 102,
+        "fail": 3,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DUPLICATE",
+          "R6 reservation evidence: REORDERED",
+          "R6 reservation evidence: GAP"
+        ],
+        "named": [
+          "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED",
+          "B4_R6_GAP_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V5  order-insensitive: sorted set == 1..32",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 103,
+        "fail": 2,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DESCENDING",
+          "R6 reservation evidence: REORDERED"
+        ],
+        "named": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V6  count only (ignore ordering)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 101,
+        "fail": 4,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DESCENDING",
+          "R6 reservation evidence: DUPLICATE",
+          "R6 reservation evidence: REORDERED",
+          "R6 reservation evidence: GAP"
+        ],
+        "named": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED",
+          "B4_R6_GAP_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V7  ordering only (ignore count)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 71,
+        "fail": 34,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 reservation survives interruption and damaged journal cannot reset the budget",
+          "R5 parent/blocked/candidate differential: counter-plant",
+          "R6 reservation evidence: PARTIAL_1",
+          "R6 reservation evidence: PARTIAL_2",
+          "R6 reservation evidence: PARTIAL_3",
+          "R6 reservation evidence: PARTIAL_4"
+        ],
+        "named": [
+          "B4_R7_RECOVERY_BOTH_GATES_DISARMED",
+          "B4_R5_BOTH_GATES_",
+          "B4_R6_PARTIAL_1_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_2_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_3_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_4_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_5_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_6_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V8  >= 32 rows (accept extra)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 104,
+        "fail": 1,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: EXTRA"
+        ],
+        "named": [
+          "B4_R6_EXTRA_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V9  count + last element == 32",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 103,
+        "fail": 2,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DUPLICATE",
+          "R6 reservation evidence: REORDERED"
+        ],
+        "named": [
+          "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V10 count + distinct set size 32",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 102,
+        "fail": 3,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DESCENDING",
+          "R6 reservation evidence: REORDERED",
+          "R6 reservation evidence: GAP"
+        ],
+        "named": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED",
+          "B4_R6_GAP_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V11 count + min/max span",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 102,
+        "fail": 3,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DESCENDING",
+          "R6 reservation evidence: DUPLICATE",
+          "R6 reservation evidence: REORDERED"
+        ],
+        "named": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V12 accept descending order too",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 104,
+        "fail": 1,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DESCENDING"
+        ],
+        "named": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V13 sum check instead of order",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 103,
+        "fail": 2,
+        "verdict": "KILLED",
+        "failing": [
+          "R6 reservation evidence: DESCENDING",
+          "R6 reservation evidence: REORDERED"
+        ],
+        "named": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "V14 bypass when journal.recovered",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 104,
+        "fail": 1,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 reservation survives interruption and damaged journal cannot reset the budget"
+        ],
+        "named": [
+          "B4_R7_RECOVERY_BOTH_GATES_DISARMED"
+        ]
+      },
+      {
+        "id": "V15 filter by presence of attempts key",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "verdict": "SURVIVES",
+        "failing": [],
+        "named": []
+      },
+      {
+        "id": "V16 filter drops event discrimination",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 92,
+        "fail": 13,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 automatic replay budget persists across processes; operator resume recovers",
+          "P3 automatic replay budget persists across processes; operator revoke recovers",
+          "Q5 explicit run retains spent budget",
+          "Q5 explicit resume retains spent budget",
+          "Q5 explicit revoke retains spent budget",
+          "Q3 exhausted safe episode settles without repair; interruption=false"
+        ],
+        "named": [
+          "B4_AUTOMATIC_REPLAY_BOUNDED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION",
+          "B4_R6_ORDERED_LOCAL_CHAIN_ACCEPTED"
+        ]
+      },
+      {
+        "id": "V17 append records attempts (off-by-one)",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 56,
+        "fail": 49,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 automatic replay budget persists across processes; operator resume recovers",
+          "P3 automatic replay budget persists across processes; operator revoke recovers",
+          "Q5 explicit run retains spent budget",
+          "Q5 explicit resume retains spent budget",
+          "Q5 explicit revoke retains spent budget",
+          "Q3 exhausted safe episode settles without repair; interruption=false"
+        ],
+        "named": [
+          "B4_AUTOMATIC_REPLAY_BOUNDED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION",
+          "B4_R6_REAL_RESERVATIONS"
+        ]
+      },
+      {
+        "id": "V18 append omits attempts field",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 56,
+        "fail": 49,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 automatic replay budget persists across processes; operator resume recovers",
+          "P3 automatic replay budget persists across processes; operator revoke recovers",
+          "Q5 explicit run retains spent budget",
+          "Q5 explicit resume retains spent budget",
+          "Q5 explicit revoke retains spent budget",
+          "Q3 exhausted safe episode settles without repair; interruption=false"
+        ],
+        "named": [
+          "B4_AUTOMATIC_REPLAY_BOUNDED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION",
+          "B4_R6_REAL_RESERVATIONS"
+        ]
+      },
+      {
+        "id": "V19 append only on first attempt",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 57,
+        "fail": 48,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 automatic replay budget persists across processes; operator resume recovers",
+          "P3 automatic replay budget persists across processes; operator revoke recovers",
+          "Q5 explicit run retains spent budget",
+          "Q5 explicit resume retains spent budget",
+          "Q5 explicit revoke retains spent budget",
+          "Q3 exhausted safe episode settles without repair; interruption=false"
+        ],
+        "named": [
+          "B4_AUTOMATIC_REPLAY_BOUNDED",
+          "B4_SETTLEMENT_UNFINISHED_REFUSED",
+          "B4_R5_COMPLETION",
+          "B4_R6_REAL_RESERVATIONS"
+        ]
+      },
+      {
+        "id": "V20 exhaust at 31",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 86,
+        "fail": 19,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 automatic replay budget persists across processes; operator resume recovers",
+          "P3 automatic replay budget persists across processes; operator revoke recovers",
+          "Q5 explicit run retains spent budget",
+          "Q5 explicit resume retains spent budget",
+          "Q5 explicit revoke retains spent budget",
+          "Q3 exhausted safe episode settles without repair; interruption=false"
+        ],
+        "named": [
+          "B4_BUDGET_ATTEMPT_AVAILABLE"
+        ]
+      },
+      {
+        "id": "V21 evidence failure reported as UNAVAILABLE code",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 68,
+        "fail": 37,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 reservation survives interruption and damaged journal cannot reset the budget",
+          "R6 reservation evidence: PARTIAL_1",
+          "R6 reservation evidence: PARTIAL_2",
+          "R6 reservation evidence: PARTIAL_3",
+          "R6 reservation evidence: PARTIAL_4",
+          "R6 reservation evidence: PARTIAL_5"
+        ],
+        "named": [
+          "B4_R7_RECOVERY_BUDGET_ERROR",
+          "B4_R6_PARTIAL_1_EVIDENCE_INVALID",
+          "B4_R6_PARTIAL_2_EVIDENCE_INVALID",
+          "B4_R6_PARTIAL_3_EVIDENCE_INVALID",
+          "B4_R6_PARTIAL_4_EVIDENCE_INVALID",
+          "B4_R6_PARTIAL_5_EVIDENCE_INVALID",
+          "B4_R6_PARTIAL_6_EVIDENCE_INVALID",
+          "B4_R6_PARTIAL_7_EVIDENCE_INVALID"
+        ]
+      },
+      {
+        "id": "V22 evidence check deleted entirely",
+        "occurrences": 1,
+        "tests": 105,
+        "pass": 67,
+        "fail": 38,
+        "verdict": "KILLED",
+        "failing": [
+          "P3 reservation survives interruption and damaged journal cannot reset the budget",
+          "R5 parent/blocked/candidate differential: counter-plant",
+          "R6 reservation evidence: PARTIAL_1",
+          "R6 reservation evidence: PARTIAL_2",
+          "R6 reservation evidence: PARTIAL_3",
+          "R6 reservation evidence: PARTIAL_4"
+        ],
+        "named": [
+          "B4_R7_RECOVERY_BOTH_GATES_DISARMED",
+          "B4_R5_BOTH_GATES_",
+          "B4_R6_PARTIAL_1_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_2_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_3_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_4_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_5_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_6_EVIDENCE_REFUSED"
+        ]
+      }
+    ],
+    "verifier_survivor": "V15 remains equivalent for writer-produced histories; no novel fail-open extension demonstrated. The unchanged ORDERED residual is not claimed fixed.",
+    "R6_M1_M2_current": [
+      {
+        "id": "control",
+        "status": 0,
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "skipped": 0,
+        "assertions": []
+      },
+      {
+        "id": "R6-M1",
+        "status": 1,
+        "tests": 105,
+        "pass": 101,
+        "fail": 4,
+        "skipped": 0,
+        "assertions": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+          "B4_R6_GAP_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED"
+        ]
+      },
+      {
+        "id": "R6-M2",
+        "status": 1,
+        "tests": 105,
+        "pass": 69,
+        "fail": 36,
+        "skipped": 0,
+        "assertions": [
+          "B4_R6_DESCENDING_EVIDENCE_REFUSED",
+          "B4_R6_DUPLICATE_EVIDENCE_REFUSED",
+          "B4_R6_EXTRA_EVIDENCE_REFUSED",
+          "B4_R6_GAP_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_10_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_11_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_12_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_13_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_14_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_15_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_16_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_17_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_18_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_19_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_1_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_20_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_21_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_22_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_23_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_24_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_25_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_26_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_27_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_28_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_29_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_2_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_30_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_31_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_3_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_4_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_5_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_6_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_7_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_8_EVIDENCE_REFUSED",
+          "B4_R6_PARTIAL_9_EVIDENCE_REFUSED",
+          "B4_R6_REORDERED_EVIDENCE_REFUSED"
+        ]
+      }
+    ],
+    "integrity": {
+      "unchanged_hashes": {
+        ".github/coordinator/service/shu71-production.mjs": "bd304b83b270478a33fe565f2be493384c4081226d1eb0bcd6600dfaed987091",
+        ".github/coordinator/service/shu71-journal.mjs": "fd598612fbcf1dfc5f4073c02bb64e2b51921d66d25a38e31f268ac7c9b405b0",
+        ".github/coordinator/service/host-suite-contract.mjs": "37e8824a22c5bf5c7313305dcb3ca551dd917212f8dff00503dd092e70a3971f",
+        ".github/workflows/ci.yml": "2787dfaf14892ee12c662a13359f5439ff3182dd72c58c39a2df6cfbb30eda0c"
+      },
+      "lane_wide_skip_contract_and_ci_identical": true,
+      "six_fixtures_identical_to_git": true
+    },
+    "production_source_changed": false,
+    "current_trust_baseline": {
+      "tests": 105,
+      "pass": 105,
+      "fail": 0,
+      "skipped": 0
+    },
+    "mutations_summary": {
+      "targeted": {
+        "killed": 57,
+        "survived": 0
+      },
+      "V1_V22": {
+        "killed": 21,
+        "survived": 1
+      },
+      "R4_MX": {
+        "killed": 10,
+        "survived": 2
+      },
+      "R5_MY": {
+        "killed": 5,
+        "survived": 2
+      },
+      "R6_M1_M10": {
+        "killed": 7,
+        "survived": 3
+      },
+      "content_property_deletions": {
+        "killed": 18,
+        "survived": 0
+      },
+      "unknown_revision_bypass": {
+        "killed": 1,
+        "survived": 0
+      }
+    },
+    "skip_comparison": {
+      "against": "569024577c8c96c0ef161798c3c541ea14b309d5",
+      "new_skip_names": [],
+      "removed_skip_names": [],
+      "PERMITTED_SKIPS": "byte-identical at all lane revisions dae5948 through starting head and candidate"
+    }
+  }
 }

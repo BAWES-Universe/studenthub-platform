@@ -465,18 +465,19 @@ consumed before the reservation append. Moving that append ahead of the counter
 dies on `B4_R6_APPEND_INTERRUPTION_COUNTER_CONSUMED`. A positive 32-ordered-row
 control explicitly retains the R5-B root-forgery residual. The production evidence check and other production behavior are unchanged.
 
-**R6-B:** unconditional control-content guards check the actual cleanup ordering
-and fault/settlement behavior of all production controls, and chain/replay/
-retirement semantics of their journal controls. Additional boundary executions
-verify the behavioral premises. Candidate production substitution is rejected
-by `SHU71_HISTORY_CONTROL_CONTENT`, including without Git. The fixture README
-explains why each property is required by the differential.
-The Git cross-check cannot run in the shallow CI checkout: CI provenance rests
-on recorded digests plus the control-content guard. Only a full clone
-re-establishes it against Git. Loads explicitly print `SHU71_HISTORY_GIT_UNAVAILABLE`
-or `SHU71_HISTORY_GIT_VERIFIED`. The synthetic Git test is named as a mechanism
-test. No CI workflow, fixture bytes, assertion, guard, error code or skip
-allowance was weakened.
+**R6-B:** candidate production substitution is rejected by
+`SHU71_HISTORY_CONTROL_CONTENT`, including without Git. The content guard is
+pure text matching after stripping whole-line comments and whitespace: a diagnostic
+aid, not a security control or provenance proof. Equivalent source rewrites can
+evade it; older real revisions `eb29fc2` and `dae5948` satisfy every checked
+property and the behavioral premises, so it does not uniquely pin `5e25c65`.
+The load-bearing backstop is the executed `historical control semantics` tests
+and downstream behavioral differentials. These tests remain intact.
+The Git cross-check cannot run in shallow CI. Recorded digests establish local
+consistency only; a full clone re-establishes provenance against Git. Loads print
+`SHU71_HISTORY_GIT_UNAVAILABLE` or `SHU71_HISTORY_GIT_VERIFIED`; neither is a skip.
+The synthetic Git test checks the comparison mechanism. No CI workflow, fixture
+bytes, assertion, guard, error code or skip allowance was weakened.
 
 **R5-B disposition (b):** this evidence check bounds accidents and non-root
 tampering, but **not a root adversary**. The chain is unkeyed and shares the
@@ -490,7 +491,7 @@ No root-tamper protection is claimed. R5-A containment residuals, Q3's scope
 choice and all other open limitations above remain unchanged. B1 stays BLOCKED;
 B2/B4 remain source-level only; overall execution closure stays BLOCK.
 
-**R6-C measured validation:** focused **309/309**, genuine baseline **254/254**,
+**Historical R6-C validation at `5690245` (superseded counts, preserved record):** focused **309/309**, genuine baseline **254/254**,
 full coordinator **1800 total / 1782 pass / 0 fail / 18 unchanged skips**.
 Focused and genuine commands now include the custody test file. All **55/55**
 targeted production/delivery/trust/recovery mutants are killed; **512** crash
@@ -509,7 +510,105 @@ coordinated candidate-source/manifest substitution fails **7** named-dependent
 tests in each (**107 pass**), with `SHU71_HISTORY_CONTROL_CONTENT`. All six
 Git comparisons are byte-identical in the full clone. Each missing historical
 object is disclosed by name in the depth-1 output. Digests, commands, complete
-mutant results and local artifact paths are in `SHU71-L3-TESTS.json`. Historical
-suite totals are retained in Git and are not current-head declarations. The
+mutant results and local artifact paths are in `SHU71-L3-TESTS.json`. These R6 suite totals are historical and are not current-head declarations. The
 application suite and new-head CI were not verified. No host access, push, PR
 change, merge, GitHub comment or Linear comment occurred.
+
+## Response to R7 — coverage closure and stopping rule
+
+Starting head: `569024577c8c96c0ef161798c3c541ea14b309d5`. Both full verdict
+artifacts were read before changes. Production source remains byte-identical;
+only tests, the history test helper, and documentation changed. All R5-B
+root-adversary disclosure and `B4_R6_ORDERED_ZERO_EFFECTS_RESIDUAL` remain intact.
+B1 is BLOCKED; B2/B4 are source-level ONLY; overall execution closure is BLOCK.
+
+**Lane stopping rule:** no demonstrated mutant that reproduces the armed-gate /
+credential-present / near-zero-effect signature may survive the genuine suite,
+including the verifier's V12 and V14 shapes. Every property remaining in the
+control-content diagnostic must fail by name when deleted individually; if one
+cannot be pinned, remove it and record why. This is a mutation-coverage stopping
+rule, not a claim to eliminate the explicitly accepted ORDERED root-forgery
+residual or to close B1 or host execution.
+
+**R7-B reproduction and closure:** before edits, V12 and V14 each survived
+104/104 genuine trust assertions. Whole-state probes reproduced V12's two armed
+gates, present credential, held lease and zero effects (HEAD: disarmed, removed,
+held, seven effects), and V14's same unsafe state with one effect (HEAD: eight).
+V14 and HEAD return the same `ACT_RETRY_BUDGET_EXHAUSTED` code, but only HEAD
+returns `budget_error: ACT_RETRY_BUDGET_INVALID`; the mutant has no budget error.
+V12 instead returns EXHAUSTED where HEAD returns UNAVAILABLE with INVALID.
+The damaged-journal test now restores armed inputs after its earlier interrupted
+fallback so that previous disarm/revocation cannot mask the missing check.
+It retains every original assertion and additionally pins both exact gate file
+contents, credential absence, lease retention, eight effects, absence of
+TEARDOWN_COMPLETE in both journals, and the budget error. The descending case
+uses 32 real reservations and the real journal writer, and pins the corresponding
+full state, including seven effects. The accepted ORDERED case is unchanged.
+
+| Mutant | Before tests/pass/fail | After tests/pass/fail | Named kill |
+| --- | --- | --- | --- |
+| V12 descending also accepted | 104/104/0 | 105/104/1 | `B4_R6_DESCENDING_EVIDENCE_REFUSED` |
+| V14 recovered journal bypass | 104/104/0 | 105/104/1 | `B4_R7_RECOVERY_BOTH_GATES_DISARMED` |
+
+**R7-A deletion sweep:** real depth-1 clone; each require line removed alone,
+entire history-plus-trust suite run, then source restored. Before: 114 tests;
+after: 134 tests; zero skips throughout. The verdict lists 17 undetected names
+but says 16; the actual all-18 sweep found 17 survivors and one kill. All 18
+properties remain, all 18 now die individually by name. No property was removed.
+Each after-change kill includes `SHU71_CONTROL_PROPERTY_` followed by the exact
+property in the table; an unrelated rejection does not satisfy the test.
+
+| Property deleted | Before pass/fail | After pass/fail |
+| --- | ---: | ---: |
+| `JOURNAL_VALIDATES_CHAIN` | 114/0 | 133/1 |
+| `JOURNAL_REPEATS_PHYSICAL_EFFECTS` | 114/0 | 133/1 |
+| `JOURNAL_APPLIES_REPEAT` | 113/1 | 132/2 |
+| `JOURNAL_FAILURE_VETOES_RETIREMENT` | 114/0 | 133/1 |
+| `KNOWN_CONTROL_MODULE` | 114/0 | 133/1 |
+| `CLEANUP_BODY_PRESENT` | 114/0 | 133/1 |
+| `ORDERED_EFFECTS_PRESENT` | 114/0 | 133/1 |
+| `GATE_FIRST_ORDINARY_EFFECT` | 114/0 | 133/1 |
+| `DISARM_BEFORE_CREDENTIAL_REMOVAL` | 114/0 | 133/1 |
+| `NO_CREDENTIAL_REVOCATION_IN_FAULT_FALLBACK` | 114/0 | 133/1 |
+| `NO_RESERVATION_EVIDENCE_BINDING` | 114/0 | 133/1 |
+| `PARENT_NO_RESERVATION_BEFORE_DISARM` | 114/0 | 133/1 |
+| `PARENT_NO_COUNTER_FAULT_FALLBACK` | 114/0 | 133/1 |
+| `BLOCKED_RESERVATION_BEFORE_DISARM` | 114/0 | 133/1 |
+| `R4_FAULT_RETURNS_WITHOUT_DISARM` | 114/0 | 133/1 |
+| `R4_NO_FAULT_GATE_LOOP` | 114/0 | 133/1 |
+| `R5_FAULT_DISARMS_GATES_ONLY` | 114/0 | 133/1 |
+| `R5_COUNTER_BOOLEAN_SETTLEMENT_AUTHORITY` | 114/0 | 133/1 |
+
+A fixture revision with a matching manifest digest but no content specification
+now raises `SHU71_HISTORY_CONTROL_UNREGISTERED`. Reinstating the silent return
+fails `SHU71_CONTROL_UNREGISTERED_VENDOR_REFUSED` (134/133/1). The synthetic Git
+mechanism test explicitly registers its generated revision in its disposable
+helper and still checks digest, Git-byte drift and missing-file failures.
+The text guard remains only a diagnostic aid; the behavioral historical-control
+executions and differentials are the load-bearing backstop, unchanged. No
+uniqueness, arbitrary rewrite resistance, or security-control claim is made.
+
+**Current measurements:** focused 331/331; genuine baseline 274/274; full
+coordinator 1822 total, 1804 passed, zero failed, 18 unchanged skips. Mutation-named
+TAP checks (`/mutation|mutant/i`, every nesting depth): 98 focused, 41 genuine,
+533 coordinator. Targeted mutations: 57/57 killed (11 production, 17 delivery,
+11 trust, 18 recovery). Crash injections: 512 (240 forward + 272 teardown).
+Un-gated disposable rollback mutation: 1/1. Genuine trust baseline: 105/105.
+All 22 verifier V sites rerun: 21 kills, V15 equivalent survivor. Prior independent
+sites rerun: R4 MX 10 kills/2 disclosed survivors, R5 MY 5/2, R6 M1–M10 7/3.
+No disclosed survivor is counted as a kill or newly claimed equivalent.
+
+Depth-1 clean: 134/134/0, 35 named Git-unavailable diagnostics, no skip. All three
+historical commits are absent and rev-list count is one. Coordinated candidate
+source plus re-recorded digest substitutions fail with CONTROL_CONTENT: parent
+134/117/17, R4 134/128/6, R5 134/126/8. The new per-property cases explain the
+additional substitution failures. All six actual fixtures still match full Git
+history byte-for-byte. PERMITTED_SKIPS and the CI workflow are byte-identical
+lane-wide; the coordinator skip-name set is identical to the starting head.
+
+Detailed results, command lines, source/log hashes and all deletion rows are in
+`SHU71-L3-TESTS.json`; local audit logs/scripts are under `/tmp/l3-r7-results/`.
+Application tests were not rerun; no application count is claimed. Host, systemd,
+cgroup, live durability, external APIs and two-lane production execution remain
+unproved. New-head CI is UNVERIFIED and belongs to the orchestrator after pushing.
+No host access, push, PR action, merge, or GitHub/Linear comment occurred.
