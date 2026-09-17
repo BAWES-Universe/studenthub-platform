@@ -140,7 +140,7 @@ Four syntax-clean production-source mutants die by `CLOSURE_WRONG_DIGEST`,
 
 ## C2 — one service-plane entrypoint
 
-`service-plane.mjs:11` is the single typed entrypoint. It composes the existing
+`service-plane.mjs:10` is the single typed entrypoint. It composes the existing
 production driver/provider/executor, not shell commands supplied by a caller.
 There was no single prior CLI that chained these actions with failure cleanup.
 
@@ -308,5 +308,33 @@ source suites also pass. The first broad census run used a repository-local
 TMPDIR and had two pre-existing ephemeral-path test failures; the unchanged two
 tests pass with normal `/tmp`. This unsuccessful run is not claimed as a suite
 PASS. All earlier test names are retained in the new 2,785-row, 101-file inventory.
-The committed inventory guard must additionally execute and validate the entire
-current suite under normal `/tmp`; its final result is recorded below when complete.
+The final committed inventory guard passed against source commit
+`d44caea101d482ad7c6036649b9a12be8a5861fd` under normal `/tmp`, after all production changes:
+101 files, 2,784 child outcomes plus the guard, zero failures and no unauthorized
+skips. All source files remained fixed throughout this final run. The subsequent
+commit adds only this report and evidence; it makes no implementation change.
+
+Exact final command:
+
+```
+TMPDIR=/tmp node --test --test-name-pattern='^A12 committed inventory requirements match real outcomes$' .github/coordinator/service/test/suite-runner-spec.test.mjs
+```
+
+The final input hardening also passed the six approval tests and ten service-plane
+tests, preserving regular non-symlink driver input custody, the production-retired
+activation-ID refusal and exact production evidence filenames. Full command/trace
+and all named mutation entrypoints above are repository-executable. No host
+acceptance, real signing bytes or actual owner signatures are inferred from them.
+
+`execution-closure-evidence/inventory-verification.tap` is the complete final guard
+stdout (including its source commit and requirement/skip mutation kills).
+`execution-closure-evidence/validation.json` records test counts/log hashes,
+constraint checks, source commit, canonical digest and outstanding gaps. These
+are the two additional changed files: retained test evidence and its summary.
+Other raw local logs are in ignored `node_modules/.cache/execution-closure/`.
+
+Git transport authentication is also a declared deployment prerequisite: the
+provider's `GH_TOKEN` reaches its GitHub API command, not automatically its Git
+commands. The actual reviewed Git transport credentials/configuration and their
+availability were not inspected. The prior halted window's evidence was not
+provided and is not silently reused as approval for this branch.
