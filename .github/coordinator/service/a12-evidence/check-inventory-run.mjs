@@ -89,7 +89,17 @@ export default async function* (source) {
   // skip for a filtered callback; every other existing proof runs unchanged.
   const result = spawnSync(process.execPath, ['--test', `--test-skip-pattern=^${guardName}$`, `--test-reporter=${reporter}`, ...files],
     { cwd: root, env, encoding: 'utf8', timeout: 600000, maxBuffer: 32 * 1024 * 1024 });
-  assert.equal(result.status, 0, `A12_INVENTORY_REAL_RUN: ${result.stderr}\n${result.stdout}`);
+  const childOutcomes = result.stdout.trim().split('\n').flatMap(line => {
+    try { const event = JSON.parse(line); return event.type === 'outcome' ? [event] : []; }
+    catch { return []; }
+  });
+  const counts = { tests: childOutcomes.length, pass: 0, fail: 0, skipped: 0 };
+  for (const outcome of childOutcomes) {
+    if (outcome.status === 'pass') counts.pass++;
+    if (outcome.status === 'fail') counts.fail++;
+    if (outcome.status === 'skip') counts.skipped++;
+  }
+  assert.equal(result.status, 0, `A12_INVENTORY_REAL_RUN: exit=${result.status}; tests=${counts.tests} / pass=${counts.pass} / fail=${counts.fail} / skipped=${counts.skipped}; non-pass=${JSON.stringify(childOutcomes.filter(o => o.status !== 'pass').map(o => ({ name: o.name, status: o.status })))}`);
   const events = result.stdout.trim().split('\n').map(JSON.parse), outcomes = events.filter(e => e.type === 'outcome');
   assert.equal(events.filter(e => e.type === 'complete').length, 1, 'A12_INVENTORY_REAL_COMPLETE');
   assert.equal(events.at(-1).type, 'complete', 'A12_INVENTORY_REAL_TERMINAL');

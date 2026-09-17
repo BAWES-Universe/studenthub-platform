@@ -33,6 +33,17 @@ async function controls(api = contract) {
     await assert.rejects(() => api.preflight(spec, () => value, covered), { code: 'SHU251_PREFLIGHT_PRIVILEGE' }, 'MALFORMED_PROBE_NOT_SKIP');
   const ns = { names: ['M3 namespace capability control'], requirements: [{ name: 'M3 namespace capability control', capabilities: [{ name: 'user_namespaces' }] }] };
   await assert.rejects(() => api.preflight(spec, key => key === 'user_namespaces' ? false : probe(key), ns), error => error.code === 'SHU251_PREFLIGHT_USER_NAMESPACES' && error.message.includes(ns.names[0]), 'NAMESPACE_REQUIRED');
+  for (const unavailable of [false, undefined, new Error('unneeded probe')]) {
+    let calls = 0;
+    let unneeded;
+    await assert.doesNotReject(async () => { unneeded = await api.preflight(spec, key => {
+      if (key === 'user_namespaces') { calls++; if (unavailable instanceof Error) throw unavailable; return unavailable; }
+      return probe(key);
+    }, covered); }, 'UNNEEDED_NOT_PROBED');
+    assert.equal(calls, 0, 'UNNEEDED_NOT_PROBED');
+    assert.deepEqual(unneeded.capabilities.user_namespaces, { required: false }, 'UNNEEDED_NOT_SKIP');
+  }
+  assert.equal(Object.keys(api.PERMITTED_SKIPS).length, 8, 'NO_NINTH_SKIP');
   for (const [status, why, code] of [['fail', reason, 'SHU251_SUITE_FAILURE'], ['skip', reason + ' ', 'SHU251_SUITE_UNPERMITTED_SKIP']])
     assert.throws(() => api.evaluateSuite({ complete: true, exit_code: 0, outcomes: [{ name, status, reason: why }] }, 1), { code }, 'OUTCOME_NOT_RECLASSIFIED');
 }
@@ -62,6 +73,7 @@ test('SHU251 C2 supplied identities do not imply sudo authority', async () => {
   }
 });
 const mutations = [
+  ['unneeded capability halts', 'derived && derived[capability.name].length === 0', 'false', 'UNNEEDED_NOT_PROBED'],
   ['covered absence rejected', "if (!available && derived)", 'if (false)', 'COVERED_ABSENCE'],
   ['uncovered requirement ignored', '|| uncovered.length)', '|| false)', 'UNCOVERED_BY_NAME'],
   ['required set omitted', 'requirements.length !== names.length', 'false', 'SHU251_PREFLIGHT_REQUIREMENTS'],

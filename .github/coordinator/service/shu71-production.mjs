@@ -31,12 +31,12 @@ export function createShu71Production(id, b = shu71Boundary) {
     need(!r.error && r.status === 0, 'ACT_COMMAND_FAILED');
     return String(r.stdout ?? '');
   };
-  function privateRead(file, uid = 0, exactMode = null) {
+  function privateRead(file, uid = 0, exactMode = null, gid = 0) {
     const fd = f.openSync(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
     try {
       const s = f.fstatSync(fd);
       need(s.isFile() && s.nlink === 1 && s.uid === uid && !(s.mode & 0o077) && s.size <= 4 * 1024 * 1024
-        && (exactMode === null || s.gid === uid && (s.mode & 0o777) === exactMode), 'ACT_FILE_CUSTODY');
+        && (exactMode === null || s.gid === gid && (s.mode & 0o777) === exactMode), 'ACT_FILE_CUSTODY');
       return f.readFileSync(fd, 'utf8');
     } finally { f.closeSync(fd); }
   }
@@ -225,7 +225,16 @@ export function createShu71Production(id, b = shu71Boundary) {
       if (action === 'expire' && !expired && !teardownStarted) return { ok: true, state: 'NOT_EXPIRED' };
       if (action === 'revoke' || expired || teardownStarted || action === 'resume' && journal.entries.some(e => e.event === 'ARMED')) return await cleanup(spec, journal, expired ? 'expiry' : 'revoke', action === 'expire');
       need(b.now() >= Date.parse(spec.pkg.created_at) && !expired, 'ACT_ID_OR_EXPIRY_INVALID');
-      assertSupervisorLaunchEnvironment(privateRead('/etc/shu/supervisor.env', 0, 0o600));
+      // Lifecycle renders User/Group from spec.lifecycle.identity and verifies
+      // the account's primary group. Resolve that installed identity, not uid=gid.
+      const user = command('/usr/bin/systemctl', ['show', '--property=User', '--value', 'shu-supervisor.service']).trim();
+      const group = command('/usr/bin/systemctl', ['show', '--property=Group', '--value', 'shu-supervisor.service']).trim();
+      need(/^[a-z_][a-z0-9_-]*$/.test(user) && /^[a-z_][a-z0-9_-]*$/.test(group), 'ACT_FILE_CUSTODY');
+      const uid = Number(command('/usr/bin/id', ['-u', user]).trim());
+      const gid = Number(command('/usr/bin/id', ['-g', user]).trim());
+      need(Number.isSafeInteger(uid) && uid > 0 && Number.isSafeInteger(gid) && gid > 0
+        && command('/usr/bin/id', ['-gn', user]).trim() === group, 'ACT_FILE_CUSTODY');
+      assertSupervisorLaunchEnvironment(privateRead('/etc/shu/supervisor.env', 0, 0o600), privateRead('/srv/shu/coordinator.env', uid, 0o600, gid));
       verifyInstallation(spec);
       const step = (name, fn) => journalEffect(journal, name, async () => {
         need(b.now() < Date.parse(spec.pkg.expires_at), 'ACT_ID_OR_EXPIRY_INVALID'); await fn();
@@ -295,7 +304,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
       return { ok: true, state: 'ARMED', activation_id: id };
     } catch (error) {
-      const code = ['SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
+      const code = ['SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';

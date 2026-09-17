@@ -29,6 +29,24 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/closure-approval.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Real local Git seed/revision/reseed composition exercises compose, seal and validate; no remote commands or host IO",
+    "call_sites": [
+      ".github/coordinator/service/test/closure-approval.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/closure-environment.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem, crypto and syntax-check subprocess only; production syscall, Git, systemd and API boundaries are modeled, not executed",
+    "call_sites": [
+      ".github/coordinator/service/test/closure-environment.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/environment-content-mutations.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
@@ -133,6 +151,14 @@
     "justification": "fork fixture/residual-process.mjs; live supervisor socket and probeProcess stat identity",
     "call_sites": [
       ".github/coordinator/service/test/residual.test.mjs:50"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/service-plane.test.mjs",
+    "capabilities": [],
+    "justification": "Node filesystem, crypto and syntax-check subprocess only; production syscall, Git, systemd and API boundaries are modeled, not executed",
+    "call_sites": [
+      ".github/coordinator/service/test/service-plane.test.mjs"
     ]
   },
   {

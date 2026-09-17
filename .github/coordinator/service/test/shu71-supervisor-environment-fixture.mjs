@@ -12,3 +12,9 @@ export const supervisorEnvironment = {
   SHU_REVIEW_TEST_FILES_JSON: '["tools/fixture/test/scan-vacuous.test.mjs","tools/fixture-2/test/scan-unawaited.test.mjs"]',
 };
 export const environmentText = (values = supervisorEnvironment) => Object.entries(values).map(([key, value]) => `${key}='${value}'\n`).join('');
+
+export const secretText = () => environmentText({ SHU_SUPERVISOR_SECRET: supervisorEnvironment.SHU_SUPERVISOR_SECRET });
+export const coordinatorText = (values = supervisorEnvironment) => environmentText({
+  GITHUB_TOKEN: 'GITHUB_POISON', LINEAR_API_TOKEN: 'LINEAR_POISON',
+  ...Object.fromEntries(Object.entries(values).filter(([key]) => key !== 'SHU_SUPERVISOR_SECRET')),
+});

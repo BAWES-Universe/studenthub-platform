@@ -1,0 +1,107 @@
+{
+  "window": {
+    "remote_url": "https://github.com/BAWES-Universe/studenthub-platform.git",
+    "approved_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repo_dir": "/reviewed/repo",
+    "unit_directory": "/etc/systemd/system",
+    "workspace_state_dir": "/srv/shu/state/workspaces",
+    "supervisor_state_dir": "/srv/shu/state/workspaces/supervisor",
+    "supervisor_socket": "/srv/shu/state/workspaces/supervisor.sock"
+  },
+  "render": {
+    "workdir": "/reviewed/repo",
+    "serviceUser": "shu-coordinator",
+    "serviceGroup": "shu-coordinator",
+    "supervisorEnvironmentFile": "/etc/shu/supervisor.env",
+    "coordinatorEnvironmentFile": "/srv/shu/coordinator.env",
+    "workspaceStateDir": "/srv/shu/state/workspaces",
+    "supervisorStateDir": "/srv/shu/state/workspaces/supervisor",
+    "supervisorSocket": "/srv/shu/state/workspaces/supervisor.sock"
+  },
+  "window_spec_path": "/reviewed/window.json",
+  "lifecycle": {
+    "checkout_before": {
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_ref": "refs/heads/main",
+      "main": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "origin_main": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tree": "cccccccccccccccccccccccccccccccccccccccc",
+      "clean": true
+    },
+    "activation_id": "shu251-window-001",
+    "approval_sha256": "0d3bf2edcc5ca5f70124e3657431f4315f7797468998aa83d9a89c3a49358eec",
+    "approved_tree": "cccccccccccccccccccccccccccccccccccccccc",
+    "identity": {
+      "user": "shu-coordinator",
+      "group": "shu-coordinator",
+      "uid": 1001,
+      "gid": 1001,
+      "groups": [
+        1001,
+        1002
+      ]
+    },
+    "environment": {
+      "supervisor": {
+        "path": "/etc/shu/supervisor.env",
+        "uid": 0,
+        "gid": 0,
+        "mode": 384,
+        "kind": "file"
+      },
+      "coordinator": {
+        "path": "/srv/shu/coordinator.env",
+        "uid": 1001,
+        "gid": 1001,
+        "mode": 384,
+        "kind": "file"
+      }
+    },
+    "directories": [
+      {
+        "path": "/srv/shu/state/workspaces",
+        "kind": "directory",
+        "uid": 1001,
+        "gid": 1001,
+        "mode": 448
+      },
+      {
+        "path": "/srv/shu/state/workspaces/supervisor",
+        "kind": "directory",
+        "uid": 1001,
+        "gid": 1001,
+        "mode": 448
+      }
+    ],
+    "systemd_version": 255,
+    "capabilities": [
+      "privilege",
+      "worker_uid",
+      "temp",
+      "cvtsudoers",
+      "checkout",
+      "systemd",
+      "systemd_analyze",
+      "flock",
+      "systemd_notify",
+      "git",
+      "bash",
+      "shell_toolchain",
+      "linux_proc",
+      "loopback_socket",
+      "unix_socket",
+      "node",
+      "atomic-rename",
+      "directory-fsync"
+    ],
+    "evidence_root": "/srv/shu/evidence",
+    "evidence_dir": "/srv/shu/evidence/shu251-window-001",
+    "rendered_sha256": {
+      "shu-supervisor.service": "d3bd9f49e6abce4dc84184d065a8f7a0403f07dfba32be798b49e6e2d5612977",
+      "shu-coordinator.service": "c0f5463709c5a1dd360bb2a5ae378e304eb0184803e4dc59004a88f374ca0633",
+      "shu-coordinator.timer": "63a112ebaba6a1fb3bbb7230f93d2ada790e3acec172381384c38fdec652b774",
+      "shu-supervisor.service.d/10-shu251.conf": "83f30eab7ff5fe303038d42e65ec70441ef5c8eccba9a51b48a95b6a06cde6b4",
+      "shu-coordinator.service.d/10-shu251.conf": "83f30eab7ff5fe303038d42e65ec70441ef5c8eccba9a51b48a95b6a06cde6b4"
+    }
+  }
+}

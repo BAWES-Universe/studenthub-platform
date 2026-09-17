@@ -5,7 +5,7 @@ import { verify as verifySignature } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { canonical, hash, refuse, UNIT_NAMES, LIFECYCLE_ACTIONS } from './phase-a-driver.mjs';
-import { FILES, TARGETS, DROP_IN_DIRECTORIES, approvedCheckout, expectedManifest } from './host-lifecycle.mjs';
+import { FILES, TARGETS, DROP_IN_DIRECTORIES, LIFECYCLE_PROBE_CAPABILITIES, approvedCheckout, expectedManifest } from './host-lifecycle.mjs';
 import { hostProbe, preflight as capabilityPreflight } from './host-suite-contract.mjs';
 
 export const productionBoundary = Object.freeze({ fs, uid: () => process.getuid(), now: () => Date.now(), apiEnv: () => ({ GH_TOKEN: process.env.GH_TOKEN }), wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
@@ -288,7 +288,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     async probe() {
       const approved_main = remoteMain();
       const probeSpec = { service_uid: c.identity.uid, service_gid: c.identity.gid, checkout: w.repo_dir, temp_dir: '/tmp' };
-      const caps = await capabilityPreflight(probeSpec, hostProbe(probeSpec, boundary));
+      const caps = await capabilityPreflight(probeSpec, hostProbe(probeSpec, boundary), { names: ['service-plane'], requirements: [{ name: 'service-plane', capabilities: LIFECYCLE_PROBE_CAPABILITIES.map(name => ({ name })) }] });
       // Prove file+directory fsync and rename on this actual evidence filesystem.
       evidence((root, fd, verify) => {
         atomic(root, fd, 'durability-probe', { kind: 'file', data: Buffer.from('proof').toString('base64'), uid: c.identity.uid, gid: c.identity.gid, mode: 0o600 }, verify);
@@ -307,7 +307,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
       return { approved_main, checkout_tuple: checkoutTuple(), checkout: { sha: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']), clean: git(['status', '--porcelain', '--untracked-files=all']) === '' },
         identity: account(), environment: Object.fromEntries(Object.entries(c.environment).map(([k,v]) => [k, metadata(v.path)])),
         directories: c.directories.map(d => metadata(d.path)), systemd_version: Number(command('/usr/bin/systemctl', ['show', '--property=Version', '--value']).match(/^\d+/)?.[0]),
-        capabilities: [...Object.keys(caps.capabilities), 'atomic-rename', 'directory-fsync'],
+        capabilities: [...Object.keys(caps.capabilities).filter(name => caps.capabilities[name].required !== false), 'atomic-rename', 'directory-fsync'],
         evidence: { path: e.path, canonical: f.realpathSync(e.path), uid: e.uid, mode: e.mode, manifest: json('manifest.json') },
         destination, writer_lock: custody ? (custody.some(l => l.p === `${w.workspace_state_dir}/host-tick.lock`) ? 'held-by-driver' : 'delegated-to-coordinator') : 'free' };
     },
