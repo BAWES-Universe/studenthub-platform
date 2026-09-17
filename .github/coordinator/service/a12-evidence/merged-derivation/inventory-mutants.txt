@@ -1,0 +1,6 @@
+A12_INVENTORY_GUARD_POSITIVE: ca77fc8a251b5e62594393c5eb0f974e195e9271; real full-run outcomes; pass
+drop required shell_toolchain: test "A12 committed inventory requirements match real outcomes" fails by A12_INVENTORY_REQUIREMENTS: SHU261 shipped profile branches pass exact network properties to systemd-run
+drop required git: test "A12 committed inventory requirements match real outcomes" fails by A12_INVENTORY_REQUIREMENTS: SHU-63 activation: the RUNNING revision is what bounds an activation, end to end
+drop required git: test "A12 committed inventory requirements match real outcomes" fails by A12_INVENTORY_REQUIREMENTS: SHU-239 mutation M13 restore world-readable attempt directories
+drop required shell_toolchain: test "A12 committed inventory requirements match real outcomes" fails by A12_INVENTORY_REQUIREMENTS: SHU-237 mutation M1 bypass canonicalization
+grant unused git: test "A12 committed inventory requirements match real outcomes" fails by A12_INVENTORY_REQUIREMENTS: B2 credential: transport consumes only fixed systemd credential and never exports it

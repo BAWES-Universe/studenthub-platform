@@ -1,0 +1,29 @@
+{
+  "assertion": "A12_INVENTORY_DERIVED",
+  "revision": "ca77fc8a251b5e62594393c5eb0f974e195e9271",
+  "files": 98,
+  "names": 2762,
+  "requirements": 2762,
+  "distinct_names": 2760,
+  "expected_tests": 2762,
+  "capability_name_counts": {
+    "privilege": 7,
+    "worker_uid": 7,
+    "temp": 0,
+    "cvtsudoers": 153,
+    "user_namespaces": 0,
+    "checkout": 0,
+    "systemd": 0,
+    "systemd_analyze": 78,
+    "flock": 82,
+    "systemd_notify": 0,
+    "git": 1270,
+    "bash": 147,
+    "shell_toolchain": 345,
+    "linux_proc": 428,
+    "loopback_socket": 46,
+    "unix_socket": 68,
+    "node": 0
+  },
+  "empty_requirements": 1065
+}

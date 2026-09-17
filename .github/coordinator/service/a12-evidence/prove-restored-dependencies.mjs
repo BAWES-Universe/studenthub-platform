@@ -43,7 +43,7 @@ try {
   fs.cpSync(new URL('a12-evidence/', base), evidence, { recursive: true });
   for (const file of ['host-suite-contract.mjs','suite-runner-spec.mjs'])
     fs.copyFileSync(new URL(file, base), path.join(root, file));
-  const runDerive = () => spawnSync(process.execPath, [path.join(evidence, 'derive-inventory.mjs')], { cwd: process.cwd(), env, encoding: 'utf8' });
+  const runDerive = () => spawnSync(process.execPath, [path.join(evidence, 'derive-inventory.mjs'), ...process.argv.slice(2)], { cwd: process.cwd(), env, encoding: 'utf8' });
   assert.equal(runDerive().status, 0, 'A12_MAPPING_POSITIVE');
   const mappingFile = path.join(evidence, 'file-requirements.json');
   const original = fs.readFileSync(mappingFile, 'utf8');

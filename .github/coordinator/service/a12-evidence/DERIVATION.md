@@ -30,3 +30,9 @@ The in-suite test `A12 committed inventory requirements match real outcomes` rea
 Because suite-runner-spec now executes the other proofs, its file union includes their nine non-identity capabilities. Child identity absences remain the eight exact authorized outcomes, not new outer skips.
 
 PERMITTED_SKIPS, ci.yml, the operational wrapper and the restored shell fixtures are unchanged. No host deployment or external action is part of these proofs.
+
+## Successful derivation checkpoint
+
+`merged-derivation/` records the complete unfiltered plain run, derivation and admission at `ca77fc8a251b5e62594393c5eb0f974e195e9271`: 98 files; 2,762 outcomes/names/requirements/expected_tests; 2,754 pass; zero fail; eight skips with byte-identical reasons; one terminal complete marker. There are 2,760 distinct names, with duplicate occurrences retained. F8 passes in that run. Five inventory row mutants, seven current probe/detection mutants (including M16) and four preserved filesystem-side-effect mutants die by named assertions.
+
+That successful run re-derived the inventory; the only byte difference was JSON serialization of Unicode test names (no decoded names or capabilities changed). Those canonical bytes are committed with this checkpoint. These checkpoint numbers belong to `ca77fc8`, not to their evidence carrier. Final plain and clock runs, derivation reproduction and admission must be repeated at the carrier's actual HEAD and reported with that exact revision.

@@ -583,7 +583,7 @@
     "capabilities": [
       "shell_toolchain"
     ],
-    "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
+    "justification": "F6: selected reviewer-evidence mutation children execute the generated #!/bin/sh unconfined-wrapper. Mutation-child union: shell_toolchain.",
     "call_sites": [
       ".github/coordinator/test/shu237-mutations.test.mjs:166"
     ]
@@ -603,7 +603,7 @@
       "bash",
       "git"
     ],
-    "justification": "selected reviewer-launch controls execute shipped Bash wrapper; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
+    "justification": "F4: M13 executes the attempt-workspace mutation child, whose disposable repository setup requires real Git. Other selected children execute Bash. Mutation-child union: bash, git.",
     "call_sites": [
       ".github/coordinator/test/shu239-mutations.test.mjs:60"
     ]
@@ -750,7 +750,7 @@
       "bash",
       "shell_toolchain"
     ],
-    "justification": "shipped Bash functions executed; setfacl/flock/systemd-run are Bash function doubles; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
+    "justification": "F1: the shipped reviewer-sandbox Bash slice executes PATH basename at reviewer-sandbox.sh:184; tool subtraction fails the exact shipped-profile network assertion. File union: bash, shell_toolchain.",
     "call_sites": [
       ".github/coordinator/test/shu261-cleanup-network.test.mjs:15",
       ".github/coordinator/test/shu261-cleanup-network.test.mjs:82"
@@ -852,7 +852,7 @@
     "capabilities": [
       "git"
     ],
-    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
+    "justification": "F3: the RUNNING revision end-to-end proof at :602 leaves revision resolution uninjected and executes real git rev-parse HEAD. File union: git.",
     "call_sites": [
       ".github/coordinator/test/single-run-activation.test.mjs:1114"
     ]
