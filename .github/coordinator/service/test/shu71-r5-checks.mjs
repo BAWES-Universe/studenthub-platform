@@ -1,9 +1,9 @@
-// Historical objects and disposable boundaries only: no production host access.
+// Custody-checked historical fixtures and disposable boundaries only.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { historicalSource } from './shu71-history.mjs';
 import { pathToFileURL } from 'node:url';
 import { productionFixture } from './shu71-production-fixture.mjs';
 export const gates = ['shu-coordinator', 'shu-supervisor'].map(n => `/etc/systemd/system/${n}.service.d/90-shu71.conf`);
@@ -13,7 +13,7 @@ export async function historicalProduction(t, revision) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-r5-diff-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const url = new URL('../shu71-production.mjs', import.meta.url);
-  const read = name => execFileSync('git', ['show', `${revision}:.github/coordinator/service/${name}`], {cwd: new URL('../../../../', import.meta.url), encoding: 'utf8'});
+  const read = name => historicalSource(revision, name);
   fs.writeFileSync(path.join(root, 'journal.mjs'), read('shu71-journal.mjs'));
   fs.writeFileSync(path.join(root, 'production.mjs'), read('shu71-production.mjs').replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
     (_, p, q, r) => `${p}${q}${r === './shu71-journal.mjs' ? pathToFileURL(path.join(root, 'journal.mjs')).href : new URL(r, url).href}${q}`));
