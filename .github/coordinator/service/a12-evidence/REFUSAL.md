@@ -1,3 +1,5 @@
+> Historical refusal, resolved by the inert-probe repair and successful capture documented in [DERIVATION.md](DERIVATION.md). The rejected run below remains non-authoritative.
+
 # A12 capture refused
 
 The post-change capture at revision `d26db39e4bed664827633caf912950bbbff2e2ce` failed. No inventory was authored; admission, the authoritative inventory name check, inventory requirement counts and `expected_tests` are **not established**. The old capture was not used.

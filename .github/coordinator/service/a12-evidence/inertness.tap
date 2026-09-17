@@ -1,0 +1,871 @@
+TAP version 13
+# Subtest: SHU251 C2 Option A wrapper proofs have no namespace requirement
+ok 1 - SHU251 C2 Option A wrapper proofs have no namespace requirement
+  ---
+  duration_ms: 1.069144
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 derived capability positive and refusal controls
+ok 2 - SHU251 C2 derived capability positive and refusal controls
+  ---
+  duration_ms: 2.996066
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 supplied identities do not imply sudo authority
+ok 3 - SHU251 C2 supplied identities do not imply sudo authority
+  ---
+  duration_ms: 0.763793
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation covered absence rejected
+ok 4 - SHU251 C2 mutation covered absence rejected
+  ---
+  duration_ms: 27.677035
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation uncovered requirement ignored
+ok 5 - SHU251 C2 mutation uncovered requirement ignored
+  ---
+  duration_ms: 29.395016
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation required set omitted
+ok 6 - SHU251 C2 mutation required set omitted
+  ---
+  duration_ms: 25.142638
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation skip binding bypassed
+ok 7 - SHU251 C2 mutation skip binding bypassed
+  ---
+  duration_ms: 28.61274
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation malformed probe reclassified
+ok 8 - SHU251 C2 mutation malformed probe reclassified
+  ---
+  duration_ms: 26.914473
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation probe failure reclassified
+ok 9 - SHU251 C2 mutation probe failure reclassified
+  ---
+  duration_ms: 26.765425
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation namespace absence waived
+ok 10 - SHU251 C2 mutation namespace absence waived
+  ---
+  duration_ms: 25.435143
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation new outcome failure accepted
+ok 11 - SHU251 C2 mutation new outcome failure accepted
+  ---
+  duration_ms: 26.469847
+  type: 'test'
+  ...
+# Subtest: SHU251 C2 mutation different outcome reason accepted
+ok 12 - SHU251 C2 mutation different outcome reason accepted
+  ---
+  duration_ms: 27.187873
+  type: 'test'
+  ...
+# Subtest: A12 dependency shell_toolchain positive and named refusal
+ok 13 - A12 dependency shell_toolchain positive and named refusal
+  ---
+  duration_ms: 33.240725
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation bypass shell_toolchain
+ok 14 - A12 dependency mutation bypass shell_toolchain
+  ---
+  duration_ms: 50.641273
+  type: 'test'
+  ...
+# Subtest: A12 dependency linux_proc positive and named refusal
+ok 15 - A12 dependency linux_proc positive and named refusal
+  ---
+  duration_ms: 31.216152
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation bypass linux_proc
+ok 16 - A12 dependency mutation bypass linux_proc
+  ---
+  duration_ms: 35.352181
+  type: 'test'
+  ...
+# Subtest: A12 dependency loopback_socket positive and named refusal
+ok 17 - A12 dependency loopback_socket positive and named refusal
+  ---
+  duration_ms: 32.16092
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation bypass loopback_socket
+ok 18 - A12 dependency mutation bypass loopback_socket
+  ---
+  duration_ms: 34.505298
+  type: 'test'
+  ...
+# Subtest: A12 shell toolchain requires /bin/sh
+ok 19 - A12 shell toolchain requires /bin/sh
+  ---
+  duration_ms: 25.059781
+  type: 'test'
+  ...
+# Subtest: A12 shell toolchain requires /usr/bin/dirname
+ok 20 - A12 shell toolchain requires /usr/bin/dirname
+  ---
+  duration_ms: 27.31086
+  type: 'test'
+  ...
+# Subtest: A12 shell toolchain requires /usr/bin/env
+ok 21 - A12 shell toolchain requires /usr/bin/env
+  ---
+  duration_ms: 31.843267
+  type: 'test'
+  ...
+# Subtest: A12 shell toolchain requires /usr/bin/chmod
+ok 22 - A12 shell toolchain requires /usr/bin/chmod
+  ---
+  duration_ms: 32.530874
+  type: 'test'
+  ...
+# Subtest: A12 shell toolchain requires /usr/bin/mktemp
+ok 23 - A12 shell toolchain requires /usr/bin/mktemp
+  ---
+  duration_ms: 36.614824
+  type: 'test'
+  ...
+# Subtest: A12 shell toolchain requires /usr/bin/rm
+ok 24 - A12 shell toolchain requires /usr/bin/rm
+  ---
+  duration_ms: 35.242079
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation tool exit dies by named assertion
+ok 25 - A12 dependency mutation tool exit dies by named assertion
+  ---
+  duration_ms: 85.497219
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation tool spawn error dies by named assertion
+ok 26 - A12 dependency mutation tool spawn error dies by named assertion
+  ---
+  duration_ms: 85.216946
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation proc content dies by named assertion
+ok 27 - A12 dependency mutation proc content dies by named assertion
+  ---
+  duration_ms: 81.319646
+  type: 'test'
+  ...
+# Subtest: A12 dependency mutation proc descriptor dies by named assertion
+ok 28 - A12 dependency mutation proc descriptor dies by named assertion
+  ---
+  duration_ms: 75.368007
+  type: 'test'
+  ...
+# Subtest: PROVIDER complete real provider recorded-boundary lifecycle
+ok 29 - PROVIDER complete real provider recorded-boundary lifecycle
+  ---
+  duration_ms: 565.190757
+  type: 'test'
+  ...
+# Subtest: DETERMINISM readiness restart scheduled ticks never conflict with driver custody
+ok 30 - DETERMINISM readiness restart scheduled ticks never conflict with driver custody
+  ---
+  duration_ms: 953.270237
+  type: 'test'
+  ...
+# Injected 3110 scheduled completions at 3110 before/after boundaries across readiness/restart
+# Subtest: DETERMINISM gate-off every boundary has zero modeled conflicts
+ok 31 - DETERMINISM gate-off every boundary has zero modeled conflicts
+  ---
+  duration_ms: 477.331565
+  type: 'test'
+  ...
+# gate-off before: ticks=856 conflicts=0 outcome=fulfilled code=none
+# gate-off after: ticks=852 conflicts=0 outcome=fulfilled code=none
+# Subtest: DETERMINISM gate-off single tick at network and bracketing readiness
+ok 32 - DETERMINISM gate-off single tick at network and bracketing readiness
+  ---
+  duration_ms: 860.46639
+  type: 'test'
+  ...
+# gate-off gh: ticks=1 conflicts=0 outcome=fulfilled code=none
+# gate-off git: ticks=1 conflicts=0 outcome=fulfilled code=none
+# gate-off readiness-before: ticks=1 conflicts=0 outcome=fulfilled code=none
+# gate-off readiness-after: ticks=1 conflicts=0 outcome=fulfilled code=none
+# Subtest: J1 prerequisite scratch permits a clean gate-off receipt
+ok 33 - J1 prerequisite scratch permits a clean gate-off receipt
+  ---
+  duration_ms: 212.438578
+  type: 'test'
+  ...
+# J1 scratchDirs=5 outcome=fulfilled code=none
+# Subtest: J1 prerequisite scratch preserves all 18 H1 interleavings
+ok 34 - J1 prerequisite scratch preserves all 18 H1 interleavings
+  ---
+  duration_ms: 3530.175976
+  type: 'test'
+  ...
+# J1 H1 pre-action workspace_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 pre-action supervisor_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 pre-action-transient workspace_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 pre-action-transient supervisor_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 git workspace_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 git supervisor_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 gh workspace_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 gh supervisor_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 readiness workspace_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 readiness supervisor_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 watch workspace_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 watch supervisor_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 baseline workspace_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 baseline supervisor_state_dir: scratchDirs=0 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 poll workspace_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 poll supervisor_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 final-readiness workspace_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# J1 H1 final-readiness supervisor_state_dir: scratchDirs=5 actualWrites=1 conflicts=0 code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes initialize
+ok 35 - OBSERVATION gate-off actual writes initialize
+  ---
+  duration_ms: 388.510421
+  type: 'test'
+  ...
+# H1 initialize workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 initialize supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes git
+ok 36 - OBSERVATION gate-off actual writes git
+  ---
+  duration_ms: 365.954556
+  type: 'test'
+  ...
+# H1 git workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 git supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes gh
+ok 37 - OBSERVATION gate-off actual writes gh
+  ---
+  duration_ms: 393.987689
+  type: 'test'
+  ...
+# H1 gh workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 gh supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes readiness
+ok 38 - OBSERVATION gate-off actual writes readiness
+  ---
+  duration_ms: 372.26587
+  type: 'test'
+  ...
+# H1 readiness workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 readiness supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes poll
+ok 39 - OBSERVATION gate-off actual writes poll
+  ---
+  duration_ms: 370.972818
+  type: 'test'
+  ...
+# H1 poll workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 poll supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes final-readiness
+ok 40 - OBSERVATION gate-off actual writes final-readiness
+  ---
+  duration_ms: 411.098183
+  type: 'test'
+  ...
+# H1 final-readiness workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 final-readiness supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes finalize
+ok 41 - OBSERVATION gate-off actual writes finalize
+  ---
+  duration_ms: 418.70286
+  type: 'test'
+  ...
+# H1 finalize workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 finalize supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes baseline
+ok 42 - OBSERVATION gate-off actual writes baseline
+  ---
+  duration_ms: 366.131133
+  type: 'test'
+  ...
+# H1 baseline workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 baseline supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes before-watch
+ok 43 - OBSERVATION gate-off actual writes before-watch
+  ---
+  duration_ms: 366.098042
+  type: 'test'
+  ...
+# H1 before-watch workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 before-watch supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes before-watch-transient
+ok 44 - OBSERVATION gate-off actual writes before-watch-transient
+  ---
+  duration_ms: 416.191181
+  type: 'test'
+  ...
+# H1 before-watch-transient workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 before-watch-transient supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION gate-off actual writes capability
+ok 45 - OBSERVATION gate-off actual writes capability
+  ---
+  duration_ms: 451.91442
+  type: 'test'
+  ...
+# H1 capability workspace_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# H1 capability supervisor_state_dir: actualWrites=1 conflicts=0 outcome=rejected code=SHU251_PROVIDER_GATE_OFF
+# Subtest: OBSERVATION disjoint roots share registration and release on failure
+ok 46 - OBSERVATION disjoint roots share registration and release on failure
+  ---
+  duration_ms: 999.433208
+  type: 'test'
+  ...
+# Subtest: OBSERVATION baseline requires writer custody and legacy start refuses
+ok 47 - OBSERVATION baseline requires writer custody and legacy start refuses
+  ---
+  duration_ms: 203.45965
+  type: 'test'
+  ...
+# Subtest: DETERMINISM scheduled tick conflict model retains exit-2 refusal
+ok 48 - DETERMINISM scheduled tick conflict model retains exit-2 refusal
+  ---
+  duration_ms: 197.354671
+  type: 'test'
+  ...
+# Subtest: DETERMINISM observation custody refuses writer effects and releases on failure
+ok 49 - DETERMINISM observation custody refuses writer effects and releases on failure
+  ---
+  duration_ms: 11.122306
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_TICK
+ok 50 - PROVIDER guard SHU251_PROVIDER_TICK
+  ---
+  duration_ms: 353.891055
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_CHECKOUT
+ok 51 - PROVIDER guard SHU251_PROVIDER_CHECKOUT
+  ---
+  duration_ms: 377.478906
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_CHECKOUT_CAS
+ok 52 - PROVIDER guard SHU251_CHECKOUT_CAS
+  ---
+  duration_ms: 393.549941
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_CHECKOUT_TREE
+ok 53 - PROVIDER guard SHU251_CHECKOUT_TREE
+  ---
+  duration_ms: 327.986998
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_CHECKOUT_REMOTE
+ok 54 - PROVIDER guard SHU251_CHECKOUT_REMOTE
+  ---
+  duration_ms: 340.775992
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_CUSTODY
+ok 55 - PROVIDER guard SHU251_APPROVAL_CUSTODY
+  ---
+  duration_ms: 328.813222
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_DIGEST
+ok 56 - PROVIDER guard SHU251_APPROVAL_DIGEST
+  ---
+  duration_ms: 330.632314
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_SIGNATURE
+ok 57 - PROVIDER guard SHU251_APPROVAL_SIGNATURE
+  ---
+  duration_ms: 337.156227
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_BINDING
+ok 58 - PROVIDER guard SHU251_APPROVAL_BINDING
+  ---
+  duration_ms: 330.645349
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_TIME
+ok 59 - PROVIDER guard SHU251_APPROVAL_TIME
+  ---
+  duration_ms: 330.763899
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_ORDER
+ok 60 - PROVIDER guard SHU251_APPROVAL_ORDER
+  ---
+  duration_ms: 334.41693
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_APPROVAL_TEARDOWN
+ok 61 - PROVIDER guard SHU251_APPROVAL_TEARDOWN
+  ---
+  duration_ms: 355.938164
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_GATE_OFF
+ok 62 - PROVIDER guard SHU251_PROVIDER_GATE_OFF
+  ---
+  duration_ms: 522.926149
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PREFLIGHT_PRIVILEGE
+ok 63 - PROVIDER guard SHU251_PREFLIGHT_PRIVILEGE
+  ---
+  duration_ms: 352.142886
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_SCOPE
+ok 64 - PROVIDER guard SHU251_PROVIDER_SCOPE
+  ---
+  duration_ms: 326.714812
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_PATH
+ok 65 - PROVIDER guard SHU251_PROVIDER_PATH
+  ---
+  duration_ms: 316.306879
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_SUBSTITUTION
+ok 66 - PROVIDER guard SHU251_PROVIDER_SUBSTITUTION
+  ---
+  duration_ms: 317.962885
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_SYMLINK
+ok 67 - PROVIDER guard SHU251_PROVIDER_SYMLINK
+  ---
+  duration_ms: 347.694607
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_FILE
+ok 68 - PROVIDER guard SHU251_PROVIDER_FILE
+  ---
+  duration_ms: 321.381152
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_STORAGE
+ok 69 - PROVIDER guard SHU251_PROVIDER_STORAGE
+  ---
+  duration_ms: 329.044943
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_CUSTODY
+ok 70 - PROVIDER guard SHU251_PROVIDER_CUSTODY
+  ---
+  duration_ms: 350.576211
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_ALLOWLIST
+ok 71 - PROVIDER guard SHU251_PROVIDER_ALLOWLIST
+  ---
+  duration_ms: 338.301194
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_COMPARE
+ok 72 - PROVIDER guard SHU251_PROVIDER_COMPARE
+  ---
+  duration_ms: 331.811429
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_ARGV
+ok 73 - PROVIDER guard SHU251_PROVIDER_ARGV
+  ---
+  duration_ms: 335.597219
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_PIN
+ok 74 - PROVIDER guard SHU251_PROVIDER_PIN
+  ---
+  duration_ms: 308.545575
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_COMMAND
+ok 75 - PROVIDER guard SHU251_PROVIDER_COMMAND
+  ---
+  duration_ms: 324.812651
+  type: 'test'
+  ...
+# Subtest: PROVIDER guard SHU251_PROVIDER_READINESS
+ok 76 - PROVIDER guard SHU251_PROVIDER_READINESS
+  ---
+  duration_ms: 512.982697
+  type: 'test'
+  ...
+# Subtest: PROVIDER durability order and failures never acknowledge success
+ok 77 - PROVIDER durability order and failures never acknowledge success
+  ---
+  duration_ms: 9.874215
+  type: 'test'
+  ...
+# Subtest: PROVIDER lock contention outside custody and release after exceptions
+ok 78 - PROVIDER lock contention outside custody and release after exceptions
+  ---
+  duration_ms: 8.360709
+  type: 'test'
+  ...
+# Subtest: PROVIDER default entrypoint wiring and no implementation option
+ok 79 - PROVIDER default entrypoint wiring and no implementation option
+  ---
+  duration_ms: 23.214411
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_TICK
+ok 80 - PROVIDER named mutation SHU251_PROVIDER_TICK
+  ---
+  duration_ms: 995.85692
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_CHECKOUT
+ok 81 - PROVIDER named mutation SHU251_PROVIDER_CHECKOUT
+  ---
+  duration_ms: 1034.243224
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_CHECKOUT_CAS
+ok 82 - PROVIDER named mutation SHU251_CHECKOUT_CAS
+  ---
+  duration_ms: 1074.161034
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_CHECKOUT_TREE
+ok 83 - PROVIDER named mutation SHU251_CHECKOUT_TREE
+  ---
+  duration_ms: 1021.755914
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_CHECKOUT_REMOTE
+ok 84 - PROVIDER named mutation SHU251_CHECKOUT_REMOTE
+  ---
+  duration_ms: 942.331394
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_CUSTODY
+ok 85 - PROVIDER named mutation SHU251_APPROVAL_CUSTODY
+  ---
+  duration_ms: 971.506468
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_DIGEST
+ok 86 - PROVIDER named mutation SHU251_APPROVAL_DIGEST
+  ---
+  duration_ms: 958.249375
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_SIGNATURE
+ok 87 - PROVIDER named mutation SHU251_APPROVAL_SIGNATURE
+  ---
+  duration_ms: 964.707627
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_BINDING
+ok 88 - PROVIDER named mutation SHU251_APPROVAL_BINDING
+  ---
+  duration_ms: 1006.665227
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_TIME
+ok 89 - PROVIDER named mutation SHU251_APPROVAL_TIME
+  ---
+  duration_ms: 930.56545
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_ORDER
+ok 90 - PROVIDER named mutation SHU251_APPROVAL_ORDER
+  ---
+  duration_ms: 971.247225
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_APPROVAL_TEARDOWN
+ok 91 - PROVIDER named mutation SHU251_APPROVAL_TEARDOWN
+  ---
+  duration_ms: 990.245407
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_GATE_OFF
+ok 92 - PROVIDER named mutation SHU251_PROVIDER_GATE_OFF
+  ---
+  duration_ms: 1407.180499
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PREFLIGHT_PRIVILEGE
+ok 93 - PROVIDER named mutation SHU251_PREFLIGHT_PRIVILEGE
+  ---
+  duration_ms: 930.851405
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_SCOPE
+ok 94 - PROVIDER named mutation SHU251_PROVIDER_SCOPE
+  ---
+  duration_ms: 953.377401
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_PATH
+ok 95 - PROVIDER named mutation SHU251_PROVIDER_PATH
+  ---
+  duration_ms: 906.693617
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_SUBSTITUTION
+ok 96 - PROVIDER named mutation SHU251_PROVIDER_SUBSTITUTION
+  ---
+  duration_ms: 972.153254
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_SYMLINK
+ok 97 - PROVIDER named mutation SHU251_PROVIDER_SYMLINK
+  ---
+  duration_ms: 943.617048
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_FILE
+ok 98 - PROVIDER named mutation SHU251_PROVIDER_FILE
+  ---
+  duration_ms: 1003.005857
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_STORAGE
+ok 99 - PROVIDER named mutation SHU251_PROVIDER_STORAGE
+  ---
+  duration_ms: 971.698916
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_CUSTODY
+ok 100 - PROVIDER named mutation SHU251_PROVIDER_CUSTODY
+  ---
+  duration_ms: 1045.160719
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_ALLOWLIST
+ok 101 - PROVIDER named mutation SHU251_PROVIDER_ALLOWLIST
+  ---
+  duration_ms: 1058.11992
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_COMPARE
+ok 102 - PROVIDER named mutation SHU251_PROVIDER_COMPARE
+  ---
+  duration_ms: 980.210558
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_ARGV
+ok 103 - PROVIDER named mutation SHU251_PROVIDER_ARGV
+  ---
+  duration_ms: 956.880296
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_PIN
+ok 104 - PROVIDER named mutation SHU251_PROVIDER_PIN
+  ---
+  duration_ms: 923.076187
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_COMMAND
+ok 105 - PROVIDER named mutation SHU251_PROVIDER_COMMAND
+  ---
+  duration_ms: 932.996847
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation SHU251_PROVIDER_READINESS
+ok 106 - PROVIDER named mutation SHU251_PROVIDER_READINESS
+  ---
+  duration_ms: 1343.35683
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation J1 scratch restored to watched root
+ok 107 - PROVIDER named mutation J1 scratch restored to watched root
+  ---
+  duration_ms: 729.61823
+  type: 'test'
+  ...
+# J1 reversal: scratchDirs=5; SHU251_PROVIDER_GATE_OFF kills clean receipt
+# Subtest: PROVIDER named mutation H1 preflight observation omitted
+ok 108 - PROVIDER named mutation H1 preflight observation omitted
+  ---
+  duration_ms: 958.598444
+  type: 'test'
+  ...
+# H1 preflight observation omitted: actualWrites=1 conflicts=0; false receipt killed by H1_WRITE_OBSERVATION_REQUIRED
+# Subtest: PROVIDER named mutation H1 first readiness observation omitted
+ok 109 - PROVIDER named mutation H1 first readiness observation omitted
+  ---
+  duration_ms: 929.660542
+  type: 'test'
+  ...
+# H1 first readiness observation omitted: actualWrites=1 conflicts=0; false receipt killed by H1_WRITE_OBSERVATION_REQUIRED
+# Subtest: PROVIDER named mutation H1 persisted baseline omitted
+ok 110 - PROVIDER named mutation H1 persisted baseline omitted
+  ---
+  duration_ms: 970.337155
+  type: 'test'
+  ...
+# H1 persisted baseline omitted: actualWrites=1 conflicts=0; false receipt killed by H1_WRITE_OBSERVATION_REQUIRED
+# Subtest: PROVIDER named mutation H1 final observation omitted
+ok 111 - PROVIDER named mutation H1 final observation omitted
+  ---
+  duration_ms: 883.515459
+  type: 'test'
+  ...
+# H1 final observation omitted: actualWrites=1 conflicts=0; false receipt killed by H1_WRITE_OBSERVATION_REQUIRED
+# Subtest: PROVIDER named mutation gate-off whole-step writer contention
+ok 112 - PROVIDER named mutation gate-off whole-step writer contention
+  ---
+  duration_ms: 936.448843
+  type: 'test'
+  ...
+# gate-off whole-step writer contention: \# gate-off before: ticks=395 conflicts=289 outcome=rejected code=SHU251_WRITER_LOCK
+# Subtest: PROVIDER named mutation gate-off executor observation scope
+ok 113 - PROVIDER named mutation gate-off executor observation scope
+  ---
+  duration_ms: 899.703668
+  type: 'test'
+  ...
+# gate-off executor observation scope: \# gate-off before: ticks=395 conflicts=289 outcome=rejected code=SHU251_WRITER_LOCK
+# Subtest: PROVIDER named mutation gate-off post-poll writer reacquisition
+ok 114 - PROVIDER named mutation gate-off post-poll writer reacquisition
+  ---
+  duration_ms: 890.80681
+  type: 'test'
+  ...
+# gate-off post-poll writer reacquisition: \# gate-off before: ticks=705 conflicts=101 outcome=rejected code=SHU251_PROVIDER_READINESS
+# Subtest: PROVIDER named mutation gate-off single network tick contention
+ok 115 - PROVIDER named mutation gate-off single network tick contention
+  ---
+  duration_ms: 1279.754627
+  type: 'test'
+  ...
+# gate-off single network tick contention: \# gate-off gh: ticks=1 conflicts=1 outcome=rejected code=SHU251_WRITER_LOCK
+# Subtest: PROVIDER named mutation readiness alone writer contention
+ok 116 - PROVIDER named mutation readiness alone writer contention
+  ---
+  duration_ms: 1267.542221
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation restart alone writer contention
+ok 117 - PROVIDER named mutation restart alone writer contention
+  ---
+  duration_ms: 1797.652829
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation readiness restart writer contention
+ok 118 - PROVIDER named mutation readiness restart writer contention
+  ---
+  duration_ms: 1301.644096
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation executor observation scope
+ok 119 - PROVIDER named mutation executor observation scope
+  ---
+  duration_ms: 1305.823812
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation default entrypoint
+ok 120 - PROVIDER named mutation default entrypoint
+  ---
+  duration_ms: 251.556545
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation production factory
+ok 121 - PROVIDER named mutation production factory
+  ---
+  duration_ms: 262.570349
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation reviewed checkout
+ok 122 - PROVIDER named mutation reviewed checkout
+  ---
+  duration_ms: 256.886906
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation file fsync
+ok 123 - PROVIDER named mutation file fsync
+  ---
+  duration_ms: 218.160182
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation directory fsync
+ok 124 - PROVIDER named mutation directory fsync
+  ---
+  duration_ms: 226.856037
+  type: 'test'
+  ...
+# Subtest: PROVIDER named mutation kernel lock
+ok 125 - PROVIDER named mutation kernel lock
+  ---
+  duration_ms: 256.841902
+  type: 'test'
+  ...
+# Subtest: PROVIDER placements restore exact bytes mode absence and masking links
+ok 126 - PROVIDER placements restore exact bytes mode absence and masking links
+  ---
+  duration_ms: 22.097799
+  type: 'test'
+  ...
+# Subtest: PROVIDER substituted destination and symlink ancestor cannot redirect placement
+ok 127 - PROVIDER substituted destination and symlink ancestor cannot redirect placement
+  ---
+  duration_ms: 11.255831
+  type: 'test'
+  ...
+# Subtest: PROVIDER observations reject listener identity runtime gate and oneshot drift
+ok 128 - PROVIDER observations reject listener identity runtime gate and oneshot drift
+  ---
+  duration_ms: 749.350226
+  type: 'test'
+  ...
+# Subtest: CLOSURE split ownership and fresh service readiness require no acceptance worker
+ok 129 - CLOSURE split ownership and fresh service readiness require no acceptance worker
+  ---
+  duration_ms: 236.70758
+  type: 'test'
+  ...
+# Subtest: CLOSURE stale local main stale origin main detached HEAD restore and retain
+ok 130 - CLOSURE stale local main stale origin main detached HEAD restore and retain
+  ---
+  duration_ms: 358.090598
+  type: 'test'
+  ...
+# Subtest: CLOSURE pin and restore recover every Git command boundary with a new provider
+ok 131 - CLOSURE pin and restore recover every Git command boundary with a new provider
+  ---
+  duration_ms: 905.072229
+  type: 'test'
+  ...
+# Subtest: CLOSURE dirty checkout independent drift wrong tree and ambiguous fetch refuse
+ok 132 - CLOSURE dirty checkout independent drift wrong tree and ambiguous fetch refuse
+  ---
+  duration_ms: 122.362668
+  type: 'test'
+  ...
+# Subtest: CLOSURE gate proof rejects stopped silence missing timer wake writes and children
+ok 133 - CLOSURE gate proof rejects stopped silence missing timer wake writes and children
+  ---
+  duration_ms: 991.202565
+  type: 'test'
+  ...
+# Subtest: CLOSURE evidence creation authenticated approval expiry cleanup and archive resume
+ok 134 - CLOSURE evidence creation authenticated approval expiry cleanup and archive resume
+  ---
+  duration_ms: 83.844597
+  type: 'test'
+  ...
+1..134
+# tests 134
+# suites 0
+# pass 134
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 68220.043061

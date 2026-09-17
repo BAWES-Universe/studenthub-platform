@@ -93,7 +93,7 @@ test('SHU251 common flock excludes overlapping writers and releases after exit',
   const exited = once(holder, 'exit');
   holder.stdin.end();
   await exited;
-  assert.equal(spawnSync('/usr/bin/flock', ['--nonblock', lock, '/usr/bin/true']).status, 0, 'SHU251_LOCK_RELEASE: writer exit must release the lock');
+  assert.equal(spawnSync('/usr/bin/flock', ['--nonblock', lock, process.execPath, '-e', '']).status, 0, 'SHU251_LOCK_RELEASE: writer exit must release the lock');
 });
 
 const policyMutations = [
