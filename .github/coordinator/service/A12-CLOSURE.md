@@ -1,3 +1,154 @@
+# A12 Option A closure — narrowed scope, not green
+
+Current decision: owner **OPTION A**, repository-only. This section supersedes
+all outstanding-deliverable language in the historical records below and in
+`userns-profile/`. The independent `/home/bawes/work/A12-WRAPPER-TRACE.md` was
+read. No deployment, host window, push, PR action or external comment occurred.
+
+## Refresh and preservation
+
+Started at `1a1f012427404c3aedde61516749dd8174519981`; fetched main at
+`2348c026e44240ebf1622781a8bd0d6b56394790`. Contrary to the prior audit, the merge
+had six conflicts: this document, PHASE-A-DRIVER.md, disposable-suite.mjs,
+host-suite-contract.mjs, suite-runner-spec.mjs and its test. Merge commit
+`dc00ce5` preserves both sides: main's failure-first reporter, cyclic-import
+CLI remedy, null-requirement refusal and validated skip-reason receipts; this
+branch's closed spec schema, revision/tree/clean-tree binding, checkout realpath,
+per-file revision-object digests, inventory byte digest and durable custody
+binding. Quiescence and capability-requirements derivation are unchanged.
+The reporter/CLI and binding mutation controls pass together.
+
+`PERMITTED_SKIPS` is byte-identical to both parents: **eight entries**, no ninth
+skip. The M3 probe remains exactly
+`/usr/bin/unshare --user --map-root-user /bin/true` under the service identity.
+No production guard, error code or allowance changed in Option A. The workflow
+`.github/workflows/ci.yml` was not edited and is byte-identical to refreshed main
+(the merge necessarily imports main's changes relative to the starting branch).
+
+## Re-expressed startup proof
+
+The removed `SHU261_NO_SETENV_NAMESPACE_STARTUP` used a user namespace only as
+a substitute for sudo/root and stopped at the argv guard. Its property is now
+carried by the three existing reviewed proofs, without a namespace:
+
+| Proof | Assertions carrying the property |
+| --- | --- |
+| `SHU261_NO_SETENV_POLICY` | Real sudoers bytes parsed through `resolveCvtsudoers`; an explicit `setenv === false` option, no non-false SETENV option, and exact command-specific `env_keep === ['CLAUDE_CODE_OAUTH_TOKEN']`. This covers environment admission and OAuth preservation. |
+| `SHU261 wrapper contract isolates both reviewer phases and every protected class` | Exact `^#!/bin/bash -p$`, no `#!/usr/bin/env`, `compgen -e` before `set -euo pipefail`, fixed PATH and exact command-specific OAuth/NOSETENV sudoers regexes. |
+| `SHU261 root wrapper startup ignores PATH and BASH_ENV before parsing` | Directly executes the shipped shebang with hostile PATH and a real BASH_ENV file; requires exit 64, no startup marker and stderr matching `exact workspace binding`. This covers startup code suppression and the argv guard. |
+
+Together these retain the old policy, startup and guard claims. They do not
+prove installed sudo enforcement or host-root startup. Added mutation
+`SHU-261 mutation: root privileged bash mode removed` changes
+`#!/bin/bash -p` to `#!/bin/bash`, runs **only** the direct-exec test and requires
+an AssertionError naming `SHU261_ROOT_STARTUP: neither a PATH interpreter nor
+BASH_ENV code may execute`. It is killed. Existing `sudo SETENV restored` and
+`root interpreter uses caller PATH` mutations also remain killed by the wrapper
+contract. No mutation depends on the removed namespace test.
+
+The only checked-in inventory-requirement reference for the removed test was
+the synthetic `ns` row in `service/test/capability-requirements.test.mjs`:
+`SHU261_NO_SETENV_NAMESPACE_STARTUP → [{name: 'user_namespaces'}]`.
+That mapping is removed. A reviewed replacement mapping in the same test gives
+policy → `cvtsudoers`, source contract → `[]`, direct-exec → `bash`, and asserts
+that derivation yields `user_namespaces: []`. This is a test fixture, **not a
+production inventory**. The old namespace refusal assertion and its mutation
+remain intact using the explicitly synthetic `M3 namespace capability control`
+name. Neither the M3 probe nor general capability admission was relaxed.
+
+## Removed / out of scope
+
+Production is `sudo -n /usr/local/libexec/shu-reviewer-sandbox` → wrapper →
+`systemd-run` with `--property=RestrictNamespaces=yes`, which denies namespace
+creation. No production launched path needs the proposed exception. Therefore:
+
+- The proposed static ELF `/usr/local/libexec/shu251-a12-suite-runner` is removed
+  from scope; no binary or native source was ever built.
+- The inert `userns-profile/a12.apparmor` exception profile body is removed.
+  It was never parsed/loaded on the target and could not execute the wrapper.
+- The host installer/load/verify/teardown model is removed from scope; its
+  JavaScript simulation is deleted. No production implementation was built.
+- The authenticated evidence collector is removed from scope; never built.
+- The six native production mutations (binary substitution, wrong binary
+  digest, wrong owner/mode, stale/wrong loaded profile, interrupted installation,
+  failed teardown) are removed from scope, never implemented or killed.
+- Supporting profile-only machinery is deleted: `contract.mjs`, `controls.mjs`,
+  `mutations.mjs`, synthetic `receipts.example.json` and
+  `service/test/userns-profile.test.mjs` (17 design tests/eight model mutations).
+  Their historical passes are not production evidence or current suite counts.
+
+The attempt remains in Git history at `1a1f0124`; DESIGN.md, VERIFICATION.md,
+AMEND2.md and both outcome JSON records remain with explicit historical status
+in the directory README and document notices. These records do not imply that
+removed work is still owed. Independently useful suite admission remains.
+
+## M3 host-window acceptance item — OPEN
+
+**Exercise the real `sudo -n /usr/local/libexec/shu-reviewer-sandbox` execution
+at EUID 0 with a real `BASH_ENV` on the host, checking that caller-controlled
+startup code does not execute through the installed sudo policy and wrapper.
+This is host-only and unproven here.**
+
+The local direct-exec test is non-root and exits at argument validation; it does
+not run sudo, install a wrapper, exercise systemd confinement or prove live
+Claude authentication. No M4 or M5 acceptance is claimed.
+
+## Satisfied, narrowed, open
+
+- **Satisfied here:** replacement repository proofs and named mutation kill;
+  removal of the test-specific namespace requirement and dead design scope;
+  unchanged eight skips and fixed M3 probe; retained admission hardening and
+  main's reporter/CLI remedies, exercised by repository controls.
+- **Narrowed:** namespace-root startup is no longer an A12 test technique or
+  AppArmor/native-runner deliverable. Its actual EUID-0 residual is the M3 item
+  above. This is not a new skip or an authorization to waive a capability.
+- **Open:** `service/suite-inventory.json` remains absent and required.
+  Production admission still refuses `SHU251_SUITE_INVENTORY`; the missing Git
+  inventory object has an explicit refusal assertion. No inventory or successful
+  production run was fabricated. Existing preflight still requires the M3
+  namespace probe even with no test-specific namespace requirement, and refuses
+  `SHU251_PREFLIGHT_USER_NAMESPACES` on absence. No host capability is proved.
+  Full coordinator/service success is not established by the focused runs.
+  Complete interruption recovery, the durable interlock, approval composition,
+  and C4's CLI-preflight custody/quiescence gap remain open as recorded below.
+  Bindings remain point-in-time checks, not protection against concurrent
+  replacement. A fresh independent verdict is required; Option A is not A12 green.
+
+## Option A executed verification
+
+Node v22.22.3, non-root, local repository and temporary fixtures only. A12 and
+Phase-A use the unchanged repository-refusal preload. SHU-261 runs use local
+Bash, the locally installed identity-checked parser, temporary canaries and
+injected production-command boundaries; no deployed host, sudo execution,
+namespace creation, systemd action or network service access occurs.
+
+| Suite | Tests | Pass | Fail | Skip |
+| --- | ---: | ---: | ---: | ---: |
+| Focused A12, including reporter/CLI, requirements, parser, binding and custody | 129 | 129 | 0 | 0 |
+| Phase-A, including routing and mutations | 42 | 42 | 0 | 0 |
+| SHU-261 reviewer isolation + full SHU-261 mutation battery | 54 | 54 | 0 | 0 |
+| SHU-261 review findings, including real policy parse | 13 | 13 | 0 | 0 |
+
+Total **238 pass, zero failures/skips/cancelled/todo** in these selections.
+Mutation controls: **59 focused + 18 Phase-A + 41 SHU-261 = 118 passing**;
+Phase-A additionally has a positive approval test with “mutation” in its name,
+which is not counted as a kill. The 41-test SHU-261 battery includes the new
+privileged-mode mutation; its separate 13-test isolation suite passes intact.
+An additional isolated policy run passed 1/1 (not double-counted above).
+Commands, exact names and log digests are in
+`test/fixture/option-a-results.json`; raw logs are in `/tmp/a12-option-a/`.
+No full-suite inventory count, unrestricted full-suite pass, deployed sudo or
+AppArmor enforcement, host cleanup, M3/M4/M5 closure or independent PASS is
+supported by these results.
+
+---
+
+# Historical correction record (superseded where Option A narrows scope)
+
+The sections below preserve prior attempts and measurements. Their namespace
+wrapper/profile requirements and earlier “current” labels are historical;
+only the Option A section above describes this head's scope and evidence.
+
 # L4 correction record — partial closure, not approval
 
 Base: `00eb979800b5ef6dfb918b57002d167802238612`.

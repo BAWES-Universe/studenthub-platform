@@ -192,6 +192,16 @@ The hole was live in the reviewed policy, before the Bash wrapper could clean th
 
 Fix: `NOPASSWD:NOSETENV:`, retain command-specific `env_keep += "CLAUDE_CODE_OAUTH_TOKEN"`, and use `["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]` for both profiles. Runtime validation and tests pin length **3**, sandbox index **2**. Both activation documents and the model-launch contract agree.
 
+**Option A supersedes the namespace technique described below.** The current
+proofs are `SHU261_NO_SETENV_POLICY` (real sudoers bytes through
+`resolveCvtsudoers`), `SHU261 wrapper contract isolates both reviewer phases and
+every protected class`, and `SHU261 root wrapper startup ignores PATH and
+BASH_ENV before parsing`. The namespace test has been replaced by these
+existing proofs. Real sudo execution at EUID 0 with BASH_ENV is an unproven,
+host-only M3 acceptance item; see [A12-CLOSURE.md](A12-CLOSURE.md). Production
+uses `systemd-run` with `RestrictNamespaces=yes`. The following probe account
+and captured logs are historical evidence, not current test instructions.
+
 The local probe parses the actual sudoers bytes with `/usr/bin/cvtsudoers`. Its parsed `setenv` and command-specific `env_keep` determine environment admission, then `/usr/bin/unshare --user --map-root-user /bin/bash <actual-wrapper>` executes the unmodified wrapper with no arguments. It exits 64 before locks, ACLs, /srv or systemd. Baseline `BASH_ENV` writes `0:local-oauth-canary`, demonstrating uncontrolled startup execution at namespace UID 0. Fixed policy produces no startup marker while preserving OAuth through `env_keep`.
 
 **Proof boundary:** sudo environment admission is modeled from the real parsed policy. The wrapper startup and namespace UID are real. This is not a real sudo-plugin enforcement test or a deployed-host integration test; installed policy, host-root escalation, and live Claude authentication were not exercised. No host access/activation was authorized. Thus the requested literal end-to-end proof through an installed sudo policy is not established here.

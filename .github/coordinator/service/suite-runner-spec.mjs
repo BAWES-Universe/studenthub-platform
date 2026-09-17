@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { halt, suiteNames, deriveRequirements } from './host-suite-contract.mjs';
 
 export const INVENTORY_PATH = '.github/coordinator/service/suite-inventory.json';
@@ -19,31 +20,64 @@ export function suiteIdentity(spec, io = suiteBoundary) {
       !Array.isArray(spec.service_groups) || !equal(actual.groups, [...new Set(spec.service_groups)].sort((a, b) => a - b))) halt('SHU251_SUITE_IDENTITY');
   return actual;
 }
-export function suiteGit(checkout, args, io = suiteBoundary) {
-  const result = io.run('/usr/bin/git', ['-C', checkout, ...args], { env: {
+export function suiteGit(checkout, args, io = suiteBoundary, raw = false) {
+  const result = io.run('/usr/bin/git', ['-C', checkout, ...args], { encoding: raw ? null : 'utf8', env: {
     PATH: '/usr/bin:/bin', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file',
   } });
   if (result.error || result.status !== 0) halt('SHU251_SUITE_REVISION');
-  return result.stdout.trimEnd();
+  return raw ? result.stdout : result.stdout.trimEnd();
 }
 export function bindSuite(spec, io = suiteBoundary) {
   const identity = suiteIdentity(spec, io);
+  // No caller-selected execution or alternate inventory authority. Keep the
+  // existing files/count guards below (and their mutation controls) intact.
+  const fields = ['service_uid', 'service_gid', 'service_groups', 'checkout', 'temp_dir', 'revision', 'tree',
+    'disposable_parent', 'source_checkout', 'activation_id', 'files', 'expected_tests'];
+  if (Object.keys(spec).some(key => !fields.includes(key))) halt('SHU251_SUITE_CALLER_SELECTION');
   if (!/^[a-f0-9]{40}$/.test(spec.revision ?? '') || !/^[a-f0-9]{40}$/.test(spec.tree ?? '') ||
       !path.isAbsolute(spec.checkout ?? '') || suiteGit(spec.checkout, ['rev-parse', 'HEAD'], io) !== spec.revision ||
       suiteGit(spec.checkout, ['rev-parse', 'HEAD^{tree}'], io) !== spec.tree ||
       suiteGit(spec.checkout, ['status', '--porcelain=v1', '--untracked-files=all'], io) !== '') halt('SHU251_SUITE_REVISION');
   const tracked = suiteGit(spec.checkout, ['ls-tree', '-r', '--name-only', spec.revision], io).split('\n');
   const files = sorted(tracked.filter(f => SUITE_ROOTS.some(root => f.startsWith(root) && !f.slice(root.length).includes('/') && f.endsWith('.test.mjs'))));
-  let inventory;
-  try { inventory = JSON.parse(suiteGit(spec.checkout, ['show', `${spec.revision}:${INVENTORY_PATH}`], io)); }
+  let inventory, inventoryBytes;
+  try {
+    inventoryBytes = suiteGit(spec.checkout, ['show', `${spec.revision}:${INVENTORY_PATH}`], io, true);
+    inventory = JSON.parse(inventoryBytes);
+  }
   catch { halt('SHU251_SUITE_INVENTORY'); }
   if (inventory?.version !== 'shu251-suite-inventory-v1' || !Array.isArray(inventory.files) || !files.length ||
       !equal(files, inventory.files) || !Array.isArray(inventory.names) || !inventory.names.length ||
       inventory.names.some(name => typeof name !== 'string' || !name) ||
       Object.hasOwn(spec, 'files') || Object.hasOwn(spec, 'expected_tests')) halt('SHU251_SUITE_INVENTORY');
   deriveRequirements(inventory.names, inventory.requirements);
-  return { requirements: inventory.requirements, identity, files: files.map(file => path.join(spec.checkout, file)), names: inventory.names, expected_tests: inventory.names.length };
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  // Git status alone is insufficient: assume-unchanged/skip-worktree can hide
+  // modified bytes. Verify every tracked coordinator input, including wrappers,
+  // against its revision object, without executing any of those inputs.
+  const entries = sorted(tracked.filter(file => file.startsWith('.github/coordinator/')));
+  let checkout, perFile;
+  try {
+    checkout = io.fs.realpathSync(spec.checkout);
+    if (checkout !== spec.checkout || !io.fs.lstatSync(checkout).isDirectory()) halt('SHU251_SUITE_CHECKOUT_REALPATH');
+    perFile = entries.map(file => {
+      if (file.split('/').some(part => !part || part === '.' || part === '..')) halt('SHU251_SUITE_FILE_DIGEST');
+      const absolute = path.join(checkout, file);
+      const stat = io.fs.lstatSync(absolute);
+      if (!stat.isFile() || stat.isSymbolicLink() || io.fs.realpathSync(absolute) !== absolute) halt('SHU251_SUITE_FILE_DIGEST');
+      const expected = digest(suiteGit(checkout, ['show', `${spec.revision}:${file}`], io, true));
+      if (digest(io.fs.readFileSync(absolute)) !== expected) halt('SHU251_SUITE_FILE_DIGEST');
+      return { file, sha256: expected };
+    });
+  } catch (error) {
+    if (error.code === 'SHU251_SUITE_CHECKOUT_REALPATH') throw error;
+    halt('SHU251_SUITE_FILE_DIGEST');
+  }
+  const binding = { revision: spec.revision, tree: spec.tree, checkout,
+    inventory_sha256: digest(inventoryBytes), entries: perFile, expected_tests: inventory.names.length };
+  return { requirements: inventory.requirements, identity, files: files.map(file => path.join(spec.checkout, file)),
+    names: inventory.names, expected_tests: inventory.names.length, binding };
 }
 export function suiteQuiescence(io = suiteBoundary) {
   const states = {};
