@@ -1,0 +1,31 @@
+Derivation input revision: 280a24901f76d77ece93fe9cb1ffd95f44ce982f
+Measured/admitted revision: 280a24901f76d77ece93fe9cb1ffd95f44ce982f
+Evidence recorded in a subsequent evidence-only commit; no claim of full-suite measurement at that carrier.
+
+PLAIN
+A12_COMMITTED_INVENTORY_ADMITTED: 280a24901f76d77ece93fe9cb1ffd95f44ce982f; 85 files; 1744 outcomes
+missing inventory: SHU251_SUITE_INVENTORY
+missing files: SHU251_SUITE_INVENTORY
+partial files: SHU251_SUITE_INVENTORY
+extra files: SHU251_SUITE_INVENTORY
+version mismatch: SHU251_SUITE_INVENTORY
+missing name requirement: SHU251_PREFLIGHT_REQUIREMENTS
+capability outside vocabulary: SHU251_PREFLIGHT_REQUIREMENTS
+name drift: SHU251_SUITE_NAMES
+unpermitted reason: SHU251_PREFLIGHT_SKIP_BINDING
+real hidden byte tampering: SHU251_SUITE_FILE_DIGEST
+A12_AUTHORITATIVE_SUITE_NAMES: {"tests":1744,"pass":1736,"fail":0,"skipped":8}
+
+CLOCK OFFSET
+A12_COMMITTED_INVENTORY_ADMITTED: 280a24901f76d77ece93fe9cb1ffd95f44ce982f; 85 files; 1744 outcomes
+missing inventory: SHU251_SUITE_INVENTORY
+missing files: SHU251_SUITE_INVENTORY
+partial files: SHU251_SUITE_INVENTORY
+extra files: SHU251_SUITE_INVENTORY
+version mismatch: SHU251_SUITE_INVENTORY
+missing name requirement: SHU251_PREFLIGHT_REQUIREMENTS
+capability outside vocabulary: SHU251_PREFLIGHT_REQUIREMENTS
+name drift: SHU251_SUITE_NAMES
+unpermitted reason: SHU251_PREFLIGHT_SKIP_BINDING
+real hidden byte tampering: SHU251_SUITE_FILE_DIGEST
+A12_AUTHORITATIVE_SUITE_NAMES: {"tests":1744,"pass":1736,"fail":0,"skipped":8}

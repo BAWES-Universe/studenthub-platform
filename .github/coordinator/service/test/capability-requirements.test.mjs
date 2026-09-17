@@ -84,3 +84,103 @@ for (const [label, from, to, assertion] of mutations) test(`SHU251 C2 mutation $
   const mutant = await import(pathToFileURL(file));
   await assert.rejects(() => controls(mutant), error => error.code === 'ERR_ASSERTION' && error.message.includes(assertion), assertion);
 });
+
+// Exercise the probe bodies, including their negative paths, without changing
+// host configuration. Probe resources are read-only proc descriptors and ephemeral TCP sockets.
+const dependencySpec = { ...spec, service_uid: process.getuid(), service_gid: process.getgid(), temp_dir: os.tmpdir() };
+async function dependencyControl(api, capability, fault = '') {
+  const p = api.hostProbe(dependencySpec, { uid: () => process.getuid(), run(file, args) {
+    assert.equal(file, process.execPath, 'A12_DEPENDENCY_SERVICE: probe uses the service Node identity');
+    assert.deepEqual(args.slice(0, -1), ['--input-type=module', '-e'], 'A12_INERT_ARGV');
+    const denyWrites = `import fsGuard from 'node:fs';
+      for(const key of ['mkdtempSync','mkdirSync','writeFileSync','appendFileSync','rmSync','unlinkSync','renameSync','chmodSync','utimesSync'])
+        fsGuard[key]=()=>{throw Error('A12_INERT_FILESYSTEM');};
+      const open=fsGuard.openSync;
+      fsGuard.openSync=(file,flags,...rest)=>{if(flags!=='r')throw Error('A12_INERT_FILESYSTEM');return open(file,flags,...rest);};`;
+    const source = denyWrites + args.at(-1).replace("import {spawnSync} from 'node:child_process';",
+      `import {spawnSync as realSpawn} from 'node:child_process';
+       const spawnSync=(file,args,options)=>{
+         const permitted={'/bin/sh':['-c','exit 0'],'/usr/bin/dirname':['/suite/wrapper'],
+           '/usr/bin/env':['/usr/bin/true'],'/usr/bin/chmod':['--version'],
+           '/usr/bin/mktemp':['--version'],'/usr/bin/rm':['--version'],
+           '/usr/bin/touch':['--version'],'/usr/bin/cat':['--version'],
+           '/usr/bin/basename':['--version'],'/usr/bin/node':['--version']};
+         const envNode=file==='/usr/bin/env'&&JSON.stringify(args)===JSON.stringify(['node','--version']);
+         const envBasename=file==='/usr/bin/env'&&JSON.stringify(args)===JSON.stringify(['basename','--version']);
+         if(envBasename&&${JSON.stringify(fault)}==='env basename')return {status:1,stdout:''};
+         if(!envNode&&!envBasename&&JSON.stringify(args)!==JSON.stringify(permitted[file]))throw Error('A12_INERT_ARGV');
+         if(envNode&&${JSON.stringify(fault)}==='env node')return {status:1,stdout:''};
+         if(file===${JSON.stringify(fault)})return {status:1,stdout:''};
+         return realSpawn(file,args,options);
+       };`);
+    return spawnSync(file, [...args.slice(0, -1), source], { encoding: 'utf8' });
+  } });
+  assert.equal(await p(capability), !fault, `A12_DEPENDENCY_PROBE: ${capability} ${fault || 'positive'}`);
+}
+for (const capability of ['shell_toolchain', 'linux_proc', 'loopback_socket']) {
+  test(`A12 dependency ${capability} positive and named refusal`, async () => {
+    await dependencyControl(contract, capability);
+    if (capability === 'shell_toolchain') {
+      for (const tool of ['/usr/bin/touch', '/usr/bin/cat', 'env node', '/usr/bin/basename', 'env basename', '/usr/bin/node'])
+        await dependencyControl(contract, capability, tool);
+    }
+    const entry = contract.CAPABILITIES.find(c => c.name === capability);
+    assert.ok(entry, 'A12_DEPENDENCY_ENTRY');
+    if (capability === 'shell_toolchain') {
+      for (const claim of ['touch,cat', '/usr/bin/env node --version (child PATH resolution)', 'as service identity', 'basename', '/usr/bin/env basename --version (child PATH resolution)', '/usr/bin/node --version', '; no filesystem mutation'])
+        assert.ok(entry.detection.includes(claim), `A12_SHELL_DETECTION: ${claim}`);
+    }
+    await assert.rejects(() => contract.preflight(spec, key => key === capability ? false : key === 'cvtsudoers'
+      ? { available: true, identity: '/usr/bin/cvtsudoers' } : true), { code: entry.code }, 'A12_DEPENDENCY_REFUSAL');
+    const p = contract.hostProbe(dependencySpec, { uid: () => process.getuid(), run: () => ({ status: 1 }) });
+    assert.equal(await p(capability), false, `A12_DEPENDENCY_FAILURE: ${capability}`);
+  });
+  test(`A12 dependency mutation bypass ${capability}`, async t => {
+    await dependencyControl(contract, capability);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a12-dependency-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const file = path.join(dir, 'mutant.mjs');
+    const source = fs.readFileSync(new URL('../host-suite-contract.mjs', import.meta.url), 'utf8');
+    const anchor = `case '${capability}': return nodeProbe(`;
+    assert.equal(source.split(anchor).length, 2, 'A12_DEPENDENCY_MUTATION_ANCHOR');
+    fs.writeFileSync(file, source.replace(anchor, `case '${capability}': return true; return nodeProbe(`));
+    const mutant = await import(pathToFileURL(file));
+    const control = async api => {
+      const p = api.hostProbe(dependencySpec, { uid: () => process.getuid(), run: () => ({ status: 1 }) });
+      assert.equal(await p(capability), false, `A12_DEPENDENCY_FAILURE: ${capability}`);
+    };
+    await control(contract);
+    await assert.rejects(() => control(mutant), e => e.code === 'ERR_ASSERTION' && e.message.includes('A12_DEPENDENCY_FAILURE'), 'A12_DEPENDENCY_MUTATION_KILL');
+  });
+}
+for (const tool of ['/bin/sh', '/usr/bin/dirname', '/usr/bin/env', '/usr/bin/chmod', '/usr/bin/mktemp', '/usr/bin/rm']) {
+  test(`A12 shell toolchain requires ${tool}`, () => dependencyControl(contract, 'shell_toolchain', tool));
+}
+for (const [label, capability, anchor, replacement, injection] of [
+  ['tool exit', 'shell_toolchain', "if(r.error||r.status!==0)throw Error('shell toolchain');", '',
+    "import {spawnSync} from 'node:child_process';|const spawnSync=()=>({status:1,stdout:''});"],
+  ['tool spawn error', 'shell_toolchain', "if(r.error||r.status!==0)throw Error('shell toolchain');", '',
+    "import {spawnSync} from 'node:child_process';|const spawnSync=()=>({status:0,error:Error('fixture'),stdout:''});"],
+  ['proc content', 'linux_proc', "if(!fs.readFileSync('/proc/self/'+name).length)throw Error('proc');", "fs.readFileSync('/proc/self/'+name);",
+    "import fs from 'node:fs';|import fs from 'node:fs';const read=fs.readFileSync;fs.readFileSync=(p,...a)=>['/proc/self/stat','/proc/self/cmdline','/proc/self/environ'].includes(p)?Buffer.alloc(0):read(p,...a);"],
+  ['proc descriptor', 'linux_proc', "if(fs.readFileSync('/proc/self/fd/'+fd,'utf8')!==expected)throw Error('proc fd');", "fs.readFileSync('/proc/self/fd/'+fd,'utf8');",
+    "import fs from 'node:fs';|import fs from 'node:fs';const read=fs.readFileSync;fs.readFileSync=(p,...a)=>String(p).startsWith('/proc/self/fd/')?'wrong':read(p,...a);"],
+]) test(`A12 dependency mutation ${label} dies by named assertion`, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a12-probe-guard-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'mutant.mjs');
+  const source = fs.readFileSync(new URL('../host-suite-contract.mjs', import.meta.url), 'utf8');
+  assert.equal(source.split(anchor).length, 2, 'A12_DEPENDENCY_MUTATION_ANCHOR');
+  fs.writeFileSync(file, source.replace(anchor, replacement));
+  const mutant = await import(pathToFileURL(file));
+  const control = async api => {
+    const p = api.hostProbe(dependencySpec, { uid: () => process.getuid(), run(file, args) {
+      const [from, to] = injection.split('|');
+      return spawnSync(file, [...args.slice(0, -1), args.at(-1).replace(from, to)], { encoding: 'utf8' });
+    } });
+    assert.equal(await p(capability), false, `A12_DEPENDENCY_GUARD: ${label}`);
+  };
+  await dependencyControl(contract, capability);
+  await control(contract);
+  await assert.rejects(() => control(mutant), e => e.code === 'ERR_ASSERTION' && e.message.includes('A12_DEPENDENCY_GUARD'), 'A12_DEPENDENCY_MUTATION_KILL');
+});

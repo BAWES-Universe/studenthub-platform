@@ -241,3 +241,8 @@ test('L4_REPOSITORY_BOUNDARY mutation refuses host command before fake execution
   assert.throws(() => assert.throws(() => attempt(source.replace(from, 'if (false)')), { code: 'L4_REPOSITORY_BOUNDARY' }, 'L4_REPOSITORY_BOUNDARY'),
     error => error.code === 'ERR_ASSERTION' && error.message.includes('L4_REPOSITORY_BOUNDARY'));
 });
+
+test('A12 committed inventory requirements match real outcomes', async t => {
+  const { checkCommittedInventory } = await import('../a12-evidence/check-inventory-run.mjs');
+  await checkCommittedInventory(t);
+});

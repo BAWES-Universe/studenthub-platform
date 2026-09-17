@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -193,7 +193,10 @@ if (!process.env.HANDOFF_MUTANT_CHILD) test('durable-handoff named mutation cont
   // Isolated copy: never mutate the production module while other tests run.
   const dir = mkdtempSync(join(tmpdir(), 'handoff-mutants-'));
   try {
-    const result = spawnSync('cp', ['-R', new URL('..', import.meta.url).pathname, join(dir, 'coordinator')]);
+    const result = (() => {
+      cpSync(new URL('..', import.meta.url).pathname, join(dir, 'coordinator'), { recursive: true, verbatimSymlinks: true });
+      return { status: 0 }; // cpSync throws on failure; preserve the existing success assertion.
+    })();
     assert.equal(result.status, 0);
     for (const [name, from, to, pattern] of mutations) {
       assert.ok(original.includes(from), `mutation anchor ${name}`);

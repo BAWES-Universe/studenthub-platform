@@ -1,0 +1,1745 @@
+{"type":"outcome","name":"RECON_ENV_POSITIVE: distinct credential roles render and pass policy","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: crossed file paths","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: identical file paths and hardlinked contents","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: supervisorEnvironmentFile missing","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: supervisorEnvironmentFile pointed at other contents","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: supervisorEnvironmentFile unsafe absolute path","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: coordinatorEnvironmentFile missing","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: coordinatorEnvironmentFile pointed at other contents","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: coordinatorEnvironmentFile unsafe absolute path","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: coordinator GITHUB_TOKEN missing or empty","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_MUTATION: coordinator LINEAR_API_TOKEN missing or empty","status":"pass"}
+{"type":"outcome","name":"RECON_DOC_POSITIVE: closed owner decision and actual error contract","status":"pass"}
+{"type":"outcome","name":"RECON_DOC_MUTATION: owner decision reopened","status":"pass"}
+{"type":"outcome","name":"RECON_DOC_MUTATION: unexpected failure class omitted","status":"pass"}
+{"type":"outcome","name":"RECON_DOC_MUTATION: shared EnvironmentFile claim restored","status":"pass"}
+{"type":"outcome","name":"RECON_CONFIG_POSITIVE: committed gates and scope remain fixed","status":"pass"}
+{"type":"outcome","name":"RECON_CONFIG_MUTATION: committed dispatch gate flipped true","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_ONLY_SECRET: exactly SHU_SUPERVISOR_SECRET proceeds through render and policy","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_EXTRA_CREDENTIAL: supervisor extra assignment refuses","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_EXTRA_SETTING: supervisor extra assignment refuses","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_FILE: supervisorEnvironmentFile symlink refuses","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_UNREADABLE: supervisorEnvironmentFile present but unreadable refuses","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_FILE: coordinatorEnvironmentFile symlink refuses","status":"pass"}
+{"type":"outcome","name":"RECON_ENV_UNREADABLE: coordinatorEnvironmentFile present but unreadable refuses","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 Option A wrapper proofs have no namespace requirement","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 derived capability positive and refusal controls","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 supplied identities do not imply sudo authority","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation covered absence rejected","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation uncovered requirement ignored","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation required set omitted","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation skip binding bypassed","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation malformed probe reclassified","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation probe failure reclassified","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation namespace absence waived","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation new outcome failure accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 C2 mutation different outcome reason accepted","status":"pass"}
+{"type":"outcome","name":"A12 dependency shell_toolchain positive and named refusal","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation bypass shell_toolchain","status":"pass"}
+{"type":"outcome","name":"A12 dependency linux_proc positive and named refusal","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation bypass linux_proc","status":"pass"}
+{"type":"outcome","name":"A12 dependency loopback_socket positive and named refusal","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation bypass loopback_socket","status":"pass"}
+{"type":"outcome","name":"A12 shell toolchain requires /bin/sh","status":"pass"}
+{"type":"outcome","name":"A12 shell toolchain requires /usr/bin/dirname","status":"pass"}
+{"type":"outcome","name":"A12 shell toolchain requires /usr/bin/env","status":"pass"}
+{"type":"outcome","name":"A12 shell toolchain requires /usr/bin/chmod","status":"pass"}
+{"type":"outcome","name":"A12 shell toolchain requires /usr/bin/mktemp","status":"pass"}
+{"type":"outcome","name":"A12 shell toolchain requires /usr/bin/rm","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation tool exit dies by named assertion","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation tool spawn error dies by named assertion","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation proc content dies by named assertion","status":"pass"}
+{"type":"outcome","name":"A12 dependency mutation proc descriptor dies by named assertion","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI preflight structured refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI mutation preflight cyclic top-level await","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI run structured refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI mutation run cyclic top-level await","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI measure structured refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI mutation measure cyclic top-level await","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI create structured refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI mutation create cyclic top-level await","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI remove structured refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 contract CLI mutation remove cyclic top-level await","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_MUTATION_STRIP_QUOTES_REMOVED","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_MUTATION_CONTENT_REFUSAL_REMOVED","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_COMMAND","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_SSH_COMMAND","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_DOUBLE_JSON","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_SINGLE_JSON","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_DOUBLE_ESCAPES","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_SINGLE_LITERAL_SLASH","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_UNQUOTED_ESCAPE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_ACCEPT_OUTER_WHITESPACE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_EMPTY","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_WHITESPACE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_QUOTED_EMPTY","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_QUOTED_WHITESPACE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_UNTERMINATED_DOUBLE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_MISMATCHED","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_TRAILING","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_INNER_DOUBLE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_INNER_SINGLE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_DOLLAR","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_BRACED_DOLLAR","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_CONTINUATION","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_DOUBLE_CONTINUATION","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_UNQUOTED_QUOTE","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_REFUSE_ESCAPED_CLOSING","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_EFFECTIVE_DOUBLE_DECODE_SHORT","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_EFFECTIVE_DOUBLE_DECODE_BOUNDARY","status":"pass"}
+{"type":"outcome","name":"ENV_CONTENT_EFFECTIVE_SINGLE_LITERAL_BOUNDARY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE complete fake-only typed action control","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE dry run and all mutation approvals have zero effects","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_CHECKOUT_TUPLE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_CHECKOUT_BASELINE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_CHECKOUT_EFFECT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_CHECKOUT_RESTORE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_RUNNING_GATE_OFF","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_EVIDENCE_ARCHIVE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_SPEC","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_PATHS","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_INPUT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_IO","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_CHECKOUT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_IDENTITY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_ENVIRONMENT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_DIRECTORIES","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_CAPABILITIES","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_EVIDENCE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_WRITER_LOCK","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_DESTINATION","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_SNAPSHOT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_ROLLBACK_REENABLE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_JOURNAL","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_INTENT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_DURABILITY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_RENDER","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_STAGE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_OWNER","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_PRIVATE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_PLACE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_RELOAD","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_ENABLE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_START","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_PIN","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_SUBSTITUTION","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_EFFECT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_ORDER","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_INSTALLED","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_READINESS","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_RESTART","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_ROLLBACK","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_ROLLBACK_EQUALITY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_PIN_RESTORE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_PIN_RETAIN","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE guard SHU251_LIFECYCLE_RECEIPT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery install every before effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery install every after effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery install every journal durability boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery start every before effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery start every after effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery start every journal durability boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery host-rollback every before effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery host-rollback every after effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery host-rollback every journal durability boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery pin every before effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery pin every after effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery pin every journal durability boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery pin-restore every before effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery pin-restore every after effect boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE recovery pin-restore every journal durability boundary","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE partial install can roll back directly without finishing installation","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE rollback restores exact bytes modes absence and masked symlink in reverse order","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE restart consumption rejects replay and survives ambiguous process failure","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE restart retains existing custody forgery cross-run and position guards","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE mutually exclusive writers cannot issue duplicate service operations","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_CHECKOUT_TUPLE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_CHECKOUT_BASELINE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_CHECKOUT_EFFECT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_CHECKOUT_RESTORE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_RUNNING_GATE_OFF","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_EVIDENCE_ARCHIVE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_SPEC","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_PATHS","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_INPUT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_IO","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_CHECKOUT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_IDENTITY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_ENVIRONMENT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_DIRECTORIES","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_CAPABILITIES","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_EVIDENCE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_WRITER_LOCK","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_DESTINATION","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_SNAPSHOT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_ROLLBACK_REENABLE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_JOURNAL","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_INTENT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_DURABILITY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_RENDER","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_STAGE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_OWNER","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_PRIVATE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_PLACE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_RELOAD","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_ENABLE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_START","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_PIN","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_SUBSTITUTION","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_EFFECT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_ORDER","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_INSTALLED","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_READINESS","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_RESTART","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_ROLLBACK","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_ROLLBACK_EQUALITY","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_PIN_RESTORE","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_PIN_RETAIN","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE named mutation SHU251_LIFECYCLE_RECEIPT","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE byte-exact rollback preserves non-UTF8 prior bytes and every safe enablement state","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE preflight mismatches are refused without rendering or exposing environment values","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE readiness proves all observations and refuses dispatch or identity drift","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE restart journal failure never allows a second consumed restart","status":"pass"}
+{"type":"outcome","name":"LIFECYCLE internal executor also enforces approval and execute intent","status":"pass"}
+{"type":"outcome","name":"CLOSURE cleanup survives forward drift and aggregates independent undo failures","status":"pass"}
+{"type":"outcome","name":"SHU251 contract missing capabilities never become skips","status":"pass"}
+{"type":"outcome","name":"SHU251 contract probe errors are named preflight refusals","status":"pass"}
+{"type":"outcome","name":"SHU251 contract publishes eight exact sanctioned skips","status":"pass"}
+{"type":"outcome","name":"SHU251 contract refuses outcomes outside the exact permitted set","status":"pass"}
+{"type":"outcome","name":"SHU251 contract rejects incomplete suite and nonzero exit","status":"pass"}
+{"type":"outcome","name":"SHU251 contract preflight failure prevents suite execution","status":"pass"}
+{"type":"outcome","name":"SHU251 contract structured reporter runs only temp fixture tests","status":"pass"}
+{"type":"outcome","name":"SHU251 contract detects capabilities through injectable command boundaries","status":"pass"}
+{"type":"outcome","name":"SHU251 contract source skip reasons remain covered or explicitly prohibited","status":"pass"}
+{"type":"outcome","name":"SHU251 contract source skip guard fails closed on unsupported expressions","status":"pass"}
+{"type":"outcome","name":"SHU251 parser captured documented shape","status":"pass"}
+{"type":"outcome","name":"SHU251 parser real installed provider","status":"pass"}
+{"type":"outcome","name":"SHU251 parser frozen allowlist","status":"pass"}
+{"type":"outcome","name":"SHU251 parser nonblocking open","status":"pass"}
+{"type":"outcome","name":"SHU251 parser minimal child environment","status":"pass"}
+{"type":"outcome","name":"SHU251 parser conventional identity","status":"pass"}
+{"type":"outcome","name":"SHU251 parser sudo-rs identity","status":"pass"}
+{"type":"outcome","name":"SHU251 parser multiple user specs","status":"pass"}
+{"type":"outcome","name":"SHU251 parser missing root user","status":"pass"}
+{"type":"outcome","name":"SHU251 parser multiple command specs","status":"pass"}
+{"type":"outcome","name":"SHU251 parser missing ALL command","status":"pass"}
+{"type":"outcome","name":"SHU251 parser invented Users key","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection EACCES initial","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection EACCES recheck","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection EIO initial","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection EIO recheck","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection EPERM initial","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection EPERM recheck","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection ENOTDIR initial","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection ENOTDIR recheck","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection ELOOP initial","status":"pass"}
+{"type":"outcome","name":"SHU251 parser inspection ELOOP recheck","status":"pass"}
+{"type":"outcome","name":"SHU251 parser device changed on open","status":"pass"}
+{"type":"outcome","name":"SHU251 parser absent","status":"pass"}
+{"type":"outcome","name":"SHU251 parser nonzero","status":"pass"}
+{"type":"outcome","name":"SHU251 parser invalid JSON","status":"pass"}
+{"type":"outcome","name":"SHU251 parser empty output","status":"pass"}
+{"type":"outcome","name":"SHU251 parser missing shape","status":"pass"}
+{"type":"outcome","name":"SHU251 parser PATH substitution","status":"pass"}
+{"type":"outcome","name":"SHU251 parser unapproved path","status":"pass"}
+{"type":"outcome","name":"SHU251 parser ambiguous providers","status":"pass"}
+{"type":"outcome","name":"SHU251 parser provider appears during execution","status":"pass"}
+{"type":"outcome","name":"SHU251 parser symlink","status":"pass"}
+{"type":"outcome","name":"SHU251 parser nonregular","status":"pass"}
+{"type":"outcome","name":"SHU251 parser nonexecutable","status":"pass"}
+{"type":"outcome","name":"SHU251 parser access denied","status":"pass"}
+{"type":"outcome","name":"SHU251 parser changed on open","status":"pass"}
+{"type":"outcome","name":"SHU251 parser changed during execution","status":"pass"}
+{"type":"outcome","name":"SHU251 parser service child carries only resolved identity","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: multiple user specs accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: root username unchecked","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: multiple command specs accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: ALL command unchecked","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: inspection error swallowed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: recheck inspection error swallowed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: nonblocking open removed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: device identity removed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: allowlist unfrozen","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: child environment inherited","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: conventional identity lost","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: sudo-rs identity lost","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: absence accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: nonzero accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: invalid JSON accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: PATH search enabled","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: unapproved path admitted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: dual provider selection","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: provider drift unchecked","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: pinned execution removed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: old hardcoded path restored","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: shape validation removed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: symlink accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: nonregular accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: nonexecutable accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: access check removed","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: opened inode unchecked","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: post execution identity unchecked","status":"pass"}
+{"type":"outcome","name":"SHU251 parser mutation: receipt identity dropped","status":"pass"}
+{"type":"outcome","name":"SHU251 A12 real policy suite accepts packaged parser","status":"pass"}
+{"type":"outcome","name":"SHU251 A12 mutation hardcoded parser dies in real suite","status":"pass"}
+{"type":"outcome","name":"SHU251 parser policy conversion preserves refusal and custody","status":"pass"}
+{"type":"outcome","name":"SHU251 operational bindings closed typed spec rejects free-form commands","status":"pass"}
+{"type":"outcome","name":"SHU251_REMOTE_INVENTORY positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_STATUS_CREDENTIAL positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_DRIVER_QUIESCENCE positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_FIXTURE_LAUNCH positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_WORKER_OBSERVATION positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_TRANSPORT_OBSERVATION positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_REPLAY_RELEASE positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_FIXTURE_CLEANUP positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_PRIOR_STATE_ROLLBACK positive control and mutation","status":"pass"}
+{"type":"outcome","name":"SHU251_UNEXPECTED: non-directory unit_directory reaches ENOTDIR","status":"pass"}
+{"type":"outcome","name":"SHU251 operational wrapper routes every reviewed lifecycle action without host effects","status":"pass"}
+{"type":"outcome","name":"SHU251 driver dry run invokes no binding","status":"pass"}
+{"type":"outcome","name":"SHU251 driver approval is explicit for every mutation","status":"pass"}
+{"type":"outcome","name":"SHU251 driver installed identity is byte exact","status":"pass"}
+{"type":"outcome","name":"SHU251 driver receipt binds the evidence digest","status":"pass"}
+{"type":"outcome","name":"SHU251 driver receipt rejects wrong revision spec step and keys","status":"pass"}
+{"type":"outcome","name":"SHU251 driver gate off observes two complete wake intervals","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses inventory differences writes and short waits","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses genuine records copied from another run","status":"pass"}
+{"type":"outcome","name":"SHU251 driver concurrent consumers emit only one receipt","status":"pass"}
+{"type":"outcome","name":"SHU251 driver restart refuses changed worker missing launch and invalid status","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses malformed and unbound binding receipts","status":"pass"}
+{"type":"outcome","name":"SHU251 driver restart accepts new supervisor and same live worker","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses caller supplied before files","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses forged recomputed observed records","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses substituted step records","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses replayed successful restart records","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses cross run custody identities","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses malformed missing and symlink custody","status":"pass"}
+{"type":"outcome","name":"SHU251 driver custody survives separate processes","status":"pass"}
+{"type":"outcome","name":"SHU251 driver rollback cannot restore active or enabled dispatch","status":"pass"}
+{"type":"outcome","name":"SHU251 driver rollback uses reviewed path and verifies quiescence","status":"pass"}
+{"type":"outcome","name":"SHU251 driver routes all nine legacy reviewed actions","status":"pass"}
+{"type":"outcome","name":"SHU251 driver refuses changed window spec before execution","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: replay acceptance","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: cross-run acceptance","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: forged record acceptance","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: substituted record acceptance","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: caller supplied before acceptance","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: caller before CLI acceptance","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: missing capability classified as skip","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: out of set skip accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: mutation approval bypassed","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: evidence digest unbound","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: rollback implicitly reenables dispatch","status":"pass"}
+{"type":"outcome","name":"SHU251 phase A mutation: installed identity compared leniently","status":"pass"}
+{"type":"outcome","name":"ROUTING complete disjoint registry and intended routes","status":"pass"}
+{"type":"outcome","name":"ROUTING named mutation overlap","status":"pass"}
+{"type":"outcome","name":"ROUTING named mutation missing registered action","status":"pass"}
+{"type":"outcome","name":"ROUTING named mutation untested new action","status":"pass"}
+{"type":"outcome","name":"ROUTING named mutation untested new lifecycle action","status":"pass"}
+{"type":"outcome","name":"ROUTING named mutation legacy route substitution","status":"pass"}
+{"type":"outcome","name":"ROUTING named mutation lifecycle route substitution","status":"pass"}
+{"type":"outcome","name":"PROVIDER complete real provider recorded-boundary lifecycle","status":"pass"}
+{"type":"outcome","name":"DETERMINISM readiness restart scheduled ticks never conflict with driver custody","status":"pass"}
+{"type":"outcome","name":"DETERMINISM gate-off every boundary has zero modeled conflicts","status":"pass"}
+{"type":"outcome","name":"DETERMINISM gate-off single tick at network and bracketing readiness","status":"pass"}
+{"type":"outcome","name":"J1 prerequisite scratch permits a clean gate-off receipt","status":"pass"}
+{"type":"outcome","name":"J1 prerequisite scratch preserves all 18 H1 interleavings","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes initialize","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes git","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes gh","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes readiness","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes poll","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes final-readiness","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes finalize","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes baseline","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes before-watch","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes before-watch-transient","status":"pass"}
+{"type":"outcome","name":"OBSERVATION gate-off actual writes capability","status":"pass"}
+{"type":"outcome","name":"OBSERVATION disjoint roots share registration and release on failure","status":"pass"}
+{"type":"outcome","name":"OBSERVATION baseline requires writer custody and legacy start refuses","status":"pass"}
+{"type":"outcome","name":"DETERMINISM scheduled tick conflict model retains exit-2 refusal","status":"pass"}
+{"type":"outcome","name":"DETERMINISM observation custody refuses writer effects and releases on failure","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_TICK","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_CHECKOUT","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_CHECKOUT_CAS","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_CHECKOUT_TREE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_CHECKOUT_REMOTE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_CUSTODY","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_DIGEST","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_SIGNATURE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_BINDING","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_TIME","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_ORDER","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_APPROVAL_TEARDOWN","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_GATE_OFF","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PREFLIGHT_PRIVILEGE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_SCOPE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_PATH","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_SUBSTITUTION","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_SYMLINK","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_FILE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_STORAGE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_CUSTODY","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_ALLOWLIST","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_COMPARE","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_ARGV","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_PIN","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_COMMAND","status":"pass"}
+{"type":"outcome","name":"PROVIDER guard SHU251_PROVIDER_READINESS","status":"pass"}
+{"type":"outcome","name":"PROVIDER durability order and failures never acknowledge success","status":"pass"}
+{"type":"outcome","name":"PROVIDER lock contention outside custody and release after exceptions","status":"pass"}
+{"type":"outcome","name":"PROVIDER default entrypoint wiring and no implementation option","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_TICK","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_CHECKOUT","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_CHECKOUT_CAS","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_CHECKOUT_TREE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_CHECKOUT_REMOTE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_CUSTODY","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_DIGEST","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_SIGNATURE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_BINDING","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_TIME","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_ORDER","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_APPROVAL_TEARDOWN","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_GATE_OFF","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PREFLIGHT_PRIVILEGE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_SCOPE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_PATH","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_SUBSTITUTION","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_SYMLINK","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_FILE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_STORAGE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_CUSTODY","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_ALLOWLIST","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_COMPARE","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_ARGV","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_PIN","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_COMMAND","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation SHU251_PROVIDER_READINESS","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation J1 scratch restored to watched root","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation H1 preflight observation omitted","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation H1 first readiness observation omitted","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation H1 persisted baseline omitted","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation H1 final observation omitted","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation gate-off whole-step writer contention","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation gate-off executor observation scope","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation gate-off post-poll writer reacquisition","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation gate-off single network tick contention","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation readiness alone writer contention","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation restart alone writer contention","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation readiness restart writer contention","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation executor observation scope","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation default entrypoint","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation production factory","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation reviewed checkout","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation file fsync","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation directory fsync","status":"pass"}
+{"type":"outcome","name":"PROVIDER named mutation kernel lock","status":"pass"}
+{"type":"outcome","name":"PROVIDER placements restore exact bytes mode absence and masking links","status":"pass"}
+{"type":"outcome","name":"PROVIDER substituted destination and symlink ancestor cannot redirect placement","status":"pass"}
+{"type":"outcome","name":"PROVIDER observations reject listener identity runtime gate and oneshot drift","status":"pass"}
+{"type":"outcome","name":"CLOSURE split ownership and fresh service readiness require no acceptance worker","status":"pass"}
+{"type":"outcome","name":"CLOSURE stale local main stale origin main detached HEAD restore and retain","status":"pass"}
+{"type":"outcome","name":"CLOSURE pin and restore recover every Git command boundary with a new provider","status":"pass"}
+{"type":"outcome","name":"CLOSURE dirty checkout independent drift wrong tree and ambiguous fetch refuse","status":"pass"}
+{"type":"outcome","name":"CLOSURE gate proof rejects stopped silence missing timer wake writes and children","status":"pass"}
+{"type":"outcome","name":"CLOSURE evidence creation authenticated approval expiry cleanup and archive resume","status":"pass"}
+{"type":"outcome","name":"SHU251 contract reporter failure beats skip end to end","status":"pass"}
+{"type":"outcome","name":"SHU251 contract null requirements refuse before probes","status":"pass"}
+{"type":"outcome","name":"SHU251 contract receipt uses validated skip reason","status":"pass"}
+{"type":"outcome","name":"SHU251 contract amendment mutation reporter failure precedence","status":"pass"}
+{"type":"outcome","name":"SHU251 contract amendment mutation null requirements typed guard","status":"pass"}
+{"type":"outcome","name":"SHU251 contract amendment mutation validated receipt reason","status":"pass"}
+{"type":"outcome","name":"SHU251 contract reporter skip plus after hook refuses","status":"pass"}
+{"type":"outcome","name":"SHU251 contract amendment mutation skip plus after hook","status":"pass"}
+{"type":"outcome","name":"SHU251 contract reporter skip plus timeout refuses","status":"pass"}
+{"type":"outcome","name":"SHU251 contract amendment mutation skip plus timeout","status":"pass"}
+{"type":"outcome","name":"SHU251_GATE_OFF_POSITIVE_CONTROL same pending tick differs only by gate","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: suppress positive-control launch","status":"pass"}
+{"type":"outcome","name":"SHU251 live worker restart adopts once and recovers durable completion","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: duplicate spawn evidence after restart","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: terminal receipt lost after restart","status":"pass"}
+{"type":"outcome","name":"SHU251_STATUS_SHAPE pins all states and launch receipt binding","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: required status field removed or renamed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: status claims launch without receipt","status":"pass"}
+{"type":"outcome","name":"SHU251_STATUS_RECEIPT rejects marker-only and every invalid confirmed-spawn binding","status":"pass"}
+{"type":"outcome","name":"SHU251_STATUS_SHAPE exact variants reject removed renamed and extra fields","status":"pass"}
+{"type":"outcome","name":"SHU251 status precedence validates unknown states and completion before receipt or intent","status":"pass"}
+{"type":"outcome","name":"SHU251 local kill-switch, syntax and rollback harness","status":"pass"}
+{"type":"outcome","name":"SHU251 parameterised argv and unit syntax","status":"pass"}
+{"type":"outcome","name":"SHU251 staging is idempotent and preserves original backup","status":"pass"}
+{"type":"outcome","name":"SHU251 drift requires rollback and symlinks are refused","status":"pass"}
+{"type":"outcome","name":"SHU251 refuses unsafe destination and concurrent transaction","status":"pass"}
+{"type":"outcome","name":"SHU251 invalid executable fails syntax before staging changes","status":"pass"}
+{"type":"outcome","name":"SHU251 common flock excludes overlapping writers and releases after exit","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: supervisor restart removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: writer restart removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: worker preservation removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: writer lock bypassed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: timer misdirected","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: dispatch gate enabled","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: unexpected adapter call","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: remote mutation","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: durable state changed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: rollback restore omitted","status":"pass"}
+{"type":"outcome","name":"SHU251 partial staging failure restores prior state","status":"pass"}
+{"type":"outcome","name":"SHU251 canonical writer lock accepted and foreign parameter refused","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: rendered foreign writer lock","status":"pass"}
+{"type":"outcome","name":"SHU251 nonexistent destination has named refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: unresolved timer placeholder","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: enabled tick trips real kill-switch harness","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: supervisor dependency removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: supervisor readiness bypassed","status":"pass"}
+{"type":"outcome","name":"SHU251 required CI runs both globs with service prerequisites","status":"pass"}
+{"type":"outcome","name":"SHU251 documentation scopes gates, timeout, verifier side effect and non-root baseline","status":"pass"}
+{"type":"outcome","name":"SHU251 runtime override trips harness even with committed config gate false","status":"pass"}
+{"type":"outcome","name":"SHU251 deployed workspace state directory accepted by installer","status":"pass"}
+{"type":"outcome","name":"SHU251 foreign workspace state directory refused before staging","status":"pass"}
+{"type":"outcome","name":"SHU251 explicit workspace override stages a visible two-writer hazard","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: matching foreign environment and writer lock","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: explicit override warning removed","status":"pass"}
+{"type":"outcome","name":"SHU251 canonical workspace constant matches literal deployment and activation contract","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: canonical workspace constant repointed","status":"pass"}
+{"type":"outcome","name":"SHU251 non-string workspace state directory has named fail-closed refusal","status":"pass"}
+{"type":"outcome","name":"SHU251 configured identity and external secret file survive staging","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: shu-supervisor.service User removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: shu-supervisor.service Group removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: shu-supervisor.service secret file removed or optional","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: shu-coordinator.service User removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: shu-coordinator.service Group removed","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: shu-coordinator.service secret file removed or optional","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: embedded secret in any unit refused","status":"pass"}
+{"type":"outcome","name":"SHU251 unsafe identity and secret file parameters fail before staging","status":"pass"}
+{"type":"outcome","name":"SHU251 suite pinned spec positive and refusal controls","status":"pass"}
+{"type":"outcome","name":"SHU251 suite exact file and identity shapes","status":"pass"}
+{"type":"outcome","name":"SHU251 suite binds wrapper bytes and refuses hidden changes and unsupported entries","status":"pass"}
+{"type":"outcome","name":"SHU251 suite measures metadata through controlled boundary without probing host policy","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation root runner accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation revision ignored","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation caller count accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation live timer accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation duplicate name accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation caller execution selectors accepted","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation checkout realpath substituted","status":"pass"}
+{"type":"outcome","name":"SHU251 suite mutation checkout bytes substituted","status":"pass"}
+{"type":"outcome","name":"SHU251 disposable clone create verify remove preserves durable receipt","status":"pass"}
+{"type":"outcome","name":"SHU251 disposable refusal preserves foreign paths and drift","status":"pass"}
+{"type":"outcome","name":"SHU251 disposable clone failure remains removable by durable custody","status":"pass"}
+{"type":"outcome","name":"SHU251 disposable mutation accepts foreign checkout","status":"pass"}
+{"type":"outcome","name":"L4_REPOSITORY_BOUNDARY mutation refuses host command before fake execution","status":"pass"}
+{"type":"outcome","name":"SHU251 recovery precedes readiness and authenticated status is available","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: recovery omitted before readiness","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: notification before listen","status":"pass"}
+{"type":"outcome","name":"SHU251 routine shutdown preserves workers and refuses further admission","status":"pass"}
+{"type":"outcome","name":"SHU251 terminating shutdown records HOLD and terminates owned child","status":"pass"}
+{"type":"outcome","name":"SHU251 disabled startup neither resumes queued work nor admits submissions","status":"pass"}
+{"type":"outcome","name":"SHU251 readiness failure closes admission and socket","status":"pass"}
+{"type":"outcome","name":"SHU251 authoritative inventory includes all durable trees and orphan files without writes","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: durable inventory directory missing or symlinked","status":"pass"}
+{"type":"outcome","name":"SHU251 concrete merged service argv renders valid units","status":"pass"}
+{"type":"outcome","name":"SHU251 process identity probe distinguishes current and stale process tokens","status":"pass"}
+{"type":"outcome","name":"SHU251 shutdown cancels queued launches before spawn","status":"pass"}
+{"type":"outcome","name":"SHU251 occupied socket refuses startup before recovery","status":"pass"}
+{"type":"outcome","name":"SHU251 mutation: missing or short secret refuses startup before state and readiness","status":"pass"}
+{"type":"outcome","name":"SHU251 service entry point fails closed when secret environment is missing","status":"pass"}
+{"type":"outcome","name":"a fully wired activation passes and names no unmet requirement","status":"pass"}
+{"type":"outcome","name":"activation fails closed when codex_sandbox_network is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when codex_sandbox_network is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when github_head_credentials is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when git_push_authentication is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when host_push_broker is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when worker_identity_split is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when worker_identity_split is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when coordinator_on_brick_box is missing","status":"pass"}
+{"type":"outcome","name":"activation fails closed when the coordinator is not the brick box","status":"pass"}
+{"type":"outcome","name":"activation fails closed when durable state lives on /tmp/codex","status":"pass"}
+{"type":"outcome","name":"activation fails closed when durable state lives on /var/tmp/codex","status":"pass"}
+{"type":"outcome","name":"activation fails closed when durable state lives on /dev/shm/codex","status":"pass"}
+{"type":"outcome","name":"activation fails closed when durable state lives on /run/codex","status":"pass"}
+{"type":"outcome","name":"activation fails closed when the state directory is unwritable or absent","status":"pass"}
+{"type":"outcome","name":"activation rejects shared durable state that another local account could forge","status":"pass"}
+{"type":"outcome","name":"whitespace is not a GitHub credential","status":"pass"}
+{"type":"outcome","name":"legacy mode: a push remote does not prove authentication without the operator declaration","status":"pass"}
+{"type":"outcome","name":"legacy mode: a worktree with no push remote fails closed even when the declaration is set","status":"pass"}
+{"type":"outcome","name":"Option A: a truthfully isolated worker activates without declaring push credentials","status":"pass"}
+{"type":"outcome","name":"Option A: declaring worker push-readiness is itself an unmet requirement","status":"pass"}
+{"type":"outcome","name":"activation creates its private state directory before checking it","status":"pass"}
+{"type":"outcome","name":"an apparently durable path resolving onto ephemeral storage fails closed","status":"pass"}
+{"type":"outcome","name":"host_push_broker: enabled but unconfigured is unmet, not silently accepted","status":"pass"}
+{"type":"outcome","name":"every declared requirement is actually enforced by the preflight","status":"pass"}
+{"type":"outcome","name":"only the local-CLI builder lane carries the contract","status":"pass"}
+{"type":"outcome","name":"activation GitHub probe validates the exact bound commit with the configured token","status":"pass"}
+{"type":"outcome","name":"main(): an unwired activation aborts dispatch, pauses the lane, and spawns nothing","status":"pass"}
+{"type":"outcome","name":"main(): an unreadable GitHub target aborts before reservation and adapter launch","status":"pass"}
+{"type":"outcome","name":"main(): LAUNCH_UNKNOWN recovery rechecks activation before calling the adapter","status":"pass"}
+{"type":"outcome","name":"a worker sharing the coordinator's uid is refused, not merely noted","status":"pass"}
+{"type":"outcome","name":"a distinct worker uid with the enforcing wrapper satisfies the split","status":"pass"}
+{"type":"outcome","name":"root is never an acceptable builder identity","status":"pass"}
+{"type":"outcome","name":"a non-numeric worker uid is not accepted as a declaration","status":"pass"}
+{"type":"outcome","name":"the split is required even with the broker flag absent","status":"pass"}
+{"type":"outcome","name":"launch 202 + agent_trigger_run_id -> RUNNING, external_run_id stored immediately","status":"pass"}
+{"type":"outcome","name":"launch 202 without run id -> LAUNCH_UNKNOWN (never fabricate a run)","status":"pass"}
+{"type":"outcome","name":"launch transport failure -> LAUNCH_UNKNOWN (outcome unknowable; slot held)","status":"pass"}
+{"type":"outcome","name":"launch 5xx -> LAUNCH_UNKNOWN","status":"pass"}
+{"type":"outcome","name":"launch 429/quota -> FAILED + pause_adapter=true","status":"pass"}
+{"type":"outcome","name":"launch 403/access -> FAILED + pause_adapter=true","status":"pass"}
+{"type":"outcome","name":"launch without token or trigger id -> LAUNCH_UNKNOWN (never sends unauthenticated)","status":"pass"}
+{"type":"outcome","name":"trigger request shape: endpoint, headers (beta + Idempotency-Key), body references the authorized contract","status":"pass"}
+{"type":"outcome","name":"buildTriggerHeaders carries the launch Idempotency-Key (LAUNCH_UNKNOWN stage embedded)","status":"pass"}
+{"type":"outcome","name":"monitor: run completed WITH validated callback -> COMPLETED","status":"pass"}
+{"type":"outcome","name":"monitor: run completed WITHOUT callback (or stale callback) -> HOLD, never COMPLETED","status":"pass"}
+{"type":"outcome","name":"monitor: run status queued/in_progress/suspended -> RUNNING with granular status","status":"pass"}
+{"type":"outcome","name":"monitor: run failed -> FAILED with upstream error code","status":"pass"}
+{"type":"outcome","name":"monitor: 429/quota -> FAILED + pause_adapter=true","status":"pass"}
+{"type":"outcome","name":"monitor: transient poll failures (5xx / network / unparseable) -> UNCHANGED (never release the slot)","status":"pass"}
+{"type":"outcome","name":"validateCallbackEvidence: strict attempt_id + target_sha + current_head binding","status":"pass"}
+{"type":"outcome","name":"SHU-227: CI must execute the distinct-uid integration tests","status":"pass"}
+{"type":"outcome","name":"SHU-227: empty root provisions an independent exact-head reviewer checkout","status":"pass"}
+{"type":"outcome","name":"SHU-227: binding conflicts, symlink paths, missing resume and invalid source refuse without overwriting","status":"pass"}
+{"type":"outcome","name":"SHU-227: interrupted preparation and concurrent ownership stay HOLD without reset","status":"pass"}
+{"type":"outcome","name":"SHU-227: both real adapters require preparation; fixed shared cwd is never the fallback","status":"pass"}
+{"type":"outcome","name":"SHU-227: worker owns its checkout and recovery preserves descendant commits","status":"skip","reason":"requires root or passwordless sudo for distinct-uid proof"}
+{"type":"outcome","name":"SHU-227: coordinator revision binds the executing root, ignoring cwd and injected git paths","status":"pass"}
+{"type":"outcome","name":"SHU-227: non-owner service account resolves revision with no global Git trust","status":"skip","reason":"requires distinct-uid execution"}
+{"type":"outcome","name":"SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches","status":"skip","reason":"requires distinct-uid execution"}
+{"type":"outcome","name":"SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches","status":"skip","reason":"requires distinct-uid execution"}
+{"type":"outcome","name":"SHU-227: broker refusal cannot promote a valid worker callback to success","status":"pass"}
+{"type":"outcome","name":"SHU-227: optional initial input is validated and mismatch refuses before all writes","status":"pass"}
+{"type":"outcome","name":"SHU-227: approval input changed during preparation refuses the launch","status":"pass"}
+{"type":"outcome","name":"SHU-227: workspace diagnosis is useful but never includes raw stderr or secrets","status":"pass"}
+{"type":"outcome","name":"SHU-227: disabled/refused runs never provision; preparation refusal never launches","status":"pass"}
+{"type":"outcome","name":"SHU-227: activation expiring during preparation never reaches an adapter","status":"pass"}
+{"type":"outcome","name":"SHU-227: generated schema is worker-readable while session authority remains private","status":"pass"}
+{"type":"outcome","name":"SHU-227: host tick requires an explicit initial head and an already-enabled gate","status":"pass"}
+{"type":"outcome","name":"SHU-227 MUTATIONS: preparation, path, binding, revision and schema guards are bound","status":"pass"}
+{"type":"outcome","name":"four-task batch reserves review progress, one writer per branch, and isolated worktrees","status":"pass"}
+{"type":"outcome","name":"Hermes sessions sharing one provider account consume one shared quota","status":"pass"}
+{"type":"outcome","name":"LAUNCH_UNKNOWN and ambiguous HOLD retain capacity","status":"pass"}
+{"type":"outcome","name":"resource-scoped quota pause blocks one account while unrelated work continues","status":"pass"}
+{"type":"outcome","name":"builders cannot consume the reviewer reserve","status":"pass"}
+{"type":"outcome","name":"unknown host/account quota and unknown cost are never interpreted as unlimited","status":"pass"}
+{"type":"outcome","name":"premium escalation and provider fallback require explicit new authority","status":"pass"}
+{"type":"outcome","name":"deadlines, retries, revisions and total spending are bounded","status":"pass"}
+{"type":"outcome","name":"reserved acknowledgement expires, but running/unknown work never releases by age","status":"pass"}
+{"type":"outcome","name":"terminal task identity is immutable and cannot be recycled","status":"pass"}
+{"type":"outcome","name":"repeating the same terminal transition charges actual cost exactly once","status":"pass"}
+{"type":"outcome","name":"dependency, overlap, and worktree exclusions fail before capacity is consumed","status":"pass"}
+{"type":"outcome","name":"task input cannot self-authorize premium runtime or leak arbitrary pause text","status":"pass"}
+{"type":"outcome","name":"policy refuses implicit global budget and unbounded retry/deadline settings","status":"pass"}
+{"type":"outcome","name":"readable status is allowlisted and never echoes prompts, tokens, or secrets","status":"pass"}
+{"type":"outcome","name":"existing lock HOLDs visibly and is never stolen by elapsed time","status":"pass"}
+{"type":"outcome","name":"state hardening does not follow a symlink or chmod its target","status":"pass"}
+{"type":"outcome","name":"state hardening rejects a directory swapped after descriptor chmod","status":"pass"}
+{"type":"outcome","name":"a valid external ledger reached through a symlink is rejected","status":"pass"}
+{"type":"outcome","name":"new capacity ledger is owner-readable and owner-writable only","status":"pass"}
+{"type":"outcome","name":"malformed persisted costs fail closed without replacing forensic evidence","status":"pass"}
+{"type":"outcome","name":"persisted reservation estimated cost must remain an integer","status":"pass"}
+{"type":"outcome","name":"four concurrent processes cannot oversubscribe a two-slot ledger","status":"pass"}
+{"type":"outcome","name":"official headless contract: execFile claude -p with JSON schema and bound UUID/SHA","status":"pass"}
+{"type":"outcome","name":"subscription OAuth is the only Claude credential passed to the child","status":"pass"}
+{"type":"outcome","name":"checkout must resolve to the receipt target SHA before Claude starts","status":"pass"}
+{"type":"outcome","name":"default checkout verifier calls git rev-parse HEAD before claude","status":"pass"}
+{"type":"outcome","name":"an API key cannot substitute for missing subscription OAuth","status":"pass"}
+{"type":"outcome","name":"missing all credentials holds launch unknown and never starts a child","status":"pass"}
+{"type":"outcome","name":"PASS requires a callback bound to the same attempt and target SHA","status":"pass"}
+{"type":"outcome","name":"completed without structured callback -> HOLD, never COMPLETED","status":"pass"}
+{"type":"outcome","name":"BLOCKED and FAILED verifier callbacks park on HOLD with evidence","status":"pass"}
+{"type":"outcome","name":"quota/plan-cap failures -> FAILED + pause; authentication expiry -> visible re-auth HOLD","status":"pass"}
+{"type":"outcome","name":"LAUNCH_UNKNOWN recovery resumes the same Claude session UUID","status":"pass"}
+{"type":"outcome","name":"monitor fails closed because print-mode has no remote polling endpoint","status":"pass"}
+{"type":"outcome","name":"claude-verifier routes to claude-code while other worker families keep their adapter","status":"pass"}
+{"type":"outcome","name":"synchronous PASS folds through acknowledged RUNNING into a valid COMPLETED receipt","status":"pass"}
+{"type":"outcome","name":"environment builder removes every metered/alternate API route","status":"pass"}
+{"type":"outcome","name":"a synchronous PASS against a MOVED head must HOLD, never COMPLETE","status":"pass"}
+{"type":"outcome","name":"a synchronous PASS at the bound head still COMPLETES","status":"pass"}
+{"type":"outcome","name":"a synchronous PASS whose live head cannot be read must HOLD (fail closed)","status":"pass"}
+{"type":"outcome","name":"launch args match the documented CLI contract: exec --json --sandbox workspace-write, never danger-full-access","status":"pass"}
+{"type":"outcome","name":"a success callback with the broker neither disabled nor configured HOLDs — never a COMPLETED with nothing pushed","status":"pass"}
+{"type":"outcome","name":"a network-isolated worker's local evidence is accepted, but a non-http URL never is","status":"pass"}
+{"type":"outcome","name":"a CONFIGURED success path reaches the real broker seam and returns a controlled result, never a crash","status":"pass"}
+{"type":"outcome","name":"an explicit opt-out is the only way to skip the broker, and it still COMPLETEs","status":"pass"}
+{"type":"outcome","name":"thread.started binds the durable run id: codexrun_<thread-uuid> + codex identity","status":"pass"}
+{"type":"outcome","name":"parse helpers: thread.started from JSONL; final agent_message only","status":"pass"}
+{"type":"outcome","name":"callback validation: wrong attempt, wrong sha, missing stage, missing links, bad url all fail closed","status":"pass"}
+{"type":"outcome","name":"builder completion validates the resulting branch head, not the input checkout head","status":"pass"}
+{"type":"outcome","name":"BLOCKED/FAILED callbacks never complete; they surface HOLD with the builder evidence","status":"pass"}
+{"type":"outcome","name":"completed without a valid schema callback -> HOLD (never COMPLETED)","status":"pass"}
+{"type":"outcome","name":"stale-head guard: checkout mismatch refuses the launch before codex starts","status":"pass"}
+{"type":"outcome","name":"resume accepts builder commits descended from the bound input and rejects a diverged worktree","status":"pass"}
+{"type":"outcome","name":"uncertain launch WITHOUT a durable thread id -> visible HOLD + pause, never another spawn","status":"pass"}
+{"type":"outcome","name":"killed BEFORE thread.started -> HOLD + pause; killed AFTER thread.started -> LAUNCH_UNKNOWN (exact-id resume)","status":"pass"}
+{"type":"outcome","name":"resume binds the EXACT thread id from the receipt; --last never appears; missing id -> HOLD","status":"pass"}
+{"type":"outcome","name":"buildCodexArgs refuses every non-exact resume identity, including --last and traversal","status":"pass"}
+{"type":"outcome","name":"model stdout cannot manufacture quota, authentication, or access failures","status":"pass"}
+{"type":"outcome","name":"missing durable state directory HOLDs before checkout or spawn","status":"pass"}
+{"type":"outcome","name":"credential isolation: child env is an allowlist; OPENAI_API_KEY/BASE_URL never leak","status":"pass"}
+{"type":"outcome","name":"authentication expiry -> visible re-auth HOLD + pause; quota stays FAILED; 403 stays access","status":"pass"}
+{"type":"outcome","name":"thread.started is persisted atomically before process exit, and crash recovery never spawns before receipt persistence","status":"pass"}
+{"type":"outcome","name":"internally generated callback schema is removed; caller-owned schema is preserved","status":"pass"}
+{"type":"outcome","name":"durable session sidecar is immutable and bound to one attempt plus target SHA","status":"pass"}
+{"type":"outcome","name":"durable session reader rejects symlinks and non-files","status":"pass"}
+{"type":"outcome","name":"temp cleanup failure cannot override a successfully linked durable session","status":"pass"}
+{"type":"outcome","name":"a session binding is not declared durable when the directory entry cannot be fsynced","status":"pass"}
+{"type":"outcome","name":"directory-fsync failure after thread.started HOLDs and pauses","status":"pass"}
+{"type":"outcome","name":"resume ownership is not accepted when its directory entry cannot be fsynced","status":"pass"}
+{"type":"outcome","name":"timeout escalates to SIGKILL and settles even when the child never closes","status":"pass"}
+{"type":"outcome","name":"production spawn bounds combined output and pauses instead of exhausting coordinator memory","status":"pass"}
+{"type":"outcome","name":"output overflow after thread.started preserves the exact resumable identity","status":"pass"}
+{"type":"outcome","name":"generated-schema cleanup failure cannot replace a valid completion","status":"pass"}
+{"type":"outcome","name":"resume requires a definitely exited bound process; live, foreign-host, and ambiguous owners never authorize it","status":"pass"}
+{"type":"outcome","name":"two recoveries can never resume the same exact Codex session concurrently","status":"pass"}
+{"type":"outcome","name":"a completed resume retains its claim until the terminal receipt is durably persisted","status":"pass"}
+{"type":"outcome","name":"resume fails closed for missing, conflicting, or unverifiable durable sidecars","status":"pass"}
+{"type":"outcome","name":"unreadable process metadata and malformed ownership never authorize resume","status":"pass"}
+{"type":"outcome","name":"malformed or wrong-PID proc records cannot manufacture PID-reuse authority","status":"pass"}
+{"type":"outcome","name":"a host without Linux procfs cannot treat its missing proc path as a dead PID","status":"pass"}
+{"type":"outcome","name":"a structurally valid matching or reused PID proc record is classified correctly","status":"pass"}
+{"type":"outcome","name":"an abandoned or corrupt recovery claim is visible and never authorizes another resume","status":"pass"}
+{"type":"outcome","name":"a resumed-owner record without its claim still blocks before spawn","status":"pass"}
+{"type":"outcome","name":"schema file written before launch; CALLBACK_SCHEMA is closed (additionalProperties false)","status":"pass"}
+{"type":"outcome","name":"routing: codex-builder -> codex-cli; launch options carry cwd/env/resume, zero credentials","status":"pass"}
+{"type":"outcome","name":"monitor fails closed: no remote poll endpoint for synchronous exec","status":"pass"}
+{"type":"outcome","name":"prompt carries the bound head, the attempt echo, and the schema contract; no secrets","status":"pass"}
+{"type":"outcome","name":"durable session failure after thread.started HOLDs and pauses (clean exit)","status":"pass"}
+{"type":"outcome","name":"durable session failure after thread.started HOLDs and pauses (killed after thread.started)","status":"pass"}
+{"type":"outcome","name":"durable session failure on the BUFFERED path also HOLDs and pauses","status":"pass"}
+{"type":"outcome","name":"Linux without a readable procfs must not treat ENOENT as proof of death","status":"pass"}
+{"type":"outcome","name":"Linux whose procfs probe returns empty must not treat ENOENT as proof of death","status":"pass"}
+{"type":"outcome","name":"Linux whose procfs probe returns not a proc record must not treat ENOENT as proof of death","status":"pass"}
+{"type":"outcome","name":"Linux whose procfs probe returns non-string must not treat ENOENT as proof of death","status":"pass"}
+{"type":"outcome","name":"a truncated procfs self record cannot authorize resume","status":"pass"}
+{"type":"outcome","name":"Linux WITH a readable procfs still treats a missing pid path as dead","status":"pass"}
+{"type":"outcome","name":"the builder is launched THROUGH the configured privilege-drop wrapper","status":"pass"}
+{"type":"outcome","name":"with no wrapper configured the builder is launched directly","status":"pass"}
+{"type":"outcome","name":"a broker-enabled launch with NO wrapper HOLDs before the builder is spawned","status":"pass"}
+{"type":"outcome","name":"launch intent is durable before the adapter boundary throws","status":"pass"}
+{"type":"outcome","name":"repeated run over one persistent store NEVER double-reserves or double-dispatches","status":"pass"}
+{"type":"outcome","name":"active receipt on a card that left the pickable set still consumes max_dispatch","status":"pass"}
+{"type":"outcome","name":"LAUNCH_UNKNOWN is reconciled across processes with the same attempt and Idempotency-Key","status":"pass"}
+{"type":"outcome","name":"recovery persists a newly discovered Codex thread id before any exact-id resume","status":"pass"}
+{"type":"outcome","name":"quota failure persists FAILED + durable pause marker; the pause survives a fresh process","status":"pass"}
+{"type":"outcome","name":"any receipt-read failure PREVENTS dispatch (fail closed)","status":"pass"}
+{"type":"outcome","name":"manual_claim HOLD from LAUNCH_UNKNOWN is validator-valid (pre-acceptance shape)","status":"pass"}
+{"type":"outcome","name":"malformed durable records never crash the validator","status":"pass"}
+{"type":"outcome","name":"conflicting immutable fields on one attempt_id PREVENT dispatch (fail closed)","status":"pass"}
+{"type":"outcome","name":"impostor receipt injected after reservation ABORTS before launch (fail closed)","status":"pass"}
+{"type":"outcome","name":"SHU-222: authoritative recheck catches a claim race before reservation","status":"pass"}
+{"type":"outcome","name":"SHU-222: authoritative recheck catches a new active receipt before reservation","status":"pass"}
+{"type":"outcome","name":"landing-verdict-consumed-exactly-once","status":"pass"}
+{"type":"outcome","name":"BLOCK-routes-to-writer","status":"pass"}
+{"type":"outcome","name":"duplicate-consumption","status":"pass"}
+{"type":"outcome","name":"unbacked-claim","status":"pass"}
+{"type":"outcome","name":"resume-after-termination","status":"pass"}
+{"type":"outcome","name":"handoff-author-authentication","status":"pass"}
+{"type":"outcome","name":"durable-handoff named mutation controls","status":"pass"}
+{"type":"outcome","name":"numeric Linear fixture id resolves to the dedicated fixture contract before the canonical-card fallback","status":"pass"}
+{"type":"outcome","name":"a misconfigured numeric fixture id fails closed instead of falling back to its card id","status":"pass"}
+{"type":"outcome","name":"SHU-222 mutation guard: only Todo is ready; Backlog is parked","status":"pass"}
+{"type":"outcome","name":"excluded: delegated card (delegate claim)","status":"pass"}
+{"type":"outcome","name":"excluded: needs:decision label","status":"pass"}
+{"type":"outcome","name":"eligible: child of an In Progress parent with no open blockers is eligible (SHU-219)","status":"pass"}
+{"type":"outcome","name":"excluded: child of a Canceled parent is excluded (SHU-219)","status":"pass"}
+{"type":"outcome","name":"excluded: child of a Duplicate parent is excluded (SHU-219)","status":"pass"}
+{"type":"outcome","name":"excluded: blocker not Done","status":"pass"}
+{"type":"outcome","name":"eligible: parent Done and blockers Done do not exclude","status":"pass"}
+{"type":"outcome","name":"excluded: linked to an open PR (normalized open linkedPR)","status":"pass"}
+{"type":"outcome","name":"excluded: linked to an open PR (live openPRs list)","status":"pass"}
+{"type":"outcome","name":"SHU-222 mutation guard: risk:R2 and risk:R3 require a named verifier","status":"pass"}
+{"type":"outcome","name":"eligible: R2/R3 card WITH named verifier label","status":"pass"}
+{"type":"outcome","name":"SHU-222: an implementation cannot be assigned to its named verifier runtime","status":"pass"}
+{"type":"outcome","name":"SHU-223: a claude-verifier implementation cannot name a Claude-family verifier","status":"pass"}
+{"type":"outcome","name":"SHU-223: existing Codex and Hermes same-family exclusions still hold","status":"pass"}
+{"type":"outcome","name":"SHU-223: independent cross-family verifiers stay eligible","status":"pass"}
+{"type":"outcome","name":"SHU-223: every recognized worker family declares its same-family verifiers","status":"pass"}
+{"type":"outcome","name":"excluded: unknown / inaccessible state — never invent backlog","status":"pass"}
+{"type":"outcome","name":"excluded: state not Todo (Backlog, In Progress, Done, Canceled)","status":"pass"}
+{"type":"outcome","name":"excluded: active assignee claim","status":"pass"}
+{"type":"outcome","name":"excluded: card naming an out-of-pilot repo","status":"pass"}
+{"type":"outcome","name":"SHU-222 mutation guard: unresolved repository ownership is held","status":"pass"}
+{"type":"outcome","name":"SHU-222: unavailable claim evidence is held","status":"pass"}
+{"type":"outcome","name":"ready sorted by priority then stable identifier tie-breaker","status":"pass"}
+{"type":"outcome","name":"compareIdentifiers is numeric-aware and stable","status":"pass"}
+{"type":"outcome","name":"requestedWorkerFor: explicit worker label wins; default codex-builder","status":"pass"}
+{"type":"outcome","name":"snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)","status":"pass"}
+{"type":"outcome","name":"fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract","status":"pass"}
+{"type":"outcome","name":"SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode — all four launches, nothing seeded, nothing deleted","status":"pass"}
+{"type":"outcome","name":"SHU-231 A2: the SAME retained HOLD, unnamed, still refuses — zero writes, zero launches","status":"pass"}
+{"type":"outcome","name":"SHU-231 A2 (unit): the spend check is the ONLY thing that changed — an unnamed retained terminal always spends","status":"pass"}
+{"type":"outcome","name":"SHU-231 A3: naming the attempt while REUSING the spent activation_id refuses","status":"pass"}
+{"type":"outcome","name":"SHU-231 A4: a HOLD produced WITHIN the current episode still spends it (SHU-225 untouched)","status":"pass"}
+{"type":"outcome","name":"SHU-231 A5: restart/resume keeps ONE episode identity and one first step","status":"pass"}
+{"type":"outcome","name":"SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot — capacity stays global","status":"pass"}
+{"type":"outcome","name":"SHU-231 A7: a fresh episode never replenishes the cumulative failure budget","status":"pass"}
+{"type":"outcome","name":"SHU-231 A8: with no activation, parking and spending are byte-for-byte unchanged","status":"pass"}
+{"type":"outcome","name":"SHU-231 A9: a callback for the RETIRED attempt cannot satisfy the new attempt","status":"pass"}
+{"type":"outcome","name":"SHU-231 A10: one attempt_id under two episodes is a durable conflict, never a silent override","status":"pass"}
+{"type":"outcome","name":"SHU-231 MUTATIONS: the boundary, the global stays and the retention rule are each load-bearing","status":"pass"}
+{"type":"outcome","name":"R1: a successor is never LAUNCHED bound to a head the coordinator has verified as stale","status":"pass"}
+{"type":"outcome","name":"R2: one armed activation cannot launch an unbounded series of runs","status":"pass"}
+{"type":"outcome","name":"R3: an unreadable live branch head refuses before lifecycle or successor writes","status":"pass"}
+{"type":"outcome","name":"R4: a branch move after selection is rechecked before RESERVED","status":"pass"}
+{"type":"outcome","name":"R5: a review whose verdict is discarded is not relaunched without limit (worker posted no callback)","status":"pass"}
+{"type":"outcome","name":"R5b: ... nor when the callback carries an unusable stage","status":"pass"}
+{"type":"outcome","name":"SHU-225 I1/I2: without an armed activation the parking rule is byte-for-byte unchanged","status":"pass"}
+{"type":"outcome","name":"SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor is supplied","status":"pass"}
+{"type":"outcome","name":"SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable","status":"pass"}
+{"type":"outcome","name":"SHU-225 I3: a successor never takes a second slot — capacity stays global","status":"pass"}
+{"type":"outcome","name":"SHU-225 I3: a successor is only selectable once its predecessor's receipt is terminal","status":"pass"}
+{"type":"outcome","name":"SHU-225 I3: a paused successor adapter is skipped, exactly like a first dispatch","status":"pass"}
+{"type":"outcome","name":"SHU-225 I2 (M2): the episode's exception covers only its own bound issue","status":"pass"}
+{"type":"outcome","name":"SHU-225 I8 (M7): a spent episode is never re-selectable","status":"pass"}
+{"type":"outcome","name":"SHU-225 I8: exhaustion and capped failures still end the episode (termination unchanged)","status":"pass"}
+{"type":"outcome","name":"SHU-225 I4: the successor is the same issue as the activation target and the committed scope","status":"pass"}
+{"type":"outcome","name":"SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review","status":"pass"}
+{"type":"outcome","name":"SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)","status":"pass"}
+{"type":"outcome","name":"SHU-225 I5 (M4) / I10: the bootstrap is one-shot, and lineage owns routing afterwards","status":"pass"}
+{"type":"outcome","name":"SHU-225 I5/I6 (M5): a same-family reviewer lane is refused — independence is CHECKED","status":"pass"}
+{"type":"outcome","name":"SHU-225 I5/I6 (M9): an unrecognised reviewer lane is refused, never inferred from card text","status":"pass"}
+{"type":"outcome","name":"SHU-225 I6: the activation record's reviewer_lane shape is validated, and stays an exact-key-set surface","status":"pass"}
+{"type":"outcome","name":"SHU-225 I6: the bootstrap lane comes from the record ONLY — never from card labels or comment text","status":"pass"}
+{"type":"outcome","name":"SHU-225 MUTATIONS: every invariant, live-head boundary, and HOLD stop has a load-bearing guard (M1..M15)","status":"pass"}
+{"type":"outcome","name":"SHU-225 I9: a refused successor path writes nothing (activation refused -> exit 2, zero writes)","status":"pass"}
+{"type":"outcome","name":"SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review -> PASS with NO seeded successor receipts","status":"pass"}
+{"type":"outcome","name":"SHU-225 I7: replay at every boundary cannot duplicate a successor","status":"pass"}
+{"type":"outcome","name":"SHU-225 I10: with no activation the successor path is unreachable and parking is unchanged","status":"pass"}
+{"type":"outcome","name":"SHU-230: future clock ticks, preserves explicit dates and reaches subprocesses","status":"pass"}
+{"type":"outcome","name":"SHU-230 mutation: literal fresh-claim date fails under future clock","status":"pass"}
+{"type":"outcome","name":"SHU-230 mutation: split process clocks fails under future clock","status":"pass"}
+{"type":"outcome","name":"R3: a stale queued reader cannot spawn after another process completes launch","status":"pass"}
+{"type":"outcome","name":"R3: worker completion between parent read and write is never lost","status":"pass"}
+{"type":"outcome","name":"R3: recovery cannot mint a local reservation from a forged receipt","status":"pass"}
+{"type":"outcome","name":"R3: recovery refuses mismatched local reservation bindings","status":"pass"}
+{"type":"outcome","name":"R3: real coordinator crash before spawn holds ownership and pauses without relaunch","status":"pass"}
+{"type":"outcome","name":"R3: real coordinator crash after spawn holds ownership and pauses without relaunch","status":"pass"}
+{"type":"outcome","name":"R3: alive/reused PID claim never permits another spawn","status":"pass"}
+{"type":"outcome","name":"R3: foreign host claim never permits another spawn","status":"pass"}
+{"type":"outcome","name":"R3: invalid PID claim never permits another spawn","status":"pass"}
+{"type":"outcome","name":"R3: wrong attempt claim never permits another spawn","status":"pass"}
+{"type":"outcome","name":"R3: corrupt JSON claim never permits another spawn","status":"pass"}
+{"type":"outcome","name":"R3: null JSON claim never permits another spawn","status":"pass"}
+{"type":"outcome","name":"R3: post-spawn persistence error retains claim and prevents recovery spawn","status":"pass"}
+{"type":"outcome","name":"R3: repository policy ACCEPTS a clean tree","status":"pass"}
+{"type":"outcome","name":"R3: repository policy rejects an absolute symlink with a newline name","status":"pass"}
+{"type":"outcome","name":"R3: repository policy rejects a tracked node_modules path with a newline name","status":"pass"}
+{"type":"outcome","name":"CR-1: a takeover cannot double-launch when the previous owner died after spawning","status":"pass"}
+{"type":"outcome","name":"CR-1b: a takeover aborts if the claim was reclaimed while we waited","status":"pass"}
+{"type":"outcome","name":"launch: lease is written QUEUED before the spawn, then RUNNING with a real worker identity","status":"pass"}
+{"type":"outcome","name":"launch: the work order echoes attempt_id + callback contract + bound head (no secrets)","status":"pass"}
+{"type":"outcome","name":"launch: duplicate attempt_id NEVER re-spawns (idempotent retry contract)","status":"pass"}
+{"type":"outcome","name":"launch: spawn failure (hermes missing) -> FAILED SPAWN_FAILED, no pause","status":"pass"}
+{"type":"outcome","name":"launch: no spawn wiring -> LAUNCH_UNKNOWN (activation wiring missing, never a phantom worker)","status":"pass"}
+{"type":"outcome","name":"monitor: a running lease -> RUNNING with granular status + worker identity","status":"pass"}
+{"type":"outcome","name":"monitor: done + validated BUILD_READY callback -> COMPLETED","status":"pass"}
+{"type":"outcome","name":"monitor: done WITHOUT callback -> HOLD; BLOCKED stage -> HOLD; stale head -> HOLD","status":"pass"}
+{"type":"outcome","name":"monitor: failed lease -> FAILED with the worker error code","status":"pass"}
+{"type":"outcome","name":"monitor: missing / corrupt lease -> UNCHANGED (fail closed, never a manufactured failure)","status":"pass"}
+{"type":"outcome","name":"validateCallbackEvidence: missing stage fails closed; only success stages pass","status":"pass"}
+{"type":"outcome","name":"adapterNameFor + adapterModuleFor route hermes-box to hermes-pool","status":"pass"}
+{"type":"outcome","name":"main(): hermes-box card dispatches through hermes-pool — lease written, one spawn, durable RUNNING","status":"pass"}
+{"type":"outcome","name":"main(): second process run polls the same lease — zero new spawns, state unchanged","status":"pass"}
+{"type":"outcome","name":"main(): worker done WITHOUT callback -> durable HOLD via the pool lease","status":"pass"}
+{"type":"outcome","name":"idempotency key contract matches the cross-adapter convention","status":"pass"}
+{"type":"outcome","name":"F1: the pool's external_run_id satisfies the shared receipt schema","status":"pass"}
+{"type":"outcome","name":"F2: a pre-spawn queued lease NEVER reports RUNNING (no phantom worker)","status":"pass"}
+{"type":"outcome","name":"F2b: concurrent recovery processes atomically claim one launch","status":"pass"}
+{"type":"outcome","name":"F2c: a successful spawn with no durable running transition keeps the launch claim","status":"pass"}
+{"type":"outcome","name":"F2d: a dead same-host owner PAST the spawn attempt fails visibly and pauses","status":"pass"}
+{"type":"outcome","name":"F2d': a dead owner whose claim has NO phase is treated as unsafe","status":"pass"}
+{"type":"outcome","name":"F2e: an alive or unprovable claim owner remains LAUNCH_UNKNOWN","status":"pass"}
+{"type":"outcome","name":"F3: an asynchronous spawn error becomes FAILED, not RUNNING, and never escapes","status":"pass"}
+{"type":"outcome","name":"F3: a successful async spawn still reaches RUNNING once the spawn event fires","status":"pass"}
+{"type":"outcome","name":"F4: the parent's post-spawn write never overwrites a worker's terminal lease state","status":"pass"}
+{"type":"outcome","name":"F5: a forged external_run_id cannot steer the lease read outside the pool","status":"pass"}
+{"type":"outcome","name":"F5b: a lease whose attempt_id or target_sha disagrees with the receipt is refused","status":"pass"}
+{"type":"outcome","name":"F6: hermes-box LAUNCH_UNKNOWN recovery runs without Workspace Agents credentials","status":"pass"}
+{"type":"outcome","name":"F5c: a traversal-shaped attempt_id can never create a lease outside the pool","status":"pass"}
+{"type":"outcome","name":"abandoned pre-spawn claim from a FOREIGN host is recovered, not deadlocked","status":"pass"}
+{"type":"outcome","name":"abandoned pre-spawn claim on the SAME host retries without pausing the adapter","status":"pass"}
+{"type":"outcome","name":"abandoned claim past the spawn attempt is a visible fault, never a silent retry","status":"pass"}
+{"type":"outcome","name":"a corrupt or empty abandoned claim is surfaced, not silently held forever","status":"pass"}
+{"type":"outcome","name":"a fresh claim is never stolen, whatever its phase or host","status":"pass"}
+{"type":"outcome","name":"a live same-host owner is never displaced even with an old timestamp","status":"pass"}
+{"type":"outcome","name":"concurrent launches on one attempt still produce exactly one worker","status":"pass"}
+{"type":"outcome","name":"the claim records the spawn attempt BEFORE the worker is started","status":"pass"}
+{"type":"outcome","name":"a spawned worker whose lease write was lost becomes visible, not invisible","status":"pass"}
+{"type":"outcome","name":"a phase advance that will not persist refuses to start the worker","status":"pass"}
+{"type":"outcome","name":"R3 main(): fabricated Linear recovery receipt cannot create host-local launch authority","status":"pass"}
+{"type":"outcome","name":"R3 main(): pause prevents recovery launch as well as new dispatch","status":"pass"}
+{"type":"outcome","name":"R3 main(): conflict prevents recovery launch as well as new dispatch","status":"pass"}
+{"type":"outcome","name":"Sentry: recovery NEVER accepts a lease missing repo/branch, and never fails silently","status":"pass"}
+{"type":"outcome","name":"Sentry: a fully bound lease still recovers normally","status":"pass"}
+{"type":"outcome","name":"Sentry: a bound lease whose repo/branch DISAGREE is refused, not quarantined","status":"pass"}
+{"type":"outcome","name":"a spawn record that does not bind to its lease is refused, never merged","status":"pass"}
+{"type":"outcome","name":"CR-2: the lifecycle poll monitors through the SAME adapter instance it resolved","status":"pass"}
+{"type":"outcome","name":"CR-3: a COMPLETED recovery against a MOVED head must HOLD, never complete","status":"pass"}
+{"type":"outcome","name":"lifecycle: polled completed WITHOUT callback -> durable HOLD; the issue is parked, never auto-redispatched","status":"pass"}
+{"type":"outcome","name":"lifecycle: polled completed WITH matching callback -> durable COMPLETED with agent_id","status":"pass"}
+{"type":"outcome","name":"lifecycle: upstream failure -> durable FAILED; the slot retries with exactly ONE new attempt","status":"pass"}
+{"type":"outcome","name":"receipt resolution is by explicit createdAt ordering, not array order","status":"pass"}
+{"type":"outcome","name":"parseEvidenceFromComments extracts the callback for the matching attempt only","status":"pass"}
+{"type":"outcome","name":"BLOCK #1: dispatch-disabled mode makes ZERO workspace calls and ZERO Linear writes","status":"pass"}
+{"type":"outcome","name":"SHU-65: dispatch-disabled mode never enters the LIFECYCLE pass (zero monitorRun calls, zero writes)","status":"pass"}
+{"type":"outcome","name":"BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest callback wins","status":"pass"}
+{"type":"outcome","name":"BLOCK #3: lifecycle terminal writes use the issue UUID (store rejects identifiers)","status":"pass"}
+{"type":"outcome","name":"BLOCK #4: an unreadable live GitHub head prevents COMPLETED (HOLD, never assume equality)","status":"pass"}
+{"type":"outcome","name":"BLOCK #5: retries are capped — after max_failed_attempts the issue parks and never relaunches","status":"pass"}
+{"type":"outcome","name":"SHU-63: the live Linear query uses the supported team filter and requests pagination","status":"pass"}
+{"type":"outcome","name":"SHU-63: fetchLinearIssues follows every Linear page and preserves order","status":"pass"}
+{"type":"outcome","name":"SHU-63: a claimed next page without a usable cursor fails closed","status":"pass"}
+{"type":"outcome","name":"SHU-63: a repeated pagination cursor fails closed instead of looping","status":"pass"}
+{"type":"outcome","name":"SHU-222 mutation guard: repository ownership comes from repo labels, not query scope","status":"pass"}
+{"type":"outcome","name":"SHU-222 mutation guard: inaccessible and canceled blockers survive normalization and HOLD","status":"pass"}
+{"type":"outcome","name":"SHU-222/reference-is-not-claim: bare references stay ready; explicit claims do not","status":"pass"}
+{"type":"outcome","name":"SHU-222: a 200 OK non-array GitHub PR response produces claim evidence HOLD","status":"pass"}
+{"type":"outcome","name":"stale-head","status":"pass"}
+{"type":"outcome","name":"self-same-family-verdict","status":"pass"}
+{"type":"outcome","name":"red-required-check","status":"pass"}
+{"type":"outcome","name":"unresolved-blocking-thread","status":"pass"}
+{"type":"outcome","name":"explicit-hold-and-forbidden-action","status":"pass"}
+{"type":"outcome","name":"advanced-base-and-branch-protection-hold","status":"pass"}
+{"type":"outcome","name":"duplicate-merge-and-already-merged-replay","status":"pass"}
+{"type":"outcome","name":"lost-merge-response","status":"pass"}
+{"type":"outcome","name":"landed-tree-mismatch","status":"pass"}
+{"type":"outcome","name":"routine-merge-gates-off","status":"pass"}
+{"type":"outcome","name":"main-consumes-one-merge-readiness-with-dispatch-disabled","status":"pass"}
+{"type":"outcome","name":"SHU-259 named mutation controls","status":"pass"}
+{"type":"outcome","name":"prepared-restart-red-check-consumeMergeReadiness","status":"pass"}
+{"type":"outcome","name":"prepared-restart-red-check-main","status":"pass"}
+{"type":"outcome","name":"SHU259_SCHEMA_BINDING","status":"pass"}
+{"type":"outcome","name":"prepared-binding-pr_number","status":"pass"}
+{"type":"outcome","name":"prepared-binding-base_ref","status":"pass"}
+{"type":"outcome","name":"base-freshness-strict-false","status":"pass"}
+{"type":"outcome","name":"base-freshness-strict-undefined","status":"pass"}
+{"type":"outcome","name":"blocked-head-prepared-upgrade-red-true","status":"pass"}
+{"type":"outcome","name":"blocked-head-prepared-upgrade-red-false","status":"pass"}
+{"type":"outcome","name":"strict-server-rejects-base-race","status":"pass"}
+{"type":"outcome","name":"binding-pre-merge-pr_number","status":"pass"}
+{"type":"outcome","name":"binding-pre-merge-base_ref","status":"pass"}
+{"type":"outcome","name":"binding-recovery-pr_number","status":"pass"}
+{"type":"outcome","name":"binding-recovery-base_ref","status":"pass"}
+{"type":"outcome","name":"binding-merged-restart-pr_number","status":"pass"}
+{"type":"outcome","name":"binding-merged-restart-base_ref","status":"pass"}
+{"type":"outcome","name":"real git: a worker url.*.insteadOf rewrite cannot redirect the push or the remote checks","status":"pass"}
+{"type":"outcome","name":"real git: an insteadOf rewrite cannot make post-push confirmation accept a foreign destination","status":"pass"}
+{"type":"outcome","name":"real git: worker core.sshCommand never executes as the broker, not even on the first remote check","status":"pass"}
+{"type":"outcome","name":"real git: worker core.fsmonitor never executes as the broker","status":"pass"}
+{"type":"outcome","name":"real git: an included worker config cannot smuggle in an executing key or a rewrite","status":"pass"}
+{"type":"outcome","name":"real git: environment-provided git configuration cannot reach a broker call","status":"pass"}
+{"type":"outcome","name":"real git: an inherited GIT_SSH_COMMAND never selects the broker's ssh program","status":"pass"}
+{"type":"outcome","name":"real git: an explicitly configured SHU_PUSH_SSH_COMMAND is preserved","status":"pass"}
+{"type":"outcome","name":"brokerGitEnv selects ssh only from the coordinator's own configuration","status":"pass"}
+{"type":"outcome","name":"brokerGitEnv strips every config-injection variable and pins ssh by precedence","status":"pass"}
+{"type":"outcome","name":"the hardening flags are applied to EVERY broker call, not just the push","status":"pass"}
+{"type":"outcome","name":"real git: a clean worktree pushes the exact validated SHA to the lane branch","status":"pass"}
+{"type":"outcome","name":"real git: a second identical call is idempotent and does not push again","status":"pass"}
+{"type":"outcome","name":"file: transport is refused under the DEFAULT github.com policy","status":"pass"}
+{"type":"outcome","name":"real git: a revision fast-forwards a lane branch already at the bound target_sha","status":"pass"}
+{"type":"outcome","name":"real git: a lane branch at any OTHER sha is still never clobbered","status":"pass"}
+{"type":"outcome","name":"real git: a worker clean filter never executes during the cleanliness check","status":"pass"}
+{"type":"outcome","name":"real git: a pre-seeded lane ref cannot complete a SHA that fails the local controls","status":"pass"}
+{"type":"outcome","name":"real git: a worker replace/graft ref cannot manufacture ancestry","status":"pass"}
+{"type":"outcome","name":"pushes the exact validated result SHA to the lane branch and confirms remote","status":"pass"}
+{"type":"outcome","name":"malicious / wrong remote URLs -> HOLD + pause, never pushed","status":"pass"}
+{"type":"outcome","name":"branch that is bare-SHA / protected / wrong prefix -> HOLD + pause","status":"pass"}
+{"type":"outcome","name":"worktree that escapes the allowed root (realpath) -> HOLD + pause","status":"pass"}
+{"type":"outcome","name":"worktree HEAD != result_sha -> HOLD + pause","status":"pass"}
+{"type":"outcome","name":"result_sha does not descend from target_sha -> HOLD + pause","status":"pass"}
+{"type":"outcome","name":"dirty worktree -> HOLD + pause","status":"pass"}
+{"type":"outcome","name":"hooks & credential helpers stripped; explicit SHA->branch refspec; no force","status":"pass"}
+{"type":"outcome","name":"crash-before-push: leftover PENDING pre-push record -> HOLD, recovery must decide","status":"pass"}
+{"type":"outcome","name":"crash-after-push-before-record: remote already has result -> idempotent ALREADY_PUSHED, no re-push","status":"pass"}
+{"type":"outcome","name":"remote divergence: branch exists at a different sha -> HOLD, never clobber","status":"pass"}
+{"type":"outcome","name":"post-push confirmation fails -> HOLD + pause, never claim success","status":"pass"}
+{"type":"outcome","name":"concurrent broker calls for the same attempt resolve without double-push or corruption","status":"pass"}
+{"type":"outcome","name":"SHU-229: every synchronous fold outcome honours clock (2020)","status":"pass"}
+{"type":"outcome","name":"SHU-229: main recovery stamps its own tick (2020)","status":"pass"}
+{"type":"outcome","name":"SHU-229: preparation HOLD uses injected clock (2020)","status":"pass"}
+{"type":"outcome","name":"SHU-229: every synchronous fold outcome honours clock (2030)","status":"pass"}
+{"type":"outcome","name":"SHU-229: main recovery stamps its own tick (2030)","status":"pass"}
+{"type":"outcome","name":"SHU-229: preparation HOLD uses injected clock (2030)","status":"pass"}
+{"type":"outcome","name":"SHU-229: absent injection keeps real clock fallback","status":"pass"}
+{"type":"outcome","name":"SHU-229 mutation: transition clock","status":"pass"}
+{"type":"outcome","name":"SHU-229 mutation: reservation clock","status":"pass"}
+{"type":"outcome","name":"SHU-229 mutation: recovery clock","status":"pass"}
+{"type":"outcome","name":"RESERVED receipt is persisted with no run identity and validates","status":"pass"}
+{"type":"outcome","name":"invariant: launch cannot happen before a RESERVED receipt exists","status":"pass"}
+{"type":"outcome","name":"invariant: worker ack from RESERVED is out of order (reserve precedes launch)","status":"pass"}
+{"type":"outcome","name":"reserve -> launch -> LAUNCH_UNKNOWN holds the slot","status":"pass"}
+{"type":"outcome","name":"LAUNCH_UNKNOWN can durably bind a discovered local session without becoming pollable RUNNING","status":"pass"}
+{"type":"outcome","name":"run_discovered is accepted only from LAUNCH_UNKNOWN and requires both identities","status":"pass"}
+{"type":"outcome","name":"worker ack -> RUNNING stores external_run_id IMMEDIATELY and retains granular adapter_status","status":"pass"}
+{"type":"outcome","name":"run_status queued/in_progress/suspended keeps RUNNING and updates adapter_status","status":"pass"}
+{"type":"outcome","name":"run completed WITH validated callback -> COMPLETED with evidence links","status":"pass"}
+{"type":"outcome","name":"completed WITHOUT validated callback -> HOLD (never auto-COMPLETED)","status":"pass"}
+{"type":"outcome","name":"invariant: stale-SHA verdict is rejected — old PASS never satisfies a changed head","status":"pass"}
+{"type":"outcome","name":"invariant: timeout alone NEVER changes state and NEVER releases the slot","status":"pass"}
+{"type":"outcome","name":"invariant: LAUNCH_UNKNOWN retry reuses the SAME Idempotency-Key (attempt_id immutable)","status":"pass"}
+{"type":"outcome","name":"failure -> FAILED with error code in notes; quota/access failure pauses the adapter","status":"pass"}
+{"type":"outcome","name":"pre-acceptance quota failure (trigger refused before any run) -> FAILED with no phantom run id","status":"pass"}
+{"type":"outcome","name":"pause invariant: next reservation for the SAME paused adapter is skipped","status":"pass"}
+{"type":"outcome","name":"max_dispatch=1: an active receipt blocks further reservations","status":"pass"}
+{"type":"outcome","name":"conflicting manual claim -> HOLD","status":"pass"}
+{"type":"outcome","name":"manual_claim cannot disturb a validated COMPLETED or a FAILED receipt","status":"pass"}
+{"type":"outcome","name":"terminal stages accept no further events (no state churn after COMPLETED/FAILED/HOLD)","status":"pass"}
+{"type":"outcome","name":"explicit hold event (missing evidence) -> HOLD from RUNNING","status":"pass"}
+{"type":"outcome","name":"idempotent duplicate worker_ack keeps a single run identity","status":"pass"}
+{"type":"outcome","name":"authorizationRefValid accepts contract refs only (free text rejected)","status":"pass"}
+{"type":"outcome","name":"RESEED sealed seed blob literals","status":"pass"}
+{"type":"outcome","name":"RESEED independent manifest literal and complete transition","status":"pass"}
+{"type":"outcome","name":"RESEED blob OIDs are load bearing","status":"pass"}
+{"type":"outcome","name":"RESEED modes are load bearing","status":"pass"}
+{"type":"outcome","name":"RESEED raw path byte ordering","status":"pass"}
+{"type":"outcome","name":"RESEED fixed timestamp literal","status":"pass"}
+{"type":"outcome","name":"RESEED fixed message literal","status":"pass"}
+{"type":"outcome","name":"RESEED zero footprint precompute and exact append round trip","status":"pass"}
+{"type":"outcome","name":"RESEED temporary merge takes objects while real store stays unchanged","status":"pass"}
+{"type":"outcome","name":"RESEED unexpected parents refused","status":"pass"}
+{"type":"outcome","name":"RESEED extra path refused","status":"pass"}
+{"type":"outcome","name":"RESEED named refusal matrix","status":"pass"}
+{"type":"outcome","name":"RESEED bad CAS leaves branch unchanged and unreachable objects harmless","status":"pass"}
+{"type":"outcome","name":"RESEED dirty binding refused before ref update","status":"pass"}
+{"type":"outcome","name":"RESEED merge conflict has zero footprint","status":"pass"}
+{"type":"outcome","name":"RESEED real trees retain binary paths modes symlinks additions and deletions","status":"pass"}
+{"type":"outcome","name":"RESEED real gitlink empty tree and SHA256 repositories refused","status":"pass"}
+{"type":"outcome","name":"RESEED all metadata headers and sealed drift refused before CAS","status":"pass"}
+{"type":"outcome","name":"RESEED linked worktree resolves real object storage without writes","status":"pass"}
+{"type":"outcome","name":"RESEED command reaches RESEEDED with real append and refuses actual ref drift","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M1 changed blob","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M2 changed mode","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M3 changed path","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M4 parent","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M5 timestamp","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M6 message","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M7 digest convention","status":"pass"}
+{"type":"outcome","name":"RESEED mutation M8 extra path","status":"pass"}
+{"type":"outcome","name":"work order: all three roles are valid on runtimes that support them","status":"pass"}
+{"type":"outcome","name":"work order: unknown role / unknown runtime / bad sha fail closed","status":"pass"}
+{"type":"outcome","name":"capabilities: review is read-only (no commit/push), build/revise are write roles","status":"pass"}
+{"type":"outcome","name":"author set: build/revise actors are authors; a review actor that edited is an author","status":"pass"}
+{"type":"outcome","name":"author exclusion: an author can never be an eligible reviewer of their own change","status":"pass"}
+{"type":"outcome","name":"route: completed build -> independent review on a fresh attempt","status":"pass"}
+{"type":"outcome","name":"route: BLOCKED review -> revision routes back to the ACTIVE WRITER, same runtime","status":"pass"}
+{"type":"outcome","name":"route: reviewer that EDITED becomes an author and rotates out next round","status":"pass"}
+{"type":"outcome","name":"route: no eligible reviewer -> visible HOLD, never a relaunch storm","status":"pass"}
+{"type":"outcome","name":"route: revisions are BOUND — exhaustion is a terminal HOLD at max_revise+1","status":"pass"}
+{"type":"outcome","name":"route: BLOCKED outcome NEVER leaks into successor orders (revise or next review)","status":"pass"}
+{"type":"outcome","name":"route: malformed attempt_id is rejected before routing — no non-UUID successor can be minted","status":"pass"}
+{"type":"outcome","name":"route: PASS is terminal (stop before merge)","status":"pass"}
+{"type":"outcome","name":"freshAttempt: deterministic, lineage-traceable, unique per stage/round","status":"pass"}
+{"type":"outcome","name":"shared Git identity can never fabricate independence (derived actor is not a session)","status":"pass"}
+{"type":"outcome","name":"work-order directive: rendered directive round-trips and carries the exact head","status":"pass"}
+{"type":"outcome","name":"work-order directive: BLOCK revision directive names the writer as actor (card is the instruction channel)","status":"pass"}
+{"type":"outcome","name":"work-order directive: malformed / non-directive text is never trusted as an order","status":"pass"}
+{"type":"outcome","name":"routing round-trip: BLOCK -> revise directive -> next build review cycle stays author-excluding","status":"pass"}
+{"type":"outcome","name":"SHU-232 B1: valid callback retains byte-identical 0600 envelope and the receipt links it","status":"pass"}
+{"type":"outcome","name":"SHU-232 B2: prose-only result retains its envelope and names NO_STRUCTURED_OUTPUT","status":"pass"}
+{"type":"outcome","name":"SHU-232 B3: structured but unbound callback names CALLBACK_BINDING_INVALID, never B2's code","status":"pass"}
+{"type":"outcome","name":"SHU-232 B4: envelope write failure is logged, nonfatal, and never claimed as retained","status":"pass"}
+{"type":"outcome","name":"SHU-232 B5: envelope is stdout-only, secret-free, token-scanned, and size-bounded","status":"pass"}
+{"type":"outcome","name":"SHU-232 B6: a real node --test execution at the bound workspace produces durable evidence","status":"pass"}
+{"type":"outcome","name":"SHU-232 B6: worst-case escaped stdout and stderr stay inside the 1 MiB evidence budget","status":"pass"}
+{"type":"outcome","name":"SHU-232 B7: no confined execution evidence fails closed and can never PASS","status":"pass"}
+{"type":"outcome","name":"SHU-232 B7: an actual unconfined child exposes a boundary and is refused before tests","status":"pass"}
+{"type":"outcome","name":"SHU-232 B8: the canonical re-seed is a checker-visible CI-green trap","status":"pass"}
+{"type":"outcome","name":"SHU-232 B9: production-shaped harness reaches build -> BLOCKED -> revision -> re-review -> PASS with no seeded successors","status":"pass"}
+{"type":"outcome","name":"SHU-232 B10: B-ii binds a control-plane-owned workspace to a distinct effective execution uid","status":"pass"}
+{"type":"outcome","name":"full valid example (RUNNING) validates","status":"pass"}
+{"type":"outcome","name":"createReceipt output (RESERVED) validates and carries all schema fields","status":"pass"}
+{"type":"outcome","name":"rejects: missing attempt_id","status":"pass"}
+{"type":"outcome","name":"rejects: missing nullable-but-present fields (worker_identity, external_run_id, adapter_status)","status":"pass"}
+{"type":"outcome","name":"rejects: bad stage enum","status":"pass"}
+{"type":"outcome","name":"rejects: free-text authorization_ref (not contract-bound)","status":"pass"}
+{"type":"outcome","name":"accepts: contract-bound FIXTURE-* refs","status":"pass"}
+{"type":"outcome","name":"rejects: malformed attempt_id (uuid required)","status":"pass"}
+{"type":"outcome","name":"rejects: worker_identity present while stage=RESERVED with no external_run_id (null is the only RESERVED value)","status":"pass"}
+{"type":"outcome","name":"rejects: RESERVED carrying any provider run identity","status":"pass"}
+{"type":"outcome","name":"LAUNCH_UNKNOWN discovered and undiscovered identity shapes are mutually exclusive","status":"pass"}
+{"type":"outcome","name":"rejects: worker_identity set while external_run_id null (contradictory pair)","status":"pass"}
+{"type":"outcome","name":"rejects: external_run_id without an approved provider prefix","status":"pass"}
+{"type":"outcome","name":"accepts provider-neutral Claude Code run identifiers","status":"pass"}
+{"type":"outcome","name":"rejects: adapter_status outside granular enum","status":"pass"}
+{"type":"outcome","name":"rejects: RUNNING without external_run_id (worker_identity may stay null until the poll supplies agent_id)","status":"pass"}
+{"type":"outcome","name":"rejects: COMPLETED without evidence_links (no callback, no COMPLETED)","status":"pass"}
+{"type":"outcome","name":"accepts: FAILED with a run (post-acceptance) and FAILED pre-acceptance (no run)","status":"pass"}
+{"type":"outcome","name":"rejects: RESERVED carrying a launch timestamp (reserve precedes launch)","status":"pass"}
+{"type":"outcome","name":"rejects: terminal stages missing timestamps.terminal","status":"pass"}
+{"type":"outcome","name":"rejects: bad target_sha format (40-hex bound head)","status":"pass"}
+{"type":"outcome","name":"rejects: requested_worker outside the family enum","status":"pass"}
+{"type":"outcome","name":"rejects: receipt_version drift","status":"pass"}
+{"type":"outcome","name":"rejects: non-object / null receipt","status":"pass"}
+{"type":"outcome","name":"machine never emits an invalid receipt across the happy path","status":"pass"}
+{"type":"outcome","name":"receipt comments round-trip (durable receipt on the Linear thread)","status":"pass"}
+{"type":"outcome","name":"all six stages are present and documented in STAGES","status":"pass"}
+{"type":"outcome","name":"SHU-219 MUTATION: restoring 'parent !== Done' excludes a child of an In Progress parent again","status":"pass"}
+{"type":"outcome","name":"SHU-224: a higher-priority real card cannot beat the scoped fixture","status":"pass"}
+{"type":"outcome","name":"SHU-224: a missing or ineligible scoped target selects nothing and never falls back","status":"pass"}
+{"type":"outcome","name":"SHU-224: eligibility may reject the target without exposing another ready card","status":"pass"}
+{"type":"outcome","name":"SHU-224: terminal scoped target parks the run and a later tick cannot select a real card","status":"pass"}
+{"type":"outcome","name":"SHU-224: malformed, empty, ambiguous, and noncanonical scopes fail closed","status":"pass"}
+{"type":"outcome","name":"SHU-224: absent scope preserves board-wide selection","status":"pass"}
+{"type":"outcome","name":"SHU-224: unscoped terminal receipts cannot publish successor directives","status":"pass"}
+{"type":"outcome","name":"SHU-224: successor backfill is scoped while lifecycle retains every capacity-consuming receipt","status":"pass"}
+{"type":"outcome","name":"SHU-224: an unscoped active receipt remains lifecycle-reconcilable during the scoped run","status":"pass"}
+{"type":"outcome","name":"SHU-224: invalid trusted scope prevents dispatch before any mutation","status":"pass"}
+{"type":"outcome","name":"SHU-224: committed scope is pinned to SHU-140 and SHU-254 while dispatch stays disabled","status":"pass"}
+{"type":"outcome","name":"SHU-224 MUTATIONS: selection, shape, and receipt-scope bypasses are killed","status":"pass"}
+{"type":"outcome","name":"SHU-226 A1: ambiguous review HOLD ends the episode and files one allowlisted Triage card","status":"pass"}
+{"type":"outcome","name":"SHU-226 A1: a synchronous breaker is reported in the tick that persists it","status":"pass"}
+{"type":"outcome","name":"SHU-226 A2/A3: revision and retryable-failure exhaustion each file all bounded attempts","status":"pass"}
+{"type":"outcome","name":"SHU-226 A4 (M1): replay does not duplicate","status":"pass"}
+{"type":"outcome","name":"SHU-226 A4 (M2/M3/M10): refused, default, dry-run, and unproven ticks write zero","status":"pass"}
+{"type":"outcome","name":"SHU-226 A5: a failed card write never prevents the stop; reporting is bounded","status":"pass"}
+{"type":"outcome","name":"SHU-226 A5: three bounded failed attempts end in a visible exhausted state","status":"pass"}
+{"type":"outcome","name":"SHU-226 A6: every breaker maps to a card; PASS and availability gaps map to none","status":"pass"}
+{"type":"outcome","name":"SHU-226 A7/A8: an unconfirmed report is never treated as delivered","status":"pass"}
+{"type":"outcome","name":"SHU-226 A9: two reporters converge on one deterministic card and launch nothing","status":"pass"}
+{"type":"outcome","name":"SHU-226 A10 (M9): reporting a spent or expired proven episode can never launch","status":"pass"}
+{"type":"outcome","name":"SHU-226 A11: the card carries no secrets; no raw evidence in reporting output","status":"pass"}
+{"type":"outcome","name":"SHU-226 M2: a refused activation still writes zero","status":"pass"}
+{"type":"outcome","name":"SHU-226 M3: disabled means disabled: zero writes","status":"pass"}
+{"type":"outcome","name":"SHU-226 M6: an incident card is filed in Triage, never pickable","status":"pass"}
+{"type":"outcome","name":"SHU-226 M8: restart keeps the same event identity","status":"pass"}
+{"type":"outcome","name":"SHU-226 M10: an unproven episode never writes","status":"pass"}
+{"type":"outcome","name":"SHU-226 A11/A12: the eight-attempt payload is complete and explicitly below the Linear bound","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M1 bypass the existing deterministic identity guard","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M2 report a generic refused activation","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M3 ignore disabled reporting authority","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M4 let reporting failure control the stop result","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M5 append an environment value to the card body","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M6 file in a pickable state","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M7 treat pending as delivered","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M8 regenerate event identity on restart","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M9 let reporting-only authority launch","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M10 remove durable launch proof","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M11 forward a raw receipt into the rendered attempt","status":"pass"}
+{"type":"outcome","name":"SHU-226 mutation M12 remove the injected timeout bound","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M1 remove envelope persistence","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M2 persist only on the structured-success path","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M3 collapse binding failures into NO_STRUCTURED_OUTPUT","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M4 make envelope write failure fatal to the valid result","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M5 persist the supplied environment with stdout","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M5b stop treating prompt context as sensitive envelope material","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M6 restore a posture where execution is never evidenced","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M7 allow PASS without a confined-execution evidence link","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M8 accept a fixture lane with no seed marker","status":"pass"}
+{"type":"outcome","name":"SHU-232 mutation M9 allow the configured execution identity to own the B-ii workspace","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M1 bypass canonicalization","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M2 execute the unresolved alias after validation","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M2a ignore the validator's canonical argv","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M2b pass sudo the unresolved sandbox alias","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M3 accept a non-root canonical target","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M3b accept a non-regular canonical target","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M3c accept a still-symbolic canonical target","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M4 accept a writable canonical target","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M5 accept a writable canonical directory","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M4b accept a non-executable canonical target","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M6 accept a non-root canonical directory","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M7 fail open when canonical resolution errors","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M7b forget that a canonical target with another basename is still configured sudo","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M8 revert root-owned control-plane acceptance","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M9 accept reviewer and unrelated ownership","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M10 accept writable control-plane objects","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M11 stop the B7 wrapper before the active child probe","status":"pass"}
+{"type":"outcome","name":"SHU-237 mutation M12 restore B7's host-dependent /usr/bin/env premise","status":"pass"}
+{"type":"outcome","name":"SHU-237 A1/A2/A5: real sudo-rs-style filesystem links resolve to immutable canonical argv","status":"pass"}
+{"type":"outcome","name":"SHU-237 A1/A2/A5: sudo-rs and sandbox symlinks execute only their validated canonical targets","status":"pass"}
+{"type":"outcome","name":"SHU-237 A3/A4: wrapper resolution fails closed for unsafe targets and directory chains","status":"pass"}
+{"type":"outcome","name":"SHU-237 A6: root-owned and coordinator-owned child/workspace pairs are trusted","status":"pass"}
+{"type":"outcome","name":"SHU-237 A7: reviewer/unrelated ownership and writable control-plane objects fail before execution","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M1 restore subscription-breaking bare mode","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M2 remove restricted mode","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M3 admit API-key fallback","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M4 expose command and write tools","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M5 expose web tools","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M6 stop denying MCP tools","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M7 load ambient MCP config","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M8 inherit hostile Claude configuration","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M9 trust readable siblings","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M10 trust writable workspaces","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M11 weaken exact-attempt binding","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M12 weaken exact-head binding","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M13 restore world-readable attempt directories","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M14 stop masking sibling workspaces","status":"pass"}
+{"type":"outcome","name":"SHU-239 mutation M15 retain reviewer ACL after execution","status":"pass"}
+{"type":"outcome","name":"SHU-239 A1/A2: restricted subscription launch replaces bare and keeps only OAuth","status":"pass"}
+{"type":"outcome","name":"SHU-239 A3/A4: tool and customization surface is the exact read/search-only restricted contract","status":"pass"}
+{"type":"outcome","name":"SHU-239 A5: hostile project customizations cannot change cwd, argv, environment, or tool policy","status":"pass"}
+{"type":"outcome","name":"SHU-239 A6/A7/A8: execution wrapper receives exact workspace binding and sibling denial is active evidence","status":"pass"}
+{"type":"outcome","name":"SHU-239 A6/A7: attempt and head bindings fail closed before the wrapper","status":"pass"}
+{"type":"outcome","name":"SHU-239 A7: shipped sandbox parser rejects anything except an exact workspace contract","status":"pass"}
+{"type":"outcome","name":"SHU-240 A1: prompt-supplied local evidence binds and BLOCKED routes to the same writer","status":"pass"}
+{"type":"outcome","name":"SHU-240 A2: outside, symlinked, and traversal file evidence is refused by the named link field","status":"pass"}
+{"type":"outcome","name":"SHU-240 A3: HTTPS links remain supplemental to mandatory local machine evidence","status":"pass"}
+{"type":"outcome","name":"SHU-240 A6: either valid envelope field binds; invalid fields are named","status":"pass"}
+{"type":"outcome","name":"SHU-240 A7/A8: trusted evidence is inline and private URI is never presented as readable","status":"pass"}
+{"type":"outcome","name":"SHU-240 mutation M1 restore HTTP-only callback links","status":"pass"}
+{"type":"outcome","name":"SHU-240 mutation M2 accept every local file","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: SHU-244 M25 reader reverts to adapter root","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: SHU-244 M26 broker drops typed bundle refusal","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: SHU-244 M27 adapter drops bundle refusal code","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: SHU-244 M28 launch mapping collapses typed bundle refusal","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: SHU-244 M29 launch receipt drops actionable bundle detail","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M1 trap admitted initially","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M2 literal-path guard removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M3 full tree bundled instead of scoped tree","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M4 scoped base given the full target as parent","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M5 private base import removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M6 scoped snapshot starts empty","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M7 outside diff ignored","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M8 revision reuses initial scope","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M9 FAILED unlocks revision","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M10 wrong writer accepted","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M11 branch binding removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M12 exact reviewed head removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M13 receipt drops allowed paths","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M14 reviewer scope refusal removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M15 scoped-base attempt binding removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M16 directive drops scope","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M17 worker bundle remote retained","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M18 reviewer missing-object check removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M19 stable scope refusal code removed","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M20 full target omitted from scoped derivation","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M21 exact path order omitted from scoped derivation","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M22 full-tree path membership disabled","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M23 recovery launch drops retained scope","status":"pass"}
+{"type":"outcome","name":"SHU-241 mutation: M24 partial scope metadata receives legacy fallback","status":"pass"}
+{"type":"outcome","name":"SHU-241 A1: fixture scope is exact, literal, and keeps the seeded trap outside the initial allowance","status":"pass"}
+{"type":"outcome","name":"SHU-241 A2: R1 parentless scoped base contains neither hidden objects nor hidden path names","status":"pass"}
+{"type":"outcome","name":"SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity","status":"skip","reason":"host cannot switch to the fixture worker uid"}
+{"type":"outcome","name":"SHU-241 A3: base-preserving scoped snapshot changes only an allowed path and never deletes hidden base entries","status":"pass"}
+{"type":"outcome","name":"SHU-244 A10: distinct-root scoped handoff bundle regression","status":"pass"}
+{"type":"outcome","name":"SHU-244 A10: distinct-root scoped handoff production workspace","status":"skip","reason":"host cannot switch worker uid"}
+{"type":"outcome","name":"SHU-244 A11: unavailable or divergent bundle authority refuses before binding and push with actionable code","status":"pass"}
+{"type":"outcome","name":"SHU-244 A12: launch-time base-bundle refusal persists its typed code and configured paths before any worker launch","status":"pass"}
+{"type":"outcome","name":"SHU-241 A4: new, mode-only, and renamed out-of-scope content is refused before binding or publication","status":"pass"}
+{"type":"outcome","name":"SHU-241 A5: only a validated exact-head BLOCK unlocks the predeclared revision scope for the same Codex writer and branch","status":"pass"}
+{"type":"outcome","name":"SHU-241 A6: receipts and directives carry immutable scope; reviewer launch refuses any scoped checkout","status":"pass"}
+{"type":"outcome","name":"SHU-241 A7: reviewer preparation is always a complete exact-head repository","status":"pass"}
+{"type":"outcome","name":"SHU-241 A8: LAUNCH_UNKNOWN recovery retains the exact scoped input without widening to the full target","status":"pass"}
+{"type":"outcome","name":"SHU-241 A9: partial scope metadata fails closed while a wholly legacy receipt alone receives full scope","status":"pass"}
+{"type":"outcome","name":"SHU-245 mutation M1 restore URL-only evidence","status":"pass"}
+{"type":"outcome","name":"SHU-245 mutation M2 accept a foreign attempt","status":"pass"}
+{"type":"outcome","name":"SHU-245 mutation M3 accept a foreign callback head","status":"pass"}
+{"type":"outcome","name":"SHU-245 mutation M4 drop mandatory machine evidence","status":"pass"}
+{"type":"outcome","name":"SHU-245 mutation M5 accept a citation from a foreign head","status":"pass"}
+{"type":"outcome","name":"SHU-245 mutation M6 admit the git control path","status":"pass"}
+{"type":"outcome","name":"SHU-245 A1: Run #5 file evidence plus exact path@sha citations produces the bound PASS","status":"pass"}
+{"type":"outcome","name":"SHU-245 A2: exact attempt and exact head binding cannot be widened","status":"pass"}
+{"type":"outcome","name":"SHU-245 A3: canonical machine file evidence remains mandatory and non-vacuous","status":"pass"}
+{"type":"outcome","name":"SHU-245 A4: malformed, unsafe, missing, and foreign-head source citations fail closed","status":"pass"}
+{"type":"outcome","name":"SHU-246 A1: prior episode reviews do not spend the current revision budget","status":"pass"}
+{"type":"outcome","name":"SHU-246 A2: current episode exhaustion remains fail-closed","status":"pass"}
+{"type":"outcome","name":"SHU-246 A3: no armed episode preserves global routing byte-for-byte","status":"pass"}
+{"type":"outcome","name":"SHU-246 A4 / Run #7: scoped writer and eligible terminal both come from the armed episode","status":"pass"}
+{"type":"outcome","name":"SHU-246 A5: main wires the armed episode boundary into backfill","status":"pass"}
+{"type":"outcome","name":"SHU-246 mutation M1 admit retired episode terminals","status":"pass"}
+{"type":"outcome","name":"SHU-246 mutation M2 restore issue-wide routing lineage","status":"pass"}
+{"type":"outcome","name":"SHU-246 mutation M3 select the Run #7 retired scoped writer","status":"pass"}
+{"type":"outcome","name":"SHU-246 mutation M4 drop main-to-backfill episode scope wiring","status":"pass"}
+{"type":"outcome","name":"SHU-247 A1: Run #7's exact bound BLOCK records a truthful durable HOLD note","status":"pass"}
+{"type":"outcome","name":"SHU-247 A2: a bound FAILED verdict is recorded truthfully without becoming COMPLETED","status":"pass"}
+{"type":"outcome","name":"SHU-247 A3: actual attempt, target, and live-head mismatches remain rejected and fail closed","status":"pass"}
+{"type":"outcome","name":"SHU-247 A4: malformed and non-verdict callbacks remain rejected and fail closed","status":"pass"}
+{"type":"outcome","name":"SHU-247 mutation M1 restore the false rejection note","status":"pass"}
+{"type":"outcome","name":"SHU-247 mutation M2 classify a terminal verdict by callback presence instead of binding","status":"pass"}
+{"type":"outcome","name":"SHU-247 mutation M3 drop truthful FAILED verdict handling","status":"pass"}
+{"type":"outcome","name":"SHU-247 mutation M4 use success-only evidence validation for held verdicts","status":"pass"}
+{"type":"outcome","name":"SHU-249 mutation: M1 re-key role to lane name","status":"pass"}
+{"type":"outcome","name":"SHU-249 mutation: M2 drop role-aware author exclusion","status":"pass"}
+{"type":"outcome","name":"SHU-249 mutation: M3 restore two-name workspace allowlist","status":"pass"}
+{"type":"outcome","name":"SHU-249 mutation: M4 drop disagreement HOLD","status":"pass"}
+{"type":"outcome","name":"SHU-249 mutation: M5 restore name-keyed scope default","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: codex-cli/build reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: codex-cli/review reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: codex-cli/revise reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: claude-code/build reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: claude-code/review reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: claude-code/revise reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: hermes-pool/build reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: hermes-pool/review reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A1: hermes-pool/revise reserves capacity and a valid work order","status":"pass"}
+{"type":"outcome","name":"SHU-249 A2: lane-derived role cannot replace required receipt authority","status":"pass"}
+{"type":"outcome","name":"SHU-249 A3: Claude author and its revision cannot PASS their own lineage","status":"pass"}
+{"type":"outcome","name":"SHU-249 A4: Hermes gets a scoped workspace and cannot claim review scope","status":"pass"}
+{"type":"outcome","name":"SHU-249 A5: trusted lane disagreement HOLDs without fallback","status":"pass"}
+{"type":"outcome","name":"SHU-249 A6: build defaults are scoped/initial and review defaults full/review","status":"pass"}
+{"type":"outcome","name":"SHU-249 A7: legacy bytes and exact version 1.1.0 schema survive durable replay","status":"pass"}
+{"type":"outcome","name":"SHU-249 A8: Claude writer launches with role-bound scope and broker-owned output","status":"pass"}
+{"type":"outcome","name":"SHU-260 positive control: a confirmed allowlisted incident creates one eligible bounded repair","status":"pass"}
+{"type":"outcome","name":"SHU-260 positive control: the real stopped tick triages the SHU-226 confirmation without launching","status":"pass"}
+{"type":"outcome","name":"SHU-260 unknown-reason auto-routing is forbidden and all authority-bearing reasons stay MISSING_AUTHORITY","status":"pass"}
+{"type":"outcome","name":"SHU-260 product-decision leakage and every forbidden authority invalidate policy","status":"pass"}
+{"type":"outcome","name":"SHU-260 same-family verifier is never eligible","status":"pass"}
+{"type":"outcome","name":"SHU-260 duplicate card: retries and restart converge on one deterministic repair","status":"pass"}
+{"type":"outcome","name":"SHU-260 lost response: committed create is recovered by deterministic lookup","status":"pass"}
+{"type":"outcome","name":"SHU-260 raw-text leakage is impossible","status":"pass"}
+{"type":"outcome","name":"SHU-260 missing evidence cannot create or update a repair","status":"pass"}
+{"type":"outcome","name":"SHU-260 durable incident→repair→PR→verdict→merge lineage and no premature resume","status":"pass"}
+{"type":"outcome","name":"SHU-260 self-edit: triage has no filesystem or execution-plane capability","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M1 unknown-reason auto-routing","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M2 product-decision leakage","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M3 same-family verifier","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M4 duplicate card identity","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M5 lost response recovery","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M6 raw-text leakage","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M7 missing incident evidence","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M8 premature resume","status":"pass"}
+{"type":"outcome","name":"SHU-260 mutation M9 self-edit capability","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=0 revoke=0 unlock=0","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=0 revoke=0 unlock=19","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=0 revoke=17 unlock=0","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=0 revoke=17 unlock=19","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=42 revoke=0 unlock=0","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=42 revoke=0 unlock=19","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=42 revoke=17 unlock=0","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup primary=42 revoke=17 unlock=19","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup signal HUP preserves signal status and runs once","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup signal INT preserves signal status and runs once","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup signal TERM preserves signal status and runs once","status":"pass"}
+{"type":"outcome","name":"SHU261 shipped profile branches pass exact network properties to systemd-run","status":"pass"}
+{"type":"outcome","name":"SHU261 mutation suppressed revocation dies by cleanup-only exit assertion","status":"pass"}
+{"type":"outcome","name":"SHU261 mutation suppressed revocation dies by reporting assertion with primary failure","status":"pass"}
+{"type":"outcome","name":"SHU261 model network claim pins exact families and absence of destination filtering","status":"pass"}
+{"type":"outcome","name":"SHU261 mutation provider overclaim dies by SHU261_NETWORK_CLAIM","status":"pass"}
+{"type":"outcome","name":"SHU261 mutation widened model families dies by SHU261_NETWORK_ENFORCEMENT","status":"pass"}
+{"type":"outcome","name":"SHU261 mutation destination filter added dies by SHU261_NETWORK_NO_ALLOWLIST","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: wrapper environment canary placement removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: preflight service-home Claude path omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: host validation service-home Claude directory omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: process marker liveness check removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class activation_records omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class workspace_authority omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class supervisor_secrets omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class coordinator_environment omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class ssh_credentials omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class codex_session_sidecars omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class service_home_claude_sidecars omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class claude_session_sidecars omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class coordinator_logs omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected class sibling_attempts omitted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: model launches directly as coordinator","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: sibling is only read-only","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: hardlink refusal removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: same-identity serialization removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: process visibility restored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: direct protected path ignored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: symlink attack ignored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: traversal attack ignored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: descriptor leakage ignored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: environment leakage ignored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: reviewer OAuth copied into inspectable argv","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: process inspection ignored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: missing protected-path canary accepted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: unknown protected class accepted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: missing descriptor canary accepted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: missing environment canary accepted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: missing process canary accepted","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: protected-paths-json propagation removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: fd-canary propagation removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: env-canary propagation removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: process-canary propagation removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: cleanup stops at first callback failure","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: primary validation failure removed from cleanup cause","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: sudo SETENV restored","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: root privileged bash mode removed","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: root interpreter uses caller PATH","status":"pass"}
+{"type":"outcome","name":"SHU-261 mutation: root ambient environment clearing removed","status":"pass"}
+{"type":"outcome","name":"SHU261_CANARY_MISSING_MUST_FAIL_0: protected-paths-json","status":"pass"}
+{"type":"outcome","name":"SHU261_CANARY_MISSING_MUST_FAIL_1: fd-canary","status":"pass"}
+{"type":"outcome","name":"SHU261_CANARY_MISSING_MUST_FAIL_2: env-canary","status":"pass"}
+{"type":"outcome","name":"SHU261_CANARY_MISSING_MUST_FAIL_3: process-canary","status":"pass"}
+{"type":"outcome","name":"SHU261_CLEANUP_RUNS_ALL_CALLBACKS","status":"pass"}
+{"type":"outcome","name":"SHU261_NO_SETENV_POLICY","status":"pass"}
+{"type":"outcome","name":"wrapper environment contains probe canary; omitted child option=null","status":"pass"}
+{"type":"outcome","name":"wrapper environment contains probe canary; omitted child option=protected-paths-json","status":"pass"}
+{"type":"outcome","name":"wrapper environment contains probe canary; omitted child option=fd-canary","status":"pass"}
+{"type":"outcome","name":"wrapper environment contains probe canary; omitted child option=env-canary","status":"pass"}
+{"type":"outcome","name":"wrapper environment contains probe canary; omitted child option=process-canary","status":"pass"}
+{"type":"outcome","name":"SHU261_CALLER_CANARIES: real caller supplies live canaries to loaded child","status":"pass"}
+{"type":"outcome","name":"SHU261_MODEL_ARGV: contract pins length 3 and sandbox index 2","status":"pass"}
+{"type":"outcome","name":"SHU261 deployed identities and layout are exact, singular service-plane constants","status":"pass"}
+{"type":"outcome","name":"SHU261 wrapper contract isolates both reviewer phases and every protected class","status":"pass"}
+{"type":"outcome","name":"SHU261 root wrapper startup ignores PATH and BASH_ENV before parsing","status":"pass"}
+{"type":"outcome","name":"SHU261 canaries are mandatory, propagated, and validated before assigned tests","status":"pass"}
+{"type":"outcome","name":"SHU261 cleanup attempts every callback and inventory check before aggregate failure","status":"pass"}
+{"type":"outcome","name":"SHU261 model review crosses the validated reviewer wrapper with a clean environment","status":"pass"}
+{"type":"outcome","name":"SHU261 restart and replay reuse the same reviewer identity boundary","status":"pass"}
+{"type":"outcome","name":"SHU261 missing validated model wrapper HOLDs before Claude","status":"pass"}
+{"type":"outcome","name":"SHU261 active attack probes are non-vacuous before confinement","status":"pass"}
+{"type":"outcome","name":"SHU261 sanitized evidence requires every denial and still requires assigned tests","status":"pass"}
+{"type":"outcome","name":"SHU261 host preflight pins every inspected path","status":"pass"}
+{"type":"outcome","name":"SHU261 host validation pins every sentinel directory class","status":"pass"}
+{"type":"outcome","name":"SHU261 process marker verifies observable cmdline before confinement","status":"pass"}
+{"type":"outcome","name":"bridge: role/runtime mapping covers the three worker lanes","status":"pass"}
+{"type":"outcome","name":"bridge: provenanceFromReceipt requires a worker identity — anonymous receipts never route","status":"pass"}
+{"type":"outcome","name":"bridge: verdict stages map to the intended routing outcome","status":"pass"}
+{"type":"outcome","name":"bridge: lane/verdict compatibility — a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent","status":"pass"}
+{"type":"outcome","name":"routeSuccessorFromReceipts: completed build -> review order bound to the EVIDENCE result head","status":"pass"}
+{"type":"outcome","name":"routeSuccessorFromReceipts: a review BLOCK routes a REVISE back to the active writer","status":"pass"}
+{"type":"outcome","name":"routeSuccessorFromReceipts: PASS is terminal — no successor order","status":"pass"}
+{"type":"outcome","name":"routeSuccessorFromReceipts: no eligible reviewer -> visible HOLD, nothing minted","status":"pass"}
+{"type":"outcome","name":"routeSuccessorFromReceipts: revision exhaustion is a terminal HOLD, never an endless loop","status":"pass"}
+{"type":"outcome","name":"routeSuccessorFromReceipts: lane mismatch fails closed (builder BLOCK never routes)","status":"pass"}
+{"type":"outcome","name":"directive round-trip: a routed order renders and re-parses as a valid work order","status":"pass"}
+{"type":"outcome","name":"security: callback comments require an immutable trusted Linear actor id","status":"pass"}
+{"type":"outcome","name":"security: a rejected attempt or target callback never becomes a durable verdict","status":"pass"}
+{"type":"outcome","name":"security: backfill rejects incoherent HOLD plus success verdict","status":"pass"}
+{"type":"outcome","name":"security: backfill fails closed when an expected live branch head is unreadable","status":"pass"}
+{"type":"outcome","name":"security: backfill binds routing to the fetched authoritative branch head","status":"pass"}
+{"type":"outcome","name":"security: the publication helper itself refuses durable verdicts when dispatch is disabled","status":"pass"}
+{"type":"outcome","name":"wiring: a polled COMPLETED build with an eligible reviewer posts the review directive via the durable backfill pass","status":"pass"}
+{"type":"outcome","name":"wiring: no eligible reviewer -> visible hold, ZERO directives posted","status":"pass"}
+{"type":"outcome","name":"wiring: dispatch-disabled makes zero writes even when a verdict-bearing receipt is seeded","status":"pass"}
+{"type":"outcome","name":"routing: forged result_sha (≠ verified authoritative head) FAILS CLOSED — attacker cannot choose the successor head","status":"pass"}
+{"type":"outcome","name":"routing: matching authoritative head routes and binds the VERIFIED head, not the volatile evidence","status":"pass"}
+{"type":"outcome","name":"routing: replay determinism — same input yields the SAME successor attempt id (backfill dedup key)","status":"pass"}
+{"type":"outcome","name":"SHU71_POSITIVE: reviewed package validates in prepared and seeded phases","status":"pass"}
+{"type":"outcome","name":"SHU71_ACTIVATION_ID: malformed and previously retained identities HALT","status":"pass"}
+{"type":"outcome","name":"SHU71_STALE_SEED: either lane drifting from its exact seed HALTs","status":"pass"}
+{"type":"outcome","name":"SHU71_WRONG_FIXTURE: a substituted fixture HALTs","status":"pass"}
+{"type":"outcome","name":"SHU71_LANE_CROSSING: swapping a fixture branch HALTs","status":"pass"}
+{"type":"outcome","name":"SHU71_FORGED_ENVELOPE: package and runtime signatures are independently verified","status":"pass"}
+{"type":"outcome","name":"SHU71_EXPIRED_WINDOW: expired or overlong approval HALTs","status":"pass"}
+{"type":"outcome","name":"SHU71_MANUAL_GATE_BYPASS: merge authority or absent stop gate HALTs","status":"pass"}
+{"type":"outcome","name":"SHU71_OWNER_KEY: committed unprovisioned anchor fails closed without generating a key","status":"pass"}
+{"type":"outcome","name":"SHU71_RESEED: append-only SHU-140 reseed records exact retained-parent evidence","status":"pass"}
+{"type":"outcome","name":"SHU71_RESEED_RECOVERY: lost reseed response is recovered only from the exact signed result","status":"pass"}
+{"type":"outcome","name":"SHU71_PARTIAL_ARMING: second-card failure restores the first and never leaves a gate armed","status":"pass"}
+{"type":"outcome","name":"SHU71_PARTIAL_ARMING: ambiguous runtime-gate response is disabled, archived and restored","status":"pass"}
+{"type":"outcome","name":"SHU71_ACTIVATE_REVOKE: exact states arm, revoke restores both, and evidence survives","status":"pass"}
+{"type":"outcome","name":"SHU71_REVOKE_EXPIRED: revocation disables an expired episode and ignores expected result-head drift","status":"pass"}
+{"type":"outcome","name":"SHU71_FAILED_CLEANUP: cleanup ambiguity HALTs after disable and retains evidence","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION stale seed: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION wrong fixture: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION lane crossing: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION partial arming rollback: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION forged envelope: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION expired window: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION failed cleanup: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"SHU71_MUTATION manual-gate bypass: named assertion kills removed guard","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_POSITIVE: differing provenance and correctly signed execution proceeds","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_MISSING_BINDING: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_WRONG_REVISION: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_FOREIGN_KEY: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_EXPIRED_AUTHORIZATION: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_CHECKOUT_DRIFT: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_MUTANT_MISSING_BINDING: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_MUTANT_WRONG_REVISION: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_MUTANT_FOREIGN_KEY: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_MUTANT_EXPIRED_AUTHORIZATION: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_MUTANT_CHECKOUT_DRIFT: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_PACKAGE_PROVENANCE_ONLY: signed provenance SHA cannot substitute for approved execution","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: codex-cli/build","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: codex-cli/review","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: codex-cli/revise","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: claude-code/build","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: claude-code/review","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: claude-code/revise","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: hermes-pool/build","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: hermes-pool/review","status":"pass"}
+{"type":"outcome","name":"SHU-71 matrix: hermes-pool/revise","status":"pass"}
+{"type":"outcome","name":"SHU-71 authority: conflicting lane HOLDs","status":"pass"}
+{"type":"outcome","name":"SHU-71 restricted capability refusal","status":"skip","reason":"production vocabulary has no undeclared runtime/role pair"}
+{"type":"outcome","name":"SHU-71 reversal: Claude BUILD_READY then Codex BLOCKED","status":"pass"}
+{"type":"outcome","name":"SHU-71 reversal: Claude BUILD_READY then Codex PASS","status":"pass"}
+{"type":"outcome","name":"SHU-71 reversal: author family cannot clear its revision","status":"pass"}
+{"type":"outcome","name":"SHU-71 responsiveness: reconcile returns during executing child","status":"pass"}
+{"type":"outcome","name":"SHU-71 recovery: duplicate wakeups launch once","status":"pass"}
+{"type":"outcome","name":"SHU-71 recovery: crash after submission recovers once","status":"pass"}
+{"type":"outcome","name":"SHU-71 recovery: live restart and ambiguous elapsed restart","status":"pass"}
+{"type":"outcome","name":"SHU-71 recovery: crash at durable pre-spawn marker","status":"pass"}
+{"type":"outcome","name":"SHU-71 recovery: child death yields terminal receipt","status":"pass"}
+{"type":"outcome","name":"SHU-71 isolation: hanging worker permits later unit","status":"pass"}
+{"type":"outcome","name":"SHU-71 isolation: dead worker permits later unit","status":"pass"}
+{"type":"outcome","name":"SHU-71 capability: restricted declaration refuses review","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: artifact repairs BLOCK to PASS","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: artifact breaks PASS to BLOCK","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: delete durable claimLaunch guard alone","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: realistically slow tick","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: role re-keyed to lane","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: reject declared combinations","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: ignore lane disagreement","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: accept undeclared capability","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: discard Claude build completion","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: route BLOCK to reviewer","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: discard Codex PASS completion","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: allow reversed same-family self-review","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: tick awaits child","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: duplicate wakeup launches","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: lose accepted submission recovery","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: treat proven live restart as dead","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: ambiguous restart launches","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: ignore pre-spawn crash marker","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: dead worker remains running","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: hanging unit blocks selection","status":"pass"}
+{"type":"outcome","name":"SHU-71 mutation: held unit blocks selection","status":"pass"}
+{"type":"outcome","name":"ACT_COMMITTED_ANCHOR_POSITIVE: real PEM validates and package reaches signature verification","status":"pass"}
+{"type":"outcome","name":"ACT_FINGERPRINT_MUTATION: changed manifest digest refuses","status":"pass"}
+{"type":"outcome","name":"ACT_FOREIGN_KEY_MUTATION: self-appointed key and matching self-appointed manifest refuse","status":"pass"}
+{"type":"outcome","name":"ACT_SOURCE_DIVERGENCE: either verifier supplied a foreign key refuses","status":"pass"}
+{"type":"outcome","name":"ACT_PUBLIC_KEY_PATH_MUTATION: unnamed, changed and dot-segment paths refuse","status":"pass"}
+{"type":"outcome","name":"ACT_PUBLIC_KEY_MISSING_MUTATION: absent committed file refuses by named assertion","status":"pass"}
+{"type":"outcome","name":"ACT_GUARD_MUTATION fingerprint comparison: named assertion kills removed binding","status":"pass"}
+{"type":"outcome","name":"ACT_GUARD_MUTATION foreign key binding: named assertion kills removed binding","status":"pass"}
+{"type":"outcome","name":"ACT_GUARD_MUTATION two-path divergence: named assertion kills removed binding","status":"pass"}
+{"type":"outcome","name":"ACT_GUARD_MUTATION path binding: named assertion kills removed binding","status":"pass"}
+{"type":"outcome","name":"ACT_REVISION_NULL: non-conforming caller revision refuses","status":"pass"}
+{"type":"outcome","name":"ACT_REVISION_UNDEFINED: non-conforming caller revision refuses","status":"pass"}
+{"type":"outcome","name":"ACT_REVISION_EMPTY: non-conforming caller revision refuses","status":"pass"}
+{"type":"outcome","name":"ACT_REVISION_NON_HEX_40: non-conforming caller revision refuses","status":"pass"}
+{"type":"outcome","name":"SHU-73: current adapter identities exercise the production-shaped build/review prefixes","status":"pass"}
+{"type":"outcome","name":"SHU-73: a production-shaped observed review session has readable lineage","status":"pass"}
+{"type":"outcome","name":"SHU-73: an unobserved review session fails closed","status":"pass"}
+{"type":"outcome","name":"SHU-73: writer results are not review-provenance claims","status":"pass"}
+{"type":"outcome","name":"SHU-73: a standalone observed review falls back only to session presence","status":"pass"}
+{"type":"outcome","name":"SHU-73: supplied lineage with no readable provenance fails closed","status":"pass"}
+{"type":"outcome","name":"SHU-73: the defensive session comparison rejects a represented author match","status":"pass"}
+{"type":"outcome","name":"SHU-73: a production-shaped observed PASS completes without invented evidence classes","status":"pass"}
+{"type":"outcome","name":"SHU-73: an unobserved PASS folds to HOLD","status":"pass"}
+{"type":"outcome","name":"SHU-73: unreadable supplied lineage folds to HOLD","status":"pass"}
+{"type":"outcome","name":"SHU-73: stale-head PASS still folds to HOLD","status":"pass"}
+{"type":"outcome","name":"SHU-73: the removed direct callback event cannot complete a receipt","status":"pass"}
+{"type":"outcome","name":"SHU-73 mutation: removing the unreadable-lineage guard wrongly completes","status":"pass"}
+{"type":"outcome","name":"SHU-86: unpersisted next-action plan is UNLAUNCHED and autonomous idle recovery launches","status":"pass"}
+{"type":"outcome","name":"SHU-86: reporting requires an actual bound launch receipt","status":"pass"}
+{"type":"outcome","name":"SHU-86: three restarts recover pending work exactly once","status":"pass"}
+{"type":"outcome","name":"SHU-86: pending HOLD codes are mandatory and survive idle restart","status":"pass"}
+{"type":"outcome","name":"SHU-86: capacity occupancy never substitutes for a launch receipt","status":"pass"}
+{"type":"outcome","name":"SHU-86: crash after spawn retains claim and stale wakeup cannot duplicate","status":"pass"}
+{"type":"outcome","name":"SHU-86 mutation: remove persist-before-announce check","status":"pass"}
+{"type":"outcome","name":"SHU-86 mutation: remove receipt requirement","status":"pass"}
+{"type":"outcome","name":"SHU-86 mutation: remove transport receipt requirement","status":"pass"}
+{"type":"outcome","name":"SHU-86 mutation: remove pending recovery","status":"pass"}
+{"type":"outcome","name":"SHU-86 mutation: remove launch claim election","status":"pass"}
+{"type":"outcome","name":"SHU-86 mutation: make HOLD code optional","status":"pass"}
+{"type":"outcome","name":"SHU-86: admitted holds survive submit recovery and stale launch callbacks","status":"pass"}
+{"type":"outcome","name":"SHU-86: legacy accepted recovery creates safe intent and never reelects a marker","status":"pass"}
+{"type":"outcome","name":"SHU-86: pre-spawn hash is durable and failed spawn reports UNLAUNCHED","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation ABSENT: the committed gates decide exactly as before","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the committed config still carries enable_dispatch: false","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation ARMED: arms one run, and still requires the runtime switch","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation argv: absent, accepted, and refused shapes","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: missing, malformed, stale, replayed, wrong-target, wrong-revision all fail closed","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the loop's OWN verdict stages do not spend it (review BLOCK #1)","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the episode ENDS on PASS, exhausted attempts, or a verdict the routing cannot continue","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: a mid-episode step with a ROUTABLE successor is never spent early","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: exhaustion is evaluated BEFORE hold, when the routing reports both","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns — or expiry","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns — or expiry","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the duplicated coherence predicate agrees with reconcile's","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the claim-time target check is narrow by construction","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the record shape is exactly the reviewed key set","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: an ABSENT activation leaves the coordinator an inert dry run","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: the RUNNING revision is what bounds an activation, end to end","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: a REFUSED activation exits 2, says why, and writes nothing","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: an invalid flag shape is refused before anything runs","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses (2026)","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses (2020)","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation: ONE authorization carries build -> BLOCK -> revision -> re-review -> PASS, then refuses (2030)","status":"pass"}
+{"type":"outcome","name":"SHU-63 activation MUTATIONS: every binding, permission, expiry and gate guard is killed","status":"pass"}
+{"type":"outcome","name":"SHU-250: real tick returns while a long-running supervised child executes","status":"pass"}
+{"type":"outcome","name":"SHU-250: concurrent ticks recover the same durable attempt with one launch","status":"pass"}
+{"type":"outcome","name":"SHU-250: crash after submission recovers once and ambiguous restart HOLDs","status":"pass"}
+{"type":"outcome","name":"SHU-250: conflicting retry HOLDs without scheduling or launching","status":"pass"}
+{"type":"outcome","name":"SHU-250: worker death surfaces a terminal HOLD receipt without blocking later tick","status":"pass"}
+{"type":"outcome","name":"SHU-250: completion with no worker evidence HOLDs","status":"pass"}
+{"type":"outcome","name":"SHU-250: carried result SHA disagrees with verified head and HOLDs","status":"pass"}
+{"type":"outcome","name":"SHU-250: bound callback and observed identity survive completion and restart","status":"pass"}
+{"type":"outcome","name":"SHU-250: stopped heartbeat never declares a live worker dead","status":"pass"}
+{"type":"outcome","name":"SHU-250: unknown socket and result contract versions fail closed","status":"pass"}
+{"type":"outcome","name":"SHU-250: fixture driver unassigns and restores on terminal path","status":"pass"}
+{"type":"outcome","name":"SHU-250: failed run restores and failed restore retains recoverable journal","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: awaited in-process launch","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: drop pre-spawn marker","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: conflicting retry","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: drop terminal fixture restore","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: accept no evidence","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: accept unbound result SHA","status":"pass"}
+{"type":"outcome","name":"SHU-250 mutation: missing heartbeat terminal","status":"pass"}
+{"type":"outcome","name":"SHU-250: different attempts cannot own the same branch concurrently","status":"pass"}
+{"type":"outcome","name":"SHU-250: invalid heartbeat version HOLDs and callback binding is never rewritten","status":"pass"}
+{"type":"outcome","name":"SHU-250: bounded driver exhaustion restores fixture","status":"pass"}
+{"type":"outcome","name":"SHU-250: supervised review persists observed identity before PASS","status":"pass"}
+{"type":"outcome","name":"SHU-250: supervised review rejects its author","status":"pass"}
+{"type":"outcome","name":"SHU-250: adapter refusal cannot be overridden by its successful callback","status":"pass"}
+{"type":"outcome","name":"SHU-250: child wrapper transports adapter artifact verbatim and rechecks authority","status":"pass"}
+{"type":"outcome","name":"SHU-250: legacy ambiguous launch is never resubmitted as a fresh supervised child","status":"pass"}
+{"type":"outcome","name":"signed work order binds attempt, repository, branch, and exact head","status":"pass"}
+{"type":"outcome","name":"durable acknowledgement returns before worker completion and does not serialize submissions","status":"pass"}
+{"type":"outcome","name":"exact duplicate is idempotent; attempt rebinding is HOLD and never spawns","status":"pass"}
+{"type":"outcome","name":"two concurrent coordinator wakes cannot double-write or double-spawn","status":"pass"}
+{"type":"outcome","name":"invalid authentication and invalid bindings create no durable attempt","status":"pass"}
+{"type":"outcome","name":"restart launches a durably accepted order, but an ambiguous launch is never repeated","status":"pass"}
+{"type":"outcome","name":"crash across spawn boundary becomes AMBIGUOUS_LAUNCH and cannot double-spawn","status":"pass"}
+{"type":"outcome","name":"child completion is durable and remains terminal after restart","status":"pass"}
+{"type":"outcome","name":"worker-owned completion survives daemon failure before its exit event is captured","status":"pass"}
+{"type":"outcome","name":"unknown liveness HOLD retains scheduler capacity","status":"pass"}
+{"type":"outcome","name":"forged or stale-head worker completion cannot become terminal","status":"pass"}
+{"type":"outcome","name":"forged durable completion file is rejected again during restart recovery","status":"pass"}
+{"type":"outcome","name":"a spawned child without real process-start evidence HOLDs and retains capacity","status":"pass"}
+{"type":"outcome","name":"worker output is counted but not retained; cap crossing kills and HOLDs","status":"pass"}
+{"type":"outcome","name":"a worker output-stream error HOLDs without becoming an unhandled daemon error","status":"pass"}
+{"type":"outcome","name":"deadline kills and HOLDs an incomplete worker","status":"pass"}
+{"type":"outcome","name":"synchronous worker output cannot race deadline initialization","status":"pass"}
+{"type":"outcome","name":"Unix socket is forced owner-only before it is returned as ready","status":"pass"}
+{"type":"outcome","name":"one broken IPC client cannot crash the supervisor server","status":"pass"}
+{"type":"outcome","name":"answered IPC clients are destroyed and later input is never buffered","status":"pass"}
+{"type":"outcome","name":"Unix socket round trip accepts durable work where the host permits sockets","status":"pass"}
+{"type":"outcome","name":"unavailable daemon returns HOLD with no direct-spawn fallback","status":"pass"}
+{"type":"outcome","name":"dispatch-disabled gate performs no transport, durable write, or launch side effect","status":"pass"}
+{"type":"outcome","name":"shutdown retains children by default; explicit termination HOLDs and signals them","status":"pass"}
+{"type":"outcome","name":"ACT_MISSING_FIXTURE: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_EXTRA_FIXTURE: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_LANE_CROSS: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_DUPLICATE_LANE: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_CAPACITY_DRIFT: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_STALE_SEED_HEAD: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_MALFORMED: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_PARTIAL_ARMING: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_MANUAL_GATE_BYPASS: positive control and named refusal","status":"pass"}
+{"type":"outcome","name":"ACT_BOUND_FIELDS: every required field, SHA, expiry, lane and capacity is enforced","status":"pass"}
+{"type":"outcome","name":"ACT_REVIEW_SIGNATURE: unsigned, altered, wrong-key and manual committed gates refuse","status":"pass"}
+{"type":"outcome","name":"ACT_REVIEWED_PATH: in-memory record reaches existing status without creating a file or setting a gate","status":"pass"}
+{"type":"outcome","name":"ACT_GATES_OFF: actual tick has zero launches and writes; manual pair gates cannot bypass review","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_MISSING_FIXTURE: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_EXTRA_FIXTURE: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_LANE_CROSS: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_DUPLICATE_LANE: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_CAPACITY_DRIFT: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_STALE_SEED_HEAD: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_MALFORMED: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_PARTIAL_ARMING: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_MUTATION ACT_MANUAL_GATE_BYPASS: removed guard dies by named AssertionError","status":"pass"}
+{"type":"outcome","name":"ACT_REMOTE_EVIDENCE: real helper resolves both heads and identities through read-only API doubles","status":"pass"}
+{"type":"outcome","name":"ACT_REMOTE_FAILURE: absent credentials and failed API reads cannot supply evidence","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_POSITIVE: correctly signed current execution proceeds","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_MISSING_BINDING: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_WRONG_REVISION: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_FOREIGN_KEY: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_EXPIRED_AUTHORIZATION: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_CHECKOUT_DRIFT: signed execution refusal","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_MUTANT_MISSING_BINDING: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_MUTANT_WRONG_REVISION: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_MUTANT_FOREIGN_KEY: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_MUTANT_EXPIRED_AUTHORIZATION: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_MUTANT_CHECKOUT_DRIFT: valid mutant dies by named assertion","status":"pass"}
+{"type":"outcome","name":"EXEC_RUNTIME_PROVENANCE_ONLY: signed provenance SHA cannot substitute for approved execution","status":"pass"}
+{"type":"outcome","name":"B3_REPRO_CURRENT_MAIN: real descendant invalidates armed activation","status":"pass"}
+{"type":"outcome","name":"TWO_LANES: issue resolution preserves legacy shape and isolates initial and revision paths","status":"pass"}
+{"type":"outcome","name":"LANE_MISMATCH: swapped attempt paths are refused before workspace I/O in both phases","status":"pass"}
+{"type":"outcome","name":"TWO_SUCCESSORS: exact-head BLOCK routes each writer to its own revision lane","status":"pass"}
+{"type":"outcome","name":"TWO_SCOPE: committed selection admits exactly SHU-140 and SHU-254","status":"pass"}
+{"type":"outcome","name":"TWO_CAPACITY: two active receipts fit and a third is refused by capacity","status":"pass"}
+{"type":"outcome","name":"DISPATCH_DISABLED: two-lane tick has zero launches and zero writes with runtime gate true","status":"pass"}
+{"type":"outcome","name":"TWO_LANES MUTATION: swapped lane receipt accepted","status":"pass"}
+{"type":"outcome","name":"TWO_LANES MUTATION: second lane resolves to first","status":"pass"}
+{"type":"outcome","name":"TWO_LANES MUTATION: scope admits third issue","status":"pass"}
+{"type":"outcome","name":"TWO_LANES MUTATION: capacity ignores active receipts","status":"pass"}
+{"type":"outcome","name":"TWO_LANES MUTATION: committed dispatch enabled","status":"pass"}
+{"type":"outcome","name":"B3_SEQUENCE: armed seed, broker descendant, BLOCK, revision, re-review","status":"pass"}
+{"type":"outcome","name":"B3_MISSING_ANCESTRY: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_FORGED_RECEIPT: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_WRONG_ACTOR: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_WRONG_LANE: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_FORCE_UPDATE: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_STALE_EPISODE: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_REWIND: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_NO_RECEIPT: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_NO_BROKER: refuses unauthorized progression","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_ANCESTRY: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_ANCESTRY_REVERSED: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_JOURNAL_PERMS: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_DIGEST_IMMUTABILITY: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_ACTIVATION: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_INTERRUPTED: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_AMBIGUOUS: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_REWRITE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_IDEMPOTENT: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_DEATH: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_BINDING: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_CUSTODY: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_AUTH: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_DURABILITY: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_RECOVERY_MARK_FAILURE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_DANGLING_IGNORED: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_ATTEMPT_UNBOUND: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_BROKER_FORCE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_DISPATCH_STAMP: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_TRANSPORT_ACTOR: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_EQUALITY_ONLY: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_MISSING_ANCESTRY: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_FORGED_RECEIPT: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_WRONG_ACTOR: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_WRONG_LANE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_FORCE_UPDATE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_STALE_EPISODE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_ONE_LANE: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_MUTATION_REWIND: dies by named assertion","status":"pass"}
+{"type":"outcome","name":"B3_DISPATCH_STAMP: main persists immutable signed provenance before launch","status":"pass"}
+{"type":"outcome","name":"B3_ANCESTRY_API: real read helper requires ahead and exact merge base","status":"pass"}
+{"type":"outcome","name":"B3_PUSH_CUSTODY: unsafe journal permissions and symlinks cannot authorize","status":"pass"}
+{"type":"outcome","name":"B3_RECEIPT_PROVENANCE: transitions retain transport actor and digest is immutable","status":"pass"}
+{"type":"outcome","name":"B3_BOTH_LANES: independently bound descendants can both progress","status":"pass"}
+{"type":"outcome","name":"B3_MAIN_SEQUENCE: coordinator ticks dispatch build, BLOCK revision and re-review","status":"pass"}
+{"type":"outcome","name":"B3_REMOTE_REWRITES: real unrelated and unauthorized descendant heads refuse","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_INTERRUPTED: exact attempt reconciles and full sequence resumes","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_AMBIGUOUS: exact attempt reconciles and full sequence resumes","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_IDEMPOTENT: repeated recovery never pushes twice","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_REWRITE: unauthorized rewrite, descendant, missing ref and cross-lane head refuse","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_BINDINGS: forged journal, unsafe custody and absent authorization refuse","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_DEATH_BEFORE: new process recovers durable attempt after SIGKILL","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_DEATH_AFTER: new process recovers durable attempt after SIGKILL","status":"pass"}
+{"type":"outcome","name":"B3_DANGLING: extra disconnected journal cannot be ignored during recovery","status":"pass"}
+{"type":"outcome","name":"B3_FORK: duplicate parent edges and journal attempt mismatch refuse","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_DURABILITY: failed durable mark holds and next recovery reconciles","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_ACTIVATION: signed authorization and receipt attacks cannot recover","status":"pass"}
+{"type":"outcome","name":"B3_RECOVERY_ANCESTRY: projected authorization cannot replace real broker ancestry","status":"pass"}
+{"type":"outcome","name":"B3_VERIFIER_ATTACKS: role, missing first edge, sibling and JSON actor spoof remain refused","status":"pass"}
+{"type":"outcome","name":"READER inline trust is exact and walks real nested checkout root","status":"pass"}
+{"type":"outcome","name":"READER missing root fails closed without invoking git","status":"pass"}
+{"type":"outcome","name":"READER git failure returns null and refuses","status":"pass"}
+{"type":"outcome","name":"READER ownership rejection hook requires inline trust","status":"pass"}
+{"type":"outcome","name":"READER operator-owned checkout read by non-root account","status":"skip","reason":"Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"}
+{"type":"outcome","name":"READER wrong checkout and directory substitution retain binding","status":"pass"}
+{"type":"outcome","name":"READER stale main ref refuses execution revision","status":"pass"}
+{"type":"outcome","name":"READER checkout drift refuses observed revision","status":"pass"}
+{"type":"outcome","name":"READER mutation: drop inline exception","status":"pass"}
+{"type":"outcome","name":"READER mutation: wildcard trust","status":"pass"}
+{"type":"outcome","name":"READER mutation: permissive unresolved-root fallback","status":"pass"}
+{"type":"outcome","name":"READER mutation: skip root walk-up","status":"pass"}
+{"type":"outcome","name":"trigger request matches the official wire contract exactly","status":"pass"}
+{"type":"outcome","name":"buildTriggerHeaders produces the documented header set","status":"pass"}
+{"type":"outcome","name":"retry after LAUNCH_UNKNOWN reuses a byte-identical Idempotency-Key","status":"pass"}
+{"type":"outcome","name":"monitorRun polls the documented runs endpoint with bearer + beta headers","status":"pass"}
+{"type":"outcome","name":"202 with run id but no parseable body -> LAUNCH_UNKNOWN (never a phantom run)","status":"pass"}
+{"type":"outcome","name":"poll response maps the documented statuses and surfaces agent_id as worker_identity","status":"pass"}
+{"type":"outcome","name":"quota/access walls FAIL and demand an adapter pause","status":"pass"}
+{"type":"outcome","name":"monitorRun with MISSING credentials fails closed (UNCHANGED — never a manufactured upstream failure)","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M1 callback before commit","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M2 worker Git directory","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M3 worker index","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M4 wrong parent","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M5 empty result","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M6 dirty race","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M7 broker HOLD promotion","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M8 network enabled","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M9 nondeterministic retry","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M10 wrong tree","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M11 premium builder","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M12 premium reviewer","status":"pass"}
+{"type":"outcome","name":"SHU-228 mutation: M13 expiry at publication","status":"pass"}
+{"type":"outcome","name":"SHU-228: host commits raw files with one bound parent and leaves worker metadata untouched","status":"pass"}
+{"type":"outcome","name":"SHU-228: filters, hooks, worker index and URL rewrites cannot influence host snapshot or push","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses empty without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses symlink without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses directory symlink without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses alternate without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses hardlink without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses submodule without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses private state without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses raced without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: refuses wrong head without changing remote","status":"pass"}
+{"type":"outcome","name":"SHU-228: lost push response reuses the deterministic commit; divergent remote is never overwritten","status":"pass"}
+{"type":"outcome","name":"SHU-228: expiry during snapshot refuses publication","status":"pass"}
+{"type":"outcome","name":"SHU-228: workspace-ready callback is bound and host refusal never publishes a result","status":"pass"}
+{"type":"outcome","name":"SHU-228: new and resumed model choices and worker network are explicit","status":"pass"}
+{"type":"complete"}

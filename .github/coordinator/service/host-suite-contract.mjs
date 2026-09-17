@@ -14,6 +14,18 @@ export const PERMITTED_SKIPS = Object.freeze({
   'SHU-71 restricted capability refusal': 'production vocabulary has no undeclared runtime/role pair',
   'READER operator-owned checkout read by non-root account': 'Not exercisable: non-root account, no passwordless elevation to create root-owned checkout',
 });
+// A capability names a host precondition required by the suite, not merely a
+// binary or a test label. Its probe executes fixed argv at absolute executable
+// paths as the service identity (except the explicit privilege/worker identity
+// probes). A successful probe establishes only its documented detection claim;
+// it does not prove every operation, host deployment, or the suite verdict.
+// Added dependency probes have zero filesystem side effects: no scratch, writes,
+// or removals, under watched roots or elsewhere. Existing infrastructure probes
+// (temp, parser, unit verification, flock, Unix socket) retain their explicit
+// temporary-resource detection claims.
+// shell_toolchain groups the actual wrapper/policy dependencies: /bin/sh,
+// dirname, basename, env (including PATH resolution of node and basename), true, chmod, mktemp, rm,
+// touch, cat and /usr/bin/node. Restored shell fixtures retain their real tool dependencies.
 export const CAPABILITIES = Object.freeze([
   ['privilege', 'SHU251_PREFLIGHT_PRIVILEGE', 'effective UID 0 or sudo -n id -u returns 0'],
   ['worker_uid', 'SHU251_PREFLIGHT_WORKER_UID', 'setpriv to fixture UID/GID 65534; id -u returns 65534; distinct from service UID'],
@@ -27,6 +39,9 @@ export const CAPABILITIES = Object.freeze([
   ['systemd_notify', 'SHU251_PREFLIGHT_SYSTEMD_NOTIFY', 'systemd-notify --version succeeds'],
   ['git', 'SHU251_PREFLIGHT_GIT', 'git --version succeeds'],
   ['bash', 'SHU251_PREFLIGHT_BASH', 'bash --noprofile --norc -c exit succeeds'],
+  ['shell_toolchain', 'SHU251_PREFLIGHT_SHELL_TOOLCHAIN', 'fixed argv as service identity: /bin/sh -c exit 0, /usr/bin/dirname /suite/wrapper, /usr/bin/env /usr/bin/true, /usr/bin/env node --version (child PATH resolution), /usr/bin/env basename --version (child PATH resolution), /usr/bin/node --version, and /usr/bin/{chmod,mktemp,rm,touch,cat,basename} --version; no filesystem mutation'],
+  ['linux_proc', 'SHU251_PREFLIGHT_LINUX_PROC', 'service identity reads its proc stat, cmdline, environ and inherited file descriptor'],
+  ['loopback_socket', 'SHU251_PREFLIGHT_LOOPBACK_SOCKET', 'service identity binds and closes an IPv4 loopback TCP socket'],
   ['unix_socket', 'SHU251_PREFLIGHT_UNIX_SOCKET', 'service identity binds and closes a temporary Unix socket'],
   ['node', 'SHU251_PREFLIGHT_NODE', 'Node major version at least 22'],
 ].map(([name, code, detection]) => Object.freeze({ name, code, detection })));
@@ -142,6 +157,29 @@ export function hostProbe(spec, io = { run, fs, uid: () => process.getuid() }) {
       case 'systemd_notify': return successful(asService('/usr/bin/systemd-notify', ['--version']));
       case 'git': return successful(asService('/usr/bin/git', ['--version']));
       case 'bash': return successful(asService('/bin/bash', ['--noprofile', '--norc', '-c', 'exit 0']));
+      case 'shell_toolchain': return nodeProbe(`
+        import {spawnSync} from 'node:child_process';
+        const invoke=(file,args)=>{const r=spawnSync(file,args,{encoding:'utf8'});if(r.error||r.status!==0)throw Error('shell toolchain');return r.stdout;};
+        invoke('/bin/sh',['-c','exit 0']);
+        invoke('/usr/bin/dirname',['/suite/wrapper']);
+        invoke('/usr/bin/env',['/usr/bin/true']);
+        invoke('/usr/bin/chmod',['--version']);
+        invoke('/usr/bin/mktemp',['--version']);
+        invoke('/usr/bin/rm',['--version']);
+        invoke('/usr/bin/touch',['--version']);
+        invoke('/usr/bin/cat',['--version']);
+        invoke('/usr/bin/env',['node','--version']);
+        invoke('/usr/bin/basename',['--version']);
+        invoke('/usr/bin/env',['basename','--version']);
+        invoke('/usr/bin/node',['--version']);
+      `);
+      case 'linux_proc': return nodeProbe(`
+        import fs from 'node:fs';
+        for(const name of ['stat','cmdline','environ'])if(!fs.readFileSync('/proc/self/'+name).length)throw Error('proc');
+        const fd=fs.openSync('/proc/version','r');const expected=fs.readFileSync('/proc/version','utf8');
+        try{if(fs.readFileSync('/proc/self/fd/'+fd,'utf8')!==expected)throw Error('proc fd');}finally{fs.closeSync(fd);}
+      `);
+      case 'loopback_socket': return nodeProbe(`import net from 'node:net'; const s=net.createServer(); await new Promise((resolve,reject)=>{s.once('error',reject);s.listen(0,'127.0.0.1',resolve)}); await new Promise((resolve,reject)=>s.close(e=>e?reject(e):resolve()));`);
       case 'unix_socket': return temporary(`const s=net.createServer(); await new Promise((resolve,reject)=>{s.once('error',reject);s.listen(path.join(dir,'socket'),resolve)}); await new Promise((resolve,reject)=>s.close(e=>e?reject(e):resolve()));`);
       case 'node': return Number(process.versions.node.split('.')[0]) >= 22;
       default: return false;

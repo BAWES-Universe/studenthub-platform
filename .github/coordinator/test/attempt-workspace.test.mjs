@@ -56,8 +56,8 @@ function setup() {
         for (const name of fs.readdirSync(root)) {
           const target = path.join(root, name);
           if (!fs.lstatSync(target).isSymbolicLink() && fs.statSync(target).uid === 65534) {
-            execFileSync(switchCommand[0], [...switchCommand.slice(1), "chmod", "-R", "u+w", target]);
-            execFileSync(switchCommand[0], [...switchCommand.slice(1), "rm", "-rf", "--", target]);
+            execFileSync(switchCommand[0], [...switchCommand.slice(1), nodeBin, "-e",
+              "const fs=require('node:fs'),path=require('node:path');function writable(p){const s=fs.lstatSync(p);if(s.isSymbolicLink())return;fs.chmodSync(p,s.mode|0o200);if(s.isDirectory())for(const n of fs.readdirSync(p))writable(path.join(p,n));}writable(process.argv[1]);fs.rmSync(process.argv[1],{recursive:true,force:true});", target]);
           }
         }
       }
@@ -232,7 +232,8 @@ for (const workspaceReady of [false, true]) test(`SHU-${workspaceReady ? 228 : 2
             const p=path.join(dir,name); if(fs.lstatSync(p).isDirectory())protect(p); else fs.chmodSync(p,0o444);
           } fs.chmodSync(dir,0o555); };
           if (process.getuid() === 0) protect(metadata);
-          else execFileSync(switchCommand[0],[...switchCommand.slice(1),"chmod","-R","a-w",metadata]);
+          else execFileSync(switchCommand[0],[...switchCommand.slice(1),nodeBin,"-e",
+            "const fs=require('node:fs'),path=require('node:path');function protect(p){const s=fs.lstatSync(p);if(s.isSymbolicLink())return;if(s.isDirectory())for(const n of fs.readdirSync(p))protect(path.join(p,n));fs.chmodSync(p,s.mode&~0o222);}protect(process.argv[1]);",metadata]);
         }
         snapshots.push({ ...options.receipt, cwd: workspace.cwd }); return workspace;
       },
