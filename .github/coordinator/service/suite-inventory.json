@@ -11,6 +11,7 @@
     ".github/coordinator/service/test/host-lifecycle.test.mjs",
     ".github/coordinator/service/test/host-suite-contract.test.mjs",
     ".github/coordinator/service/test/host-window-bindings.test.mjs",
+    ".github/coordinator/service/test/mint-shu71.test.mjs",
     ".github/coordinator/service/test/phase-a-driver.test.mjs",
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
     ".github/coordinator/service/test/reporter-amendments.test.mjs",
@@ -2903,7 +2904,10 @@
     "B1_EXISTING_REVIEW_GUARDS: missing reviewer UID, wrappers and tests refuse",
     "B1_ENV_CUSTODY: production requires modeled root root 0600 on the opened file",
     "CLOSURE_ENV production combined and crossed sources refuse before signing",
-    "A12 committed inventory requirements match real outcomes"
+    "A12 committed inventory requirements match real outcomes",
+    "SHU71 mint positive controls and named refusals",
+    "SHU71 mint actual Git derivation and named remote mutations",
+    "SHU71 mint source mutants die at named assertions"
   ],
   "requirements": [
     {
@@ -23741,6 +23745,30 @@
         },
         {
           "name": "unix_socket"
+        }
+      ]
+    },
+    {
+      "name": "SHU71 mint positive controls and named refusals",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71 mint actual Git derivation and named remote mutations",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "SHU71 mint source mutants die at named assertions",
+      "capabilities": [
+        {
+          "name": "git"
         }
       ]
     }

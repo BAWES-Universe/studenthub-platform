@@ -9,6 +9,7 @@
   ".github/coordinator/service/test/host-lifecycle.test.mjs",
   ".github/coordinator/service/test/host-suite-contract.test.mjs",
   ".github/coordinator/service/test/host-window-bindings.test.mjs",
+  ".github/coordinator/service/test/mint-shu71.test.mjs",
   ".github/coordinator/service/test/phase-a-driver.test.mjs",
   ".github/coordinator/service/test/production-lifecycle.test.mjs",
   ".github/coordinator/service/test/reporter-amendments.test.mjs",
