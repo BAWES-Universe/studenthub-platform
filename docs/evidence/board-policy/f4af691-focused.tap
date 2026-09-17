@@ -1,0 +1,217 @@
+TAP version 13
+# {"name":"completes only","title":"Local correction","body":"Completes only SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"closes only","title":"Local correction","body":"Closes only SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"title reference","title":"Implement acceptance (SHU-253)","body":"","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"title completion","title":"Completes only SHU-253","body":"","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"punctuation","title":"Local correction","body":"Closes: (SHU-253).","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"line break","title":"Local correction","body":"Completes only\\n\\nSHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"split reference","title":"Local correction","body":"Closes SHU-\\n253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"case","title":"Local correction","body":"rEsOlVeS shu-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"past tense","title":"Local correction","body":"This has completed the work for SHU-253.","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"future tense","title":"Local correction","body":"This will finish the acceptance work for SHU-253.","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"neutral reference","title":"Local correction","body":"Related: SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"negation","title":"Local correction","body":"Does not close SHU-253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"quoted example","title":"Local correction","body":"`Fixes SHU-253`","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"url","title":"Local correction","body":"Related: https://linear.app/team/issue/SHU-253/acceptance","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"url without id","title":"Local correction","body":"https://linear.app/team/issue/opaque","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"unicode dash","title":"Local correction","body":"Completes SHU–253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"unicode width","title":"Local correction","body":"Closes ＳＨＵ－２５３","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"zero width","title":"Local correction","body":"Closes SHU-​253","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"other team","title":"Local correction","body":"Closes ACCEPT-42","exit":1,"output":{"code":"BOARD_ACCEPTANCE_REFERENCE"}}
+# {"name":"neutral repository link","title":"Local correction","body":"Related work: [acceptance record](docs/acceptance-record.md)","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"completes without issue","title":"Local correction","body":"Completes only the local parser tests.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"closes without issue","title":"Local correction","body":"Closes only the local file descriptor.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"neutral title","title":"Add repository acceptance policy","body":"","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"punctuation without issue","title":"Local correction","body":"Fixes: parsing.\\nResolves local test failures.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# {"name":"issue prose without identifier","title":"Local correction","body":"Live acceptance remains pending owner proof.","exit":0,"output":{"code":"BOARD_METADATA_ACCEPTED","matcher":"repository-reference-ban-v1","linear_completion_guard":"UNRESOLVED"}}
+# mutation=BOARD_METADATA_SHAPE control_exit=0 syntax_exit=0 mutant_exit=1 assertion=BOARD_METADATA_SHAPE
+# mutation=BOARD_ACCEPTANCE_REFERENCE control_exit=0 syntax_exit=0 mutant_exit=1 assertion=BOARD_ACCEPTANCE_REFERENCE
+# Subtest: probe completes only
+ok 1 - probe completes only
+  ---
+  duration_ms: 1.136573
+  type: 'test'
+  ...
+# Subtest: probe closes only
+ok 2 - probe closes only
+  ---
+  duration_ms: 0.16733
+  type: 'test'
+  ...
+# Subtest: probe title reference
+ok 3 - probe title reference
+  ---
+  duration_ms: 0.062212
+  type: 'test'
+  ...
+# Subtest: probe title completion
+ok 4 - probe title completion
+  ---
+  duration_ms: 0.058226
+  type: 'test'
+  ...
+# Subtest: probe punctuation
+ok 5 - probe punctuation
+  ---
+  duration_ms: 0.056045
+  type: 'test'
+  ...
+# Subtest: probe line break
+ok 6 - probe line break
+  ---
+  duration_ms: 0.052297
+  type: 'test'
+  ...
+# Subtest: probe split reference
+ok 7 - probe split reference
+  ---
+  duration_ms: 0.057833
+  type: 'test'
+  ...
+# Subtest: probe case
+ok 8 - probe case
+  ---
+  duration_ms: 0.052528
+  type: 'test'
+  ...
+# Subtest: probe past tense
+ok 9 - probe past tense
+  ---
+  duration_ms: 0.18728
+  type: 'test'
+  ...
+# Subtest: probe future tense
+ok 10 - probe future tense
+  ---
+  duration_ms: 0.205959
+  type: 'test'
+  ...
+# Subtest: probe neutral reference
+ok 11 - probe neutral reference
+  ---
+  duration_ms: 0.184967
+  type: 'test'
+  ...
+# Subtest: probe negation
+ok 12 - probe negation
+  ---
+  duration_ms: 0.673494
+  type: 'test'
+  ...
+# Subtest: probe quoted example
+ok 13 - probe quoted example
+  ---
+  duration_ms: 0.099519
+  type: 'test'
+  ...
+# Subtest: probe url
+ok 14 - probe url
+  ---
+  duration_ms: 0.042202
+  type: 'test'
+  ...
+# Subtest: probe url without id
+ok 15 - probe url without id
+  ---
+  duration_ms: 0.069676
+  type: 'test'
+  ...
+# Subtest: probe unicode dash
+ok 16 - probe unicode dash
+  ---
+  duration_ms: 0.073751
+  type: 'test'
+  ...
+# Subtest: probe unicode width
+ok 17 - probe unicode width
+  ---
+  duration_ms: 0.032528
+  type: 'test'
+  ...
+# Subtest: probe zero width
+ok 18 - probe zero width
+  ---
+  duration_ms: 0.028914
+  type: 'test'
+  ...
+# Subtest: probe other team
+ok 19 - probe other team
+  ---
+  duration_ms: 0.027474
+  type: 'test'
+  ...
+# Subtest: probe neutral repository link
+ok 20 - probe neutral repository link
+  ---
+  duration_ms: 0.086659
+  type: 'test'
+  ...
+# Subtest: probe completes without issue
+ok 21 - probe completes without issue
+  ---
+  duration_ms: 0.026299
+  type: 'test'
+  ...
+# Subtest: probe closes without issue
+ok 22 - probe closes without issue
+  ---
+  duration_ms: 0.023189
+  type: 'test'
+  ...
+# Subtest: probe neutral title
+ok 23 - probe neutral title
+  ---
+  duration_ms: 0.021151
+  type: 'test'
+  ...
+# Subtest: probe punctuation without issue
+ok 24 - probe punctuation without issue
+  ---
+  duration_ms: 0.020615
+  type: 'test'
+  ...
+# Subtest: probe issue prose without identifier
+ok 25 - probe issue prose without identifier
+  ---
+  duration_ms: 0.020761
+  type: 'test'
+  ...
+# Subtest: BOARD_METADATA_SHAPE rejects missing or malformed metadata
+ok 26 - BOARD_METADATA_SHAPE rejects missing or malformed metadata
+  ---
+  duration_ms: 0.093854
+  type: 'test'
+  ...
+# Subtest: template is an accepted positive control
+ok 27 - template is an accepted positive control
+  ---
+  duration_ms: 0.132057
+  type: 'test'
+  ...
+# Subtest: event-file CLI measures every probe with exact exit and code
+ok 28 - event-file CLI measures every probe with exact exit and code
+  ---
+  duration_ms: 567.230586
+  type: 'test'
+  ...
+# Subtest: mutation remove BOARD_METADATA_SHAPE
+ok 29 - mutation remove BOARD_METADATA_SHAPE
+  ---
+  duration_ms: 64.58287
+  type: 'test'
+  ...
+# Subtest: mutation remove BOARD_ACCEPTANCE_REFERENCE
+ok 30 - mutation remove BOARD_ACCEPTANCE_REFERENCE
+  ---
+  duration_ms: 66.783624
+  type: 'test'
+  ...
+1..30
+# tests 30
+# suites 0
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 751.562158
