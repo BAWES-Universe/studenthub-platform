@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { activationId, validateIdLedger, validateObservations, derive, validateMint, optionsCheck, repositoryFacts, RETAINED_PARENT } from '../mint-shu71-package.mjs';
 import { hash } from '../phase-a-driver.mjs';
@@ -8,6 +9,7 @@ import { canonicalBytes } from '../../shu71-activation-package.mjs';
 import { REQUIRED_CAPABILITIES } from '../host-lifecycle.mjs';
 import { createGitAdapter, SEALED_SEED_BLOBS } from '../../reseed-append-contract.mjs';
 import { composeApproval } from '../compose-shu71-approval.mjs';
+import { render, serviceParameters } from '../units.mjs';
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const bytes = v => canonicalBytes(v, false);
 export const mintControlName = 'SHU71 mint positive controls and named refusals';
@@ -42,6 +44,17 @@ export function runMintControls() {
   const composed = composeApproval({ pkg: result.pkg, revision: facts.revision, activationId: result.pkg.activation_id, checkout: options.checkout,
     tree: facts.tree, binding: facts.binding, anchor: facts.anchor, publicKeyPem: facts.publicKeyPem });
   assert.deepEqual(composed.payload, result.spec.production, 'MINT_COMPOSER_CONSUMES');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mint-render-control-'));
+  try {
+    const supervisor = path.join(tmp, 'supervisor.env'), coordinator = path.join(tmp, 'coordinator.env');
+    fs.writeFileSync(supervisor, 'SHU_SUPERVISOR_SECRET=' + 'x'.repeat(32) + '\n');
+    fs.writeFileSync(coordinator, 'GITHUB_TOKEN=synthetic\nLINEAR_API_TOKEN=synthetic\n');
+    const units = render(serviceParameters({ ...result.spec.render, supervisorEnvironmentFile: supervisor, coordinatorEnvironmentFile: coordinator }));
+    for (const [name, text] of Object.entries(units)) {
+      const normalized = text.replaceAll(supervisor, result.spec.render.supervisorEnvironmentFile).replaceAll(coordinator, result.spec.render.coordinatorEnvironmentFile);
+      assert.equal(hash(normalized), result.spec.lifecycle.rendered_sha256[name], `MINT_EXISTING_RENDERER: ${name}`);
+    }
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   const kill = (name, fn, code) => assert.throws(fn, e => e.code === code, `${name}: ${code}`);
   const outputMutants = [
     ['stale revision', x => x.pkg.coordinator_revision = 'f'.repeat(40), 'MINT_REVISION'],
@@ -91,24 +104,28 @@ export function runMintControls() {
 // Actual local checkout bytes; remote refs and historical reseed objects are doubled.
 // Does not rewrite refs, consume credentials, or contact a host.
 export function repositoryControls() {
-  const repo = root.replace(/\/$/, ''), real = createGitAdapter(repo);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'mint-git-control-'));
+  try {
+  const repo = path.join(temp, 'checkout');
+  createGitAdapter(root)(['clone', '--shared', '--no-checkout', root, repo]);
+  const real = createGitAdapter(repo);
+  real(['checkout', '--detach', 'HEAD']);
   const revision = real(['rev-parse', 'HEAD']).toString().trim();
   const tree = real(['rev-parse', 'HEAD^{tree}']).toString().trim();
   const remote = `${revision}\trefs/heads/main\n${RETAINED_PARENT}\trefs/heads/coordinator/SHU-140\n6c9c14907189fe3af733969c3d8f3a2c4e21f9b0\trefs/heads/coordinator/SHU-254\n`;
-  // All actual bytes checked; git status may include the test runner's scratch files.
+  // Clean disposable checkout: actual bytes and status are checked, not bypassed.
   const boundary = change => () => (args, opts) => {
     const key = args.join(' ');
     const changed = change?.(key);
     if (changed !== undefined) return Buffer.from(changed);
     if (key === 'remote get-url origin') return Buffer.from('https://github.com/BAWES-Universe/studenthub-platform.git');
-    if (key.startsWith('rev-parse refs/') && key.endsWith('coordinator/SHU-140')) return Buffer.from(RETAINED_PARENT);
-    if (key.startsWith('rev-parse refs/') && key.endsWith('coordinator/SHU-254')) return Buffer.from('6c9c14907189fe3af733969c3d8f3a2c4e21f9b0');
+    if (key.startsWith('rev-parse ') && key.endsWith('coordinator/SHU-140')) return Buffer.from(RETAINED_PARENT);
+    if (key.startsWith('rev-parse ') && key.endsWith('coordinator/SHU-254')) return Buffer.from('6c9c14907189fe3af733969c3d8f3a2c4e21f9b0');
     if (args[0] === 'merge-base') return Buffer.from('');
     if (args[0] === 'merge-tree') return Buffer.from(tree);
     if (args[0] === 'ls-tree' && args.includes('-t')) return Buffer.from(Object.entries(SEALED_SEED_BLOBS).map(([name, oid]) => `100644 blob ${oid}\t${name}\0`).join(''));
     if (args[0] === 'ls-remote') return Buffer.from(remote);
     if (key === 'rev-parse refs/remotes/origin/main') return Buffer.from(revision);
-    if (args[0] === 'status') return Buffer.from('');
     return real(args, opts);
   };
   const good = repositoryFacts(repo, boundary());
@@ -122,4 +139,5 @@ export function repositoryControls() {
     ['wrong remote', key => key === 'remote get-url origin' ? 'https://example.invalid/repo' : undefined, 'MINT_REMOTE'],
   ]) assert.throws(() => repositoryFacts(repo, boundary(changed)), e => e.code === code, `${name}: ${code}`);
   return { revision, binding: good.binding };
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 }
