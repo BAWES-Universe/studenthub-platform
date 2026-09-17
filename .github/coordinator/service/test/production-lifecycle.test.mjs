@@ -130,6 +130,72 @@ test('DETERMINISM gate-off single tick at network and bracketing readiness', asy
   }
 });
 
+// J1: execute real scratch create/write/remove effects at each generated probe
+// boundary, entirely inside the translated fixture filesystem.
+test('J1 prerequisite scratch permits a clean gate-off receipt', async t => {
+  const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+  f.faults.capabilityScratch = [];
+  await f.run('install'); await f.run('start');
+  assert.equal(f.faults.capabilityScratch.length, 10);
+  f.faults.capabilityScratch.length = 0;
+  const [outcome] = await Promise.allSettled([f.run('running-gate-off')]);
+  t.diagnostic(`J1 scratchDirs=${f.faults.capabilityScratch.length} outcome=${outcome.status} code=${outcome.reason?.code ?? 'none'}`);
+  assert.equal(f.faults.capabilityScratch.length, 5);
+  assert.equal(outcome.status, 'fulfilled', 'J1_PREREQUISITE_RECEIPT_REQUIRED');
+  assert.equal(outcome.value.evidence.ok, true);
+  const proof = outcome.value.evidence.after.proof;
+  assert.equal(proof.writes, 0);
+  assert.equal(proof.ticks, 3);
+  assert.deepEqual(proof.before, proof.after);
+  assert.deepEqual(f.faults.capabilityScratch, Array(5).fill('/tmp'));
+});
+
+test('J1 prerequisite scratch preserves all 18 H1 interleavings', async t => {
+  for (const target of ['pre-action', 'pre-action-transient', 'git', 'gh', 'readiness', 'watch', 'baseline', 'poll', 'final-readiness']) {
+    for (const rootKey of ['workspace_state_dir', 'supervisor_state_dir']) {
+      const f = productionFixture(t, { operations: ['install', 'start', 'running-gate-off'] });
+      f.faults.capabilityScratch = [];
+      await f.run('install'); await f.run('start');
+      assert.equal(f.faults.capabilityScratch.length, 10);
+      f.faults.capabilityScratch.length = 0;
+      let writes = 0, conflicts = 0, readiness = 0;
+      const filename = `${f.spec.window[rootKey]}/j1-tick`;
+      const inject = () => {
+        if (writes || conflicts) return;
+        if (f.scheduledTick() === '2') { conflicts++; return; }
+        f.write(filename, 'scheduled tick landed');
+        assert.equal(fs.readFileSync(f.resolve(filename), 'utf8'), 'scheduled tick landed');
+        writes++;
+        if (target === 'pre-action-transient') fs.unlinkSync(f.resolve(filename));
+      };
+      if (target.startsWith('pre-action')) inject();
+      f.faults.boundary = point => {
+        if (point.phase !== 'before') return;
+        if (target === 'watch' && point.kind === 'watch') inject();
+        if (target === 'baseline' && point.kind === 'readdirSync' && point.args[0] === f.spec.window.workspace_state_dir) inject();
+        if (point.kind === 'command' && (target === 'git' && point.args.includes('ls-remote') || target === 'gh' && point.args[0] === '/usr/bin/gh')) inject();
+      };
+      const original = f.provider.serviceReadiness;
+      f.provider.serviceReadiness = (...args) => {
+        readiness++;
+        if (target === 'readiness' && readiness === 1 || target === 'final-readiness' && readiness === 3) inject();
+        return original(...args);
+      };
+      if (target === 'poll') f.faults.wait = inject;
+      const [outcome] = await Promise.allSettled([f.run('running-gate-off')]);
+      f.faults.boundary = null;
+      t.diagnostic(`J1 H1 ${target} ${rootKey}: scratchDirs=${f.faults.capabilityScratch.length} actualWrites=${writes} conflicts=${conflicts} code=${outcome.reason?.code ?? 'none'}`);
+      assert.equal(writes, 1);
+      assert.equal(conflicts, 0);
+      assert.equal(outcome.reason?.code, 'SHU251_PROVIDER_GATE_OFF');
+      // Preflight is not reached when the recorded baseline already differs.
+      assert.equal(f.faults.capabilityScratch.length, ['pre-action', 'pre-action-transient', 'watch', 'baseline'].includes(target) ? 0 : 5);
+      assert.equal(f.lockHeld('journal.lock'), false);
+      assert.equal(f.lockHeld('host-tick.lock'), false);
+    }
+  }
+});
+
 // H1: the write really reaches disposable storage only after a successful
 // modeled scheduled tick. Count bytes written, not a requested injection.
 for (const target of ['initialize', 'git', 'gh', 'readiness', 'poll', 'final-readiness', 'finalize', 'baseline', 'before-watch', 'before-watch-transient', 'capability']) {
@@ -364,6 +430,7 @@ test('PROVIDER default entrypoint wiring and no implementation option', async t 
 
 const mutations = cases.map(([code]) => ({ name: code, pattern: `PROVIDER guard ${code}`, from: 'if (!condition) refuse(code);', to: `if (!condition && code !== '${code}') refuse(code);`, assertion: `${code}_REQUIRED` }));
 mutations.push(
+  { name: 'J1 scratch restored to watched root', pattern: 'J1 prerequisite scratch permits', from: "temp_dir: '/tmp'", to: 'temp_dir: w.workspace_state_dir', assertion: 'J1_PREREQUISITE_RECEIPT_REQUIRED' },
   { name: 'H1 preflight observation omitted', module: 'host-lifecycle', pattern: 'OBSERVATION gate-off actual writes gh$', from: 'await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))', to: 'await execute(step, spec, options, io)', extra: { module: 'host-lifecycle', from: 'await host.gateOffBaseline(baseline);', to: 'void baseline;' }, assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
   { name: 'H1 first readiness observation omitted', module: 'host-lifecycle', pattern: 'OBSERVATION gate-off actual writes readiness$', from: 'await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))', to: 'await execute(step, spec, options, io)', extra: { module: 'host-lifecycle', from: 'await host.gateOffBaseline(baseline);', to: 'void baseline;' }, assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
   { name: 'H1 persisted baseline omitted', pattern: 'OBSERVATION gate-off actual writes before-watch$', from: 'gateObservation !== null && equal(before, gateObservation.before)', to: 'gateObservation !== null', assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
@@ -404,6 +471,10 @@ for (const mutation of mutations) test(`PROVIDER named mutation ${mutation.name}
   assert.equal(result.status, 1, output); assert.match(output, /^# fail 1$/m);
   assert.match(output, /code: 'ERR_ASSERTION'/); assert.ok(output.includes(mutation.assertion), output);
   assert.doesNotMatch(output, /TypeError|SyntaxError|ERR_MODULE_NOT_FOUND/);
+  if (mutation.name.startsWith('J1 ')) {
+    assert.match(output, /J1 scratchDirs=5 outcome=rejected code=SHU251_PROVIDER_GATE_OFF/);
+    t.diagnostic('J1 reversal: scratchDirs=5; SHU251_PROVIDER_GATE_OFF kills clean receipt');
+  }
   if (mutation.name.startsWith('gate-off ')) t.diagnostic(`${mutation.name}: ${output.match(/# gate-off [^\n]+/)?.[0]}`);
   if (mutation.name.startsWith('H1 ')) {
     assert.match(output, /actualWrites=1 conflicts=0 outcome=fulfilled/);
@@ -460,7 +531,7 @@ test('CLOSURE split ownership and fresh service readiness require no acceptance 
   assert.ok(!f.commands.some(c => c.file === '/usr/bin/node' && ['worker', 'transport'].includes(c.args[1])));
   assert.ok(!f.events.some(e => e[0] === 'read' && Object.values(f.spec.lifecycle.environment).some(v => v.path === e[1])));
   const probes = f.commands.filter(c => c.file === '/usr/bin/setpriv').flatMap(c => c.args).filter(a => a.includes('fs.mkdtempSync'));
-  assert.ok(probes.length > 0 && probes.every(p => p.includes(JSON.stringify(f.spec.window.workspace_state_dir)) && !p.includes(JSON.stringify(f.spec.lifecycle.evidence_dir))), 'service probes use writable service storage, never root-only evidence');
+  assert.ok(probes.length === 20 && probes.every(p => p.includes(JSON.stringify('/tmp')) && !p.includes(JSON.stringify(f.spec.window.workspace_state_dir)) && !p.includes(JSON.stringify(f.spec.lifecycle.evidence_dir))), 'service probes use writable scratch storage, never watched state or root-only evidence');
   assert.equal(f.spec.lifecycle.environment.supervisor.uid, 0);
   assert.equal(f.spec.lifecycle.environment.coordinator.uid, 1001);
 });

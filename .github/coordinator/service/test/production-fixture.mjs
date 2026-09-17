@@ -34,7 +34,7 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
   };
   function mkdir(p, mode = 0o755) { fs.mkdirSync(resolve(p), { recursive: true, mode }); }
   function write(p, bytes, mode = 0o600) { mkdir(path.dirname(p)); fs.writeFileSync(resolve(p), bytes, { mode }); }
-  for (const p of ['/etc/systemd/system', spec.lifecycle.evidence_dir, spec.window.workspace_state_dir, spec.window.supervisor_state_dir, '/reviewed/repo']) mkdir(p);
+  for (const p of ['/etc/systemd/system', spec.lifecycle.evidence_dir, spec.window.workspace_state_dir, spec.window.supervisor_state_dir, '/reviewed/repo', '/tmp']) mkdir(p);
   for (const p of [spec.lifecycle.evidence_dir, spec.window.workspace_state_dir, spec.window.supervisor_state_dir]) fs.chmodSync(resolve(p), 0o700);
   for (const v of Object.values(spec.lifecycle.environment)) { write(v.path, 'NO_ENV_VALUES_READ'); owners.set(v.path, [v.uid, v.gid]); }
   write('/etc/shu/approvals/owner.pub', owner.publicKey.export({ format: 'pem', type: 'spki' }), 0o644);
@@ -122,6 +122,21 @@ export function productionFixture(t, { operations = ['install', 'start', 'pin', 
     if (file === '/usr/bin/ss') return out(`u_str LISTEN 0 10 ${spec.window.supervisor_socket} 1 * 0 users:(("node",pid=123,fd=5))`);
     if (file === '/usr/bin/node') return out(JSON.stringify({ evidence: args[1] === 'worker' ? { ok: true, pid: 4321, start_token: '12345' } : { ok: true, stage: 'RUNNING' } }));
     if (file === '/usr/bin/setpriv') {
+      // Opt-in model of the five shipped probes' real scratch-directory effects.
+      // Read the destination from the actual generated script; never run host commands.
+      const source = args[args.indexOf('-e') + 1];
+      if (faults.capabilityScratch && args.includes('-e')) {
+        const match = source.match(/const dir=fs\.mkdtempSync\(path\.join\(("(?:[^"\\]|\\.)*"),/)
+          ?? source.match(/console\.log\(JSON\.stringify\(resolveCvtsudoers\(("(?:[^"\\]|\\.)*")\)/);
+        if (match) {
+          const parent = JSON.parse(match[1]);
+          const dir = fs.mkdtempSync(path.join(resolve(parent), 'shu251-cap-'));
+          fs.writeFileSync(path.join(dir, 'probe'), 'real prerequisite scratch');
+          assert.equal(fs.readFileSync(path.join(dir, 'probe'), 'utf8'), 'real prerequisite scratch');
+          fs.rmSync(dir, { recursive: true });
+          faults.capabilityScratch.push(parent);
+        }
+      }
       if (args.includes('/usr/bin/id')) return out('65534');
       if (args.some(a => a.includes('resolveCvtsudoers'))) return out('{"available":true,"identity":"/usr/bin/cvtsudoers"}');
       return out(''); // recorded service-identity capability probe outputs

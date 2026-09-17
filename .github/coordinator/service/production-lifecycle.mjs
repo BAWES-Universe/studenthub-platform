@@ -287,7 +287,7 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
     remoteMain,
     async probe() {
       const approved_main = remoteMain();
-      const probeSpec = { service_uid: c.identity.uid, service_gid: c.identity.gid, checkout: w.repo_dir, temp_dir: w.workspace_state_dir };
+      const probeSpec = { service_uid: c.identity.uid, service_gid: c.identity.gid, checkout: w.repo_dir, temp_dir: '/tmp' };
       const caps = await capabilityPreflight(probeSpec, hostProbe(probeSpec, boundary));
       // Prove file+directory fsync and rename on this actual evidence filesystem.
       evidence((root, fd, verify) => {

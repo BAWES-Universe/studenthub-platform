@@ -1,4 +1,6 @@
-# R4 H1 amendment — repository-only writer evidence
+# R4 H1 amendment — historical repository-only writer evidence
+
+J1 scratch placement is superseded by [R5-AMEND-VALIDATION.md](R5-AMEND-VALIDATION.md).
 
 Starting head: `de54fb46dacd475aad1b05c106eb07e0c427c468` (PR #135).
 Both `/home/bawes/work/verdict-135-r4.md` and its JSON were read before changes.
@@ -45,8 +47,8 @@ unchanged; only the expected outcome changed. Logs/scripts are retained under
   `start` therefore captures `gate_off_baseline` under its **existing** writer
   custody and includes it in the durable, digest-bound start receipt. Gate-off
   loads that journal under journal custody and compares the recorded baseline
-  with the observer's baseline before preflight or receipt resumption. A write
-  even before watcher registration cannot simply become a new trusted baseline.
+  with the observer's baseline before preflight or receipt resumption **when a
+  start receipt exists**. A write even before watcher registration cannot simply become a new trusted baseline.
   Directory timestamps also expose a create/delete pair in that interval.
 - Older start receipts missing this field refuse `SHU251_PROVIDER_GATE_OFF`.
   This is intentionally conservative: any recorded-state drift since start
@@ -198,8 +200,10 @@ guard calls 61 → 64. `git diff --check` passes.
 - No transactional claim couples a filesystem observation to receipt/archive
   persistence. A late failure can leave durable artifacts; recovery at every
   evidence/archive syscall remains unproved. The recorded-start comparison also
-  applies before receipt resumption, so persisted state drift cannot be accepted
-  merely by returning a prior receipt on retry.
+  applies before receipt resumption **when a start receipt exists**. With that
+  receipt present, persisted state drift cannot be accepted merely by returning
+  a prior receipt on retry. If it is absent, resumption returns before the later
+  order check; no unconditional baseline comparison on resumption is claimed.
 - A3 credential isolation, A4 worker bootstrap/transitional-state/live systemd,
   A6 unconditional shutdown/lock-failure cleanup/full inventory/syscall recovery,
   and A7 expiry teardown/continuous approval/key provisioning/executing-tool tree

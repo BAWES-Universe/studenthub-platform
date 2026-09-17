@@ -58,15 +58,19 @@ before the old observer existed. The observer now wraps initialization through
 finalization, with one recursive watcher covering both state roots before the
 baseline scan. A durable baseline recorded by `start` under its existing writer
 custody also covers the interval before watcher registration. Gate-off compares
-that baseline before preflight; file contents/timestamps and directory timestamps
-must match. Older start receipts without this baseline refuse. A final inventory
+that baseline before preflight or receipt resumption when a start receipt exists;
+file contents/timestamps and directory timestamps must match. Older start receipts without this baseline refuse. A final inventory
 and queued-event check precede successful return; errors close the watcher.
 [R4-AMEND-VALIDATION.md](R4-AMEND-VALIDATION.md) records the reproduction,
-actual-write regressions, mutations and limits. This is conservative: changes
-since start, including the existing capability probes' own temporary writes in
-workspace state, refuse. No exception for those writes or live A5 success is
-claimed. The capability-probe placement/zero-write incompatibility remains a
-limitation of usable host acceptance, not a reason to emit a zero-write receipt.
+actual-write regressions, mutations and limits. Changes in watched state since
+start still refuse. R5 found that the observer's own capability probes always
+created scratch directories there, making clean A5 acceptance impossible.
+The probes now use `/tmp`; their checks and the complete observation window are
+unchanged, and no watched writes are exempted. If a spec places a watched root
+at or above `/tmp`, those scratch writes still refuse. Repository boundary tests
+model all five probes' real create/write/remove effects and prove a clean receipt
+plus continued refusal of scheduled writes in both state roots; this is not live
+A5 acceptance. See [R5-AMEND-VALIDATION.md](R5-AMEND-VALIDATION.md).
 The `launches: 0` receipt field is a literal, not a measurement.
 The launch claim relies on zero observed local authoritative-state writes (including durable
 launch receipts), unchanged inventory, dispatch disabled, and no observed children;
@@ -108,10 +112,10 @@ the checkout guard mutations. This classification does not approve live executio
 
 Legacy operational routes retain their earlier contract; the new artifact does
 not authenticate an end-to-end legacy/Phase-B composition. No independent
-exact-head verifier has reviewed this H1 amendment yet. The independent R4
-AMEND at `de54fb4` confirmed G1, F1 and F4 closed and retained A2 closed at repository scope;
+exact-head verifier has reviewed this J1/J2 amendment yet. The independent R5
+AMEND at `7b3cdc3` confirmed H1, G1, F1 and F4 closed and retained A2 closed at repository scope;
 A3/A4/A5/A7 partial; A6 open. This amendment does not upgrade those markers.
-Current counts and limitations are in [R4-AMEND-VALIDATION.md](R4-AMEND-VALIDATION.md).
+Current counts and limitations are in [R5-AMEND-VALIDATION.md](R5-AMEND-VALIDATION.md).
 
 These limitations are not reclassified as LIVE_ONLY: several require source-level
 composition with the separately scoped credential and disposable-checkout lanes.
