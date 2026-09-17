@@ -1,14 +1,22 @@
+# Typed lifecycle extension
+
+The repository-only typed lifecycle executor and its fake-only verification are
+documented in [HOST-LIFECYCLE.md](HOST-LIFECYCLE.md). The new actions extend this
+driver; the legacy Phase-A route is described below.
+
 # SHU-251 Phase A and A12 contract
 
-Repository-only preparation. These entry points are inert on import. Nothing here
-installs packages or units, enables dispatch, or initiates a service start/restart.
+Repository-only preparation. These entry points are inert on import. Importing the modules does not
+install packages or units, enable dispatch, or initiate a service start/restart.
+The lifecycle route can install units and start/restart services when executed.
 No host acceptance is claimed by repository tests.
 
-## Phase A input and execution
+## Legacy Phase A input and execution
 
 `node phase-a-driver.mjs STEP /absolute/driver.json` prints a dry-run plan.
-`--execute` performs observations and writes only the driver custody files described below. A plan is deliberately not an acceptance
-receipt. Mutation steps additionally require **both**
+`--execute` performs the legacy operations described below, including observations,
+driver custody writes and explicitly approved replay/release, cleanup or rollback.
+A plan is deliberately not an acceptance receipt. Mutation steps additionally require **both**
 `SHU251_HOST_MUTATION_APPROVED=true` and
 `--approved-host-mutation <full-40-character-SHA>` matching the spec. Missing,
 partial or mismatched approval gives `SHU251_HOST_MUTATION_APPROVAL`, including
@@ -45,12 +53,17 @@ The driver must itself run from that checkout. Workspace and supervisor render
 paths must agree with the window. The separately read window file must match
 byte-independent canonical JSON before any execution.
 
-Every executed step first invokes reviewed `inventory`, which binds clean local
+Every executed legacy step first invokes reviewed `inventory`, which binds clean local
 HEAD and remote main to the approved SHA. Git trust is passed only to that child
 process for the one checkout, through `GIT_CONFIG_COUNT`; no configuration file
-is written. All nine operations route through
-`shu251-operational-bindings.sh ACTION /absolute/window.json`. No binding logic
-is copied. The driver checks the returned success envelope, binding discriminator
+is written. The nine legacy binding operations route through
+`shu251-operational-bindings.sh ACTION /absolute/window.json`, with exactly two
+arguments. The same wrapper also accepts ten lifecycle actions and routes
+`ACTION /absolute/driver.json [driver flags]` to `phase-a-driver.mjs`. Lifecycle
+flags and the caller's environment are forwarded unchanged; the driver enforces
+its closed flag parser and approval checks. Lifecycle preflight uses its production
+provider, not the legacy inventory binding. The wrapper manufactures no approval.
+No binding logic is copied. The driver checks the returned success envelope, binding discriminator
 and relevant identity fields; malformed/missing evidence is
 `SHU251_BINDING_RECEIPT`.
 
@@ -163,14 +176,22 @@ not signatures or proof of an untrusted producer's identity. No keys are created
 
 ## A12 host contract
 
-`node host-suite-contract.mjs preflight /absolute/suite.json` detects capabilities.
-`node host-suite-contract.mjs run /absolute/suite.json` always performs that same
-preflight before invoking Node tests. The suite spec contains `service_uid`
-(non-root), `service_gid`, absolute `checkout`, absolute `temp_dir`, absolute
-`files` under the checkout, and positive integer `expected_tests`. Supply the
-complete reviewed test list and its exact reviewed count. The process identity
-is the suite identity; service-specific probes explicitly use the supplied service
-UID/GID. No automatic identity escalation is used for the suite itself.
+`node host-suite-contract.mjs preflight /absolute/suite.json` binds identity,
+revision and inventory before detecting capabilities. It does not check custody
+or quiescence. `node host-suite-contract.mjs run /absolute/suite.json` performs
+capability preflight before invoking Node tests. Its runner first verifies disposable
+custody, the exact non-root service UID/GID/groups, pinned revision/tree, inventory
+and inactive service/timer states. Caller-selected `files` and `expected_tests`
+are now rejected. The pinned revision supplies the suite inventory and its count.
+See [A12-CLOSURE.md](A12-CLOSURE.md) for the replacement spec, create/remove actions,
+verification evidence and outstanding blockers. No authoritative inventory is yet
+shipped; A12 remains blocked. Historical counts below are not an inventory for
+this revision. No automatic identity escalation is used for the suite itself.
+The R2 CLI correction allows cyclic imports to finish before awaiting actions.
+Subprocess regressions for `preflight`, `run`, `measure`, `create` and `remove`
+prove structured identity refusals (exit 2), with the restored top-level-await
+mutant caught for every action. These repository controls do not prove host
+capability or successful A12 execution.
 
 | Capability | Detection | Named refusal |
 | --- | --- | --- |
@@ -197,7 +218,16 @@ process-scoped inline Git trust described above.
 
 Probe exceptions also become the corresponding named refusal, never a skip.
 Preflight creates only bounded temporary probes, cleans them up, and never
-installs capabilities. A missing capability requires a separate operator action.
+installs capabilities. A missing privilege/worker capability is allowed only when
+all tests requiring it have an exact authorized skip name and byte-exact reason.
+Any uncovered test fails preflight under the existing capability code, by name.
+The pinned inventory's `requirements` array contains one `{name, capabilities}`
+row per `names` occurrence; each capability is `{name, reason?}`. Unknown or
+incomplete declarations fail `SHU251_PREFLIGHT_REQUIREMENTS`; unauthorized
+name/reason pairs fail `SHU251_PREFLIGHT_SKIP_BINDING`. Empty capability arrays
+are explicit reviewed declarations. Infrastructure capabilities, including
+namespace proof, remain mandatory. No sudo expansion or namespace deferment is
+part of this contract. Outcomes are never synthesized or reclassified.
 
 `PERMITTED_SKIPS` preserves eight exact sanctioned exceptions: the seven historical
 exceptions documented in `ENV-CONTENT-VALIDATION.md` and
@@ -350,7 +380,8 @@ credential change, signing, remote fixture change, PR creation or merge occurred
 ## SHU-251 packaged parser capability correction (Codex/GPT)
 
 The observed `SHU251_PREFLIGHT_CVTSUDOERS` halt was a filename mismatch:
-trusted sudo-rs supplies `/usr/bin/cvtsudoers.ws`, while the former probe only
+the packaged classic parser uses `/usr/bin/cvtsudoers.ws` in the alternatives
+arrangement, while the former probe only
 tried `/usr/bin/cvtsudoers`. This is not evidence of a missing sudo package.
 The reviewed resolution constant is:
 
@@ -380,7 +411,7 @@ with `-f json`. A spawn error or nonzero exit refuses. Exit zero must produce JS
 with exactly one `User_Specs` entry, a `User_List` array containing username `root`,
 and exactly one `Cmnd_Specs` entry whose `Commands` array contains command `ALL`.
 Only the documented `User_List` spelling is accepted; `Users` is not an alias.
-The test preserves the operator's actual sudo-rs raw prefix and a complete local
+The test preserves the operator-supplied packaged-parser raw prefix and a complete local
 cvtsudoers capture, and conditionally executes the installed real provider without
 a skip. `Host_List` and `runasusers` are observed but are not validation requirements.
 The parser child receives only `LC_ALL=C`, excluding inherited loader and operator
@@ -404,7 +435,7 @@ Refusals, raised in `service/host-suite-contract.mjs`:
 - `SHU251_PREFLIGHT_CVTSUDOERS_OUTPUT`: invalid/empty conversion JSON, wrong
   fixture shape, or malformed child result.
 
-Positive controls cover conventional and sudo-rs success with exact emitted
+Positive controls cover the conventional and packaged classic parser paths with exact emitted
 identity, absent candidates, nonzero conversion, invalid and empty JSON, missing
 shape, hostile PATH, unapproved path, dual providers, symlink, nonregular file,
 nonexecutable file, denied execution access, substitution on open and changes
@@ -452,3 +483,15 @@ TMPDIR=/tmp SHU_TEST_CLOCK_OFFSET_MS=31536000000 \
 The immutable config blob on both sides remains
 `8a0317173d76f4c09811b9365e25b380b38dc93d`. Only this document,
 `host-suite-contract.mjs`, and `test/host-suite-contract.test.mjs` change.
+
+
+### Board-policy correction to parser provenance
+
+The earlier version of this record called `cvtsudoers.ws` a sudo-rs provider.
+That attribution was unsupported; the governing directive identifies it as the
+packaged classic parser name in the alternatives arrangement. Filename resolution
+and fake conversion tests do not establish installed package provenance. Historical
+test labels containing `sudoRs` or `SUDO-RS` remain unchanged in the A12 lane's test
+file; they are not evidence of implementation identity. No assertion, named code,
+parser guard or skip allowance was changed by this documentation correction.
+See [the acceptance operating record](../../../docs/acceptance-record.md).
