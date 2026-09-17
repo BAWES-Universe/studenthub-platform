@@ -29,7 +29,7 @@
 //     push is already done and must not run again).
 
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, mkdtempSync, rmSync, lstatSync, renameSync, openSync, fsyncSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { snapshotWorkspaceResult } from "./workspace-result.mjs";
@@ -383,10 +383,12 @@ export function prePushRecordPath(stateDir, attempt_id) {
   return `${stateDir}/push-${attempt_id}.json`;
 }
 
-export function persistPrePush({ stateDir, attempt_id, result_sha, branch, repo, worktree, writeImpl = writeFileSync, mkdirImpl = mkdirSync }) {
+export function persistPrePush({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree, writeImpl = writeFileSync, mkdirImpl = mkdirSync }) {
   const path = prePushRecordPath(stateDir, attempt_id);
   const record = JSON.stringify({
     version: 1,
+    target_sha,
+    update_mode: "fast-forward",
     stage: PUSH_STAGES[0], // "PENDING"
     attempt_id,
     result_sha,
@@ -433,6 +435,29 @@ export async function remoteBranchHead({ repo, branch, gitImpl = execFile, remot
   return { ok: true, head };
 }
 
+// Explicit recovery is separate from the ordinary push API: existing HOLD
+// semantics remain unchanged. The trusted caller must re-check current attempt
+// authorization, even when only confirming an already landed result.
+const RECOVERY = Symbol("reviewed exact-attempt recovery");
+export async function recoverExactSha(options) {
+  if (typeof options.beforePublish !== "function") return {
+    ok: false, stage: "HOLD", pause_adapter: true, reason_code: "B3_RECOVERY_AUTHORIZATION",
+    reason: "recovery requires current attempt authorization",
+  };
+  return pushExactSha({ ...options, [RECOVERY]: true });
+}
+
+function durableRecoveryMark(stateDir, attempt_id, record) {
+  const file = prePushRecordPath(stateDir, attempt_id);
+  const temp = `${file}.recovery-${process.pid}`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: "wx", flush: true });
+    renameSync(temp, file);
+    const fd = openSync(stateDir, "r");
+    try { fsyncSync(fd); } finally { closeSync(fd); }
+  } finally { rmSync(temp, { force: true }); }
+}
+
 // pushExactSha — the authoritative, validated push. Returns:
 //   { ok:true, stage:"PUSHED", remote_head } on success
 //   { ok:true, stage:"ALREADY_PUSHED", remote_head } if the remote already has it (idempotent)
@@ -468,6 +493,7 @@ export async function pushExactSha({
   scoped_base_sha = null,
   snapshotImpl = snapshotWorkspaceResult,
   beforePublish = null,
+  [RECOVERY]: recovering = false,
 }) {
   // --- identity / shape -----------------------------------------------------
   if (!workspaceReady && !SHA_RE.test(String(result_sha ?? ""))) {
@@ -627,7 +653,42 @@ export async function pushExactSha({
     return held(`remote check failed: ${remote.reason}`);
   }
 
-  if (existingRecord) {
+  if (recovering) {
+    const refuseRecovery = (code, reason) => ({ ...held(reason), reason_code: code });
+    try {
+      if (await beforePublish() !== true) return refuseRecovery("B3_RECOVERY_AUTHORIZATION", "recovery authorization expired or revoked");
+    } catch { return refuseRecovery("B3_RECOVERY_AUTHORIZATION", "recovery authorization unavailable"); }
+    try {
+      for (const file of [stateDir, prePushRecordPath(stateDir, attempt_id)]) {
+        const st = lstatSync(file);
+        if (st.isSymbolicLink() || st.uid !== process.getuid() || (st.mode & 0o077)) throw new Error("unsafe custody");
+      }
+      if (!lstatSync(prePushRecordPath(stateDir, attempt_id)).isFile()) throw new Error("not a file");
+    } catch { return refuseRecovery("B3_RECOVERY_JOURNAL", "recovery requires a private broker journal"); }
+    if (!existingRecord || existingRecord.version !== 1 ||
+        !["PENDING", "PUSHED"].includes(existingRecord.stage) ||
+        existingRecord.attempt_id !== attempt_id || existingRecord.target_sha !== target_sha ||
+        existingRecord.result_sha !== result_sha || existingRecord.branch !== branch ||
+        existingRecord.repo !== repo || existingRecord.worktree !== cwd ||
+        existingRecord.update_mode !== "fast-forward") {
+      return refuseRecovery("B3_RECOVERY_BINDING", "recovery journal does not bind this exact attempt");
+    }
+    if (remote.ok === true && remote.head === result_sha) {
+      try {
+        durableRecoveryMark(stateDir, attempt_id, { ...existingRecord, stage: "PUSHED",
+          remote_head: result_sha, pushed_at: existingRecord.pushed_at ?? new Date().toISOString() });
+      } catch { return refuseRecovery("B3_RECOVERY_DURABILITY", "could not durably confirm recovery"); }
+      cleanupBrokerRepo();
+      return { ok: true, stage: "ALREADY_PUSHED", remote_head: result_sha, recovered: true };
+    }
+    if (existingRecord.stage !== "PENDING" || remote.ok !== true || remote.head !== target_sha) {
+      return refuseRecovery("B3_RECOVERY_REMOTE", "recovery refuses an absent, rewritten or cross-lane remote head");
+    }
+    // Only this exact PENDING edge may resume from its exact bound parent.
+    // It remains an edge throughout; no journal is deleted or ignored.
+  }
+
+  if (existingRecord && !recovering) {
     // Recovery path: a pre-push record exists for this attempt. The remote is
     // authoritative for whether the push landed.
     if (remote.ok === true && remote.head === result_sha) {
@@ -668,7 +729,8 @@ export async function pushExactSha({
   try {
     if (beforePublish && await beforePublish() !== true) return held("result authorization expired or revoked");
   } catch { return held("result authorization unavailable"); }
-  const pre = persistImpl({ stateDir, attempt_id, result_sha, branch, repo, worktree: cwd });
+  const pre = recovering ? { ok: true, path: prePushRecordPath(stateDir, attempt_id) }
+    : persistImpl({ stateDir, attempt_id, target_sha, result_sha, branch, repo, worktree: cwd });
   if (!pre.ok) {
     // A concurrent broker won the reservation (EEXIST) — HOLD, the winner pushes.
     return held(pre.reason);
@@ -711,8 +773,10 @@ export async function pushExactSha({
   try {
     const rec = readPreImpl(stateDir, attempt_id);
     const mark = { ...(rec ?? {}), stage: PUSH_STAGES[1], result_sha, branch, remote_head, pushed_at: new Date().toISOString() };
-    writeFileSync(pre.path ?? prePushRecordPath(stateDir, attempt_id), `${JSON.stringify(mark)}\n`, { mode: 0o600 });
+    if (recovering) durableRecoveryMark(stateDir, attempt_id, mark);
+    else writeFileSync(pre.path ?? prePushRecordPath(stateDir, attempt_id), `${JSON.stringify(mark)}\n`, { mode: 0o600 });
   } catch (e) {
+    if (recovering) return { ...held("could not durably confirm recovery"), reason_code: "B3_RECOVERY_DURABILITY" };
     // Best-effort: the push succeeded and remote is confirmed; a mark failure is
     // not ambiguity about whether the push happened (remote is authoritative).
   }

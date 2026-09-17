@@ -1,4 +1,5 @@
 // Read-only authorization verifier. No record writer, gate setter or launcher.
+import { activationDigest, progressionHeads } from './two-fixture-progression.mjs';
 import { verify, createPublicKey } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { loadShu71PublicKey, SHU71_PUBLIC_KEY_PATH } from './shu71-public-key.mjs';
@@ -19,7 +20,7 @@ export function reviewedActivationBytes(record) {
 }
 const refusal = (code, detail) => ({ requested: true, state: 'refused', valid: false, code, reason: `${code}: ${detail}`, kind: 'two-fixture-v1' });
 
-export function validateTwoFixtureActivation({ record, config, revision, mainRevision, heads = {}, issues = [], env = {}, now = new Date(), publicKeyPath = SHU71_PUBLIC_KEY_PATH }) {
+export function validateTwoFixtureActivation({ record, config, revision, mainRevision, heads = {}, issues = [], env = {}, now = new Date(), publicKeyPath = SHU71_PUBLIC_KEY_PATH, receipts = [], readPush = () => null, isAncestor = () => false }) {
   const at = new Date(now).getTime();
   const expiry = Date.parse(record?.expires_at);
   if (!exact(record, keys) || record.kind !== 'two-fixture-v1' || typeof record.activation_id !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(record.activation_id ?? '') ||
@@ -38,12 +39,18 @@ export function validateTwoFixtureActivation({ record, config, revision, mainRev
   const binding = executionBindingError(record, revision, mainRevision);
   if (binding) return refusal('ACT_MALFORMED', binding);
   if (record.gates.reviewed !== record.gates.runtime || record.fixtures.some(f => !issues.some(i => i.id === f.issue_id && i.linearId)) || configured.length !== 2) return refusal('ACT_PARTIAL_ARMING', 'both gates and both resolvable fixtures required');
+  const digest = activationDigest(reviewedActivationBytes(record));
+  const progressed = progressionHeads({ record, config, receipts, digest, readPush, isAncestor });
+  if (!progressed) return refusal('ACT_STALE_SEED_HEAD', 'invalid receipt-bound progression');
   for (const fixture of record.fixtures) {
     let lane;
     try { lane = resolveFixtureLane(config, fixture.issue_id); } catch { return refusal('ACT_PARTIAL_ARMING', 'fixtures cannot be resolved'); }
     if (!lane) return refusal('ACT_PARTIAL_ARMING', 'fixtures cannot be resolved');
     if (fixture.branch !== `coordinator/${fixture.issue_id}` || fixture.lane.id !== fixture.issue_id || !isDeepStrictEqual(fixture.lane, lane) || !validateFixtureScopePolicy(lane).ok) return refusal('ACT_LANE_CROSS', 'issue must retain its exact reviewed lane definition and branch');
-    if (heads[fixture.branch] !== fixture.seed_head) return refusal('ACT_STALE_SEED_HEAD', 'branch head differs from bound seed');
+    if (heads[fixture.branch] !== fixture.seed_head) {
+      if (progressed[fixture.branch] !== heads[fixture.branch]) return refusal('ACT_STALE_SEED_HEAD', 'branch head differs from bound seed');
+    }
+    if (heads[fixture.branch] === fixture.seed_head && progressed[fixture.branch] !== fixture.seed_head) return refusal('ACT_STALE_SEED_HEAD', 'branch rewound after authorized progression');
   }
   let publicKeyPem;
   try { publicKeyPem = loadShu71PublicKey(publicKeyPath, config.two_fixture_activation_public_key); }
@@ -55,5 +62,5 @@ export function validateTwoFixtureActivation({ record, config, revision, mainRev
   } catch { /* absent or invalid trust anchor refuses */ }
   if (!authenticated || config.enable_dispatch !== false || (env.ENABLE_DISPATCH === 'true') !== record.gates.runtime) return refusal('ACT_MANUAL_GATE_BYPASS', 'signed reviewed gates diverge from runtime or committed configuration');
   return { requested: true, valid: true, state: record.gates.reviewed ? 'armed' : 'disabled', kind: record.kind,
-    ...record, target_issue_ids: record.fixtures.map(f => f.issue_id), reason: null };
+    ...record, activation_digest: digest, target_issue_ids: record.fixtures.map(f => f.issue_id), reason: null };
 }

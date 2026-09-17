@@ -559,6 +559,7 @@ export function validateReceipt(receipt) {
   };
 
   expectEnum("receipt_version", RECEIPT_VERSIONS);
+  if (Object.hasOwn(receipt, "activation_digest") && !/^[0-9a-f]{64}$/.test(receipt.activation_digest ?? "")) errors.push("invalid activation_digest");
   const authority = resolveReceiptRoleAuthority(receipt);
   if (!authority.ok) errors.push(authority.reason);
   expectType("issue_id", ["string"]);
@@ -721,6 +722,7 @@ export function createReceipt({
   allowed_paths = [],
   scoped_base_sha = null,
   episode_id = null,
+  activation_digest = null,
   attempt_id = randomUUID(),
   reserved_at = new Date().toISOString(),
 }) {
@@ -734,6 +736,7 @@ export function createReceipt({
     // armed, i.e. the historically-tagged migration state). Untagged legacy
     // receipts stay readable exactly as before.
     episode_id,
+    ...(activation_digest ? { activation_digest } : {}),
     stage: "RESERVED",
     requested_worker,
     worker_identity: null,
@@ -809,7 +812,14 @@ export function nextReceiptState(receipt, event, ctx = {}) {
     return unchanged(`stage ${receipt.stage} is terminal — no further transitions`);
   }
 
-  const copy = () => structuredClone(receipt);
+  const copy = () => {
+    const next = structuredClone(receipt);
+    // Preserve authenticated transport provenance through our own transitions;
+    // structuredClone drops symbols, JSON must continue to omit this metadata.
+    const actor = receiptCommentActorId(receipt);
+    if (actor) Object.defineProperty(next, RECEIPT_COMMENT_ACTOR, { value: actor });
+    return next;
+  };
   const at = () => nowIso(event.at ?? ctx.now?.());
   const note = (text) => {
     const next = copy();
@@ -1476,7 +1486,7 @@ export const PAUSE_MARKER_RE = /^coordinator-pause:\s*([a-z0-9-]+)$/m;
 // the SAME rule — a control that only one layer enforces is unreachable if the
 // other collapses its inputs first.
 export const RECEIPT_IMMUTABLE_FIELDS = Object.freeze([
-  "receipt_version", "role", "runtime",
+  "receipt_version", "role", "runtime", "activation_digest",
   "issue_id",
   "authorization_ref",
   "requested_worker",
@@ -2700,6 +2710,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, io =
     // SHU-231: stamp the episode on every receipt the coordinator writes. Null when
     // no episode is armed, so the disabled/global path is unchanged.
     episode_id: episodeScope?.episode_id ?? null,
+    activation_digest: singleRunActivation.activation_digest ?? null,
     // SHU-225 I7 (idempotency): a successor's attempt id is DERIVED from its
     // predecessor (freshAttempt over the predecessor attempt + role + round), not
     // minted fresh. A restart at any boundary therefore re-derives the SAME
