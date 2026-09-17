@@ -1,0 +1,58 @@
+TAP version 13
+# Subtest: CLOSURE_CUSTODY configured unequal uid gid passes and drift refuses
+not ok 1 - CLOSURE_CUSTODY configured unequal uid gid passes and drift refuses
+  ---
+  duration_ms: 13.523047
+  type: 'test'
+  location: '/home/bawes/work/a12inv/.github/coordinator/service/test/closure-environment.test.mjs:90:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    CLOSURE_ARM_PAIR_PASSES
+    
+    false !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    armingControl (file:///home/bawes/work/a12inv/.github/coordinator/service/test/closure-environment.test.mjs:75:41)
+    async TestContext.<anonymous> (file:///home/bawes/work/a12inv/.github/coordinator/service/test/closure-environment.test.mjs:90:90)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: CLOSURE_WIRING forked adapter receives nine keys and custody refusal is named
+not ok 2 - CLOSURE_WIRING forked adapter receives nine keys and custody refusal is named
+  ---
+  duration_ms: 58.167716
+  type: 'test'
+  location: '/home/bawes/work/a12inv/.github/coordinator/service/test/closure-environment.test.mjs:143:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    CLOSURE_WIRING_EXIT: SHU251_ENV_CUSTODY
+    
+    
+    1 !== 0
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    workerControl (file:///home/bawes/work/a12inv/.github/coordinator/service/test/closure-environment.test.mjs:136:12)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async TestContext.<anonymous> (file:///home/bawes/work/a12inv/.github/coordinator/service/test/closure-environment.test.mjs:144:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 0
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 130.928363

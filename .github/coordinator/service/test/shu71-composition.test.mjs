@@ -25,7 +25,15 @@ async function composition(t) {
   const execute = action => createShu71Production(p.id, p.boundary).execute(action);
   const armStart = p.events.length;
   assert.equal((await execute('run')).state, 'ARMED', 'B1_PRODUCTION_ARM');
-  assert.equal(effects(p, armStart), 116, 'B1_ARM_EFFECT_COUNT');
+  // Preserve the original 116 operations plus exactly five identity reads.
+  assert.equal(effects(p, armStart), 116 + 5, 'B1_ARM_EFFECT_COUNT');
+  assert.deepEqual(p.events.slice(armStart).filter(e => e.startsWith('command:')).slice(0, 5), [
+    'command:/usr/bin/systemctl:show --property=User --value shu-supervisor.service',
+    'command:/usr/bin/systemctl:show --property=Group --value shu-supervisor.service',
+    'command:/usr/bin/id:-u shu-coordinator',
+    'command:/usr/bin/id:-g shu-coordinator',
+    'command:/usr/bin/id:-gn shu-coordinator',
+  ], 'CLOSURE_ARM_IDENTITY_READ_ARGV');
   const signed = p.read(credential);
   config.two_fixture_activation_public_key = keys.publicKey.export({ type: 'spki', format: 'pem' });
   config.fixture_lane = pkg.fixtures[0].lane;

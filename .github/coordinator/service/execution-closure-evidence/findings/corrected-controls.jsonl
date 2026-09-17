@@ -1,0 +1,21 @@
+{"type":"outcome","name":"CLOSURE_ENV split passes combined and crossed refuse","status":"pass"}
+{"type":"outcome","name":"CLOSURE_ENV child reads fixed coordinator source with custody","status":"pass"}
+{"type":"outcome","name":"CLOSURE_ENV mutation combined accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_ENV mutation crossed accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_ENV mutation child adapter delivery omitted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY configured unequal uid gid passes and drift refuses","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation arming invalid identity name accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation arming invalid identity gid accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation arming conflates gid with uid","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation arming wrong gid accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation arming non0600 accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation arming configured identity ignored","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation child conflates gid with uid","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation child wrong gid accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_CUSTODY mutation child non0600 accepted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_WIRING forked adapter receives nine keys and custody refusal is named","status":"pass"}
+{"type":"outcome","name":"CLOSURE_WIRING mutation worker child delivery omitted","status":"pass"}
+{"type":"outcome","name":"CLOSURE_WIRING mutation worker process gid ignored","status":"pass"}
+{"type":"outcome","name":"CLOSURE_WIRING mutation worker custody diagnostic swallowed","status":"pass"}
+{"type":"outcome","name":"CLOSURE_LIFECYCLE independently pinned capability vocabulary","status":"pass"}
+{"type":"complete"}
