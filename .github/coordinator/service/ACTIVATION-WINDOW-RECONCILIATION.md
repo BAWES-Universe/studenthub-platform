@@ -584,3 +584,13 @@ index 3f7a352..9bec0be 100644
 +    assert.deepEqual(fs.readdirSync(root), ['.environment', 'shu-supervisor.service'], 'SHU251_CLEANUP: rollback must remove transaction artifacts');
 +    assertFixtureEnvironmentUnchanged(root);
 ```
+
+## B1 launch-content supplement
+
+The historical patches above retain their original secret-only staging contract.
+For SHU-71 arming, `/etc/shu/supervisor.env` now requires the nine adapter settings
+in addition to `SHU_SUPERVISOR_SECRET`, with root:root 0600 custody. Secret-only
+staging remains gate-off; it cannot pass the production launch-content check.
+See [SHU71-B1-COMPOSITION.md](SHU71-B1-COMPOSITION.md) for the exact key inventory,
+existing semantic refusals, new `SHU71_SUPERVISOR_ENV_REQUIRED` refusal, and
+repository/host proof boundary. Per-unit `SHU251_SECRET_FILE` binding is retained.
