@@ -8,9 +8,9 @@ not ok 1 - CLOSURE_CUSTODY configured unequal uid gid passes and drift refuses
   failureType: 'testCodeFailure'
   error: |-
     CLOSURE_ARM_PAIR_PASSES
-    
+
     false !== true
-    
+
   code: 'ERR_ASSERTION'
   name: 'AssertionError'
   expected: true
@@ -31,10 +31,10 @@ not ok 2 - CLOSURE_WIRING forked adapter receives nine keys and custody refusal 
   failureType: 'testCodeFailure'
   error: |-
     CLOSURE_WIRING_EXIT: SHU251_ENV_CUSTODY
-    
-    
+
+
     1 !== 0
-    
+
   code: 'ERR_ASSERTION'
   name: 'AssertionError'
   expected: 0

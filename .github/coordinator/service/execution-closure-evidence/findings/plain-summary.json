@@ -1,0 +1,69 @@
+{
+  "label": "plain",
+  "revision": "6ebef2a1360724a2614a52058929870afb010adb",
+  "offset_ms": 0,
+  "exit_code": 0,
+  "counts": {
+    "tests": 2800,
+    "pass": 2792,
+    "fail": 0,
+    "skipped": 8
+  },
+  "terminal_markers": 1,
+  "terminal_complete": true,
+  "exact_names": true,
+  "inventory_guard": "pass",
+  "skips": [
+    {
+      "type": "outcome",
+      "name": "SHU-227: worker owns its checkout and recovery preserves descendant commits",
+      "status": "skip",
+      "reason": "requires root or passwordless sudo for distinct-uid proof"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-227: non-owner service account resolves revision with no global Git trust",
+      "status": "skip",
+      "reason": "requires distinct-uid execution"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-227: empty-root main drives real Git, both real adapters and real broker through four launches",
+      "status": "skip",
+      "reason": "requires distinct-uid execution"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-228: empty-root main drives real Git, both real adapters and real broker through four launches",
+      "status": "skip",
+      "reason": "requires distinct-uid execution"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-241 A2 host: R1 uses the existing bundle transport through the distinct worker identity",
+      "status": "skip",
+      "reason": "host cannot switch to the fixture worker uid"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-244 A10: distinct-root scoped handoff production workspace",
+      "status": "skip",
+      "reason": "host cannot switch worker uid"
+    },
+    {
+      "type": "outcome",
+      "name": "SHU-71 restricted capability refusal",
+      "status": "skip",
+      "reason": "production vocabulary has no undeclared runtime/role pair"
+    },
+    {
+      "type": "outcome",
+      "name": "READER operator-owned checkout read by non-root account",
+      "status": "skip",
+      "reason": "Not exercisable: non-root account, no passwordless elevation to create root-owned checkout"
+    }
+  ],
+  "stderr_bytes": 0,
+  "events_sha256": "08adf79c31635921e603165b6742c3a27574b527c2de036a51c97a2e54ded3e0",
+  "event_lines": 2801
+}

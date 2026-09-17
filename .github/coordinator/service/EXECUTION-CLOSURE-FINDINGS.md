@@ -98,8 +98,8 @@ reader calls now pass their expected gid explicitly alongside unchanged uid
 expectations.
 
 Evidence is retained in `execution-closure-evidence/findings/`: original-file
-regression TAP, all 20 corrected control/mutation outcomes, and the two full-suite
-summaries. The full suite uses the inventory's 101 files and
+regression TAP (trailing whitespace normalized), all 20 corrected control/mutation
+outcomes, and both complete full-suite event logs and summaries. The full suite uses the inventory's 101 files and
 `--test-reporter=./.github/coordinator/service/host-suite-contract.mjs`.
 The future run additionally sets `SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
 `NODE_OPTIONS=--import=<checkout>/.github/coordinator/test/fixture/shift-wall-clock.mjs`;
@@ -109,3 +109,18 @@ inventory guard's own passing outcome.
 The original proof table's live signing, service-plane execution and prerequisite
 verification limits remain OPEN/PARTIAL. No live readiness or host acceptance is
 claimed. F1–F4 are closed within the requested repository scope.
+
+Both complete reruns tested source commit
+`6ebef2a1360724a2614a52058929870afb010adb`. The final commit adds only this report,
+recorded validation evidence and transcript whitespace cleanup; production and
+test source are unchanged from the tested commit.
+
+| Run | Tests | Pass | Fail | Authorized skips | Terminal complete markers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Plain | 2800 | 2792 | 0 | 8 | 1 |
+| +365 days (31536000000 ms) | 2800 | 2792 | 0 | 8 | 1 |
+
+Both runs exit 0, have empty stderr, exact inventory names, and a passing
+`A12 committed inventory requirements match real outcomes` outcome. Each log
+contains 2,801 events, with its sole complete marker last. The summaries retain
+all eight exact skip names/reasons and SHA-256 hashes of the complete event logs.
