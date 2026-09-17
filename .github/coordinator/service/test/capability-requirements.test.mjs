@@ -103,9 +103,12 @@ async function dependencyControl(api, capability, fault = '') {
          const permitted={'/bin/sh':['-c','exit 0'],'/usr/bin/dirname':['/suite/wrapper'],
            '/usr/bin/env':['/usr/bin/true'],'/usr/bin/chmod':['--version'],
            '/usr/bin/mktemp':['--version'],'/usr/bin/rm':['--version'],
-           '/usr/bin/touch':['--version'],'/usr/bin/cat':['--version']};
+           '/usr/bin/touch':['--version'],'/usr/bin/cat':['--version'],
+           '/usr/bin/basename':['--version'],'/usr/bin/node':['--version']};
          const envNode=file==='/usr/bin/env'&&JSON.stringify(args)===JSON.stringify(['node','--version']);
-         if(!envNode&&JSON.stringify(args)!==JSON.stringify(permitted[file]))throw Error('A12_INERT_ARGV');
+         const envBasename=file==='/usr/bin/env'&&JSON.stringify(args)===JSON.stringify(['basename','--version']);
+         if(envBasename&&${JSON.stringify(fault)}==='env basename')return {status:1,stdout:''};
+         if(!envNode&&!envBasename&&JSON.stringify(args)!==JSON.stringify(permitted[file]))throw Error('A12_INERT_ARGV');
          if(envNode&&${JSON.stringify(fault)}==='env node')return {status:1,stdout:''};
          if(file===${JSON.stringify(fault)})return {status:1,stdout:''};
          return realSpawn(file,args,options);
@@ -118,13 +121,13 @@ for (const capability of ['shell_toolchain', 'linux_proc', 'loopback_socket']) {
   test(`A12 dependency ${capability} positive and named refusal`, async () => {
     await dependencyControl(contract, capability);
     if (capability === 'shell_toolchain') {
-      for (const tool of ['/usr/bin/touch', '/usr/bin/cat', 'env node'])
+      for (const tool of ['/usr/bin/touch', '/usr/bin/cat', 'env node', '/usr/bin/basename', 'env basename', '/usr/bin/node'])
         await dependencyControl(contract, capability, tool);
     }
     const entry = contract.CAPABILITIES.find(c => c.name === capability);
     assert.ok(entry, 'A12_DEPENDENCY_ENTRY');
     if (capability === 'shell_toolchain') {
-      for (const claim of ['touch,cat', '/usr/bin/env node --version (child PATH resolution)', 'as service identity'])
+      for (const claim of ['touch,cat', '/usr/bin/env node --version (child PATH resolution)', 'as service identity', 'basename', '/usr/bin/env basename --version (child PATH resolution)', '/usr/bin/node --version', '; no filesystem mutation'])
         assert.ok(entry.detection.includes(claim), `A12_SHELL_DETECTION: ${claim}`);
     }
     await assert.rejects(() => contract.preflight(spec, key => key === capability ? false : key === 'cvtsudoers'

@@ -1,3 +1,5 @@
+> Historical evidence for the pre-merge 85-file inventory. See DERIVATION.md for the current 98-file verification procedure; these old measurements do not attest the current head.
+
 # A12 BLOCK correction report
 
 Implementation and measured/admitted revision: `280a24901f76d77ece93fe9cb1ffd95f44ce982f`. Starting revision: `d09f50d6c597ca1d27ea237f2fb342981816b993`. The later evidence-only commit records these measurements; it is not their source revision. No full-suite figures below are claimed as new measurements of d09f50d or 52e5f01.

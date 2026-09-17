@@ -1,3 +1,5 @@
+> Historical evidence for the pre-merge 85-file inventory. See DERIVATION.md for the current 98-file verification procedure; these old measurements do not attest the current head.
+
 # A12 dependency audit — successful inert-probe capture
 
 The required-file derivation is the literal `SUITE_ROOTS` filter and sort from `suite-runner-spec.mjs:42-43`, applied to `git ls-tree -r --name-only HEAD`. Its output is committed in `required-files.json`: **85 files**. No glob narrowing is used.

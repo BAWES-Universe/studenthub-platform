@@ -1,3 +1,5 @@
+> Historical evidence for the pre-merge 85-file inventory. See DERIVATION.md for the current 98-file verification procedure; these old measurements do not attest the current head.
+
 > Historical refusal, resolved by the inert-probe repair and successful capture documented in [DERIVATION.md](DERIVATION.md). The rejected run below remains non-authoritative.
 
 # A12 capture refused

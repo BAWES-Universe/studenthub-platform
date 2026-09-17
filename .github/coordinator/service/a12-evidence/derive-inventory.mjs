@@ -6,16 +6,19 @@ import { execFileSync } from 'node:child_process';
 import { SUITE_ROOTS, INVENTORY_PATH } from '../suite-runner-spec.mjs';
 import { PERMITTED_SKIPS, deriveRequirements, suiteNames, evaluateSuite } from '../host-suite-contract.mjs';
 const root = path.dirname(new URL(import.meta.url).pathname);
-const read = name => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8'));
-const lines = name => fs.readFileSync(path.join(root, name), 'utf8').trim().split('\n').map(JSON.parse);
+const capture = process.argv[2] ? path.resolve(process.argv[2]) : root;
+const read = name => JSON.parse(fs.readFileSync(path.join(name === 'file-requirements.json' ? root : capture, name), 'utf8'));
+const lines = name => fs.readFileSync(path.join(capture, name), 'utf8').trim().split('\n').map(JSON.parse);
 const summary = read('successful-run-summary.json');
+const revision = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+assert.equal(summary.revision, revision, 'A12_CAPTURE_REVISION');
 const events = lines('successful-run.jsonl');
 const outcomes = events.filter(e => e.type === 'outcome');
 assert.equal(summary.exit_code, 0, 'A12_CAPTURE_EXIT');
 assert.equal(events.filter(e => e.type === 'complete').length, 1, 'A12_CAPTURE_COMPLETE');
 assert.equal(events.at(-1).type, 'complete', 'A12_CAPTURE_TERMINAL');
 evaluateSuite({ outcomes, complete: true, exit_code: summary.exit_code }, outcomes.length);
-const provenance = lines('outcome-files.jsonl');
+const provenance = lines('outcome-files.jsonl').map(o => ({ ...o, file: path.isAbsolute(o.file) ? path.relative(process.cwd(), o.file) : o.file }));
 assert.deepEqual(provenance.map(o => o.name), outcomes.map(o => o.name), 'A12_FILE_PROVENANCE_ORDER');
 const tracked = execFileSync('/usr/bin/git', ['ls-tree', '-r', '--name-only', 'HEAD'], { encoding: 'utf8' }).trimEnd().split('\n');
 const sorted = values => [...values].sort();
@@ -49,7 +52,7 @@ suiteNames(outcomes, names);
 const inventory = { version: 'shu251-suite-inventory-v1', files, names, requirements };
 fs.writeFileSync(INVENTORY_PATH, JSON.stringify(inventory, null, 2) + '\n');
 fs.writeFileSync(path.join(root, 'required-files.json'), JSON.stringify(files, null, 2) + '\n');
-console.log(JSON.stringify({ assertion: 'A12_INVENTORY_DERIVED', files: files.length, names: names.length,
+console.log(JSON.stringify({ assertion: 'A12_INVENTORY_DERIVED', revision, files: files.length, names: names.length, requirements: requirements.length,
   distinct_names: new Set(names).size, expected_tests: names.length,
   capability_name_counts: Object.fromEntries(Object.entries(derived).map(([name, values]) => [name, values.length])),
   empty_requirements: requirements.filter(r => !r.capabilities.length).length }, null, 2));

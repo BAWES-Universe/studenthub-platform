@@ -150,11 +150,127 @@
     ]
   },
   {
-    "file": ".github/coordinator/service/test/suite-runner-spec.test.mjs",
+    "file": ".github/coordinator/service/test/shu71-composition.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects commands and fetch; episode harness injects revision, workspace and launch boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-composition.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-delivery.test.mjs",
+    "capabilities": [],
+    "justification": "credential and broker APIs inject read/run/fork; rendered executable strings are assertions only",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-delivery.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-delta-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-final-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-history.test.mjs",
     "capabilities": [
       "git"
     ],
-    "justification": "disposableFixture creates, commits and clones real local Git repositories; lifecycle tools are doubled",
+    "justification": "historicalSource executes git cat-file/show; synthetic repository uses git init/add/commit/rev-parse",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-history.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-production-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-production.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-production.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-state-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
+    "capabilities": [],
+    "justification": "render and policy checks; productionFixture injects commands; review refusal occurs before execution",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-trust-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-trust.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "counterDifferential and r5Differential call historicalSource, executing git cat-file/show",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-trust.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/suite-runner-spec.test.mjs",
+    "capabilities": [
+      "git",
+      "bash",
+      "shell_toolchain",
+      "linux_proc",
+      "loopback_socket",
+      "cvtsudoers",
+      "systemd_analyze",
+      "flock",
+      "unix_socket"
+    ],
+    "justification": "Real committed-inventory guard executes all other suite proofs: union of their non-identity dependencies; authorized identity absences remain exact child outcomes.",
     "call_sites": [
       ".github/coordinator/service/test/suite-runner-spec.test.mjs:131",
       ".github/coordinator/service/test/suite-runner-spec.test.mjs:142",
@@ -464,8 +580,10 @@
   },
   {
     "file": ".github/coordinator/test/shu237-mutations.test.mjs",
-    "capabilities": [],
-    "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "Node only: executable fixture bytes and/or validated argv inspected, process/transport boundaries injected; no successful shell or socket operation required; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
     "call_sites": [
       ".github/coordinator/test/shu237-mutations.test.mjs:166"
     ]
@@ -482,9 +600,10 @@
   {
     "file": ".github/coordinator/test/shu239-mutations.test.mjs",
     "capabilities": [
-      "bash"
+      "bash",
+      "git"
     ],
-    "justification": "selected reviewer-launch controls execute shipped Bash wrapper",
+    "justification": "selected reviewer-launch controls execute shipped Bash wrapper; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
     "call_sites": [
       ".github/coordinator/test/shu239-mutations.test.mjs:60"
     ]
@@ -628,9 +747,10 @@
   {
     "file": ".github/coordinator/test/shu261-cleanup-network.test.mjs",
     "capabilities": [
-      "bash"
+      "bash",
+      "shell_toolchain"
     ],
-    "justification": "shipped Bash functions executed; setfacl/flock/systemd-run are Bash function doubles",
+    "justification": "shipped Bash functions executed; setfacl/flock/systemd-run are Bash function doubles; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
     "call_sites": [
       ".github/coordinator/test/shu261-cleanup-network.test.mjs:15",
       ".github/coordinator/test/shu261-cleanup-network.test.mjs:82"
@@ -729,8 +849,10 @@
   },
   {
     "file": ".github/coordinator/test/single-run-activation.test.mjs",
-    "capabilities": [],
-    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required; current verdict F1/F3/F4/F6: retained executable or selected mutation child dependency",
     "call_sites": [
       ".github/coordinator/test/single-run-activation.test.mjs:1114"
     ]
