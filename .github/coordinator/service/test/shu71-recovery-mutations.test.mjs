@@ -10,6 +10,7 @@ import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-sourc
 import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck } from './shu71-recovery-checks.mjs';
 import { plantedCounterCheck, plantedSettlementCheck } from './shu71-r5-checks.mjs';
 import { reservationHistoryCheck } from './shu71-r6-checks.mjs';
+import { damagedJournalCheck } from './shu71-r7-checks.mjs';
 const keys = ephemeralPublicSource();
 for (const [name, before, after, check, target = 'journal', assertion = /B4_/] of [
   ['gate DONE suppresses repair', "['gate', 'activation', 'workers', 'reload', 'evidence-broker']", "['activation', 'workers', 'reload', 'evidence-broker']", gateRecoveryCheck],
@@ -27,6 +28,8 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   ['R5-C MY6 failed settlement releases ownership', 'if (result.ok) remove(`${ROOT}/active.json`);', 'remove(`${ROOT}/active.json`);', (create, h) => exhaustedSettlementCheck(create, h, true), 'production', /B4_SETTLEMENT_FAILED_OWNERSHIP_RETAINED/],
   ['R6-M2 partial reservation evidence accepted', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'reservations.length >= 1', reservationHistoryCheck, 'production', /B4_R6_PARTIAL_1_EVIDENCE_REFUSED/],
   ['R6-M1 unordered reservation evidence accepted', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'reservations.length === 32', (create, h) => reservationHistoryCheck(create, h, 'REORDERED', 32), 'production', /B4_R6_REORDERED_EVIDENCE_REFUSED/],
+  ['R7 V12 descending chain accepted', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'reservations.length === 32 && (reservations.every((e, i) => e.attempts === i + 1) || reservations.every((e, i) => e.attempts === 32 - i))', (create, h) => reservationHistoryCheck(create, h, 'DESCENDING', 32), 'production', /B4_R6_DESCENDING_EVIDENCE_REFUSED/],
+  ['R7 V14 damaged journal bypasses evidence', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'journal.recovered || (reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1))', damagedJournalCheck, 'production', /B4_R7_RECOVERY_BOTH_GATES_DISARMED/],
   ['P3 automatic budget removed', 'if (attempts >= 32)', 'if (false)', boundedReplayCheck, 'production', /B4_AUTOMATIC_REPLAY_BOUNDED/],
 ]) test(`recovery mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

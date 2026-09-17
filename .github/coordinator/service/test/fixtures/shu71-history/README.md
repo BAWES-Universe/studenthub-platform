@@ -35,14 +35,13 @@ To exercise both differential modules without history, clone this branch via
 
 ## R6 control-content and provenance boundary
 
-The Git cross-check **cannot run in the shallow CI checkout**. There, provenance
-rests on the recorded digests plus the unconditional control-content guard;
-only a full clone re-establishes provenance against Git. Each load prints
+The Git cross-check **cannot run in the shallow CI checkout**. Recorded digests check fixture consistency there; they do not establish
+provenance. Only a full clone re-establishes provenance against Git. Each load prints
 `SHU71_HISTORY_GIT_UNAVAILABLE` or `SHU71_HISTORY_GIT_VERIFIED`, with the exact
 revision and module. Missing history is not a passing claim of Git provenance.
 The synthetic-repository test checks only the Git comparison mechanism.
 
-`controlContent` checks executable cleanup structure before the Git comparison:
+`controlContent` diagnoses the following cleanup text shapes before the Git comparison:
 
 - Parent `5e25c65`: gate disarm is the first ordinary cleanup effect, before
   credential removal; there is no budget reservation or counter-fault fallback
@@ -60,15 +59,22 @@ The synthetic-repository test checks only the Git comparison mechanism.
   depend on those journal semantics. Their journal bytes are identical to the
   candidate's journal, so substitution of those identical bytes is harmless.
 
-These properties follow from the control revisions' cleanup behavior, rather
-than comments, version labels or unrelated strings. Tests also execute the real
-vendored production/journal pairs with disposable boundaries to check reservation
-versus disarm ordering and poisoned-counter outcomes. Separate negative tests
-pass candidate production source directly to the guard for every control slot,
-without consulting Git, and alter journal replay to demonstrate its guard.
+The guard is pure text matching over source with whole-line comments and whitespace
+stripped. It is a diagnostic aid, **not a security control**: a semantics-preserving
+rewrite can evade it completely. It does not uniquely pin `5e25c65`; the older real
+revisions `eb29fc2` and `dae5948` satisfy its properties and behavioral premises.
+The **load-bearing backstop** is the `historical control semantics` tests, which
+execute the vendored production/journal pairs on disposable boundaries, together
+with the downstream behavioral differentials. Those tests remain intact.
 
-This is a narrow semantic guard, not authentication: a coordinated adversary who
-rewrites fixtures, digests and tests can defeat repository-local checks. Even an
-unrelated substitution that preserves the checked properties is not proven to be
-the historical source. Full-history byte comparison remains necessary for that
+Each of the 18 retained diagnostic properties now has a separate negative text
+case requiring its exact property error. Deleting any single check fails the
+named `SHU71_CONTROL_PROPERTY_<property>` assertion. None was removed. A vendored
+revision absent from `controlRevisions` fails with
+`SHU71_HISTORY_CONTROL_UNREGISTERED`; the synthetic Git-mechanism test explicitly
+registers its revision in its disposable helper, with no loader bypass.
+
+A coordinated adversary who rewrites fixtures, digests and tests can defeat
+repository-local checks. An unrelated substitution preserving the checked text
+properties is not proven to be the historical source. Full-history byte comparison remains necessary for that
 stronger claim. No workflow, skip allowance or historical fixture was changed.

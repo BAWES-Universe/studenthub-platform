@@ -4,7 +4,7 @@ import { gates } from './shu71-r5-checks.mjs';
 
 export const reservationHistories = [
   ...Array.from({ length: 31 }, (_, i) => [`PARTIAL_${i + 1}`, i + 1]),
-  ['DUPLICATE', 32], ['REORDERED', 32], ['GAP', 32], ['EXTRA', 32], ['ORDERED', 32],
+  ['DESCENDING', 32], ['DUPLICATE', 32], ['REORDERED', 32], ['GAP', 32], ['EXTRA', 32], ['ORDERED', 32],
 ];
 
 export async function reservationHistoryCheck(createProduction, h, kind = 'PARTIAL_1', count = 1) {
@@ -21,6 +21,7 @@ export async function reservationHistoryCheck(createProduction, h, kind = 'PARTI
   const rows = h.journal();
   const reservations = rows.filter(e => e.event === 'AUTOMATIC_TEARDOWN_RESERVED');
   assert.deepEqual(reservations.map(e => e.attempts), Array.from({ length: count }, (_, i) => i + 1), 'B4_R6_REAL_RESERVATIONS');
+  if (kind === 'DESCENDING') reservations.forEach((e, i) => { e.attempts = 32 - i; });
   if (kind === 'DUPLICATE') reservations[16].attempts = 16;
   if (kind === 'REORDERED') [reservations[15].attempts, reservations[16].attempts] = [17, 16];
   if (kind === 'GAP') reservations[31].attempts = 33;
@@ -48,6 +49,10 @@ export async function reservationHistoryCheck(createProduction, h, kind = 'PARTI
     assert.equal(result.budget_error, 'ACT_RETRY_BUDGET_INVALID', `B4_R6_${kind}_EVIDENCE_INVALID`);
     for (const gate of gates) assert.match(h.read(gate), /ENABLE_DISPATCH=false/, `B4_R6_${kind}_BOTH_GATES_DISARMED`);
     assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false, `B4_R6_${kind}_CREDENTIAL_REVOKED`);
+    if (kind === 'DESCENDING') {
+      for (const gate of gates) assert.equal(h.read(gate), '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'B4_R7_DESCENDING_GATE_CONTENTS');
+      assert.equal(effects.length, 7, 'B4_R7_DESCENDING_SAFETY_EFFECTS');
+    }
     assert.ok(effects.length > 0, `B4_R6_${kind}_SAFETY_EFFECTS`);
   }
   assert.equal(h.exists('/srv/shu/state/shu71-evidence/active.json'), true, 'B4_R6_OWNERSHIP_RETAINED');

@@ -14,10 +14,13 @@ export const controlRevisions = [
   '0eeadd5f05abc8cd82968a855b2bff8cc137c65a',
 ];
 
-// These are semantic prerequisites of the controls, not a provenance proof.
-// Scope checks to executable cleanup code; comments cannot satisfy a check.
+// Text diagnostics only: neither a security control nor a provenance proof.
+// Executed historical control semantics tests are the load-bearing backstop.
+// Match cleanup text after stripping whole-line comments and whitespace; this
+// does not establish semantics and can be evaded by equivalent source rewrites.
 export function controlContent(revision, name, source) {
-  if (!controlRevisions.includes(revision)) return; // synthetic Git-mechanism fixture
+  if (!controlRevisions.includes(revision))
+    fail('SHU71_HISTORY_CONTROL_UNREGISTERED', `${revision}/${name}; declare a control-content specification before loading this fixture`);
   const require = (condition, property) => {
     if (!condition) fail('SHU71_HISTORY_CONTROL_CONTENT', `${revision}/${name}: ${property}`);
   };
