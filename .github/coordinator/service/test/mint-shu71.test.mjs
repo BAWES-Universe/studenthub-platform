@@ -45,6 +45,15 @@ test('SHU71 mint source mutants die at named assertions', t => {
     assert.notEqual(out.status, 0, `${name}: survived`);
     assert.ok(out.stderr.includes('AssertionError') && out.stderr.includes(`${assertion}: ${code}`), `${name}: wrong death ${out.stderr}`);
   }
+  for (const [name, from, to, assertion] of [
+    ['numeric ID coercion', "typeof id === 'string' && ", '', 'numeric ledger ID: MINT_ID_LEDGER'],
+    ['timestamp coercion', "capturedTime(l.captured_at)", 'Number.isFinite(Date.parse(l.captured_at))', 'numeric capture time: MINT_ID_LEDGER'],
+  ]) {
+    fs.writeFileSync(modulePath, original.replaceAll(from, to));
+    const out = run();
+    assert.notEqual(out.status, 0, `${name}: survived`);
+    assert.ok(out.stderr.includes('AssertionError') && out.stderr.includes(assertion), `${name}: wrong death ${out.stderr}`);
+  }
   fs.writeFileSync(modulePath, original.replace('created_at: new Date(at).toISOString()', 'created_at: new Date(now).toISOString()'));
   const random = run();
   assert.notEqual(random.status, 0, 'clock-dependent output: survived');

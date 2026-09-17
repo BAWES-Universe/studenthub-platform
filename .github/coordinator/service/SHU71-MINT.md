@@ -32,7 +32,8 @@ This proves absence only from the supplied capture, not from future activity.
 Observation ledger schema: `version: shu71-mint-observations-v1`, `captured_at`,
 `source`, `observations`, and `sha256`. Digest covers canonical JSON of all
 fields except `sha256` (recursive sorted keys, no whitespace or final newline).
-It is capture integrity, not a signature or independent host attestation.
+Capture timestamps must be valid UTC ISO instants; numeric IDs and loose dates
+are rejected without coercion. It is capture integrity, not a signature or independent host attestation.
 The orchestrator must supply a truthful capture; a self-computed digest cannot
 establish its provenance. `observations` has exactly:
 
@@ -50,7 +51,8 @@ establish its provenance. `observations` has exactly:
 Creation time derives from observation capture time, not ambient wall time.
 Lifetime and maximum observation age must each be positive integer milliseconds
 no greater than 43,200,000 (the existing twelve-hour policy). Future/stale
-observations, observations older than the ID ledger, and expired output refuse.
+observations, stale ID captures, observations older than the ID ledger, and
+expired output refuse. The maximum age bound applies to both ledgers.
 For identical valid inputs, advancing time changes admissibility but never bytes.
 
 The local checkout must equal live remote main and local origin/main, be clean,

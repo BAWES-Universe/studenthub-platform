@@ -78,6 +78,12 @@ export function runMintControls() {
   for (const [name, change, code] of outputMutants) { const v = structuredClone(result); change(v); kill(name, () => validateMint(v, result), code); }
   for (const [key, code] of Object.entries({ revision: 'REVISION', fixtures: 'FIXTURES', branch: 'BRANCH', expected_parent: 'LINEAGE', expected_seed_head: 'LINEAGE', patch_sha256: 'PATCH', evidence: 'EVIDENCE', signature: 'SIGNATURE', commands: 'COMMANDS', activation_id: 'ID_UNKNOWN', pkg: 'CALLER_PACKAGE', spec: 'CALLER_SPEC' }))
     kill(`caller ${key}`, () => optionsCheck({ ...options, [key]: '' }), `MINT_${code}`);
+  kill('numeric ledger ID', () => validateIdLedger({ ...options.idLedger, ids: [12345678], sha256: hash('12345678\n') }), 'MINT_ID_LEDGER');
+  kill('numeric capture time', () => validateIdLedger({ ...options.idLedger, captured_at: 0 }), 'MINT_ID_LEDGER');
+  kill('ambiguous capture time', () => validateIdLedger({ ...options.idLedger, captured_at: '2026-09-17' }), 'MINT_ID_LEDGER');
+  kill('rolled calendar date', () => validateIdLedger({ ...options.idLedger, captured_at: '2026-02-30T00:00:00Z' }), 'MINT_ID_LEDGER');
+  const ambiguous = structuredClone(options.observations); delete ambiguous.sha256; ambiguous.captured_at = '2026-09-17'; ambiguous.sha256 = hash(bytes(ambiguous));
+  kill('ambiguous observation time', () => validateObservations(ambiguous), 'MINT_OBSERVATIONS_REQUIRED');
   kill('missing ledger', () => validateIdLedger(null), 'MINT_ID_LEDGER');
   kill('empty ledger', () => validateIdLedger({ ...options.idLedger, ids: [], count: 0 }), 'MINT_ID_LEDGER');
   kill('ledger digest', () => validateIdLedger({ ...options.idLedger, sha256: '0'.repeat(64) }), 'MINT_ID_LEDGER_DIGEST');
@@ -95,6 +101,7 @@ export function runMintControls() {
     ['observed fixture', o => o.issues[0].issue_id = 'SHU-999', 'MINT_ISSUES'],
   ]) { const v = structuredClone(options.observations); delete v.sha256; mutate(v.observations); v.sha256 = hash(bytes(v)); kill(name, () => validateObservations(v), code); }
   kill('expiry exceeds twelve hours', () => derive({ ...options, lifetimeMs: 43200001 }, facts, at), 'MINT_EXPIRY');
+  kill('stale ID capture', () => derive({ ...options, idLedger: { ...options.idLedger, captured_at: new Date(at - 60001).toISOString() } }, facts, at), 'MINT_OBSERVATION_STALE');
   kill('stale observation', () => derive(options, facts, at + 60001), 'MINT_OBSERVATION_STALE');
   kill('expired output', () => derive({ ...options, lifetimeMs: 1 }, facts, at + 1), 'MINT_EXPIRED');
   kill('missing option', () => { const v = { ...options }; delete v.windowFile; optionsCheck(v); }, 'MINT_REQUIRED');

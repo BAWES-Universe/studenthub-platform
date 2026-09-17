@@ -24,6 +24,8 @@ const need = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { cod
 const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && same(Object.keys(v).sort(), [...keys].sort());
 const sha = v => typeof v === 'string' && /^[a-f0-9]{40}$/.test(v);
 const uuid = v => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(v);
+const capturedTime = v => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(v) && Number.isFinite(Date.parse(v))
+  && new Date(Date.parse(v)).toISOString() === (v.length === 20 ? v.replace('Z', '.000Z') : v);
 const absolute = v => typeof v === 'string' && /^\/[a-zA-Z0-9_./-]+$/.test(v) && path.normalize(v) === v && !v.endsWith('/');
 function read(file, code) {
   try { const s = fs.lstatSync(file); need(s.isFile() && !s.isSymbolicLink(), code); return JSON.parse(fs.readFileSync(file)); }
@@ -31,9 +33,9 @@ function read(file, code) {
 }
 export function validateIdLedger(l) {
   need(exact(l, ['version', 'captured_at', 'source', 'ids', 'count', 'sha256']) && l.version === 'shu71-activation-id-ledger-v1'
-    && typeof l.source === 'string' && l.source.length > 0 && Number.isFinite(Date.parse(l.captured_at))
+    && typeof l.source === 'string' && l.source.length > 0 && capturedTime(l.captured_at)
     && Array.isArray(l.ids) && l.ids.length > 0 && l.count === l.ids.length && new Set(l.ids).size === l.ids.length
-    && l.ids.every(id => /^[A-Za-z0-9_-]{8,64}$/.test(id)), 'MINT_ID_LEDGER');
+    && l.ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(id)), 'MINT_ID_LEDGER');
   need(hash(l.ids.join('\n') + '\n') === l.sha256, 'MINT_ID_LEDGER_DIGEST');
   return l;
 }
@@ -48,7 +50,7 @@ export function activationId(l) {
 export function validateObservations(l) {
   need(exact(l, ['version', 'captured_at', 'source', 'observations', 'sha256'])
     && l.version === 'shu71-mint-observations-v1' && typeof l.source === 'string' && l.source.length > 0
-    && Number.isFinite(Date.parse(l.captured_at)), 'MINT_OBSERVATIONS_REQUIRED');
+    && capturedTime(l.captured_at), 'MINT_OBSERVATIONS_REQUIRED');
   const { sha256, ...body } = l;
   need(hash(bytes(body)) === sha256, 'MINT_OBSERVATIONS_DIGEST');
   const o = l.observations;
@@ -129,7 +131,7 @@ export function derive(options, facts, now = Date.now()) {
   optionsCheck(options);
   const ledger = validateIdLedger(options.idLedger), observation = validateObservations(options.observations);
   const at = Date.parse(observation.captured_at), age = now - at;
-  need(age >= 0 && age <= options.maxObservationAgeMs && at >= Date.parse(ledger.captured_at), 'MINT_OBSERVATION_STALE');
+  need(age >= 0 && age <= options.maxObservationAgeMs && now - Date.parse(ledger.captured_at) <= options.maxObservationAgeMs && at >= Date.parse(ledger.captured_at), 'MINT_OBSERVATION_STALE');
   need(at + options.lifetimeMs > now, 'MINT_EXPIRED');
   const activation_id = activationId(ledger), o = observation.observations;
   const { revision, tree, lanes, binding } = facts;
