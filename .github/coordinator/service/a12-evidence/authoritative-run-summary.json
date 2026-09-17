@@ -1,0 +1,16 @@
+{
+  "revision": "52e5f01906a21f67d4578b8aa06839edc7544168",
+  "command": "node --test --test-reporter=./.github/coordinator/service/host-suite-contract.mjs .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs",
+  "exit_code": 0,
+  "outcomes": 1744,
+  "distinct_names": 1742,
+  "pass": 1736,
+  "fail": 0,
+  "skip": 8,
+  "complete_markers": 1,
+  "terminal_complete": true,
+  "stderr_bytes": 0,
+  "assertion": "A12_AUTHORITATIVE_SUITE_NAMES",
+  "name_check": "suiteNames(outcomes, contract.names) did not halt",
+  "proof_command": "node .github/coordinator/service/a12-evidence/prove-inventory.mjs /tmp/a12-authoritative-run.jsonl"
+}

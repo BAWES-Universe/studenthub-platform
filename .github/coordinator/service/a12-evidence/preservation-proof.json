@@ -1,0 +1,14 @@
+{
+  "baseline": "1fe68f89ef08fe2102a5d2f19865ebe69f85388a",
+  "PERMITTED_SKIPS_byte_identical": true,
+  "PERMITTED_SKIPS_entries": 8,
+  ".github/workflows/ci.yml": {
+    "unchanged": true,
+    "sha256": "138f92481b2a0f51c04714d9dc144735c7662394d300befb46a23bfa851e8e46"
+  },
+  ".github/coordinator/service/shu251-operational-bindings.sh": {
+    "unchanged": true,
+    "sha256": "a32082aefc94836cf2235804d204837d354f2c36005ef1702437f3ac7bc8009d"
+  },
+  "outcome_names_multiset_unchanged": true
+}
