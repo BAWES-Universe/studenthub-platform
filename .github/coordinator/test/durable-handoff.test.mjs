@@ -80,7 +80,7 @@ test('BLOCK-routes-to-writer', async () => {
   let launches = 0;
   try {
     const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', enable_dispatch: true, max_dispatch: 2,
+    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', dispatch_scope_mode: "bounded", enable_dispatch: true, max_dispatch: 2,
       repo_label_map: { 'repo:example/repo': 'example/repo' }, linear_receipt_actor_ids: [TRUSTED_RECEIPT_ACTOR] }));
     const adapter = { async launchBuilder(o) {
       launches++;
@@ -146,7 +146,7 @@ test('resume-after-termination', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'handoff-resume-'));
   try {
     const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', enable_dispatch: true, max_dispatch: 1,
+    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', dispatch_scope_mode: "bounded", enable_dispatch: true, max_dispatch: 1,
       linear_receipt_actor_ids: [TRUSTED_RECEIPT_ACTOR] }));
     for (let i = 0; i < 2; i++) await coordinator.main([], { ENABLE_DISPATCH: 'true', LINEAR_API_TOKEN: 'synthetic' },
       { configPath, fetchImpl: h.fetchImpl, openPRsOverride: [], stdout() {} });

@@ -226,7 +226,7 @@ test('main-consumes-one-merge-readiness-with-dispatch-disabled', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shu259-main-'));
   try {
     const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', max_dispatch: 1, enable_dispatch: false,
+    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', max_dispatch: 1, dispatch_scope_mode: "bounded", enable_dispatch: false,
       repo_label_map: { 'repo:example/repo': 'example/repo' }, linear_callback_actor_ids: [ACTOR],
       linear_receipt_actor_ids: [ACTOR],
       routine_merge_authority: h.args.config.routine_merge_authority }));
@@ -298,7 +298,7 @@ for (const entry of ['consumeMergeReadiness', 'main']) test(`prepared-restart-re
   const dir = mkdtempSync(join(tmpdir(), 'shu259-restart-'));
   try {
     const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', max_dispatch: 1, enable_dispatch: false,
+    writeFileSync(configPath, JSON.stringify({ pilot_repo: 'example/repo', max_dispatch: 1, dispatch_scope_mode: "bounded", enable_dispatch: false,
       repo_label_map: { 'repo:example/repo': 'example/repo' }, linear_callback_actor_ids: [ACTOR],
       ...h.args.config }));
     await assert.doesNotReject(async () => {
