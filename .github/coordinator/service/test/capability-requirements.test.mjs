@@ -31,11 +31,25 @@ async function controls(api = contract) {
   await assert.rejects(() => api.preflight(spec, () => { throw Error('new failure'); }, covered), { code: 'SHU251_PREFLIGHT_PRIVILEGE' }, 'PROBE_FAILURE_NOT_SKIP');
   for (const value of [undefined, null, {}, 'missing'])
     await assert.rejects(() => api.preflight(spec, () => value, covered), { code: 'SHU251_PREFLIGHT_PRIVILEGE' }, 'MALFORMED_PROBE_NOT_SKIP');
-  const ns = { names: ['SHU261_NO_SETENV_NAMESPACE_STARTUP'], requirements: [{ name: 'SHU261_NO_SETENV_NAMESPACE_STARTUP', capabilities: [{ name: 'user_namespaces' }] }] };
+  const ns = { names: ['M3 namespace capability control'], requirements: [{ name: 'M3 namespace capability control', capabilities: [{ name: 'user_namespaces' }] }] };
   await assert.rejects(() => api.preflight(spec, key => key === 'user_namespaces' ? false : probe(key), ns), error => error.code === 'SHU251_PREFLIGHT_USER_NAMESPACES' && error.message.includes(ns.names[0]), 'NAMESPACE_REQUIRED');
   for (const [status, why, code] of [['fail', reason, 'SHU251_SUITE_FAILURE'], ['skip', reason + ' ', 'SHU251_SUITE_UNPERMITTED_SKIP']])
     assert.throws(() => api.evaluateSuite({ complete: true, exit_code: 0, outcomes: [{ name, status, reason: why }] }, 1), { code }, 'OUTCOME_NOT_RECLASSIFIED');
 }
+// Reviewed requirement mapping only, not an authoritative suite inventory.
+// The removed namespace startup row required user_namespaces. Its replacement
+// proofs require the parser or Bash; no namespace requirement transfers to them.
+test('SHU251 C2 Option A wrapper proofs have no namespace requirement', () => {
+  const requirements = [
+    { name: 'SHU261_NO_SETENV_POLICY', capabilities: [{ name: 'cvtsudoers' }] },
+    { name: 'SHU261 wrapper contract isolates both reviewer phases and every protected class', capabilities: [] },
+    { name: 'SHU261 root wrapper startup ignores PATH and BASH_ENV before parsing', capabilities: [{ name: 'bash' }] },
+  ];
+  const derived = contract.deriveRequirements(requirements.map(row => row.name), requirements);
+  assert.deepEqual(derived.user_namespaces, []);
+  assert.equal(derived.cvtsudoers[0].test, requirements[0].name);
+  assert.equal(derived.bash[0].test, requirements[2].name);
+});
 test('SHU251 C2 derived capability positive and refusal controls', () => controls());
 test('SHU251 C2 supplied identities do not imply sudo authority', async () => {
   for (const [uid, gid] of [[999, 982], [994, 979]]) {

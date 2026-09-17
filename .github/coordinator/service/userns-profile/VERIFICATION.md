@@ -1,3 +1,15 @@
+> **REMOVED / OUT OF SCOPE — owner Option A.** This is a historical record,
+> superseded by [A12-CLOSURE.md](../A12-CLOSURE.md). The static ELF runner,
+> AppArmor exception profile, host installer/load/verify/teardown model,
+> authenticated collector, six native production mutations and supporting
+> profile design-model machinery are no longer deliverables. Production uses
+> sudo → wrapper → systemd-run with `RestrictNamespaces=yes`; the namespace
+> was only a test substitute for sudo/root. The inert profile and executable
+> model/tests were removed. The native runner, installer and authenticated
+> collector were never built; native production mutation kills were never proved.
+> All requirements, commands, counts and outstanding-work language below are
+> historical, not current obligations or runnable verification instructions.
+
 # Repository verification receipt
 
 Branch: `feat/shu251-a12-userns-profile`

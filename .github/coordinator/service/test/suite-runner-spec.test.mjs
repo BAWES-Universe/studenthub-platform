@@ -65,6 +65,11 @@ test('SHU251 suite exact file and identity shapes', () => {
     { version: 'shu251-suite-inventory-v1', files: [...files, '.github/coordinator/test/extra.test.mjs'], names: ['one'] }])
     assert.throws(() => runner.bindSuite(spec, boundary({ inventory }).io), { code: 'SHU251_SUITE_INVENTORY' });
   assert.throws(() => runner.bindSuite(spec, boundary({ dirty: '?? extra.test.mjs' }).io), { code: 'SHU251_SUITE_REVISION' });
+  const { io } = boundary();
+  assert.throws(() => runner.bindSuite(spec, { ...io, run(file, args, options) {
+    if (args.includes('show') && args.at(-1).endsWith(runner.INVENTORY_PATH)) return { status: 128, stdout: '' };
+    return io.run(file, args, options);
+  } }), { code: 'SHU251_SUITE_INVENTORY' }, 'missing revision inventory still refuses production binding');
   for (const active of ['activating', 'deactivating', 'failed', 'active\ninactive', ''])
     assert.throws(() => runner.suiteQuiescence(boundary({ active }).io), { code: 'SHU251_SUITE_QUIESCENCE' });
 });
