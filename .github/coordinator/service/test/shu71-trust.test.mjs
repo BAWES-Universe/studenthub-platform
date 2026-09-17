@@ -1,4 +1,4 @@
-import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck } from './shu71-recovery-checks.mjs';
+import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck } from './shu71-recovery-checks.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createShu71Production } from '../shu71-production.mjs';
@@ -122,4 +122,35 @@ for (const value of ['not-json', '{"attempts":-1}', '{"attempts":1.5}', '{"attem
   assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_UNAVAILABLE', 'B4_INVALID_BUDGET_REFUSED');
   assert.equal(h.events.slice(start).some(e => e.startsWith('command:') || e.startsWith('api:')), false);
   assert.equal((await create().execute('revoke')).state, 'REVOKED', 'B4_INVALID_BUDGET_MANUAL_RECOVERY');
+});
+
+for (const fault of ['mode', 'nlink', 'write', 'fsync', 'rename', '{}', 'not-json', '{"attempts":-1}', '{"attempts":33}', '{"attempts":1e999}'])
+  test(`Q1 counter fault disarms both disk gates: ${fault}`, t => counterFaultCheck(createShu71Production, productionFixture(t, keys), fault));
+for (const action of ['run', 'resume', 'revoke']) test(`Q5 explicit ${action} retains spent budget`, t => manualBudgetCheck(createShu71Production, productionFixture(t, keys), action));
+for (const interrupt of [false, true]) test(`Q3 exhausted safe episode settles without repair; interruption=${interrupt}`, t => exhaustedSettlementCheck(createShu71Production, productionFixture(t, keys), interrupt));
+
+import { counterDifferential } from './shu71-r4-differential.mjs';
+test('Q1 identical counter fault at parent, blocked head and candidate', t => counterDifferential(t, keys, createShu71Production));
+
+test('Q1 independent gate failure is surfaced and second gate is still disarmed', async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, '{}');
+  h.faults.before = e => e === 'write:/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf.pending';
+  const result = await create().execute('expire');
+  assert.equal(result.code, 'ACT_RETRY_BUDGET_UNAVAILABLE');
+  assert.equal(result.budget_error, 'ACT_RETRY_BUDGET_INVALID', 'B4_COUNTER_INVALID_DIAGNOSTIC');
+  assert.deepEqual(result.failures, ['ACT_TEARDOWN_GATE'], 'B4_COUNTER_GATE_FAILURE_SURFACED');
+  assert.match(h.read('/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf'), /ENABLE_DISPATCH=false/);
+});
+test('Q3 exhaustion cannot settle unfinished remote restoration', async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  h.faults.before = e => e === 'card:SHU-140';
+  for (let n=0;n<32;n++) assert.equal((await create().execute('expire')).code, 'ACT_CLEANUP_FAILED');
+  h.faults.before = undefined;
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED', 'B4_SETTLEMENT_UNFINISHED_REFUSED');
+  assert.equal(h.exists('/srv/shu/state/shu71-evidence/active.json'), true);
+  assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), false);
+  assert.equal((await create().execute('resume')).state, 'REVOKED');
 });

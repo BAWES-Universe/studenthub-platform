@@ -342,7 +342,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       f.rmSync(target, { recursive: true, force: false });
     }
   }
-  function observeTeardown() {
+  function observeGateFiles() {
     for (const file of GATES) {
       const fd = f.openSync(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
       try {
@@ -351,6 +351,9 @@ export function createShu71Production(id, b = shu71Boundary) {
           && f.readFileSync(fd, 'utf8') === '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'ACT_TEARDOWN_DRIFT');
       } finally { f.closeSync(fd); }
     }
+  }
+  function observeTeardown() {
+    observeGateFiles();
     let absent = false;
     try { f.lstatSync(ACTIVATION_FILE); } catch (e) { if (e.code !== 'ENOENT') throw e; absent = true; }
     need(absent, 'ACT_TEARDOWN_DRIFT');
@@ -360,18 +363,29 @@ export function createShu71Production(id, b = shu71Boundary) {
   }
   async function cleanup(spec, journal, reason, automatic = false) {
     // Separate from either journal so damaged-log recovery cannot reset the
-    // automatic budget. Reserve durably BEFORE effects, including crash retries.
+    // automatic budget. Reserve durably before ordinary effects, including crash
+    // retries; counter failure has its own independent gate-disarm fallback.
     // Explicit resume/revoke remain available without resetting this budget.
+    let exhausted = false;
     if (automatic) {
       try {
         let attempts = 0;
         try { attempts = JSON.parse(privateRead(`${dir}/automatic-teardown.json`)).attempts; }
         catch (e) { if (e.code !== 'ENOENT') throw e; }
         need(Number.isSafeInteger(attempts) && attempts >= 0 && attempts <= 32, 'ACT_RETRY_BUDGET_INVALID');
-        if (attempts >= 32) return { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_EXHAUSTED', operator_action: 'resume_or_revoke' };
-        atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: attempts + 1 }));
-      } catch {
-        return { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_UNAVAILABLE', operator_action: 'resume_or_revoke' };
+        if (attempts >= 32) exhausted = true;
+        else atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: attempts + 1 }));
+      } catch (error) {
+        // Counter storage must never veto the independent disk gate disarm.
+        // Do not rely on journal availability or issue commands without a reservation.
+        const failures = [];
+        for (const file of GATES) {
+          try { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 0, 0, 0o644); }
+          catch { failures.push('ACT_TEARDOWN_GATE'); }
+        }
+        return { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_UNAVAILABLE',
+          budget_error: error.code === 'ACT_RETRY_BUDGET_INVALID' || error instanceof SyntaxError ? 'ACT_RETRY_BUDGET_INVALID' : 'ACT_RETRY_BUDGET_UNAVAILABLE',
+          failures, operator_action: 'resume_or_revoke' };
       }
     }
 
@@ -406,6 +420,25 @@ export function createShu71Production(id, b = shu71Boundary) {
         command('/usr/bin/systemctl', ['disable', '--now', `shu71-expiry-${id}.timer`]);
       }],
     );
+    if (exhausted) {
+      const refusal = { ok: false, state: 'HALT', code: 'ACT_RETRY_BUDGET_EXHAUSTED', operator_action: 'resume_or_revoke' };
+      // No repair after exhaustion. Reap a physically safe episode only when
+      // all non-observational work is already durably complete. Check files
+      // first so an armed gate still costs zero commands or writes per wake.
+      try {
+        observeGateFiles();
+        need(effects.filter(([step]) => !['observation', 'expiry-timer'].includes(step))
+          .every(([step]) => journal.entries.some(e => e.event === 'DONE' && e.step === `teardown:${step}`)), 'ACT_CLEANUP_FAILED');
+        const budget = JSON.parse(privateRead(`${dir}/automatic-teardown.json`));
+        if (budget.settlement_started) return refusal;
+        observeTeardown();
+        // One durable settlement allowance; interruption requires explicit recovery.
+        atomic(`${dir}/automatic-teardown.json`, JSON.stringify({ attempts: 32, settlement_started: true }));
+      } catch { return refusal; }
+      const result = await teardownActivation(journal, effects.filter(([step]) => ['observation', 'expiry-timer'].includes(step)), reason);
+      if (result.ok) remove(`${ROOT}/active.json`);
+      return result;
+    }
     const result = await teardownActivation(journal, effects, reason);
     if (result.ok) {
       // A retired episode's periodic wake must never tear down its successor.
