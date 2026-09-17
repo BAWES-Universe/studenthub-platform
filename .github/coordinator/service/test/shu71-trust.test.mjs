@@ -234,3 +234,29 @@ import { exhaustedVariants, exhaustedInvariant } from './shu71-exhausted-invaria
 for (const variant of exhaustedVariants) test(`exhausted invariant: ${variant.axis}: ${variant.label}`, t =>
   exhaustedInvariant(createShu71Production, () => productionFixture(t, keys), variant,
     snapshot => t.diagnostic(JSON.stringify(snapshot))));
+
+import { exhaustedControl, completionOrdering, inventoryGuard } from './shu71-delta-properties.mjs';
+import { journalInventory, appendReal } from './shu71-exhausted-invariants.mjs';
+test('SHU71_CONTROL_PROPERTY_EXHAUSTED_NO_CLOCK and COUNTER_ATTEMPTS_ONLY', () => exhaustedControl());
+test('SHU71_CONTROL_PROPERTY_COMPLETION_BEFORE_EXHAUSTED', () => completionOrdering());
+test('SHU71_CONTROL_PROPERTY_JOURNAL_APPEND_INVENTORY', () => inventoryGuard(journalInventory));
+for (const journal of ['intact', 'recovered']) test(`B4_TEARDOWN_COMPLETE_LEGITIMATE_TERMINAL_${journal}`, async t => {
+  const h = productionFixture(t, keys);
+  // The unchanged state driver verifies its unconsumed precondition before this
+  // wrapper appends the terminal signal immediately before the measured wake.
+  const create = (id, boundary) => {
+    const production = createShu71Production(id, boundary);
+    return { execute: async action => {
+      if (action === 'expire') appendReal(h, `/srv/shu/state/shu71-evidence/${h.id}`, journalInventory.find(e => e.terminal), journal);
+      return production.execute(action);
+    } };
+  };
+  const { stateTransition } = await import('./shu71-r8-state-model.mjs');
+  const measured = await stateTransition(create, h, { physical: 'armed', counter: 'exhausted', journal, allowance: 'unconsumed' });
+  // Writer append is setup; exactly one write, checked rather than hidden.
+  assert.equal(measured.events.filter(e => /journal.jsonl|recovery.jsonl/.test(e)).length, 1, 'B4_TERMINAL_REAL_WRITER');
+  assert.deepEqual({ ...measured.after, effects: measured.after.effects - 1 }, {
+    gates: Array(2).fill('[Service]\nEnvironment=ENABLE_DISPATCH=true\n'), credential: true, lease: true,
+    effects: 0, code: 'ACT_TEARDOWN_DRIFT', complete: true,
+  }, `B4_TEARDOWN_COMPLETE_LEGITIMATE_TERMINAL_${journal.toUpperCase()}`);
+});
