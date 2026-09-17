@@ -103,11 +103,11 @@ export function adapterLaunchEnvironment(source) {
     || ['CLAUDE_CODE_OAUTH_TOKEN', 'WORKSPACE_AGENT_ACCESS_TOKEN', 'WORKSPACE_AGENT_TRIGGER_ID'].includes(key)));
 }
 
-export function readAdapterLaunchEnvironment(io = fs, uid = process.getuid()) {
+export function readAdapterLaunchEnvironment(io = fs, uid = process.getuid(), gid = process.getgid()) {
   const fd = io.openSync('/srv/shu/coordinator.env', io.constants.O_RDONLY | io.constants.O_NOFOLLOW | io.constants.O_NONBLOCK);
   try {
     const stat = io.fstatSync(fd);
-    assert.ok(stat.isFile() && stat.nlink === 1 && stat.uid === uid && stat.gid === uid
+    assert.ok(stat.isFile() && stat.nlink === 1 && stat.uid === uid && stat.gid === gid
       && (stat.mode & 0o777) === 0o600 && stat.size <= 1024 * 1024,
       'SHU251_ENV_CUSTODY: private coordinator source required');
     return adapterLaunchEnvironment(io.readFileSync(fd, 'utf8'));

@@ -172,6 +172,21 @@
     "CLOSURE_ENV mutation combined accepted",
     "CLOSURE_ENV mutation crossed accepted",
     "CLOSURE_ENV mutation child adapter delivery omitted",
+    "CLOSURE_CUSTODY configured unequal uid gid passes and drift refuses",
+    "CLOSURE_CUSTODY mutation arming invalid identity name accepted",
+    "CLOSURE_CUSTODY mutation arming invalid identity gid accepted",
+    "CLOSURE_CUSTODY mutation arming conflates gid with uid",
+    "CLOSURE_CUSTODY mutation arming wrong gid accepted",
+    "CLOSURE_CUSTODY mutation arming non0600 accepted",
+    "CLOSURE_CUSTODY mutation arming configured identity ignored",
+    "CLOSURE_CUSTODY mutation child conflates gid with uid",
+    "CLOSURE_CUSTODY mutation child wrong gid accepted",
+    "CLOSURE_CUSTODY mutation child non0600 accepted",
+    "CLOSURE_WIRING forked adapter receives nine keys and custody refusal is named",
+    "CLOSURE_WIRING mutation worker child delivery omitted",
+    "CLOSURE_WIRING mutation worker process gid ignored",
+    "CLOSURE_WIRING mutation worker custody diagnostic swallowed",
+    "CLOSURE_LIFECYCLE independently pinned capability vocabulary",
     "ENV_CONTENT_MUTATION_STRIP_QUOTES_REMOVED",
     "ENV_CONTENT_MUTATION_CONTENT_REFUSAL_REMOVED",
     "ENV_CONTENT_ACCEPT_COMMAND",
@@ -3451,6 +3466,66 @@
     },
     {
       "name": "CLOSURE_ENV mutation child adapter delivery omitted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY configured unequal uid gid passes and drift refuses",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation arming invalid identity name accepted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation arming invalid identity gid accepted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation arming conflates gid with uid",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation arming wrong gid accepted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation arming non0600 accepted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation arming configured identity ignored",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation child conflates gid with uid",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation child wrong gid accepted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_CUSTODY mutation child non0600 accepted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_WIRING forked adapter receives nine keys and custody refusal is named",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_WIRING mutation worker child delivery omitted",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_WIRING mutation worker process gid ignored",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_WIRING mutation worker custody diagnostic swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "CLOSURE_LIFECYCLE independently pinned capability vocabulary",
       "capabilities": []
     },
     {

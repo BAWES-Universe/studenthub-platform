@@ -1,6 +1,6 @@
 # Execution-closure correction (repository evidence, not host authorization)
 
-Branch `fix/execution-closure`, based on
+Branch `fix/shu251-execution-closure`, based on
 `b14174c5d6dd57982e71f69469bd2583d72b0713` (`origin/main`).
 No remote host contact, push, PR, merge, external comment, AppArmor or sysctl
 change occurred. No production signing key was accessed. The final evidence
@@ -11,6 +11,14 @@ commit follows the implementation commit; obtain its exact ID with `git rev-pars
 The base inventory has zero `user_namespaces` requirements. Its distinct names
 are bash, cvtsudoers, flock, git, linux_proc, loopback_socket, privilege,
 shell_toolchain, systemd_analyze, unix_socket and worker_uid.
+
+Six capabilities therefore stop being probed in the suite path: `temp`,
+`user_namespaces`, `checkout`, `systemd`, `systemd_notify`, and `node`.
+Disposable-directory creation still exercises temp storage; disposable custody
+and revision-byte checks cover the checkout (except the former explicit checkout
+root uid assertion). Suite quiescence still invokes systemctl. Node >=22 and
+systemd-notify are no longer explicit suite admission gates. The lifecycle path
+retains all 16 non-namespace probes; these omissions are not extra test skips.
 
 `host-suite-contract.mjs:221` now omits probes with zero derived requirements.
 Evidence is `{required:false}`, **not a skip**. This also handles a probe that
@@ -223,6 +231,14 @@ These are prerequisites, not implicit permission to provision or contact a host:
    root and `/etc/systemd/system` must exist with reviewed ownership/modes. The
    provider creates the activation evidence directory, manifest and journal lock;
    it does not create service accounts, credentials or the evidence parent.
+   `/srv/shu/coordinator.env` must belong to the configured identity's numeric
+   **uid AND gid**, with mode **exactly 0600**. The supplied real-host measurement
+   is uid **999**, gid **982** (`shu-coordinator:shu-coordinator`), mode 0600;
+   equal account/group names do not imply equal numbers. Lifecycle binds this
+   pair through `spec.lifecycle.identity`. Arming resolves the installed
+   supervisor User/Group rendered from that identity using systemctl and id;
+   adapter children check their inherited process uid and primary gid separately.
+   This correction did not remeasure the host.
 4. Local Git objects, HEAD/main/origin-main and activation pin must have the
    recorded baseline; the provider reads/fetches the approved revision and reads
    remote main plus GitHub API main. This requires network/authentication during
@@ -237,6 +253,10 @@ These are prerequisites, not implicit permission to provision or contact a host:
    reads prior unit files and the two `10-shu251.conf` drop-ins (or their absence),
    enable/active state and stages exact dispatch-off bytes. No preinstalled SHU
    unit is required. Unreviewed drop-ins still refuse.
+   Window prerequisite: the coordinator environment file must contain **no
+   `ENABLE_DISPATCH=` line**, even `ENABLE_DISPATCH=false`. Rendering in
+   `phase-a-driver.mjs` refuses any such line with `SHU251_ENV_GATE_OVERRIDE`;
+   dispatch gating belongs to the reviewed unit/drop-in path.
 7. Runtime reads include the Git config at the approved revision, supervisor
    state, and `/proc/<supervisor-pid>/{status,environ}`. Provider evidence reads
    are manifest, journal, archive, preflight, staged unit bytes and locks beneath

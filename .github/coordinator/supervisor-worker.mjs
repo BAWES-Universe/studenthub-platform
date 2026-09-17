@@ -67,6 +67,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.send) {
         Object.assign(process.env, readAdapterLaunchEnvironment());
       }
       await executeSupervisedOrder(message, { send: value => { if (process.connected) process.send(value); } }); process.exit(0); }
-    catch { process.exit(1); }
+    catch (error) {
+      const code = /SHU251_ENV_CUSTODY|SHU251_ENV_CROSSED|SHU71_SUPERVISOR_ENV_REQUIRED/.exec(error.message)?.[0] ?? 'SHU251_CHILD_FAILED';
+      process.stderr.write(`${code}\n`); process.exit(1);
+    }
   });
 }

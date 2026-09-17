@@ -18,6 +18,7 @@ export function productionFixture(t, keys) {
     binding: { ...pkg.reseed, approvedExecutionRevision: pkg.coordinator_revision, tree, manifest_hex: '' } };
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-production-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const identity = { user: 'shu-coordinator', group: 'shu-coordinator', uid: 999, gid: 999 };
   const owners = new Map(), handles = new Map(), events = [], faults = {};
   const logical = p => typeof p === 'number' ? handles.get(p) : p;
   const resolve = p => typeof p === 'number' ? p : root + p;
@@ -58,9 +59,9 @@ export function productionFixture(t, keys) {
     readdirSync: p => fs.readdirSync(resolve(p)),
     rmSync: (p, opts) => effect(`remove:${p}`, () => fs.rmSync(resolve(p), opts)),
   };
-  function write(p, value, mode = 0o600, uid = 0) {
+  function write(p, value, mode = 0o600, uid = 0, gid = uid) {
     fs.mkdirSync(path.dirname(resolve(p)), { recursive: true, mode: 0o755 });
-    fs.writeFileSync(resolve(p), value, { mode }); owners.set(p, [uid, uid]);
+    fs.writeFileSync(resolve(p), value, { mode }); owners.set(p, [uid, gid]);
   }
   for (const p of ['/srv/shu/state', '/srv/shu/state/workspaces', '/etc/systemd/system', '/srv/shu/worktrees']) fs.mkdirSync(resolve(p), { recursive: true, mode: 0o755 });
   fs.chmodSync(resolve('/srv/shu/worktrees'), 0o3770);
@@ -79,11 +80,14 @@ export function productionFixture(t, keys) {
       let output = '';
       effect(`command:${exe}:${argv.join(' ')}`, () => {
         if (exe === '/usr/bin/systemctl') {
+          if (argv.includes('--property=User')) { output = identity.user; return; }
+          if (argv.includes('--property=Group')) { output = identity.group; return; }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
           if (['start', 'restart'].includes(argv[0])) active.set(argv[1], 'active');
           if (argv[0] === 'stop') active.set(argv[1], 'inactive');
           return;
         }
+        if (exe === '/usr/bin/id') { output = String(identity[{ '-u': 'uid', '-g': 'gid', '-gn': 'group' }[argv[0]]]); return; }
         if (exe !== '/usr/bin/setpriv') throw new Error('unexpected command');
         const args = argv.slice(argv.indexOf('-C') + 2), [verb, ...rest] = args;
         const ref = rest.at(-1);
@@ -129,7 +133,7 @@ export function productionFixture(t, keys) {
       });
     },
   };
-  return { ...h, spec, id, root, boundary, events, faults, active, write, signatures: () => signatures,
+  return { ...h, spec, id, root, identity, boundary, events, faults, active, write, signatures: () => signatures,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),
