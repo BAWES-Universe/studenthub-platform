@@ -38,7 +38,30 @@ export function checkRequirements(inventory, outcomes, audit) {
   }
   assert.equal([...rows.values()].flat().length, 0, 'A12_INVENTORY_REQUIREMENTS: surplus rows');
 }
+export function checkRealSkips(outcomes) {
+  for (const { name, reason } of outcomes.filter(o => o.status === 'skip')) {
+    assert.ok(Object.hasOwn(PERMITTED_SKIPS, name), `A12_INVENTORY_REAL_SKIPS: ${name}`);
+    assert.equal(reason, PERMITTED_SKIPS[name], `A12_INVENTORY_REAL_SKIPS: ${name}`);
+  }
+}
 export async function checkCommittedInventory(t) {
+  const eightSkips = Object.entries(PERMITTED_SKIPS).map(([name, reason]) => ({ name, reason, status: 'skip' }));
+  const fourSkips = eightSkips.map(o => o.name.startsWith('SHU-227:') || o.name.startsWith('SHU-228:')
+    ? { name: o.name, status: 'pass' } : o);
+  for (const [count, outcomes] of [[8, eightSkips], [4, fourSkips]]) {
+    assert.equal(outcomes.filter(o => o.status === 'skip').length, count, 'A12_INVENTORY_SKIP_SHAPE');
+    checkRealSkips(outcomes);
+    t.diagnostic(`A12_INVENTORY_REAL_SKIPS: ${count}-skip shape passes`);
+  }
+  for (const outcome of [
+    { name: 'A12 unauthorized skip control', reason: eightSkips[0].reason, status: 'skip' },
+    { ...eightSkips[0], reason: eightSkips[0].reason + ' altered' },
+  ]) {
+    assert.throws(() => checkRealSkips([...fourSkips, outcome]),
+      e => e.code === 'ERR_ASSERTION' && e.message.includes(`A12_INVENTORY_REAL_SKIPS: ${outcome.name}`),
+      `A12_INVENTORY_SKIP_MUTATION_KILL: ${outcome.name}`);
+    t.diagnostic(`skip control killed by A12_INVENTORY_REAL_SKIPS: ${outcome.name}`);
+  }
   const revision = git(['rev-parse', 'HEAD']).trim();
   const inventory = JSON.parse(git(['show', `${revision}:${INVENTORY_PATH}`]));
   const files = git(['ls-tree', '-r', '--name-only', revision]).trim().split('\n').filter(f =>
@@ -71,7 +94,7 @@ export default async function* (source) {
   assert.equal(events.filter(e => e.type === 'complete').length, 1, 'A12_INVENTORY_REAL_COMPLETE');
   assert.equal(events.at(-1).type, 'complete', 'A12_INVENTORY_REAL_TERMINAL');
   evaluateSuite({ outcomes, complete: true, exit_code: result.status }, inventory.names.length - 1);
-  assert.deepEqual(outcomes.filter(o => o.status === 'skip').map(o => [o.name, o.reason]).sort(), Object.entries(PERMITTED_SKIPS).sort(), 'A12_INVENTORY_REAL_SKIPS');
+  checkRealSkips(outcomes);
   // This callback is the sole excluded recursive case, and is checked too.
   outcomes.push({ name: guardName, file: '.github/coordinator/service/test/suite-runner-spec.test.mjs' });
   assert.deepEqual(outcomes.map(o => o.name).sort(), [...inventory.names].sort(), 'A12_INVENTORY_REAL_NAMES');
