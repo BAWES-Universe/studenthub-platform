@@ -502,7 +502,7 @@ test("thread.started is persisted atomically before process exit, and crash reco
   const fakeBin = mkdtempSync(join(tmpdir(), "codex-bin-"));
   const fakeCodex = join(fakeBin, "codex");
   const aliveMarker = join(worktree, "codex-child-alive");
-  writeFileSync(fakeCodex, `#!${process.execPath}\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); setTimeout(() => { fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); }, 1000);\n`);
+  writeFileSync(fakeCodex, `#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(aliveMarker)}, "alive"); process.stdout.write(${JSON.stringify(`${JSON.stringify({ type: "thread.started", thread_id: THREAD })}\n`)}); setTimeout(() => { fs.unlinkSync(${JSON.stringify(aliveMarker)}); process.exit(0); }, 1000);\n`);
   chmodSync(fakeCodex, 0o755);
   const adapterUrl = new URL("../adapters/codex-cli.mjs", import.meta.url).href;
   const runner = join(worktree, "runner.mjs");
