@@ -1,4 +1,4 @@
-import { gateRecoveryCheck, serviceRecoveryCheck } from './shu71-recovery-checks.mjs';
+import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck } from './shu71-recovery-checks.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createShu71Production } from '../shu71-production.mjs';
@@ -78,3 +78,48 @@ for (const retry of ['resume', 'revoke', 'expire']) test(`transient gate drift r
   gateRecoveryCheck(createShu71Production, productionFixture(t, keys), retry));
 for (const service of ['shu71-evidence.service', 'shu-supervisor.service']) test(`transient ${service} restart is stopped again on recovery`, t =>
   serviceRecoveryCheck(createShu71Production, productionFixture(t, keys), service));
+
+test('P1 drift after observation but before retirement refuses completion', t =>
+  retirementWindowCheck(createShu71Production, productionFixture(t, keys)));
+for (const retry of ['resume', 'revoke', 'expire']) test(`P4 activation file recreated after unlink recovers via ${retry}`, t =>
+  activationRecoveryCheck(createShu71Production, productionFixture(t, keys), retry));
+test('P5 remote restores and archive do not repeat on wedged wakes', t =>
+  onceOnlyRestoreCheck(createShu71Production, productionFixture(t, keys)));
+for (const retry of ['resume', 'revoke']) test(`P3 automatic replay budget persists across processes; operator ${retry} recovers`, t =>
+  boundedReplayCheck(createShu71Production, productionFixture(t, keys), retry));
+
+test('P3 reservation survives interruption and damaged journal cannot reset the budget', async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  const dir = `/srv/shu/state/shu71-evidence/${h.id}`;
+  const budget = `${dir}/automatic-teardown.json`;
+  // Interrupt after the durable reservation, before any safety effect.
+  let interrupted = false;
+  h.faults.after = event => {
+    if (!interrupted && event === `fsync:${dir}` && h.exists(budget)) { interrupted = true; return true; }
+    return false;
+  };
+  const start = h.events.length;
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_UNAVAILABLE', 'B4_BUDGET_RESERVATION_INTERRUPTED');
+  assert.equal(JSON.parse(h.read(budget)).attempts, 1, 'B4_BUDGET_RESERVATION_SURVIVES');
+  assert.equal(h.events.slice(start).some(e => e.startsWith('command:')), false, 'B4_NO_UNRESERVED_EFFECT');
+  h.faults.after = undefined;
+  h.write(budget, JSON.stringify({ attempts: 32 }));
+  const original = h.read(`${dir}/journal.jsonl`);
+  h.write(`${dir}/journal.jsonl`, original + 'torn');
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED', 'B4_RECOVERY_NO_BUDGET_RESET');
+  assert.equal(h.read(`${dir}/journal.jsonl`), original + 'torn');
+  const recovery = h.read(`${dir}/recovery.jsonl`);
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_EXHAUSTED');
+  assert.equal(h.read(`${dir}/recovery.jsonl`), recovery, 'B4_RECOVERY_BOUNDED_GROWTH');
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_BUDGET_DAMAGED_JOURNAL_MANUAL_RECOVERY');
+});
+for (const value of ['not-json', '{"attempts":-1}', '{"attempts":1.5}', '{"attempts":33}']) test(`P3 invalid retry budget refuses automatic effects: ${value}`, async t => {
+  const h = productionFixture(t, keys), create = () => createShu71Production(h.id, h.boundary);
+  await create().execute('run'); h.expire();
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, value);
+  const start = h.events.length;
+  assert.equal((await create().execute('expire')).code, 'ACT_RETRY_BUDGET_UNAVAILABLE', 'B4_INVALID_BUDGET_REFUSED');
+  assert.equal(h.events.slice(start).some(e => e.startsWith('command:') || e.startsWith('api:')), false);
+  assert.equal((await create().execute('revoke')).state, 'REVOKED', 'B4_INVALID_BUDGET_MANUAL_RECOVERY');
+});
