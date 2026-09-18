@@ -252,7 +252,7 @@ export function createShu71Production(id, b = shu71Boundary) {
         if (!signed) {
           need(!journal.entries.some(e => e.event === 'SIGNING_STARTED'), 'ACT_SIGNING_AMBIGUOUS');
           journal.append({ event: 'SIGNING_STARTED' });
-          const key = privateRead('/etc/shu/keys/shu71-signing.pem');
+          const key = privateRead('/etc/shu/keys/shu71-activation-ed25519.pem');
           signed = structuredClone(spec.pkg);
           signed.activation.signature = b.sign(canonicalBytes(signed.activation), key).toString('base64');
           signed.signature = b.sign(canonicalBytes(signed), key).toString('base64');
@@ -477,7 +477,7 @@ export function createShu71Production(id, b = shu71Boundary) {
 }
 
 export function renderEvidenceBroker() {
-  return `[Unit]\nDescription=SHU71 bounded fixture evidence\n[Service]\nUser=shu71-evidence\nGroup=shu71-evidence\nEnvironmentFile=/srv/shu/coordinator.env\nRuntimeDirectory=shu71-evidence\nRuntimeDirectoryMode=0750\nUMask=0007\nExecStart=/usr/bin/node /usr/local/lib/shu71/coordinator/service/fixture-evidence-broker.mjs\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nRestart=on-failure\n`;
+  return `[Unit]\nDescription=SHU71 bounded fixture evidence\n[Service]\nUser=shu71-evidence\nGroup=shu-workspace\nEnvironmentFile=/srv/shu/coordinator.env\nRuntimeDirectory=shu71-evidence\nRuntimeDirectoryMode=0750\nUMask=0007\nExecStart=/usr/bin/node /usr/local/lib/shu71/coordinator/service/fixture-evidence-broker.mjs\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nRestart=on-failure\n`;
 }
 
 // A kernel lock survives exceptions and is automatically released on death.

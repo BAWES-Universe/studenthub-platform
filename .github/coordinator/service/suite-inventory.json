@@ -27,6 +27,7 @@
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
+    ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -2972,7 +2973,34 @@
     "SHU71 review named mutation killed: rollback success",
     "SHU71 review named mutation killed: rollback exit",
     "SHU71 review path neutral mutation killed",
-    "SHU71 review recovery process exit status"
+    "SHU71 review recovery process exit status",
+    "D1 activation path signs both runtime payloads",
+    "D1 committed activation SPKI remains pinned",
+    "D1 precondition reports existing activation key custody",
+    "D1 shared group permits coordinator and denies unrelated user",
+    "D1 precondition measures shared group membership and socket predicates",
+    "D1 C1 owner package substitution rejected and mutant killed",
+    "D1 C1 owner activation substitution rejected and mutant killed",
+    "D1 lifecycle owner package substitution rejected and mutant killed",
+    "D1 lifecycle owner activation substitution rejected and mutant killed",
+    "D1 activation path source mutant killed",
+    "D1 coordinator allowed render mutation killed behaviourally",
+    "D1 unrelated denied render mutation killed behaviourally",
+    "D1 messagebus unit identity refused and guard mutation killed",
+    "D1 numeric unit identity refused and guard mutation killed",
+    "D1 socket mode refusal and source mutation killed",
+    "D1 runtime directory mode refusal and source mutation killed",
+    "D1 shared group membership refusal and source mutation killed",
+    "D1 shared group exists by name refusal and source mutation killed",
+    "D1 activation key owner custody refusal and mutation killed",
+    "D1 activation key group other bits custody refusal and mutation killed",
+    "D1 activation key nonempty custody refusal and mutation killed",
+    "D1 activation key single link custody refusal and mutation killed",
+    "D1 activation key no symlink custody refusal and mutation killed",
+    "D1 precondition key path mutation killed",
+    "D1 precondition exact rendered unit mutation killed",
+    "D1 broker creates socket at 0660 and widened source mutant killed",
+    "D1 rendered runtime directory widening refused and mutant killed"
   ],
   "requirements": [
     {
@@ -24083,6 +24111,114 @@
     },
     {
       "name": "SHU71 review recovery process exit status",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation path signs both runtime payloads",
+      "capabilities": []
+    },
+    {
+      "name": "D1 committed activation SPKI remains pinned",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition reports existing activation key custody",
+      "capabilities": []
+    },
+    {
+      "name": "D1 shared group permits coordinator and denies unrelated user",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition measures shared group membership and socket predicates",
+      "capabilities": []
+    },
+    {
+      "name": "D1 C1 owner package substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 C1 owner activation substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 lifecycle owner package substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 lifecycle owner activation substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation path source mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 coordinator allowed render mutation killed behaviourally",
+      "capabilities": []
+    },
+    {
+      "name": "D1 unrelated denied render mutation killed behaviourally",
+      "capabilities": []
+    },
+    {
+      "name": "D1 messagebus unit identity refused and guard mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 numeric unit identity refused and guard mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 socket mode refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 runtime directory mode refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 shared group membership refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 shared group exists by name refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key owner custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key group other bits custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key nonempty custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key single link custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key no symlink custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition key path mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition exact rendered unit mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 broker creates socket at 0660 and widened source mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 rendered runtime directory widening refused and mutant killed",
       "capabilities": []
     }
   ]

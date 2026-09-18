@@ -13,6 +13,8 @@ export const PATHS = Object.freeze({
   unit: '/etc/systemd/system/shu71-evidence.service', receipt: '/etc/shu/shu71-prerequisites.json',
 });
 export const BROKER = 'shu71-evidence';
+export const SHARED_GROUP = 'shu-workspace';
+const EVIDENCE_SOCKET = '/run/shu71-evidence/fixture.sock';
 const ACCOUNT_FILES = [...['/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow', '/etc/subuid', '/etc/subgid'].flatMap(p => [p, p + '-']), '/etc/.pwd.lock'];
 const PREFIX = '.github/coordinator/';
 const need = (v, code) => { if (!v) throw Object.assign(new Error(code), { code }); };
@@ -130,8 +132,17 @@ export function provisioner(revision, b = boundary) {
     need(!g || !users.some(p => p.name !== BROKER && p.gid === g.gid), 'ACT_BROKER_GID_COLLISION');
     if (!u || !g) { need(allowAbsent && !u && !g, 'ACT_BROKER_IDENTITY_MISSING'); return null; }
     need(u.uid > 0 && g.gid > 0 && u.gid === g.gid && u.home === '/nonexistent' && u.shell === '/usr/sbin/nologin' && g.members === '', 'ACT_BROKER_IDENTITY');
-    need(renderEvidenceBroker().includes(`\nUser=${BROKER}\nGroup=${BROKER}\n`) && !/\n(?:User|Group)=\d+\n/.test(renderEvidenceBroker()), 'ACT_BROKER_UNIT_BINDING');
+    need(renderEvidenceBroker().includes(`\nUser=${BROKER}\nGroup=${SHARED_GROUP}\n`) && !/\n(?:User|Group)=\d+\n/.test(renderEvidenceBroker()), 'ACT_BROKER_UNIT_BINDING');
     return { name: BROKER, uid: u.uid, gid: g.gid };
+  }
+  function sharedAccess() {
+    const { groups } = databases();
+    const shared = groups.filter(g => g.name === SHARED_GROUP);
+    need(shared.length === 1 && shared[0].gid > 0, 'ACT_BROKER_SHARED_GROUP');
+    serviceIdentity();
+    const memberships = command('/usr/bin/id', ['-Gn', 'shu-coordinator']).toString().trim().split(/\s+/);
+    need(memberships.includes(SHARED_GROUP), 'ACT_BROKER_COORDINATOR_ACCESS');
+    return { name: SHARED_GROUP, gid: shared[0].gid, coordinator: 'shu-coordinator' };
   }
   function allocate() {
     const db = databases(), defs = f.readFileSync('/etc/login.defs', 'utf8');
@@ -298,8 +309,21 @@ export function provisioner(revision, b = boundary) {
       need(r.uid === 0 && r.gid === 0 && r.mode === 0o600 && j.state === 'VERIFIED' && j.revision === revision, 'ACT_PREREQUISITE_RECEIPT');
       need(JSON.stringify(j.broker) === JSON.stringify(identity()), 'ACT_BROKER_IDENTITY'); return { state: j.state };
     });
+    check('/etc/shu/keys/shu71-activation-ed25519.pem', () => {
+      const r = read('/etc/shu/keys/shu71-activation-ed25519.pem');
+      need(r.uid === 0 && !(r.mode & 0o077) && r.bytes.length > 0 && Buffer.from(r.bytes, 'base64').length <= 4 * 1024 * 1024, 'ACT_FILE_CUSTODY');
+      return { uid: r.uid, gid: r.gid, mode: r.mode };
+    });
+    check('group:' + SHARED_GROUP, () => sharedAccess());
+    for (const p of ['/run/shu71-evidence', EVIDENCE_SOCKET]) check(p, () => {
+      const broker = identity(), shared = sharedAccess(), s = stat(p);
+      const directory = p !== EVIDENCE_SOCKET;
+      need(s && !s.isSymbolicLink() && (directory ? s.isDirectory() : s.isSocket()) && s.uid === broker.uid && s.gid === shared.gid, 'ACT_BROKER_SOCKET_CUSTODY');
+      need(directory ? (s.mode & 0o7777) === 0o750 : (s.mode & 0o7777) === 0o660, directory ? 'ACT_BROKER_DIRECTORY_MODE' : 'ACT_BROKER_SOCKET_MODE');
+      return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+    });
     const files = [['/etc/shu/approvals/owner.pub', 0o644, 0, 0], ['/etc/shu/approvals/shu71-owner.pub', 0o600, 0, 0],
-      ['/etc/shu/keys/shu71-signing.pem', 0o600, 0, 0], ['/etc/shu/supervisor.env', 0o600, 0, 0], ['/srv/shu/coordinator.env', 0o600, 'shu-coordinator', 'shu-coordinator']];
+      ['/etc/shu/supervisor.env', 0o600, 0, 0], ['/srv/shu/coordinator.env', 0o600, 'shu-coordinator', 'shu-coordinator']];
     for (const [p, mode, owner, group] of files) check(p, () => {
       const { uid, gid } = owner === 'shu-coordinator' ? serviceIdentity() : { uid: owner, gid: group };
       const r = read(p); need(r.mode === mode && r.uid === uid && r.gid === gid && r.bytes.length > 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid, gid, mode };

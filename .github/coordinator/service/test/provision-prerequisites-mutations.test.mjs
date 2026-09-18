@@ -38,7 +38,7 @@ for (const [name, from, to, fault, code] of cases) test(`SHU71 named mutation ki
 });
 test('SHU71 named mutation killed: hard-coded numeric identity in render', async t => {
   const from = "import { renderEvidenceBroker } from './shu71-production.mjs';";
-  const to = "import { renderEvidenceBroker as originalRender } from './shu71-production.mjs'; const renderEvidenceBroker = () => originalRender().replace('User=shu71-evidence', 'User=996').replace('Group=shu71-evidence', 'Group=999');";
+  const to = "import { renderEvidenceBroker as originalRender } from './shu71-production.mjs'; const renderEvidenceBroker = () => originalRender().replace('User=shu71-evidence', 'User=996').replace('Group=shu-workspace', 'Group=999');";
   const check = implementation => { const h = fixture(t); provisioner(revision, h.boundary).install();
     assert.doesNotThrow(() => implementation(revision, h.boundary).identity(), 'SHU71_KILL_NUMERIC_RENDER');
     assert.deepEqual(implementation(revision, h.boundary).identity(), { name: BROKER, uid: 100, gid: 100 }, 'SHU71_KILL_NUMERIC_RENDER'); };

@@ -10,7 +10,7 @@ import { digest } from '../shu71-journal.mjs';
 
 // All paths map into this disposable tree. Every command and API is interpreted
 // here. No production command, host service, API or signing key is reachable.
-export function productionFixture(t, keys) {
+export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-activation-ed25519.pem') {
   const h = harness(keys), pkg = h.context.pkg, id = pkg.activation_id;
   pkg.reseed.patch_sha256 = digest(''); pkg.signature = ''; pkg.activation.signature = '';
   const tree = 'd'.repeat(40);
@@ -67,7 +67,7 @@ export function productionFixture(t, keys) {
   fs.chmodSync(resolve('/srv/shu/worktrees'), 0o3770);
   write(`/etc/shu/approvals/${id}.shu71.json`, JSON.stringify({ payload: spec, signature: sign(null, canonicalBytes(spec, false), keys.privateKey).toString('base64') }));
   write('/etc/shu/approvals/shu71-owner.pub', keys.publicKey.export({ type: 'spki', format: 'pem' }));
-  write('/etc/shu/keys/shu71-signing.pem', keys.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  write(signingPath, keys.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   write('/usr/local/lib/shu71/coordinator/service/shu71-production.mjs', 'reviewed artifact', 0o644);
   write('/etc/shu/supervisor.env', secretText());
   write('/srv/shu/coordinator.env', coordinatorText(), 0o600, 999);

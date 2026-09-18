@@ -260,6 +260,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
+    "capabilities": [],
+    "justification": "Node core crypto/filesystem controls; production command and NSS boundaries doubled; Unix DAC connection behaviour model, no host identity or socket access claimed",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",

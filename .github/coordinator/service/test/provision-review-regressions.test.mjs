@@ -28,8 +28,8 @@ test('SHU71 review checkout capability', t => {
 });
 test('SHU71 review named absent row codes', t => {
   const h = fixture(t), p = provisioner(revision, h.boundary);
-  h.remove('/etc/shu/keys/shu71-signing.pem'); h.remove('/srv/shu/worktrees');
-  for (const [name, code] of [['/etc/shu/keys/shu71-signing.pem', 'ACT_PREREQUISITE_PATH_MISSING'], ['/srv/shu/worktrees', 'ACT_PREREQUISITE_CUSTODY'], ['identity:' + BROKER, 'ACT_BROKER_IDENTITY_MISSING']]) {
+  h.remove('/etc/shu/keys/shu71-activation-ed25519.pem'); h.remove('/srv/shu/worktrees');
+  for (const [name, code] of [['/etc/shu/keys/shu71-activation-ed25519.pem', 'ACT_PREREQUISITE_PATH_MISSING'], ['/srv/shu/worktrees', 'ACT_PREREQUISITE_CUSTODY'], ['identity:' + BROKER, 'ACT_BROKER_IDENTITY_MISSING']]) {
     assert.equal(row(p, name).code, code, 'SHU71_ABSENT_ROW_CODE');
   }
   assert.ok(p.precondition().paths.filter(r => !r.ok).every(r => /^(ACT_|SHU251_)/.test(r.code)), 'SHU71_ALL_ROWS_NAMED');
@@ -73,7 +73,7 @@ function allocation(t, mod, variant, label) {
   const receipt = JSON.parse(h.f.readFileSync(PATHS.receipt, 'utf8'));
   assert.deepEqual(receipt.broker, r.broker, label);
   const unit = h.f.readFileSync(PATHS.unit, 'utf8');
-  assert.ok(unit.includes(`\nUser=${receipt.broker.name}\nGroup=${receipt.broker.name}\n`), label);
+  assert.ok(unit.includes(`\nUser=${receipt.broker.name}\nGroup=shu-workspace\n`), label);
   assert.deepEqual(mod.provisioner(revision, h.boundary).identity(), receipt.broker, label);
 }
 function recoveryCli(t, mod, label) {
@@ -155,7 +155,7 @@ const mutants = [
     const h=fixture(t); m.provisioner(revision,h.boundary).install(); assert.equal(fs.existsSync(h.root+PATHS.tree+'/test/excluded.test.mjs'),false,l);
   }],
   ['raw errno', 'SHU71_ABSENT_ROW_CODE', "e.code === 'ENOENT' ? 'ACT_PREREQUISITE_PATH_MISSING'", "e.code === 'ENOENT' ? e.code", (t,m,l) => {
-    const h=fixture(t); h.remove('/etc/shu/keys/shu71-signing.pem'); assert.equal(row(m.provisioner(revision,h.boundary),'/etc/shu/keys/shu71-signing.pem').code,'ACT_PREREQUISITE_PATH_MISSING',l);
+    const h=fixture(t); h.remove('/etc/shu/keys/shu71-activation-ed25519.pem'); assert.equal(row(m.provisioner(revision,h.boundary),'/etc/shu/keys/shu71-activation-ed25519.pem').code,'ACT_PREREQUISITE_PATH_MISSING',l);
   }],
   ['rollback success', 'SHU71_INSTALL_RECOVERY_NOT_SUCCESS', "...rollback(old), ok: false", "...rollback(old), ok: true", (t,m,l) => {
     const h=fixture(t); unfinished(h); assert.equal(m.provisioner(revision,h.boundary).install().ok,false,l);

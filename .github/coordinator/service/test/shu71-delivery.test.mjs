@@ -30,7 +30,7 @@ test('B2 rendered coordinator carries exact activation argv; broker identity and
   const p = serviceParameters({ workdir: '/reviewed/repo', node: '/usr/bin/node' });
   assert.deepEqual(p.coordinator, ['/usr/bin/node', '/reviewed/repo/.github/coordinator/service/coordinator-tick.mjs', '--activation', ACTIVATION_FILE]);
   const unit = renderEvidenceBroker();
-  assert.equal(unit, '[Unit]\nDescription=SHU71 bounded fixture evidence\n[Service]\nUser=shu71-evidence\nGroup=shu71-evidence\nEnvironmentFile=/srv/shu/coordinator.env\nRuntimeDirectory=shu71-evidence\nRuntimeDirectoryMode=0750\nUMask=0007\nExecStart=/usr/bin/node /usr/local/lib/shu71/coordinator/service/fixture-evidence-broker.mjs\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nRestart=on-failure\n', 'SHU71_BROKER_NAMED_IDENTITY: exact reviewed unit uses the dedicated named user and group');
+  assert.equal(unit, '[Unit]\nDescription=SHU71 bounded fixture evidence\n[Service]\nUser=shu71-evidence\nGroup=shu-workspace\nEnvironmentFile=/srv/shu/coordinator.env\nRuntimeDirectory=shu71-evidence\nRuntimeDirectoryMode=0750\nUMask=0007\nExecStart=/usr/bin/node /usr/local/lib/shu71/coordinator/service/fixture-evidence-broker.mjs\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nRestart=on-failure\n', 'SHU71_BROKER_NAMED_IDENTITY: exact reviewed unit uses the dedicated named user and named shared group');
   assert.match(fs.readFileSync(new URL('../shu-coordinator.service.in', import.meta.url), 'utf8'), /^LoadCredential=supervisor-transport:@SUPERVISOR_ENVIRONMENT_FILE@$/m);
   assert.match(fs.readFileSync(new URL('../shu-supervisor.service.in', import.meta.url), 'utf8'), /^Environment=SHU71_EVIDENCE_BROKER=true$/m);
 });

@@ -41,7 +41,8 @@ files are deliberately untouched: their deletion is outside this reviewed
 entrypoint's effects. Consequently their separate sudo authorization remains
 an external policy question; installing this file does not revoke other rules.
 
-The broker user and group are both named `shu71-evidence`. Existing names must
+The broker account and its private NSS primary group are named `shu71-evidence`.
+The service runs with `Group=shu-workspace` for shared socket access. Existing names must
 be unique, dedicated, non-login identities. New uid/gid values are selected
 independently from explicit SYS_UID/SYS_GID ranges in `/etc/login.defs`, after
 measuring both databases with fixed `getent` commands. Occupied IDs are never
@@ -188,7 +189,9 @@ refuse. No numeric 999/982 service assumption remains in this entrypoint.
 | Broker identity | provisioner@904fbed:101–131: measured named dedicated identity, collision and messagebus prohibitions, SYS-range allocation and named render binding. |
 | Receipt | provisioner@904fbed:151–170,280–285: root:root 0600, VERIFIED, exact revision and measured broker, no pending replacement. |
 | `/etc/shu/approvals/owner.pub` | `service/production-lifecycle.mjs:158–162`: root:root 0644 regular public key; provisioner@904fbed:44–52,286–291 retains ancestor custody and nonempty-file checks. |
-| SHU71 owner public key and signing private key | `service/shu71-production.mjs:34–40,160,255`: root-owned private regular single-link files. provisioner@904fbed:286–289 retains the reviewed, stricter root:root 0600 and nonempty policy; production's privateRead alone does not mandate exact 0600 or GID 0. |
+| SHU71 owner public key | `service/shu71-production.mjs:34–40,160`: root-owned private regular single-link file. provisioner@904fbed:286–289 retains the reviewed, stricter root:root 0600 and nonempty policy; production's privateRead alone does not mandate exact 0600 or GID 0. |
+| `/etc/shu/keys/shu71-activation-ed25519.pem` | D1-a uses the **existing activation private key**. `service/shu71-production.mjs:34–40,255` reads a root-owned regular single-link file with `O_NOFOLLOW`, no group/other permission bits, at most 4 MiB; no exact owner-only mode or GID is required. `service/provision-shu71-prerequisites.mjs:312–316` checks this custody plus nonempty content and retained ancestor custody. No key material is created, copied, renamed, linked, relocated, or duplicated by provisioning. |
+| Shared broker access | `service/SHU-261-VALIDATION.md:12` names `shu-workspace`; `service/shu71-production.mjs:480` renders `User=shu71-evidence`, `Group=shu-workspace`, `RuntimeDirectoryMode=0750`. `service/provision-shu71-prerequisites.mjs:138–146,317–324` resolves the shared group by name, measures coordinator membership with `id -Gn shu-coordinator`, and measures broker ownership/shared GID and separate exact directory/socket modes. `service/fixture-evidence-broker.mjs:31` creates the socket and chmods it to 0660. |
 | Supervisor and coordinator environment files | `service/host-lifecycle.mjs:48–49` and `service/shu71-production.mjs:228–237`: root:root 0600 supervisor file, measured service UID/primary GID 0600 coordinator file; single regular file and custody checks retained. |
 | Approvals, keys, evidence root directories | provisioner@904fbed:37–43,291: root:root, directory, no symlinks, no group/world writes, ancestor custody. Production custody primitives: `service/production-lifecycle.mjs:35–49`, `service/shu71-production.mjs:43–46`. Exact root GID remains provisioning policy. |
 | Workspace state and supervisor state | `service/host-lifecycle.mjs:54–56`: service identity UID/GID, directory, 0700; provisioner@904fbed:292–296 retains parent custody and non-symlink checks. UID/GID now measured by name. |
@@ -256,3 +259,118 @@ coordinator and service suites. For either command, the exact CI clock prefix is
 Run from the repository root. The earlier 144/2837 results above describe the
 original reviewed commit; correction-run counts and final commit/tree IDs are
 reported separately after running against the committed correction.
+
+
+### Owner decisions D1-a and shared broker access
+
+Production reads the already-provisioned activation key at
+`/etc/shu/keys/shu71-activation-ed25519.pem`. The production change is a path
+change; the provisioner never creates or duplicates key material. Its report
+has exactly one key row, for that path. The owner public keys remain separate
+approval authorities; neither is an activation signing authority.
+
+The dedicated broker account remains `shu71-evidence`; its service primary
+group is the existing named `shu-workspace`. No identity number is introduced
+into the production render or new shared-access checks. The account's private
+primary group in NSS and the existing allocation/collision policy are retained.
+In particular, the previously reviewed reserved-996 refusal is unchanged;
+removing it would violate the instruction to preserve F1. Other pre-existing
+numeric assumptions outside these two decisions are not changed. Thus a literal
+claim of “no hard-coded UID/GID anywhere in the tree” is not made.
+
+The report measures NSS membership and on-disk unit/directory/socket metadata.
+It refuses missing shared group (`ACT_BROKER_SHARED_GROUP`), missing membership
+(`ACT_BROKER_COORDINATOR_ACCESS`), invalid dedicated/numeric unit identity
+(`ACT_BROKER_UNIT_BINDING`), wrong socket custody
+(`ACT_BROKER_SOCKET_CUSTODY`), widened socket mode (`ACT_BROKER_SOCKET_MODE`),
+and widened runtime-directory mode (`ACT_BROKER_DIRECTORY_MODE`). Existing
+`ACT_BROKER_MESSAGEBUS` and collision refusals remain intact. Unit content drift
+continues to use `ACT_TREE_CONTENT`. Activation key failures use
+`ACT_FILE_CUSTODY`, retained single-file custody and named measurement errors.
+
+The first five new controls were run before changing production: 5 tests,
+1 pass, 4 failures (activation path, key report/custody, coordinator connection,
+shared-access measurements). Identical inputs then gave 5 passes. The SPKI
+control already passed; owner-signature rejection and exact-unit rejection are
+retained protections, not newly discovered production defects.
+
+`service/test/shu71-owner-decisions.test.mjs` supplies named passing controls
+and matching source-mutant kills:
+
+| Claim / source mutation | Killing assertion |
+| --- | --- |
+| Runtime signer reads the activation path; restore the old path | `D1_ACTIVATION_PATH` |
+| Both signed payloads verify using the ephemeral activation test key | `D1_ACTIVATION_SIGNATURE_POSITIVE` |
+| Real committed public key and anchor fingerprint | `D1_COMMITTED_SPKI`, `D1_TRUST_ANCHOR` |
+| C1-owner signed package / activation; delete final package validation | `D1_REJECT_C1_OWNER_PACKAGE`, `D1_REJECT_C1_OWNER_ACTIVATION` |
+| Lifecycle-owner signed package / activation; delete final package validation | `D1_REJECT_LIFECYCLE_OWNER_PACKAGE`, `D1_REJECT_LIFECYCLE_OWNER_ACTIVATION` |
+| Key report path mutation | `D1_KEY_ROW` |
+| Delete key owner / permission / nonempty / single-link / no-follow guards | `D1_KEY_OWNER`, `D1_KEY_GROUP_OTHER_BITS`, `D1_KEY_NONEMPTY`, `D1_KEY_SINGLE_LINK`, `D1_KEY_NO_SYMLINK` |
+| Render private broker group: coordinator connect changes to EACCES | `D1_COORDINATOR_ALLOWED` |
+| Render unrelated user's group: its connect changes to CONNECTED | `D1_UNRELATED_DENIED` |
+| Substitute messagebus / numeric User; remove named render guard | `D1_MESSAGEBUS_IDENTITY_REFUSED`, `D1_NUMERIC_IDENTITY_REFUSED` |
+| Accept widened socket mode / runtime-directory mode independently | `D1_SOCKET_MODE`, `D1_RUNTIME_DIRECTORY_MODE` |
+| Remove membership guard / resolve renamed group instead | `D1_SHARED_GROUP_MEMBERSHIP`, `D1_SHARED_GROUP_EXISTS_BY_NAME` |
+| Ignore unit content mismatch | `D1_EXACT_UNIT` |
+| Broker chmod source widened to 0666 | `D1_SOCKET_CREATED_0660` |
+| Rendered directory mode widened to 0755 | `D1_RENDERED_DIRECTORY_MODE` |
+
+The connection controls execute a Unix DAC model with directory search and
+socket write checked independently using the fixture's named account database.
+They show a behavioural result, not a render-string comparison, but are **not a
+real kernel socket-access proof**. Directory/socket mode measurements use real
+temporary-file modes; socket type, ownership, NSS, commands and APIs are doubled.
+The production report performs real `lstat`, NSS and membership measurements when
+run on a host; it has not been run there in this repository-only task.
+
+The 27 new tests include 22 named source-mutant kills over passing controls.
+Production still calls `validateShu71Package` after signing
+(`service/shu71-production.mjs:264–270`); its signature checks load the fixed
+committed public source (`shu71-activation-package.mjs:190–193`) and the
+trust-anchor validation checks its fingerprint. These guards are retained.
+
+The committed SPKI is independently measured as
+`0cc5f24f46554bd25b713d78fca2f2bd48ab9b270d217a9dce613956d5786d5a`.
+A fresh runtime signature against that committed public key remains **unproven**:
+its private counterpart is not available to this repository-only run. The
+positive signing control uses the existing ephemeral public-source test seam;
+it must not be represented as a committed-key signature proof. Owner-role tests
+use distinct generated test owner keys, not the host's owner private keys.
+No on-host key, account, service, socket or API was accessed. Immutable historical
+source fixtures retain their old path and hashes; the historical differential
+harness derives its fixture key path from those bytes without altering them.
+
+
+Owner-decision focused command (974 tests):
+
+```sh
+node --test .github/coordinator/service/test/provision*.test.mjs .github/coordinator/service/test/shu71-owner-decisions.test.mjs .github/coordinator/service/test/shu71-production.test.mjs .github/coordinator/service/test/shu71-trust*.test.mjs
+```
+
+Full coordinator + service command, with both TAP and the unchanged reviewed
+reporter (set `run=plain` or `run=clock` for the output names):
+
+```sh
+run=plain
+node --test --test-reporter=tap --test-reporter-destination="/tmp/shu71-d1-full-verified-$run.tap" --test-reporter=./.github/coordinator/service/host-suite-contract.mjs --test-reporter-destination="/tmp/shu71-d1-full-verified-$run.jsonl" .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs
+```
+
+Both commands were run with `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS` unset
+for plain, and with the exact CI prefix
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS="--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs"`
+for clock. Full-suite file selection is identical to `npm run test:coordinator`.
+Earlier development runs exposed four historical fixture-input mismatches;
+full development runs were stopped while those consumers were corrected.
+The first completed full runs each reported 2,892 tests / 2,881 pass / 3 fail /
+8 skip: two remaining historical fixture-input mismatches (subsequently fixed)
+and the unchanged A12 guard reading the old committed inventory. Final counts
+and commit/tree IDs are reported after validation against the new commit.
+
+`PERMITTED_SKIPS` is byte-identical to
+`24228e6e73f3ef08df60c2e0b38d570d70ec8e69`: 1,093 bytes including its final
+newline; SHA-256 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+The entire `host-suite-contract.mjs` is also byte-identical, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`.
+All existing file/name/requirement entries remain intact; 27 test names and one
+test file are added. No historical fixtures, trust-anchor bytes, committed
+public key, CI workflow or other source outside `.github/coordinator` changed.

@@ -14,6 +14,11 @@ export function fixture(t) {
   const logical = p => typeof p === 'number' ? handles.get(p) : p;
   const effect = (name, fn) => { events.push(name); if (faults.before?.(name)) throw Error('INJECTED'); const r = fn(); if (faults.after?.(name)) throw Error('INJECTED'); return r; };
   const s = (p, st) => new Proxy(st, { get(target, key) {
+    if (logical(p) === '/run/shu71-evidence' || logical(p) === '/run/shu71-evidence/fixture.sock') {
+      if (key === 'uid') return users.find(u => u.name === BROKER)?.uid ?? 0;
+      if (key === 'gid') return groups.find(g => g.name === 'shu-workspace')?.gid ?? 0;
+      if (key === 'isSocket') return () => logical(p).endsWith('/fixture.sock');
+    }
     if (key === 'uid' || key === 'gid') return (owners.get(logical(p)) ?? [0, 0])[key === 'uid' ? 0 : 1];
     const v = target[key]; return typeof v === 'function' ? v.bind(target) : v;
   } });
@@ -42,7 +47,7 @@ export function fixture(t) {
     ['test/excluded.test.mjs', Buffer.from('not production')],
   ]);
   let users = [{ name: 'messagebus', uid: 996, gid: 998, home: '/nonexistent', shell: '/usr/sbin/nologin' }];
-  let groups = [{ name: 'messagebus', gid: 998, members: '' }, { name: 'shu-coordinator', gid: 982, members: '' }, { name: 'shu-workspace', gid: 980, members: '' }];
+  let groups = [{ name: 'messagebus', gid: 998, members: '' }, { name: 'shu-coordinator', gid: 982, members: '' }, { name: 'shu-workspace', gid: 980, members: 'shu-coordinator' }];
   users.push({ name: 'shu-coordinator', uid: 999, gid: 982, home: '/nonexistent', shell: '/usr/sbin/nologin' });
   function accountBytes() { return {
     '/etc/passwd': users.map(u => `${u.name}:x:${u.uid}:${u.gid}::${u.home}:${u.shell}`).join('\n') + '\n',
@@ -68,7 +73,8 @@ export function fixture(t) {
       else if (verb === 'cat-file') stdout = [...sources.values()].find(bytes => blob(bytes) === a[2]);
       else if (verb === 'hash-object') stdout = blob(opts.input);
       else throw Error('unexpected git ' + args);
-    } else if (exe === '/usr/bin/getent') stdout = args[0] === 'passwd'
+    } else if (exe === '/usr/bin/id') stdout = groups.filter(g => g.members.split(',').includes(args[1]) || g.gid === users.find(u => u.name === args[1])?.gid).map(g => g.name).join(' ');
+    else if (exe === '/usr/bin/getent') stdout = args[0] === 'passwd'
       ? users.map(u => `${u.name}:x:${u.uid}:${u.gid}::${u.home}:${u.shell}`).join('\n')
       : groups.map(g => `${g.name}:x:${g.gid}:${g.members}`).join('\n');
     else if (exe === '/proc/self/fd/3') {
@@ -87,6 +93,7 @@ export function fixture(t) {
     });
     return { status, stdout };
   };
+  directory('/run/shu71-evidence', 0o750); write('/run/shu71-evidence/fixture.sock', '', 0o660);
   directory('/proc'); directory('/etc/shu'); directory('/etc/sudoers.d'); directory('/etc/systemd/system'); directory('/usr/local/libexec');
   directory(PATHS.checkout, 0o755, 999, 982);
   for (const [p, bytes] of Object.entries(accountBytes())) write(p, bytes, p.includes('shadow') ? 0o600 : 0o644);
@@ -95,7 +102,7 @@ export function fixture(t) {
   write('/usr/bin/cvtsudoers.ws', 'parser double', 0o755);
   write('/etc/sudoers.d/shu-reviewer-sandbox', 'unrelated', 0o440);
   write(PATHS.wrapper, 'old wrapper', 0o750, 12, 13);
-  for (const p of ['/etc/shu/approvals/owner.pub', '/etc/shu/approvals/shu71-owner.pub', '/etc/shu/keys/shu71-signing.pem', '/etc/shu/supervisor.env']) write(p, 'private fixture', p.endsWith('/owner.pub') ? 0o644 : 0o600);
+  for (const p of ['/etc/shu/approvals/owner.pub', '/etc/shu/approvals/shu71-owner.pub', '/etc/shu/keys/shu71-activation-ed25519.pem', '/etc/shu/supervisor.env']) write(p, 'private fixture', p.endsWith('/owner.pub') ? 0o644 : 0o600);
   write('/srv/shu/coordinator.env', 'private fixture', 0o600, 999, 982);
   directory('/srv/shu/state/shu71-evidence'); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
   directory('/srv/shu/state/workspaces/supervisor', 0o700, 999, 982); directory('/srv/shu/worktrees', 0o3770, 999, 980);

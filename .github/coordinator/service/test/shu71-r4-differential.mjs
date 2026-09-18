@@ -10,18 +10,19 @@ import { productionFixture } from './shu71-production-fixture.mjs';
 export async function counterDifferential(t, keys, candidate) {
   const url = new URL('../shu71-production.mjs', import.meta.url);
   for (const [label, revision] of [['parent', '5e25c651254a72adbb46fa8f950df95248b640e9'], ['blocked', 'e9a68c156a0b8631b314d8d14c626ba31014a882'], ['candidate', null]]) {
-    let create = candidate;
+    let create = candidate, historicalSigningPath;
     if (revision) {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-r4-differential-'));
       t.after(() => fs.rmSync(root, {recursive: true, force: true}));
       const read = name => historicalSource(revision, name);
       fs.writeFileSync(path.join(root, 'journal.mjs'), read('shu71-journal.mjs'));
+      historicalSigningPath = read('shu71-production.mjs').match(/privateRead\('([^']+\/keys\/[^']+)'\)/)[1];
       const source = read('shu71-production.mjs').replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
         (_, p, q, r) => `${p}${q}${r === './shu71-journal.mjs' ? pathToFileURL(path.join(root, 'journal.mjs')).href : new URL(r, url).href}${q}`);
       fs.writeFileSync(path.join(root, 'production.mjs'), source);
       create = (await import(pathToFileURL(path.join(root, 'production.mjs')))).createShu71Production;
     }
-    const h = productionFixture(t, keys);
+    const h = productionFixture(t, keys, historicalSigningPath);
     assert.equal((await create(h.id,h.boundary).execute('run')).state, 'ARMED'); h.expire();
     h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, '{"attempts":0}', 0o644);
     for (let n=0;n<4;n++) {

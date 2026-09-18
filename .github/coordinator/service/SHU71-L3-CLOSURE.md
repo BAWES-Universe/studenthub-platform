@@ -50,7 +50,7 @@ journal write.
 | Authority/effect | Production adapter | Evidence/recovery |
 | --- | --- | --- |
 | Exact revision/tree and fixture parents | Git as UID/GID 999 with cleared supplementary groups; local refs, explicit HTTPS ls-remote, fixed GitHub repository API | `binding` intent/completion; clean checkout and main/API equality |
-| Package and runtime envelope signing | Fixed root-only signing-key path `/etc/shu/keys/shu71-signing.pem` | `SIGNING_STARTED`, durable signed package, adoption or ambiguous-signing refusal |
+| Package and runtime envelope signing | Fixed root-only signing-key path `/etc/shu/keys/shu71-activation-ed25519.pem` | `SIGNING_STARTED`, durable signed package, adoption or ambiguous-signing refusal |
 | Local append | Existing `createReseedAppendIo` and commit/manifest verifier | Deterministic commit, expected-parent update-ref; observes an already-installed result |
 | Remote append | Explicit refspec and `--force-with-lease=<ref>:<expected-old>` after verified ancestry | Adopts an already-pushed exact SHA; local/remote/API readback, manifest and API ancestry |
 | Exact fixture transitions | Fixed Linear GraphQL read/update operations; exact signed issue UUID, state and assignee; readback | Intent precedes each card change; restore runs independently for both fixtures |
