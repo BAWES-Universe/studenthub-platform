@@ -22,7 +22,7 @@ function prepare(t) {
   return h;
 }
 test('HOST_REALITY_PRE_FIX: all five failures reproduced from merged source', async t => {
-  const old = await load(execFileSync('git', ['show', '3761fc4:.github/coordinator/service/provision-shu71-prerequisites.mjs'], { encoding: 'utf8' }));
+  const old = await load(fs.readFileSync(new URL('./fixtures/shu71-history/3761fc4ed83429d56a43592b125fa52564b94cc0/provision-shu71-prerequisites.mjs', import.meta.url), 'utf8'));
   const h = prepare(t);
   assert.throws(() => old.provisioner(revision, h.boundary).install(), { code: 'ACT_IDENTITY_SYSTEM_RANGE' }, 'HOST_RANGE_PRE_FIX');
   h.write('/etc/login.defs', 'SYS_UID_MIN 100\nSYS_UID_MAX 999\nSYS_GID_MIN 100\nSYS_GID_MAX 999\n');
