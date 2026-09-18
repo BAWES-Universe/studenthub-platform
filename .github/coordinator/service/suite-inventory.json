@@ -15,6 +15,7 @@
     ".github/coordinator/service/test/phase-a-driver.test.mjs",
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
     ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
+    ".github/coordinator/service/test/provision-review-regressions.test.mjs",
     ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
     ".github/coordinator/service/test/reporter-amendments.test.mjs",
     ".github/coordinator/service/test/residual.test.mjs",
@@ -2943,7 +2944,35 @@
     "SHU71 provisioning refuses extras symlinks hardlinks and parent writes",
     "SHU71 provisioning partial installation and rollback residue crash matrix",
     "SHU71 provisioning rollback process replacement at every effect",
-    "SHU71 provisioning refuses to remove an identity still in use"
+    "SHU71 provisioning refuses to remove an identity still in use",
+    "SHU71 review worktrees production shape",
+    "SHU71 review checkout capability",
+    "SHU71 review named absent row codes",
+    "SHU71 review rollback only install result",
+    "SHU71 review literal effect paths",
+    "SHU71 review non test effect selection",
+    "SHU71 review path neutral commands",
+    "SHU71 review recovery CLI status",
+    "SHU71 review measured service identity",
+    "SHU71 review checkout rejects symlink and wrong owner",
+    "SHU71 review named mutation killed: worktrees group",
+    "SHU71 review named mutation killed: worktrees mode",
+    "SHU71 review named mutation killed: checkout group",
+    "SHU71 review named mutation killed: checkout access",
+    "SHU71 review named mutation killed: service group name",
+    "SHU71 review named mutation killed: allocator occupied",
+    "SHU71 review named mutation killed: allocator free 996",
+    "SHU71 review named mutation killed: pre useradd collision",
+    "SHU71 review named mutation killed: messagebus prohibition",
+    "SHU71 review named mutation killed: literal sudoers",
+    "SHU71 review named mutation killed: literal wrapper",
+    "SHU71 review named mutation killed: literal tree",
+    "SHU71 review named mutation killed: test exclusion",
+    "SHU71 review named mutation killed: raw errno",
+    "SHU71 review named mutation killed: rollback success",
+    "SHU71 review named mutation killed: rollback exit",
+    "SHU71 review path neutral mutation killed",
+    "SHU71 review recovery process exit status"
   ],
   "requirements": [
     {
@@ -23942,6 +23971,118 @@
     },
     {
       "name": "SHU71 provisioning refuses to remove an identity still in use",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review worktrees production shape",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review checkout capability",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named absent row codes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review rollback only install result",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review literal effect paths",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review non test effect selection",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review path neutral commands",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review recovery CLI status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review measured service identity",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review checkout rejects symlink and wrong owner",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: worktrees group",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: worktrees mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: checkout group",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: checkout access",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: service group name",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: allocator occupied",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: allocator free 996",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: pre useradd collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: messagebus prohibition",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: literal sudoers",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: literal wrapper",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: literal tree",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: test exclusion",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: raw errno",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: rollback success",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: rollback exit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review path neutral mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review recovery process exit status",
       "capabilities": []
     }
   ]

@@ -30,8 +30,8 @@ export function provisioner(revision, b = boundary) {
     need(!r.error && r.status === 0, 'ACT_PREREQUISITE_COMMAND');
     return Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? '');
   };
-  const git = (args, input) => command('/usr/bin/setpriv', ['--reuid=999', '--regid=982', '--clear-groups', '/usr/bin/git',
-    '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', PATHS.checkout, ...args], { input, encoding: null });
+  const git = (args, input) => { const { uid, gid } = serviceIdentity(); return command('/usr/bin/setpriv', [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '/usr/bin/git',
+    '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', PATHS.checkout, ...args], { input, encoding: null }); };
   const hash = bytes => git(['hash-object', '--stdin'], bytes).toString().trim();
   const stat = p => { try { return f.lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
   function custody(p) {
@@ -103,6 +103,22 @@ export function provisioner(revision, b = boundary) {
     const groups = parse('group').map(p => ({ name: p[0], gid: Number(p[2]), members: p[3] }));
     need(users.every(p => p.name && Number.isInteger(p.uid) && Number.isInteger(p.gid)) && groups.every(p => p.name && Number.isInteger(p.gid)), 'ACT_IDENTITY_DATABASE');
     return { users, groups };
+  }
+  function serviceIdentity() {
+    const { users, groups } = databases();
+    const us = users.filter(u => u.name === 'shu-coordinator'), gs = groups.filter(g => g.name === 'shu-coordinator');
+    need(us.length === 1 && gs.length === 1, 'ACT_SERVICE_IDENTITY_MISSING');
+    need(us[0].uid > 0 && gs[0].gid > 0 && us[0].gid === gs[0].gid, 'ACT_SERVICE_IDENTITY');
+    return { uid: us[0].uid, gid: gs[0].gid };
+  }
+  function checkout() {
+    const { uid, gid } = serviceIdentity(), s = stat(PATHS.checkout);
+    need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === uid, 'ACT_PREREQUISITE_CHECKOUT');
+    // Same read/traverse/no-symlink capability as host-suite-contract.mjs:152.
+    const probe = `import fs from 'node:fs'; import path from 'node:path'; function visit(p){const s=fs.lstatSync(p); if(s.isSymbolicLink()) throw Error('symlink'); fs.accessSync(p,fs.constants.R_OK|(s.isDirectory()?fs.constants.X_OK:0)); if(s.isDirectory()) for(const n of fs.readdirSync(p)) { visit(path.join(p,n)); }} visit(${JSON.stringify(PATHS.checkout)});`;
+    const r = b.run('/usr/bin/setpriv', [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '/usr/bin/node', '--input-type=module', '-e', probe], { env: ENV });
+    need(!r.error && r.status === 0, 'ACT_PREREQUISITE_CHECKOUT_ACCESS');
+    return { uid: s.uid, gid: s.gid, revision };
   }
   function identity(allowAbsent = false) {
     const { users, groups } = databases(), us = users.filter(p => p.name === BROKER), gs = groups.filter(p => p.name === BROKER);
@@ -224,7 +240,7 @@ export function provisioner(revision, b = boundary) {
   }
   function install() {
     const old = load();
-    if (old && old.state !== 'VERIFIED') return rollback(old);
+    if (old && old.state !== 'VERIFIED') return { ...rollback(old), ok: false, code: 'ACT_PREREQUISITE_INSTALL_RECOVERED' };
     const entries = expected();
     if (old) return { ok: true, state: 'ADOPTED', revision, ...verify(entries) };
     // An existing coordinator tree is adopted only as an exact complete tree.
@@ -265,11 +281,10 @@ export function provisioner(revision, b = boundary) {
   function precondition() {
     const report = { ok: true, revision, paths: [] };
     const check = (p, fn) => { try { report.paths.push({ path: p, ok: true, ...fn() }); }
-      catch (e) { report.ok = false; report.paths.push({ path: p, ok: false, code: e.code ?? 'ACT_PREREQUISITE_MISSING' }); } };
+      catch (e) { report.ok = false; report.paths.push({ path: p, ok: false, code: !e.code ? 'ACT_PREREQUISITE_MISSING' : /^(ACT_|SHU251_)[A-Z0-9_]+$/.test(e.code) ? e.code : e.code === 'ENOENT' ? 'ACT_PREREQUISITE_PATH_MISSING' : 'ACT_PREREQUISITE_MEASUREMENT' }); } };
     let entries;
     check(PATHS.checkout, () => {
-      const s = stat(PATHS.checkout); need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === 999 && s.gid === 982 && !(s.mode & 0o022), 'ACT_PREREQUISITE_CHECKOUT');
-      entries = expected(); return { uid: s.uid, gid: s.gid, revision };
+      const measured = checkout(); entries = expected(); return measured;
     });
     if (entries) {
       for (const e of entries) check(e.path, () => verifyFile(e));
@@ -284,15 +299,22 @@ export function provisioner(revision, b = boundary) {
       need(JSON.stringify(j.broker) === JSON.stringify(identity()), 'ACT_BROKER_IDENTITY'); return { state: j.state };
     });
     const files = [['/etc/shu/approvals/owner.pub', 0o644, 0, 0], ['/etc/shu/approvals/shu71-owner.pub', 0o600, 0, 0],
-      ['/etc/shu/keys/shu71-signing.pem', 0o600, 0, 0], ['/etc/shu/supervisor.env', 0o600, 0, 0], ['/srv/shu/coordinator.env', 0o600, 999, 982]];
-    for (const [p, mode, uid, gid] of files) check(p, () => {
+      ['/etc/shu/keys/shu71-signing.pem', 0o600, 0, 0], ['/etc/shu/supervisor.env', 0o600, 0, 0], ['/srv/shu/coordinator.env', 0o600, 'shu-coordinator', 'shu-coordinator']];
+    for (const [p, mode, owner, group] of files) check(p, () => {
+      const { uid, gid } = owner === 'shu-coordinator' ? serviceIdentity() : { uid: owner, gid: group };
       const r = read(p); need(r.mode === mode && r.uid === uid && r.gid === gid && r.bytes.length > 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid, gid, mode };
     });
     for (const p of ['/etc/shu/approvals', '/etc/shu/keys', '/srv/shu/state/shu71-evidence']) check(p, () => { custody(p); const s = stat(p); need(s.gid === 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
     for (const p of ['/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor', '/srv/shu/worktrees']) check(p, () => {
-      const s = stat(p); custody(p.endsWith('/supervisor') ? '/srv/shu/state' : path.dirname(p));
-      if (p.endsWith('/supervisor')) { const parent = stat(path.dirname(p)); need(parent?.isDirectory() && !parent.isSymbolicLink() && parent.uid === 999 && parent.gid === 982 && (parent.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY'); }
-      need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === 999 && s.gid === 982 && (s.mode & 0o7777) === (p.endsWith('/worktrees') ? 0o3770 : 0o700), 'ACT_PREREQUISITE_CUSTODY');
+      const s = stat(p);
+      if (p === '/srv/shu/worktrees') {
+        need(s?.isDirectory() && !s.isSymbolicLink() && (s.mode & 0o7777) === 0o3770, 'ACT_PREREQUISITE_CUSTODY');
+        return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+      }
+      const { uid, gid } = serviceIdentity();
+      custody(p.endsWith('/supervisor') ? '/srv/shu/state' : path.dirname(p));
+      if (p.endsWith('/supervisor')) { const parent = stat(path.dirname(p)); need(parent?.isDirectory() && !parent.isSymbolicLink() && parent.uid === uid && parent.gid === gid && (parent.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY'); }
+      need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === uid && s.gid === gid && (s.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY');
       return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
     });
     for (const ref of ['refs/heads/coordinator/SHU-140', 'refs/heads/coordinator/SHU-254']) check(ref, () => {
@@ -308,17 +330,20 @@ export function parseCli(argv) {
   need(argv.length === 2 && ['install', 'verify', 'rollback', 'precondition'].includes(argv[0]) && /^[a-f0-9]{40}$/.test(argv[1]), 'ACT_COMMAND_INVALID');
   return { action: argv[0], revision: argv[1] };
 }
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+export function runCli(argv, b = boundary, emit = value => console.log(JSON.stringify(value))) {
   try {
-    const { action, revision } = parseCli(process.argv.slice(2));
+    const { action, revision } = parseCli(argv);
     if (['install', 'rollback'].includes(action)) {
-      need(process.getuid() === 0, 'ACT_PROCESS_IDENTITY');
+      need(b.uid() === 0, 'ACT_PROCESS_IDENTITY');
       const script = `import { provisioner } from 'file://${PATHS.checkout}/.github/coordinator/service/provision-shu71-prerequisites.mjs'; const r = provisioner('${revision}').${action}(); console.log(JSON.stringify(r)); if(r.ok === false) process.exitCode = 2;`;
-      const result = boundary.run('/usr/bin/flock', ['--exclusive', '--nonblock', '--no-fork', '/etc/shu', '/usr/bin/node', '--input-type=module', '-e', script], { env: ENV, timeout: 0, stdio: 'inherit' });
-      need(!result.error && result.status === 0, 'ACT_PREREQUISITE_LOCK_OR_EXECUTION');
+      const result = b.run('/usr/bin/flock', ['--exclusive', '--nonblock', '--no-fork', '/etc/shu', '/usr/bin/node', '--input-type=module', '-e', script], { env: ENV, timeout: 0, stdio: 'inherit' });
+      need(!result.error && [0, 2].includes(result.status), 'ACT_PREREQUISITE_LOCK_OR_EXECUTION');
+      return result.status;
     } else {
-      const result = provisioner(revision)[action]();
-      console.log(JSON.stringify(result)); if (result.ok === false) process.exitCode = 2;
+      const result = provisioner(revision, b)[action]();
+      emit(result); return result.ok === false ? 2 : 0;
     }
-  } catch (e) { console.log(JSON.stringify({ ok: false, code: e.code ?? 'ACT_PREREQUISITE_FAILED' })); process.exitCode = 2; }
+  } catch (e) { emit({ ok: false, code: e.code ?? 'ACT_PREREQUISITE_FAILED' }); return 2; }
 }
+
+if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = runCli(process.argv.slice(2));

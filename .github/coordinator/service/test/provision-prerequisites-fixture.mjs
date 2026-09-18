@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import vm from 'node:vm';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { PATHS, BROKER } from '../provision-shu71-prerequisites.mjs';
@@ -41,7 +42,8 @@ export function fixture(t) {
     ['test/excluded.test.mjs', Buffer.from('not production')],
   ]);
   let users = [{ name: 'messagebus', uid: 996, gid: 998, home: '/nonexistent', shell: '/usr/sbin/nologin' }];
-  let groups = [{ name: 'messagebus', gid: 998, members: '' }];
+  let groups = [{ name: 'messagebus', gid: 998, members: '' }, { name: 'shu-coordinator', gid: 982, members: '' }, { name: 'shu-workspace', gid: 980, members: '' }];
+  users.push({ name: 'shu-coordinator', uid: 999, gid: 982, home: '/nonexistent', shell: '/usr/sbin/nologin' });
   function accountBytes() { return {
     '/etc/passwd': users.map(u => `${u.name}:x:${u.uid}:${u.gid}::${u.home}:${u.shell}`).join('\n') + '\n',
     '/etc/group': groups.map(g => `${g.name}:x:${g.gid}:${g.members}`).join('\n') + '\n',
@@ -50,7 +52,15 @@ export function fixture(t) {
   }; }
   const run = (exe, args, opts = {}) => {
     let stdout = ''; let status = 0;
-    if (exe === '/usr/bin/setpriv') {
+    if (exe === '/usr/bin/setpriv' && args.includes('/usr/bin/node')) {
+      const uid = Number(args[0].split('=')[1]), gid = Number(args[1].split('=')[1]);
+      const probeFS = { ...f, accessSync(p, requested) {
+        const st = f.lstatSync(p), shift = st.uid === uid ? 6 : st.gid === gid ? 3 : 0;
+        if (((st.mode >> shift) & requested) !== requested) throw Error('EACCES');
+      } };
+      try { vm.runInNewContext(args.at(-1).replace(/import .*?; /g, ''), {fs: probeFS, path}); }
+      catch { status = 1; }
+    } else if (exe === '/usr/bin/setpriv') {
       const a = args.slice(args.indexOf('-C') + 2), verb = a[0];
       if (verb === 'rev-parse') stdout = revision;
       else if (verb === 'status') stdout = '';
@@ -88,7 +98,7 @@ export function fixture(t) {
   for (const p of ['/etc/shu/approvals/owner.pub', '/etc/shu/approvals/shu71-owner.pub', '/etc/shu/keys/shu71-signing.pem', '/etc/shu/supervisor.env']) write(p, 'private fixture', p.endsWith('/owner.pub') ? 0o644 : 0o600);
   write('/srv/shu/coordinator.env', 'private fixture', 0o600, 999, 982);
   directory('/srv/shu/state/shu71-evidence'); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
-  directory('/srv/shu/state/workspaces/supervisor', 0o700, 999, 982); directory('/srv/shu/worktrees', 0o3770, 999, 982);
+  directory('/srv/shu/state/workspaces/supervisor', 0o700, 999, 982); directory('/srv/shu/worktrees', 0o3770, 999, 980);
   function snapshot() {
     const result = {};
     function visit(p) { const st = f.lstatSync(p); result[p] = { mode: st.mode & 0o7777, uid: st.uid, gid: st.gid, ...(st.isFile() ? { bytes: f.readFileSync(p).toString('base64') } : {}) };
