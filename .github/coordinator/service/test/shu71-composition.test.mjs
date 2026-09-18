@@ -25,8 +25,9 @@ async function composition(t) {
   const execute = action => createShu71Production(p.id, p.boundary).execute(action);
   const armStart = p.events.length;
   assert.equal((await execute('run')).state, 'ARMED', 'B1_PRODUCTION_ARM');
-  // Preserve the original 116 operations plus exactly five identity reads.
-  assert.equal(effects(p, armStart), 116 + 5, 'B1_ARM_EFFECT_COUNT');
+  // Preserve the original 116 operations, five identity reads, and exactly
+  // four new journal writes (RUN_ATTEMPT_STARTED, INTENT, CHECK_STARTED, DONE), plus seven ruled runtime operations (three probes and four receipt writes/renames).
+  assert.equal(effects(p, armStart), 116 + 5 + 7 + 4, 'B1_ARM_EFFECT_COUNT');
   assert.deepEqual(p.events.slice(armStart).filter(e => e.startsWith('command:')).slice(0, 5), [
     'command:/usr/bin/systemctl:show --property=User --value shu-supervisor.service',
     'command:/usr/bin/systemctl:show --property=Group --value shu-supervisor.service',

@@ -14,6 +14,10 @@
     ".github/coordinator/service/test/mint-shu71.test.mjs",
     ".github/coordinator/service/test/phase-a-driver.test.mjs",
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
+    ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
+    ".github/coordinator/service/test/provision-review-regressions.test.mjs",
+    ".github/coordinator/service/test/provision-runtime-state.test.mjs",
+    ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
     ".github/coordinator/service/test/reporter-amendments.test.mjs",
     ".github/coordinator/service/test/residual.test.mjs",
     ".github/coordinator/service/test/service-plane.test.mjs",
@@ -24,13 +28,16 @@
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
+    ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
     ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
     ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-trust.test.mjs",
+    ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
     ".github/coordinator/service/test/suite-runner-spec.test.mjs",
     ".github/coordinator/service/test/supervisor-service.test.mjs",
     ".github/coordinator/test/activation.test.mjs",
@@ -2907,7 +2914,195 @@
     "A12 committed inventory requirements match real outcomes",
     "SHU71 mint positive controls and named refusals",
     "SHU71 mint actual Git derivation and named remote mutations",
-    "SHU71 mint source mutants die at named assertions"
+    "SHU71 mint source mutants die at named assertions",
+    "SHU71 named mutation killed: missing tree file",
+    "SHU71 named mutation killed: stale tree file",
+    "SHU71 named mutation killed: wrong tree ownership",
+    "SHU71 named mutation killed: wrong tree mode",
+    "SHU71 named mutation killed: wrong sudoers path",
+    "SHU71 named mutation killed: wrong sudoers mode",
+    "SHU71 named mutation killed: wrong sudoers content",
+    "SHU71 named mutation killed: parser failure",
+    "SHU71 named mutation killed: wrapper drift",
+    "SHU71 named mutation killed: UID collision",
+    "SHU71 named mutation killed: GID collision",
+    "SHU71 named mutation killed: messagebus substitution",
+    "SHU71 named mutation killed: hard-coded numeric identity in render",
+    "SHU71 named mutation killed: partial installation",
+    "SHU71 named mutation killed: rollback residue",
+    "SHU71 provisioning refuses missing tree file",
+    "SHU71 provisioning refuses stale tree file",
+    "SHU71 provisioning refuses wrong tree ownership",
+    "SHU71 provisioning refuses wrong tree mode",
+    "SHU71 provisioning refuses wrong sudoers path",
+    "SHU71 provisioning refuses wrong sudoers mode",
+    "SHU71 provisioning refuses wrong sudoers content",
+    "SHU71 provisioning refuses parser failure",
+    "SHU71 provisioning refuses wrapper drift",
+    "SHU71 provisioning refuses UID collision",
+    "SHU71 provisioning refuses GID collision",
+    "SHU71 provisioning refuses messagebus substitution",
+    "SHU71 provisioning exact install adoption and rollback",
+    "SHU71 precondition measures all paths without effects or private bytes",
+    "SHU71 provisioning closed CLI",
+    "SHU71 provisioning refuses extras symlinks hardlinks and parent writes",
+    "SHU71 provisioning partial installation and rollback residue crash matrix",
+    "SHU71 provisioning rollback process replacement at every effect",
+    "SHU71 provisioning refuses to remove an identity still in use",
+    "SHU71 review worktrees production shape",
+    "SHU71 review checkout capability",
+    "SHU71 review named absent row codes",
+    "SHU71 review rollback only install result",
+    "SHU71 review literal effect paths",
+    "SHU71 review non test effect selection",
+    "SHU71 review path neutral commands",
+    "SHU71 review recovery CLI status",
+    "SHU71 review measured service identity",
+    "SHU71 review checkout rejects symlink and wrong owner",
+    "SHU71 review named mutation killed: worktrees group",
+    "SHU71 review named mutation killed: worktrees mode",
+    "SHU71 review named mutation killed: checkout group",
+    "SHU71 review named mutation killed: checkout access",
+    "SHU71 review named mutation killed: service group name",
+    "SHU71 review named mutation killed: allocator occupied",
+    "SHU71 review named mutation killed: allocator free 996",
+    "SHU71 review named mutation killed: pre useradd collision",
+    "SHU71 review named mutation killed: messagebus prohibition",
+    "SHU71 review named mutation killed: literal sudoers",
+    "SHU71 review named mutation killed: literal wrapper",
+    "SHU71 review named mutation killed: literal tree",
+    "SHU71 review named mutation killed: test exclusion",
+    "SHU71 review named mutation killed: raw errno",
+    "SHU71 review named mutation killed: rollback success",
+    "SHU71 review named mutation killed: rollback exit",
+    "SHU71 review path neutral mutation killed",
+    "SHU71 review recovery process exit status",
+    "D1 activation path signs both runtime payloads",
+    "D1 committed activation SPKI remains pinned",
+    "D1 precondition reports existing activation key custody",
+    "D1 shared group permits coordinator and denies unrelated user",
+    "D1 precondition measures shared group membership and socket predicates",
+    "D1 C1 owner package substitution rejected and mutant killed",
+    "D1 C1 owner activation substitution rejected and mutant killed",
+    "D1 lifecycle owner package substitution rejected and mutant killed",
+    "D1 lifecycle owner activation substitution rejected and mutant killed",
+    "D1 activation path source mutant killed",
+    "D1 coordinator allowed render mutation killed behaviourally",
+    "D1 unrelated denied render mutation killed behaviourally",
+    "D1 messagebus unit identity refused and guard mutation killed",
+    "D1 numeric unit identity refused and guard mutation killed",
+    "D1 socket mode refusal and source mutation killed",
+    "D1 runtime directory mode refusal and source mutation killed",
+    "D1 shared group membership refusal and source mutation killed",
+    "D1 shared group exists by name refusal and source mutation killed",
+    "D1 activation key owner custody refusal and mutation killed",
+    "D1 activation key group other bits custody refusal and mutation killed",
+    "D1 activation key nonempty custody refusal and mutation killed",
+    "D1 activation key single link custody refusal and mutation killed",
+    "D1 activation key no symlink custody refusal and mutation killed",
+    "D1 precondition key path mutation killed",
+    "D1 precondition exact rendered unit mutation killed",
+    "D1 broker creates socket at 0660 and widened source mutant killed",
+    "D1 rendered runtime directory widening refused and mutant killed",
+    "H1_NOT_STARTED passing control and named mutant kill",
+    "H1_EXPLICIT_RUNTIME_MARKER passing control and named mutant kill",
+    "H1_RUNNING_MEASURED passing control and named mutant kill",
+    "H2_DIRECTORY_UID_CUSTODY passing control and named mutant kill",
+    "H2_DIRECTORY_GID_CUSTODY passing control and named mutant kill",
+    "H1_DIRECTORY_WIDENED_MODE passing control and named mutant kill",
+    "H2_SOCKET_UID_CUSTODY passing control and named mutant kill",
+    "H2_SOCKET_GID_CUSTODY passing control and named mutant kill",
+    "H1_SOCKET_WIDENED_MODE passing control and named mutant kill",
+    "H1_PARTIAL_RUNTIME passing control and named mutant kill",
+    "H1_ABSENT_STATIC_UNIT passing control and named mutant kill",
+    "H1_ABSENT_STATIC_IDENTITY passing control and named mutant kill",
+    "H1_ABSENT_STATIC_GROUP passing control and named mutant kill",
+    "H1_ABSENT_STATIC_MEMBERSHIP passing control and named mutant kill",
+    "H1_ABSENT_STATIC_KEY passing control and named mutant kill",
+    "H1_ABSENT_STATIC_RECEIPT passing control and named mutant kill",
+    "H1_ABSENT_STATIC_TREE passing control and named mutant kill",
+    "H1_ABSENT_STATIC_CHECKOUT passing control and named mutant kill",
+    "H1_ABSENT_STATIC_REFS passing control and named mutant kill",
+    "H1_ABSENT_RENDER passing control and named mutant kill",
+    "OWNER_STATIC_USER passing control and named mutant kill",
+    "OWNER_STATIC_GROUP passing control and named mutant kill",
+    "OWNER_STATIC_RUNTIME_DIRECTORY passing control and named mutant kill",
+    "OWNER_STATIC_DIRECTORY_MODE passing control and named mutant kill",
+    "OWNER_STATIC_UMASK passing control and named mutant kill",
+    "OWNER_STATIC_NUMERIC_IDENTITY passing control and named mutant kill",
+    "OWNER_STATIC_SOCKET_CONTRACT passing control and named mutant kill",
+    "WINDOW_MISSING_DIRECTORY passing control and named mutant kill",
+    "WINDOW_MISSING_SOCKET passing control and named mutant kill",
+    "WINDOW_WRONG_OWNER passing control and named mutant kill",
+    "WINDOW_WRONG_GROUP passing control and named mutant kill",
+    "WINDOW_WIDENED_DIRECTORY passing control and named mutant kill",
+    "WINDOW_WIDENED_SOCKET passing control and named mutant kill",
+    "WINDOW_COORDINATOR_INACCESSIBLE passing control and named mutant kill",
+    "WINDOW_MEASURED_RECEIPT passing control and named mutant kill",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered",
+    "V1_EMITTED_ROWS_VALIDATE",
+    "V1_SCHEMA_AMBIGUOUS_DEFERRED",
+    "V1_SCHEMA_FABRICATED_MEASUREMENT",
+    "V1_SCHEMA_MODE_WEAKENED",
+    "V1_SCHEMA_REFUSAL_WEAKENED",
+    "V1_SCHEMA_LOAD_BEARING_provisioner",
+    "V1_SCHEMA_LOAD_BEARING_measureBrokerRuntime",
+    "V3_PREMINT_DIRECTORY_754",
+    "V3_WINDOW_DIRECTORY_754",
+    "V3_PREMINT_DIRECTORY_751",
+    "V3_WINDOW_DIRECTORY_751",
+    "V3_PREMINT_SOCKET_664",
+    "V3_WINDOW_SOCKET_664",
+    "V3_PREMINT_SOCKET_661",
+    "V3_WINDOW_SOCKET_661",
+    "V6_DIRECTORY_ENOENT",
+    "V6_DIRECTORY_EACCES",
+    "V6_DIRECTORY_ELOOP",
+    "V6_DIRECTORY_ENOTDIR",
+    "V6_SOCKET_ENOENT",
+    "V6_SOCKET_EACCES",
+    "V6_SOCKET_ELOOP",
+    "V6_SOCKET_ENOTDIR",
+    "V7_NUMERIC_RENDER_CLAUSE",
+    "V5_PRIVATE_READ_SEMANTICS",
+    "V4_STALE_ARCHIVE_REFUSAL",
+    "V10_JOURNALLED_ORDER",
+    "V9_TRAVERSE_/usr/bin/node",
+    "V9_TRAVERSE_/usr/bin/systemctl",
+    "V9_TRAVERSE_/usr/bin/flock",
+    "V9_TRAVERSE_/usr/bin/env",
+    "V9_TRAVERSE_/usr/sbin/useradd",
+    "V9_TRAVERSE_/usr/sbin/groupadd",
+    "V9_TRAVERSE_/usr/sbin/userdel",
+    "V9_TRAVERSE_/usr/sbin/groupdel",
+    "V9_TRAVERSE_/usr/sbin/nologin",
+    "V9_TRAVERSE_/usr/bin/find",
+    "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.timer",
+    "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d",
+    "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+    "V9_TRAVERSE_/run/lock/shu71-production.lock",
+    "V9_TRAVERSE_/srv/shu/state/shu71-activation.json",
+    "V9_TRAVERSE_/etc/shu/approvals/example.shu71.json",
+    "V9_BINDING_SUPERVISOR_IDENTITY",
+    "V9_BINDING_COORDINATOR_GROUP",
+    "V9_BINDING_CREDENTIAL_SOURCE",
+    "V9_BINDING_TIMER_TARGET",
+    "V9_BINDING_GATE_OFF",
+    "V10_WAIT_FOR_SOCKET",
+    "V10_WAIT_EXPIRY",
+    "V4_RESUME_DISCARDS_PRIOR_MEASUREMENT",
+    "V1_SCHEMA_FORGERY_MATRIX",
+    "V5_REVIEWED_PRIVATE_READ_KILL",
+    "V8_DOCUMENTATION_LINK_TARGETS",
+    "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered"
   ],
   "requirements": [
     {
@@ -23771,6 +23966,786 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "SHU71 named mutation killed: missing tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: stale tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong tree ownership",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong tree mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong sudoers path",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong sudoers mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong sudoers content",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: parser failure",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrapper drift",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: UID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: GID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: messagebus substitution",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: hard-coded numeric identity in render",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: partial installation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: rollback residue",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses missing tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses stale tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong tree ownership",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong tree mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong sudoers path",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong sudoers mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong sudoers content",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses parser failure",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrapper drift",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses UID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses GID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses messagebus substitution",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning exact install adoption and rollback",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 precondition measures all paths without effects or private bytes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning closed CLI",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses extras symlinks hardlinks and parent writes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning partial installation and rollback residue crash matrix",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning rollback process replacement at every effect",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses to remove an identity still in use",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review worktrees production shape",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review checkout capability",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named absent row codes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review rollback only install result",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review literal effect paths",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review non test effect selection",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review path neutral commands",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review recovery CLI status",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review measured service identity",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review checkout rejects symlink and wrong owner",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: worktrees group",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: worktrees mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: checkout group",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: checkout access",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: service group name",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: allocator occupied",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: allocator free 996",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: pre useradd collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: messagebus prohibition",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: literal sudoers",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: literal wrapper",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: literal tree",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: test exclusion",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: raw errno",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: rollback success",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review named mutation killed: rollback exit",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review path neutral mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 review recovery process exit status",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation path signs both runtime payloads",
+      "capabilities": []
+    },
+    {
+      "name": "D1 committed activation SPKI remains pinned",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition reports existing activation key custody",
+      "capabilities": []
+    },
+    {
+      "name": "D1 shared group permits coordinator and denies unrelated user",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition measures shared group membership and socket predicates",
+      "capabilities": []
+    },
+    {
+      "name": "D1 C1 owner package substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 C1 owner activation substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 lifecycle owner package substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 lifecycle owner activation substitution rejected and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation path source mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 coordinator allowed render mutation killed behaviourally",
+      "capabilities": []
+    },
+    {
+      "name": "D1 unrelated denied render mutation killed behaviourally",
+      "capabilities": []
+    },
+    {
+      "name": "D1 messagebus unit identity refused and guard mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 numeric unit identity refused and guard mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 socket mode refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 runtime directory mode refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 shared group membership refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 shared group exists by name refusal and source mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key owner custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key group other bits custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key nonempty custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key single link custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 activation key no symlink custody refusal and mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition key path mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 precondition exact rendered unit mutation killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 broker creates socket at 0660 and widened source mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "D1 rendered runtime directory widening refused and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "H1_NOT_STARTED passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_EXPLICIT_RUNTIME_MARKER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_RUNNING_MEASURED passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_DIRECTORY_UID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_DIRECTORY_GID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_DIRECTORY_WIDENED_MODE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_SOCKET_UID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_SOCKET_GID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_SOCKET_WIDENED_MODE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_PARTIAL_RUNTIME passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_UNIT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_IDENTITY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_GROUP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_MEMBERSHIP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_KEY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_RECEIPT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_TREE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_CHECKOUT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_REFS passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_RENDER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_USER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_GROUP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_RUNTIME_DIRECTORY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_DIRECTORY_MODE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_UMASK passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_NUMERIC_IDENTITY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_SOCKET_CONTRACT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_MISSING_DIRECTORY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_MISSING_SOCKET passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WRONG_OWNER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WRONG_GROUP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WIDENED_DIRECTORY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WIDENED_SOCKET passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_COORDINATOR_INACCESSIBLE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_MEASURED_RECEIPT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "V1_EMITTED_ROWS_VALIDATE",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_AMBIGUOUS_DEFERRED",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_FABRICATED_MEASUREMENT",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_MODE_WEAKENED",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_REFUSAL_WEAKENED",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_LOAD_BEARING_provisioner",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_LOAD_BEARING_measureBrokerRuntime",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_DIRECTORY_754",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_DIRECTORY_754",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_DIRECTORY_751",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_DIRECTORY_751",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_SOCKET_664",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_SOCKET_664",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_SOCKET_661",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_SOCKET_661",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_ENOENT",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_EACCES",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_ELOOP",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_ENOTDIR",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_ENOENT",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_EACCES",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_ELOOP",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_ENOTDIR",
+      "capabilities": []
+    },
+    {
+      "name": "V7_NUMERIC_RENDER_CLAUSE",
+      "capabilities": []
+    },
+    {
+      "name": "V5_PRIVATE_READ_SEMANTICS",
+      "capabilities": []
+    },
+    {
+      "name": "V4_STALE_ARCHIVE_REFUSAL",
+      "capabilities": []
+    },
+    {
+      "name": "V10_JOURNALLED_ORDER",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/node",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/systemctl",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/flock",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/env",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/useradd",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/groupadd",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/userdel",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/groupdel",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/nologin",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/find",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.timer",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/run/lock/shu71-production.lock",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/srv/shu/state/shu71-activation.json",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/shu/approvals/example.shu71.json",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_SUPERVISOR_IDENTITY",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_COORDINATOR_GROUP",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_CREDENTIAL_SOURCE",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_TIMER_TARGET",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_GATE_OFF",
+      "capabilities": []
+    },
+    {
+      "name": "V10_WAIT_FOR_SOCKET",
+      "capabilities": []
+    },
+    {
+      "name": "V10_WAIT_EXPIRY",
+      "capabilities": []
+    },
+    {
+      "name": "V4_RESUME_DISCARDS_PRIOR_MEASUREMENT",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_FORGERY_MATRIX",
+      "capabilities": []
+    },
+    {
+      "name": "V5_REVIEWED_PRIVATE_READ_KILL",
+      "capabilities": []
+    },
+    {
+      "name": "V8_DOCUMENTATION_LINK_TARGETS",
+      "capabilities": []
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     }
+  ],
+  "runtime_artifacts": [
+    ".github/coordinator/service/shu71-runtime-row.schema.json",
+    ".github/coordinator/service/shu71-runtime-schema.mjs"
   ]
 }

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SHU71 prerequisite runtime row",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "enum": [
+            "/run/shu71-evidence",
+            "/run/shu71-evidence/fixture.sock"
+          ]
+        },
+        "ok": {
+          "const": true
+        },
+        "runtime": {
+          "const": "DEFERRED_UNTIL_SERVICE_START"
+        }
+      },
+      "required": [
+        "path",
+        "ok",
+        "runtime"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "enum": [
+            "/run/shu71-evidence",
+            "/run/shu71-evidence/fixture.sock"
+          ]
+        },
+        "ok": {
+          "const": true
+        },
+        "runtime": {
+          "const": "MEASURED"
+        },
+        "uid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "enum": [
+            488,
+            432
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "ok",
+        "runtime",
+        "uid",
+        "gid",
+        "mode"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "path": {
+                "const": "/run/shu71-evidence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mode": {
+                "const": 488
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "mode": {
+                "const": 432
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "enum": [
+            "/run/shu71-evidence",
+            "/run/shu71-evidence/fixture.sock"
+          ]
+        },
+        "ok": {
+          "const": false
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^(ACT_|SHU251_)[A-Z0-9_]+$"
+        }
+      },
+      "required": [
+        "path",
+        "ok",
+        "code"
+      ]
+    }
+  ]
+}

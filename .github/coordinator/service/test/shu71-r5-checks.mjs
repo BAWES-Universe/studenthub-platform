@@ -17,12 +17,12 @@ export async function historicalProduction(t, revision) {
   fs.writeFileSync(path.join(root, 'journal.mjs'), read('shu71-journal.mjs'));
   fs.writeFileSync(path.join(root, 'production.mjs'), read('shu71-production.mjs').replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
     (_, p, q, r) => `${p}${q}${r === './shu71-journal.mjs' ? pathToFileURL(path.join(root, 'journal.mjs')).href : new URL(r, url).href}${q}`));
-  return (await import(pathToFileURL(path.join(root, 'production.mjs')))).createShu71Production;
+  return Object.assign((await import(pathToFileURL(path.join(root, 'production.mjs')))).createShu71Production, { signingPath: read('shu71-production.mjs').match(/privateRead\('([^']+\/keys\/[^']+)'\)/)[1] });
 }
 export async function r5Differential(t, keys, candidate, scenario) {
   for (const [label, revision] of [['parent', '5e25c651254a72adbb46fa8f950df95248b640e9'], ['blocked', '0eeadd5f05abc8cd82968a855b2bff8cc137c65a'], ['candidate', null]]) {
     const production = revision ? await historicalProduction(t, revision) : candidate;
-    const h = productionFixture(t, keys), create = () => production(h.id, h.boundary);
+    const h = productionFixture(t, keys, production.signingPath), create = () => production(h.id, h.boundary);
     assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
     const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
     if (['settlement-plant', 'settlement-interrupt'].includes(scenario)) {

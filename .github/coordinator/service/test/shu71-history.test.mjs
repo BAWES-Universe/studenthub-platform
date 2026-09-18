@@ -66,7 +66,7 @@ for (const [index, revision] of controlRevisions.entries()) {
     // Load both real vendored modules. Execute the properties behind the source
     // guard so its assumptions are independently checked on disposable boundaries.
     const production = await historicalProduction(t, revision);
-    const h = productionFixture(t, keys), create = () => production(h.id, h.boundary);
+    const h = productionFixture(t, keys, production.signingPath), create = () => production(h.id, h.boundary);
     assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
     const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
     const start = h.events.length;
@@ -81,7 +81,7 @@ for (const [index, revision] of controlRevisions.entries()) {
     else assert.ok(reserve >= 0 && reserve < disarm, 'SHU71_CONTROL_RESERVATION_BEFORE_DISARM');
     // Fresh episode: neither previous disarm nor credential removal can mask
     // the historical fault-path difference.
-    const fault = productionFixture(t, keys);
+    const fault = productionFixture(t, keys, production.signingPath);
     await production(fault.id, fault.boundary).execute('run'); fault.expire();
     fault.write(`/srv/shu/state/shu71-evidence/${fault.id}/automatic-teardown.json`, '{"attempts":0}', 0o644);
     const result = await production(fault.id, fault.boundary).execute('expire');

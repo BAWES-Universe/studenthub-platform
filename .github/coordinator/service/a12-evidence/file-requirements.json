@@ -142,6 +142,36 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",
+    "call_sites": [
+      ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-review-regressions.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem, VM and child process assertions; host paths mapped to temporary fixtures and all host executable boundaries doubled",
+    "call_sites": [
+      ".github/coordinator/service/test/provision-review-regressions.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-runtime-state.test.mjs",
+    "capabilities": [],
+    "justification": "Node core temporary filesystem with stored ownership state and injected command boundaries; no host service or external successful tool operation required",
+    "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",
+    "call_sites": [
+      ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/reporter-amendments.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",
@@ -236,6 +266,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
+    "capabilities": [],
+    "justification": "Node core crypto/filesystem controls; production command and NSS boundaries doubled; Unix DAC connection behaviour model, no host identity or socket access claimed",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
@@ -257,6 +293,14 @@
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
     "call_sites": [
       ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and VM DAC model; commands, identities and services are doubled; kernel connect is host-only",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-runtime-window.test.mjs"
     ]
   },
   {
@@ -291,6 +335,18 @@
     "justification": "counterDifferential and r5Differential call historicalSource, executing git cat-file/show",
     "call_sites": [
       ".github/coordinator/service/test/shu71-trust.test.mjs"
+    ]
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
+    "capabilities": [],
+    "justification": "Node-only repository fixtures; static production boundaries and schema mutation controls; no host commands or network",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-verdict-closures.test.mjs"
+    ],
+    "resources": [
+      ".github/coordinator/service/shu71-runtime-row.schema.json",
+      ".github/coordinator/service/shu71-runtime-schema.mjs"
     ]
   },
   {

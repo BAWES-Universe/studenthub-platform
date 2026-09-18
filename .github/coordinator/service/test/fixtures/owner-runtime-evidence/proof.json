@@ -1,0 +1,313 @@
+{
+  "pre_mint": {
+    "inactive_green": {
+      "ok": true,
+      "refusals": [],
+      "runtime_rows": [
+        {
+          "path": "/run/shu71-evidence",
+          "ok": true,
+          "runtime": "DEFERRED_UNTIL_SERVICE_START"
+        },
+        {
+          "path": "/run/shu71-evidence/fixture.sock",
+          "ok": true,
+          "runtime": "DEFERRED_UNTIL_SERVICE_START"
+        }
+      ]
+    },
+    "inactive_static_failure": {
+      "ok": false,
+      "refusals": [
+        {
+          "path": "/etc/systemd/system/shu71-evidence.service",
+          "ok": false,
+          "code": "ACT_TREE_CONTENT"
+        },
+        {
+          "path": "/etc/systemd/system/shu71-evidence.service#UMask",
+          "ok": false,
+          "code": "ACT_BROKER_UNIT_UMASK"
+        },
+        {
+          "path": "/run/shu71-evidence",
+          "ok": false,
+          "code": "ACT_TREE_CONTENT"
+        },
+        {
+          "path": "/run/shu71-evidence/fixture.sock",
+          "ok": false,
+          "code": "ACT_TREE_CONTENT"
+        }
+      ],
+      "runtime_rows": [
+        {
+          "path": "/run/shu71-evidence",
+          "ok": false,
+          "code": "ACT_TREE_CONTENT"
+        },
+        {
+          "path": "/run/shu71-evidence/fixture.sock",
+          "ok": false,
+          "code": "ACT_TREE_CONTENT"
+        }
+      ]
+    },
+    "active_correct": {
+      "ok": true,
+      "refusals": [],
+      "runtime_rows": [
+        {
+          "path": "/run/shu71-evidence",
+          "ok": true,
+          "runtime": "MEASURED",
+          "uid": 100,
+          "gid": 980,
+          "mode": 488
+        },
+        {
+          "path": "/run/shu71-evidence/fixture.sock",
+          "ok": true,
+          "runtime": "MEASURED",
+          "uid": 100,
+          "gid": 980,
+          "mode": 432
+        }
+      ]
+    },
+    "active_wrong": {
+      "ok": false,
+      "refusals": [
+        {
+          "path": "/run/shu71-evidence/fixture.sock",
+          "ok": false,
+          "code": "ACT_BROKER_SOCKET_MODE"
+        }
+      ],
+      "runtime_rows": [
+        {
+          "path": "/run/shu71-evidence",
+          "ok": true,
+          "runtime": "MEASURED",
+          "uid": 100,
+          "gid": 980,
+          "mode": 488
+        },
+        {
+          "path": "/run/shu71-evidence/fixture.sock",
+          "ok": false,
+          "code": "ACT_BROKER_SOCKET_MODE"
+        }
+      ]
+    }
+  },
+  "window": {
+    "passing": {
+      "result": {
+        "ok": true,
+        "state": "ARMED",
+        "activation_id": "shu71-proof-20260915"
+      },
+      "runtime_receipt": {
+        "rows": [
+          {
+            "path": "/run/shu71-evidence",
+            "ok": true,
+            "runtime": "MEASURED",
+            "uid": 100,
+            "gid": 980,
+            "mode": 488
+          },
+          {
+            "path": "/run/shu71-evidence/fixture.sock",
+            "ok": true,
+            "runtime": "MEASURED",
+            "uid": 100,
+            "gid": 980,
+            "mode": 432
+          }
+        ],
+        "coordinator_access": "MEASURED_TRAVERSE_READ_WRITE",
+        "kernel_connect": "HOST_ONLY_UNPROVEN"
+      },
+      "archive_runtime": {
+        "rows": [
+          {
+            "path": "/run/shu71-evidence",
+            "ok": true,
+            "runtime": "MEASURED",
+            "uid": 100,
+            "gid": 980,
+            "mode": 488
+          },
+          {
+            "path": "/run/shu71-evidence/fixture.sock",
+            "ok": true,
+            "runtime": "MEASURED",
+            "uid": 100,
+            "gid": 980,
+            "mode": 432
+          }
+        ],
+        "coordinator_access": "MEASURED_TRAVERSE_READ_WRITE",
+        "kernel_connect": "HOST_ONLY_UNPROVEN"
+      },
+      "halted": [],
+      "teardown_complete": true
+    },
+    "missing_directory": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_DIRECTORY_MISSING",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_DIRECTORY_MISSING"
+        }
+      ],
+      "teardown_complete": true
+    },
+    "missing_socket": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_SOCKET_MISSING",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_SOCKET_MISSING"
+        }
+      ],
+      "teardown_complete": true
+    },
+    "wrong_owner": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_OWNER",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_OWNER"
+        }
+      ],
+      "teardown_complete": true
+    },
+    "wrong_group": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_GROUP",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_GROUP"
+        }
+      ],
+      "teardown_complete": true
+    },
+    "widened_directory": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_DIRECTORY_MODE",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_DIRECTORY_MODE"
+        }
+      ],
+      "teardown_complete": true
+    },
+    "widened_socket": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_SOCKET_MODE",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_SOCKET_MODE"
+        }
+      ],
+      "teardown_complete": true
+    },
+    "coordinator_inaccessible": {
+      "result": {
+        "ok": false,
+        "state": "HALT",
+        "code": "ACT_RUNTIME_COORDINATOR_ACCESS",
+        "teardown": {
+          "ok": true,
+          "state": "REVOKED",
+          "code": null,
+          "failures": []
+        }
+      },
+      "runtime_receipt": null,
+      "archive_runtime": null,
+      "halted": [
+        {
+          "event": "HALTED",
+          "code": "ACT_RUNTIME_COORDINATOR_ACCESS"
+        }
+      ],
+      "teardown_complete": true
+    }
+  }
+}

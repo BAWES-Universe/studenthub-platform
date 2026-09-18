@@ -149,22 +149,25 @@ test('SHU251 parser captured documented shape', () => {
   assert.equal(Object.hasOwn(observed, 'Users'), false);
   assert.deepEqual(resolveCvtsudoers('/virtual', parserIO({ [sudoRs]: {} }).io), { available: true, identity: sudoRs });
 });
+// Keep the inventory's historical name; installation is now a filesystem
+// double. Exercise every reviewed occupancy set regardless of the host parser.
 test('SHU251 parser real installed provider', async t => {
-  const present = CVTSUDOERS_CANDIDATES.filter(file => {
-    try { fs.lstatSync(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
-  });
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'real-parser-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  if (present.length === 0) {
-    assert.throws(() => resolveCvtsudoers(root), named('SHU251_PREFLIGHT_CVTSUDOERS'));
-  } else if (present.length > 1) {
-    assert.throws(() => resolveCvtsudoers(root), named('SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS'));
-  } else {
-    const expected = { available: true, identity: present[0] };
-    assert.deepEqual(resolveCvtsudoers(root), expected, 'REAL_PARSER_ACCEPTED');
-    const probe = hostProbe({ ...spec, service_uid: process.getuid(), temp_dir: root });
-    assert.deepEqual(await probe('cvtsudoers'), expected, 'REAL_CHILD_IDENTITY');
-    t.diagnostic(`real parser accepted: ${present[0]}`);
+  for (const present of [[], ...CVTSUDOERS_CANDIDATES.map(candidate => [candidate]), [...CVTSUDOERS_CANDIDATES]]) {
+    const entries = Object.fromEntries(present.map(candidate => [candidate, {}]));
+    const resolve = () => resolveCvtsudoers('/virtual', parserIO(entries).io);
+    const probe = parserChildProbe(parserIO(entries).io);
+    if (present.length === 0) {
+      assert.throws(resolve, named('SHU251_PREFLIGHT_CVTSUDOERS'));
+      await assert.rejects(() => probe('cvtsudoers'), named('SHU251_PREFLIGHT_CVTSUDOERS'));
+    } else if (present.length > 1) {
+      assert.throws(resolve, named('SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS'));
+      await assert.rejects(() => probe('cvtsudoers'), named('SHU251_PREFLIGHT_CVTSUDOERS_AMBIGUOUS'));
+    } else {
+      const expected = { available: true, identity: present[0] };
+      assert.deepEqual(resolve(), expected, 'REAL_PARSER_ACCEPTED');
+      assert.deepEqual(await probe('cvtsudoers'), expected, 'REAL_CHILD_IDENTITY');
+      t.diagnostic(`parser installation double accepted: ${present[0]}`);
+    }
   }
 });
 test('SHU251 parser frozen allowlist', () => {
@@ -274,16 +277,22 @@ for (const [label, entries, options, suffix, message] of refusalCases) test(`SHU
     if (['PATH substitution', 'unapproved path', 'ambiguous providers', 'absent'].includes(label)) assert.equal(calls.length, 0);
   } finally { if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath; }
 });
-test('SHU251 parser service child carries only resolved identity', async () => {
-  const { io } = parserIO({ [sudoRs]: {} });
-  const probe = hostProbe(spec, { uid: () => spec.service_uid, run(file, args) {
+function parserChildProbe(io) {
+  return hostProbe(spec, { uid: () => spec.service_uid, run(file, args) {
     assert.equal(file, process.execPath);
     const source = args.at(-1).replace("import fs from 'node:fs'; import path from 'node:path'; import {spawnSync} from 'node:child_process';", '');
     let stdout;
-    runInNewContext(source, { fs: io.fs, path, spawnSync: io.run, process: {}, console: { log: s => { stdout = s; } } });
-    return { status: 0, stdout };
+    const child = {};
+    runInNewContext(source, { fs: io.fs, path, spawnSync: io.run, process: child, console: { log: s => { stdout = s; } } });
+    return { status: child.exitCode ?? 0, stdout };
   } });
-  assert.deepEqual(await probe('cvtsudoers'), { available: true, identity: sudoRs });
+}
+test('SHU251 parser service child carries only resolved identity', async () => {
+  for (const candidate of CVTSUDOERS_CANDIDATES) {
+    const { io } = parserIO({ [candidate]: {} });
+    const probe = parserChildProbe(io);
+    assert.deepEqual(await probe('cvtsudoers'), { available: true, identity: candidate });
+  }
 });
 
 const parserMutations = [

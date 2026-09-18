@@ -50,7 +50,7 @@ journal write.
 | Authority/effect | Production adapter | Evidence/recovery |
 | --- | --- | --- |
 | Exact revision/tree and fixture parents | Git as UID/GID 999 with cleared supplementary groups; local refs, explicit HTTPS ls-remote, fixed GitHub repository API | `binding` intent/completion; clean checkout and main/API equality |
-| Package and runtime envelope signing | Fixed root-only signing-key path `/etc/shu/keys/shu71-signing.pem` | `SIGNING_STARTED`, durable signed package, adoption or ambiguous-signing refusal |
+| Package and runtime envelope signing | Fixed root-only signing-key path `/etc/shu/keys/shu71-activation-ed25519.pem` | `SIGNING_STARTED`, durable signed package, adoption or ambiguous-signing refusal |
 | Local append | Existing `createReseedAppendIo` and commit/manifest verifier | Deterministic commit, expected-parent update-ref; observes an already-installed result |
 | Remote append | Explicit refspec and `--force-with-lease=<ref>:<expected-old>` after verified ancestry | Adopts an already-pushed exact SHA; local/remote/API readback, manifest and API ancestry |
 | Exact fixture transitions | Fixed Linear GraphQL read/update operations; exact signed issue UUID, state and assignee; readback | Intent precedes each card change; restore runs independently for both fixtures |
@@ -73,13 +73,29 @@ activation IDs from sharing the physical gates.
 | Coordinator tick | `shu-coordinator` (package contract UID 999) | Its existing coordinator environment stays separate. `LoadCredential=supervisor-transport:/etc/shu/supervisor.env` exposes only the single-key transport file under `/run/credentials/shu-coordinator.service/`; it is read at the transport call site, never exported into `process.env`. |
 | Supervisor | same existing service identity | Its root-owned `0600` environment still contains only `SHU_SUPERVISOR_SECRET`; no GitHub/Linear token is added. |
 | Trusted supervisor adapter child | same service identity; sandboxed writer/reviewer remain 995/994 | An exact allowlist admits runtime configuration plus the two required adapter model credentials, CLAUDE_CODE_OAUTH_TOKEN and WORKSPACE_AGENT_ACCESS_TOKEN. GitHub/Linear API and supervisor transport credentials, aliases and unknown keys are refused. Fixed evidence-client argv sends only an `evidence` or SHA-bounded `ancestry` request to the local broker. |
-| Fixture evidence broker | numeric UID 996, GID 999 | Separate systemd service reads the existing coordinator environment; its code consumes GitHub/Linear bindings only. Socket `/run/shu71-evidence/fixture.sock`, mode 0660, private runtime directory 0750. The fixed repository and two fixture IDs are compiled into the broker; caller-supplied URLs, queries, writes and executables are rejected. |
+| Fixture evidence broker | named `shu71-evidence`, service primary group `shu-workspace` | Separate systemd service reads the existing coordinator environment; its code consumes GitHub/Linear bindings only. Socket `/run/shu71-evidence/fixture.sock`, mode 0660, shared-group runtime directory 0750. The fixed repository and two fixture IDs are compiled into the broker; caller-supplied URLs, queries, writes and executables are rejected. |
 
 No secret files are combined, re-owned or copied into supervisor/worker
 configuration. The broker is a trusted credential consumer, not a secret-export
-endpoint. Receipt metadata and errors contain no credential values. Numeric UID
-996 availability, installed-library custody, actual service IDs, source-file
-metadata and real systemd credential behavior remain unmeasured host facts.
+endpoint. Receipt metadata and errors contain no credential values. The operative
+[`renderEvidenceBroker()`](shu71-production.mjs#L498) binds
+`User=shu71-evidence` and `Group=shu-workspace`; the provisioner's
+[`identity()` and `sharedAccess()`](provision-shu71-prerequisites.mjs#L126)
+resolve the identities by name and refuse messagebus/UID 996 substitution.
+Actual host identity allocation, coordinator membership, installed-library
+custody, source-file metadata and systemd behavior remain unmeasured host facts.
+
+The service primary group is a bounded expansion of the broker's read scope:
+`shu-workspace` allows reading and traversing group-accessible files, including
+coordinator attempt worktrees ([workspace layout](SHU-261-VALIDATION.md#L12)).
+`ProtectSystem=strict` makes that hierarchy read-only in the service;
+`NoNewPrivileges` and `PrivateTmp` constrain privilege gain and temporary-file
+visibility. The broker exposes only its two fixed requests
+([broker implementation](fixture-evidence-broker.mjs)), not arbitrary file
+reads. Group membership does not grant root identity, bypass owner-only file
+permissions, grant worktree writes through the service sandbox, or add arbitrary
+API requests, commands or a credential-export endpoint. These mitigations bound
+the expansion; they do not eliminate the additional filesystem read authority.
 
 `coordinator-tick.mjs --activation /srv/shu/state/shu71-activation.json` is rendered
 literally. With the runtime gate off it invokes a normal disabled tick; with the

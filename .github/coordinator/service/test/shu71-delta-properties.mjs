@@ -31,7 +31,9 @@ export function completionOrdering(source = productionSource()) {
 // Exact append-site inventory includes dynamic expressions, not just string literals.
 export const appendSites = {
   'shu71-production.mjs': [
-    "{ event: 'APPROVED', spec }", "{ event: 'SIGNING_STARTED' }",
+    "{ event: 'APPROVED', spec }", "{ event: 'RUN_ATTEMPT_STARTED' }", "{ event: 'SIGNING_STARTED' }",
+    "{ event: 'BROKER_RUNTIME_CHECK_STARTED' }",
+    "{ event: 'BROKER_RUNTIME_MEASURED', ...runtime }",
     "{ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false }",
     "{ event: 'HALTED', code }",
     "{ event: 'FIXTURE_REMOVE_INTENT', attempt_id: record.attempt_id, dev: st.dev, ino: st.ino, uid: st.uid }",
