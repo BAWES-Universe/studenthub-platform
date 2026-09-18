@@ -518,7 +518,7 @@ Focused validation command:
 `node --test .github/coordinator/service/test/provision*.test.mjs .github/coordinator/service/test/shu71-runtime-window.test.mjs .github/coordinator/service/test/shu71-production.test.mjs`.
 Full validation command: `npm run test:coordinator`. CI clock validation prefixes
 each with `SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
-`NODE_OPTIONS=--import=/home/bawes/work/prov/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+`NODE_OPTIONS="--import=${GITHUB_WORKSPACE}/.github/coordinator/test/fixture/shift-wall-clock.mjs"`.
 The committed-inventory audit requires the new files and inventory at `HEAD`;
 therefore final full runs follow the new commit. Terminal TAP counts and the
 final HEAD/tree are reported with the completion response.
