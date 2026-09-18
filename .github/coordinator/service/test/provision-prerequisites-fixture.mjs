@@ -104,7 +104,7 @@ export function fixture(t) {
   write(PATHS.wrapper, 'old wrapper', 0o750, 12, 13);
   for (const p of ['/etc/shu/approvals/owner.pub', '/etc/shu/approvals/shu71-owner.pub', '/etc/shu/keys/shu71-activation-ed25519.pem', '/etc/shu/supervisor.env']) write(p, 'private fixture', p.endsWith('/owner.pub') ? 0o644 : 0o600);
   write('/srv/shu/coordinator.env', 'private fixture', 0o600, 999, 982);
-  directory('/srv/shu/state/shu71-evidence'); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
+  directory('/srv/shu/state', 0o700, 999, 982); directory('/srv/shu/state/shu71-evidence', 0o700, 999, 982); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
   directory('/srv/shu/state/workspaces/supervisor', 0o700, 999, 982); directory('/srv/shu/worktrees', 0o3770, 999, 980);
   for (const p of ['/usr/bin/node', '/usr/bin/systemctl', '/usr/bin/flock', '/usr/bin/env', '/usr/sbin/useradd', '/usr/sbin/groupadd', '/usr/sbin/userdel', '/usr/sbin/groupdel', '/usr/sbin/nologin', '/usr/bin/find']) write(p, 'executable fixture', 0o755);
   directory('/run/lock');

@@ -14,6 +14,7 @@
     ".github/coordinator/service/test/mint-shu71.test.mjs",
     ".github/coordinator/service/test/phase-a-driver.test.mjs",
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
+    ".github/coordinator/service/test/provision-host-reality.test.mjs",
     ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
     ".github/coordinator/service/test/provision-review-regressions.test.mjs",
     ".github/coordinator/service/test/provision-runtime-state.test.mjs",
@@ -3102,7 +3103,56 @@
     "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload intact",
-    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered"
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered",
+    "HOST_REALITY_PRE_FIX: all five failures reproduced from merged source",
+    "HOST_RANGE_DEFAULT",
+    "HOST_GREEN",
+    "HOST_CLI_GREEN",
+    "HOST_ENV_FOREIGN_TARGET",
+    "HOST_ENV_FOREIGN_OWNER",
+    "HOST_ENV_LINK_OWNER",
+    "HOST_ENV_WRITABLE",
+    "HOST_ENV_PARENT_WRITABLE",
+    "HOST_STATE_OWNER_/srv/shu/state",
+    "HOST_STATE_WRITE_/srv/shu/state",
+    "HOST_STATE_LINK_/srv/shu/state",
+    "HOST_STATE_OWNER_/srv/shu/state/workspaces",
+    "HOST_STATE_WRITE_/srv/shu/state/workspaces",
+    "HOST_STATE_LINK_/srv/shu/state/workspaces",
+    "HOST_STATE_OWNER_/srv/shu/state/workspaces/supervisor",
+    "HOST_STATE_WRITE_/srv/shu/state/workspaces/supervisor",
+    "HOST_STATE_LINK_/srv/shu/state/workspaces/supervisor",
+    "HOST_STATE_OWNER_/srv/shu/state/shu71-evidence",
+    "HOST_STATE_WRITE_/srv/shu/state/shu71-evidence",
+    "HOST_STATE_LINK_/srv/shu/state/shu71-evidence",
+    "HOST_ROOT_ANCESTOR",
+    "HOST_ACTIVATION_PRESENT",
+    "HOST_HARD_UNIT_shu-supervisor.service",
+    "HOST_HARD_UNIT_shu-coordinator.service",
+    "HOST_HARD_UNIT_shu-coordinator.timer",
+    "HOST_RANGE_DUPLICATE",
+    "HOST_RANGE_MALFORMED",
+    "HOST_RANGE_REVERSED",
+    "HOST_RANGE_OVERLAP",
+    "HOST_RANGE_ZERO",
+    "HOST_RANGE_OVERFLOW",
+    "HOST_RANGE_REGULAR_MALFORMED",
+    "HOST_RANGE_BOUNDARIES_OCCUPANCY",
+    "HOST_KILL_RANGE_DEFAULT",
+    "HOST_KILL_ENV_SYMLINK",
+    "HOST_KILL_STATE_ROOT_ONLY",
+    "HOST_KILL_WINDOW_HARD_REQUIREMENT",
+    "HOST_KILL_ACTIVATION_HARD_REQUIREMENT",
+    "HOST_KILL_GREEN_ALWAYS_REFUSE",
+    "HOST_KILL_ENV_FOREIGN_TARGET",
+    "HOST_KILL_ENV_FOREIGN_OWNER",
+    "HOST_KILL_ENV_WRITABLE",
+    "HOST_KILL_STATE_SYMLINK",
+    "HOST_KILL_DUPLICATE",
+    "HOST_KILL_MALFORMED",
+    "HOST_KILL_MAX_DEFAULT",
+    "HOST_KILL_OCCUPIED_UID",
+    "HOST_KILL_NO_WORLD_WRITE"
   ],
   "requirements": [
     {
@@ -24740,6 +24790,398 @@
       "capabilities": [
         {
           "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "HOST_REALITY_PRE_FIX: all five failures reproduced from merged source",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_DEFAULT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CLI_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_FOREIGN_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_FOREIGN_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_LINK_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_WRITABLE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_PARENT_WRITABLE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state/workspaces",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state/workspaces",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state/workspaces",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state/workspaces/supervisor",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state/workspaces/supervisor",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state/workspaces/supervisor",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state/shu71-evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state/shu71-evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state/shu71-evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ROOT_ANCESTOR",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ACTIVATION_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_HARD_UNIT_shu-supervisor.service",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_HARD_UNIT_shu-coordinator.service",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_HARD_UNIT_shu-coordinator.timer",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_DUPLICATE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_REVERSED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_OVERLAP",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_ZERO",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_OVERFLOW",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_REGULAR_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_BOUNDARIES_OCCUPANCY",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_RANGE_DEFAULT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_SYMLINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_STATE_ROOT_ONLY",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_WINDOW_HARD_REQUIREMENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ACTIVATION_HARD_REQUIREMENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_GREEN_ALWAYS_REFUSE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_FOREIGN_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_FOREIGN_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_WRITABLE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_STATE_SYMLINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_DUPLICATE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MAX_DEFAULT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_OCCUPIED_UID",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_NO_WORLD_WRITE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
         }
       ]
     }

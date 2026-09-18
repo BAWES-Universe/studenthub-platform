@@ -142,6 +142,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/provision-host-reality.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",

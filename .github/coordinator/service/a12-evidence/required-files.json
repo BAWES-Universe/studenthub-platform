@@ -12,6 +12,7 @@
   ".github/coordinator/service/test/mint-shu71.test.mjs",
   ".github/coordinator/service/test/phase-a-driver.test.mjs",
   ".github/coordinator/service/test/production-lifecycle.test.mjs",
+  ".github/coordinator/service/test/provision-host-reality.test.mjs",
   ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
   ".github/coordinator/service/test/provision-review-regressions.test.mjs",
   ".github/coordinator/service/test/provision-runtime-state.test.mjs",

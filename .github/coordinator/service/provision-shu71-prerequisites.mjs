@@ -40,7 +40,9 @@ export function provisioner(revision, b = boundary) {
   function custody(p) {
     for (let current = p;; current = path.dirname(current)) {
       const s = stat(current);
-      need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === 0 && !(s.mode & 0o022), 'ACT_PREREQUISITE_CUSTODY');
+      const state = current === '/srv/shu/state' || current.startsWith('/srv/shu/state/');
+      const owner = state ? serviceIdentity() : { uid: 0, gid: 0 };
+      need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === owner.uid && (!state || s.gid === owner.gid && (s.mode & 0o7777) === 0o700) && !(s.mode & 0o022), 'ACT_PREREQUISITE_CUSTODY');
       if (current === '/') break;
     }
   }
@@ -147,10 +149,22 @@ export function provisioner(revision, b = boundary) {
   }
   function allocate() {
     const db = databases(), defs = f.readFileSync('/etc/login.defs', 'utf8');
+    // shadow login.defs defaults: SYS_*_MIN=100, SYS_*_MAX=*_MIN-1.
+    // Parse declarations before values so malformed/duplicate entries cannot
+    // disappear into a default. Regular ranges must remain disjoint.
+    const value = (key, fallback) => {
+      const rows = defs.split('\n').map(l => l.replace(/#.*$/, '').trim()).filter(l => l.split(/\s+/)[0] === key);
+      need(rows.length <= 1, 'ACT_IDENTITY_SYSTEM_RANGE');
+      if (!rows.length) return fallback;
+      const match = new RegExp('^' + key + '\\s+([0-9]+)$').exec(rows[0]);
+      need(match && Number.isSafeInteger(Number(match[1])), 'ACT_IDENTITY_SYSTEM_RANGE');
+      return Number(match[1]);
+    };
     const range = kind => {
-      const val = edge => { const matches = [...defs.matchAll(new RegExp(`^\\s*SYS_${kind}_${edge}\\s+(\\d+)\\s*(?:#.*)?$`, 'gm'))];
-        need(matches.length === 1, 'ACT_IDENTITY_SYSTEM_RANGE'); return Number(matches[0][1]); };
-      const lo = val('MIN'), hi = val('MAX'); need(lo > 0 && hi >= lo && hi < 65534, 'ACT_IDENTITY_SYSTEM_RANGE'); return [lo, hi];
+      const regularMin = value(kind + '_MIN', 1000), regularMax = value(kind + '_MAX', 60000);
+      const lo = value('SYS_' + kind + '_MIN', 100), hi = value('SYS_' + kind + '_MAX', regularMin - 1);
+      need(lo > 0 && hi >= lo && hi < 65534 && regularMin > hi && regularMax >= regularMin && regularMax < 65534, 'ACT_IDENTITY_SYSTEM_RANGE');
+      return [lo, hi];
     };
     const choose = (kind, used) => { const [lo, hi] = range(kind); for (let n = lo; n <= hi; n++) if (n !== 996 && !used.has(n)) return n;
       need(false, 'ACT_IDENTITY_SYSTEM_RANGE'); };
@@ -342,15 +356,15 @@ export function provisioner(revision, b = boundary) {
       const { uid, gid } = owner === 'shu-coordinator' ? serviceIdentity() : { uid: owner, gid: group };
       const r = read(p); need(r.mode === mode && r.uid === uid && r.gid === gid && r.bytes.length > 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid, gid, mode };
     });
-    for (const p of ['/etc/shu/approvals', '/etc/shu/keys', '/srv/shu/state/shu71-evidence']) check(p, () => { custody(p); const s = stat(p); need(s.gid === 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
-    for (const p of ['/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor', '/srv/shu/worktrees']) check(p, () => {
+    for (const p of ['/etc/shu/approvals', '/etc/shu/keys']) check(p, () => { custody(p); const s = stat(p); need(s.gid === 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
+    for (const p of ['/srv/shu/state', '/srv/shu/state/shu71-evidence', '/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor', '/srv/shu/worktrees']) check(p, () => {
       const s = stat(p);
       if (p === '/srv/shu/worktrees') {
         need(s?.isDirectory() && !s.isSymbolicLink() && (s.mode & 0o7777) === 0o3770, 'ACT_PREREQUISITE_CUSTODY');
         return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
       }
       const { uid, gid } = serviceIdentity();
-      custody(p.endsWith('/supervisor') ? '/srv/shu/state' : path.dirname(p));
+      custody(p);
       if (p.endsWith('/supervisor')) { const parent = stat(path.dirname(p)); need(parent?.isDirectory() && !parent.isSymbolicLink() && parent.uid === uid && parent.gid === gid && (parent.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY'); }
       need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === uid && s.gid === gid && (s.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY');
       return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
@@ -361,7 +375,14 @@ export function provisioner(revision, b = boundary) {
     // Fixed production dependencies: measurement only, never execute these tools.
     for (const p of ['/usr/bin/node', '/usr/bin/systemctl', '/usr/bin/flock', '/usr/bin/env',
       '/usr/sbin/useradd', '/usr/sbin/groupadd', '/usr/sbin/userdel', '/usr/sbin/groupdel', '/usr/sbin/nologin', '/usr/bin/find']) check(p, () => {
-      const r = read(p);
+      let target = p;
+      if (stat(p)?.isSymbolicLink()) {
+        custody(path.dirname(p));
+        const link = stat(p);
+        target = path.resolve(path.dirname(p), f.readlinkSync(p));
+        need(p === '/usr/bin/env' && target === '/usr/lib/cargo/bin/coreutils/env' && link.uid === 0 && link.gid === 0, 'ACT_PRODUCTION_EXECUTABLE');
+      }
+      const r = read(target);
       need(r.uid === 0 && r.gid === 0 && r.mode === 0o755 && r.bytes.length > 0, 'ACT_PRODUCTION_EXECUTABLE');
       return { uid: r.uid, gid: r.gid, mode: r.mode };
     });
@@ -379,8 +400,9 @@ export function provisioner(revision, b = boundary) {
         return { uid: r.uid, gid: r.gid, mode: r.mode };
       });
       if (name.endsWith('.service')) {
-        check(p + '.d', () => { custody(p + '.d'); const s = stat(p + '.d'); need(s.gid === 0 && (s.mode & 0o7777) === 0o755, 'ACT_PRODUCTION_GATE_DIRECTORY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
+        check(p + '.d', () => { if (!stat(p + '.d')) { custody(path.dirname(p)); return { window: 'DEFERRED_UNTIL_ARM' }; } custody(p + '.d'); const s = stat(p + '.d'); need(s.gid === 0 && (s.mode & 0o7777) === 0o755, 'ACT_PRODUCTION_GATE_DIRECTORY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
         check(p + '.d/90-shu71.conf', () => {
+          if (!stat(p + '.d/90-shu71.conf')) { custody(stat(p + '.d') ? p + '.d' : path.dirname(p)); return { window: 'DEFERRED_UNTIL_ARM' }; }
           const r = read(p + '.d/90-shu71.conf');
           need(r.uid === 0 && r.gid === 0 && r.mode === 0o644 && Buffer.from(r.bytes, 'base64').toString() === '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'ACT_PRODUCTION_GATE');
           return { uid: r.uid, gid: r.gid, mode: r.mode };
@@ -398,7 +420,7 @@ export function provisioner(revision, b = boundary) {
     check('/srv/shu/state/shu71-activation.json', () => {
       custody('/srv/shu/state');
       need(!stat('/srv/shu/state/shu71-activation.json'), 'ACT_PRODUCTION_ACTIVATION_PRESENT');
-      return { state: 'CREATED_AT_ARM' };
+      return { state: 'CREATED_AT_ARM', window: 'DEFERRED_UNTIL_ARM' };
     });
     // The activation ID is selected after this pre-mint gate. Traverse any
     // existing approval documents without treating one as this run's approval.
