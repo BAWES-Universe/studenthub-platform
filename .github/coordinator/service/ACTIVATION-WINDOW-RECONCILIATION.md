@@ -53,9 +53,18 @@ and the public fingerprint. No manifest rewrite or self-referencing commit is
 needed. Missing, wrong and drifted bindings fail closed. See the
 [final-revision binding step](../SHU-71-ACTIVATION-PACKAGE.md#anchor-provenance-and-execution-authorization).
 
-Host custody is documentation only: `/etc/shu/keys/shu71-activation-ed25519.pem`,
-Ed25519, root:root 0600; parent `/etc/shu/keys`, root:root 0700. No code reads or
-requires that location.
+The operative activation private-key path is
+`/etc/shu/keys/shu71-activation-ed25519.pem`: production reads it to sign both
+payloads ([signing step in shu71-production.mjs](shu71-production.mjs#L255)), and
+[`precondition()`](provision-shu71-prerequisites.mjs#L312) requires its custody.
+The key must be a root-owned, non-symlink, single-link regular file with no
+group/other permission bits, nonempty and at most 4 MiB; neither exact 0600 nor
+a particular file GID is enforced. The documented host layout remains root:root
+0600 with parent `/etc/shu/keys` root:root 0700, but the parent check permits
+root:root 0755 (root-owned non-symlink ancestors without group/other write).
+Exact parent 0700 is therefore **not proven** by this gate (H8). Provisioning
+never creates, copies, renames, links or relocates key material. The host key's
+correspondence to the committed public key remains unproven in repository tests.
 
 The real committed-key positive control accepts the anchor with a separate binding and
 proves the package reaches signature verification (`ACT_FORGED_ENVELOPE` for

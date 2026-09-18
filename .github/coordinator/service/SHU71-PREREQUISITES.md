@@ -80,12 +80,20 @@ account hooks, or real power-loss durability. Those remain unproven. The parser'
 stdin behavior is exercised through its boundary double; live cvtsudoers.ws
 acceptance remains to be measured in the authorized host window.
 
-Changing the broker's group also changes the group owning its runtime directory
-and socket. This patch does not grant the coordinator membership in the new
-group or prove that the coordinator can connect to the broker socket. That
-integration must be independently resolved/proved before M4; the static
-precondition report alone does not establish socket access. No running unit,
-remote ref, credential validity or live fixture launch is claimed here.
+The broker service uses the existing `shu-workspace` primary group, which also
+owns its runtime directory and socket. Provisioning does not modify the
+coordinator's memberships; the gate requires its existing membership by name.
+This expands the broker's read/traverse authority to group-accessible shared
+files, including coordinator attempt worktrees. `ProtectSystem=strict` makes
+that hierarchy read-only; `NoNewPrivileges`, `PrivateTmp` and the broker's two
+fixed requests bound the expansion. It does not grant root identity, bypass
+owner-only permissions, permit worktree writes through the service sandbox,
+or expose arbitrary file reads, API requests, commands or credentials to clients.
+See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
+[workspace layout](SHU-261-VALIDATION.md#L12) and
+[operative unit render](shu71-production.mjs#L480). Real kernel socket access
+must still be proved in the authorized window; the static report cannot prove it.
+No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
 ## Named mutation reproduction
 
@@ -191,7 +199,7 @@ refuse. No numeric 999/982 service assumption remains in this entrypoint.
 | `/etc/shu/approvals/owner.pub` | `service/production-lifecycle.mjs:158–162`: root:root 0644 regular public key; provisioner@904fbed:44–52,286–291 retains ancestor custody and nonempty-file checks. |
 | SHU71 owner public key | `service/shu71-production.mjs:34–40,160`: root-owned private regular single-link file. provisioner@904fbed:286–289 retains the reviewed, stricter root:root 0600 and nonempty policy; production's privateRead alone does not mandate exact 0600 or GID 0. |
 | `/etc/shu/keys/shu71-activation-ed25519.pem` | D1-a uses the **existing activation private key**. `service/shu71-production.mjs:34–40,255` reads a root-owned regular single-link file with `O_NOFOLLOW`, no group/other permission bits, at most 4 MiB; no exact owner-only mode or GID is required. `service/provision-shu71-prerequisites.mjs:312–316` checks this custody plus nonempty content and retained ancestor custody. No key material is created, copied, renamed, linked, relocated, or duplicated by provisioning. |
-| Shared broker access | `service/SHU-261-VALIDATION.md:12` names `shu-workspace`; `service/shu71-production.mjs:480` renders `User=shu71-evidence`, `Group=shu-workspace`, `RuntimeDirectoryMode=0750`. `service/provision-shu71-prerequisites.mjs:138–146,317–324` resolves the shared group by name, measures coordinator membership with `id -Gn shu-coordinator`, and measures broker ownership/shared GID and separate exact directory/socket modes. `service/fixture-evidence-broker.mjs:31` creates the socket and chmods it to 0660. |
+| Shared broker access | `service/SHU-261-VALIDATION.md:12` names `shu-workspace`; `service/shu71-production.mjs:480` renders `User=shu71-evidence`, `Group=shu-workspace`, `RuntimeDirectoryMode=0750`. `service/provision-shu71-prerequisites.mjs:138–146,338–355` resolves the shared group by name, measures coordinator membership with `id -Gn shu-coordinator`, and measures broker ownership/shared GID and separate exact directory/socket modes. `service/fixture-evidence-broker.mjs:31` creates the socket and chmods it to 0660. |
 | Supervisor and coordinator environment files | `service/host-lifecycle.mjs:48–49` and `service/shu71-production.mjs:228–237`: root:root 0600 supervisor file, measured service UID/primary GID 0600 coordinator file; single regular file and custody checks retained. |
 | Approvals, keys, evidence root directories | provisioner@904fbed:37–43,291: root:root, directory, no symlinks, no group/world writes, ancestor custody. Production custody primitives: `service/production-lifecycle.mjs:35–49`, `service/shu71-production.mjs:43–46`. Exact root GID remains provisioning policy. |
 | Workspace state and supervisor state | `service/host-lifecycle.mjs:54–56`: service identity UID/GID, directory, 0700; provisioner@904fbed:292–296 retains parent custody and non-symlink checks. UID/GID now measured by name. |
@@ -374,3 +382,63 @@ The entire `host-suite-contract.mjs` is also byte-identical, SHA-256
 All existing file/name/requirement entries remain intact; 27 test names and one
 test file are added. No historical fixtures, trust-anchor bytes, committed
 public key, CI workflow or other source outside `.github/coordinator` changed.
+
+
+### H1–H8 independent-verdict corrections
+
+Before editing, a clean fixture with `/run` removed reproduced H1: `install()`
+returned `VERIFIED`; the immediately following read-only `precondition()` failed
+only `/run/shu71-evidence` and its `fixture.sock`, both with
+`ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
+Production starts the service during M4 and stops it at teardown
+([start](shu71-production.mjs#L292), [stop](shu71-production.mjs#L430)).
+
+The corrected gate evaluates runtime paths after **all** static checks. With
+both absent and all static checks passing, both rows explicitly contain
+`ok:true,runtime:"not_started"`, with no measured UID/GID/mode. This is an
+absence observation, not proof of systemd activity or a measured socket. With
+both present, each must satisfy its existing type, ownership and exact mode
+checks (0750 directory, 0660 socket), and passes as `runtime:"measured"`.
+A partial pair refuses with `ACT_BROKER_SOCKET_CUSTODY`. Static failures remain
+named failures even when both runtime paths are absent; those runtime rows
+also refuse, rather than claiming an eligible not-started state. The report is
+a read-only snapshot, not protection against concurrent host state changes.
+
+[`provision-runtime-state.test.mjs`](test/provision-runtime-state.test.mjs)
+provides passing controls and 20 named assertion/mutant kills:
+
+- `H1_NOT_STARTED`, `H1_EXPLICIT_RUNTIME_MARKER`, `H1_RUNNING_MEASURED`.
+- `H2_{DIRECTORY,SOCKET}_{UID,GID}_CUSTODY`: stored fixture ownership changes
+  really reach lstat, and deletion of the ownership predicate dies by name.
+- `H1_{DIRECTORY,SOCKET}_WIDENED_MODE`, `H1_PARTIAL_RUNTIME`.
+- `H1_ABSENT_STATIC_{UNIT,IDENTITY,GROUP,MEMBERSHIP,KEY,RECEIPT,TREE,CHECKOUT,REFS}`.
+- `H1_ABSENT_RENDER`: invalid Group is refused and removing only the Group
+  clause from the render guard dies behaviorally (H6), not by source anchoring.
+
+The fixture stores runtime ownership in the same `owners` map as other paths;
+it no longer synthesizes ownership from the expected account database (H2).
+The socket type remains modeled. No real systemd or kernel socket proof is made.
+H3/H4's stale key-path and numeric-identity statements are corrected in the
+[reconciliation](ACTIVATION-WINDOW-RECONCILIATION.md) and
+[closure](SHU71-L3-CLOSURE.md#least-privilege-delivery) documents. H5's primary-group
+read expansion and mitigations are explicitly disclosed above.
+
+Remaining limits: H7's `connect()` DAC model still hard-codes 0750/0660;
+its connection result is not evidence about actual fixture modes. Separate
+precondition tests measure modes and kill widened-mode mutants. H8's parent
+`/etc/shu/keys` check allows 0755; documented 0700 is not enforced or proven.
+The D1 signing path, signing authority and shared-group mechanism remain unchanged.
+No target-host account, key, socket, service, API or committed-key runtime
+signature was measured in this repository-only correction.
+
+Correction validation before commit: focused plain and exact CI-clock commands
+both passed 994 tests, zero failures/skips, one terminal `1..994` each. Initial
+full worktree runs reached `A12_INVENTORY_AUDIT_FILES`: that guard compares the
+committed HEAD's test-file set with the working audit, so adding a test requires
+committing before its exact-head full run. This assertion remains unchanged;
+final committed-head full counts and logs are reported separately.
+`PERMITTED_SKIPS`, including its trailing newline, remains byte-identical to
+18e346ce5ac255d32ad97bfecab0edaed1c86935: 1,093 bytes, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+All three inventories are additive only: one file and 20 names/requirements in
+the suite inventory, one file in each file audit; zero removals or changed rows.

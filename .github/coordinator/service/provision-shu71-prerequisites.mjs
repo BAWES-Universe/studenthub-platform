@@ -315,13 +315,6 @@ export function provisioner(revision, b = boundary) {
       return { uid: r.uid, gid: r.gid, mode: r.mode };
     });
     check('group:' + SHARED_GROUP, () => sharedAccess());
-    for (const p of ['/run/shu71-evidence', EVIDENCE_SOCKET]) check(p, () => {
-      const broker = identity(), shared = sharedAccess(), s = stat(p);
-      const directory = p !== EVIDENCE_SOCKET;
-      need(s && !s.isSymbolicLink() && (directory ? s.isDirectory() : s.isSocket()) && s.uid === broker.uid && s.gid === shared.gid, 'ACT_BROKER_SOCKET_CUSTODY');
-      need(directory ? (s.mode & 0o7777) === 0o750 : (s.mode & 0o7777) === 0o660, directory ? 'ACT_BROKER_DIRECTORY_MODE' : 'ACT_BROKER_SOCKET_MODE');
-      return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
-    });
     const files = [['/etc/shu/approvals/owner.pub', 0o644, 0, 0], ['/etc/shu/approvals/shu71-owner.pub', 0o600, 0, 0],
       ['/etc/shu/supervisor.env', 0o600, 0, 0], ['/srv/shu/coordinator.env', 0o600, 'shu-coordinator', 'shu-coordinator']];
     for (const [p, mode, owner, group] of files) check(p, () => {
@@ -343,6 +336,20 @@ export function provisioner(revision, b = boundary) {
     });
     for (const ref of ['refs/heads/coordinator/SHU-140', 'refs/heads/coordinator/SHU-254']) check(ref, () => {
       const head = git(['rev-parse', '--verify', `${ref}^{commit}`]).toString().trim(); need(/^[a-f0-9]{40}$/.test(head), 'ACT_REF_BINDING'); return { head };
+    });
+    // Runtime absence is acceptable only after every static prerequisite passes.
+    for (const p of ['/run/shu71-evidence', EVIDENCE_SOCKET]) check(p, () => {
+      const broker = identity(), shared = sharedAccess(), s = stat(p);
+      const peer = stat(p === EVIDENCE_SOCKET ? '/run/shu71-evidence' : EVIDENCE_SOCKET);
+      if (!s && !peer) {
+        need(report.ok, report.paths.find(r => !r.ok)?.code ?? 'ACT_PREREQUISITE_MISSING');
+        return { runtime: 'not_started' };
+      }
+      need(peer, 'ACT_BROKER_SOCKET_CUSTODY');
+      const directory = p !== EVIDENCE_SOCKET;
+      need(s && !s.isSymbolicLink() && (directory ? s.isDirectory() : s.isSocket()) && s.uid === broker.uid && s.gid === shared.gid, 'ACT_BROKER_SOCKET_CUSTODY');
+      need(directory ? (s.mode & 0o7777) === 0o750 : (s.mode & 0o7777) === 0o660, directory ? 'ACT_BROKER_DIRECTORY_MODE' : 'ACT_BROKER_SOCKET_MODE');
+      return { runtime: 'measured', uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
     });
     return report;
   }

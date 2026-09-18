@@ -158,6 +158,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/provision-runtime-state.test.mjs",
+    "capabilities": [],
+    "justification": "Node core temporary filesystem with stored ownership state and injected command boundaries; no host service or external successful tool operation required",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",

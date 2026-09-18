@@ -16,6 +16,7 @@
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
     ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
     ".github/coordinator/service/test/provision-review-regressions.test.mjs",
+    ".github/coordinator/service/test/provision-runtime-state.test.mjs",
     ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
     ".github/coordinator/service/test/reporter-amendments.test.mjs",
     ".github/coordinator/service/test/residual.test.mjs",
@@ -3000,7 +3001,27 @@
     "D1 precondition key path mutation killed",
     "D1 precondition exact rendered unit mutation killed",
     "D1 broker creates socket at 0660 and widened source mutant killed",
-    "D1 rendered runtime directory widening refused and mutant killed"
+    "D1 rendered runtime directory widening refused and mutant killed",
+    "H1_NOT_STARTED passing control and named mutant kill",
+    "H1_EXPLICIT_RUNTIME_MARKER passing control and named mutant kill",
+    "H1_RUNNING_MEASURED passing control and named mutant kill",
+    "H2_DIRECTORY_UID_CUSTODY passing control and named mutant kill",
+    "H2_DIRECTORY_GID_CUSTODY passing control and named mutant kill",
+    "H1_DIRECTORY_WIDENED_MODE passing control and named mutant kill",
+    "H2_SOCKET_UID_CUSTODY passing control and named mutant kill",
+    "H2_SOCKET_GID_CUSTODY passing control and named mutant kill",
+    "H1_SOCKET_WIDENED_MODE passing control and named mutant kill",
+    "H1_PARTIAL_RUNTIME passing control and named mutant kill",
+    "H1_ABSENT_STATIC_UNIT passing control and named mutant kill",
+    "H1_ABSENT_STATIC_IDENTITY passing control and named mutant kill",
+    "H1_ABSENT_STATIC_GROUP passing control and named mutant kill",
+    "H1_ABSENT_STATIC_MEMBERSHIP passing control and named mutant kill",
+    "H1_ABSENT_STATIC_KEY passing control and named mutant kill",
+    "H1_ABSENT_STATIC_RECEIPT passing control and named mutant kill",
+    "H1_ABSENT_STATIC_TREE passing control and named mutant kill",
+    "H1_ABSENT_STATIC_CHECKOUT passing control and named mutant kill",
+    "H1_ABSENT_STATIC_REFS passing control and named mutant kill",
+    "H1_ABSENT_RENDER passing control and named mutant kill"
   ],
   "requirements": [
     {
@@ -24219,6 +24240,86 @@
     },
     {
       "name": "D1 rendered runtime directory widening refused and mutant killed",
+      "capabilities": []
+    },
+    {
+      "name": "H1_NOT_STARTED passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_EXPLICIT_RUNTIME_MARKER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_RUNNING_MEASURED passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_DIRECTORY_UID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_DIRECTORY_GID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_DIRECTORY_WIDENED_MODE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_SOCKET_UID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H2_SOCKET_GID_CUSTODY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_SOCKET_WIDENED_MODE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_PARTIAL_RUNTIME passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_UNIT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_IDENTITY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_GROUP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_MEMBERSHIP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_KEY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_RECEIPT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_TREE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_CHECKOUT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_STATIC_REFS passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "H1_ABSENT_RENDER passing control and named mutant kill",
       "capabilities": []
     }
   ]

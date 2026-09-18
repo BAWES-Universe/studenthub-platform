@@ -15,8 +15,6 @@ export function fixture(t) {
   const effect = (name, fn) => { events.push(name); if (faults.before?.(name)) throw Error('INJECTED'); const r = fn(); if (faults.after?.(name)) throw Error('INJECTED'); return r; };
   const s = (p, st) => new Proxy(st, { get(target, key) {
     if (logical(p) === '/run/shu71-evidence' || logical(p) === '/run/shu71-evidence/fixture.sock') {
-      if (key === 'uid') return users.find(u => u.name === BROKER)?.uid ?? 0;
-      if (key === 'gid') return groups.find(g => g.name === 'shu-workspace')?.gid ?? 0;
       if (key === 'isSocket') return () => logical(p).endsWith('/fixture.sock');
     }
     if (key === 'uid' || key === 'gid') return (owners.get(logical(p)) ?? [0, 0])[key === 'uid' ? 0 : 1];
@@ -93,7 +91,8 @@ export function fixture(t) {
     });
     return { status, stdout };
   };
-  directory('/run/shu71-evidence', 0o750); write('/run/shu71-evidence/fixture.sock', '', 0o660);
+  // Model the running baseline's custody as stored state, independent of NSS reads.
+  directory('/run/shu71-evidence', 0o750, 100, 980); write('/run/shu71-evidence/fixture.sock', '', 0o660, 100, 980);
   directory('/proc'); directory('/etc/shu'); directory('/etc/sudoers.d'); directory('/etc/systemd/system'); directory('/usr/local/libexec');
   directory(PATHS.checkout, 0o755, 999, 982);
   for (const [p, bytes] of Object.entries(accountBytes())) write(p, bytes, p.includes('shadow') ? 0o600 : 0o644);
