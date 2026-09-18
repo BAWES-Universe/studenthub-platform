@@ -62,11 +62,21 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     readdirSync: p => fs.readdirSync(resolve(p)),
     rmSync: (p, opts) => effect(`remove:${p}`, () => fs.rmSync(resolve(p), opts)),
   };
-  function write(p, value, mode = 0o600, uid = 0, gid = uid) {
-    fs.mkdirSync(path.dirname(resolve(p)), { recursive: true, mode: 0o755 });
-    fs.writeFileSync(resolve(p), value, { mode }); owners.set(p, [uid, gid]);
+  // Model fixture custody explicitly: mkdir/write creation modes are filtered
+  // by the caller's umask. Only newly created ancestors receive the default,
+  // so deliberate permission damage in refusal controls remains observable.
+  function directory(p) {
+    if (fs.existsSync(resolve(p))) return;
+    directory(path.dirname(p));
+    fs.mkdirSync(resolve(p), { mode: 0o755 });
+    fs.chmodSync(resolve(p), 0o755);
   }
-  for (const p of ['/srv/shu/state', '/srv/shu/state/workspaces', '/etc/systemd/system', '/srv/shu/worktrees']) fs.mkdirSync(resolve(p), { recursive: true, mode: 0o755 });
+  function write(p, value, mode = 0o600, uid = 0, gid = uid) {
+    directory(path.dirname(p));
+    fs.writeFileSync(resolve(p), value, { mode });
+    fs.chmodSync(resolve(p), mode); owners.set(p, [uid, gid]);
+  }
+  for (const p of ['/srv/shu/state', '/srv/shu/state/workspaces', '/etc/systemd/system', '/srv/shu/worktrees']) directory(p);
   fs.chmodSync(resolve('/srv/shu/worktrees'), 0o3770);
   write(`/etc/shu/approvals/${id}.shu71.json`, JSON.stringify({ payload: spec, signature: sign(null, canonicalBytes(spec, false), keys.privateKey).toString('base64') }));
   write('/etc/shu/approvals/shu71-owner.pub', keys.publicKey.export({ type: 'spki', format: 'pem' }));
@@ -83,7 +93,10 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
       let output = '';
       effect(`command:${exe}:${argv.join(' ')}`, () => {
         if (exe === '/usr/bin/getent') {
-          output = argv[0] === 'passwd' ? 'shu71-evidence:x:100:100::/nonexistent:/usr/sbin/nologin' : 'shu-workspace:x:980:shu-coordinator'; return;
+          if (argv.join(' ') === 'passwd shu71-evidence') output = 'shu71-evidence:x:100:100::/nonexistent:/usr/sbin/nologin';
+          else if (argv.join(' ') === 'group shu-workspace') output = 'shu-workspace:x:980:shu-coordinator';
+          else throw new Error('unexpected account lookup');
+          return;
         }
         if (exe === '/usr/bin/setpriv' && argv.includes('--init-groups')) {
           const probeFs = { ...f, accessSync(p, requested) {

@@ -14,8 +14,19 @@ async function mutant(from, to) {
     (_, p, q, rel) => `${p}${q}${new URL(rel, sourceURL)}${q}`).replaceAll('import.meta.url', JSON.stringify(sourceURL.href));
   return (await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))).createShu71Production;
 }
-async function passing(t, impl = createShu71Production) {
-  const h = productionFixture(t, keys);
+async function passing(t, impl = createShu71Production, mask = process.umask()) {
+  const previous = process.umask(mask);
+  let h;
+  try { h = productionFixture(t, keys); }
+  finally { process.umask(previous); }
+  // execute() can cross await boundaries; scope the umask to the synchronous
+  // service-start double, where runtime paths are actually created.
+  const run = h.boundary.run;
+  h.boundary.run = (...args) => {
+    const before = process.umask(mask);
+    try { return run(...args); }
+    finally { process.umask(before); }
+  };
   assert.equal((await impl(h.id, h.boundary).execute('run')).state, 'ARMED', 'WINDOW_PASSING_CONTROL');
   return h;
 }
@@ -51,14 +62,16 @@ for (const [name, damage, code] of [
 test('WINDOW_MEASURED_RECEIPT passing control and named mutant kill', async t => {
   const label = 'WINDOW_MEASURED_RECEIPT';
   const check = async impl => {
-    const h = await passing(t, impl), rows = h.journal();
-    const receipt = rows.find(r => r.event === 'BROKER_RUNTIME_MEASURED');
-    assert.deepEqual(receipt?.rows, [dir, socket].map((path, i) => ({ path, ok: true, runtime: 'MEASURED', uid: 100, gid: 980, mode: i ? 0o660 : 0o750 })), label);
-    assert.ok(rows.indexOf(receipt) < rows.findIndex(r => r.step === 'ready-SHU-140'), label);
-    assert.equal(receipt.coordinator_access, 'MEASURED_TRAVERSE_READ_WRITE', label);
-    assert.equal((await impl(h.id, h.boundary).execute('revoke')).state, 'REVOKED', label);
-    const archive = JSON.parse(h.read(`/srv/shu/state/shu71-evidence/${h.id}/activation.json`));
-    assert.deepEqual(archive.broker_runtime.rows, receipt.rows, label);
+    for (const mask of [0o002, 0o022, 0o077]) {
+      const h = await passing(t, impl, mask), rows = h.journal();
+      const receipt = rows.find(r => r.event === 'BROKER_RUNTIME_MEASURED');
+      assert.deepEqual(receipt?.rows, [dir, socket].map((path, i) => ({ path, ok: true, runtime: 'MEASURED', uid: 100, gid: 980, mode: i ? 0o660 : 0o750 })), label);
+      assert.ok(rows.indexOf(receipt) < rows.findIndex(r => r.step === 'ready-SHU-140'), label);
+      assert.equal(receipt.coordinator_access, 'MEASURED_TRAVERSE_READ_WRITE', label);
+      assert.equal((await impl(h.id, h.boundary).execute('revoke')).state, 'REVOKED', label);
+      const archive = JSON.parse(h.read(`/srv/shu/state/shu71-evidence/${h.id}/activation.json`));
+      assert.deepEqual(archive.broker_runtime.rows, receipt.rows, label);
+    }
   };
   await check(createShu71Production);
   const changed = await mutant("journal.append({ event: 'BROKER_RUNTIME_MEASURED', ...runtime });", '');
