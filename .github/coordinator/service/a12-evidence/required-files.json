@@ -28,6 +28,7 @@
   ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-history.test.mjs",
   ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
+  ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
   ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-production.test.mjs",
   ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",

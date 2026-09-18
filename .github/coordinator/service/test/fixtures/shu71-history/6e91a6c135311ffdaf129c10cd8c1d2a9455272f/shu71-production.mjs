@@ -17,8 +17,6 @@ const REMOTE = `https://github.com/${REPO}.git`;
 const IDS = ['SHU-140', 'SHU-254'];
 const SERVICES = ['shu-coordinator.timer', 'shu-coordinator.service', 'shu-supervisor.service'];
 const GATES = SERVICES.filter(n => n.endsWith('.service')).map(n => `/etc/systemd/system/${n}.d/90-shu71.conf`);
-const READBACK_CODES = ['DROPIN', 'ACTIVATION'].flatMap(kind =>
-  ['MISSING', 'BYTES', 'CUSTODY', 'MODE', 'DIRECTORY', 'READ'].map(reason => `ACT_${kind}_READBACK_${reason}`));
 export const installedModule = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
 export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), now: () => Date.now(),
   run: (file, args, options) => spawnSync(file, args, { timeout: 30000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8', ...options }),
@@ -59,30 +57,6 @@ export function createShu71Production(id, b = shu71Boundary) {
     f.renameSync(name, file);
     const parentFd = f.openSync(parent, C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
     try { f.fsyncSync(parentFd); } finally { f.closeSync(parentFd); }
-  }
-  // Phase-bound read-back compares raw bytes, including the activation signature.
-  // Open without following links and measure/read the same descriptor.
-  function installedReadback(file, value, gid, mode, kind) {
-    const code = reason => `ACT_${kind}_READBACK_${reason}`;
-    let fd;
-    try {
-      if (kind === 'DROPIN') {
-        const parent = f.lstatSync(path.dirname(file));
-        need(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === 0 && parent.gid === 0
-          && (parent.mode & 0o7777) === 0o755, code('DIRECTORY'));
-      }
-      const entry = f.lstatSync(file);
-      need(entry.isFile() && !entry.isSymbolicLink() && entry.nlink === 1, code('CUSTODY'));
-      fd = f.openSync(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
-      const stat = f.fstatSync(fd);
-      need(stat.isFile() && stat.nlink === 1 && stat.uid === 0 && stat.gid === gid, code('CUSTODY'));
-      need((stat.mode & 0o7777) === mode, code('MODE'));
-      const expected = Buffer.from(value);
-      need(stat.size === expected.length && f.readFileSync(fd).equals(expected), code('BYTES'));
-    } catch (error) {
-      if (READBACK_CODES.includes(error.code)) throw error;
-      need(false, code(error.code === 'ENOENT' ? 'MISSING' : 'READ'));
-    } finally { if (fd !== undefined) f.closeSync(fd); }
   }
   const remove = file => {
     try { f.unlinkSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -340,14 +314,8 @@ export function createShu71Production(id, b = shu71Boundary) {
       }, true);
       for (const t of pkg.issue_transitions) await step(`ready-${t.issue_id}`, () => transition(t, t.ready));
       await step('activation', () => atomic(ACTIVATION_FILE, JSON.stringify(pkg.activation), 0, 999, 0o640));
-      await step('activation-readback', () => installedReadback(ACTIVATION_FILE, JSON.stringify(pkg.activation), 999, 0o640, 'ACTIVATION'), true);
-      await step('gate-install', () => {
-        for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0, 0o644); }
-      });
-      await step('dropin-readback', () => {
-        for (const file of GATES) installedReadback(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0o644, 'DROPIN');
-      }, /* remeasure on resume */ true);
       await step('gate', () => {
+        for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0, 0o644); }
         command('/usr/bin/systemctl', ['daemon-reload']);
         command('/usr/bin/systemctl', ['restart', 'shu-supervisor.service']);
         command('/usr/bin/systemctl', ['start', 'shu-coordinator.timer']);
@@ -355,7 +323,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
       return { ok: true, state: 'ARMED', activation_id: id };
     } catch (error) {
-      const code = [...READBACK_CODES, ...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
+      const code = [...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';

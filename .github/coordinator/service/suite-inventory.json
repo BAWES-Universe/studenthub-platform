@@ -30,6 +30,7 @@
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
+    ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -3152,7 +3153,88 @@
     "HOST_KILL_MALFORMED",
     "HOST_KILL_MAX_DEFAULT",
     "HOST_KILL_OCCUPIED_UID",
-    "HOST_KILL_NO_WORLD_WRITE"
+    "HOST_KILL_NO_WORLD_WRITE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
+    "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
+    "PHASE_KILL_DROPIN_COORDINATOR_BYTES",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_UID",
+    "PHASE_KILL_DROPIN_COORDINATOR_UID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_GID",
+    "PHASE_KILL_DROPIN_COORDINATOR_GID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_WIDE_MODE",
+    "PHASE_KILL_DROPIN_COORDINATOR_WIDE_MODE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_NARROW_MODE",
+    "PHASE_KILL_DROPIN_COORDINATOR_NARROW_MODE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_SPECIAL_MODE",
+    "PHASE_KILL_DROPIN_COORDINATOR_SPECIAL_MODE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_SYMLINK",
+    "PHASE_KILL_DROPIN_COORDINATOR_SYMLINK",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_UID",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_UID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_GID",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_GID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_MISSING",
+    "PHASE_KILL_DROPIN_SUPERVISOR_MISSING",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_BYTES",
+    "PHASE_KILL_DROPIN_SUPERVISOR_BYTES",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_UID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_UID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_GID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_GID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_WIDE_MODE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_WIDE_MODE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_NARROW_MODE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_NARROW_MODE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_SPECIAL_MODE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_SPECIAL_MODE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_SYMLINK",
+    "PHASE_KILL_DROPIN_SUPERVISOR_SYMLINK",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_UID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_UID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_GID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_GID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+    "PHASE_REQUIRE_ACTIVATION_MISSING",
+    "PHASE_KILL_ACTIVATION_MISSING",
+    "PHASE_REQUIRE_ACTIVATION_BYTES",
+    "PHASE_KILL_ACTIVATION_BYTES",
+    "PHASE_REQUIRE_ACTIVATION_UID",
+    "PHASE_KILL_ACTIVATION_UID",
+    "PHASE_REQUIRE_ACTIVATION_GID",
+    "PHASE_KILL_ACTIVATION_GID",
+    "PHASE_REQUIRE_ACTIVATION_WIDE_MODE",
+    "PHASE_KILL_ACTIVATION_WIDE_MODE",
+    "PHASE_REQUIRE_ACTIVATION_NARROW_MODE",
+    "PHASE_KILL_ACTIVATION_NARROW_MODE",
+    "PHASE_REQUIRE_ACTIVATION_SPECIAL_MODE",
+    "PHASE_KILL_ACTIVATION_SPECIAL_MODE",
+    "PHASE_REQUIRE_ACTIVATION_SYMLINK",
+    "PHASE_KILL_ACTIVATION_SYMLINK",
+    "PHASE_REQUIRE_ACTIVATION_SIGNATURE",
+    "PHASE_KILL_ACTIVATION_SIGNATURE",
+    "PHASE_PRE_FIX_DROPIN_COORDINATOR_MISSING_ACCEPTED",
+    "PHASE_PRE_FIX_DROPIN_COORDINATOR_BYTES_ACCEPTED",
+    "PHASE_PRE_FIX_DROPIN_SUPERVISOR_MISSING_ACCEPTED",
+    "PHASE_PRE_FIX_DROPIN_SUPERVISOR_BYTES_ACCEPTED",
+    "PHASE_PRE_FIX_ACTIVATION_MISSING_ACCEPTED",
+    "PHASE_PRE_FIX_ACTIVATION_BYTES_ACCEPTED",
+    "PHASE_GREEN_ORDER_AND_EXACT_BYTES",
+    "PHASE_KILL_ACTIVATION_LATE_ORDER",
+    "PHASE_KILL_DROPIN_LATE_ORDER",
+    "PHASE_HISTORICAL_BYTES_PINNED",
+    "PHASE_KILL_ACTIVATION_PAST_DISPATCH_GATE",
+    "PHASE_REQUIRE_ACTIVATION_RESUME_REMEASURES",
+    "PHASE_KILL_ACTIVATION_RESUME_SKIP",
+    "PHASE_REQUIRE_DROPIN_RESUME_REMEASURES",
+    "PHASE_KILL_DROPIN_RESUME_SKIP"
   ],
   "requirements": [
     {
@@ -25184,6 +25266,330 @@
           "name": "shell_toolchain"
         }
       ]
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_SIGNATURE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_SIGNATURE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_COORDINATOR_MISSING_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_COORDINATOR_BYTES_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_SUPERVISOR_MISSING_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_SUPERVISOR_BYTES_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_ACTIVATION_MISSING_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_ACTIVATION_BYTES_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_GREEN_ORDER_AND_EXACT_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_LATE_ORDER",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_LATE_ORDER",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_HISTORICAL_BYTES_PINNED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_PAST_DISPATCH_GATE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_RESUME_REMEASURES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_RESUME_SKIP",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_RESUME_REMEASURES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_RESUME_SKIP",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

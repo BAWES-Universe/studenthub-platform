@@ -278,6 +278,14 @@
     "call_sites": []
   },
   {
+    "file": ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; historical and mutation modules execute in-process with disposable filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-phase-readback.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
