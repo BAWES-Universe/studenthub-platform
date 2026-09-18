@@ -1,7 +1,8 @@
+import { validateRuntimeRow } from './shu71-runtime-schema.mjs';
 // Fixed host boundary; no operator-selected paths or executable.
 export const RUNTIME_CODES = Object.freeze(['ACT_RUNTIME_DIRECTORY_MISSING', 'ACT_RUNTIME_SOCKET_MISSING',
   'ACT_RUNTIME_OWNER', 'ACT_RUNTIME_GROUP', 'ACT_RUNTIME_DIRECTORY_MODE', 'ACT_RUNTIME_SOCKET_MODE',
-  'ACT_RUNTIME_COORDINATOR_ACCESS', 'ACT_RUNTIME_IDENTITY']);
+  'ACT_RUNTIME_COORDINATOR_ACCESS', 'ACT_RUNTIME_IDENTITY', 'ACT_RUNTIME_DIRECTORY_MEASUREMENT', 'ACT_RUNTIME_SOCKET_MEASUREMENT', 'ACT_RUNTIME_ROW_SCHEMA']);
 const need = (ok, code) => { if (!ok) throw Object.assign(new Error(code), { code }); };
 export function measureBrokerRuntime(b, env) {
   const run = (exe, args, code) => {
@@ -14,13 +15,13 @@ export function measureBrokerRuntime(b, env) {
     && group.length === 4 && group[0] === 'shu-workspace' && /^[1-9][0-9]*$/.test(group[2]), 'ACT_RUNTIME_IDENTITY');
   const rows = ['/run/shu71-evidence', '/run/shu71-evidence/fixture.sock'].map((path, i) => {
     const missing = i ? 'ACT_RUNTIME_SOCKET_MISSING' : 'ACT_RUNTIME_DIRECTORY_MISSING';
-    let s; try { s = b.fs.lstatSync(path); } catch { need(false, missing); }
+    let s; try { s = b.fs.lstatSync(path); } catch (e) { need(false, e.code === 'ENOENT' ? missing : i ? 'ACT_RUNTIME_SOCKET_MEASUREMENT' : 'ACT_RUNTIME_DIRECTORY_MEASUREMENT'); }
     need(s && !s.isSymbolicLink() && (i ? s.isSocket() : s.isDirectory()), missing);
     need(s.uid === Number(user[2]), 'ACT_RUNTIME_OWNER');
     need(s.gid === Number(group[2]), 'ACT_RUNTIME_GROUP');
     need(i ? (s.mode & 0o7777) === 0o660 : (s.mode & 0o7777) === 0o750,
       i ? 'ACT_RUNTIME_SOCKET_MODE' : 'ACT_RUNTIME_DIRECTORY_MODE');
-    return { path, ok: true, runtime: 'MEASURED', uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+    return validateRuntimeRow({ path, ok: true, runtime: 'MEASURED', uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 });
   });
   // Kernel permission probe under the coordinator's NSS primary/supplementary
   // groups, including traversal of every ancestor. This does not prove connect().

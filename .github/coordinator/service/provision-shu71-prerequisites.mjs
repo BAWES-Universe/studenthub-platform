@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Closed, repository-reviewed host boundary. Importing this module performs no IO.
 import fs from 'node:fs';
+import { validateRuntimeRow } from './shu71-runtime-schema.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -291,7 +292,7 @@ export function provisioner(revision, b = boundary) {
   }
   function precondition() {
     const report = { ok: true, revision, paths: [] };
-    const check = (p, fn) => { try { report.paths.push({ path: p, ok: true, ...fn() }); }
+    const check = (p, fn) => { try { const row = { path: p, ok: true, ...fn() }; if (p === '/run/shu71-evidence' || p === EVIDENCE_SOCKET) validateRuntimeRow(row); report.paths.push(row); }
       catch (e) { report.ok = false; report.paths.push({ path: p, ok: false, code: !e.code ? 'ACT_PREREQUISITE_MISSING' : /^(ACT_|SHU251_)[A-Z0-9_]+$/.test(e.code) ? e.code : e.code === 'ENOENT' ? 'ACT_PREREQUISITE_PATH_MISSING' : 'ACT_PREREQUISITE_MEASUREMENT' }); } };
     let entries;
     check(PATHS.checkout, () => {
@@ -357,6 +358,56 @@ export function provisioner(revision, b = boundary) {
     for (const ref of ['refs/heads/coordinator/SHU-140', 'refs/heads/coordinator/SHU-254']) check(ref, () => {
       const head = git(['rev-parse', '--verify', `${ref}^{commit}`]).toString().trim(); need(/^[a-f0-9]{40}$/.test(head), 'ACT_REF_BINDING'); return { head };
     });
+    // Fixed production dependencies: measurement only, never execute these tools.
+    for (const p of ['/usr/bin/node', '/usr/bin/systemctl', '/usr/bin/flock', '/usr/bin/env',
+      '/usr/sbin/useradd', '/usr/sbin/groupadd', '/usr/sbin/userdel', '/usr/sbin/groupdel', '/usr/sbin/nologin', '/usr/bin/find']) check(p, () => {
+      const r = read(p);
+      need(r.uid === 0 && r.gid === 0 && r.mode === 0o755 && r.bytes.length > 0, 'ACT_PRODUCTION_EXECUTABLE');
+      return { uid: r.uid, gid: r.gid, mode: r.mode };
+    });
+    for (const name of ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer']) {
+      const p = '/etc/systemd/system/' + name;
+      check(p, () => {
+        const r = read(p), source = Buffer.from(r.bytes, 'base64').toString();
+        need(r.uid === 0 && r.gid === 0 && r.mode === 0o644, 'ACT_PRODUCTION_UNIT_CUSTODY');
+        const exact = (key, value) => { const lines = source.split('\n').filter(l => new RegExp('^\\s*' + key + '\\s*=').test(l)); need(lines.length === 1 && lines[0] === key + '=' + value, 'ACT_PRODUCTION_UNIT_BINDING'); };
+        if (name.endsWith('.service')) {
+          serviceIdentity(); exact('User', 'shu-coordinator'); exact('Group', 'shu-coordinator');
+          exact('EnvironmentFile', name === 'shu-supervisor.service' ? '/etc/shu/supervisor.env' : '/srv/shu/coordinator.env');
+          if (name === 'shu-coordinator.service') exact('LoadCredential', 'supervisor-transport:/etc/shu/supervisor.env');
+        } else exact('Unit', 'shu-coordinator.service');
+        return { uid: r.uid, gid: r.gid, mode: r.mode };
+      });
+      if (name.endsWith('.service')) {
+        check(p + '.d', () => { custody(p + '.d'); const s = stat(p + '.d'); need(s.gid === 0 && (s.mode & 0o7777) === 0o755, 'ACT_PRODUCTION_GATE_DIRECTORY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
+        check(p + '.d/90-shu71.conf', () => {
+          const r = read(p + '.d/90-shu71.conf');
+          need(r.uid === 0 && r.gid === 0 && r.mode === 0o644 && Buffer.from(r.bytes, 'base64').toString() === '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 'ACT_PRODUCTION_GATE');
+          return { uid: r.uid, gid: r.gid, mode: r.mode };
+        });
+      }
+    }
+    check('/run/lock/shu71-production.lock', () => {
+      custody('/run');
+      const parent = stat('/run/lock');
+      need(parent?.isDirectory() && !parent.isSymbolicLink() && parent.uid === 0 && parent.gid === 0 && (!(parent.mode & 0o022) || (parent.mode & 0o1000)), 'ACT_PRODUCTION_LOCK_CUSTODY');
+      const s = stat('/run/lock/shu71-production.lock');
+      need(!s || s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022), 'ACT_PRODUCTION_LOCK_CUSTODY');
+      return { state: s ? 'EXISTING_LOCK' : 'CREATED_BY_FLOCK' };
+    });
+    check('/srv/shu/state/shu71-activation.json', () => {
+      custody('/srv/shu/state');
+      need(!stat('/srv/shu/state/shu71-activation.json'), 'ACT_PRODUCTION_ACTIVATION_PRESENT');
+      return { state: 'CREATED_AT_ARM' };
+    });
+    // The activation ID is selected after this pre-mint gate. Traverse any
+    // existing approval documents without treating one as this run's approval.
+    check('/etc/shu/approvals#documents', () => {
+    for (const name of f.readdirSync('/etc/shu/approvals').filter(n => n.endsWith('.shu71.json'))) check('/etc/shu/approvals/' + name, () => {
+      const r = read('/etc/shu/approvals/' + name);
+      need(r.uid === 0 && !(r.mode & 0o077) && r.bytes.length > 0, 'ACT_PRODUCTION_APPROVAL_CUSTODY'); return { state: 'CUSTODY_ONLY_NOT_AUTHORIZATION' };
+    });
+    return {}; });
     // Runtime absence is acceptable only after every static prerequisite passes.
     for (const p of ['/run/shu71-evidence', EVIDENCE_SOCKET]) check(p, () => {
       const broker = identity(), shared = sharedAccess(), s = stat(p);
@@ -371,6 +422,7 @@ export function provisioner(revision, b = boundary) {
       need(directory ? (s.mode & 0o7777) === 0o750 : (s.mode & 0o7777) === 0o660, directory ? 'ACT_BROKER_DIRECTORY_MODE' : 'ACT_BROKER_SOCKET_MODE');
       return { runtime: 'MEASURED', uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
     });
+    for (const row of report.paths.filter(r => r.path === '/run/shu71-evidence' || r.path === EVIDENCE_SOCKET)) validateRuntimeRow(row);
     return report;
   }
   return { install, precondition, verify: () => verify(expected()), rollback: () => { const j = load(); return j ? rollback(j) : { ok: true, state: 'ABSENT' }; },

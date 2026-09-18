@@ -338,6 +338,18 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
+    "capabilities": [],
+    "justification": "Node-only repository fixtures; static production boundaries and schema mutation controls; no host commands or network",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-verdict-closures.test.mjs"
+    ],
+    "resources": [
+      ".github/coordinator/service/shu71-runtime-row.schema.json",
+      ".github/coordinator/service/shu71-runtime-schema.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/suite-runner-spec.test.mjs",
     "capabilities": [
       "git",

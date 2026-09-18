@@ -87,7 +87,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
   let signatures = 0;
   const active = new Map();
-  const boundary = { fs: f, uid: () => 0, now: () => now,
+  const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
       let output = '';

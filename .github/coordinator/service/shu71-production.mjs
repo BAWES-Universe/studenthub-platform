@@ -225,6 +225,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       const teardownStarted = journal.entries.some(e => ['REVOKE_REQUESTED', 'AUTHORIZATION_EXPIRED', 'TEARDOWN_INCOMPLETE', 'TEARDOWN_COMPLETE'].includes(e.event));
       if (action === 'expire' && !expired && !teardownStarted) return { ok: true, state: 'NOT_EXPIRED' };
       if (action === 'revoke' || expired || teardownStarted || action === 'resume' && journal.entries.some(e => e.event === 'ARMED')) return await cleanup(spec, journal, expired ? 'expiry' : 'revoke', action === 'expire');
+      journal.append({ event: 'RUN_ATTEMPT_STARTED' });
       need(b.now() >= Date.parse(spec.pkg.created_at) && !expired, 'ACT_ID_OR_EXPIRY_INVALID');
       // Lifecycle renders User/Group from spec.lifecycle.identity and verifies
       // the account's primary group. Resolve that installed identity, not uid=gid.
@@ -237,9 +238,9 @@ export function createShu71Production(id, b = shu71Boundary) {
         && command('/usr/bin/id', ['-gn', user]).trim() === group, 'ACT_FILE_CUSTODY');
       assertSupervisorLaunchEnvironment(privateRead('/etc/shu/supervisor.env', 0, 0o600), privateRead('/srv/shu/coordinator.env', uid, 0o600, gid));
       verifyInstallation(spec);
-      const step = (name, fn) => journalEffect(journal, name, async () => {
+      const step = (name, fn, repeat = false) => journalEffect(journal, name, async () => {
         need(b.now() < Date.parse(spec.pkg.expires_at), 'ACT_ID_OR_EXPIRY_INVALID'); await fn();
-      });
+      }, repeat);
       await step('binding', async () => {
         await heads(spec);
         for (const t of spec.pkg.issue_transitions) need(JSON.stringify(await issue(t)) === JSON.stringify(t.before), 'ACT_PRIOR_STATE_DRIFT');
@@ -294,9 +295,23 @@ export function createShu71Production(id, b = shu71Boundary) {
         command('/usr/bin/systemctl', ['daemon-reload']);
         command('/usr/bin/systemctl', ['start', 'shu71-evidence.service']);
       });
-      const runtime = measureBrokerRuntime(b, env);
-      journal.append({ event: 'BROKER_RUNTIME_MEASURED', ...runtime });
-      atomic(`${dir}/broker-runtime.json`, JSON.stringify(runtime));
+      await step('broker-runtime', async () => {
+        journal.append({ event: 'BROKER_RUNTIME_CHECK_STARTED' });
+        // Type=simple can return from start before bind(). Retry absence only;
+        // custody, mode, identity and measurement failures are immediate refusals.
+        for (let attempt = 0; ; attempt++) {
+          need(b.now() < Date.parse(spec.pkg.expires_at), 'ACT_ID_OR_EXPIRY_INVALID');
+          try {
+            const runtime = measureBrokerRuntime(b, env);
+            journal.append({ event: 'BROKER_RUNTIME_MEASURED', ...runtime });
+            atomic(`${dir}/broker-runtime.json`, JSON.stringify(runtime));
+            break;
+          } catch (e) {
+            if (!['ACT_RUNTIME_DIRECTORY_MISSING', 'ACT_RUNTIME_SOCKET_MISSING'].includes(e.code) || attempt >= 19) throw e;
+            await (b.runtimeWait ?? (ms => new Promise(resolve => setTimeout(resolve, ms))))(50);
+          }
+        }
+      }, true);
       for (const t of pkg.issue_transitions) await step(`ready-${t.issue_id}`, () => transition(t, t.ready));
       await step('activation', () => atomic(ACTIVATION_FILE, JSON.stringify(pkg.activation), 0, 999, 0o640));
       await step('gate', () => {
@@ -432,7 +447,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       }]),
       ['fixtures', () => cleanupWorkspaces(spec, journal)],
       ['evidence-broker', () => command('/usr/bin/systemctl', ['stop', 'shu71-evidence.service'])],
-      ['archive', () => atomic(`${dir}/activation.json`, JSON.stringify({ activation_id: id, pkg: spec.pkg, retained: true, broker_runtime: (() => { try { return JSON.parse(privateRead(`${dir}/broker-runtime.json`)); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } })() }))],
+      ['archive', () => atomic(`${dir}/activation.json`, JSON.stringify({ activation_id: id, pkg: spec.pkg, retained: true, broker_runtime: (() => { const last = journal.entries.findLast(e => ['RUN_ATTEMPT_STARTED', 'BROKER_RUNTIME_CHECK_STARTED', 'BROKER_RUNTIME_MEASURED'].includes(e.event)); if (last?.event !== 'BROKER_RUNTIME_MEASURED') return null; const { rows, coordinator_access, kernel_connect } = last; return { rows, coordinator_access, kernel_connect }; })() }))],
       ['manifest', () => atomic(`${dir}/manifest.json`, JSON.stringify({ activation_id: id,
         journal_sha256: digest(JSON.stringify(journal.entries)), authorization_expired: reason === 'expiry' }))],
     ];

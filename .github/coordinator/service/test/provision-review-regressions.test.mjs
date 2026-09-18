@@ -166,7 +166,7 @@ for (const [name,label,from,to,check] of mutants) test(`SHU71 review named mutat
   check(t,implementation,label);
   assert.ok(source.includes(from),'SHU71_REVIEW_MUTATION_SOURCE');
   let text=source.replace(from,to);
-  for (const dep of ['host-suite-contract','shu71-production']) text=text.replace(`'./${dep}.mjs'`,JSON.stringify(new URL('../'+dep+'.mjs',import.meta.url).href));
+  for (const dep of ['host-suite-contract','shu71-production','shu71-runtime-schema']) text=text.replace(`'./${dep}.mjs'`,JSON.stringify(new URL('../'+dep+'.mjs',import.meta.url).href));
   const m=await import('data:text/javascript;base64,'+Buffer.from(text).toString('base64'));
   assert.throws(()=>check(t,m,label),e=>e.code==='ERR_ASSERTION' && e.message.includes(label),label+': mutant must die by name');
 });

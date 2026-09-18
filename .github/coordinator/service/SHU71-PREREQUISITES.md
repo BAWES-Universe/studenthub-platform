@@ -91,7 +91,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L480). Real kernel socket access
+[operative unit render](shu71-production.mjs#L498). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -391,7 +391,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L292), [stop](shu71-production.mjs#L430)).
+([start](shu71-production.mjs#L293), [stop](shu71-production.mjs#L449)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -471,7 +471,9 @@ At M4, immediately after the reviewed `systemctl start shu71-evidence.service`
 step, `measureBrokerRuntime` re-resolves the named broker/shared group and checks
 the real directory/socket, their types, UID, GID and exact 0750/0660 modes. This
 runs before every ready transition, activation write, gate enable and dispatch
-start. There is no deferred window result and no missing-path grace period.
+start. There is no deferred window result. The journalled runtime step retries only
+missing paths, up to 20 measurements separated by 50 ms, checking expiry each
+time; every other refusal is immediate.
 Failures use the following codes and the existing HALT/teardown path:
 
 | Assertion / killing mutant | Refusal |
@@ -497,8 +499,9 @@ point-in-time checks, not immunity to a later host mutation.
 On success the journal receives `BROKER_RUNTIME_MEASURED` with both exact rows,
 `coordinator_access:"MEASURED_TRAVERSE_READ_WRITE"`, and
 `kernel_connect:"HOST_ONLY_UNPROVEN"`. The private `broker-runtime.json` receipt is
-also retained under the activation evidence directory and copied into the cleanup
-archive as `broker_runtime`. `WINDOW_MEASURED_RECEIPT` checks the rows, ordering and
+also retained under the activation evidence directory. The cleanup archive derives
+`broker_runtime` from the journal after the latest `RUN_ATTEMPT_STARTED` and
+`BROKER_RUNTIME_CHECK_STARTED`; an attempt without a measurement archives null. `WINDOW_MEASURED_RECEIPT` checks the rows, ordering and
 archive preservation and kills omission of the journal receipt. Existing crash
 matrices cover the new receipt durability boundaries. D1 signing and H1–H8 guards
 remain intact; the original eight permitted skips are unchanged.
@@ -512,7 +515,8 @@ The journal append-site/class inventories add `BROKER_RUNTIME_MEASURED`, includi
 both intact/recovered exhausted-invariant payload controls. The exact composition
 count preserves the prior 116 operations and five identity reads, adding exactly
 seven operations for three runtime probes and four journal/receipt writes and
-renames. No earlier inventory entries or assertion IDs are removed.
+renames, plus four journal writes for RUN_ATTEMPT_STARTED and the runtime step
+INTENT, CHECK_STARTED and DONE. No earlier inventory entries or assertion IDs are removed.
 
 Focused validation command:
 `node --test .github/coordinator/service/test/provision*.test.mjs .github/coordinator/service/test/shu71-runtime-window.test.mjs .github/coordinator/service/test/shu71-production.test.mjs`.
@@ -522,3 +526,8 @@ each with `SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
 The committed-inventory audit requires the new files and inventory at `HEAD`;
 therefore final full runs follow the new commit. Terminal TAP counts and the
 final HEAD/tree are reported with the completion response.
+
+## Independent-verdict closure
+
+See [V1–V10 closure evidence](SHU71-VERDICT-CLOSURE.md) for the new controls,
+static path traversal, explicit V5 justification and V9 generated-path exceptions.

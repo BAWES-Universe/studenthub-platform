@@ -35,6 +35,7 @@
   ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
   ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-trust.test.mjs",
+  ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
   ".github/coordinator/service/test/suite-runner-spec.test.mjs",
   ".github/coordinator/service/test/supervisor-service.test.mjs",
   ".github/coordinator/test/activation.test.mjs",

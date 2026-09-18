@@ -12,7 +12,7 @@ const result = { pre_mint: {}, window: {} };
 try {
   for (const state of ['inactive_green', 'inactive_static_failure', 'active_correct', 'active_wrong']) {
     const h = fixture(t);
-    if (state.startsWith('inactive')) h.remove('/run');
+    if (state.startsWith('inactive')) h.remove('/run/shu71-evidence');
     const p = provisioner(revision, h.boundary); p.install();
     if (state === 'inactive_static_failure') h.write(PATHS.unit, fs.readFileSync(h.root + PATHS.unit, 'utf8').replace('UMask=0007', 'UMask=0000'));
     if (state === 'active_wrong') fs.chmodSync(h.root + socket, 0o666);

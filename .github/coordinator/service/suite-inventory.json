@@ -37,6 +37,7 @@
     ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
     ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-trust.test.mjs",
+    ".github/coordinator/service/test/shu71-verdict-closures.test.mjs",
     ".github/coordinator/service/test/suite-runner-spec.test.mjs",
     ".github/coordinator/service/test/supervisor-service.test.mjs",
     ".github/coordinator/test/activation.test.mjs",
@@ -3039,7 +3040,69 @@
     "WINDOW_COORDINATOR_INACCESSIBLE passing control and named mutant kill",
     "WINDOW_MEASURED_RECEIPT passing control and named mutant kill",
     "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload intact",
-    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered"
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered",
+    "V1_EMITTED_ROWS_VALIDATE",
+    "V1_SCHEMA_AMBIGUOUS_DEFERRED",
+    "V1_SCHEMA_FABRICATED_MEASUREMENT",
+    "V1_SCHEMA_MODE_WEAKENED",
+    "V1_SCHEMA_REFUSAL_WEAKENED",
+    "V1_SCHEMA_LOAD_BEARING_provisioner",
+    "V1_SCHEMA_LOAD_BEARING_measureBrokerRuntime",
+    "V3_PREMINT_DIRECTORY_754",
+    "V3_WINDOW_DIRECTORY_754",
+    "V3_PREMINT_DIRECTORY_751",
+    "V3_WINDOW_DIRECTORY_751",
+    "V3_PREMINT_SOCKET_664",
+    "V3_WINDOW_SOCKET_664",
+    "V3_PREMINT_SOCKET_661",
+    "V3_WINDOW_SOCKET_661",
+    "V6_DIRECTORY_ENOENT",
+    "V6_DIRECTORY_EACCES",
+    "V6_DIRECTORY_ELOOP",
+    "V6_DIRECTORY_ENOTDIR",
+    "V6_SOCKET_ENOENT",
+    "V6_SOCKET_EACCES",
+    "V6_SOCKET_ELOOP",
+    "V6_SOCKET_ENOTDIR",
+    "V7_NUMERIC_RENDER_CLAUSE",
+    "V5_PRIVATE_READ_SEMANTICS",
+    "V4_STALE_ARCHIVE_REFUSAL",
+    "V10_JOURNALLED_ORDER",
+    "V9_TRAVERSE_/usr/bin/node",
+    "V9_TRAVERSE_/usr/bin/systemctl",
+    "V9_TRAVERSE_/usr/bin/flock",
+    "V9_TRAVERSE_/usr/bin/env",
+    "V9_TRAVERSE_/usr/sbin/useradd",
+    "V9_TRAVERSE_/usr/sbin/groupadd",
+    "V9_TRAVERSE_/usr/sbin/userdel",
+    "V9_TRAVERSE_/usr/sbin/groupdel",
+    "V9_TRAVERSE_/usr/sbin/nologin",
+    "V9_TRAVERSE_/usr/bin/find",
+    "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.timer",
+    "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d",
+    "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d",
+    "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+    "V9_TRAVERSE_/run/lock/shu71-production.lock",
+    "V9_TRAVERSE_/srv/shu/state/shu71-activation.json",
+    "V9_TRAVERSE_/etc/shu/approvals/example.shu71.json",
+    "V9_BINDING_SUPERVISOR_IDENTITY",
+    "V9_BINDING_COORDINATOR_GROUP",
+    "V9_BINDING_CREDENTIAL_SOURCE",
+    "V9_BINDING_TIMER_TARGET",
+    "V9_BINDING_GATE_OFF",
+    "V10_WAIT_FOR_SOCKET",
+    "V10_WAIT_EXPIRY",
+    "V4_RESUME_DISCARDS_PRIOR_MEASUREMENT",
+    "V1_SCHEMA_FORGERY_MATRIX",
+    "V5_REVIEWED_PRIVATE_READ_KILL",
+    "V8_DOCUMENTATION_LINK_TARGETS",
+    "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered"
   ],
   "requirements": [
     {
@@ -24415,6 +24478,274 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "V1_EMITTED_ROWS_VALIDATE",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_AMBIGUOUS_DEFERRED",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_FABRICATED_MEASUREMENT",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_MODE_WEAKENED",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_REFUSAL_WEAKENED",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_LOAD_BEARING_provisioner",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_LOAD_BEARING_measureBrokerRuntime",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_DIRECTORY_754",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_DIRECTORY_754",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_DIRECTORY_751",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_DIRECTORY_751",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_SOCKET_664",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_SOCKET_664",
+      "capabilities": []
+    },
+    {
+      "name": "V3_PREMINT_SOCKET_661",
+      "capabilities": []
+    },
+    {
+      "name": "V3_WINDOW_SOCKET_661",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_ENOENT",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_EACCES",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_ELOOP",
+      "capabilities": []
+    },
+    {
+      "name": "V6_DIRECTORY_ENOTDIR",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_ENOENT",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_EACCES",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_ELOOP",
+      "capabilities": []
+    },
+    {
+      "name": "V6_SOCKET_ENOTDIR",
+      "capabilities": []
+    },
+    {
+      "name": "V7_NUMERIC_RENDER_CLAUSE",
+      "capabilities": []
+    },
+    {
+      "name": "V5_PRIVATE_READ_SEMANTICS",
+      "capabilities": []
+    },
+    {
+      "name": "V4_STALE_ARCHIVE_REFUSAL",
+      "capabilities": []
+    },
+    {
+      "name": "V10_JOURNALLED_ORDER",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/node",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/systemctl",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/flock",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/env",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/useradd",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/groupadd",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/userdel",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/groupdel",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/sbin/nologin",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/usr/bin/find",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.timer",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-supervisor.service.d/90-shu71.conf",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/systemd/system/shu-coordinator.service.d/90-shu71.conf",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/run/lock/shu71-production.lock",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/srv/shu/state/shu71-activation.json",
+      "capabilities": []
+    },
+    {
+      "name": "V9_TRAVERSE_/etc/shu/approvals/example.shu71.json",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_SUPERVISOR_IDENTITY",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_COORDINATOR_GROUP",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_CREDENTIAL_SOURCE",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_TIMER_TARGET",
+      "capabilities": []
+    },
+    {
+      "name": "V9_BINDING_GATE_OFF",
+      "capabilities": []
+    },
+    {
+      "name": "V10_WAIT_FOR_SOCKET",
+      "capabilities": []
+    },
+    {
+      "name": "V10_WAIT_EXPIRY",
+      "capabilities": []
+    },
+    {
+      "name": "V4_RESUME_DISCARDS_PRIOR_MEASUREMENT",
+      "capabilities": []
+    },
+    {
+      "name": "V1_SCHEMA_FORGERY_MATRIX",
+      "capabilities": []
+    },
+    {
+      "name": "V5_REVIEWED_PRIVATE_READ_KILL",
+      "capabilities": []
+    },
+    {
+      "name": "V8_DOCUMENTATION_LINK_TARGETS",
+      "capabilities": []
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     }
+  ],
+  "runtime_artifacts": [
+    ".github/coordinator/service/shu71-runtime-row.schema.json",
+    ".github/coordinator/service/shu71-runtime-schema.mjs"
   ]
 }

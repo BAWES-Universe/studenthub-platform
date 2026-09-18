@@ -22,7 +22,7 @@ async function kills(t, label, check, from, to) {
 }
 function installed(t, running = true) {
   const h = fixture(t);
-  if (!running) h.remove('/run');
+  if (!running) h.remove('/run/shu71-evidence');
   assert.equal(provisioner(revision, h.boundary).install().state, 'VERIFIED', 'H_INSTALL_CONTROL');
   assert.equal(provisioner(revision, h.boundary).precondition().ok, true, 'H_STATIC_AND_RUNTIME_CONTROL');
   return h;

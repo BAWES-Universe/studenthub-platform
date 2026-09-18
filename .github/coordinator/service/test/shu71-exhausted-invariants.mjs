@@ -37,6 +37,7 @@ export async function exhaustedInvariant(createProduction, fixture, variant, dia
 export const journalInventory = [
   { event: 'APPROVED', payload: h => ({ spec: h.spec }) },
   { event: 'SIGNING_STARTED' },
+  { event: 'RUN_ATTEMPT_STARTED' }, { event: 'BROKER_RUNTIME_CHECK_STARTED' },
   { event: 'BROKER_RUNTIME_MEASURED', payload: h => JSON.parse(h.read(`/srv/shu/state/shu71-evidence/${h.id}/broker-runtime.json`)) },
   { event: 'ARMED', payload: h => ({ authorization_expires_at: h.spec.pkg.expires_at, teardown_complete: false }) },
   { event: 'HALTED', payload: () => ({ code: 'ACT_PRODUCTION_FAILED' }) },

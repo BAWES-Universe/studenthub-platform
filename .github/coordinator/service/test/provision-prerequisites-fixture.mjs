@@ -106,6 +106,13 @@ export function fixture(t) {
   write('/srv/shu/coordinator.env', 'private fixture', 0o600, 999, 982);
   directory('/srv/shu/state/shu71-evidence'); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
   directory('/srv/shu/state/workspaces/supervisor', 0o700, 999, 982); directory('/srv/shu/worktrees', 0o3770, 999, 980);
+  for (const p of ['/usr/bin/node', '/usr/bin/systemctl', '/usr/bin/flock', '/usr/bin/env', '/usr/sbin/useradd', '/usr/sbin/groupadd', '/usr/sbin/userdel', '/usr/sbin/groupdel', '/usr/sbin/nologin', '/usr/bin/find']) write(p, 'executable fixture', 0o755);
+  directory('/run/lock');
+  for (const name of ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer']) {
+    const p = '/etc/systemd/system/' + name;
+    write(p, name.endsWith('.timer') ? '[Timer]\nUnit=shu-coordinator.service\n' : '[Service]\nUser=shu-coordinator\nGroup=shu-coordinator\nEnvironmentFile=' + (name === 'shu-supervisor.service' ? '/etc/shu/supervisor.env' : '/srv/shu/coordinator.env') + '\n' + (name === 'shu-coordinator.service' ? 'LoadCredential=supervisor-transport:/etc/shu/supervisor.env\n' : ''));
+    if (name.endsWith('.service')) { directory(p + '.d'); write(p + '.d/90-shu71.conf', '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'); }
+  }
   function snapshot() {
     const result = {};
     function visit(p) { const st = f.lstatSync(p); result[p] = { mode: st.mode & 0o7777, uid: st.uid, gid: st.gid, ...(st.isFile() ? { bytes: f.readFileSync(p).toString('base64') } : {}) };
