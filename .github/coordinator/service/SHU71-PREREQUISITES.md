@@ -44,8 +44,12 @@ an external policy question; installing this file does not revoke other rules.
 The broker account and its private NSS primary group are named `shu71-evidence`.
 The service runs with `Group=shu-workspace` for shared socket access. Existing names must
 be unique, dedicated, non-login identities. New uid/gid values are selected
-independently from explicit SYS_UID/SYS_GID ranges in `/etc/login.defs`, after
-measuring both databases with fixed `getent` commands. Occupied IDs are never
+independently from resolved SYS_UID/SYS_GID ranges in `/etc/login.defs`, after
+measuring both databases with fixed `getent` commands. Missing system minima
+default to 100; missing system maxima default to the corresponding regular
+minimum minus one (normally 999). Malformed, duplicate or inconsistent declarations
+remain refusals. [Host-reality corrections and proofs](SHU71-HOST-REALITY.md)
+cover executable symlinks, state ancestry and deferred arm-time artifacts. Occupied IDs are never
 selected; uid 996 is forbidden even if otherwise available. An alias to
 messagebus is refused. No unrelated account is modified or added to a group.
 Actual uid/gid are in the durable receipt and stdout result. The renderer's
