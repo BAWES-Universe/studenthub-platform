@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { once } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { RUNTIMES, ROLES, RUNTIME_ROLE_SUPPORT, laneForRuntimeRole, resolveReceiptRoleAuthority } from '../launch-vocabulary.mjs';
 import { createReceipt, validateReceipt, foldLaunchOutcome, receiptCommentBody, parseReceiptCommentBody, parseReceiptsFromComments, main } from '../reconcile.mjs';
 import { validWorkOrder, routeSuccessorFromReceipts } from '../review-routing.mjs';
@@ -127,6 +128,13 @@ test('SHU-71 reversal: author family cannot clear its revision', () => {
   assert.equal(routeSuccessorFromReceipts({ terminal: review, issueReceipts: [writer, revision, review], evidenceStage: 'PASS' }).hold, 'author_exclusion', named.author);
 });
 function setup(t, multiple = false, working = false) {
+  // Responsiveness measures coordinator scheduling, not host disk latency.
+  // Keep real files and valid descriptors, but double the durability syscall
+  // for this single-process fixture. The separate process race below retains
+  // real fsync, and the slow-tick/await-child mutants still use real timers.
+  const sync = t.mock.method(fs, 'fsyncSync', fd => { fs.fstatSync(fd); });
+  syncBuiltinESMExports();
+  t.after(() => { sync.mock.restore(); syncBuiltinESMExports(); });
   const h = createEpisodeHarness({ issueId: 'SHU-71', githubToken: 'fake-token' });
   t.after(async () => {
     for (const child of children) if (working && child.exitCode === null) {
