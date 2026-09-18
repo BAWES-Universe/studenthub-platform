@@ -81,13 +81,13 @@ export function resolveCvtsudoers(tempDir, io = { fs, run }, policyFile = null) 
     verify();
     fd = io.fs.openSync(candidate, io.fs.constants.O_RDONLY | io.fs.constants.O_NOFOLLOW | io.fs.constants.O_NONBLOCK);
     if (identity(io.fs.fstatSync(fd, { bigint: true })) !== identity(stat)) fail('_SUBSTITUTION');
-    dir = io.fs.mkdtempSync(path.join(tempDir, 'shu251-cap-'));
-    const fixture = path.join(dir, 'sudoers');
-    io.fs.writeFileSync(fixture, 'root ALL=(ALL) ALL\n', { flag: 'wx' });
+    dir = tempDir === null ? undefined : io.fs.mkdtempSync(path.join(tempDir, 'shu251-cap-'));
+    const fixture = dir === undefined ? '-' : path.join(dir, 'sudoers');
+    if (dir !== undefined) io.fs.writeFileSync(fixture, 'root ALL=(ALL) ALL\n', { flag: 'wx' });
     verify();
     // Execute the pinned inode, not a second pathname lookup. Only this fixed
     // inherited descriptor is executable; candidate identity remains the path.
-    const result = io.run('/proc/self/fd/3', ['-f', 'json', fixture], { stdio: ['ignore', 'pipe', 'pipe', fd], env: { LC_ALL: 'C' } });
+    const result = io.run('/proc/self/fd/3', ['-f', 'json', fixture], { stdio: [dir === undefined ? 'pipe' : 'ignore', 'pipe', 'pipe', fd], env: { LC_ALL: 'C' }, ...(dir === undefined ? { input: 'root ALL=(ALL) ALL\n' } : {}) });
     verify(); // Recheck the approved pathname and inode metadata after execution.
     if (!successful(result)) fail('');
     let output;

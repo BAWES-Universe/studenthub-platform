@@ -14,6 +14,8 @@
     ".github/coordinator/service/test/mint-shu71.test.mjs",
     ".github/coordinator/service/test/phase-a-driver.test.mjs",
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
+    ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
+    ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
     ".github/coordinator/service/test/reporter-amendments.test.mjs",
     ".github/coordinator/service/test/residual.test.mjs",
     ".github/coordinator/service/test/service-plane.test.mjs",
@@ -2907,7 +2909,41 @@
     "A12 committed inventory requirements match real outcomes",
     "SHU71 mint positive controls and named refusals",
     "SHU71 mint actual Git derivation and named remote mutations",
-    "SHU71 mint source mutants die at named assertions"
+    "SHU71 mint source mutants die at named assertions",
+    "SHU71 named mutation killed: missing tree file",
+    "SHU71 named mutation killed: stale tree file",
+    "SHU71 named mutation killed: wrong tree ownership",
+    "SHU71 named mutation killed: wrong tree mode",
+    "SHU71 named mutation killed: wrong sudoers path",
+    "SHU71 named mutation killed: wrong sudoers mode",
+    "SHU71 named mutation killed: wrong sudoers content",
+    "SHU71 named mutation killed: parser failure",
+    "SHU71 named mutation killed: wrapper drift",
+    "SHU71 named mutation killed: UID collision",
+    "SHU71 named mutation killed: GID collision",
+    "SHU71 named mutation killed: messagebus substitution",
+    "SHU71 named mutation killed: hard-coded numeric identity in render",
+    "SHU71 named mutation killed: partial installation",
+    "SHU71 named mutation killed: rollback residue",
+    "SHU71 provisioning refuses missing tree file",
+    "SHU71 provisioning refuses stale tree file",
+    "SHU71 provisioning refuses wrong tree ownership",
+    "SHU71 provisioning refuses wrong tree mode",
+    "SHU71 provisioning refuses wrong sudoers path",
+    "SHU71 provisioning refuses wrong sudoers mode",
+    "SHU71 provisioning refuses wrong sudoers content",
+    "SHU71 provisioning refuses parser failure",
+    "SHU71 provisioning refuses wrapper drift",
+    "SHU71 provisioning refuses UID collision",
+    "SHU71 provisioning refuses GID collision",
+    "SHU71 provisioning refuses messagebus substitution",
+    "SHU71 provisioning exact install adoption and rollback",
+    "SHU71 precondition measures all paths without effects or private bytes",
+    "SHU71 provisioning closed CLI",
+    "SHU71 provisioning refuses extras symlinks hardlinks and parent writes",
+    "SHU71 provisioning partial installation and rollback residue crash matrix",
+    "SHU71 provisioning rollback process replacement at every effect",
+    "SHU71 provisioning refuses to remove an identity still in use"
   ],
   "requirements": [
     {
@@ -23771,6 +23807,142 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "SHU71 named mutation killed: missing tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: stale tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong tree ownership",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong tree mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong sudoers path",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong sudoers mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrong sudoers content",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: parser failure",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: wrapper drift",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: UID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: GID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: messagebus substitution",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: hard-coded numeric identity in render",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: partial installation",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 named mutation killed: rollback residue",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses missing tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses stale tree file",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong tree ownership",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong tree mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong sudoers path",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong sudoers mode",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrong sudoers content",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses parser failure",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses wrapper drift",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses UID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses GID collision",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses messagebus substitution",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning exact install adoption and rollback",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 precondition measures all paths without effects or private bytes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning closed CLI",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses extras symlinks hardlinks and parent writes",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning partial installation and rollback residue crash matrix",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning rollback process replacement at every effect",
+      "capabilities": []
+    },
+    {
+      "name": "SHU71 provisioning refuses to remove an identity still in use",
+      "capabilities": []
     }
   ]
 }
