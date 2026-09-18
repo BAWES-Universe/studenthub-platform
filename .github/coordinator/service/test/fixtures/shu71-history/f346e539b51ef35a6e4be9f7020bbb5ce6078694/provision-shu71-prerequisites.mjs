@@ -33,7 +33,7 @@ export function provisioner(revision, b = boundary) {
     need(!r.error && r.status === 0, 'ACT_PREREQUISITE_COMMAND');
     return Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? '');
   };
-  const git = (args, input) => { serviceIdentity(); return command('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups', '/usr/bin/git',
+  const git = (args, input) => { const { uid, gid } = serviceIdentity(); return command('/usr/bin/setpriv', [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '/usr/bin/git',
     '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', PATHS.checkout, ...args], { input, encoding: null }); };
   const hash = bytes => git(['hash-object', '--stdin'], bytes).toString().trim();
   const stat = p => { try { return f.lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
@@ -41,7 +41,7 @@ export function provisioner(revision, b = boundary) {
     for (let current = p;; current = path.dirname(current)) {
       const s = stat(current);
       const state = current === '/srv/shu/state' || current.startsWith('/srv/shu/state/');
-      const owner = state && current !== '/srv/shu/state/shu71-evidence' ? serviceIdentity() : { uid: 0, gid: 0 };
+      const owner = state ? serviceIdentity() : { uid: 0, gid: 0 };
       need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === owner.uid && (!state || s.gid === owner.gid && (s.mode & 0o7777) === 0o700) && !(s.mode & 0o022), 'ACT_PREREQUISITE_CUSTODY');
       if (current === '/') break;
     }
@@ -121,7 +121,7 @@ export function provisioner(revision, b = boundary) {
     need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === uid, 'ACT_PREREQUISITE_CHECKOUT');
     // Same read/traverse/no-symlink capability as host-suite-contract.mjs:152.
     const probe = `import fs from 'node:fs'; import path from 'node:path'; function visit(p){const s=fs.lstatSync(p); if(s.isSymbolicLink()) throw Error('symlink'); fs.accessSync(p,fs.constants.R_OK|(s.isDirectory()?fs.constants.X_OK:0)); if(s.isDirectory()) for(const n of fs.readdirSync(p)) { visit(path.join(p,n)); }} visit(${JSON.stringify(PATHS.checkout)});`;
-    const r = b.run('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups', '/usr/bin/node', '--input-type=module', '-e', probe], { env: ENV });
+    const r = b.run('/usr/bin/setpriv', [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '/usr/bin/node', '--input-type=module', '-e', probe], { env: ENV });
     need(!r.error && r.status === 0, 'ACT_PREREQUISITE_CHECKOUT_ACCESS');
     return { uid: s.uid, gid: s.gid, revision };
   }
@@ -363,7 +363,7 @@ export function provisioner(revision, b = boundary) {
         need(s?.isDirectory() && !s.isSymbolicLink() && (s.mode & 0o7777) === 0o3770, 'ACT_PREREQUISITE_CUSTODY');
         return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
       }
-      const { uid, gid } = p === '/srv/shu/state/shu71-evidence' ? { uid: 0, gid: 0 } : serviceIdentity();
+      const { uid, gid } = serviceIdentity();
       custody(p);
       if (p.endsWith('/supervisor')) { const parent = stat(path.dirname(p)); need(parent?.isDirectory() && !parent.isSymbolicLink() && parent.uid === uid && parent.gid === gid && (parent.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY'); }
       need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === uid && s.gid === gid && (s.mode & 0o7777) === 0o700, 'ACT_PREREQUISITE_CUSTODY');

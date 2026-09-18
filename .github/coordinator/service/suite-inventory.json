@@ -29,6 +29,7 @@
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
+    ".github/coordinator/service/test/shu71-host-contract.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
@@ -3234,7 +3235,37 @@
     "PHASE_REQUIRE_ACTIVATION_RESUME_REMEASURES",
     "PHASE_KILL_ACTIVATION_RESUME_SKIP",
     "PHASE_REQUIRE_DROPIN_RESUME_REMEASURES",
-    "PHASE_KILL_DROPIN_RESUME_SKIP"
+    "PHASE_KILL_DROPIN_RESUME_SKIP",
+    "CONTRACT_JOINT_PREPARED_HOST",
+    "CONTRACT_PRE_FIX_EVIDENCE_UNSATISFIABLE",
+    "CONTRACT_EVIDENCE_REFUSE_SERVICE_OWNER",
+    "CONTRACT_EVIDENCE_REFUSE_GID",
+    "CONTRACT_EVIDENCE_REFUSE_MODE",
+    "CONTRACT_EVIDENCE_REFUSE_SYMLINK",
+    "CONTRACT_EVIDENCE_REFUSE_ANCESTOR",
+    "CONTRACT_READER_UID_NE_GID",
+    "CONTRACT_PRE_FIX_ACTIVATION_UNREADABLE",
+    "CONTRACT_GIT_SHARED_GROUP_OPERATION",
+    "CONTRACT_KILL_EVIDENCE_SERVICE_OWNER",
+    "CONTRACT_KILL_ACTIVATION_UID_AS_GID",
+    "CONTRACT_KILL_GIT_OLD_IDENTITY",
+    "CONTRACT_KILL_GIT_CLEAR_GROUPS",
+    "CONTRACT_KILL_STATE_ROOT_ONLY",
+    "CONTRACT_DISTINCT_ACCOUNT_DATABASE",
+    "CONTRACT_EXACT_GATE_AND_PRODUCTION_PREDICATE",
+    "CONTRACT_KILL_EXACT_GATE_GID",
+    "CONTRACT_KILL_EXACT_GATE_MODE",
+    "CONTRACT_KILL_EXACT_PRODUCTION_GID",
+    "CONTRACT_KILL_EXACT_PRODUCTION_MODE",
+    "CONTRACT_READBACK_REFUSES_SYSTEMD_JOURNAL",
+    "CONTRACT_KILL_READBACK_UID_AS_GID",
+    "CONTRACT_KILL_SERVICE_ROOT_ACCEPTANCE",
+    "CONTRACT_READER_PROBE_REFUSAL",
+    "CONTRACT_KILL_READER_PROBE_OMISSION",
+    "CONTRACT_HISTORICAL_BYTES_PINNED",
+    "CONTRACT_GATE_CHECKOUT_GROUPS",
+    "CONTRACT_KILL_GATE_CLEAR_GROUPS",
+    "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY"
   ],
   "requirements": [
     {
@@ -25590,6 +25621,246 @@
     {
       "name": "PHASE_KILL_DROPIN_RESUME_SKIP",
       "capabilities": []
+    },
+    {
+      "name": "CONTRACT_JOINT_PREPARED_HOST",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_PRE_FIX_EVIDENCE_UNSATISFIABLE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_SERVICE_OWNER",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_MODE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_SYMLINK",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_ANCESTOR",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_READER_UID_NE_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_PRE_FIX_ACTIVATION_UNREADABLE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_GIT_SHARED_GROUP_OPERATION",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EVIDENCE_SERVICE_OWNER",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_ACTIVATION_UID_AS_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_GIT_OLD_IDENTITY",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_GIT_CLEAR_GROUPS",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_STATE_ROOT_ONLY",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_DISTINCT_ACCOUNT_DATABASE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EXACT_GATE_AND_PRODUCTION_PREDICATE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_GATE_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_GATE_MODE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_PRODUCTION_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_PRODUCTION_MODE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_READBACK_REFUSES_SYSTEMD_JOURNAL",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_READBACK_UID_AS_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_SERVICE_ROOT_ACCEPTANCE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_READER_PROBE_REFUSAL",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_READER_PROBE_OMISSION",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_HISTORICAL_BYTES_PINNED",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_GATE_CHECKOUT_GROUPS",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_GATE_CLEAR_GROUPS",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

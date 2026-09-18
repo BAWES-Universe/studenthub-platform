@@ -14,7 +14,7 @@ const source = fs.readFileSync(moduleUrl, 'utf8');
 const historical = fs.readFileSync(new URL('./fixtures/shu71-history/6e91a6c135311ffdaf129c10cd8c1d2a9455272f/shu71-production.mjs', import.meta.url), 'utf8');
 const activation = '/srv/shu/state/shu71-activation.json';
 const gates = ['shu-coordinator', 'shu-supervisor'].map(n => `/etc/systemd/system/${n}.service.d/90-shu71.conf`);
-const activationStep = "      await step('activation-readback', () => installedReadback(ACTIVATION_FILE, JSON.stringify(pkg.activation), 999, 0o640, 'ACTIVATION'), true);\n";
+const activationStep = "      await step('activation-readback', () => installedReadback(ACTIVATION_FILE, JSON.stringify(pkg.activation), coordinatorIdentity().gid, 0o640, 'ACTIVATION'), true);\n";
 const dropinStep = "      await step('dropin-readback', () => {\n        for (const file of GATES) installedReadback(file, '[Service]\\nEnvironment=ENABLE_DISPATCH=true\\n', 0, 0o644, 'DROPIN');\n      }, /* remeasure on resume */ true);\n";
 function replace(s, before, after) {
   assert.equal(s.split(before).length, 2, 'PHASE_MUTATION_UNIQUE');
@@ -31,7 +31,7 @@ async function load(t, s) {
 const damage = {
   MISSING: (h, file) => fs.unlinkSync(h.root + file),
   BYTES: (h, file) => fs.writeFileSync(h.root + file, h.read(file).replace(/./, '!')),
-  UID: (h, file) => h.owners.set(file, [123, file === activation ? 999 : 0]),
+  UID: (h, file) => h.owners.set(file, [123, file === activation ? 982 : 0]),
   GID: (h, file) => h.owners.set(file, [0, 123]),
   WIDE_MODE: (h, file) => fs.chmodSync(h.root + file, 0o666),
   NARROW_MODE: (h, file) => fs.chmodSync(h.root + file, 0o600),
@@ -104,6 +104,7 @@ for (const { file, failure, label } of cases) {
 }
 for (const file of [...gates, activation]) for (const failure of ['MISSING', 'BYTES']) test(`PHASE_PRE_FIX_${file === activation ? 'ACTIVATION' : file.includes('supervisor') ? 'DROPIN_SUPERVISOR' : 'DROPIN_COORDINATOR'}_${failure}_ACCEPTED`, async t => {
   const create = await load(t, historical), h = scenario(t, file, failure);
+  h.owners.set('/srv/shu/state', [0, 0]);
   assert.equal((await create(h.id, h.boundary).execute('run')).state, 'ARMED', 'PHASE_PRE_FIX_ACCEPTS_DAMAGED_ARTIFACT');
   assert.ok(h.events.some(e => e.includes(':restart shu-supervisor.service')), 'PHASE_PRE_FIX_RESTARTS');
   if (failure === 'MISSING') assert.equal(h.exists(file), false, 'PHASE_PRE_FIX_MISSING');

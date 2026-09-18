@@ -67,6 +67,7 @@ for (const [index, revision] of controlRevisions.entries()) {
     // guard so its assumptions are independently checked on disposable boundaries.
     const production = await historicalProduction(t, revision);
     const h = productionFixture(t, keys, production.signingPath), create = () => production(h.id, h.boundary);
+    h.owners.set('/srv/shu/state', [0, 0]); // Execute the immutable source under its historical custody.
     assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
     const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
     const start = h.events.length;
@@ -82,6 +83,7 @@ for (const [index, revision] of controlRevisions.entries()) {
     // Fresh episode: neither previous disarm nor credential removal can mask
     // the historical fault-path difference.
     const fault = productionFixture(t, keys, production.signingPath);
+    fault.owners.set('/srv/shu/state', [0, 0]);
     await production(fault.id, fault.boundary).execute('run'); fault.expire();
     fault.write(`/srv/shu/state/shu71-evidence/${fault.id}/automatic-teardown.json`, '{"attempts":0}', 0o644);
     const result = await production(fault.id, fault.boundary).execute('expire');

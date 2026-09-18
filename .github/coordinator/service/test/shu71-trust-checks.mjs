@@ -54,7 +54,7 @@ export const trustChecks = {
 export function journalCheck(open, h, kind) {
   const dir = `/srv/shu/state/shu71-evidence/${h.id}`, file = `${dir}/journal.jsonl`;
   h.write(file, '');
-  const journal = open(dir, h.boundary.fs); journal.append({ event: 'APPROVED' }); journal.append({ event: 'ARMED' }); journal.close();
+  const journal = open(dir, h.boundary.fs, 'journal.jsonl', h.identity); journal.append({ event: 'APPROVED' }); journal.append({ event: 'ARMED' }); journal.close();
   const rows = h.read(file).trim().split('\n').map(JSON.parse);
   if (kind === 'hash') rows[1].event = 'TEARDOWN_COMPLETE';
   if (kind === 'link') {
@@ -68,5 +68,5 @@ export function journalCheck(open, h, kind) {
   h.write(file, JSON.stringify(rows[0]) + '\n' + JSON.stringify(rows[1]) + (kind === 'torn' ? '' : '\n'));
   if (kind === 'custody') h.write(file, h.read(file), 0o600, 999);
   const code = kind === 'torn' ? 'ACT_JOURNAL_TORN' : kind === 'custody' ? 'ACT_JOURNAL_CUSTODY' : 'ACT_JOURNAL_INVALID';
-  assert.throws(() => { const j = open(dir, h.boundary.fs); j.close(); }, e => e.code === code, `B4_JOURNAL_${kind.toUpperCase()}`);
+  assert.throws(() => { const j = open(dir, h.boundary.fs, 'journal.jsonl', h.identity); j.close(); }, e => e.code === code, `B4_JOURNAL_${kind.toUpperCase()}`);
 }

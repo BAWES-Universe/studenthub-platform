@@ -13,7 +13,7 @@ const gates = ['shu-supervisor.service', 'shu-coordinator.service'].flatMap(n =>
 function prepare(t) {
   const h = fixture(t);
   h.write('/etc/login.defs', defs);
-  for (const p of state) h.directory(p, 0o700, 999, 982);
+  for (const p of state) h.directory(p, 0o700, p.endsWith('shu71-evidence') ? 0 : 999, p.endsWith('shu71-evidence') ? 0 : 982);
   h.remove('/usr/bin/env'); h.write('/usr/lib/cargo/bin/coreutils/env', 'trusted executable', 0o755);
   fs.symlinkSync('../lib/cargo/bin/coreutils/env', h.root + '/usr/bin/env');
   h.f.readlinkSync = p => fs.readlinkSync(h.root + p);
@@ -67,7 +67,7 @@ const checks = [
   ['ENV_WRITABLE', h => h.write('/usr/lib/cargo/bin/coreutils/env', 'unsafe', 0o777), '/usr/bin/env', 'ACT_PRODUCTION_EXECUTABLE'],
   ['ENV_PARENT_WRITABLE', h => h.directory('/usr/lib/cargo', 0o777), '/usr/bin/env', 'ACT_PREREQUISITE_CUSTODY'],
   ...state.flatMap(p => [
-    ['STATE_OWNER_' + p, h => h.owners.set(p, [0, 0]), p, 'ACT_PREREQUISITE_CUSTODY'],
+    ['STATE_OWNER_' + p, h => h.owners.set(p, p.endsWith('shu71-evidence') ? [999, 982] : [0, 0]), p, 'ACT_PREREQUISITE_CUSTODY'],
     ['STATE_WRITE_' + p, h => h.directory(p, 0o722, 999, 982), p, 'ACT_PREREQUISITE_CUSTODY'],
     ['STATE_LINK_' + p, h => { h.remove(p); fs.symlinkSync('/tmp', h.root + p); }, p, 'ACT_PREREQUISITE_CUSTODY'],
   ]),

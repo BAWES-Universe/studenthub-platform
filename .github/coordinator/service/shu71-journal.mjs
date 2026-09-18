@@ -6,13 +6,16 @@ import { createHash } from 'node:crypto';
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 export function activationError(code) { return Object.assign(new Error(code), { code }); }
 export function requireActivation(condition, code) { if (!condition) throw activationError(code); }
-export function openActivationJournal(directory, f = fs, name = 'journal.jsonl') {
+export function openActivationJournal(directory, f = fs, name = 'journal.jsonl', coordinator = null) {
   const C = f.constants;
   let current = '/';
   for (const part of directory.split('/').filter(Boolean)) {
     current = path.join(current, part);
     const s = f.lstatSync(current);
-    requireActivation(s.isDirectory() && !s.isSymbolicLink() && s.uid === 0 && !(s.mode & 0o022), 'ACT_JOURNAL_CUSTODY');
+    const state = current === '/srv/shu/state' && coordinator;
+    requireActivation(s.isDirectory() && !s.isSymbolicLink() && (state
+      ? s.uid === coordinator.uid && s.gid === coordinator.gid && (s.mode & 0o7777) === 0o700
+      : s.uid === 0) && !(s.mode & 0o022), 'ACT_JOURNAL_CUSTODY');
   }
   const filename = path.join(directory, name);
   const fd = f.openSync(filename, C.O_RDWR | C.O_CREAT | C.O_APPEND | C.O_NOFOLLOW, 0o600);

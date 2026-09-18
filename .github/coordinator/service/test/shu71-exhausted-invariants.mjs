@@ -6,7 +6,7 @@ export const row = { physical: 'armed', counter: 'exhausted', journal: 'intact',
 const journalVariant = event => ({
   axis: 'NON_RESERVATION_ROWS', label: event,
   transform(h, dir) {
-    const journal = openActivationJournal(dir, h.boundary.fs);
+    const journal = openActivationJournal(dir, h.boundary.fs, 'journal.jsonl', h.identity);
     try { journal.append({ event }); } finally { journal.close(); }
   },
 });
@@ -50,7 +50,7 @@ export const journalInventory = [
   { event: 'TEARDOWN_COMPLETE', terminal: true, payload: () => ({ failures: [] }) },
 ];
 export function appendReal(h, dir, entry, journal = 'intact') {
-  const writer = openActivationJournal(dir, h.boundary.fs, journal === 'recovered' ? 'recovery.jsonl' : 'journal.jsonl');
+  const writer = openActivationJournal(dir, h.boundary.fs, journal === 'recovered' ? 'recovery.jsonl' : 'journal.jsonl', h.identity);
   try { writer.append({ event: entry.event, ...entry.payload?.(h) }); } finally { writer.close(); }
 }
 export const realJournalVariants = ['intact', 'recovered'].flatMap(journal => journalInventory.filter(e => !e.terminal).map(entry => ({

@@ -35,7 +35,9 @@ async function composition(t) {
     ['INTENT', 'gate-install'], ['DONE', 'gate-install'],
     ['INTENT', 'dropin-readback'], ['DONE', 'dropin-readback'],
   ], 'B1_ADDITIVE_PHASE_JOURNAL_WRITES');
-  assert.equal(effects(p, armStart) - phaseRows.length, 116 + 5 + 7 + 4, 'B1_ARM_EFFECT_COUNT');
+  const readerProbes = p.events.slice(armStart).filter(e => e.startsWith('command:/usr/bin/setpriv:') && e.includes('/usr/bin/node') && e.includes(credential));
+  assert.equal(readerProbes.length, 1, 'B1_ADDITIVE_ACTIVATION_READER_PROBE');
+  assert.equal(effects(p, armStart) - phaseRows.length - readerProbes.length, 116 + 5 + 7 + 4, 'B1_ARM_EFFECT_COUNT');
   assert.deepEqual(p.events.slice(armStart).filter(e => e.startsWith('command:')).slice(0, 5), [
     'command:/usr/bin/systemctl:show --property=User --value shu-supervisor.service',
     'command:/usr/bin/systemctl:show --property=Group --value shu-supervisor.service',

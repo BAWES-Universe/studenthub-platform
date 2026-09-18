@@ -34,7 +34,7 @@ export async function stateTransition(createProduction, h, s, transform = () => 
     const name = recovered ? 'recovery.jsonl' : 'journal.jsonl';
     if (recovered || s.journal.startsWith('FORGED')) {
       h.write(`${dir}/${name}`, '');
-      const j = openActivationJournal(dir, h.boundary.fs, name);
+      const j = openActivationJournal(dir, h.boundary.fs, name, h.identity);
       // Local writer custody is deliberately granted, as in the retained R5-B residual.
       // Recovery includes both demonstrated durable-prefix facts: ARMED and one reservation.
       j.append({ event: 'APPROVED', spec: h.spec });
@@ -44,7 +44,7 @@ export async function stateTransition(createProduction, h, s, transform = () => 
       j.close();
     }
     if (s.allowance === 'consumed') {
-      const j = openActivationJournal(dir, h.boundary.fs, name); j.append({ event: 'SETTLEMENT_STARTED' }); j.close();
+      const j = openActivationJournal(dir, h.boundary.fs, name, h.identity); j.append({ event: 'SETTLEMENT_STARTED' }); j.close();
     }
   }
   const budget = `${dir}/automatic-teardown.json`;
