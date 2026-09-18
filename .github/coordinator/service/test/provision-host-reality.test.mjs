@@ -42,7 +42,19 @@ const controls = {
   },
 };
 for (const [name, control] of Object.entries(controls)) test('HOST_' + name, t => control(provisioner)(t));
-test('HOST_CLI_GREEN', t => { const h = prepare(t); provisioner(revision, h.boundary).install(); assert.equal(runCli(['precondition', revision], h.boundary, () => {}), 0, 'HOST_CLI_GREEN'); });
+test('HOST_CLI_GREEN', t => { const h = prepare(t);
+  // Exercise every production blob and exact Git mode in the reviewed tree,
+  // not only the small crash-matrix fixture's representative source map.
+  const run = h.boundary.run;
+  h.boundary.run = (exe, args, opts) => {
+    if (exe === '/usr/bin/setpriv' && args.includes('/usr/bin/git')) {
+      const a = args.slice(args.indexOf('-C') + 2);
+      if (a[0] === 'ls-tree') return { status: 0, stdout: execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', 'HEAD', '--', '.github/coordinator']) };
+      if (a[0] === 'cat-file') return { status: 0, stdout: execFileSync('git', a) };
+    }
+    return run(exe, args, opts);
+  };
+  provisioner(revision, h.boundary).install(); assert.equal(runCli(['precondition', revision], h.boundary, () => {}), 0, 'HOST_CLI_GREEN'); });
 const refusal = (name, change, path, code) => impl => t => {
   const h = prepare(t); impl(revision, h.boundary).install(); change(h);
   const row = impl(revision, h.boundary).precondition().paths.find(r => r.path === path);
@@ -96,7 +108,7 @@ const mutants = [
 ];
 for (const [name, from, to, control] of mutants) test('HOST_KILL_' + name, async t => {
   control(provisioner)(t); assert.ok(source.includes(from), 'HOST_MUTATION_SOURCE_' + name);
-  const m = await load(source.replace(from, to));
+  const m = await load((name === 'ENV_FOREIGN_TARGET' ? source.replace("['../lib/cargo/bin/coreutils/env', '/usr/lib/cargo/bin/coreutils/env'].includes(destination)", 'true') : source).replace(from, to));
   assert.throws(() => { try { control(m.provisioner)(t); } catch (e) { assert.fail('HOST_KILL_' + name + ': ' + e.message); } }, e => e.code === 'ERR_ASSERTION' && e.message.includes('HOST_KILL_' + name), 'HOST_KILL_' + name);
 });
 const rangeControl = (label, defsText, expected, setup = () => {}) => impl => t => {

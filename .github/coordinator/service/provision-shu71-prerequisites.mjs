@@ -379,7 +379,9 @@ export function provisioner(revision, b = boundary) {
       if (stat(p)?.isSymbolicLink()) {
         custody(path.dirname(p));
         const link = stat(p);
-        target = path.resolve(path.dirname(p), f.readlinkSync(p));
+        const destination = f.readlinkSync(p);
+        need(['../lib/cargo/bin/coreutils/env', '/usr/lib/cargo/bin/coreutils/env'].includes(destination), 'ACT_PRODUCTION_EXECUTABLE');
+        target = path.resolve(path.dirname(p), destination);
         need(p === '/usr/bin/env' && target === '/usr/lib/cargo/bin/coreutils/env' && link.uid === 0 && link.gid === 0, 'ACT_PRODUCTION_EXECUTABLE');
       }
       const r = read(target);
