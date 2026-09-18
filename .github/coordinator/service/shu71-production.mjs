@@ -1,6 +1,7 @@
 // Reviewed Phase-B composition. The CLI selects this boundary; it accepts no
 // provider, callback, executable, URL or credential path from the operator.
 import fs from 'node:fs';
+import { measureBrokerRuntime, RUNTIME_CODES } from './shu71-runtime.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -293,6 +294,9 @@ export function createShu71Production(id, b = shu71Boundary) {
         command('/usr/bin/systemctl', ['daemon-reload']);
         command('/usr/bin/systemctl', ['start', 'shu71-evidence.service']);
       });
+      const runtime = measureBrokerRuntime(b, env);
+      journal.append({ event: 'BROKER_RUNTIME_MEASURED', ...runtime });
+      atomic(`${dir}/broker-runtime.json`, JSON.stringify(runtime));
       for (const t of pkg.issue_transitions) await step(`ready-${t.issue_id}`, () => transition(t, t.ready));
       await step('activation', () => atomic(ACTIVATION_FILE, JSON.stringify(pkg.activation), 0, 999, 0o640));
       await step('gate', () => {
@@ -304,7 +308,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
       return { ok: true, state: 'ARMED', activation_id: id };
     } catch (error) {
-      const code = ['SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
+      const code = [...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';
@@ -428,7 +432,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       }]),
       ['fixtures', () => cleanupWorkspaces(spec, journal)],
       ['evidence-broker', () => command('/usr/bin/systemctl', ['stop', 'shu71-evidence.service'])],
-      ['archive', () => atomic(`${dir}/activation.json`, JSON.stringify({ activation_id: id, pkg: spec.pkg, retained: true }))],
+      ['archive', () => atomic(`${dir}/activation.json`, JSON.stringify({ activation_id: id, pkg: spec.pkg, retained: true, broker_runtime: (() => { try { return JSON.parse(privateRead(`${dir}/broker-runtime.json`)); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } })() }))],
       ['manifest', () => atomic(`${dir}/manifest.json`, JSON.stringify({ activation_id: id,
         journal_sha256: digest(JSON.stringify(journal.entries)), authorization_expired: reason === 'expiry' }))],
     ];

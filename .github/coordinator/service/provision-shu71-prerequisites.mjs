@@ -303,6 +303,26 @@ export function provisioner(revision, b = boundary) {
     }
     check(PATHS.sudoers + '#parser', () => ({ parser: parser().identity }));
     check('identity:' + BROKER, () => identity());
+    const unit = renderEvidenceBroker();
+    for (const [key, value, code] of [
+      ['User', BROKER, 'ACT_BROKER_UNIT_USER'], ['Group', SHARED_GROUP, 'ACT_BROKER_UNIT_GROUP'],
+      ['RuntimeDirectory', 'shu71-evidence', 'ACT_BROKER_UNIT_RUNTIME_DIRECTORY'],
+      ['RuntimeDirectoryMode', '0750', 'ACT_BROKER_UNIT_DIRECTORY_MODE'], ['UMask', '0007', 'ACT_BROKER_UNIT_UMASK'],
+    ]) check(PATHS.unit + '#' + key, () => {
+      for (const rendered of [unit, Buffer.from(read(PATHS.unit).bytes, 'base64').toString()]) {
+        const lines = rendered.split('\n').filter(line => line.startsWith(key + '='));
+        need(lines.length === 1 && lines[0] === key + '=' + value, code);
+      }
+      return { value };
+    });
+    check(PATHS.unit + '#named-identities', () => {
+      need(!/^\s*(?:User|Group|SupplementaryGroups|SocketUser|SocketGroup)\s*=.*\b[0-9]+\b/m.test(unit + '\n' + Buffer.from(read(PATHS.unit).bytes, 'base64').toString()), 'ACT_BROKER_UNIT_NUMERIC_IDENTITY'); return {};
+    });
+    check(PATHS.unit + '#socket-contract', () => {
+      const source = Buffer.from(read(PATHS.tree + '/service/fixture-evidence-broker.mjs').bytes, 'base64').toString();
+      need(source.includes('fs.chmodSync(EVIDENCE_SOCKET, 0o660)'), 'ACT_BROKER_SOCKET_CONTRACT');
+      return { directory_mode: '0750', socket_mode: '0660' };
+    });
     check(PATHS.receipt, () => {
       need(!stat(PATHS.receipt + '.shu71-pending'), 'ACT_PREREQUISITE_RESIDUE');
       const r = read(PATHS.receipt), j = JSON.parse(Buffer.from(r.bytes, 'base64'));
@@ -343,13 +363,13 @@ export function provisioner(revision, b = boundary) {
       const peer = stat(p === EVIDENCE_SOCKET ? '/run/shu71-evidence' : EVIDENCE_SOCKET);
       if (!s && !peer) {
         need(report.ok, report.paths.find(r => !r.ok)?.code ?? 'ACT_PREREQUISITE_MISSING');
-        return { runtime: 'not_started' };
+        return { runtime: 'DEFERRED_UNTIL_SERVICE_START' };
       }
       need(peer, 'ACT_BROKER_SOCKET_CUSTODY');
       const directory = p !== EVIDENCE_SOCKET;
       need(s && !s.isSymbolicLink() && (directory ? s.isDirectory() : s.isSocket()) && s.uid === broker.uid && s.gid === shared.gid, 'ACT_BROKER_SOCKET_CUSTODY');
       need(directory ? (s.mode & 0o7777) === 0o750 : (s.mode & 0o7777) === 0o660, directory ? 'ACT_BROKER_DIRECTORY_MODE' : 'ACT_BROKER_SOCKET_MODE');
-      return { runtime: 'measured', uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+      return { runtime: 'MEASURED', uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
     });
     return report;
   }

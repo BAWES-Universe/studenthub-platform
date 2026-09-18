@@ -38,6 +38,7 @@ export function fixture(t) {
   function directory(p, mode = 0o755, uid = 0, gid = 0) { fs.mkdirSync(local(p), { recursive: true, mode }); fs.chmodSync(local(p), mode); owners.set(p, [uid, gid]); }
   function write(p, bytes, mode = 0o644, uid = 0, gid = 0) { fs.mkdirSync(path.dirname(local(p)), { recursive: true, mode: 0o755 }); if (fs.existsSync(local(p))) fs.chmodSync(local(p), 0o600); fs.writeFileSync(local(p), bytes); fs.chmodSync(local(p), mode); owners.set(p, [uid, gid]); }
   const sources = new Map([
+    ['service/fixture-evidence-broker.mjs', fs.readFileSync(new URL('../fixture-evidence-broker.mjs', import.meta.url))],
     ['service/provision-shu71-prerequisites.mjs', Buffer.from('reviewed entrypoint')],
     ['service/shu71-production.mjs', Buffer.from('reviewed production')],
     ['service/shu-reviewer.sudoers', fs.readFileSync(new URL('../shu-reviewer.sudoers', import.meta.url))],

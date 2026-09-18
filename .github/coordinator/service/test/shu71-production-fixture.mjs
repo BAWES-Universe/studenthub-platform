@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { secretText, coordinatorText } from './shu71-supervisor-environment-fixture.mjs';
 import os from 'node:os';
+import vm from 'node:vm';
 import path from 'node:path';
 import { sign } from 'node:crypto';
 import { harness } from '../../test/fixture/shu71-package.mjs';
@@ -17,12 +18,14 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   const spec = { kind: 'shu71-production-v1', checkout: '/reviewed/repo', tree: 'c'.repeat(40), pkg,
     binding: { ...pkg.reseed, approvedExecutionRevision: pkg.coordinator_revision, tree, manifest_hex: '' } };
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-production-'));
+  fs.chmodSync(root, 0o755); // Model the host / traversal mode inside the disposable tree.
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const identity = { user: 'shu-coordinator', group: 'shu-coordinator', uid: 999, gid: 999 };
   const owners = new Map(), handles = new Map(), events = [], faults = {};
   const logical = p => typeof p === 'number' ? handles.get(p) : p;
   const resolve = p => typeof p === 'number' ? p : root + p;
   const stat = (p, value) => new Proxy(value, { get(target, key) {
+    if (key === 'isSocket' && logical(p) === '/run/shu71-evidence/fixture.sock') return () => true;
     if (key === 'uid') return owners.get(logical(p))?.[0] ?? 0;
     if (key === 'gid') return owners.get(logical(p))?.[1] ?? 0;
     const v = target[key]; return typeof v === 'function' ? v.bind(target) : v;
@@ -79,7 +82,23 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     run(exe, argv, options) {
       let output = '';
       effect(`command:${exe}:${argv.join(' ')}`, () => {
+        if (exe === '/usr/bin/getent') {
+          output = argv[0] === 'passwd' ? 'shu71-evidence:x:100:100::/nonexistent:/usr/sbin/nologin' : 'shu-workspace:x:980:shu-coordinator'; return;
+        }
+        if (exe === '/usr/bin/setpriv' && argv.includes('--init-groups')) {
+          const probeFs = { ...f, accessSync(p, requested) {
+            const st = f.lstatSync(p), shift = st.uid === 999 ? 6 : [999, 980].includes(st.gid) ? 3 : 0;
+            if (((st.mode >> shift) & requested) !== requested) throw Error('EACCES');
+          } };
+          try { vm.runInNewContext(argv.at(-1).replace("import fs from 'node:fs'; ", ''), { fs: probeFs }); }
+          catch { output = null; } return;
+        }
         if (exe === '/usr/bin/systemctl') {
+          if (argv[0] === 'start' && argv[1] === 'shu71-evidence.service') {
+            write('/run/shu71-evidence/fixture.sock', '', 0o660, 100, 980);
+            fs.chmodSync(resolve('/run/shu71-evidence'), 0o750); owners.set('/run/shu71-evidence', [100, 980]);
+            faults.runtime?.();
+          }
           if (argv.includes('--property=User')) { output = identity.user; return; }
           if (argv.includes('--property=Group')) { output = identity.group; return; }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
@@ -112,7 +131,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           remote = pkg.reseed.expected_seed_head;
         } else if (!['status', 'check-ref-format', 'merge-base'].includes(verb)) throw new Error(`unexpected git ${verb}`);
       });
-      return { status: 0, stdout: output };
+      return { status: output === null ? 1 : 0, stdout: output };
     },
     async fetch(url, opts) {
       return effect(`api:${url}`, () => {
@@ -133,7 +152,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
       });
     },
   };
-  return { ...h, spec, id, root, identity, boundary, events, faults, active, write, signatures: () => signatures,
+  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, write, signatures: () => signatures,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),

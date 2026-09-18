@@ -395,10 +395,10 @@ Production starts the service during M4 and stops it at teardown
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
-`ok:true,runtime:"not_started"`, with no measured UID/GID/mode. This is an
+`ok:true,runtime:"DEFERRED_UNTIL_SERVICE_START"`, with no measured UID/GID/mode. This is an
 absence observation, not proof of systemd activity or a measured socket. With
 both present, each must satisfy its existing type, ownership and exact mode
-checks (0750 directory, 0660 socket), and passes as `runtime:"measured"`.
+checks (0750 directory, 0660 socket), and passes as `runtime:"MEASURED"`.
 A partial pair refuses with `ACT_BROKER_SOCKET_CUSTODY`. Static failures remain
 named failures even when both runtime paths are absent; those runtime rows
 also refuse, rather than claiming an eligible not-started state. The report is
@@ -442,3 +442,83 @@ final committed-head full counts and logs are reported separately.
 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
 All three inventories are additive only: one file and 20 names/requirements in
 the suite inventory, one file in each file audit; zero removals or changed rows.
+
+## Owner runtime ruling: pre-mint and window receipts
+
+The pre-mint runtime-row schema is
+[`shu71-runtime-row.schema.json`](shu71-runtime-row.schema.json). Only when both
+runtime paths are absent and **every static row** succeeds, the two runtime rows
+contain exactly `path`, `ok:true`, and
+`runtime:"DEFERRED_UNTIL_SERVICE_START"`. This token is a deferral, not a passing
+runtime measurement. No UID, GID or mode is attached. Any static failure produces
+named refusal rows without that marker. Active paths require `runtime:"MEASURED"`
+with exact directory 0750 and socket 0660, broker UID and shared-group GID;
+partial presence, owner/group drift and widened or narrowed modes refuse.
+
+Static checks retain the complete reviewed unit byte comparison and all prior
+identity, membership, signing and custody checks. Additional named rows inspect
+both the render and installed unit: `ACT_BROKER_UNIT_USER` (`shu71-evidence`),
+`ACT_BROKER_UNIT_GROUP` (`shu-workspace`),
+`ACT_BROKER_UNIT_RUNTIME_DIRECTORY` (`shu71-evidence`),
+`ACT_BROKER_UNIT_DIRECTORY_MODE` (`0750`), `ACT_BROKER_UNIT_UMASK` (`0007`), and
+`ACT_BROKER_UNIT_NUMERIC_IDENTITY`. `ACT_BROKER_SOCKET_CONTRACT` binds the installed,
+revision-verified broker source to the reviewed 0660 chmod contract. The named
+broker account and named shared group remain mandatory while inactive.
+`OWNER_STATIC_*` assertions kill each named suppression over passing controls;
+H1/H2 assertions continue to cover identity/group binding and all four gate states.
+
+At M4, immediately after the reviewed `systemctl start shu71-evidence.service`
+step, `measureBrokerRuntime` re-resolves the named broker/shared group and checks
+the real directory/socket, their types, UID, GID and exact 0750/0660 modes. This
+runs before every ready transition, activation write, gate enable and dispatch
+start. There is no deferred window result and no missing-path grace period.
+Failures use the following codes and the existing HALT/teardown path:
+
+| Assertion / killing mutant | Refusal |
+| --- | --- |
+| `WINDOW_MISSING_DIRECTORY` | `ACT_RUNTIME_DIRECTORY_MISSING` |
+| `WINDOW_MISSING_SOCKET` | `ACT_RUNTIME_SOCKET_MISSING` |
+| `WINDOW_WRONG_OWNER` | `ACT_RUNTIME_OWNER` |
+| `WINDOW_WRONG_GROUP` | `ACT_RUNTIME_GROUP` |
+| `WINDOW_WIDENED_DIRECTORY` | `ACT_RUNTIME_DIRECTORY_MODE` |
+| `WINDOW_WIDENED_SOCKET` | `ACT_RUNTIME_SOCKET_MODE` |
+| `WINDOW_COORDINATOR_INACCESSIBLE` | `ACT_RUNTIME_COORDINATOR_ACCESS` |
+
+The fixed `setpriv --reuid=shu-coordinator --regid=shu-coordinator --init-groups`
+probe checks ancestor traversal (including `/` and `/run`), rejects ancestor
+symlinks, and checks socket read/write permissions as the coordinator. Repository
+fixtures execute the actual probe text against modeled DAC bits, owner identity,
+and primary/supplementary group membership; the inaccessible case closes `/run`
+while leaving both measured runtime artifacts correct. No real target-host
+commands are invoked. ACL/MAC, live NSS, service startup timing and kernel socket
+`connect()` acceptance remain host-only and unproven. Permission observations are
+point-in-time checks, not immunity to a later host mutation.
+
+On success the journal receives `BROKER_RUNTIME_MEASURED` with both exact rows,
+`coordinator_access:"MEASURED_TRAVERSE_READ_WRITE"`, and
+`kernel_connect:"HOST_ONLY_UNPROVEN"`. The private `broker-runtime.json` receipt is
+also retained under the activation evidence directory and copied into the cleanup
+archive as `broker_runtime`. `WINDOW_MEASURED_RECEIPT` checks the rows, ordering and
+archive preservation and kills omission of the journal receipt. Existing crash
+matrices cover the new receipt durability boundaries. D1 signing and H1–H8 guards
+remain intact; the original eight permitted skips are unchanged.
+
+Repository proof capture: run
+`node .github/coordinator/service/test/fixtures/owner-runtime-evidence/capture.mjs`.
+The committed [`proof.json`](test/fixtures/owner-runtime-evidence/proof.json)
+contains actual fixture-produced reports for all four pre-mint states, seven
+window HALT/REVOKED outcomes, and the passing journal/archive measurements.
+The journal append-site/class inventories add `BROKER_RUNTIME_MEASURED`, including
+both intact/recovered exhausted-invariant payload controls. The exact composition
+count preserves the prior 116 operations and five identity reads, adding exactly
+seven operations for three runtime probes and four journal/receipt writes and
+renames. No earlier inventory entries or assertion IDs are removed.
+
+Focused validation command:
+`node --test .github/coordinator/service/test/provision*.test.mjs .github/coordinator/service/test/shu71-runtime-window.test.mjs .github/coordinator/service/test/shu71-production.test.mjs`.
+Full validation command: `npm run test:coordinator`. CI clock validation prefixes
+each with `SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=/home/bawes/work/prov/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+The committed-inventory audit requires the new files and inventory at `HEAD`;
+therefore final full runs follow the new commit. Terminal TAP counts and the
+final HEAD/tree are reported with the completion response.

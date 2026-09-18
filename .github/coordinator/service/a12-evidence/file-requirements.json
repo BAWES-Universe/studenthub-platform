@@ -296,6 +296,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and VM DAC model; commands, identities and services are doubled; kernel connect is host-only",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-runtime-window.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",

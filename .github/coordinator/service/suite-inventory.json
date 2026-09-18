@@ -32,6 +32,7 @@
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
     ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
     ".github/coordinator/service/test/shu71-trust-mutations.test.mjs",
@@ -3021,7 +3022,24 @@
     "H1_ABSENT_STATIC_TREE passing control and named mutant kill",
     "H1_ABSENT_STATIC_CHECKOUT passing control and named mutant kill",
     "H1_ABSENT_STATIC_REFS passing control and named mutant kill",
-    "H1_ABSENT_RENDER passing control and named mutant kill"
+    "H1_ABSENT_RENDER passing control and named mutant kill",
+    "OWNER_STATIC_USER passing control and named mutant kill",
+    "OWNER_STATIC_GROUP passing control and named mutant kill",
+    "OWNER_STATIC_RUNTIME_DIRECTORY passing control and named mutant kill",
+    "OWNER_STATIC_DIRECTORY_MODE passing control and named mutant kill",
+    "OWNER_STATIC_UMASK passing control and named mutant kill",
+    "OWNER_STATIC_NUMERIC_IDENTITY passing control and named mutant kill",
+    "OWNER_STATIC_SOCKET_CONTRACT passing control and named mutant kill",
+    "WINDOW_MISSING_DIRECTORY passing control and named mutant kill",
+    "WINDOW_MISSING_SOCKET passing control and named mutant kill",
+    "WINDOW_WRONG_OWNER passing control and named mutant kill",
+    "WINDOW_WRONG_GROUP passing control and named mutant kill",
+    "WINDOW_WIDENED_DIRECTORY passing control and named mutant kill",
+    "WINDOW_WIDENED_SOCKET passing control and named mutant kill",
+    "WINDOW_COORDINATOR_INACCESSIBLE passing control and named mutant kill",
+    "WINDOW_MEASURED_RECEIPT passing control and named mutant kill",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered"
   ],
   "requirements": [
     {
@@ -24320,6 +24338,74 @@
     },
     {
       "name": "H1_ABSENT_RENDER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_USER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_GROUP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_RUNTIME_DIRECTORY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_DIRECTORY_MODE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_UMASK passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_NUMERIC_IDENTITY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "OWNER_STATIC_SOCKET_CONTRACT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_MISSING_DIRECTORY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_MISSING_SOCKET passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WRONG_OWNER passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WRONG_GROUP passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WIDENED_DIRECTORY passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_WIDENED_SOCKET passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_COORDINATOR_INACCESSIBLE passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "WINDOW_MEASURED_RECEIPT passing control and named mutant kill",
+      "capabilities": []
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload intact",
+      "capabilities": []
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered",
       "capabilities": []
     }
   ]
