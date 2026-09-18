@@ -24402,11 +24402,19 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload intact",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_MEASURED real payload recovered",
-      "capabilities": []
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
     }
   ]
 }
