@@ -35,7 +35,7 @@ export const appendSites = {
     "{ event: 'BROKER_RUNTIME_CHECK_STARTED' }",
     "{ event: 'BROKER_RUNTIME_MEASURED', ...runtime }",
     "{ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false }",
-    "{ event: 'HALTED', code }",
+    "{ event: 'HALTED', code, ...named }",
     "{ event: 'FIXTURE_REMOVE_INTENT', attempt_id: record.attempt_id, dev: st.dev, ino: st.ino, uid: st.uid }",
     "{ event: 'AUTOMATIC_TEARDOWN_RESERVED', attempts: attempts + 1 }", "{ event: 'SETTLEMENT_STARTED' }",
   ],

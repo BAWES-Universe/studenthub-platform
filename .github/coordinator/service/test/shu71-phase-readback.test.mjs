@@ -69,7 +69,13 @@ async function check(create, h, file, failure) {
     assert.ok(written >= 0 && halt, `${name}_AFTER_INSTALL`);
   }
   assert.equal(h.exists(activation), false, `${name}_TEARDOWN_ACTIVATION`);
-  assert.ok(h.events.some(e => e.includes(':kill --kill-whom=all')), `${name}_TEARDOWN_WORKERS`);
+  // Corrected in place: every read-back refusal halts before the supervisor is
+  // started, and the measured host refuses a kill for a unit with no processes.
+  // The same named assertion now requires the stronger pair - the step reaches
+  // its durable DONE row and issues no kill for a unit this episode never
+  // started - with the idle measurement asserted immediately below.
+  assert.ok(h.journal().some(e => e.event === 'DONE' && e.step === 'teardown:workers'), `${name}_TEARDOWN_WORKERS`);
+  assert.equal(h.events.some(e => e.includes(':kill --kill-whom=all')), false, `${name}_TEARDOWN_WORKERS`);
   for (const service of ['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'])
     assert.equal(h.active.get(service), 'inactive', `${name}_TEARDOWN_STOP`);
   for (const v of h.spec.pkg.issue_transitions) assert.deepEqual(h.states.get(v.issue_id), v.restore, `${name}_TEARDOWN_RESTORE`);

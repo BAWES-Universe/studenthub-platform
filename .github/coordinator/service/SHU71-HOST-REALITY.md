@@ -258,3 +258,50 @@ falsified on its own in this model, because the whole-tree walk already reads
 every in-tree path; `HOST_KILL_CHECKOUT_READ_PROOF` therefore removes both
 read/traverse calls together. Real kernel behavior, live NSS and actual host
 symlink resolution remain host-only and unproven here.
+
+## Third real target measurement: approved window `shu71-mint-00000017`, 2026-09-19
+
+Measured evidence supplied by ai-orchestrator, not a live run by this code lane.
+The window ran at the merged revision `873a36e6a2feb69ae5abaf451c34c278bcb82185`
+and refused **by name** before arming:
+
+```json
+{"ok":false,"state":"HALT","code":"SHU71_SUPERVISOR_ENV_REQUIRED",
+ "teardown":{"ok":false,"state":"HALT","code":"ACT_CLEANUP_FAILED",
+   "failures":["ACT_TEARDOWN_WORKERS","ACT_TEARDOWN_FIXTURES","ACT_TEARDOWN_EXPIRY_TIMER"]}}
+```
+
+`/srv/shu/coordinator.env` was missing the documented key
+`SHU_REVIEW_MODEL_WRAPPER_JSON` (value documented at
+`docs/SHU-63-activation-contract.md:98`). The refusal is correct. **The key is
+now present on the host**, added through a separate bounded receipted
+host-preparation step, with the value
+`["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`, quoted as
+`'["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'`. That exact
+form is asserted **accepted** by `HOST_ADAPTER_ENV_HOST_VALUE`, so the corrected
+pre-mint gate is passable on the real host today.
+
+The defect is the teardown, which ran before the resources it cleans up had been
+created. Measured on the host at that moment:
+
+* `systemctl kill --kill-whom=all --signal=SIGKILL shu-supervisor.service` →
+  **rc=1**; the unit was never started and is `inactive`. That is
+  `teardown:workers`, whose failure fails the whole step.
+* `systemctl disable --now shu71-expiry-shu71-mint-00000017.timer` → **rc=1**;
+  the unit file was never created. That is `teardown:expiry-timer`.
+* `teardown:fixtures` requires `teardown:workers` DONE and therefore failed as a
+  consequence with `ACT_FIXTURE_CLEANUP`.
+* The journal recorded `TEARDOWN_INCOMPLETE`, so every later `run`/`resume` at
+  that revision routed straight back into cleanup and failed identically: the
+  **activation id could never be released**. The episode was retired by hand
+  (owner decision) and must never be reused.
+
+The corrections, the journal-derived non-creation proof, the named drift
+refusals, the re-runnable cleanup and the phase-boundary crash matrix are
+documented with their named controls and killing mutants in
+[SHU71-PREREQUISITES.md](SHU71-PREREQUISITES.md). The two `systemctl` refusals
+are reproduced by the disposable production fixture; the stricter reading of the
+kill refusal (any unit currently holding no processes) was not measured during
+the window and is available behind an explicit fixture flag. Real systemd exit
+statuses, live kernel behavior and the host's current environment file remain
+host-only facts reproduced here by explicit doubles.

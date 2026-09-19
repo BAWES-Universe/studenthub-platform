@@ -16,7 +16,8 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   ['gate DONE suppresses repair', "['gate', 'activation', 'workers', 'reload', 'evidence-broker']", "['activation', 'workers', 'reload', 'evidence-broker']", gateRecoveryCheck],
   ['broker DONE suppresses repair', "'reload', 'evidence-broker'", "'reload'", serviceRecoveryCheck],
   ['service DONE suppresses repair', " || step.startsWith('stop-')", '', (create, h) => serviceRecoveryCheck(create, h, 'shu-supervisor.service')],
-  ['P1 retirement re-observation removed', '        observeTeardown();\n        command', '        command', retirementWindowCheck, 'production', /B4_RETIREMENT_REOBSERVATION/],
+  // Anchor updated in place for the receipt-aware retirement; assertion unchanged.
+  ['P1 retirement re-observation removed', '        observeTeardown();\n        retireExpiryTimer', '        retireExpiryTimer', retirementWindowCheck, 'production', /B4_RETIREMENT_REOBSERVATION/],
   ['P4 activation DONE suppresses repair', "'gate', 'activation', 'workers'", "'gate', 'workers'", activationRecoveryCheck, 'journal', /B4_ACTIVATION_DRIFT_RECOVERED/],
   ['P5 all effects repeat', 'effect, repeat);', 'effect, true);', onceOnlyRestoreCheck, 'journal', /B4_RESTORES_ONCE_ONLY/],
   ['Q1 counter fault skips disarm', 'for (const file of GATES) {\n          try', 'for (const file of []) {\n          try', counterFaultCheck, 'production', /B4_COUNTER_FAULT_DISARMS/],

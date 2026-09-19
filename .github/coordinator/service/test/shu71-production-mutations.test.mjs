@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { createShu71Production } from '../shu71-production.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
+import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck } from './shu71-recovery-checks.mjs';
 const keys = ephemeralPublicSource();
 const moduleUrl = new URL('../shu71-production.mjs', import.meta.url);
 const source = fs.readFileSync(moduleUrl, 'utf8');
@@ -56,10 +57,22 @@ const mutations = [
     assert.equal((await create(h.id, h.boundary).execute('revoke')).state, 'REVOKED', 'B4_REVOKED');
     for (const transition of h.spec.pkg.issue_transitions) assert.deepEqual(h.states.get(transition.issue_id), transition.restore, 'B4_BOTH_FIXTURES_RESTORED');
   }],
-  ['worker kill omitted', "['workers', () => command('/usr/bin/systemctl', ['kill', '--kill-whom=all', '--signal=SIGKILL', 'shu-supervisor.service'])]", "['workers', () => {}]", async (create, h) => {
+  // Anchor updated in place for the receipt-aware kill; name and assertion unchanged.
+  ['worker kill omitted', "['workers', () => killSupervisorWorkers(journal)]", "['workers', () => {}]", async (create, h) => {
     await basic(create, h); await create(h.id, h.boundary).execute('revoke');
     assert.ok(h.events.some(e => e.includes('kill --kill-whom=all --signal=SIGKILL')), 'B4_WORKERS_PHYSICALLY_KILLED');
   }],
+  // SHU-71 idempotent, receipt-aware teardown.
+  ['pre-arm worker drift silently accepted', "      if (phase === 'never') { need(idle, 'ACT_TEARDOWN_DRIFT'); return; }",
+    "      if (phase === 'never') { return; }", (create, h) => preArmDriftCheck(create, h, 'supervisor')],
+  ['refused worker kill blindly accepted', "catch (error) { need(error?.code === 'ACT_COMMAND_FAILED' && unitIdle(unit), 'ACT_TEARDOWN_DRIFT'); }",
+    'catch { /* mutation: accept any kill refusal */ }', workerKillFailureCheck],
+  ['pre-arm expiry drift silently accepted', "if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(retired(), 'ACT_TEARDOWN_DRIFT'); return; }",
+    "if (false) { need(retired(), 'ACT_TEARDOWN_DRIFT'); return; }", (create, h) => preArmDriftCheck(create, h, 'timer-file')],
+  ['expiry retirement ignores unit liveness', "&& unitIdle(timer) && ['', 'not-found'].includes(unitProperty(timer, 'UnitFileState'));", ';',
+    (create, h) => preArmDriftCheck(create, h, 'timer-active')],
+  ['non-creation inferred from an empty journal', "return journalHas(journal, 'RUN_ATTEMPT_STARTED') && !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';",
+    "return !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';", destroyedJournalCheck],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

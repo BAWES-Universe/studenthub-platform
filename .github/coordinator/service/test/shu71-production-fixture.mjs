@@ -91,7 +91,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   write('/srv/shu/coordinator.env', coordinatorText(), 0o600, 999);
   let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
   let signatures = 0;
-  const active = new Map();
+  const active = new Map(), enabled = new Set(), started = new Set(), systemd = { killRequiresProcesses: false };
   const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
@@ -119,8 +119,32 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           }
           if (argv.includes('--property=User')) { output = identity.user; return; }
           if (argv.includes('--property=Group')) { output = identity.group; return; }
+          const unitFile = unit => fs.existsSync(resolve(`/etc/systemd/system/${unit}`));
+          if (argv[0] === 'show' && argv.includes('--property=UnitFileState')) {
+            output = `${unitFile(argv.at(-1)) ? (enabled.has(argv.at(-1)) ? 'enabled' : 'disabled') : ''}\n`; return;
+          }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
-          if (['start', 'restart'].includes(argv[0])) active.set(argv[1], 'active');
+          // Measured on the target host during shu71-mint-00000017: systemctl
+          // kill exits 1 for a unit this episode never started, and
+          // enable/disable exit 1 for a unit whose file was never created.
+          // `stop` is not modeled that way: every unit this teardown stops is
+          // installed. systemd.killRequiresProcesses opts in to the stricter
+          // reading - any unit that currently holds no processes - which the
+          // approved window did not measure.
+          if (argv[0] === 'kill') {
+            const unit = argv.at(-1);
+            const holds = systemd.killRequiresProcesses ? ['active', 'activating'].includes(active.get(unit) ?? 'inactive') : started.has(unit);
+            if (!holds) output = null;
+            return;
+          }
+          if (['enable', 'disable'].includes(argv[0])) {
+            const unit = argv.at(-1);
+            if (!unitFile(unit)) { output = null; return; }
+            if (argv[0] === 'enable') enabled.add(unit); else enabled.delete(unit);
+            if (argv.includes('--now')) { active.set(unit, argv[0] === 'enable' ? 'active' : 'inactive'); if (argv[0] === 'enable') started.add(unit); }
+            return;
+          }
+          if (['start', 'restart'].includes(argv[0])) { active.set(argv[1], 'active'); started.add(argv[1]); }
           if (argv[0] === 'stop') active.set(argv[1], 'inactive');
           return;
         }
@@ -170,7 +194,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
       });
     },
   };
-  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, write, signatures: () => signatures,
+  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, systemd, write, signatures: () => signatures,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),

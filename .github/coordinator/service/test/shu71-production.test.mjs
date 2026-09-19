@@ -150,3 +150,45 @@ test('B4 fixture cleanup removes only the episode-bound owned attempt and preser
   assert.equal(h.read('/srv/shu/worktrees/unrelated/keep'), 'unrelated');
   assert.ok(h.journal().some(e => e.event === 'FIXTURE_REMOVE_INTENT' && e.attempt_id === attempt));
 });
+
+// SHU-71 idempotent, receipt-aware teardown (approved window shu71-mint-00000017).
+import { preArmTeardownCheck, preArmFixtureCleanupCheck, preArmDriftCheck, workerKillFailureCheck,
+  destroyedJournalCheck, phaseInterruptionCheck, lifecyclePhases } from './shu71-recovery-checks.mjs';
+import { supervisorAdapterKeys } from '../units.mjs';
+
+test('B4 pre-arm refusal by name completes its own teardown and is re-runnable', async t => {
+  await preArmTeardownCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 every documented adapter key halts before arming with a complete teardown', async t => {
+  for (const key of supervisorAdapterKeys) {
+    const h = productionFixture(t, keys);
+    const result = await preArmTeardownCheck(createShu71Production, h, key);
+    assert.equal(result.missing_key, key, `B4_PREARM_EVERY_KEY_${key}`);
+  }
+});
+
+test('B4 pre-arm fixture cleanup is not blocked by a legitimately skipped worker kill', async t => {
+  await preArmFixtureCleanupCheck(createShu71Production, productionFixture(t, keys));
+});
+
+for (const drift of ['supervisor', 'timer-file', 'timer-active', 'timer-enabled']) {
+  test(`B4 pre-arm teardown refuses ${drift} drift by name`, async t => {
+    await preArmDriftCheck(createShu71Production, productionFixture(t, keys), drift);
+  });
+}
+
+test('B4 a refused worker kill is accepted only for a unit measured idle', async t => {
+  await workerKillFailureCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a destroyed journal is never proof that nothing was created', async t => {
+  await destroyedJournalCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 interruption at every lifecycle phase boundary completes cleanup or halts by name', async t => {
+  for (const phase of lifecyclePhases) {
+    const result = await phaseInterruptionCheck(createShu71Production, productionFixture(t, keys), phase);
+    t.diagnostic(`${phase}: ${JSON.stringify({ ok: result.ok, state: result.state, code: result.code ?? null })}`);
+  }
+});
