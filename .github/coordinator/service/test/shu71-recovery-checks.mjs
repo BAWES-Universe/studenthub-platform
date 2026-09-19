@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 export async function gateRecoveryCheck(createProduction, h, retry = 'resume') {
   const create = () => createProduction(h.id, h.boundary);
   await create().execute('run');
@@ -659,4 +660,114 @@ export function predicateRefusalCheck(api) {
   assert.equal(api.measuredPredicate(() => false), false, 'B4_EXPIRY_PREDICATE_FALSE_REFUSES');
   assert.equal(api.measuredPredicate(() => 'yes'), false, 'B4_EXPIRY_PREDICATE_REQUIRES_MEASURED_TRUE');
   assert.equal(api.measuredPredicate(() => true), true, 'B4_EXPIRY_PREDICATE_MEASURED_TRUE_PASSES');
+}
+
+// SHU-71 expiry-retirement drift, correction round. The pre-condition's
+// EXISTENCE half is pinned above (expiryFileDriftCheck); its CUSTODY half was
+// enforced by the shipped code but pinned by no shipped control, so an
+// installed unit file REPLACED by a non-root-owned, group/world-writable or
+// non-regular file was still disabled, removed and reported as retired. Each
+// control below plants exactly one broken custody term on a JOURNAL-PROVEN
+// INSTALLED unit file, with both files present and `disable --now` ready to
+// succeed, so nothing but the named clause can produce the refusal.
+// ACT_TEARDOWN_DRIFT is raised by need() inside the `expiry-timer` teardown
+// effect, and teardownActivation() reports every effect refusal under that
+// step's own name: ACT_CLEANUP_FAILED with ACT_TEARDOWN_EXPIRY_TIMER in
+// failures is the observable form of that refusal at the module boundary. The
+// literal code is observable on the retired-episode receipt path, which
+// expiryRetirementCheck pins.
+const CUSTODY_VARIANTS = Object.freeze({
+  'non-root-owner': 'owner', 'non-root-group': 'group', 'group-writable': 'group_mode',
+  'world-writable': 'world_mode', 'non-regular-file': 'shape',
+});
+// A genuine non-regular file with the unit file's own custody: root:root, one
+// link, 0644, and not a symlink, so every other custody term still holds and
+// only the shape term can refuse. Node unlinks the socket path on close, so the
+// server is closed before the file is restored and always before returning.
+async function plantNonRegularFile(path) {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
+  fs.chmodSync(path, 0o644);
+  let closed = false;
+  return () => closed ? Promise.resolve() : new Promise(resolve => { closed = true; server.close(() => resolve()); });
+}
+export async function expiryCustodyDriftCheck(createProduction, h, variant) {
+  const create = () => createProduction(h.id, h.boundary);
+  const file = `/etc/systemd/system/${expiryTimer(h)}`;
+  assert.equal((await create().execute('run')).state, 'ARMED', `B4_EXPIRY_CUSTODY_SETUP_${variant}`);
+  assert.ok(h.journal().some(e => e.event === 'ARMED'), `B4_EXPIRY_CUSTODY_JOURNAL_PROVES_INSTALLED_${variant}`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `B4_EXPIRY_CUSTODY_BOTH_UNITS_PRESENT_${variant}`);
+  let close = null;
+  if (variant === 'non-root-owner') h.owners.set(file, [999, 0]);
+  else if (variant === 'non-root-group') h.owners.set(file, [0, 982]);
+  else if (variant === 'group-writable') fs.chmodSync(h.root + file, 0o664);
+  else if (variant === 'world-writable') fs.chmodSync(h.root + file, 0o646);
+  else { fs.rmSync(h.root + file); close = await plantNonRegularFile(h.root + file); }
+  try {
+    // Exactly one custody term is broken. Anything else would let a control
+    // survive on the mutant that removes the term it claims to pin.
+    const s = h.boundary.fs.lstatSync(file);
+    const broken = Object.entries({ shape: s.isFile() && !s.isSymbolicLink(), links: s.nlink === 1, owner: s.uid === 0,
+      group: s.gid === 0, group_mode: !(s.mode & 0o020), world_mode: !(s.mode & 0o002) }).filter(([, ok]) => !ok).map(([term]) => term);
+    assert.deepEqual(broken, [CUSTODY_VARIANTS[variant]], `B4_EXPIRY_CUSTODY_EXACTLY_ONE_TERM_${variant}`);
+    // The modelled host would disable it: the unit file is still there, so the
+    // refusal below is the pre-condition's, never a lucky command failure.
+    assert.equal(h.exists(`/etc/systemd/system/shu71-expiry-${h.id}.service`), true, `B4_EXPIRY_CUSTODY_COMPANION_PRESENT_${variant}`);
+    const start = h.events.length;
+    const result = await create().execute('revoke');
+    assert.equal(result.ok, false, `B4_EXPIRY_CUSTODY_REFUSED_${variant}: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED', `B4_EXPIRY_CUSTODY_NAMED_${variant}`);
+    assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `B4_EXPIRY_CUSTODY_STEP_NAMED_${variant}`);
+    assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `B4_EXPIRY_CUSTODY_BEFORE_DISABLE_${variant}`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `B4_EXPIRY_CUSTODY_UNITS_RETAINED_${variant}`);
+    assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `B4_EXPIRY_CUSTODY_NO_RECEIPT_${variant}`);
+    unfinished(h, `B4_EXPIRY_CUSTODY_${variant}`);
+    const repeat = h.events.length;
+    assert.equal((await create().execute('resume')).code, 'ACT_CLEANUP_FAILED', `B4_EXPIRY_CUSTODY_PERSISTS_${variant}`);
+    assert.equal(h.events.slice(repeat).some(e => e.includes('disable --now shu71-expiry-')), false, `B4_EXPIRY_CUSTODY_REPEAT_BEFORE_DISABLE_${variant}`);
+    unfinished(h, `B4_EXPIRY_CUSTODY_REPEAT_${variant}`);
+  } finally { if (close) await close(); }
+  // Root custody restored, the same teardown completes and removes both files.
+  if (variant === 'non-regular-file') h.write(file, '[Timer]\n', 0o644);
+  h.owners.set(file, [0, 0]);
+  fs.chmodSync(h.root + file, 0o644);
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `B4_EXPIRY_CUSTODY_RECOVERED_${variant}`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `B4_EXPIRY_CUSTODY_RECOVERED_UNITS_REMOVED_${variant}`);
+}
+// The refusal AFTER the daemon-reload. Both unit files are removed, systemd's
+// stale loaded view is refreshed, and the end state is still not retired
+// because the mechanism came back on disk before systemd re-read the unit
+// directory. Nothing later in this teardown measures that state, so deleting
+// this one statement reports a live expiry mechanism as a successful
+// retirement; only the post-reload refusal can construct the difference.
+export async function expiryPostReloadDriftCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const file = `/etc/systemd/system/${expiryTimer(h)}`;
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_EXPIRY_POST_RELOAD_SETUP');
+  // The loaded view lags the removal, so the retirement must reload and
+  // measure again rather than accept the cached answer.
+  h.systemd.unitFileViewCached = true;
+  const run = h.boundary.run;
+  let recreated = 0;
+  h.boundary.run = (exe, argv, options) => {
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'daemon-reload' && !h.exists(file)
+      && h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED')) { recreated++; h.write(file, '[Timer]\n', 0o644); }
+    return run(exe, argv, options);
+  };
+  const start = h.events.length;
+  const result = await create().execute('revoke');
+  const slice = h.events.slice(start);
+  assert.equal(recreated, 1, 'B4_EXPIRY_POST_RELOAD_STATE_CONSTRUCTED');
+  const unlink = slice.findIndex(e => e === `unlink:${file}`);
+  assert.ok(unlink >= 0, 'B4_EXPIRY_POST_RELOAD_REMOVAL_ISSUED');
+  assert.ok(slice.slice(unlink).some(e => e === 'command:/usr/bin/systemctl:daemon-reload'), 'B4_EXPIRY_POST_RELOAD_RELOADED');
+  assert.equal(h.exists(file), true, 'B4_EXPIRY_POST_RELOAD_NOT_RETIRED');
+  assert.equal(result.ok, false, `B4_EXPIRY_POST_RELOAD_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', 'B4_EXPIRY_POST_RELOAD_NAMED');
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), 'B4_EXPIRY_POST_RELOAD_STEP_NAMED');
+  unfinished(h, 'B4_EXPIRY_POST_RELOAD');
+  // Once the mechanism stays removed, the same teardown completes.
+  h.boundary.run = run;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_POST_RELOAD_RECOVERED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_POST_RELOAD_RETIRED_AFTER_RECOVERY');
 }

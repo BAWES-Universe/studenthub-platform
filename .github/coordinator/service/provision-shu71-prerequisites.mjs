@@ -516,6 +516,27 @@ export function provisioner(revision, b = boundary) {
       need(!stat('/srv/shu/state/shu71-activation.json'), 'ACT_PRODUCTION_ACTIVATION_PRESENT');
       return { state: 'CREATED_AT_ARM', window: 'DEFERRED_UNTIL_ARM' };
     });
+    // A successor window may not arm while an earlier episode's expiry
+    // mechanism is still installed. retireExpiryTimer() removes both durable
+    // unit files and leaves the unit unloaded, so this gate measures that
+    // outcome as a machine-checked precondition rather than an inference: no
+    // shu71-expiry-* unit file in the installation directory, and no enable
+    // symlink for one in any target's .wants directory, which is the durable
+    // record `systemctl enable` writes. The activation ID is selected after
+    // this gate, so every expiry unit is foreign to the window being minted.
+    // A unit that is active with no unit file of its own is not measurable
+    // from disk here; that state is the retiring episode's own post-condition
+    // (unitIdle plus UnitFileState in shu71-production.mjs).
+    check('/etc/systemd/system#shu71-expiry', () => {
+      const expiry = n => n.startsWith('shu71-expiry-') && (n.endsWith('.timer') || n.endsWith('.service'));
+      need(!f.readdirSync('/etc/systemd/system').some(expiry), 'ACT_PRODUCTION_EXPIRY_UNIT_PRESENT');
+      const enabled = ['timers.target.wants', 'multi-user.target.wants', 'default.target.wants'].flatMap(target => {
+        try { return f.readdirSync('/etc/systemd/system/' + target); }
+        catch (e) { if (e.code !== 'ENOENT') throw e; return []; }
+      }).filter(expiry);
+      need(!enabled.length, 'ACT_PRODUCTION_EXPIRY_UNIT_ENABLED');
+      return { state: 'NO_EXPIRY_MECHANISM' };
+    });
     // The activation ID is selected after this pre-mint gate. Traverse any
     // existing approval documents without treating one as this run's approval.
     check('/etc/shu/approvals#documents', () => {

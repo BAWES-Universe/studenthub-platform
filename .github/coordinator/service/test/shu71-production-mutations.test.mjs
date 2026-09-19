@@ -9,7 +9,9 @@ import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
 import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck, expiryFileDriftCheck, expiryRetirementCheck,
   expiryDisableFailureCheck, expiryCachedViewCheck, expiryPostConditionCheck, recoveredNonCreationCheck,
-  teardownOrderCheck, fixturesRequireWorkersCheck, predicateRefusalCheck } from './shu71-recovery-checks.mjs';
+  teardownOrderCheck, fixturesRequireWorkersCheck, predicateRefusalCheck, expiryCustodyDriftCheck,
+  expiryPostReloadDriftCheck } from './shu71-recovery-checks.mjs';
+const custody = variant => (create, h) => expiryCustodyDriftCheck(create, h, variant);
 const keys = ephemeralPublicSource();
 const moduleUrl = new URL('../shu71-production.mjs', import.meta.url);
 const source = fs.readFileSync(moduleUrl, 'utf8');
@@ -98,6 +100,19 @@ const mutations = [
     "      ['workers', () => killSupervisorWorkers(journal)],\n      ['activation', () => remove(ACTIVATION_FILE)],", teardownOrderCheck],
   ['fixtures durability precondition removed', "need(journal.entries.some(e => e.event === 'DONE' && e.step === 'teardown:workers'), 'ACT_FIXTURE_CLEANUP');",
     "need(true, 'ACT_FIXTURE_CLEANUP');", fixturesRequireWorkersCheck],
+  // Correction round: one mutant per custody term of the pre-condition, plus
+  // the vacuous predicate, and the refusal measured after the daemon-reload.
+  // `!s.isSymbolicLink()` has no mutant: it is an equivalent mutant on an lstat
+  // result, documented at the predicate rather than pinned by a faked control.
+  ['expiry unit owner unchecked', 's.nlink === 1 && s.uid === 0 && s.gid === 0', 's.nlink === 1 && s.gid === 0', custody('non-root-owner')],
+  ['expiry unit group unchecked', 's.nlink === 1 && s.uid === 0 && s.gid === 0', 's.nlink === 1 && s.uid === 0', custody('non-root-group')],
+  ['expiry unit group-writable mode accepted', 's.gid === 0 && !(s.mode & 0o022)', 's.gid === 0 && !(s.mode & 0o002)', custody('group-writable')],
+  ['expiry unit world-writable mode accepted', 's.gid === 0 && !(s.mode & 0o022)', 's.gid === 0 && !(s.mode & 0o020)', custody('world-writable')],
+  ['expiry unit file shape unchecked', 's.isFile() && !s.isSymbolicLink() && ', '', custody('non-regular-file')],
+  ['expiry unit custody predicate vacuous', 'return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022);',
+    'return true;', custody('non-root-owner')],
+  ['post-reload expiry end state never measured', "      command('/usr/bin/systemctl', ['daemon-reload']);\n      need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT');",
+    "      command('/usr/bin/systemctl', ['daemon-reload']);", expiryPostReloadDriftCheck],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

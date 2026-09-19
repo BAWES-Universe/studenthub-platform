@@ -203,7 +203,7 @@ test('B4 a unit that holds no processes still completes its teardown', async t =
 import * as production from '../shu71-production.mjs';
 import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck, expiryCachedViewCheck,
   expiryPostConditionCheck, recoveredNonCreationCheck, teardownOrderCheck, fixturesRequireWorkersCheck,
-  predicateRefusalCheck } from './shu71-recovery-checks.mjs';
+  predicateRefusalCheck, expiryCustodyDriftCheck, expiryPostReloadDriftCheck } from './shu71-recovery-checks.mjs';
 
 for (const unit of ['timer', 'service']) {
   test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
@@ -241,4 +241,16 @@ test('B4 a disable that reports success while the unit stays live is drift', asy
 
 test('B4 a refusal predicate that throws is still the named refusal', () => {
   predicateRefusalCheck(production);
+});
+
+// Correction round: the custody half of the same pre-condition, one control per
+// term, and the refusal that measures the end state after the daemon-reload.
+for (const variant of ['non-root-owner', 'non-root-group', 'group-writable', 'world-writable', 'non-regular-file']) {
+  test(`B4 an installed expiry unit file replaced by a ${variant} one halts before disabling`, async t => {
+    await expiryCustodyDriftCheck(createShu71Production, productionFixture(t, keys), variant);
+  });
+}
+
+test('B4 an expiry mechanism still present after the reload is refused, never reported retired', async t => {
+  await expiryPostReloadDriftCheck(createShu71Production, productionFixture(t, keys));
 });

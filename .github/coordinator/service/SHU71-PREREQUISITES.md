@@ -95,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L649). Real kernel socket access
+[operative unit render](shu71-production.mjs#L663). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -396,7 +396,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L349), [stop](shu71-production.mjs#L600)).
+([start](shu71-production.mjs#L349), [stop](shu71-production.mjs#L607)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -785,7 +785,9 @@ The corrected retirement is a pre-condition, a command, and a post-condition:
    measured again. The end state satisfies the same predicate the
    never-installed branch asserts. **Invariant:** after a completed teardown the
    successor window's pre-mint gate must pass, and this episode leaves no expiry
-   mechanism behind. The retired episode's own receipt path now observes that
+   mechanism behind — machine-checked from the gate side since the correction
+   round below, by the `/etc/systemd/system#shu71-expiry` precondition row. The
+   retired episode's own receipt path now observes that
    too, so a mechanism re-created afterwards halts by `ACT_TEARDOWN_DRIFT`.
 4. **No exception bypasses a check.** Every refusal in the retirement measures
    its predicate into a value first, through the exported `measuredPredicate()`:
@@ -893,3 +895,121 @@ are strictly additive: 113 test files unchanged, 3,238 → 3,262 names and
 requirement rows, zero removals and zero dropped requirement rows; no test file
 was added. The reviewed teardown effects set and its order are unchanged. Only
 files under `.github/coordinator/**` changed; no push or PR was performed.
+
+#### Correction round: the clauses the shipped tree did not pin
+
+An independent verifier (a different model family) reproduced the behaviour
+above from the shipped code and confirmed it, then returned **BLOCK** on
+coverage: three custody clauses of the pre-condition and the refusal after the
+`daemon-reload` were enforced by the shipped module but **pinned by no shipped
+control**. Its own mutants — ownership clause removed, mode clause removed,
+custody predicate made vacuous, and the post-reload `need(...)` deleted while
+keeping the reload — each survived the entire shipped expiry surface (1,069
+tests, 0 failures). Only the *existence* half of the pre-condition was pinned.
+A future edit could therefore delete those clauses with the suite still green,
+and an installed `shu71-expiry-<id>.timer`/`.service` **replaced** by a
+non-root-owned or group/world-writable file would again be disabled, removed
+and reported as successfully retired.
+
+The clauses are unchanged. What follows is new coverage, plus one new
+machine-checked precondition in the pre-mint gate.
+
+**The custody terms, one control and one mutant each.** Each control plants
+exactly one broken term on a **journal-proven installed** unit file, with both
+files present and `disable --now` ready to succeed, and asserts by
+`B4_EXPIRY_CUSTODY_EXACTLY_ONE_TERM_<variant>` that nothing else in the
+predicate is false — so the control cannot survive on the mutant that removes
+the term it claims to pin. `ACT_TEARDOWN_DRIFT` is raised by `need()` inside the
+`expiry-timer` teardown effect, and `teardownActivation()` reports every effect
+refusal under that step's own name, so `ACT_CLEANUP_FAILED` with
+`ACT_TEARDOWN_EXPIRY_TIMER` in `failures` is the observable form of that refusal
+at the module boundary; the literal code is observable on the retired-episode
+receipt path, pinned by `B4_RETIRED_EPISODE_EXPIRY_DRIFT_NAMED`.
+
+| Named control | Named killing mutant | Clause pinned |
+| --- | --- | --- |
+| `B4_EXPIRY_CUSTODY_REFUSED_non-root-owner` (+ `_NAMED_`, `_STEP_NAMED_`, `_BEFORE_DISABLE_`, `_UNITS_RETAINED_`, `_NO_RECEIPT_`, `_PERSISTS_`, `_RECOVERED_`) | `B1/B4 mutation: expiry unit owner unchecked` | `s.uid === 0` |
+| `B4_EXPIRY_CUSTODY_REFUSED_non-root-group` (+ the same suffixes) | `B1/B4 mutation: expiry unit group unchecked` | `s.gid === 0` |
+| `B4_EXPIRY_CUSTODY_REFUSED_group-writable` | `B1/B4 mutation: expiry unit group-writable mode accepted` (`0o022` → `0o002`) | the group-write bit of `!(s.mode & 0o022)` |
+| `B4_EXPIRY_CUSTODY_REFUSED_world-writable` | `B1/B4 mutation: expiry unit world-writable mode accepted` (`0o022` → `0o020`) | the world-write bit of `!(s.mode & 0o022)` |
+| `B4_EXPIRY_CUSTODY_REFUSED_non-regular-file` | `B1/B4 mutation: expiry unit file shape unchecked` | `s.isFile() && !s.isSymbolicLink()` |
+| `B4_EXPIRY_CUSTODY_REFUSED_non-root-owner` | `B1/B4 mutation: expiry unit custody predicate vacuous` | the whole predicate |
+| `B4_EXPIRY_POST_RELOAD_REFUSED` (+ `_NAMED`, `_STEP_NAMED`, `_STATE_CONSTRUCTED`, `_REMOVAL_ISSUED`, `_RELOADED`, `_NOT_RETIRED`, `_RECOVERED`, `_RETIRED_AFTER_RECOVERY`) | `B1/B4 mutation: post-reload expiry end state never measured` | `need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT')` after the reload |
+
+Each mutant was re-verified individually: with the clause removed the teardown
+returns `{"ok":true,"state":"REVOKED"}` — a live or lawless expiry mechanism
+reported as a successful retirement — and the control dies by its own named
+assertion, not by a textual anchor or a documentation line number. The
+post-reload control constructs exactly the state the verifier named: both unit
+files are removed, the mechanism comes back on disk before systemd re-reads the
+unit directory, the `daemon-reload` is issued and observed in the event slice
+(`B4_EXPIRY_POST_RELOAD_RELOADED`), and the end state is still not retired.
+
+The non-regular-file control plants a **listening unix socket** with the unit
+file's own custody (root:root, one link, `0644`): a genuine non-regular file for
+which every other custody term still holds. A planted **symlink** could not
+serve, because a symlink's own mode is `0777`, so the mode clause would refuse
+it and the shape mutant would survive.
+
+**`!s.isSymbolicLink()` is an equivalent mutant, and is documented as one
+rather than given a faked control.** `s` is an `lstat` result, so a symlink is
+already `isFile() === false`; removing that term alone cannot change any
+outcome, and a mutant that removes it survives — by construction, not by a gap.
+It is retained as a statement of the requirement at the point of measurement,
+and the shape clause **as a whole** is pinned by the control above. The reasoning
+is recorded in place at the predicate in `shu71-production.mjs`.
+
+**The `expiry-timer` step's last-of-all precondition is deliberate defence in
+depth.** `teardownActivation()` already refuses that step when any earlier
+effect failed, throwing `ACT_CLEANUP_FAILED` independently. The precondition
+states the same requirement against the **durable journal rows** rather than one
+process's in-memory failure list, so a retry in a fresh process that re-reads
+the log reaches it too. Noted in place; unchanged.
+
+**The successor-gate claim is now machine-checked, not inferred.** The invariant
+above says a completed teardown leaves the successor window's pre-mint gate
+passing. Until this round nothing in `provision-shu71-prerequisites.mjs`
+mentioned the expiry mechanism, so that sentence was an inference about an
+out-of-repo host process. `precondition()` now carries the row
+`/etc/systemd/system#shu71-expiry`, which refuses:
+
+* `ACT_PRODUCTION_EXPIRY_UNIT_PRESENT` — any `shu71-expiry-*.timer` or
+  `shu71-expiry-*.service` file in `/etc/systemd/system`. The activation ID is
+  selected **after** this gate, so every such unit is a foreign episode's.
+* `ACT_PRODUCTION_EXPIRY_UNIT_ENABLED` — any `shu71-expiry-*` enable symlink in
+  `timers.target.wants`, `multi-user.target.wants` or `default.target.wants`,
+  which is the durable record `systemctl enable` writes, and which survives even
+  where the unit file itself is gone.
+
+The row reports `{ state: 'NO_EXPIRY_MECHANISM' }` and **passes** where no expiry
+mechanism is installed, which is the target host's measured state: it refuses
+drift, it does not block arming (`HOST_EXPIRY_UNITS_ABSENT_GREEN`, which also
+asserts the whole report stays green). Its limit is stated plainly: a unit that
+is *active* with no unit file and no enable symlink of its own is not measurable
+from disk, and no `systemctl` is executed by the pre-mint gate. That state is
+the retiring episode's own post-condition (`unitIdle` plus `UnitFileState` in
+`shu71-production.mjs`), not this gate's.
+
+| Named control | Named killing mutant |
+| --- | --- |
+| `HOST_EXPIRY_UNIT_TIMER_PRESENT` | `HOST_KILL_EXPIRY_UNIT_PRESENT` (the presence `need(...)` removed) |
+| `HOST_EXPIRY_UNIT_SERVICE_PRESENT` | `HOST_KILL_EXPIRY_UNIT_COMPANION` (the `.service` suffix dropped from the match) |
+| `HOST_EXPIRY_UNIT_ENABLED` | `HOST_KILL_EXPIRY_UNIT_ENABLED` (the enablement `need(...)` removed) |
+| `HOST_EXPIRY_UNITS_ABSENT_GREEN` | — (green control: the gate must stay passable on the real host) |
+
+**`V8_DOCUMENTATION_LINK_TARGETS`.** The previous round widened the accepted-line
+alternation with `|function sharedAccess\(` when `SHU71-L3-CLOSURE.md` split one
+broker-identity link into `identity()#L182` and `sharedAccess()#L195`. The
+justification is now recorded in the test itself: every accepted alternative is
+the definition or call line of the exact symbol its link text names, and
+`function sharedAccess(` is the same "definition line of the named function"
+form already accepted for `identity()`, in the same file, for the adjacent half
+of the same claim. No assertion was removed and the exact line is still
+asserted, so a one-line drift in either target still fails.
+
+Inventories remain strictly additive: 3,262 → 3,282 names and requirement rows,
+no test file added or removed, no name changed. `PERMITTED_SKIPS` stays
+byte-identical (1,093 bytes, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`). The
+reviewed teardown effects set and its order are unchanged, and the only
+production changes in this round are two comments and the new pre-mint gate row.

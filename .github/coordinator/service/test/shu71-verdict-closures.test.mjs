@@ -237,6 +237,14 @@ test('V8_DOCUMENTATION_LINK_TARGETS', async () => {
       const source = fs.readFileSync(new URL('../' + name, import.meta.url), 'utf8');
       for (const [, file, number] of source.matchAll(/\((shu71-production\.mjs|provision-shu71-prerequisites\.mjs)#L(\d+)\)/g)) {
         const lines = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8').split('\n');
+        // Every accepted alternative is the definition or call line of the exact
+        // symbol its link text names, so the pattern cannot accept a link that
+        // points somewhere else. `function sharedAccess(` was added when
+        // SHU71-L3-CLOSURE.md split one broker-identity link into `identity()`
+        // and `sharedAccess()`: it is the same "definition line of the named
+        // function" form already accepted for `identity()`, on the same file,
+        // for the adjacent half of the same claim. The exact line is still
+        // asserted, so a one-line drift in either target still fails below.
         assert.match(lines[Number(number) - 1 + drift], /renderEvidenceBroker|const key = privateRead|step\('evidence-broker'|\['evidence-broker'|check\('\/etc\/shu\/keys|function identity\(|function sharedAccess\(/, label);
       }
     }

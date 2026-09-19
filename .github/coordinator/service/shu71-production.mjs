@@ -430,6 +430,13 @@ export function createShu71Production(id, b = shu71Boundary) {
   // answer is a cache of what systemd loaded, never a substitute for the files.
   const expiryTimerUnit = `shu71-expiry-${id}.timer`;
   const EXPIRY_UNITS = [`/etc/systemd/system/${expiryTimerUnit}`, `/etc/systemd/system/shu71-expiry-${id}.service`];
+  // Custody terms, each pinned by its own control and killing mutant: the file
+  // shape (a non-regular file replacing the unit refuses), one link, root user,
+  // root group, and neither group- nor world-writable. `!s.isSymbolicLink()` is
+  // an EQUIVALENT mutant and deliberately has no control of its own: `s` is an
+  // lstat result, so a symlink is already `isFile() === false`, and removing
+  // that term alone cannot change any outcome. It is retained as a statement of
+  // the requirement at the point of measurement, not as a reachable branch.
   const expiryUnitCustody = file => {
     const s = f.lstatSync(file);
     return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022);
@@ -607,6 +614,13 @@ export function createShu71Production(id, b = shu71Boundary) {
     // Retire the retry mechanism only after every effect and observation passed.
     effects.push(
       ['expiry-timer', () => {
+        // Defence in depth, kept deliberately: teardownActivation() already
+        // refuses this step when any earlier effect failed (shu71-journal.mjs,
+        // `if (step === 'expiry-timer' && failures.length)`), throwing
+        // ACT_CLEANUP_FAILED independently. This precondition is the same
+        // requirement stated against the durable journal rows rather than
+        // against one process's in-memory failure list, so a retry in a fresh
+        // process that re-reads the log reaches it too.
         need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
           .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
         observeTeardown();

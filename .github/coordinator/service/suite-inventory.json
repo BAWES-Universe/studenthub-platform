@@ -771,6 +771,13 @@
     "B1/B4 mutation: recovered log accepted as non-creation proof",
     "B1/B4 mutation: teardown effect order permuted",
     "B1/B4 mutation: fixtures durability precondition removed",
+    "B1/B4 mutation: expiry unit owner unchecked",
+    "B1/B4 mutation: expiry unit group unchecked",
+    "B1/B4 mutation: expiry unit group-writable mode accepted",
+    "B1/B4 mutation: expiry unit world-writable mode accepted",
+    "B1/B4 mutation: expiry unit file shape unchecked",
+    "B1/B4 mutation: expiry unit custody predicate vacuous",
+    "B1/B4 mutation: post-reload expiry end state never measured",
     "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
@@ -801,6 +808,12 @@
     "B4 fixture cleanup refuses until the worker kill reaches its durable DONE row",
     "B4 a disable that reports success while the unit stays live is drift",
     "B4 a refusal predicate that throws is still the named refusal",
+    "B4 an installed expiry unit file replaced by a non-root-owner one halts before disabling",
+    "B4 an installed expiry unit file replaced by a non-root-group one halts before disabling",
+    "B4 an installed expiry unit file replaced by a group-writable one halts before disabling",
+    "B4 an installed expiry unit file replaced by a world-writable one halts before disabling",
+    "B4 an installed expiry unit file replaced by a non-regular-file one halts before disabling",
+    "B4 an expiry mechanism still present after the reload is refused, never reported retired",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -3173,6 +3186,10 @@
     "HOST_HARD_UNIT_shu-supervisor.service",
     "HOST_HARD_UNIT_shu-coordinator.service",
     "HOST_HARD_UNIT_shu-coordinator.timer",
+    "HOST_EXPIRY_UNIT_TIMER_PRESENT",
+    "HOST_EXPIRY_UNIT_SERVICE_PRESENT",
+    "HOST_EXPIRY_UNIT_ENABLED",
+    "HOST_EXPIRY_UNITS_ABSENT_GREEN",
     "HOST_RANGE_DUPLICATE",
     "HOST_RANGE_MALFORMED",
     "HOST_RANGE_REVERSED",
@@ -3191,6 +3208,9 @@
     "HOST_KILL_ENV_FOREIGN_OWNER",
     "HOST_KILL_ENV_WRITABLE",
     "HOST_KILL_STATE_SYMLINK",
+    "HOST_KILL_EXPIRY_UNIT_PRESENT",
+    "HOST_KILL_EXPIRY_UNIT_COMPANION",
+    "HOST_KILL_EXPIRY_UNIT_ENABLED",
     "HOST_KILL_DUPLICATE",
     "HOST_KILL_MALFORMED",
     "HOST_KILL_MAX_DEFAULT",
@@ -7414,6 +7434,34 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry unit owner unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit group unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit group-writable mode accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit world-writable mode accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit file shape unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit custody predicate vacuous",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: post-reload expiry end state never measured",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: refusal predicate evaluated inside need()",
       "capabilities": []
     },
@@ -7531,6 +7579,30 @@
     },
     {
       "name": "B4 a refusal predicate that throws is still the named refusal",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a non-root-owner one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a non-root-group one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a group-writable one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a world-writable one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a non-regular-file one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an expiry mechanism still present after the reload is refused, never reported retired",
       "capabilities": []
     },
     {
@@ -25395,6 +25467,38 @@
       ]
     },
     {
+      "name": "HOST_EXPIRY_UNIT_TIMER_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_EXPIRY_UNIT_SERVICE_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_EXPIRY_UNIT_ENABLED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_EXPIRY_UNITS_ABSENT_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "HOST_RANGE_DUPLICATE",
       "capabilities": [
         {
@@ -25532,6 +25636,30 @@
     },
     {
       "name": "HOST_KILL_STATE_SYMLINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_EXPIRY_UNIT_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_EXPIRY_UNIT_COMPANION",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_EXPIRY_UNIT_ENABLED",
       "capabilities": [
         {
           "name": "shell_toolchain"
