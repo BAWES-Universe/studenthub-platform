@@ -95,3 +95,28 @@ Install failure now reports its original code and successful rollback outcome to
 After the diagnostic experiment, **the account was removed and the receipt restored afterwards to its original absent state**. The host is currently clean: no `shu71-evidence` user or group, `/etc/shu/shu71-prerequisites.json`, `/usr/local/lib/shu71`, `/etc/sudoers.d/shu-reviewer`, or `shu71-evidence.service`. The deployment checkout is pinned to `a3e40ca`; both fixture refs exist. `/srv/shu/state/shu71-evidence` is root:root 0700 with its three unchanged episode directories. All three reviewed units are installed inactive with `ENABLE_DISPATCH=false`.
 
 `provision-target-host-fixture.mjs` reproduces the shadow rc 3/stderr, commented ranges with accepted explicit IDs, and the unpruned find rc 1/stderr. The existing forward and rollback crash matrices now run on this shape. Named `TARGET_*` controls and `TARGET_KILL_*` mutants in `provision-target-host.test.mjs` mutate shipped source; a kill requires the corresponding named assertion, never an import or syntax failure. No existing assertion or refusal is removed or renamed. The old partial-installation mutant's source anchor is updated to the new catch signature while retaining its exact assertion.
+
+### Final validation of the target-host correction
+
+The tested implementation is `6a0cd80b22b4d194aeb0a592016405e30e402ff5`, tree `92eb74b850a1219d9423ffc16f20551068910949`. All four final commands began at that commit. The follow-up test commit makes the system-flag mutant target `useradd` specifically and uses adjacent positive IDs for ownership mutants, avoiding `find`'s special negative-number syntax. Production bytes remain those of `7a0a6c7`.
+
+The unchanged namespace harness verifies UID 1000, umask 0022, and absent target accounts/runtime/reviewer sudoers for every run. The focused selection is the prior phase-readback/host-contract selection, including all `provision*.test.mjs`. Full commands use `taskset -c 0-3 node --test --test-concurrency=2` with both coordinator and service test globs. This limits concurrent pressure on the existing one-second controls; it changes no assertion. The nested inventory run inherits the CPU affinity. Plain clears NODE_OPTIONS and SHU_TEST_CLOCK_OFFSET_MS; clock sets the reviewed +31536000000 ms offset and preload. Exact commands and environment are in the validation metadata.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused plain | 1210 | 1210 | 0 | 0 | 1 / 1 |
+| Focused clock | 1210 | 1210 | 0 | 0 | 1 / 1 |
+| Full plain | 3183 | 3175 | 0 | 8 | 1 / 1 |
+| Full clock | 3183 | 3175 | 0 | 8 | 1 / 1 |
+
+Every final command exits zero with no cancelled/todo outcomes. Focused TAP plans are `1..1210`; full plans are `1..3178`, with five nested outcomes. All four structured reports pass unchanged `evaluateSuite`; both full name lists match the committed inventory. The original provisioning matrices retain 296 forward and 92 rollback process-death injections, now against the target-shaped shadow/proc fixture. Each relevant run passes all 11 new controls and 21 named killing mutants.
+
+Exact behavioral assertion names: `TARGET_ARGV`, `TARGET_PROPERTIES`, `TARGET_MAIL_DEFAULT`, `TARGET_CONFIGURATION`, `TARGET_FILE`, `TARGET_PROCESS`, `TARGET_PROC_RACE`, `TARGET_ENUMERATION`, `TARGET_RECOVERY`, `TARGET_IDENTITY_CRASH`, `TARGET_CLI`. The [complete named control and mutant manifest](test/fixtures/target-host-evidence/named-controls.json) also enumerates every mutation-applied and named-kill assertion.
+
+The initial full run with default concurrency reported two failures: the inventory child reported SHU-249 A1 codex-cli/build, and the SHU-250 pre-spawn-marker mutant hit its one-second responsiveness check instead of its intended assertion. The isolated 43-test rerun passed. Final full runs use the constrained scheduling above. No production or existing assertion changes were made to address those timing-sensitive results. An in-progress retry was stopped when the new mutants were tightened; all four final runs were then restarted at the same test commit. The earlier provisioning discovery failure was solely the stale partial-installation mutant anchor, corrected with its name and assertion intact.
+
+[Machine-readable validation](test/fixtures/target-host-evidence/validation.json) records counts, terminal markers, hashes, commands, exact names, the initial failures and scope. Compressed TAP, structured outcomes and harness constraints are retained beside it, including the initial failed full run and isolated timing controls. This completion note and evidence are added after validation; tested production, test and inventory bytes are unchanged.
+
+Inventories are strictly additive: 112 to 113 test files and 3151 to 3183 names/requirements, with every prior row unchanged. PERMITTED_SKIPS is byte-identical to `a3e40ca`: **1093 bytes**, SHA-256 **03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e**; its entire source file is also unchanged. No fixed broker GID, numeric rendered identity, extra effect, or unrelated-file deletion was introduced. All prior findings and the joint evidence-root control remain covered by the passing full suites.
+
+Remaining code or test inconsistencies: **none**. A fresh installation on the real target host has not been performed by this lane; the supplied measurements are reproduced by explicit doubles. Only `.github/coordinator/**` repository files changed. No push was performed.

@@ -1,0 +1,197 @@
+{
+  "base": "a3e40ca225a4515102d6fee4f9350e5334803831",
+  "tested_implementation": "6a0cd80b22b4d194aeb0a592016405e30e402ff5",
+  "tested_tree": "92eb74b850a1219d9423ffc16f20551068910949",
+  "run_revision_note": "All four final runs start at tested_implementation. A test-only follow-up corrects the system-flag mutant to target useradd and ownership mutants to use adjacent positive IDs rather than find numeric-prefix syntax. The in-progress retry was stopped and all four final runs restarted; no production source changed in that follow-up.",
+  "constraints": {
+    "uid": 1000,
+    "umask": "0022",
+    "target_accounts": "absent",
+    "runtime": "absent",
+    "reviewer": "absent"
+  },
+  "clock_offset_ms": 31536000000,
+  "runs": {
+    "focused-plain": {
+      "tests": 1210,
+      "pass": 1210,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "exit_code": 0,
+      "terminal_tap_markers": [
+        "1..1210"
+      ],
+      "terminal_reporter_markers": 1,
+      "tap_sha256": "b839388d122e194f0b7cce64315ef63f913d09e58de2ee6560269ac9c4bd6b42",
+      "reporter_sha256": "64b667a04e78fd8496bde1ae6be80ce655569fb9da7f2400cfcd2922a05c5a0f",
+      "validated": {
+        "tests": 1210,
+        "pass": 1210,
+        "fail": 0,
+        "skipped": 0
+      }
+    },
+    "focused-clock": {
+      "tests": 1210,
+      "pass": 1210,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "exit_code": 0,
+      "terminal_tap_markers": [
+        "1..1210"
+      ],
+      "terminal_reporter_markers": 1,
+      "tap_sha256": "957588236e7ae16af39b67d4209e37e4fe95299fb8bca3eb3454022229f9ddc6",
+      "reporter_sha256": "64b667a04e78fd8496bde1ae6be80ce655569fb9da7f2400cfcd2922a05c5a0f",
+      "validated": {
+        "tests": 1210,
+        "pass": 1210,
+        "fail": 0,
+        "skipped": 0
+      }
+    },
+    "full-plain": {
+      "tests": 3183,
+      "pass": 3175,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "exit_code": 0,
+      "terminal_tap_markers": [
+        "1..3178"
+      ],
+      "terminal_reporter_markers": 1,
+      "tap_sha256": "248b65c48b0920727c5afadc2cd29b7b0689bdc8c22a3cedc53e08a3464a4b0d",
+      "reporter_sha256": "e72a329bfa308ba7633f67d571ca1bb5218d9b64b339049978d3bf91fbece443",
+      "validated": {
+        "tests": 3183,
+        "pass": 3175,
+        "fail": 0,
+        "skipped": 8
+      }
+    },
+    "full-clock": {
+      "tests": 3183,
+      "pass": 3175,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0,
+      "exit_code": 0,
+      "terminal_tap_markers": [
+        "1..3178"
+      ],
+      "terminal_reporter_markers": 1,
+      "tap_sha256": "27733dde4e27ff257e84020e4bb20e7d1eb2ad2ca8979870d64ac6ada4a4ea9e",
+      "reporter_sha256": "e72a329bfa308ba7633f67d571ca1bb5218d9b64b339049978d3bf91fbece443",
+      "validated": {
+        "tests": 3183,
+        "pass": 3175,
+        "fail": 0,
+        "skipped": 8
+      }
+    }
+  },
+  "permitted_skips": {
+    "bytes": 1093,
+    "sha256": "03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e",
+    "byte_identical": true,
+    "entire_source_byte_identical": true
+  },
+  "inventory": {
+    "files_before": 112,
+    "files_after": 113,
+    "names_before": 3151,
+    "names_after": 3183,
+    "all_previous_rows_unchanged": true
+  },
+  "new_names": [
+    "TARGET_ARGV",
+    "TARGET_PROPERTIES",
+    "TARGET_MAIL_DEFAULT",
+    "TARGET_CONFIGURATION",
+    "TARGET_FILE",
+    "TARGET_PROCESS",
+    "TARGET_PROC_RACE",
+    "TARGET_ENUMERATION",
+    "TARGET_RECOVERY",
+    "TARGET_IDENTITY_CRASH",
+    "TARGET_CLI",
+    "TARGET_KILL_ARGV",
+    "TARGET_KILL_PROPERTY_no_create_home",
+    "TARGET_KILL_PROPERTY_no_log_init",
+    "TARGET_KILL_PROPERTY_system",
+    "TARGET_KILL_HOME",
+    "TARGET_KILL_SHELL",
+    "TARGET_KILL_PRIVATE_GROUP",
+    "TARGET_KILL_WRITE_AHEAD",
+    "TARGET_KILL_CONFIGURATION_ARGUMENT",
+    "TARGET_KILL_MAIL_DEFAULT",
+    "TARGET_KILL_CONFIGURATION",
+    "TARGET_KILL_FILE_UID",
+    "TARGET_KILL_FILE_GID",
+    "TARGET_KILL_PROCESS",
+    "TARGET_KILL_PRUNE_PROC",
+    "TARGET_KILL_PRUNE_SYS",
+    "TARGET_KILL_PRUNE_DEV",
+    "TARGET_KILL_ENUMERATION",
+    "TARGET_KILL_ORIGINAL",
+    "TARGET_KILL_ROLLBACK_OUTCOME",
+    "TARGET_KILL_CLI"
+  ],
+  "identity_crash_matrices": {
+    "forward_injections": 296,
+    "rollback_injections": 92,
+    "fixture": "provision-target-host-fixture.mjs"
+  },
+  "initial_local_failure": "Provisioning discovery run: the prior partial-installation mutant had a stale source anchor after the catch changed. Its anchor was updated without changing its name or assertion; all four final runs pass.",
+  "remaining_inconsistencies": [],
+  "initial_full_run": {
+    "revision": "7a0a6c7d56ffa7e9d0272cc27edf145b0a10c1d5",
+    "tests": 3183,
+    "pass": 3173,
+    "fail": 2,
+    "skipped": 8,
+    "exit_code": 1,
+    "failures": [
+      "A12 committed inventory requirements match real outcomes (nested SHU-249 A1 codex-cli/build reservation failed)",
+      "SHU-250 mutation: drop pre-spawn marker (SHU250_RESPONSIVE 1000ms threshold reached instead of expected kill)"
+    ],
+    "isolated_rerun": {
+      "tests": 43,
+      "pass": 43,
+      "fail": 0
+    },
+    "resolution": "No assertions changed. Full runs constrain CPU affinity to 0-3 and outer test concurrency to 2; nested inventory children inherit four CPUs."
+  },
+  "node_version": "v22.22.3",
+  "commands": {
+    "harness": ".github/coordinator/service/test/fixture/shu71-ci-like.sh",
+    "focused": "node --test .github/coordinator/service/test/provision*.test.mjs .github/coordinator/service/test/shu71-owner-decisions.test.mjs .github/coordinator/service/test/shu71-production*.test.mjs .github/coordinator/service/test/shu71-phase-readback.test.mjs .github/coordinator/service/test/shu71-host-contract.test.mjs .github/coordinator/service/test/shu71-trust*.test.mjs",
+    "full": "taskset -c 0-3 node --test --test-concurrency=2 .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs",
+    "reporters": "--test-reporter=tap --test-reporter-destination=<run>.tap --test-reporter=./.github/coordinator/service/host-suite-contract.mjs --test-reporter-destination=<run>.jsonl",
+    "plain_env": "env -u NODE_OPTIONS -u SHU_TEST_CLOCK_OFFSET_MS",
+    "clock_env": "env SHU_TEST_CLOCK_OFFSET_MS=31536000000 NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs"
+  },
+  "proof_scope": "Repository validation and explicit target-host doubles. The real host evidence is supplied by ai-orchestrator; this lane did not execute a new target-host install.",
+  "tested_file_sha256": {
+    ".github/coordinator/service/ACTIVATION-WINDOW-RECONCILIATION.md": "cdc4177231e7192c28af66d76ac44183bedd37dcf900eb74ee37c069cfd7a900",
+    ".github/coordinator/service/SHU71-HOST-REALITY.md": "ec421a82511ede911a6feb954a19416756306f6c69fd1696644a57d23959725a",
+    ".github/coordinator/service/SHU71-L3-CLOSURE.md": "556f4f755315e3749474458d67e8d51b44efb700e8ad3f16e102c6236335a541",
+    ".github/coordinator/service/SHU71-PREREQUISITES.md": "c087964f8daee2f2106b0bc16a654e23e7b343a9f6c361d6784ec079c2f24f5a",
+    ".github/coordinator/service/a12-evidence/file-requirements.json": "ffc80fc74b11cbab97da9a179216538e12554387cfd9b4252b5ed7030bd00ba6",
+    ".github/coordinator/service/a12-evidence/required-files.json": "66f74cb59bb8b3a5c8a59d319912a88a6370c053cc89707943c63df7ecdf7b52",
+    ".github/coordinator/service/provision-shu71-prerequisites.mjs": "8c2ebad0eb5a8da76a6e7f5c4e58f6a5a353614f10f6b816cd0bf1c16a1410d3",
+    ".github/coordinator/service/suite-inventory.json": "37bf421297cfd1e9ddd2f092eaf4c49daed6cdcd15af56b93cf89cdb624c58b1",
+    ".github/coordinator/service/test/provision-prerequisites-fixture.mjs": "40fe46d9ada61a41e9d635ea9f0ec163282716bcdeef9268c68868a16fde32ec",
+    ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs": "4401c9c63270df124a391305e46ecb9ad54e52a73d24a27b506b1eeb588528b4",
+    ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs": "a660316fc07535d3e24d879bdc4591f5b46d3c775c69279d669727ee65dc5fba",
+    ".github/coordinator/service/test/provision-target-host-fixture.mjs": "5bfcfc90c4a1ac2c41cd3062890fef4085f1d0db26251a4adb2b9baabfc63fd1",
+    ".github/coordinator/service/test/provision-target-host.test.mjs": "c2a45cd6e4d5f1f003e5efdf42fdec2a2e2d7581af4742db8618f53303328ea2"
+  }
+}
