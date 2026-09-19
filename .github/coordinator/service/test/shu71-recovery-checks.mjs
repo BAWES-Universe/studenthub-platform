@@ -434,3 +434,21 @@ export async function phaseInterruptionCheck(createProduction, h, phase) {
   }
   return result;
 }
+// The window measured the kill refusal only for a unit this episode never
+// started. Under the stricter reading - any unit that currently holds no
+// processes, as after a reboot or a teardown that already stopped it - the
+// same teardown must still complete rather than wedge.
+export async function strictKillModelCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_STRICT_KILL_SETUP');
+  h.systemd.killRequiresProcesses = true;
+  h.active.set('shu-supervisor.service', 'inactive');
+  const result = await create().execute('revoke');
+  assert.equal(result.state, 'REVOKED', `B4_STRICT_KILL_NO_WEDGE: ${JSON.stringify(result)}`);
+  assert.ok(h.events.some(e => e.includes(':kill --kill-whom=all')), 'B4_STRICT_KILL_ISSUED');
+  assert.ok(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), 'B4_STRICT_KILL_RECEIPT');
+  assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false, 'B4_STRICT_KILL_CREDENTIAL_REVOKED');
+  const settled = treeSnapshot(h);
+  assert.equal((await create().execute('revoke')).ok, true, 'B4_STRICT_KILL_IDEMPOTENT');
+  assert.deepEqual(treeSnapshot(h), settled, 'B4_STRICT_KILL_IDEMPOTENT_INERT');
+}

@@ -778,6 +778,7 @@
     "B4 a refused worker kill is accepted only for a unit measured idle",
     "B4 a destroyed journal is never proof that nothing was created",
     "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
+    "B4 a unit that holds no processes still completes its teardown",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -7414,6 +7415,10 @@
     },
     {
       "name": "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a unit that holds no processes still completes its teardown",
       "capabilities": []
     },
     {

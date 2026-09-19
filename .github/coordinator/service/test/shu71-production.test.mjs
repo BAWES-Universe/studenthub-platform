@@ -153,7 +153,7 @@ test('B4 fixture cleanup removes only the episode-bound owned attempt and preser
 
 // SHU-71 idempotent, receipt-aware teardown (approved window shu71-mint-00000017).
 import { preArmTeardownCheck, preArmFixtureCleanupCheck, preArmDriftCheck, workerKillFailureCheck,
-  destroyedJournalCheck, phaseInterruptionCheck, lifecyclePhases } from './shu71-recovery-checks.mjs';
+  destroyedJournalCheck, strictKillModelCheck, phaseInterruptionCheck, lifecyclePhases } from './shu71-recovery-checks.mjs';
 import { supervisorAdapterKeys } from '../units.mjs';
 
 test('B4 pre-arm refusal by name completes its own teardown and is re-runnable', async t => {
@@ -191,4 +191,8 @@ test('B4 interruption at every lifecycle phase boundary completes cleanup or hal
     const result = await phaseInterruptionCheck(createShu71Production, productionFixture(t, keys), phase);
     t.diagnostic(`${phase}: ${JSON.stringify({ ok: result.ok, state: result.state, code: result.code ?? null })}`);
   }
+});
+
+test('B4 a unit that holds no processes still completes its teardown', async t => {
+  await strictKillModelCheck(createShu71Production, productionFixture(t, keys));
 });
