@@ -84,7 +84,7 @@ test('H1_PARTIAL_RUNTIME passing control and named mutant kill', async t => {
     assert.equal(report.paths.find(r => r.path === socket)?.code, 'ACT_BROKER_SOCKET_CUSTODY', label);
   }, "need(peer, 'ACT_BROKER_SOCKET_CUSTODY');", '');
 });
-const absentGuard = "need(report.ok, report.paths.find(r => !r.ok)?.code ?? 'ACT_PREREQUISITE_MISSING');";
+const absentGuard = "mirror(report.paths.find(r => !r.ok)); need(report.ok, 'ACT_PREREQUISITE_MISSING');";
 for (const [name, damage, code] of [
   ['UNIT', h => h.write(PATHS.unit, 'drift'), 'ACT_TREE_CONTENT'],
   ['IDENTITY', h => { h.users().find(u => u.name === 'shu71-evidence').shell = '/bin/sh'; }, 'ACT_BROKER_IDENTITY'],
@@ -97,13 +97,21 @@ for (const [name, damage, code] of [
   ['REFS', h => { const run = h.boundary.run; h.boundary.run = (exe, args, opts) => args.includes('--verify') ? { status: 0, stdout: 'bad' } : run(exe, args, opts); }, 'ACT_REF_BINDING'],
 ]) {
   const label = `H1_ABSENT_STATIC_${name}`;
+  // The three identity rows refuse directly inside the runtime check itself;
+  // every other static failure is mirrored onto the absent runtime rows.
+  const direct = ['IDENTITY', 'GROUP', 'MEMBERSHIP'].includes(name);
   test(`${label} passing control and named mutant kill`, async t => {
     await kills(t, label, impl => {
       const h = installed(t, false); damage(h);
       const report = impl(revision, h.boundary).precondition();
       assert.equal(report.ok, false, label);
       assert.ok(report.paths.some(r => ![dir, socket].includes(r.path) && r.code === code), label);
-      assert.deepEqual(runtime(report), [dir, socket].map(path => ({ path, ok: false, code })), label);
+      // A mirrored refusal names the row it mirrors as its own fields; a direct
+      // refusal (H2/H1 widened-mode rows above) carries neither.
+      const mirrored = report.paths.find(r => !r.ok);
+      assert.deepEqual(runtime(report), [dir, socket].map(path => direct
+        ? { path, ok: false, code }
+        : { path, ok: false, code, mirrored_code: code, mirrored_from: mirrored.path }), label);
     }, ...(['IDENTITY', 'GROUP', 'MEMBERSHIP'].includes(name)
       ? ['const broker = identity(), shared = sharedAccess(), s = stat(p);', "if (!stat(p) && !stat(p === EVIDENCE_SOCKET ? '/run/shu71-evidence' : EVIDENCE_SOCKET)) return { runtime: 'DEFERRED_UNTIL_SERVICE_START' }; const broker = identity(), shared = sharedAccess(), s = stat(p);"]
       : [absentGuard, '']));

@@ -155,7 +155,10 @@ for (const [name, mutate, from, to] of [
   ['owner', h => h.owners.set(keyPath, [7, 0]), 'r.uid === 0 && !(r.mode & 0o077)', '!(r.mode & 0o077)'],
   ['group other bits', h => h.write(keyPath, 'private fixture', 0o640), '!(r.mode & 0o077)', 'true'],
   ['nonempty', h => h.write(keyPath, '', 0o600), 'r.bytes.length > 0 && Buffer.from', 'Buffer.from'],
-  ['single link', h => fs.linkSync(h.root + keyPath, h.root + keyPath + '.extra'), 's.isFile() && s.nlink === 1', 's.isFile()'],
+  // Anchor updated for the installed-file scope of the single-link rule; the
+  // activation key row is measured through the unshared read, so its named
+  // assertion and refusal are unchanged.
+  ['single link', h => fs.linkSync(h.root + keyPath, h.root + keyPath + '.extra'), 's.isFile() && (shared || s.nlink === 1)', 's.isFile()'],
   ['no symlink', h => { fs.renameSync(h.root + keyPath, h.root + keyPath + '.target'); fs.symlinkSync(h.root + keyPath + '.target', h.root + keyPath); }, 'C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK', 'C.O_RDONLY | C.O_NONBLOCK'],
 ]) test(`D1 activation key ${name} custody refusal and mutation killed`, async t => {
   const label = 'D1_KEY_' + name.replaceAll(' ', '_').toUpperCase();

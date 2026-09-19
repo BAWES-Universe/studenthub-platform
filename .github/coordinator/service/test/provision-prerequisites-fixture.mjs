@@ -24,6 +24,7 @@ export function fixture(t) {
     lstatSync: (p, opts) => s(p, fs.lstatSync(local(p), opts)), fstatSync: (fd, opts) => s(fd, fs.fstatSync(fd, opts)),
     readFileSync: (p, encoding) => fs.readFileSync(local(p), encoding), readdirSync: p => fs.readdirSync(local(p)),
     realpathSync: p => fs.realpathSync(local(p)).slice(root.length), accessSync: (p, mode) => fs.accessSync(local(p), mode),
+    readlinkSync: p => fs.readlinkSync(local(p)),
     openSync(p, flags, mode) { const fd = fs.openSync(local(p), flags, mode); handles.set(fd, p); return fd; },
     closeSync(fd) { handles.delete(fd); fs.closeSync(fd); },
     writeFileSync: (p, data) => effect(`write:${logical(p)}`, () => fs.writeFileSync(local(p), data)),
@@ -64,8 +65,11 @@ export function fixture(t) {
         const st = f.lstatSync(p), shift = st.uid === uid ? 6 : held.includes(st.gid) ? 3 : 0;
         if (((st.mode >> shift) & requested) !== requested) throw Error('EACCES');
       } };
-      try { vm.runInNewContext(args.at(-1).replace(/import .*?; /g, ''), {fs: probeFS, path}); }
+      // The probe reports its refusal shape and symlink census on stdout.
+      const printed = [];
+      try { vm.runInNewContext(args.at(-1).replace(/import .*?; /g, ''), {fs: probeFS, path, console: {log: line => printed.push(String(line))}}); }
       catch { status = 1; }
+      stdout = printed.join('\n');
     } else if (exe === '/usr/bin/setpriv') {
       const a = args.slice(args.indexOf('-C') + 2), verb = a[0];
       if (verb === 'rev-parse') stdout = revision;

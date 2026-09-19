@@ -120,3 +120,141 @@ The initial full run with default concurrency reported two failures: the invento
 Inventories are strictly additive: 112 to 113 test files and 3151 to 3183 names/requirements, with every prior row unchanged. PERMITTED_SKIPS is byte-identical to `a3e40ca`: **1093 bytes**, SHA-256 **03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e**; its entire source file is also unchanged. No fixed broker GID, numeric rendered identity, extra effect, or unrelated-file deletion was introduced. All prior findings and the joint evidence-root control remain covered by the passing full suites.
 
 Remaining code or test inconsistencies: **none**. A fresh installation on the real target host has not been performed by this lane; the supplied measurements are reproduced by explicit doubles. Only `.github/coordinator/**` repository files changed. No push was performed.
+
+## Second real target precondition: 2026-09-19
+
+Measured evidence supplied by ai-orchestrator, not a live run by this code lane.
+After `install` succeeded on the real target host (exit 0; exact non-test tree
+root:root and blob-verified, `/etc/sudoers.d/shu-reviewer` 0440, the wrapper
+0755, `/etc/systemd/system/shu71-evidence.service` 0644, receipt VERIFIED,
+broker uid 100 / gid 107, accepted parser `/usr/bin/cvtsudoers.ws`), the
+read-only `precondition` refused with `ok:false` over 48 rows and exactly two
+independent failures:
+
+```text
+FAIL /srv/shu/studenthub-platform  code=ACT_PREREQUISITE_CHECKOUT_ACCESS
+FAIL /usr/bin/env                  code=ACT_PREREQUISITE_CUSTODY
+DEFER /etc/systemd/system/shu-supervisor.service.d/90-shu71.conf   DEFERRED_UNTIL_ARM
+DEFER /etc/systemd/system/shu-coordinator.service.d/90-shu71.conf  DEFERRED_UNTIL_ARM
+DEFER /srv/shu/state/shu71-activation.json                         DEFERRED_UNTIL_ARM
+```
+
+The two `/run/shu71-evidence` rows only mirrored the first failing row's code.
+Both failures were predicates that can hold only in a fixture.
+
+### Measured host facts
+
+| Measurement | Value |
+| --- | --- |
+| Deployment checkout | the live npm-workspace deployment, `999:982 755` |
+| Symlinks below the checkout | exactly **19**, all under `node_modules` |
+| Symlink targets outside the checkout root | **0** (each chain resolved and checked) |
+| Entries unreadable/untraversable as `shu-coordinator` | **0** |
+| Checkout ancestors | every one root-owned, non-symlink, non-writable |
+| `/usr/bin/env` | root-owned symlink to `../lib/cargo/bin/coreutils/env` |
+| `/usr/lib/cargo/bin/coreutils/env` | `root:root 0755`, **nlink = 115** (cargo multicall coreutils; `/usr/bin/coreutils` is the same inode) |
+
+The 19 links are `node_modules/@studenthub/{gateway,worker,contracts,search-bakeoff,fixtures,reconciliation,search,db,legacy-import}`
+and `node_modules/@bawes/actor-assertion` pointing at `../../apps|packages|tools/<pkg>`,
+plus `node_modules/.bin/{tsc,tsserver,vite,vite-node,vitest,esbuild,rollup,nanoid,why-is-node-running}`
+pointing at `../<pkg>/...`.
+
+### Correction 1: escape prevention replaces the blanket symlink ban
+
+A blanket symlink rejection is unsatisfiable for any prepared real deployment
+and does not express the property that matters. The capability keeps its real
+content — the whole-tree read/traverse proof executed as the measured service
+identity through fixed `setpriv --reuid=shu-coordinator --regid=shu-coordinator
+--init-groups`, the service-owned checkout, and the reviewed ancestor custody —
+and adds escape prevention:
+
+* every symlink resolves as a complete chain; a cycle or a dangling link refuses
+  with `ACT_PREREQUISITE_CHECKOUT_SYMLINK_UNRESOLVED`;
+* any hop or resolved real path outside the checkout root refuses with
+  `ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE`;
+* a group/world-writable target refuses with
+  `ACT_PREREQUISITE_CHECKOUT_SYMLINK_WRITABLE`;
+* the resolved target must be readable/traversable by the service identity;
+  unreadable entries keep `ACT_PREREQUISITE_CHECKOUT_ACCESS`;
+* a symlinked, non-root-owned or group/world-writable ancestor of the checkout
+  path refuses with `ACT_PREREQUISITE_CHECKOUT_ANCESTOR`;
+* the row reports the symlink census (`symlinks`), so the tree's shape is
+  visible in the receipts.
+
+The probe reports its refusal shape and census as JSON on stdout; only the named
+codes above are accepted from it, and an unparseable or failed probe stays
+`ACT_PREREQUISITE_CHECKOUT_ACCESS`.
+
+**The CI capability probe in `host-suite-contract.mjs` (`case 'checkout'`,
+including its `no symlinks` detection text) is deliberately NOT changed.** It
+governs the disposable suite clone created by `disposable-suite.mjs`
+(`git clone --no-local --no-hardlinks --no-checkout` plus `checkout --detach`
+under `<disposable_parent>/<activation-id>/checkout`), which contains only
+tracked repository files and no `node_modules`. The blanket ban is satisfiable
+there and is the stronger claim; relaxing it to escape prevention would weaken
+a CI capability claim for no benefit. The two surfaces therefore differ on
+purpose, and the divergence is stated in the entrypoint comment beside the
+probe as well as here.
+
+### Correction 2: single-link custody is scoped to installed files
+
+`nlink === 1` is custody for the files this provisioner **installs** — it writes
+each of them at exactly one path — and it remains enforced for every one of them
+(tree files, `/etc/sudoers.d/shu-reviewer`, the wrapper, the evidence unit and
+the receipt). It is not a property of a pre-existing system executable that is
+only measured: the measured `/usr/bin/env` target is cargo's multicall coreutils
+inode with **nlink = 115**, so the install-time rule made the row unsatisfiable.
+Only measurement callers pass the new `shared` argument. The executable rows
+still require a regular file (never a symlink, directory, fifo, socket or
+device, opened `O_NOFOLLOW`), `root:root`, exactly `0755`, non-empty content and
+no group/world write on the file or on any component of the `/usr/bin/env`
+chain; the reviewed chain validation (complete root-owned non-writable chain,
+permitted link destination, exact resolved target) is unchanged.
+
+### Mirrored refusals are now distinguishable
+
+An absent runtime row still refuses with the first failing row's code and still
+produces exit 2. That row now also carries `mirrored_code` and `mirrored_from`,
+naming the code and the row it mirrors; a direct refusal (for example the broker
+identity, shared group or membership rows, which refuse inside the runtime check
+itself) carries neither. The runtime row schema gains only these two optional
+properties on its existing refusal branch; every other branch, `const`, pattern
+and `additionalProperties: false` is unchanged.
+
+### Named controls and killing mutants
+
+`provision-host-reality.test.mjs` builds the measured shape in its prepared
+model: the checkout holds the same 19 in-tree symlinks, and
+`/usr/lib/cargo/bin/coreutils/env` really has 115 links. All 49 previous tests
+pass unchanged against that shape. The new mutant harness in that file is
+stricter than the matrices above: a kill requires the exact named assertion, not
+merely any thrown error.
+
+| Correction | Named control(s) | Named killing mutant(s) |
+| --- | --- | --- |
+| In-tree symlinks accepted; census reported | `HOST_CHECKOUT_CENSUS` (19 links, `ok:true`, whole report green) | `HOST_KILL_CHECKOUT_SYMLINK_BAN`, `HOST_KILL_CHECKOUT_CENSUS` |
+| Escaping symlink | `HOST_CHECKOUT_ESCAPE`, `HOST_CHECKOUT_ESCAPE_EXISTING`, `HOST_CHECKOUT_ESCAPE_REALPATH` | `HOST_KILL_CHECKOUT_ESCAPE`, `HOST_KILL_CHECKOUT_ESCAPE_RESOLVED`, `HOST_KILL_CHECKOUT_ESCAPE_REALPATH` |
+| Dangling symlink | `HOST_CHECKOUT_DANGLING` | `HOST_KILL_CHECKOUT_DANGLING` |
+| Symlink loop | `HOST_CHECKOUT_LOOP` | `HOST_KILL_CHECKOUT_LOOP` |
+| Group/world-writable target | `HOST_CHECKOUT_WRITABLE_TARGET` | `HOST_KILL_CHECKOUT_WRITABLE_TARGET` |
+| Unreadable entry / target | `HOST_CHECKOUT_UNREADABLE_TARGET`, retained `SHU71_CHECKOUT_READABILITY` | `HOST_KILL_CHECKOUT_READ_PROOF`, retained `SHU71 review named mutation killed: checkout access` |
+| Symlinked checkout ancestor | `HOST_CHECKOUT_ANCESTOR` | `HOST_KILL_CHECKOUT_ANCESTOR` |
+| Multicall executable accepted | `HOST_ENV_MULTILINK` (asserts nlink 115) | `HOST_KILL_ENV_MULTILINK` |
+| Installed files keep single-link custody | `HOST_INSTALLED_SINGLE_LINK`, retained `SHU71_CUSTODY_hardlink` | `HOST_KILL_INSTALLED_SINGLE_LINK` |
+| Writable multicall target still refuses | `HOST_MULTILINK_WRITABLE_TARGET` | `HOST_KILL_MULTILINK_WRITABLE_TARGET` |
+| Foreign-owned multicall target still refuses | `HOST_MULTILINK_FOREIGN_OWNER` | `HOST_KILL_MULTILINK_FOREIGN_OWNER` |
+| Mirrored vs direct runtime refusal | `HOST_MIRRORED_REFUSAL`, every `H1_ABSENT_STATIC_*` | `HOST_KILL_MIRRORED_REFUSAL`, `HOST_KILL_MIRRORED_INDISCRIMINATE` |
+
+`SHU71_CHECKOUT_NO_SYMLINK` is retained with its name and its refusal; its
+expected code is corrected in place from the generic access code to
+`ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE`, because the link it creates points
+outside the checkout root. The `SHU71_CHECKOUT_READABILITY` mutant anchor moved
+from the removed parent-side status check to the probe's read/traverse call;
+its name and assertion are unchanged. Every `H1_ABSENT_STATIC_*` assertion now
+pins the mirrored or direct row shape exactly instead of only the code.
+
+Known limit: `permitted(t.path, t.stat)` (resolved-target readability) cannot be
+falsified on its own in this model, because the whole-tree walk already reads
+every in-tree path; `HOST_KILL_CHECKOUT_READ_PROOF` therefore removes both
+read/traverse calls together. Real kernel behavior, live NSS and actual host
+symlink resolution remain host-only and unproven here.

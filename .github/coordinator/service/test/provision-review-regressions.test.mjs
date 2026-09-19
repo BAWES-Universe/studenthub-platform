@@ -111,7 +111,10 @@ test('SHU71 review measured service identity', t => {
 test('SHU71 review checkout rejects symlink and wrong owner', t => {
   const h = fixture(t), p = provisioner(revision, h.boundary);
   fs.symlinkSync('/does-not-exist', h.root + PATHS.checkout + '/link');
-  assert.equal(row(p, PATHS.checkout).code, 'ACT_PREREQUISITE_CHECKOUT_ACCESS', 'SHU71_CHECKOUT_NO_SYMLINK');
+  // Corrected in place: a real prepared deployment checkout contains in-tree
+  // symlinks, so this link is refused for escaping the checkout root by its own
+  // name rather than by the generic access code. The refusal itself is retained.
+  assert.equal(row(p, PATHS.checkout).code, 'ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE', 'SHU71_CHECKOUT_NO_SYMLINK');
   h.remove(PATHS.checkout + '/link'); h.owners.set(PATHS.checkout, [123,980]);
   assert.equal(row(p, PATHS.checkout).code, 'ACT_PREREQUISITE_CHECKOUT', 'SHU71_CHECKOUT_SERVICE_OWNER');
 });
@@ -125,7 +128,7 @@ const mutants = [
   ['checkout group', 'SHU71_CHECKOUT_GROUP_INDEPENDENT', 's.uid === uid,', 's.uid === uid && s.gid === gid,', (t,m,l) => {
     const h=fixture(t); h.owners.set(PATHS.checkout,[999,980]); assert.equal(row(m.provisioner(revision,h.boundary),PATHS.checkout).ok,true,l);
   }],
-  ['checkout access', 'SHU71_CHECKOUT_READABILITY', "need(!r.error && r.status === 0, 'ACT_PREREQUISITE_CHECKOUT_ACCESS');", '', (t,m,l) => {
+  ['checkout access', 'SHU71_CHECKOUT_READABILITY', ' permitted(p, s); if (s.isDirectory())', ' if (s.isDirectory())', (t,m,l) => {
     const h=fixture(t); h.write(PATHS.checkout+'/secret','secret',0o600); assert.equal(row(m.provisioner(revision,h.boundary),PATHS.checkout).ok,false,l);
   }],
   ['service group name', 'SHU71_SERVICE_GROUP_REQUIRED', "groups.filter(g => g.name === 'shu-coordinator')", "groups.filter(g => g.name === 'shu-workspace')", (t,m,l) => {
