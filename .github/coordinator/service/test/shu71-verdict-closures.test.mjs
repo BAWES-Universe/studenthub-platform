@@ -235,17 +235,26 @@ test('V8_DOCUMENTATION_LINK_TARGETS', async () => {
   const check = async drift => {
     for (const name of docs) {
       const source = fs.readFileSync(new URL('../' + name, import.meta.url), 'utf8');
-      for (const [, file, number] of source.matchAll(/\((shu71-production\.mjs|provision-shu71-prerequisites\.mjs)#L(\d+)\)/g)) {
+      for (const [, text, file, number] of source.matchAll(/\[([^\]]*)\]\((shu71-production\.mjs|provision-shu71-prerequisites\.mjs)#L(\d+)\)/g)) {
         const lines = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8').split('\n');
-        // Every accepted alternative is the definition or call line of the exact
-        // symbol its link text names, so the pattern cannot accept a link that
-        // points somewhere else. `function sharedAccess(` was added when
-        // SHU71-L3-CLOSURE.md split one broker-identity link into `identity()`
-        // and `sharedAccess()`: it is the same "definition line of the named
-        // function" form already accepted for `identity()`, on the same file,
-        // for the adjacent half of the same claim. The exact line is still
-        // asserted, so a one-line drift in either target still fails below.
-        assert.match(lines[Number(number) - 1 + drift], /renderEvidenceBroker|const key = privateRead|step\('evidence-broker'|\['evidence-broker'|check\('\/etc\/shu\/keys|function identity\(|function sharedAccess\(/, label);
+        const target = lines[Number(number) - 1 + drift] ?? '';
+        // Two claims, and no more than two. (1) The alternation: every accepted
+        // line is the definition or call line of a symbol these documents name,
+        // at the EXACT line number the link gives, so a one-line drift in any
+        // target fails. (2) The alternation alone does not read the link TEXT,
+        // so on its own it would accept two links whose targets were exchanged.
+        // Where the text names a symbol as `name()` AND the target is a
+        // function DEFINITION line, that definition must be `name`'s own - which
+        // is what stops `identity()` and `sharedAccess()`, the two halves
+        // SHU71-L3-CLOSURE.md split one broker-identity link into, from being
+        // swapped. Nothing more is claimed: a link whose text names no symbol,
+        // or whose target is a call site rather than a definition (the
+        // `precondition()` link points at the key custody check it performs),
+        // is pinned by the alternation and the exact line number only.
+        const symbol = /^`(\w+)\(\)`$/.exec(text)?.[1];
+        if (symbol && /^\s*(export\s+)?(async\s+)?function\s+\w+\s*\(/.test(target))
+          assert.match(target, new RegExp(`function ${symbol}\\(`), label);
+        assert.match(target, /renderEvidenceBroker|const key = privateRead|step\('evidence-broker'|\['evidence-broker'|check\('\/etc\/shu\/keys|function identity\(|function sharedAccess\(/, label);
       }
     }
   };

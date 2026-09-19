@@ -339,6 +339,18 @@ export async function preArmDriftCheck(createProduction, h, drift = 'supervisor'
   if (drift === 'supervisor') h.active.set('shu-supervisor.service', 'active');
   else if (drift === 'timer-file') h.write(`/etc/systemd/system/${timer}`, '[Timer]\n', 0o644);
   else if (drift === 'timer-active') h.active.set(timer, 'active');
+  // The drift only the never-created branch refuses: BOTH durable unit files
+  // present and in perfect root custody for a mechanism the journal proves was
+  // never created. Every other clause of the retirement is satisfied by it, so
+  // without that branch the pair is disabled, unlinked and reported retired.
+  else if (drift === 'both-files') for (const [unit, body] of [[timer, '[Timer]\n'], [`shu71-expiry-${h.id}.service`, '[Service]\n']])
+    h.write(`/etc/systemd/system/${unit}`, body, 0o644);
+  // The companion half of expiryRetired()'s absence conjunct. Only the .service
+  // unit file is there, so every OTHER term of expiryRetired() is satisfied -
+  // the timer unit is idle and systemd reports no unit file state for it - and
+  // only `EXPIRY_UNITS.every(unitFileAbsent)` can refuse the leftover half of a
+  // mechanism the journal proves was never created.
+  else if (drift === 'service-file') h.write(`/etc/systemd/system/shu71-expiry-${h.id}.service`, '[Service]\n', 0o644);
   else h.enabled.add(timer), h.write(`/etc/systemd/system/${timer}`, '[Timer]\n', 0o644);
   const result = await preArmEnvHalt(createProduction, h);
   assert.equal(result.code, 'SHU71_SUPERVISOR_ENV_REQUIRED', `B4_PREARM_DRIFT_NAMED_REFUSAL_${drift}`);
@@ -1024,4 +1036,241 @@ export async function expiryInstalledBeforeArmedCheck(createProduction, h) {
   } finally { await close(); }
   assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_BEFORE_ARMED_RECOVERED');
   for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_BEFORE_ARMED_UNITS_REMOVED');
+}
+
+// SHU-71 expiry-retirement drift, third correction round. An independent
+// verifier reviewed `f6d6711056f0356a010f28aeae3c6c70c20018cd` and returned
+// BLOCK on the same property for the third time, through a third door: the
+// custody pre-condition was gated on `installed`, so it was SKIPPED ENTIRELY
+// where the journal could not vouch for the installation - an install
+// interrupted before its durable DONE row, or a recovered log - while the
+// removal loop below still unlinked whatever was present. The controls here
+// pin the RESTRUCTURED rule rather than that one door: custody is a property of
+// the removal, measured on every PRESENT unit file whatever the journal says,
+// and the journal may only ever account for ABSENCE.
+//
+// A run interrupted inside `installExpiry` leaves exactly the state the
+// verifier described: both durable unit files written, the INTENT row for
+// `expiry-watch` durable, and neither a DONE row nor ARMED nor a removal
+// receipt, so `installed` and `removing` are both false and the phase is
+// inconclusive. The teardown that the failed run triggers is interrupted too -
+// its `disable --now` throws an untyped error, which is a refusal - so the pair
+// survives for the measured retry below.
+async function interruptExpiryInstall(create, h, name) {
+  const timer = expiryTimer(h);
+  h.faults.before = event => [`command:/usr/bin/systemctl:enable --now ${timer}`,
+    `command:/usr/bin/systemctl:disable --now ${timer}`].includes(event);
+  const halt = await create().execute('run');
+  h.faults.before = null;
+  assert.equal(halt.ok, false, `${name}_INSTALL_INTERRUPTED: ${JSON.stringify(halt)}`);
+  const rows = h.journal();
+  assert.ok(rows.some(e => e.event === 'INTENT' && e.step === 'expiry-watch'), `${name}_INSTALL_INTENT_DURABLE`);
+  assert.equal(rows.some(e => e.event === 'DONE' && e.step === 'expiry-watch'), false, `${name}_NO_DURABLE_DONE_ROW`);
+  assert.equal(rows.some(e => e.event === 'ARMED'), false, `${name}_NOT_ARMED`);
+  assert.equal(rows.some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
+  assert.equal(rows.some(e => e.event === 'TEARDOWN_COMPLETE'), false, `${name}_TEARDOWN_UNFINISHED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_BOTH_UNITS_PRESENT`);
+  return halt;
+}
+// An authentic retained PREFIX of this episode's own journal, ending at the
+// forward attempt: the log is `recovered`, holds neither ARMED nor any DONE row
+// for the creating step, and the mechanism really is installed on disk.
+function recoverLogWithoutInstallation(h, name) {
+  const rows = h.journal(), stop = rows.findIndex(e => e.event === 'RUN_ATTEMPT_STARTED');
+  assert.ok(stop > 0, `${name}_PREFIX_AUTHENTIC`);
+  assert.equal(rows.slice(0, stop + 1).some(e => e.event === 'ARMED' || e.step === 'expiry-watch'), false, `${name}_PREFIX_NOT_INSTALLED`);
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/recovery.jsonl`, rows.slice(0, stop + 1).map(e => JSON.stringify(e)).join('\n') + '\n');
+}
+// Plant exactly one broken custody term on one of the two durable unit files,
+// leaving every other term - and the companion file - intact. Returns the
+// restore function; `variant` is one of CUSTODY_VARIANTS above.
+async function plantCustodyDrift(h, variant) {
+  const unit = CUSTODY_UNITS[variant] ?? 'timer';
+  const file = `/etc/systemd/system/shu71-expiry-${h.id}.${unit}`;
+  let close = null;
+  if (variant === 'non-root-owner') h.owners.set(file, [999, 0]);
+  else if (variant === 'non-root-group') h.owners.set(file, [0, 982]);
+  else if (variant === 'group-writable') fs.chmodSync(h.root + file, 0o664);
+  else if (variant === 'world-writable') fs.chmodSync(h.root + file, 0o646);
+  else if (CUSTODY_VARIANTS[variant] === 'links') close = plantHardlink(h, file, unit);
+  else { fs.rmSync(h.root + file); close = await plantNonRegularFile(h.root + file); }
+  // `close` releases the planted resource and is always safe to run, including
+  // where a mutant has already unlinked the file: it never masks the failing
+  // assertion that killed the mutant. `restore` rebuilds root custody and runs
+  // only on the passing path, after the measured refusal.
+  return { file, unit,
+    close: async () => { if (close) await close(); },
+    restore: () => {
+      if (variant === 'non-regular-file') h.write(file, unit === 'timer' ? '[Timer]\n' : '[Service]\n', 0o644);
+      h.owners.set(file, [0, 0]);
+      fs.chmodSync(h.root + file, 0o644);
+    } };
+}
+const custodyTerms = (h, target) => {
+  const s = h.boundary.fs.lstatSync(target);
+  return { shape: s.isFile() && !s.isSymbolicLink(), links: s.nlink === 1, owner: s.uid === 0,
+    group: s.gid === 0, group_mode: !(s.mode & 0o020), world_mode: !(s.mode & 0o002) };
+};
+// P154C-01. The journal vouches for NOTHING about the installation - `installed`
+// is false either because the install was interrupted before its durable DONE
+// row or because the log is a recovered prefix - and a durable expiry unit file
+// is PRESENT and out of root custody. Gated on the journal, the pre-condition
+// never runs here at all and the drifted file is disabled, unlinked and
+// reported as a clean retirement. Custody being a property of the removal, it
+// halts by name before the command, exactly as it does for a proven install.
+export async function expiryJournalBlindCustodyCheck(createProduction, h, state, variant) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = `B4_EXPIRY_JOURNAL_BLIND_CUSTODY_${state}_${variant}`;
+  if (state === 'interrupted-install') await interruptExpiryInstall(create, h, name);
+  else {
+    assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+    recoverLogWithoutInstallation(h, name);
+  }
+  const { file, close, restore } = await plantCustodyDrift(h, variant);
+  try {
+    // Exactly one custody term is broken, on exactly one of the two files, so
+    // a control cannot survive the mutant that removes the term it pins.
+    assert.deepEqual(Object.entries(custodyTerms(h, file)).filter(([, ok]) => !ok).map(([term]) => term),
+      [CUSTODY_VARIANTS[variant]], `${name}_EXACTLY_ONE_TERM`);
+    for (const other of expiryUnits(h).filter(p => p !== file))
+      assert.deepEqual(Object.entries(custodyTerms(h, other)).filter(([, ok]) => !ok).map(([term]) => term), [],
+        `${name}_OTHER_UNIT_INTACT`);
+    // Both durable unit files are still there, so `disable --now` would succeed
+    // on the modelled host: the refusal below is the custody rule's own.
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_BOTH_UNITS_PRESENT`);
+    const start = h.events.length;
+    const result = await create().execute('resume');
+    assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+    assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+    assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_BEFORE_DISABLE`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_UNITS_NOT_UNLINKED`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_UNITS_RETAINED`);
+  } finally { await close(); }
+  restore();
+  // Root custody restored in the SAME journal state, the retirement completes
+  // and removes both durable unit files: the rule refuses drift, not the state.
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+// The other half of the same rule: what the journal may excuse is ABSENCE, and
+// only where it accounts for it. `retired`: the journal vouches for nothing and
+// the mechanism is measurably, entirely retired, so the teardown completes
+// rather than wedging. `half`: one durable unit file is gone and the other is
+// right there in perfect custody, with no receipt and no journal account of the
+// gap - that is drift, and it halts before the command rather than quietly
+// finishing someone else's removal.
+export async function expiryAbsenceAccountedCheck(createProduction, h, state, shape) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = `B4_EXPIRY_ABSENCE_${state}_${shape}`;
+  const [service, timer] = expiryUnits(h);
+  if (state === 'interrupted-install') await interruptExpiryInstall(create, h, name);
+  else {
+    assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+    recoverLogWithoutInstallation(h, name);
+  }
+  h.active.set(timer.replace('/etc/systemd/system/', ''), 'inactive');
+  h.enabled.delete(expiryTimer(h));
+  for (const path of shape === 'retired' ? expiryUnits(h) : [service]) fs.rmSync(h.root + path);
+  // Measured before the teardown: the file that is still there is in perfect
+  // root custody, so only the unaccounted-for ABSENCE of its companion can
+  // produce the refusal below.
+  if (shape === 'half') assert.deepEqual(Object.entries(custodyTerms(h, timer)).filter(([, ok]) => !ok).map(([term]) => term), [], `${name}_PRESENT_UNIT_IN_CUSTODY`);
+  const start = h.events.length;
+  const result = await create().execute('resume');
+  if (shape === 'retired') {
+    assert.equal(result.state, 'REVOKED', `${name}_COMPLETES: ${JSON.stringify(result)}`);
+    assert.equal(result.ok, true, `${name}_NO_WEDGE`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_NOTHING_TO_REMOVE`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_STAYS_RETIRED`);
+    return;
+  }
+  assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+  assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_BEFORE_DISABLE`);
+  assert.equal(h.exists(timer), true, `${name}_PRESENT_UNIT_RETAINED`);
+  assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
+  // The companion restored, the gap is accounted for and the same teardown
+  // completes and removes both.
+  h.write(service, '[Service]\n', 0o644);
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+// The `!installed` half of the absence rule. The journal PROVES this episode
+// created the mechanism - by ARMED, or by the durable DONE row alone in the
+// window before it - and the mechanism has vanished entirely, with no removal
+// receipt to account for it. The end state is otherwise spotless: idle, not
+// enabled, nothing left on disk. Only the absence clause can refuse it, and it
+// must, before any command is issued: an installation that disappeared without
+// this teardown removing it is drift, not a completed retirement.
+export async function expiryVanishedMechanismCheck(createProduction, h, proof = 'armed') {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = `B4_EXPIRY_VANISHED_${proof.toUpperCase().replaceAll('-', '_')}`;
+  if (proof === 'armed') assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  else {
+    let dead = false;
+    h.faults.before = event => dead || (dead = event === 'command:/usr/bin/systemctl:restart shu-supervisor.service');
+    await create().execute('run').catch(() => {});
+    h.faults.before = null;
+    assert.equal(dead, true, `${name}_INTERRUPTED`);
+    assert.equal(h.journal().some(e => e.event === 'ARMED'), false, `${name}_NOT_ARMED`);
+  }
+  assert.ok(h.journal().some(e => e.event === 'DONE' && e.step === 'expiry-watch'), `${name}_JOURNAL_PROVES_INSTALLED`);
+  assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
+  for (const path of expiryUnits(h)) { assert.equal(h.exists(path), true, `${name}_INSTALLED`); fs.rmSync(h.root + path); }
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h));
+  const start = h.events.length;
+  const result = await create().execute('revoke');
+  assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+  assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_BEFORE_DISABLE`);
+  assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_STILL_NO_RECEIPT`);
+  unfinished(h, name);
+  // The durable pair restored, the same teardown completes and removes both.
+  for (const [path, body] of expiryUnits(h).map(p => [p, p.endsWith('.timer') ? '[Timer]\n' : '[Service]\n'])) h.write(path, body, 0o644);
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+// The SECOND measurement. `disable --now` runs between the custody check at the
+// top of the retirement and the unlink, and a unit file can drift in that
+// window - here a second name is planted on the inode by the disable itself.
+// The file about to be unlinked must be held in custody NOW, not as it was
+// before the command; measured only once, the retirement destroys the unit path
+// and leaves the inode, and its holder, behind.
+export async function expiryUnlinkCustodyCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = 'B4_EXPIRY_UNLINK_CUSTODY';
+  const file = `/etc/systemd/system/${expiryTimer(h)}`;
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  assert.deepEqual(Object.entries(custodyTerms(h, file)).filter(([, ok]) => !ok).map(([term]) => term), [], `${name}_CUSTODY_HELD_AT_ENTRY`);
+  const run = h.boundary.run;
+  let close = null;
+  h.boundary.run = (exe, argv, options) => {
+    const result = run(exe, argv, options);
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'disable' && argv.at(-1) === expiryTimer(h) && !close) close = plantHardlink(h, file, 'timer');
+    return result;
+  };
+  try {
+    const start = h.events.length;
+    const result = await create().execute('revoke');
+    assert.ok(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), `${name}_DISABLE_ISSUED`);
+    assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+    assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_UNITS_NOT_UNLINKED`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_UNITS_RETAINED`);
+    // Measured after the retention assertions, so an unlink the re-measure
+    // should have prevented is reported by its own name rather than by an
+    // ENOENT raised while probing the file it destroyed.
+    let links = null;
+    try { links = h.boundary.fs.lstatSync(file).nlink; } catch { /* reported as null */ }
+    assert.equal(links, 2, `${name}_SECOND_NAME_PLANTED_BY_DISABLE`);
+    assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
+    unfinished(h, name);
+  } finally { h.boundary.run = run; if (close) await close(); }
+  // The second name gone, the same teardown completes and removes both.
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
 }

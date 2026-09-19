@@ -759,6 +759,8 @@
     "B1/B4 mutation: refused worker kill blindly accepted",
     "B1/B4 mutation: pre-arm expiry drift silently accepted",
     "B1/B4 mutation: expiry retirement ignores unit liveness",
+    "B1/B4 mutation: expiry retirement ignores unit enablement",
+    "B1/B4 mutation: expiry retirement ignores the companion unit file",
     "B1/B4 mutation: non-creation inferred from an empty journal",
     "B1/B4 mutation: installed expiry pre-condition omitted",
     "B1/B4 mutation: expiry companion service file unchecked",
@@ -792,6 +794,16 @@
     "B1/B4 mutation: expiry installation proven only by ARMED",
     "B1/B4 mutation: expiry disable command never issued",
     "B1/B4 mutation: expiry removal issued with nothing to remove",
+    "B1/B4 mutation: expiry custody conditioned on journal-proven installation",
+    "B1/B4 mutation: expiry custody conditioned on a recovered log",
+    "B1/B4 mutation: expiry custody predicate ignores the companion unit file",
+    "B1/B4 mutation: expiry custody measured on absent unit files",
+    "B1/B4 mutation: expiry custody measured only after the disable",
+    "B1/B4 mutation: expiry custody never re-measured before the unlink",
+    "B1/B4 mutation: expiry presence pre-condition ignores the removal receipt",
+    "B1/B4 mutation: unaccounted expiry absence accepted",
+    "B1/B4 mutation: journal-proven installed expiry absence accepted",
+    "B1/B4 mutation: unretired expiry absence accepted",
     "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
@@ -808,6 +820,8 @@
     "B4 pre-arm teardown refuses timer-file drift by name",
     "B4 pre-arm teardown refuses timer-active drift by name",
     "B4 pre-arm teardown refuses timer-enabled drift by name",
+    "B4 pre-arm teardown refuses both-files drift by name",
+    "B4 pre-arm teardown refuses service-file drift by name",
     "B4 a refused worker kill is accepted only for a unit measured idle",
     "B4 a destroyed journal is never proof that nothing was created",
     "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
@@ -839,6 +853,21 @@
     "B4 a disable refused where the journal cannot vouch for the installation, mechanism retired",
     "B4 a disable refused where the journal cannot vouch for the installation, mechanism present",
     "B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-owner",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-group",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, group-writable",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, world-writable",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-regular-file",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-timer",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-service",
+    "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-timer",
+    "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-service",
+    "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install retired",
+    "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install half",
+    "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, recovered half",
+    "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, armed",
+    "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, done-row",
+    "B4 expiry custody is measured again immediately before the unlink",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -7411,6 +7440,14 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry retirement ignores unit enablement",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement ignores the companion unit file",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: non-creation inferred from an empty journal",
       "capabilities": []
     },
@@ -7543,6 +7580,46 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry custody conditioned on journal-proven installation",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody conditioned on a recovered log",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody predicate ignores the companion unit file",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody measured on absent unit files",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody measured only after the disable",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody never re-measured before the unlink",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry presence pre-condition ignores the removal receipt",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: unaccounted expiry absence accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: journal-proven installed expiry absence accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: unretired expiry absence accepted",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: refusal predicate evaluated inside need()",
       "capabilities": []
     },
@@ -7604,6 +7681,14 @@
     },
     {
       "name": "B4 pre-arm teardown refuses timer-enabled drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses both-files drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-file drift by name",
       "capabilities": []
     },
     {
@@ -7728,6 +7813,66 @@
     },
     {
       "name": "B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-owner",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-group",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, group-writable",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, world-writable",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-regular-file",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-timer",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-service",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-timer",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-service",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install retired",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install half",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, recovered half",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, armed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, done-row",
+      "capabilities": []
+    },
+    {
+      "name": "B4 expiry custody is measured again immediately before the unlink",
       "capabilities": []
     },
     {

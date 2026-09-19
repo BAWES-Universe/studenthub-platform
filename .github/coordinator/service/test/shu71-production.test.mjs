@@ -172,7 +172,7 @@ test('B4 pre-arm fixture cleanup is not blocked by a legitimately skipped worker
   await preArmFixtureCleanupCheck(createShu71Production, productionFixture(t, keys));
 });
 
-for (const drift of ['supervisor', 'timer-file', 'timer-active', 'timer-enabled']) {
+for (const drift of ['supervisor', 'timer-file', 'timer-active', 'timer-enabled', 'both-files', 'service-file']) {
   test(`B4 pre-arm teardown refuses ${drift} drift by name`, async t => {
     await preArmDriftCheck(createShu71Production, productionFixture(t, keys), drift);
   });
@@ -205,7 +205,9 @@ import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck,
   expiryPostConditionCheck, recoveredNonCreationCheck, teardownOrderCheck, fixturesRequireWorkersCheck,
   predicateRefusalCheck, expiryCustodyDriftCheck, expiryPostReloadDriftCheck, expiryInterruptedRemovalCheck,
   expiryInterruptedCustodyDriftCheck, expiryDisableExitFailureCheck, expiryActivePostConditionCheck,
-  expiryEnabledPostConditionCheck, expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck } from './shu71-recovery-checks.mjs';
+  expiryEnabledPostConditionCheck, expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck,
+  expiryJournalBlindCustodyCheck, expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck,
+  expiryUnlinkCustodyCheck } from './shu71-recovery-checks.mjs';
 
 for (const unit of ['timer', 'service']) {
   test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
@@ -301,4 +303,37 @@ for (const variant of ['retired', 'present']) {
 
 test('B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed', async t => {
   await expiryInstalledBeforeArmedCheck(createShu71Production, productionFixture(t, keys));
+});
+
+// Third correction round, P154C-01. The custody measurement is a property of
+// the REMOVAL and is conditioned on nothing; the journal may only account for
+// ABSENCE. These controls reach a present, drifted durable unit file in each
+// journal state that used to skip the pre-condition entirely, and the absence
+// rule in the same states.
+for (const variant of ['non-root-owner', 'non-root-group', 'group-writable', 'world-writable', 'non-regular-file', 'hardlinked-timer', 'hardlinked-service']) {
+  test(`B4 an install interrupted before its durable row still holds a present expiry unit file in custody, ${variant}`, async t => {
+    await expiryJournalBlindCustodyCheck(createShu71Production, productionFixture(t, keys), 'interrupted-install', variant);
+  });
+}
+
+for (const variant of ['hardlinked-timer', 'hardlinked-service']) {
+  test(`B4 a recovered log never waives custody of a present expiry unit file, ${variant}`, async t => {
+    await expiryJournalBlindCustodyCheck(createShu71Production, productionFixture(t, keys), 'recovered', variant);
+  });
+}
+
+for (const [state, shape] of [['interrupted-install', 'retired'], ['interrupted-install', 'half'], ['recovered', 'half']]) {
+  test(`B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, ${state} ${shape}`, async t => {
+    await expiryAbsenceAccountedCheck(createShu71Production, productionFixture(t, keys), state, shape);
+  });
+}
+
+for (const proof of ['armed', 'done-row']) {
+  test(`B4 a journal-proven installed expiry mechanism that vanished entirely is drift, ${proof}`, async t => {
+    await expiryVanishedMechanismCheck(createShu71Production, productionFixture(t, keys), proof);
+  });
+}
+
+test('B4 expiry custody is measured again immediately before the unlink', async t => {
+  await expiryUnlinkCustodyCheck(createShu71Production, productionFixture(t, keys));
 });

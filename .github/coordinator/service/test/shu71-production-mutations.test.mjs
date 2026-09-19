@@ -12,8 +12,15 @@ import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck, expiry
   teardownOrderCheck, fixturesRequireWorkersCheck, predicateRefusalCheck, expiryCustodyDriftCheck,
   expiryPostReloadDriftCheck, expiryInterruptedRemovalCheck, expiryInterruptedCustodyDriftCheck,
   expiryDisableExitFailureCheck, expiryActivePostConditionCheck, expiryEnabledPostConditionCheck,
-  expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck } from './shu71-recovery-checks.mjs';
+  expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck, expiryJournalBlindCustodyCheck,
+  expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck, expiryUnlinkCustodyCheck } from './shu71-recovery-checks.mjs';
 const custody = variant => (create, h) => expiryCustodyDriftCheck(create, h, variant);
+// The journal-independent custody requirement of the restructured
+// retireExpiryTimer(): every durable expiry unit file that is PRESENT is held
+// in root custody, measured before the disable and again before the unlink.
+// Several mutants below reintroduce a journal condition in front of it - the
+// three doors this defect has already been reopened through.
+const CUSTODY_PREDICATE = 'const custodyOfPresentUnits = () => EXPIRY_UNITS.every(file => unitFileAbsent(file) || expiryUnitCustody(file));';
 const keys = ephemeralPublicSource();
 const moduleUrl = new URL('../shu71-production.mjs', import.meta.url);
 const source = fs.readFileSync(moduleUrl, 'utf8');
@@ -74,20 +81,40 @@ const mutations = [
   ['refused worker kill blindly accepted', "catch (error) { need(error?.code === 'ACT_COMMAND_FAILED' && unitIdle(unit), 'ACT_TEARDOWN_DRIFT'); }",
     'catch { /* mutation: accept any kill refusal */ }', workerKillFailureCheck],
   // Anchors updated in place for the pre/post-condition retirement; names and assertions unchanged.
+  // Third correction round: the never-created branch is no longer the only
+  // clause that can refuse a half-present mechanism, so this mutant is killed
+  // by the drift only IT refuses - both durable unit files present and in
+  // perfect root custody for a mechanism the journal proves was never created.
+  // Without the branch that state is disabled, unlinked and reported retired.
   ['pre-arm expiry drift silently accepted', "if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }",
-    "if (false) { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }", (create, h) => preArmDriftCheck(create, h, 'timer-file')],
-  ['expiry retirement ignores unit liveness', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));", ';',
+    "if (false) { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }", (create, h) => preArmDriftCheck(create, h, 'both-files')],
+  // Split so each half of expiryRetired()'s tail is killed by a control that
+  // reaches THAT half: `timer-active` leaves the enablement half satisfied, and
+  // the stale-loaded-view control leaves the liveness half satisfied.
+  ['expiry retirement ignores unit liveness', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));",
+    "\n    && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));",
     (create, h) => preArmDriftCheck(create, h, 'timer-active')],
+  ['expiry retirement ignores unit enablement', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));",
+    '\n    && unitIdle(expiryTimerUnit);', expiryCachedViewCheck],
+  // ...and the absence conjunct itself. Measured, not assumed: the timer's
+  // UnitFileState covers the timer file, so only the leftover COMPANION unit
+  // file distinguishes this mutant, and `service-file` is the drift that does.
+  ['expiry retirement ignores the companion unit file', "const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)\n    && unitIdle(expiryTimerUnit)",
+    'const expiryRetired = () => unitIdle(expiryTimerUnit)', (create, h) => preArmDriftCheck(create, h, 'service-file')],
   ['non-creation inferred from an empty journal', "return journalHas(journal, 'RUN_ATTEMPT_STARTED') && !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';",
     "return !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';", destroyedJournalCheck],
   // SHU-71 expiry retirement drift: pre-condition, post-condition, the removal
   // itself, and the clauses in this area that no control pinned before.
   // Anchors updated in place for the receipt-aware pre-condition; names and
   // assertions unchanged.
-  ['installed expiry pre-condition omitted', 'if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
-    'if (false) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+  // Anchors moved to the restructured clause; names and assertions unchanged.
+  // The pre-condition is now two separate requirements - custody of every
+  // PRESENT file, which nothing may condition, and an accounted-for ABSENCE,
+  // which is what these two mutants address.
+  ['installed expiry pre-condition omitted', "need(measuredPredicate(() => removing || EXPIRY_UNITS.every(file => !unitFileAbsent(file))\n      || !installed && expiryRetired()), 'ACT_TEARDOWN_DRIFT');",
+    "need(true, 'ACT_TEARDOWN_DRIFT');",
     (create, h) => expiryFileDriftCheck(create, h, 'timer')],
-  ['expiry companion service file unchecked', 'EXPIRY_UNITS.every(file =>', '[EXPIRY_UNITS[0]].every(file =>',
+  ['expiry companion service file unchecked', 'EXPIRY_UNITS.every(file => !unitFileAbsent(file))', '[EXPIRY_UNITS[0]].every(file => !unitFileAbsent(file))',
     (create, h) => expiryFileDriftCheck(create, h, 'service')],
   ['retired expiry units left behind', 'for (const file of EXPIRY_UNITS) remove(file);', 'for (const file of []) remove(file);', expiryRetirementCheck],
   ['expiry retirement receipt omitted', "if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });",
@@ -131,11 +158,14 @@ const mutations = [
   // journal-proven installed unit file that has drifted out of root custody and
   // disables, unlinks and reports it as a clean retirement, while a second name
   // for the same inode survives the removal.
-  ['interrupted removal bypasses expiry custody', 'if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
-    'if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+  // Re-anchored on the restructured clause: the F-01 door is now reintroduced
+  // by conditioning the custody PREDICATE itself on the durable receipt, which
+  // waives it at both measurement points at once. Names and assertions unchanged.
+  ['interrupted removal bypasses expiry custody', CUSTODY_PREDICATE,
+    CUSTODY_PREDICATE.replace('=> EXPIRY_UNITS', '=> removing || EXPIRY_UNITS'),
     (create, h) => expiryInterruptedCustodyDriftCheck(create, h, 'timer')],
-  ['interrupted removal bypasses companion custody', 'if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
-    'if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+  ['interrupted removal bypasses companion custody', CUSTODY_PREDICATE,
+    CUSTODY_PREDICATE.replace('=> EXPIRY_UNITS', '=> removing || EXPIRY_UNITS'),
     (create, h) => expiryInterruptedCustodyDriftCheck(create, h, 'service')],
   // F-02: the load-bearing ordering. Appended after the loop, a crash inside the
   // loop leaves no receipt and the retry is a permanent wedge.
@@ -164,8 +194,12 @@ const mutations = [
     "), 'ACT_TEARDOWN_DRIFT');", expiryEnabledPostConditionCheck],
   // The remaining clauses of the sweep: the second disjunct of the `installed`
   // derivation, the disable command itself, and the removal loop's own guard.
+  // `installed` no longer gates custody at all, so it is observable only where
+  // a unit file is ABSENT: a mechanism the DONE row alone proves installed,
+  // which has vanished entirely with no receipt, is drift. Read from ARMED only
+  // that state is `!installed && expiryRetired()` and is reported retired.
   ['expiry installation proven only by ARMED', "journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');",
-    "journalHas(journal, 'ARMED');", expiryInstalledBeforeArmedCheck],
+    "journalHas(journal, 'ARMED');", (create, h) => expiryVanishedMechanismCheck(create, h, 'done-row')],
   ['expiry disable command never issued', "try { command('/usr/bin/systemctl', ['disable', '--now', expiryTimerUnit]); }",
     'try { /* mutation: never issue the disable */ }', expiryRetirementCheck],
   // The removal loop's own guard. The teardown's `expiry-timer` step is not a
@@ -175,6 +209,36 @@ const mutations = [
   // issues both unlinks for a pair there is nothing to remove.
   ['expiry removal issued with nothing to remove', 'if (measuredPredicate(() => !EXPIRY_UNITS.every(unitFileAbsent))) {',
     'if (true) {', (create, h) => expiryUninstalledDisableCheck(create, h, 'retired')],
+  // Third correction round, P154C-01. The custody measurement is a property of
+  // the removal; every mutant here puts a journal condition back in front of
+  // it, or narrows what it measures, and each is killed by a control that
+  // reaches a PRESENT, drifted unit file in the journal state it excuses.
+  ['expiry custody conditioned on journal-proven installation', CUSTODY_PREDICATE,
+    CUSTODY_PREDICATE.replace('=> EXPIRY_UNITS', '=> !installed || EXPIRY_UNITS'),
+    (create, h) => expiryJournalBlindCustodyCheck(create, h, 'interrupted-install', 'hardlinked-timer')],
+  ['expiry custody conditioned on a recovered log', CUSTODY_PREDICATE,
+    CUSTODY_PREDICATE.replace('=> EXPIRY_UNITS', '=> journal.recovered || EXPIRY_UNITS'),
+    (create, h) => expiryJournalBlindCustodyCheck(create, h, 'recovered', 'hardlinked-timer')],
+  ['expiry custody predicate ignores the companion unit file', CUSTODY_PREDICATE,
+    CUSTODY_PREDICATE.replace('EXPIRY_UNITS.every', '[EXPIRY_UNITS[0]].every'), custody('hardlinked-service')],
+  ['expiry custody measured on absent unit files', CUSTODY_PREDICATE,
+    CUSTODY_PREDICATE.replace('unitFileAbsent(file) || ', ''), expiryInterruptedRemovalCheck],
+  // The two measurement points, each pinned on its own: before the command
+  // that acts on the unit, and again immediately before the unlink.
+  ['expiry custody measured only after the disable', '\n    requireCustodyOfPresentUnits();', '',
+    custody('non-root-owner')],
+  ['expiry custody never re-measured before the unlink', '\n      requireCustodyOfPresentUnits();', '',
+    expiryUnlinkCustodyCheck],
+  // The ABSENCE half of the same clause: what the journal may and may not
+  // excuse. One mutant per disjunct, each with the state that distinguishes it.
+  ['expiry presence pre-condition ignores the removal receipt', 'removing || EXPIRY_UNITS.every(file => !unitFileAbsent(file))',
+    'EXPIRY_UNITS.every(file => !unitFileAbsent(file))', expiryInterruptedRemovalCheck],
+  ['unaccounted expiry absence accepted', "\n      || !installed && expiryRetired()), 'ACT_TEARDOWN_DRIFT');", "), 'ACT_TEARDOWN_DRIFT');",
+    (create, h) => expiryUninstalledDisableCheck(create, h, 'retired')],
+  ['journal-proven installed expiry absence accepted', '\n      || !installed && expiryRetired())', '\n      || expiryRetired())',
+    (create, h) => expiryVanishedMechanismCheck(create, h, 'armed')],
+  ['unretired expiry absence accepted', "\n      || !installed && expiryRetired()), 'ACT_TEARDOWN_DRIFT');", "\n      || !installed), 'ACT_TEARDOWN_DRIFT');",
+    (create, h) => expiryAbsenceAccountedCheck(create, h, 'interrupted-install', 'half')],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

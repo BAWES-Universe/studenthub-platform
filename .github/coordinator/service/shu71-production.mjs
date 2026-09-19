@@ -464,31 +464,55 @@ export function createShu71Production(id, b = shu71Boundary) {
     try { command('/usr/bin/systemctl', ['kill', '--kill-whom=all', '--signal=SIGKILL', unit]); }
     catch (error) { need(error?.code === 'ACT_COMMAND_FAILED' && unitIdle(unit), 'ACT_TEARDOWN_DRIFT'); }
   }
+  // THE RULE of this function, stated once at the top so that no later edit can
+  // quietly make it conditional again: CUSTODY IS A PROPERTY OF THE REMOVAL,
+  // NOT OF THE JOURNAL. Every durable expiry unit file that is PRESENT is
+  // measured and must be held in root custody - regular file, not a symlink,
+  // one link, uid 0, gid 0, neither group- nor world-writable - before this
+  // teardown disables anything, and measured again immediately before the
+  // unlink. A present file that fails custody refuses by name whatever
+  // `installed`, `removing`, the durable receipt or a recovered log say: there
+  // is no journal state that authorises removing a file we do not hold in
+  // custody, and three separate rounds of this defect reopened exactly by
+  // putting one more journal condition in front of that measurement.
+  // The journal's only role here is ABSENCE. A missing unit file must be
+  // accounted for - by the branch where the journal proves the mechanism was
+  // never created, by the durable removal receipt that proves THIS teardown
+  // already began the removal, or, where the journal vouches for nothing at
+  // all, by a MEASURED fully retired mechanism rather than by any journal claim
+  // - and in every one of those cases each PRESENT file still passes the
+  // custody measurement above.
   function retireExpiryTimer(journal) {
-    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }
-    // A timer the journal proves was durably installed is measured before and
-    // after the command: its disappearance is a refusal. Only an installation
-    // the journal cannot vouch for may end with nothing left to retire.
+    // What the journal proves, read once. Both are facts about ABSENCE only.
+    // `installed`: this episode durably created the mechanism, so a unit file
+    // that is gone is unexplained. `removing`: this teardown already began
+    // unlinking, so a unit file that is gone is the completed half of its own
+    // interrupted work rather than foreign drift. Neither is ever a custody
+    // waiver, and neither may gate the custody measurement below.
     const installed = journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');
-    // Durable receipt for the removal below: a pair this teardown has already
-    // begun unlinking is its own interrupted work, not foreign drift.
     const removing = journalHas(journal, 'EXPIRY_RETIREMENT_STARTED');
-    // Pre-condition, not only post-condition. Where the journal proves this
-    // episode installed the expiry mechanism, BOTH durable unit files must
-    // still exist under root custody before `disable --now` is issued: systemd
-    // will happily disable a unit it still holds loaded whose file was deleted
-    // or replaced underneath it, and that success must never absorb the drift.
-    // The receipt never authorises skipping custody. What it PROVES is that
-    // this teardown already began unlinking, so a unit file that is now ABSENT
-    // is the completed half of our own interrupted removal rather than foreign
-    // drift. What it does NOT prove is that a file which is still PRESENT is
-    // safe to remove: those bytes and that inode are unmeasured, and a second
-    // name for the inode, a foreign owner or a group-writable replacement
-    // survives the unlink. So every unit file that still exists is verified
-    // under root custody on the retry path too, and drifted custody halts here
-    // instead of being disabled, removed and reported as retired.
-    if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>
-      removing && unitFileAbsent(file) || expiryUnitCustody(file))), 'ACT_TEARDOWN_DRIFT');
+    // Journal-independent by construction: this predicate reads the disk and
+    // nothing else, takes no journal argument, and is required before the
+    // never-created branch, so no path through this function reaches an effect
+    // without having measured every unit file that is actually there.
+    const custodyOfPresentUnits = () => EXPIRY_UNITS.every(file => unitFileAbsent(file) || expiryUnitCustody(file));
+    const requireCustodyOfPresentUnits = () => need(measuredPredicate(custodyOfPresentUnits), 'ACT_TEARDOWN_DRIFT');
+    requireCustodyOfPresentUnits();
+    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }
+    // Absence, accounted for. `disable --now` needs a unit file that exists,
+    // and systemd will happily disable a unit it still holds loaded whose file
+    // was deleted or replaced underneath it; that success must never absorb the
+    // drift. So where the journal proves this episode installed the mechanism,
+    // BOTH durable unit files must still be there unless the receipt explains
+    // the gap; and where the journal proves nothing - a recovered log, or an
+    // install interrupted before its durable DONE row - a gap is accepted only
+    // against a measured, fully retired mechanism, never against the journal's
+    // silence. A half-present mechanism nobody can account for is drift.
+    // This clause reads the journal because it is about PRESENCE, which is what
+    // the command it guards requires; the custody measurement above is not
+    // conditioned on anything and must never become so.
+    need(measuredPredicate(() => removing || EXPIRY_UNITS.every(file => !unitFileAbsent(file))
+      || !installed && expiryRetired()), 'ACT_TEARDOWN_DRIFT');
     try { command('/usr/bin/systemctl', ['disable', '--now', expiryTimerUnit]); }
     catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }
     // Post-condition on the success path too: the unit ends not active and not
@@ -500,6 +524,11 @@ export function createShu71Production(id, b = shu71Boundary) {
     need(measuredPredicate(() => unitIdle(expiryTimerUnit)
       && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');
     if (measuredPredicate(() => !EXPIRY_UNITS.every(unitFileAbsent))) {
+      // Measured again, immediately before the unlink. `disable --now` has run
+      // since the measurement at the top, so the file this loop is about to
+      // remove is the one we must hold in custody NOW, not the one we held
+      // before the command.
+      requireCustodyOfPresentUnits();
       if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });
       for (const file of EXPIRY_UNITS) remove(file);
     }
