@@ -1455,3 +1455,65 @@ exactly once: removing both retires the expiry mechanism against a teardown that
 failed. No single-file mutant can express that, which is why the pair is
 recorded as an equivalent pair with this measurement rather than as a shipped
 mutant.
+
+#### Validation of the second correction round
+
+Tested implementation `0f6f04a1860a5e627a89c0daeb6b853245e20307`, tree
+`0861e981c38dc458a86a6293842b3f5cc4be0e27`. All four commands ran from the
+repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`): UID 1000, `umask 0022`, target
+accounts absent (`shu-coordinator`, `shu-supervisor`, `shu71-evidence`,
+`shu-workspace`, `messagebus`), `/run` and `/etc/sudoers.d` tmpfs,
+`/run/shu71-evidence` and `/etc/sudoers.d/shu-reviewer` absent,
+`chmod -R go-w .github/coordinator`, `taskset -c 0-3 node --test
+--test-concurrency=2`, with both the TAP reporter and the unchanged
+`host-suite-contract.mjs` reporter writing separate outputs. Plain unsets
+`NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1594 | 1593 | 0 | 1 | 1 / 1 | 0 | 0.68 → 2.84 |
+| Focused clock | 1594 | 1593 | 0 | 1 | 1 / 1 | 0 | 1.42 → 2.12 |
+| Full plain | 3307 | 3299 | 0 | 8 | 1 / 1 | 0 | 1.79 → 2.38 |
+| Full clock | 3307 | 3299 | 0 | 8 | 1 / 1 | 0 | 2.51 → 3.03 |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line. Focused TAP plans are `1..1594`; full plans are `1..3302`, with
+five nested outcomes bringing each full total to 3,307. Each run's structured
+report has exactly one terminal `complete` event, is terminated by it, and
+passes the unchanged `evaluateSuite` validator. Both full runs' 3,307 outcome
+names are exactly the committed inventory's 3,307 names, with identical
+multiplicities, and `A12 committed inventory requirements match real outcomes`
+passes in both (`ok 2091`). Node's concurrent scheduler interleaves files, so
+the *sequence* of outcome names differs between runs and from the inventory's
+recorded order; the A12 guard compares the name set and its requirement rows,
+which is what both full runs satisfy. Every skip in all four runs is a
+`PERMITTED_SKIPS` entry carrying that entry's exact documented reason,
+byte-for-byte; the single focused skip is
+`SHU-71 restricted capability refusal`.
+
+The focused selection is the sixteen-entry list printed above for the previous
+correction round, unchanged; every file this round touches is already in it. The
+focused total is the previous round's 1,572 plus this round's 22 inventory
+names: 1,594. The full total is 3,285 plus the same 22: 3,307. The full
+selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
+
+`PERMITTED_SKIPS` is byte-identical to `9e1a2d0`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,285 → 3,307 names and
+requirement rows, zero removals and zero dropped requirement rows; no test file
+was added. The reviewed teardown effects set and its order are unchanged. The
+production change is one clause and its comment in `retireExpiryTimer()`, ten
+added lines, which moved three documentation line-number links
+(`shu71-production.mjs#L663` → `#L673` in `SHU71-PREREQUISITES.md` and
+`SHU71-L3-CLOSURE.md`, and `#L607` → `#L617`); `V8_DOCUMENTATION_LINK_TARGETS`
+passes, including its own one-line-drift mutant. Only files under
+`.github/coordinator/**` changed; no push or PR was performed.
+
+Nothing was left inconsistent this round.
