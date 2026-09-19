@@ -30,6 +30,9 @@ export function provisioner(revision, b = boundary) {
   const f = b.fs, C = f.constants;
   const command = (exe, args, options = {}) => {
     const r = b.run(exe, args, { env: ENV, ...options });
+    if (exe === '/usr/sbin/useradd' && r.status === 3 && /unknown item/.test(String(r.stderr))) {
+      throw Object.assign(new Error('ACT_PREREQUISITE_USERADD_CONFIGURATION'), { code: 'ACT_PREREQUISITE_USERADD_CONFIGURATION', command: exe, argument: args.includes('-K') ? '-K ' + args[args.indexOf('-K') + 1] : null, stderr: String(r.stderr) });
+    }
     need(!r.error && r.status === 0, 'ACT_PREREQUISITE_COMMAND');
     return Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? '');
   };
@@ -227,8 +230,8 @@ export function provisioner(revision, b = boundary) {
         const { users, groups } = databases(), u = users.find(u => u.name === BROKER), g = groups.find(g => g.name === BROKER);
         need(!u || u.uid === e.uid && u.gid === e.gid && u.home === '/nonexistent' && u.shell === '/usr/sbin/nologin', 'ACT_ROLLBACK_IDENTITY_DRIFT');
         need(!g || g.gid === e.gid && g.members === '', 'ACT_ROLLBACK_IDENTITY_DRIFT');
-        // All mounted filesystems must be searchable; errors refuse deletion.
-        // This also observes proc owners. No account is removed if any use is found.
+        // Search every filesystem outside process/device pseudo-filesystems.
+        // Processes are inspected separately; all other enumeration errors refuse deletion.
         if (u || g) {
           for (const pid of f.readdirSync('/proc').filter(n => /^[0-9]+$/.test(n))) {
             let status;
@@ -237,7 +240,7 @@ export function provisioner(revision, b = boundary) {
             need(!ids.includes(e.uid) && !ids.includes(e.gid), 'ACT_ROLLBACK_IDENTITY_IN_USE');
           }
         }
-        if (u || g) need(command('/usr/bin/find', ['/', '-uid', String(e.uid), '-o', '-gid', String(e.gid)]).length === 0, 'ACT_ROLLBACK_IDENTITY_IN_USE');
+        if (u || g) need(command('/usr/bin/find', ['/', '(', '-path', '/proc', '-o', '-path', '/sys', '-o', '-path', '/dev', ')', '-prune', '-o', '(', '-uid', String(e.uid), '-o', '-gid', String(e.gid), ')', '-print']).length === 0, 'ACT_ROLLBACK_IDENTITY_IN_USE');
         if (u) command('/usr/sbin/userdel', [BROKER]);
         if (g && databases().groups.some(g => g.name === BROKER)) command('/usr/sbin/groupdel', [BROKER]);
         // Account utilities rewrite their backup files as well as the databases.
@@ -286,8 +289,12 @@ export function provisioner(revision, b = boundary) {
         const { users, groups } = databases();
         need(!users.some(u => u.uid === allocated.uid || u.name === BROKER), 'ACT_BROKER_UID_COLLISION');
         need(!groups.some(g => g.gid === allocated.gid || g.name === BROKER) && !users.some(u => u.gid === allocated.gid), 'ACT_BROKER_GID_COLLISION');
+        // The target shadow build rejects -K CREATE_MAIL_SPOOL. Require its
+        // measured no-spool default; explicit flags suppress home and login logs.
+        const defaults = command('/usr/sbin/useradd', ['-D']).toString().split('\n').filter(line => line.startsWith('CREATE_MAIL_SPOOL='));
+        need(defaults.length === 1 && defaults[0] === 'CREATE_MAIL_SPOOL=no', 'ACT_PREREQUISITE_MAIL_SPOOL_DEFAULT');
         command('/usr/sbin/groupadd', ['--system', '--gid', String(allocated.gid), BROKER]);
-        command('/usr/sbin/useradd', ['--system', '--no-create-home', '--no-log-init', '-K', 'CREATE_MAIL_SPOOL=no', '--uid', String(allocated.uid), '--gid', String(allocated.gid), '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', BROKER]);
+        command('/usr/sbin/useradd', ['--system', '--no-create-home', '--no-log-init', '--uid', String(allocated.uid), '--gid', String(allocated.gid), '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', BROKER]);
         const measured = identity(); need(measured.uid === allocated.uid && measured.gid === allocated.gid, 'ACT_BROKER_IDENTITY');
       });
       for (const e of entries) {
@@ -300,7 +307,10 @@ export function provisioner(revision, b = boundary) {
       const result = verify(entries); j.state = 'VERIFIED'; save(j);
       return { ok: true, state: 'VERIFIED', revision, ...result };
     } catch (error) {
-      try { rollback(j); } catch { need(false, 'ACT_PREREQUISITE_ROLLBACK_REQUIRED'); }
+      try { rollback(j); } catch (recovery) {
+        throw Object.assign(new Error('ACT_PREREQUISITE_ROLLBACK_REQUIRED'), { code: 'ACT_PREREQUISITE_ROLLBACK_REQUIRED', original: prerequisiteFailure(error), rollback: { ok: false, code: recovery.code ?? 'ACT_PREREQUISITE_FAILED' } });
+      }
+      error.rollback = { ok: true, state: 'ROLLED_BACK' };
       throw error;
     }
   }
@@ -453,6 +463,11 @@ export function provisioner(revision, b = boundary) {
     // Exported closure methods are test seams only, never CLI input.
     verifyFile, identity };
 }
+export function prerequisiteFailure(e) {
+  return { ok: false, code: e.code ?? 'ACT_PREREQUISITE_FAILED',
+    ...(e.argument !== undefined ? { command: e.command, argument: e.argument, stderr: e.stderr } : {}),
+    ...(e.original ? { original: e.original } : {}), ...(e.rollback ? { rollback: e.rollback } : {}) };
+}
 export function parseCli(argv) {
   need(argv.length === 2 && ['install', 'verify', 'rollback', 'precondition'].includes(argv[0]) && /^[a-f0-9]{40}$/.test(argv[1]), 'ACT_COMMAND_INVALID');
   return { action: argv[0], revision: argv[1] };
@@ -462,7 +477,7 @@ export function runCli(argv, b = boundary, emit = value => console.log(JSON.stri
     const { action, revision } = parseCli(argv);
     if (['install', 'rollback'].includes(action)) {
       need(b.uid() === 0, 'ACT_PROCESS_IDENTITY');
-      const script = `import { provisioner } from 'file://${PATHS.checkout}/.github/coordinator/service/provision-shu71-prerequisites.mjs'; const r = provisioner('${revision}').${action}(); console.log(JSON.stringify(r)); if(r.ok === false) process.exitCode = 2;`;
+      const script = `import { provisioner, prerequisiteFailure } from 'file://${PATHS.checkout}/.github/coordinator/service/provision-shu71-prerequisites.mjs'; try { const r = provisioner('${revision}').${action}(); console.log(JSON.stringify(r)); if(r.ok === false) process.exitCode = 2; } catch(e) { console.log(JSON.stringify(prerequisiteFailure(e))); process.exitCode = 2; }`;
       const result = b.run('/usr/bin/flock', ['--exclusive', '--nonblock', '--no-fork', '/etc/shu', '/usr/bin/node', '--input-type=module', '-e', script], { env: ENV, timeout: 0, stdio: 'inherit' });
       need(!result.error && [0, 2].includes(result.status), 'ACT_PREREQUISITE_LOCK_OR_EXECUTION');
       return result.status;
@@ -470,7 +485,7 @@ export function runCli(argv, b = boundary, emit = value => console.log(JSON.stri
       const result = provisioner(revision, b)[action]();
       emit(result); return result.ok === false ? 2 : 0;
     }
-  } catch (e) { emit({ ok: false, code: e.code ?? 'ACT_PREREQUISITE_FAILED' }); return 2; }
+  } catch (e) { emit(prerequisiteFailure(e)); return 2; }
 }
 
 if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = runCli(process.argv.slice(2));

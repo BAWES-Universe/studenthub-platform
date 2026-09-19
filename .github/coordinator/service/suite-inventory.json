@@ -19,6 +19,7 @@
     ".github/coordinator/service/test/provision-review-regressions.test.mjs",
     ".github/coordinator/service/test/provision-runtime-state.test.mjs",
     ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
+    ".github/coordinator/service/test/provision-target-host.test.mjs",
     ".github/coordinator/service/test/reporter-amendments.test.mjs",
     ".github/coordinator/service/test/residual.test.mjs",
     ".github/coordinator/service/test/service-plane.test.mjs",
@@ -3265,7 +3266,39 @@
     "CONTRACT_HISTORICAL_BYTES_PINNED",
     "CONTRACT_GATE_CHECKOUT_GROUPS",
     "CONTRACT_KILL_GATE_CLEAR_GROUPS",
-    "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY"
+    "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY",
+    "TARGET_ARGV",
+    "TARGET_PROPERTIES",
+    "TARGET_MAIL_DEFAULT",
+    "TARGET_CONFIGURATION",
+    "TARGET_FILE",
+    "TARGET_PROCESS",
+    "TARGET_PROC_RACE",
+    "TARGET_ENUMERATION",
+    "TARGET_RECOVERY",
+    "TARGET_IDENTITY_CRASH",
+    "TARGET_CLI",
+    "TARGET_KILL_ARGV",
+    "TARGET_KILL_PROPERTY_no_create_home",
+    "TARGET_KILL_PROPERTY_no_log_init",
+    "TARGET_KILL_PROPERTY_system",
+    "TARGET_KILL_HOME",
+    "TARGET_KILL_SHELL",
+    "TARGET_KILL_PRIVATE_GROUP",
+    "TARGET_KILL_WRITE_AHEAD",
+    "TARGET_KILL_CONFIGURATION_ARGUMENT",
+    "TARGET_KILL_MAIL_DEFAULT",
+    "TARGET_KILL_CONFIGURATION",
+    "TARGET_KILL_FILE_UID",
+    "TARGET_KILL_FILE_GID",
+    "TARGET_KILL_PROCESS",
+    "TARGET_KILL_PRUNE_PROC",
+    "TARGET_KILL_PRUNE_SYS",
+    "TARGET_KILL_PRUNE_DEV",
+    "TARGET_KILL_ENUMERATION",
+    "TARGET_KILL_ORIGINAL",
+    "TARGET_KILL_ROLLBACK_OUTCOME",
+    "TARGET_KILL_CLI"
   ],
   "requirements": [
     {
@@ -25861,6 +25894,134 @@
           "name": "git"
         }
       ]
+    },
+    {
+      "name": "TARGET_ARGV",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_PROPERTIES",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_MAIL_DEFAULT",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_CONFIGURATION",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_FILE",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_PROCESS",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_PROC_RACE",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_ENUMERATION",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_RECOVERY",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_IDENTITY_CRASH",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_CLI",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_ARGV",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PROPERTY_no_create_home",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PROPERTY_no_log_init",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PROPERTY_system",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_HOME",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_SHELL",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PRIVATE_GROUP",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_WRITE_AHEAD",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_CONFIGURATION_ARGUMENT",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_MAIL_DEFAULT",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_CONFIGURATION",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_FILE_UID",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_FILE_GID",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PROCESS",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PRUNE_PROC",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PRUNE_SYS",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_PRUNE_DEV",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_ENUMERATION",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_ORIGINAL",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_ROLLBACK_OUTCOME",
+      "capabilities": []
+    },
+    {
+      "name": "TARGET_KILL_CLI",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

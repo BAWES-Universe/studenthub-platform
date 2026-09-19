@@ -17,6 +17,7 @@
   ".github/coordinator/service/test/provision-review-regressions.test.mjs",
   ".github/coordinator/service/test/provision-runtime-state.test.mjs",
   ".github/coordinator/service/test/provision-shu71-prerequisites.test.mjs",
+  ".github/coordinator/service/test/provision-target-host.test.mjs",
   ".github/coordinator/service/test/reporter-amendments.test.mjs",
   ".github/coordinator/service/test/residual.test.mjs",
   ".github/coordinator/service/test/service-plane.test.mjs",

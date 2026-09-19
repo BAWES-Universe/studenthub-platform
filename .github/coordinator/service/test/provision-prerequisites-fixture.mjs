@@ -56,6 +56,7 @@ export function fixture(t) {
   }; }
   const run = (exe, args, opts = {}) => {
     let stdout = ''; let status = 0;
+    if (exe === '/usr/sbin/useradd' && args.length === 1 && args[0] === '-D') return {status:0,stdout:'CREATE_MAIL_SPOOL=no\n'};
     if (exe === '/usr/bin/setpriv' && args.includes('/usr/bin/node')) {
       const uid = users.find(u => u.name === args[0].split('=')[1])?.uid ?? Number(args[0].split('=')[1]), gid = groups.find(g => g.name === args[1].split('=')[1])?.gid ?? Number(args[1].split('=')[1]);
       const probeFS = { ...f, accessSync(p, requested) {
