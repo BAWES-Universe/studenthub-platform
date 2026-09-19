@@ -78,7 +78,7 @@ activation IDs from sharing the physical gates.
 No secret files are combined, re-owned or copied into supervisor/worker
 configuration. The broker is a trusted credential consumer, not a secret-export
 endpoint. Receipt metadata and errors contain no credential values. The operative
-[`renderEvidenceBroker()`](shu71-production.mjs#L663) binds
+[`renderEvidenceBroker()`](shu71-production.mjs#L673) binds
 `User=shu71-evidence` and `Group=shu-workspace`; the provisioner's
 [`identity()`](provision-shu71-prerequisites.mjs#L182) and
 [`sharedAccess()`](provision-shu71-prerequisites.mjs#L195)

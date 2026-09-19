@@ -10,7 +10,9 @@ import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-sourc
 import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck, expiryFileDriftCheck, expiryRetirementCheck,
   expiryDisableFailureCheck, expiryCachedViewCheck, expiryPostConditionCheck, recoveredNonCreationCheck,
   teardownOrderCheck, fixturesRequireWorkersCheck, predicateRefusalCheck, expiryCustodyDriftCheck,
-  expiryPostReloadDriftCheck } from './shu71-recovery-checks.mjs';
+  expiryPostReloadDriftCheck, expiryInterruptedRemovalCheck, expiryInterruptedCustodyDriftCheck,
+  expiryDisableExitFailureCheck, expiryActivePostConditionCheck, expiryEnabledPostConditionCheck,
+  expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck } from './shu71-recovery-checks.mjs';
 const custody = variant => (create, h) => expiryCustodyDriftCheck(create, h, variant);
 const keys = ephemeralPublicSource();
 const moduleUrl = new URL('../shu71-production.mjs', import.meta.url);
@@ -80,10 +82,12 @@ const mutations = [
     "return !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';", destroyedJournalCheck],
   // SHU-71 expiry retirement drift: pre-condition, post-condition, the removal
   // itself, and the clauses in this area that no control pinned before.
-  ['installed expiry pre-condition omitted', "if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(expiryUnitCustody)), 'ACT_TEARDOWN_DRIFT');",
-    "if (false) need(measuredPredicate(() => EXPIRY_UNITS.every(expiryUnitCustody)), 'ACT_TEARDOWN_DRIFT');",
+  // Anchors updated in place for the receipt-aware pre-condition; names and
+  // assertions unchanged.
+  ['installed expiry pre-condition omitted', 'if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+    'if (false) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
     (create, h) => expiryFileDriftCheck(create, h, 'timer')],
-  ['expiry companion service file unchecked', 'EXPIRY_UNITS.every(expiryUnitCustody)', '[EXPIRY_UNITS[0]].every(expiryUnitCustody)',
+  ['expiry companion service file unchecked', 'EXPIRY_UNITS.every(file =>', '[EXPIRY_UNITS[0]].every(file =>',
     (create, h) => expiryFileDriftCheck(create, h, 'service')],
   ['retired expiry units left behind', 'for (const file of EXPIRY_UNITS) remove(file);', 'for (const file of []) remove(file);', expiryRetirementCheck],
   ['expiry retirement receipt omitted', "if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });",
@@ -119,6 +123,58 @@ const mutations = [
     'return true;', custody('non-root-owner')],
   ['post-reload expiry end state never measured', "      command('/usr/bin/systemctl', ['daemon-reload']);\n      need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT');",
     "      command('/usr/bin/systemctl', ['daemon-reload']);", expiryPostReloadDriftCheck],
+  // Second correction round. The verifier's own surviving mutants, plus one per
+  // remaining load-bearing clause and ordering of the retirement, so the clause
+  // table in SHU71-PREREQUISITES.md can be attacked instead of rediscovered.
+  //
+  // F-01: the shape the durable receipt had before this round. A retry finds a
+  // journal-proven installed unit file that has drifted out of root custody and
+  // disables, unlinks and reports it as a clean retirement, while a second name
+  // for the same inode survives the removal.
+  ['interrupted removal bypasses expiry custody', 'if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+    'if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+    (create, h) => expiryInterruptedCustodyDriftCheck(create, h, 'timer')],
+  ['interrupted removal bypasses companion custody', 'if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+    'if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>',
+    (create, h) => expiryInterruptedCustodyDriftCheck(create, h, 'service')],
+  // F-02: the load-bearing ordering. Appended after the loop, a crash inside the
+  // loop leaves no receipt and the retry is a permanent wedge.
+  ['expiry removal receipt appended after the unlinks',
+    "      if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });\n      for (const file of EXPIRY_UNITS) remove(file);",
+    "      for (const file of EXPIRY_UNITS) remove(file);\n      if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });",
+    expiryInterruptedRemovalCheck],
+  ['expiry removal receipt never re-read', "const removing = journalHas(journal, 'EXPIRY_RETIREMENT_STARTED');",
+    'const removing = false;', expiryInterruptedRemovalCheck],
+  // F-03: both doors of the disable catch, and each conjunct behind the typed one.
+  ['expiry disable exit-status refusal conjuncts dropped',
+    "error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())",
+    "error?.code === 'ACT_COMMAND_FAILED'", expiryDisableExitFailureCheck],
+  ['interrupted expiry disable refusal rejected', '(removing || !installed && expiryRetired())',
+    '(!installed && expiryRetired())', expiryInterruptedRemovalCheck],
+  ['uninstalled expiry disable refusal rejected', '(removing || !installed && expiryRetired())',
+    '(removing)', (create, h) => expiryUninstalledDisableCheck(create, h, 'retired')],
+  ['uninstalled expiry disable accepted with the mechanism present', '(removing || !installed && expiryRetired())',
+    '(removing || !installed)', (create, h) => expiryUninstalledDisableCheck(create, h, 'present')],
+  // F-04: one mutant per post-condition conjunct, each attributable now that the
+  // two controls reach them independently.
+  ['expiry post-condition unit liveness inert', 'measuredPredicate(() => unitIdle(expiryTimerUnit)\n',
+    'measuredPredicate(() => true\n', expiryActivePostConditionCheck],
+  ['expiry post-condition enablement unchecked',
+    "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');",
+    "), 'ACT_TEARDOWN_DRIFT');", expiryEnabledPostConditionCheck],
+  // The remaining clauses of the sweep: the second disjunct of the `installed`
+  // derivation, the disable command itself, and the removal loop's own guard.
+  ['expiry installation proven only by ARMED', "journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');",
+    "journalHas(journal, 'ARMED');", expiryInstalledBeforeArmedCheck],
+  ['expiry disable command never issued', "try { command('/usr/bin/systemctl', ['disable', '--now', expiryTimerUnit]); }",
+    'try { /* mutation: never issue the disable */ }', expiryRetirementCheck],
+  // The removal loop's own guard. The teardown's `expiry-timer` step is not a
+  // repeating effect, so a second teardown never re-enters the retirement: the
+  // reachable state where the guard is false is a mechanism that is already
+  // absent when the step first runs. Dropping it writes a removal receipt and
+  // issues both unlinks for a pair there is nothing to remove.
+  ['expiry removal issued with nothing to remove', 'if (measuredPredicate(() => !EXPIRY_UNITS.every(unitFileAbsent))) {',
+    'if (true) {', (create, h) => expiryUninstalledDisableCheck(create, h, 'retired')],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

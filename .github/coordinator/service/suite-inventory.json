@@ -779,6 +779,19 @@
     "B1/B4 mutation: expiry unit hardlink unchecked",
     "B1/B4 mutation: expiry unit custody predicate vacuous",
     "B1/B4 mutation: post-reload expiry end state never measured",
+    "B1/B4 mutation: interrupted removal bypasses expiry custody",
+    "B1/B4 mutation: interrupted removal bypasses companion custody",
+    "B1/B4 mutation: expiry removal receipt appended after the unlinks",
+    "B1/B4 mutation: expiry removal receipt never re-read",
+    "B1/B4 mutation: expiry disable exit-status refusal conjuncts dropped",
+    "B1/B4 mutation: interrupted expiry disable refusal rejected",
+    "B1/B4 mutation: uninstalled expiry disable refusal rejected",
+    "B1/B4 mutation: uninstalled expiry disable accepted with the mechanism present",
+    "B1/B4 mutation: expiry post-condition unit liveness inert",
+    "B1/B4 mutation: expiry post-condition enablement unchecked",
+    "B1/B4 mutation: expiry installation proven only by ARMED",
+    "B1/B4 mutation: expiry disable command never issued",
+    "B1/B4 mutation: expiry removal issued with nothing to remove",
     "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
@@ -817,6 +830,15 @@
     "B4 an installed expiry timer unit file with a second hard link halts before disabling",
     "B4 an installed expiry service unit file with a second hard link halts before disabling",
     "B4 an expiry mechanism still present after the reload is refused, never reported retired",
+    "B4 a teardown interrupted inside the removal loop retries on its durable receipt",
+    "B4 the removal receipt never waives custody of a present expiry timer unit file",
+    "B4 the removal receipt never waives custody of a present expiry service unit file",
+    "B4 a disable that exits non-zero for an installed timer is a refusal, not a retirement",
+    "B4 a disable that leaves the expiry unit active but not enabled is drift",
+    "B4 a disable that leaves the expiry unit enabled but not active is drift",
+    "B4 a disable refused where the journal cannot vouch for the installation, mechanism retired",
+    "B4 a disable refused where the journal cannot vouch for the installation, mechanism present",
+    "B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -7469,6 +7491,58 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: interrupted removal bypasses expiry custody",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: interrupted removal bypasses companion custody",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry removal receipt appended after the unlinks",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry removal receipt never re-read",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry disable exit-status refusal conjuncts dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: interrupted expiry disable refusal rejected",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: uninstalled expiry disable refusal rejected",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: uninstalled expiry disable accepted with the mechanism present",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition unit liveness inert",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition enablement unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry installation proven only by ARMED",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry disable command never issued",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry removal issued with nothing to remove",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: refusal predicate evaluated inside need()",
       "capabilities": []
     },
@@ -7618,6 +7692,42 @@
     },
     {
       "name": "B4 an expiry mechanism still present after the reload is refused, never reported retired",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a teardown interrupted inside the removal loop retries on its durable receipt",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the removal receipt never waives custody of a present expiry timer unit file",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the removal receipt never waives custody of a present expiry service unit file",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that exits non-zero for an installed timer is a refusal, not a retirement",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry unit active but not enabled is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry unit enabled but not active is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable refused where the journal cannot vouch for the installation, mechanism retired",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable refused where the journal cannot vouch for the installation, mechanism present",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed",
       "capabilities": []
     },
     {

@@ -798,3 +798,230 @@ export async function expiryPostReloadDriftCheck(createProduction, h) {
   assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_POST_RELOAD_RECOVERED');
   for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_POST_RELOAD_RETIRED_AFTER_RECOVERY');
 }
+
+// SHU-71 expiry-retirement drift, second correction round. The controls below
+// close the gaps an independent verifier demonstrated at
+// `eb23e258247a03ea678676a73ba3e2d0a13da175`: the durable removal receipt was
+// allowed to SKIP the custody pre-condition on the retry path, the receipt's
+// position relative to the removal loop was pinned by nothing, the
+// `ACT_COMMAND_FAILED` door of the disable catch was pinned by nothing, and the
+// two post-condition conjuncts could not be told apart.
+//
+// Interrupt a teardown inside the removal loop: the durable receipt is written,
+// `unlink` of `file` throws, and the process dies with the pair still in the
+// state this returns. Both unit files are still present when the fault is
+// planted on the FIRST unit of EXPIRY_UNITS (the timer); the timer is already
+// gone when it is planted on the second (the service).
+async function interruptExpiryRemoval(create, h, file, name) {
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_INSTALLED`);
+  h.faults.before = event => event === `unlink:${file}`;
+  const result = await create().execute('revoke');
+  h.faults.before = null;
+  assert.equal(result.ok, false, `${name}_INTERRUPTED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_INTERRUPTED_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_INTERRUPTED_STEP_NAMED`);
+  // The load-bearing ordering, observed where its inversion is observable: the
+  // receipt is durable BEFORE the unlink that was interrupted. Appended after
+  // the loop instead, this interrupted state carries no receipt at all and the
+  // retry below is indistinguishable from foreign drift - a permanent wedge.
+  assert.ok(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), `${name}_RECEIPT_BEFORE_REMOVAL`);
+  unfinished(h, name);
+  return result;
+}
+// F-02. A teardown interrupted part-way through the removal loop: the receipt
+// is durable before the unlinks, one durable unit file is already gone, and the
+// retry finishes the removal rather than refusing its own half-done work. Only
+// the correct order can satisfy this; the inversion leaves no receipt here.
+export async function expiryInterruptedRemovalCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const [timer, service] = [`/etc/systemd/system/${expiryTimer(h)}`, `/etc/systemd/system/shu71-expiry-${h.id}.service`];
+  await interruptExpiryRemoval(create, h, service, 'B4_EXPIRY_INTERRUPTED_REMOVAL');
+  // Exactly the half-removed pair: our own work, proven by the receipt.
+  assert.equal(h.exists(timer), false, 'B4_EXPIRY_INTERRUPTED_REMOVAL_FIRST_UNIT_GONE');
+  assert.equal(h.exists(service), true, 'B4_EXPIRY_INTERRUPTED_REMOVAL_SECOND_UNIT_PRESENT');
+  const start = h.events.length;
+  const result = await create().execute('resume');
+  assert.equal(result.state, 'REVOKED', `B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_COMPLETES: ${JSON.stringify(result)}`);
+  assert.equal(result.ok, true, 'B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_OK');
+  assert.ok(h.events.slice(start).some(e => e === `unlink:${service}`), 'B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_FINISHES_UNLINK');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_INTERRUPTED_REMOVAL_RETIRED');
+}
+// F-01. The receipt is not a custody waiver. On the retry path a unit file that
+// is still PRESENT but has drifted out of root custody - here a second name for
+// the inode systemd loaded - must halt, exactly as it does on the first pass.
+// Accepting it disables and unlinks the unit path while the other name keeps
+// the inode, and reports that as a clean retirement.
+export async function expiryInterruptedCustodyDriftCheck(createProduction, h, unit = 'timer') {
+  const create = () => createProduction(h.id, h.boundary);
+  const timer = `/etc/systemd/system/${expiryTimer(h)}`, file = `/etc/systemd/system/shu71-expiry-${h.id}.${unit}`;
+  const name = `B4_EXPIRY_INTERRUPTED_CUSTODY_${unit}`;
+  // Interrupted at the FIRST unlink, so the receipt exists and both durable
+  // unit files are still on disk - the verifier's demonstrated retry state.
+  await interruptExpiryRemoval(create, h, timer, name);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_BOTH_UNITS_STILL_PRESENT`);
+  const close = plantHardlink(h, file, unit);
+  try {
+    const s = h.boundary.fs.lstatSync(file);
+    assert.equal(s.nlink, 2, `${name}_SECOND_NAME_PLANTED`);
+    assert.equal(s.isFile() && !s.isSymbolicLink() && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022), true, `${name}_ONLY_LINK_TERM_BROKEN`);
+    const start = h.events.length;
+    const result = await create().execute('resume');
+    assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+    assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+    assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_BEFORE_DISABLE`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_UNITS_NOT_UNLINKED`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_UNITS_RETAINED`);
+    unfinished(h, `${name}_RETRY`);
+  } finally { await close(); }
+  // The second name removed, the same retry finishes the interrupted removal.
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+// F-03, the `ACT_COMMAND_FAILED` door of the disable catch. `systemctl disable`
+// exits NON-ZERO for a journal-proven installed timer whose end state is
+// otherwise spotless: idle, not enabled, both files in root custody. Nothing
+// but the refusal conjuncts can produce a refusal here, so a catch that accepts
+// any typed command failure reports this as a successful retirement.
+export async function expiryDisableExitFailureCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_EXPIRY_DISABLE_EXIT_SETUP');
+  assert.ok(h.journal().some(e => e.event === 'ARMED'), 'B4_EXPIRY_DISABLE_EXIT_JOURNAL_PROVES_INSTALLED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_DISABLE_EXIT_UNITS_PRESENT');
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h));
+  const run = h.boundary.run;
+  let exits = 0;
+  h.boundary.run = (exe, argv, options) => {
+    const result = run(exe, argv, options);
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'disable' && argv.at(-1) === expiryTimer(h)) { exits++; return { status: 1, stdout: '' }; }
+    return result;
+  };
+  const start = h.events.length;
+  const result = await create().execute('revoke');
+  assert.equal(exits, 1, 'B4_EXPIRY_DISABLE_EXIT_NONZERO_ISSUED');
+  assert.ok(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), 'B4_EXPIRY_DISABLE_EXIT_COMMAND_ISSUED');
+  assert.equal(result.ok, false, `B4_EXPIRY_DISABLE_EXIT_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', 'B4_EXPIRY_DISABLE_EXIT_NAMED');
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), 'B4_EXPIRY_DISABLE_EXIT_STEP_NAMED');
+  assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, 'B4_EXPIRY_DISABLE_EXIT_UNITS_NOT_UNLINKED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_DISABLE_EXIT_UNITS_RETAINED');
+  assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, 'B4_EXPIRY_DISABLE_EXIT_NO_RECEIPT');
+  unfinished(h, 'B4_EXPIRY_DISABLE_EXIT');
+  h.boundary.run = run;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_DISABLE_EXIT_RECOVERED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_DISABLE_EXIT_RETIRED_AFTER_RECOVERY');
+}
+// F-04. `expiryPostConditionCheck` ends the unit BOTH active and enabled, so
+// either conjunct alone still refuses and neither can be attributed. These two
+// make each conjunct independently reachable: the unit ends active but not
+// enabled, and not active but enabled. In both, the OTHER conjunct is
+// measurably satisfied, so only the named one can produce the refusal - and an
+// inert conjunct destroys the durable unit files of a unit that is still live
+// or still enabled, which is what each control observes.
+async function expiryPostConditionConjunct(createProduction, h, variant) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = `B4_EXPIRY_POSTCONDITION_${variant.toUpperCase()}`;
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  const run = h.boundary.run;
+  h.boundary.run = (exe, argv, options) => {
+    const result = run(exe, argv, options);
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'disable' && argv.at(-1) === expiryTimer(h)) {
+      if (variant === 'active') h.active.set(expiryTimer(h), 'active');
+      else h.enabled.add(expiryTimer(h));
+    }
+    return result;
+  };
+  const result = await create().execute('revoke');
+  // Exactly one conjunct is false at the point of measurement.
+  assert.equal(h.active.get(expiryTimer(h)) ?? 'inactive', variant === 'active' ? 'active' : 'inactive', `${name}_ACTIVE_STATE`);
+  assert.equal(h.enabled.has(expiryTimer(h)), variant === 'enabled', `${name}_ENABLED_STATE`);
+  assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_UNITS_RETAINED`);
+  unfinished(h, name);
+  h.boundary.run = run;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RETIRED_AFTER_RECOVERY`);
+}
+export const expiryActivePostConditionCheck = (createProduction, h) => expiryPostConditionConjunct(createProduction, h, 'active');
+export const expiryEnabledPostConditionCheck = (createProduction, h) => expiryPostConditionConjunct(createProduction, h, 'enabled');
+// The other door of the same catch: a disable that exits non-zero where the
+// journal CANNOT vouch for the installation. `retired`: the mechanism really is
+// absent, `disable` exits 1 because the unit file was never created, and the
+// teardown must complete rather than wedge. `present`: the mechanism is right
+// there, so the same non-zero exit is drift and must halt. Together they pin
+// both halves of `!installed && expiryRetired()`.
+export async function expiryUninstalledDisableCheck(createProduction, h, variant = 'retired') {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = `B4_EXPIRY_UNINSTALLED_${variant.toUpperCase()}`;
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  // An authentic retained prefix of this episode's own journal that records the
+  // forward attempt and neither ARMED nor any DONE for the creating step: the
+  // phase stays inconclusive and `installed` is false.
+  const rows = h.journal(), stop = rows.findIndex(e => e.event === 'RUN_ATTEMPT_STARTED');
+  assert.ok(stop > 0, `${name}_PREFIX_AUTHENTIC`);
+  assert.equal(rows.slice(0, stop + 1).some(e => e.event === 'ARMED' || e.step === 'expiry-watch'), false, `${name}_PREFIX_NOT_INSTALLED`);
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/recovery.jsonl`, rows.slice(0, stop + 1).map(e => JSON.stringify(e)).join('\n') + '\n');
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h));
+  const run = h.boundary.run;
+  let exits = 0;
+  if (variant === 'retired') for (const path of expiryUnits(h)) fs.rmSync(h.root + path);
+  else h.boundary.run = (exe, argv, options) => {
+    const result = run(exe, argv, options);
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'disable' && argv.at(-1) === expiryTimer(h)) { exits++; return { status: 1, stdout: '' }; }
+    return result;
+  };
+  const start = h.events.length;
+  const result = await create().execute('resume');
+  assert.ok(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), `${name}_COMMAND_ISSUED`);
+  if (variant === 'retired') {
+    // The command's own refusal, from the modelled host: no unit file, exit 1.
+    assert.equal(result.state, 'REVOKED', `${name}_COMPLETES: ${JSON.stringify(result)}`);
+    assert.equal(result.ok, true, `${name}_NO_WEDGE`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_NOTHING_TO_REMOVE`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_STAYS_RETIRED`);
+    return;
+  }
+  assert.equal(exits, 1, `${name}_NONZERO_ISSUED`);
+  assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+  assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_UNITS_NOT_UNLINKED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_UNITS_RETAINED`);
+  h.boundary.run = run;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RETIRED_AFTER_RECOVERY`);
+}
+// The second disjunct of the `installed` derivation. Interrupted after the
+// expiry-watch step reached its durable DONE row but before ARMED, the mechanism
+// is installed and the journal proves it by that row alone. Custody drift on it
+// must halt: reading installation from ARMED only would disable and destroy a
+// drifted unit file in exactly this window.
+export async function expiryInstalledBeforeArmedCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const file = `/etc/systemd/system/${expiryTimer(h)}`;
+  let dead = false;
+  h.faults.before = event => dead || (dead = event === 'command:/usr/bin/systemctl:restart shu-supervisor.service');
+  await create().execute('run').catch(() => {});
+  h.faults.before = null;
+  assert.equal(dead, true, 'B4_EXPIRY_BEFORE_ARMED_INTERRUPTED');
+  assert.ok(h.journal().some(e => e.event === 'DONE' && e.step === 'expiry-watch'), 'B4_EXPIRY_BEFORE_ARMED_INSTALL_DONE');
+  assert.equal(h.journal().some(e => e.event === 'ARMED'), false, 'B4_EXPIRY_BEFORE_ARMED_NOT_ARMED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_BEFORE_ARMED_UNITS_INSTALLED');
+  const close = plantHardlink(h, file, 'timer');
+  try {
+    assert.equal(h.boundary.fs.lstatSync(file).nlink, 2, 'B4_EXPIRY_BEFORE_ARMED_SECOND_NAME_PLANTED');
+    const start = h.events.length;
+    const result = await create().execute('revoke');
+    assert.equal(result.ok, false, `B4_EXPIRY_BEFORE_ARMED_REFUSED: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED', 'B4_EXPIRY_BEFORE_ARMED_NAMED');
+    assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), 'B4_EXPIRY_BEFORE_ARMED_STEP_NAMED');
+    assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, 'B4_EXPIRY_BEFORE_ARMED_BEFORE_DISABLE');
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_BEFORE_ARMED_UNITS_RETAINED');
+    unfinished(h, 'B4_EXPIRY_BEFORE_ARMED');
+  } finally { await close(); }
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_BEFORE_ARMED_RECOVERED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_BEFORE_ARMED_UNITS_REMOVED');
+}

@@ -478,7 +478,17 @@ export function createShu71Production(id, b = shu71Boundary) {
     // still exist under root custody before `disable --now` is issued: systemd
     // will happily disable a unit it still holds loaded whose file was deleted
     // or replaced underneath it, and that success must never absorb the drift.
-    if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(expiryUnitCustody)), 'ACT_TEARDOWN_DRIFT');
+    // The receipt never authorises skipping custody. What it PROVES is that
+    // this teardown already began unlinking, so a unit file that is now ABSENT
+    // is the completed half of our own interrupted removal rather than foreign
+    // drift. What it does NOT prove is that a file which is still PRESENT is
+    // safe to remove: those bytes and that inode are unmeasured, and a second
+    // name for the inode, a foreign owner or a group-writable replacement
+    // survives the unlink. So every unit file that still exists is verified
+    // under root custody on the retry path too, and drifted custody halts here
+    // instead of being disabled, removed and reported as retired.
+    if (installed) need(measuredPredicate(() => EXPIRY_UNITS.every(file =>
+      removing && unitFileAbsent(file) || expiryUnitCustody(file))), 'ACT_TEARDOWN_DRIFT');
     try { command('/usr/bin/systemctl', ['disable', '--now', expiryTimerUnit]); }
     catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }
     // Post-condition on the success path too: the unit ends not active and not

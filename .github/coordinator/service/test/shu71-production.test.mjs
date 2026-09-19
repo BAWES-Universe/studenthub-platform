@@ -203,7 +203,9 @@ test('B4 a unit that holds no processes still completes its teardown', async t =
 import * as production from '../shu71-production.mjs';
 import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck, expiryCachedViewCheck,
   expiryPostConditionCheck, recoveredNonCreationCheck, teardownOrderCheck, fixturesRequireWorkersCheck,
-  predicateRefusalCheck, expiryCustodyDriftCheck, expiryPostReloadDriftCheck } from './shu71-recovery-checks.mjs';
+  predicateRefusalCheck, expiryCustodyDriftCheck, expiryPostReloadDriftCheck, expiryInterruptedRemovalCheck,
+  expiryInterruptedCustodyDriftCheck, expiryDisableExitFailureCheck, expiryActivePostConditionCheck,
+  expiryEnabledPostConditionCheck, expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck } from './shu71-recovery-checks.mjs';
 
 for (const unit of ['timer', 'service']) {
   test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
@@ -262,4 +264,41 @@ for (const unit of ['timer', 'service']) {
 
 test('B4 an expiry mechanism still present after the reload is refused, never reported retired', async t => {
   await expiryPostReloadDriftCheck(createShu71Production, productionFixture(t, keys));
+});
+
+// Second correction round: the retry path. The durable removal receipt proves
+// this teardown began unlinking - so an absent unit file is our own work - and
+// nothing more. A unit file still present on the retry is measured for custody
+// exactly as on the first pass, and the receipt's position before the loop is
+// what makes the retry distinguishable from foreign drift at all.
+test('B4 a teardown interrupted inside the removal loop retries on its durable receipt', async t => {
+  await expiryInterruptedRemovalCheck(createShu71Production, productionFixture(t, keys));
+});
+
+for (const unit of ['timer', 'service']) {
+  test(`B4 the removal receipt never waives custody of a present expiry ${unit} unit file`, async t => {
+    await expiryInterruptedCustodyDriftCheck(createShu71Production, productionFixture(t, keys), unit);
+  });
+}
+
+test('B4 a disable that exits non-zero for an installed timer is a refusal, not a retirement', async t => {
+  await expiryDisableExitFailureCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a disable that leaves the expiry unit active but not enabled is drift', async t => {
+  await expiryActivePostConditionCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a disable that leaves the expiry unit enabled but not active is drift', async t => {
+  await expiryEnabledPostConditionCheck(createShu71Production, productionFixture(t, keys));
+});
+
+for (const variant of ['retired', 'present']) {
+  test(`B4 a disable refused where the journal cannot vouch for the installation, mechanism ${variant}`, async t => {
+    await expiryUninstalledDisableCheck(createShu71Production, productionFixture(t, keys), variant);
+  });
+}
+
+test('B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed', async t => {
+  await expiryInstalledBeforeArmedCheck(createShu71Production, productionFixture(t, keys));
 });
