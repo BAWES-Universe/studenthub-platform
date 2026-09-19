@@ -667,3 +667,67 @@ refusal — any unit that currently holds no processes — was **not** measured
 during the window; `systemd.killRequiresProcesses` opts into it explicitly, and
 the production fix is correct under either reading. `stop` is deliberately not
 modelled that way: every unit this teardown stops is installed on the host.
+
+#### Validation of the idempotent-teardown correction
+
+Tested implementation `62832ac2ed6603ca99046f5536dc0db43441516e`, tree
+`f7bded590d288275963d69155dd490c4be190440`. All four commands ran from the
+repository root under the CI-like harness: UID 1000, `umask 0022`, target
+accounts absent (`shu-coordinator`, `shu-supervisor`, `shu71-evidence`,
+`shu-workspace`, `shu-reviewer`), `/srv/shu` and `/etc/sudoers.d/shu-reviewer`
+absent, `chmod -R go-w .github/coordinator`, `taskset -c 0-3 node --test
+--test-concurrency=2`, with both the TAP reporter and the unchanged
+`host-suite-contract.mjs` reporter writing separate outputs. Plain unsets
+`NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused plain | 1495 | 1494 | 0 | 1 | 1 / 1 |
+| Focused clock | 1495 | 1494 | 0 | 1 | 1 / 1 |
+| Full plain | 3238 | 3230 | 0 | 8 | 1 / 1 |
+| Full clock | 3238 | 3230 | 0 | 8 | 1 / 1 |
+
+Every command exited zero with zero cancelled and zero todo outcomes. Focused
+TAP plans are `1..1495`; full plans are `1..3233`, with five nested outcomes.
+Each full run's structured report has exactly one terminal `complete` event and
+passes the unchanged `evaluateSuite` validator, and the committed-inventory
+guard reruns the whole suite and matches all 3,238 names. Every skip in all four
+runs is a `PERMITTED_SKIPS` entry with its exact documented reason; the single
+focused skip is `SHU-71 restricted capability refusal`.
+
+The focused selection is the prior lane selection extended with the files this
+correction touches:
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs
+```
+
+The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
+
+`PERMITTED_SKIPS` is byte-identical to `873a36e`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,213 → 3,238 names and
+requirement rows, zero removals and zero dropped requirement rows. No new test
+file was added. The reviewed teardown effects set and its order are unchanged.
+Only files under `.github/coordinator/**` changed; no push or PR was performed.
