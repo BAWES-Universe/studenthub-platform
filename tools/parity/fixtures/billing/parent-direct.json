@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "sourceKind": "synthetic",
+  "fixtureId": "parent-direct",
+  "newInvoiceNumbers": ["HQ-2026-08-000001"],
+  "transfers": [
+    { "transfer_id": 300, "parent_transfer_id": null, "company_id": 30, "company_total": "6.000", "deleted": 0 }
+  ],
+  "transfer_candidates": [
+    { "tc_id": 3001, "transfer_id": 300, "company_id": 30, "store_id": 301, "company_total": "2.000", "deleted": 0 },
+    { "tc_id": 3002, "transfer_id": 300, "company_id": 30, "store_id": 302, "company_total": "4.000", "deleted": 0 }
+  ],
+  "invoices": [
+    { "invoice_id": 7001, "transfer_id": 300, "deleted": 0 }
+  ]
+}
