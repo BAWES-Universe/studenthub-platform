@@ -1802,3 +1802,96 @@ in-test comment now states exactly two claims and no more — the alternation wi
 the exact line number, and the text-to-definition rule — and explicitly records
 what it does **not** claim about links whose text names no symbol, or whose
 target is a call site rather than a definition (the `precondition()` link).
+
+#### Validation of the third correction round
+
+Tested implementation `4ecf4abd80ced7229a463df8cc3740ab77e31419`, tree
+`9d9df4b2a32ee52d55fb5e60a6400b6c9f4021d3`. All four commands ran from the
+repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`), which printed
+`CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent
+reviewer=absent` for each: UID 1000, `umask 0022`, target accounts absent
+(`shu-coordinator`, `shu-supervisor`, `shu71-evidence`, `shu-workspace`,
+`messagebus`), `/run` and `/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and
+`/etc/sudoers.d/shu-reviewer` absent, `chmod -R go-w .github/coordinator`,
+`taskset -c 0-3 node --test --test-concurrency=2`, with both the TAP reporter
+and the unchanged `host-suite-contract.mjs` reporter writing separate outputs.
+Plain unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1623 | 1622 | 0 | 1 | 1 / 1 | 0 | 0.12 → 2.15 |
+| Focused clock | 1623 | 1622 | 0 | 1 | 1 / 1 | 0 | 2.15 → 2.61 |
+| Full plain | 3336 | 3328 | 0 | 8 | 1 / 1 | 0 | 2.61 → 2.49 |
+| Full clock | 3336 | 3328 | 0 | 8 | 1 / 1 | 0 | 2.49 → 2.51 |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line in any of the four TAP outputs. Focused TAP plans are `1..1623`;
+full plans are `1..3331`, with five nested outcomes bringing each full total to
+3,336. Each run's structured report has exactly one terminal `complete` event,
+is terminated by it, and passes the unchanged `evaluateSuite` validator
+(1,623 / 1,623 / 3,336 / 3,336 expected outcomes). Both full runs' 3,336 outcome
+names are exactly the committed inventory's 3,336 names, with identical
+multiplicities — zero missing and zero extra — and `A12 committed inventory
+requirements match real outcomes` passes in both (`ok 2120`). Node's concurrent
+scheduler interleaves files, so the *sequence* of outcome names differs between
+runs and from the inventory's recorded order; the A12 guard compares the name
+set and its requirement rows, which is what both full runs satisfy. Every skip
+in all four runs is a `PERMITTED_SKIPS` entry carrying that entry's exact
+documented reason, byte-for-byte (checked against the exported object, not by
+eye); the single focused skip is `SHU-71 restricted capability refusal`.
+
+The focused selection is the sixteen-entry list printed for the previous
+correction round, unchanged — every file this round touches is already in it —
+which expands to 23 test files. The focused total is the previous round's 1,594
+plus this round's 29 inventory names: 1,623. The full total is 3,307 plus the
+same 29: 3,336. The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`
+(113 files, unchanged).
+
+Every mutant in `shu71-production-mutations.test.mjs` was additionally replayed
+this round under an instrumented harness that recorded the exact assertion whose
+failure killed it: **59 mutants, 59 kills, no survivors**, and every control
+name in the clause table above is a name that replay printed. Three corrections
+to the table came out of that replay rather than out of reasoning — the removal
+loop is killed by `B4_EXPIRY_RETIREMENT_COMPLETES` and not
+`B4_EXPIRY_UNITS_REMOVED`, the stale-view reload by
+`B4_EXPIRY_RELOAD_REFRESHES_UNIT_VIEW` and not `B4_EXPIRY_CACHED_VIEW_RELOADED`,
+and `unaccounted expiry absence accepted` by
+`B4_EXPIRY_UNINSTALLED_RETIRED_COMMAND_ISSUED` and not `…_COMPLETES` — which is
+the reason the replay was run at all.
+
+`PERMITTED_SKIPS` is byte-identical to `9e1a2d0`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,307 → 3,336 names and
+requirement rows in a 145-insertion / 0-deletion diff, zero removals and zero
+dropped requirement rows; no test file was added. The reviewed teardown effects
+set and its order are unchanged. The production change moved three documentation
+line-number links (`shu71-production.mjs#L673` → `#L702` in
+`SHU71-PREREQUISITES.md` and `SHU71-L3-CLOSURE.md`, and `#L617` → `#L646`);
+`V8_DOCUMENTATION_LINK_TARGETS` passes, including its own one-line-drift mutant
+and its new text-to-definition rule. Only files under `.github/coordinator/**`
+changed; no push or PR was performed.
+
+##### What could not be made consistent
+
+One thing, stated rather than smoothed over. The owner's rule says absence may
+be excused only by the never-created branch or by the durable removal receipt,
+and that "nothing else may excuse absence". The shipped assertion
+`B4_EXPIRY_UNINSTALLED_RETIRED_COMPLETES` requires a third case to be accepted:
+a teardown whose journal can vouch for nothing, whose expiry mechanism is
+measurably and entirely gone — absent on disk, idle, not enabled — must complete
+rather than wedge for ever. Making the rule literally exact would have deleted
+that assertion, which this lane is not permitted to do and which is right on its
+own terms. So the code carries the third tolerance explicitly
+(`|| !installed && expiryRetired()`), it is pinned by its own control and mutant
+in the table above, and it is a MEASUREMENT of the end state rather than a
+journal claim: no journal row can satisfy it. The half-present mechanism — the
+case where that tolerance would actually hide drift — is now refused, which it
+was not before this round. Everything else in P154C-01 through P154C-04 is
+consistent, and nothing else was left open.
