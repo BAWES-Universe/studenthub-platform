@@ -1013,3 +1013,78 @@ byte-identical (1,093 bytes, SHA-256
 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`). The
 reviewed teardown effects set and its order are unchanged, and the only
 production changes in this round are two comments and the new pre-mint gate row.
+
+#### Validation of the correction round
+
+Tested implementation `d9880fd4e395d5793195936f03d5810c7c69819f`, tree
+`027b3ec2ee1f68b8cece8b1356657c6bc3bce27f`. All commands ran from the repository
+root under the CI-like harness (`service/test/fixture/shu71-ci-like.sh`): UID
+1000, `umask 0022`, target accounts absent, `/run` and `/etc/sudoers.d` tmpfs,
+runtime and reviewer sudoers absent, `chmod -R go-w .github/coordinator`,
+`taskset -c 0-3 node --test --test-concurrency=2`, with both the TAP reporter
+and the unchanged `host-suite-contract.mjs` reporter writing separate outputs.
+Plain unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1569 | 1568 | 0 | 1 | 1 / 1 | 0 | 1.46 → 2.52 |
+| Focused clock | 1569 | 1568 | 0 | 1 | 1 / 1 | 0 | 2.32 → 3.20 |
+| Full plain | 3282 | 3274 | 0 | 8 | 1 / 1 | 0 | 3.03 → 3.25 |
+| Full clock | 3282 | 3274 | 0 | 8 | 1 / 1 | 0 | 2.53 → 2.87 |
+
+Every command exited zero with zero cancelled and zero todo outcomes. Focused
+TAP plans are `1..1569`; full plans are `1..3277`, with five nested outcomes
+bringing each total to 3,282. Each run's structured report has exactly one
+terminal `complete` event and passes the unchanged `evaluateSuite` validator.
+The committed-inventory guard reruns the whole suite against the committed
+inventory and matches all 3,282 names, their order and their capability rows.
+Every skip in all four runs is a `PERMITTED_SKIPS` entry with its exact
+documented reason; the single focused skip is
+`SHU-71 restricted capability refusal`.
+
+The focused selection is the previous lane's, extended with the one further
+file this round's gate row affects:
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs \
+  .github/coordinator/service/test/shu71-host-contract.test.mjs
+```
+
+The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
+
+Each of this round's seven production mutants and three pre-mint gate mutants
+was additionally re-verified on its own, outside the suite: with the clause
+removed the teardown reports `{"ok":true,"state":"REVOKED"}` (or the gate row
+reports `ok: true`), and the named control dies. The verifier's own mutant
+shapes were replayed the same way — ownership clause removed, mode clause
+removed, custody predicate vacuous, post-reload `need(...)` deleted — and all
+four now die by name. The only surviving mutant is `!s.isSymbolicLink()`, which
+survives by construction and is documented above as equivalent.
+
+`PERMITTED_SKIPS` is byte-identical to `9e1a2d0`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,262 → 3,282 names and
+requirement rows, zero removals and zero dropped requirement rows; no test file
+was added. The reviewed teardown effects set and its order are unchanged. Only
+files under `.github/coordinator/**` changed; no push or PR was performed.
