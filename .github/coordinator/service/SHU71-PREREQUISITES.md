@@ -1152,3 +1152,71 @@ totals together (1,495 → +24 → 1,519 → +20 inventory names → +30 tests f
 the added file → 1,569). The two statements were not numerically in conflict;
 the defect was that neither said which list had actually been run, so the
 selection could only be reconstructed by chaining two relative references.
+
+#### Validation of the hardlink-clause round
+
+Tested implementation `5412819cb7c6028ec726afeba7c0f15782a1b306`, tree
+`cd7ba2ab44537b5668d4fb716192e6a9539d0d9e`. All four commands ran from the
+repository root under the CI-like harness (`test/fixture/shu71-ci-like.sh`):
+UID 1000, `umask 0022`, target accounts absent (`shu-coordinator`,
+`shu-supervisor`, `shu71-evidence`, `shu-workspace`, `messagebus`), `/run` and
+`/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and `/etc/sudoers.d/shu-reviewer`
+absent, `chmod -R go-w .github/coordinator`, `taskset -c 0-3 node --test
+--test-concurrency=2`, with both the TAP reporter and the unchanged
+`host-suite-contract.mjs` reporter writing separate outputs. Plain unsets
+`NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1572 | 1571 | 0 | 1 | 1 / 1 | 0 | 1.50 → 7.11 |
+| Focused clock | 1572 | 1571 | 0 | 1 | 1 / 1 | 0 | 6.54 → 3.95 |
+| Full plain | 3285 | 3277 | 0 | 8 | 1 / 1 | 0 | 3.95 → 2.20 |
+| Full clock | 3285 | 3277 | 0 | 8 | 1 / 1 | 0 | 2.02 → 3.09 |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line. Focused TAP plans are `1..1572`; full plans are `1..3280`, with
+five nested outcomes bringing each total to 3,285. Each run's structured report
+has exactly one terminal `complete` event and passes the unchanged
+`evaluateSuite` validator, and both full runs' outcome names match the
+committed inventory's 3,285 names exactly. Every skip in all four runs is a
+`PERMITTED_SKIPS` entry with its exact documented reason; the single focused
+skip is `SHU-71 restricted capability refusal`.
+
+The focused selection is the sixteen-entry list printed above for the previous
+correction round, unchanged; every file this round touches is already in it.
+The focused total is that round's 1,569 plus this round's three inventory
+names: 1,572. The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
+
+One earlier full plain run, executed against the working tree before this
+round's commit existed, failed with `SHU251_SUITE_INCOMPLETE` in `A12 committed
+inventory requirements match real outcomes`, and is recorded here rather than
+discarded. That guard reads the inventory from the committed revision
+(`git show <revision>:suite-inventory.json`) while executing the working-tree
+test files, so three uncommitted names are necessarily an incomplete suite to
+it — the same property earlier lanes handled with a detached committed
+snapshot. All four runs in the table above are against the committed revision
+with a clean working tree, and that guard passes in both full runs.
+
+Each hardlink control was additionally re-verified on its own, outside the
+suite: with `s.nlink === 1 && ` removed from `expiryUnitCustody`, the teardown
+reports `{"ok":true,"state":"REVOKED","failures":[]}`, the unit path is
+unlinked, the retained second name still resolves to the inode, and both
+`B4_EXPIRY_CUSTODY_REFUSED_hardlinked-timer` and `…_hardlinked-service` die by
+name. The service-side control also kills the existing `expiry companion
+service file unchecked` mutant, which the timer-side control survives by
+construction.
+
+`PERMITTED_SKIPS` is byte-identical to `9e1a2d0`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. No
+production file changed in this round at all: the only changed bytes are three
+test files, the inventory and this document. Inventories are strictly additive:
+113 test files unchanged, 3,282 → 3,285 names and requirement rows, zero
+removals and zero dropped requirement rows; no test file was added. The
+reviewed teardown effects set and its order are unchanged. Only files under
+`.github/coordinator/**` changed; no push or PR was performed.
