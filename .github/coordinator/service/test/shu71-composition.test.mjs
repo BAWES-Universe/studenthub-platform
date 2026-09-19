@@ -27,7 +27,17 @@ async function composition(t) {
   assert.equal((await execute('run')).state, 'ARMED', 'B1_PRODUCTION_ARM');
   // Preserve the original 116 operations, five identity reads, and exactly
   // four new journal writes (RUN_ATTEMPT_STARTED, INTENT, CHECK_STARTED, DONE), plus seven ruled runtime operations (three probes and four receipt writes/renames).
-  assert.equal(effects(p, armStart), 116 + 5 + 7 + 4, 'B1_ARM_EFFECT_COUNT');
+  // Account for exactly the six additional durable phase-control rows while
+  // retaining the reviewed expected count for every prior operation.
+  const phaseRows = p.journal().filter(r => ['activation-readback', 'gate-install', 'dropin-readback'].includes(r.step));
+  assert.deepEqual(phaseRows.map(({ event, step }) => [event, step]), [
+    ['INTENT', 'activation-readback'], ['DONE', 'activation-readback'],
+    ['INTENT', 'gate-install'], ['DONE', 'gate-install'],
+    ['INTENT', 'dropin-readback'], ['DONE', 'dropin-readback'],
+  ], 'B1_ADDITIVE_PHASE_JOURNAL_WRITES');
+  const readerProbes = p.events.slice(armStart).filter(e => e.startsWith('command:/usr/bin/setpriv:') && e.includes('/usr/bin/node') && e.includes(credential));
+  assert.equal(readerProbes.length, 1, 'B1_ADDITIVE_ACTIVATION_READER_PROBE');
+  assert.equal(effects(p, armStart) - phaseRows.length - readerProbes.length, 116 + 5 + 7 + 4, 'B1_ARM_EFFECT_COUNT');
   assert.deepEqual(p.events.slice(armStart).filter(e => e.startsWith('command:')).slice(0, 5), [
     'command:/usr/bin/systemctl:show --property=User --value shu-supervisor.service',
     'command:/usr/bin/systemctl:show --property=Group --value shu-supervisor.service',

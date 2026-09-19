@@ -11,17 +11,17 @@ import { digest } from '../shu71-journal.mjs';
 
 // All paths map into this disposable tree. Every command and API is interpreted
 // here. No production command, host service, API or signing key is reachable.
-export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-activation-ed25519.pem') {
+export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-activation-ed25519.pem', host = null) {
   const h = harness(keys), pkg = h.context.pkg, id = pkg.activation_id;
   pkg.reseed.patch_sha256 = digest(''); pkg.signature = ''; pkg.activation.signature = '';
   const tree = 'd'.repeat(40);
   const spec = { kind: 'shu71-production-v1', checkout: '/reviewed/repo', tree: 'c'.repeat(40), pkg,
     binding: { ...pkg.reseed, approvedExecutionRevision: pkg.coordinator_revision, tree, manifest_hex: '' } };
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-production-'));
+  const root = host?.root ?? fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-production-'));
   fs.chmodSync(root, 0o755); // Model the host / traversal mode inside the disposable tree.
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const identity = { user: 'shu-coordinator', group: 'shu-coordinator', uid: 999, gid: 999 };
-  const owners = new Map(), handles = new Map(), events = [], faults = {};
+  const identity = { user: 'shu-coordinator', group: 'shu-coordinator', uid: 999, gid: 982 };
+  const owners = host?.owners ?? new Map(), handles = new Map(), events = [], faults = {};
   const logical = p => typeof p === 'number' ? handles.get(p) : p;
   const resolve = p => typeof p === 'number' ? p : root + p;
   const stat = (p, value) => new Proxy(value, { get(target, key) {
@@ -45,6 +45,8 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     openSync(p, flags, mode) { const fd = fs.openSync(resolve(p), flags, mode); handles.set(fd, p); return fd; },
     closeSync(fd) { fs.closeSync(fd); handles.delete(fd); },
     readFileSync(p, encoding) {
+      if (!host && p === '/etc/passwd') return `shu-coordinator:x:999:982::/nonexistent:/usr/sbin/nologin\n`;
+      if (!host && p === '/etc/group') return `shu-coordinator:x:982:\nshu-workspace:x:980:shu-coordinator\nsystemd-journal:x:999:\n`;
       if (p instanceof URL) {
         if (p.pathname.endsWith('shu71-trust-anchor.json')) return JSON.stringify(h.context.anchor);
         return fs.readFileSync(p, encoding);
@@ -71,13 +73,16 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     fs.mkdirSync(resolve(p), { mode: 0o755 });
     fs.chmodSync(resolve(p), 0o755);
   }
-  function write(p, value, mode = 0o600, uid = 0, gid = uid) {
+  function write(p, value, mode = 0o600, uid = 0, gid = uid === identity.uid ? identity.gid : uid) {
     directory(path.dirname(p));
     fs.writeFileSync(resolve(p), value, { mode });
     fs.chmodSync(resolve(p), mode); owners.set(p, [uid, gid]);
   }
   for (const p of ['/srv/shu/state', '/srv/shu/state/workspaces', '/etc/systemd/system', '/srv/shu/worktrees']) directory(p);
+  for (const p of ['/srv/shu/state/shu71-evidence', `/srv/shu/state/shu71-evidence/${id}`]) { directory(p); fs.chmodSync(resolve(p), 0o700); }
   fs.chmodSync(resolve('/srv/shu/worktrees'), 0o3770);
+  owners.set('/srv/shu/worktrees', [999, 980]);
+  for (const p of ['/srv/shu/state', '/srv/shu/state/workspaces']) { fs.chmodSync(resolve(p), 0o700); owners.set(p, [999, 982]); }
   write(`/etc/shu/approvals/${id}.shu71.json`, JSON.stringify({ payload: spec, signature: sign(null, canonicalBytes(spec, false), keys.privateKey).toString('base64') }));
   write('/etc/shu/approvals/shu71-owner.pub', keys.publicKey.export({ type: 'spki', format: 'pem' }));
   write(signingPath, keys.privateKey.export({ type: 'pkcs8', format: 'pem' }));
@@ -98,9 +103,9 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           else throw new Error('unexpected account lookup');
           return;
         }
-        if (exe === '/usr/bin/setpriv' && argv.includes('--init-groups')) {
+        if (exe === '/usr/bin/setpriv' && argv.includes('--init-groups') && argv.includes('/usr/bin/node')) {
           const probeFs = { ...f, accessSync(p, requested) {
-            const st = f.lstatSync(p), shift = st.uid === 999 ? 6 : [999, 980].includes(st.gid) ? 3 : 0;
+            const st = f.lstatSync(p), shift = st.uid === 999 ? 6 : [identity.gid, 980].includes(st.gid) ? 3 : 0;
             if (((st.mode >> shift) & requested) !== requested) throw Error('EACCES');
           } };
           try { vm.runInNewContext(argv.at(-1).replace("import fs from 'node:fs'; ", ''), { fs: probeFs }); }
@@ -119,7 +124,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           if (argv[0] === 'stop') active.set(argv[1], 'inactive');
           return;
         }
-        if (exe === '/usr/bin/id') { output = String(identity[{ '-u': 'uid', '-g': 'gid', '-gn': 'group' }[argv[0]]]); return; }
+        if (exe === '/usr/bin/id') { output = argv[0] === '-Gn' ? 'shu-coordinator shu-workspace' : String(identity[{ '-u': 'uid', '-g': 'gid', '-gn': 'group' }[argv[0]]]); return; }
         if (exe !== '/usr/bin/setpriv') throw new Error('unexpected command');
         const args = argv.slice(argv.indexOf('-C') + 2), [verb, ...rest] = args;
         const ref = rest.at(-1);

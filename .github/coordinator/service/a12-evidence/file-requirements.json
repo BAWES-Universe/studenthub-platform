@@ -142,6 +142,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/provision-host-reality.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem and crypto APIs in disposable roots; all host paths, Git, parser and account command boundaries doubled; source mutants imported in memory",
@@ -266,10 +272,28 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-host-contract.test.mjs",
+    "capabilities": [
+      "git"
+    ],
+    "justification": "Real Git object write after modeled POSIX identity and shared-group access; host commands otherwise injected",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-host-contract.test.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     "capabilities": [],
     "justification": "Node core crypto/filesystem controls; production command and NSS boundaries doubled; Unix DAC connection behaviour model, no host identity or socket access claimed",
     "call_sites": []
+  },
+  {
+    "file": ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; historical and mutation modules execute in-process with disposable filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-phase-readback.test.mjs"
+    ]
   },
   {
     "file": ".github/coordinator/service/test/shu71-production-mutations.test.mjs",

@@ -97,10 +97,10 @@ test('SHU71 review measured service identity', t => {
   h.users().find(u => u.name === 'shu-coordinator').uid = 1201;
   h.users().find(u => u.name === 'shu-coordinator').gid = 1202;
   h.groups().find(g => g.name === 'shu-coordinator').gid = 1202;
-  for (const p of [PATHS.checkout, '/srv/shu/coordinator.env', '/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor']) h.owners.set(p, [1201,1202]);
+  for (const p of [PATHS.checkout, '/srv/shu/coordinator.env', '/srv/shu/state', '/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor']) h.owners.set(p, [1201,1202]);
   const run = h.boundary.run;
   h.boundary.run = (exe, args, opts) => {
-    if (exe === '/usr/bin/setpriv') assert.deepEqual(args.slice(0,3), ['--reuid=1201','--regid=1202','--clear-groups'], 'SHU71_SERVICE_NAME_RESOLUTION');
+    if (exe === '/usr/bin/setpriv') assert.deepEqual(args.slice(0,3), ['--reuid=shu-coordinator','--regid=shu-coordinator','--init-groups'], 'SHU71_SERVICE_NAME_RESOLUTION');
     return run(exe,args,opts);
   };
   const p = provisioner(revision, h.boundary); p.install();

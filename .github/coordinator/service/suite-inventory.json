@@ -14,6 +14,7 @@
     ".github/coordinator/service/test/mint-shu71.test.mjs",
     ".github/coordinator/service/test/phase-a-driver.test.mjs",
     ".github/coordinator/service/test/production-lifecycle.test.mjs",
+    ".github/coordinator/service/test/provision-host-reality.test.mjs",
     ".github/coordinator/service/test/provision-prerequisites-mutations.test.mjs",
     ".github/coordinator/service/test/provision-review-regressions.test.mjs",
     ".github/coordinator/service/test/provision-runtime-state.test.mjs",
@@ -28,7 +29,9 @@
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
+    ".github/coordinator/service/test/shu71-host-contract.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
+    ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -3102,7 +3105,167 @@
     "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: RUN_ATTEMPT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload intact",
-    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered"
+    "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered",
+    "HOST_REALITY_PRE_FIX: all five failures reproduced from merged source",
+    "HOST_RANGE_DEFAULT",
+    "HOST_GREEN",
+    "HOST_CLI_GREEN",
+    "HOST_ENV_FOREIGN_TARGET",
+    "HOST_ENV_FOREIGN_OWNER",
+    "HOST_ENV_LINK_OWNER",
+    "HOST_ENV_WRITABLE",
+    "HOST_ENV_PARENT_WRITABLE",
+    "HOST_STATE_OWNER_/srv/shu/state",
+    "HOST_STATE_WRITE_/srv/shu/state",
+    "HOST_STATE_LINK_/srv/shu/state",
+    "HOST_STATE_OWNER_/srv/shu/state/workspaces",
+    "HOST_STATE_WRITE_/srv/shu/state/workspaces",
+    "HOST_STATE_LINK_/srv/shu/state/workspaces",
+    "HOST_STATE_OWNER_/srv/shu/state/workspaces/supervisor",
+    "HOST_STATE_WRITE_/srv/shu/state/workspaces/supervisor",
+    "HOST_STATE_LINK_/srv/shu/state/workspaces/supervisor",
+    "HOST_STATE_OWNER_/srv/shu/state/shu71-evidence",
+    "HOST_STATE_WRITE_/srv/shu/state/shu71-evidence",
+    "HOST_STATE_LINK_/srv/shu/state/shu71-evidence",
+    "HOST_ROOT_ANCESTOR",
+    "HOST_ACTIVATION_PRESENT",
+    "HOST_HARD_UNIT_shu-supervisor.service",
+    "HOST_HARD_UNIT_shu-coordinator.service",
+    "HOST_HARD_UNIT_shu-coordinator.timer",
+    "HOST_RANGE_DUPLICATE",
+    "HOST_RANGE_MALFORMED",
+    "HOST_RANGE_REVERSED",
+    "HOST_RANGE_OVERLAP",
+    "HOST_RANGE_ZERO",
+    "HOST_RANGE_OVERFLOW",
+    "HOST_RANGE_REGULAR_MALFORMED",
+    "HOST_RANGE_BOUNDARIES_OCCUPANCY",
+    "HOST_KILL_RANGE_DEFAULT",
+    "HOST_KILL_ENV_SYMLINK",
+    "HOST_KILL_STATE_ROOT_ONLY",
+    "HOST_KILL_WINDOW_HARD_REQUIREMENT",
+    "HOST_KILL_ACTIVATION_HARD_REQUIREMENT",
+    "HOST_KILL_GREEN_ALWAYS_REFUSE",
+    "HOST_KILL_ENV_FOREIGN_TARGET",
+    "HOST_KILL_ENV_FOREIGN_OWNER",
+    "HOST_KILL_ENV_WRITABLE",
+    "HOST_KILL_STATE_SYMLINK",
+    "HOST_KILL_DUPLICATE",
+    "HOST_KILL_MALFORMED",
+    "HOST_KILL_MAX_DEFAULT",
+    "HOST_KILL_OCCUPIED_UID",
+    "HOST_KILL_NO_WORLD_WRITE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
+    "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
+    "PHASE_KILL_DROPIN_COORDINATOR_BYTES",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_UID",
+    "PHASE_KILL_DROPIN_COORDINATOR_UID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_GID",
+    "PHASE_KILL_DROPIN_COORDINATOR_GID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_WIDE_MODE",
+    "PHASE_KILL_DROPIN_COORDINATOR_WIDE_MODE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_NARROW_MODE",
+    "PHASE_KILL_DROPIN_COORDINATOR_NARROW_MODE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_SPECIAL_MODE",
+    "PHASE_KILL_DROPIN_COORDINATOR_SPECIAL_MODE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_SYMLINK",
+    "PHASE_KILL_DROPIN_COORDINATOR_SYMLINK",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_UID",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_UID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_GID",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_GID",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+    "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+    "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_MISSING",
+    "PHASE_KILL_DROPIN_SUPERVISOR_MISSING",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_BYTES",
+    "PHASE_KILL_DROPIN_SUPERVISOR_BYTES",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_UID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_UID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_GID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_GID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_WIDE_MODE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_WIDE_MODE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_NARROW_MODE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_NARROW_MODE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_SPECIAL_MODE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_SPECIAL_MODE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_SYMLINK",
+    "PHASE_KILL_DROPIN_SUPERVISOR_SYMLINK",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_UID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_UID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_GID",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_GID",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+    "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+    "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+    "PHASE_REQUIRE_ACTIVATION_MISSING",
+    "PHASE_KILL_ACTIVATION_MISSING",
+    "PHASE_REQUIRE_ACTIVATION_BYTES",
+    "PHASE_KILL_ACTIVATION_BYTES",
+    "PHASE_REQUIRE_ACTIVATION_UID",
+    "PHASE_KILL_ACTIVATION_UID",
+    "PHASE_REQUIRE_ACTIVATION_GID",
+    "PHASE_KILL_ACTIVATION_GID",
+    "PHASE_REQUIRE_ACTIVATION_WIDE_MODE",
+    "PHASE_KILL_ACTIVATION_WIDE_MODE",
+    "PHASE_REQUIRE_ACTIVATION_NARROW_MODE",
+    "PHASE_KILL_ACTIVATION_NARROW_MODE",
+    "PHASE_REQUIRE_ACTIVATION_SPECIAL_MODE",
+    "PHASE_KILL_ACTIVATION_SPECIAL_MODE",
+    "PHASE_REQUIRE_ACTIVATION_SYMLINK",
+    "PHASE_KILL_ACTIVATION_SYMLINK",
+    "PHASE_REQUIRE_ACTIVATION_SIGNATURE",
+    "PHASE_KILL_ACTIVATION_SIGNATURE",
+    "PHASE_PRE_FIX_DROPIN_COORDINATOR_MISSING_ACCEPTED",
+    "PHASE_PRE_FIX_DROPIN_COORDINATOR_BYTES_ACCEPTED",
+    "PHASE_PRE_FIX_DROPIN_SUPERVISOR_MISSING_ACCEPTED",
+    "PHASE_PRE_FIX_DROPIN_SUPERVISOR_BYTES_ACCEPTED",
+    "PHASE_PRE_FIX_ACTIVATION_MISSING_ACCEPTED",
+    "PHASE_PRE_FIX_ACTIVATION_BYTES_ACCEPTED",
+    "PHASE_GREEN_ORDER_AND_EXACT_BYTES",
+    "PHASE_KILL_ACTIVATION_LATE_ORDER",
+    "PHASE_KILL_DROPIN_LATE_ORDER",
+    "PHASE_HISTORICAL_BYTES_PINNED",
+    "PHASE_KILL_ACTIVATION_PAST_DISPATCH_GATE",
+    "PHASE_REQUIRE_ACTIVATION_RESUME_REMEASURES",
+    "PHASE_KILL_ACTIVATION_RESUME_SKIP",
+    "PHASE_REQUIRE_DROPIN_RESUME_REMEASURES",
+    "PHASE_KILL_DROPIN_RESUME_SKIP",
+    "CONTRACT_JOINT_PREPARED_HOST",
+    "CONTRACT_PRE_FIX_EVIDENCE_UNSATISFIABLE",
+    "CONTRACT_EVIDENCE_REFUSE_SERVICE_OWNER",
+    "CONTRACT_EVIDENCE_REFUSE_GID",
+    "CONTRACT_EVIDENCE_REFUSE_MODE",
+    "CONTRACT_EVIDENCE_REFUSE_SYMLINK",
+    "CONTRACT_EVIDENCE_REFUSE_ANCESTOR",
+    "CONTRACT_READER_UID_NE_GID",
+    "CONTRACT_PRE_FIX_ACTIVATION_UNREADABLE",
+    "CONTRACT_GIT_SHARED_GROUP_OPERATION",
+    "CONTRACT_KILL_EVIDENCE_SERVICE_OWNER",
+    "CONTRACT_KILL_ACTIVATION_UID_AS_GID",
+    "CONTRACT_KILL_GIT_OLD_IDENTITY",
+    "CONTRACT_KILL_GIT_CLEAR_GROUPS",
+    "CONTRACT_KILL_STATE_ROOT_ONLY",
+    "CONTRACT_DISTINCT_ACCOUNT_DATABASE",
+    "CONTRACT_EXACT_GATE_AND_PRODUCTION_PREDICATE",
+    "CONTRACT_KILL_EXACT_GATE_GID",
+    "CONTRACT_KILL_EXACT_GATE_MODE",
+    "CONTRACT_KILL_EXACT_PRODUCTION_GID",
+    "CONTRACT_KILL_EXACT_PRODUCTION_MODE",
+    "CONTRACT_READBACK_REFUSES_SYSTEMD_JOURNAL",
+    "CONTRACT_KILL_READBACK_UID_AS_GID",
+    "CONTRACT_KILL_SERVICE_ROOT_ACCEPTANCE",
+    "CONTRACT_READER_PROBE_REFUSAL",
+    "CONTRACT_KILL_READER_PROBE_OMISSION",
+    "CONTRACT_HISTORICAL_BYTES_PINNED",
+    "CONTRACT_GATE_CHECKOUT_GROUPS",
+    "CONTRACT_KILL_GATE_CLEAR_GROUPS",
+    "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY"
   ],
   "requirements": [
     {
@@ -24737,6 +24900,962 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: BROKER_RUNTIME_CHECK_STARTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "HOST_REALITY_PRE_FIX: all five failures reproduced from merged source",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_DEFAULT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CLI_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_FOREIGN_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_FOREIGN_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_LINK_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_WRITABLE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_PARENT_WRITABLE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state/workspaces",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state/workspaces",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state/workspaces",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state/workspaces/supervisor",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state/workspaces/supervisor",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state/workspaces/supervisor",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_OWNER_/srv/shu/state/shu71-evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_WRITE_/srv/shu/state/shu71-evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_STATE_LINK_/srv/shu/state/shu71-evidence",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ROOT_ANCESTOR",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ACTIVATION_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_HARD_UNIT_shu-supervisor.service",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_HARD_UNIT_shu-coordinator.service",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_HARD_UNIT_shu-coordinator.timer",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_DUPLICATE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_REVERSED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_OVERLAP",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_ZERO",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_OVERFLOW",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_REGULAR_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_RANGE_BOUNDARIES_OCCUPANCY",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_RANGE_DEFAULT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_SYMLINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_STATE_ROOT_ONLY",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_WINDOW_HARD_REQUIREMENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ACTIVATION_HARD_REQUIREMENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_GREEN_ALWAYS_REFUSE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_FOREIGN_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_FOREIGN_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_WRITABLE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_STATE_SYMLINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_DUPLICATE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MAX_DEFAULT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_OCCUPIED_UID",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_NO_WORLD_WRITE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_COORDINATOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_WIDE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_SUPERVISOR_DIRECTORY_NARROW",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_MISSING",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_UID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_GID",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_WIDE_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_NARROW_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_SPECIAL_MODE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_SYMLINK",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_SIGNATURE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_SIGNATURE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_COORDINATOR_MISSING_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_COORDINATOR_BYTES_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_SUPERVISOR_MISSING_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_DROPIN_SUPERVISOR_BYTES_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_ACTIVATION_MISSING_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_PRE_FIX_ACTIVATION_BYTES_ACCEPTED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_GREEN_ORDER_AND_EXACT_BYTES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_LATE_ORDER",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_LATE_ORDER",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_HISTORICAL_BYTES_PINNED",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_PAST_DISPATCH_GATE",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_ACTIVATION_RESUME_REMEASURES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_ACTIVATION_RESUME_SKIP",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_REQUIRE_DROPIN_RESUME_REMEASURES",
+      "capabilities": []
+    },
+    {
+      "name": "PHASE_KILL_DROPIN_RESUME_SKIP",
+      "capabilities": []
+    },
+    {
+      "name": "CONTRACT_JOINT_PREPARED_HOST",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_PRE_FIX_EVIDENCE_UNSATISFIABLE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_SERVICE_OWNER",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_MODE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_SYMLINK",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EVIDENCE_REFUSE_ANCESTOR",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_READER_UID_NE_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_PRE_FIX_ACTIVATION_UNREADABLE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_GIT_SHARED_GROUP_OPERATION",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EVIDENCE_SERVICE_OWNER",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_ACTIVATION_UID_AS_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_GIT_OLD_IDENTITY",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_GIT_CLEAR_GROUPS",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_STATE_ROOT_ONLY",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_DISTINCT_ACCOUNT_DATABASE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_EXACT_GATE_AND_PRODUCTION_PREDICATE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_GATE_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_GATE_MODE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_PRODUCTION_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_EXACT_PRODUCTION_MODE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_READBACK_REFUSES_SYSTEMD_JOURNAL",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_READBACK_UID_AS_GID",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_SERVICE_ROOT_ACCEPTANCE",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_READER_PROBE_REFUSAL",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_READER_PROBE_OMISSION",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_HISTORICAL_BYTES_PINNED",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_GATE_CHECKOUT_GROUPS",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_GATE_CLEAR_GROUPS",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "CONTRACT_KILL_JOURNAL_ROOT_ONLY_ANCESTRY",
       "capabilities": [
         {
           "name": "git"

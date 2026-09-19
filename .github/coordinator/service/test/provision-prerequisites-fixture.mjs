@@ -46,7 +46,7 @@ export function fixture(t) {
     ['test/excluded.test.mjs', Buffer.from('not production')],
   ]);
   let users = [{ name: 'messagebus', uid: 996, gid: 998, home: '/nonexistent', shell: '/usr/sbin/nologin' }];
-  let groups = [{ name: 'messagebus', gid: 998, members: '' }, { name: 'shu-coordinator', gid: 982, members: '' }, { name: 'shu-workspace', gid: 980, members: 'shu-coordinator' }];
+  let groups = [{ name: 'systemd-journal', gid: 999, members: '' }, { name: 'messagebus', gid: 998, members: '' }, { name: 'shu-coordinator', gid: 982, members: '' }, { name: 'shu-workspace', gid: 980, members: 'shu-coordinator' }];
   users.push({ name: 'shu-coordinator', uid: 999, gid: 982, home: '/nonexistent', shell: '/usr/sbin/nologin' });
   function accountBytes() { return {
     '/etc/passwd': users.map(u => `${u.name}:x:${u.uid}:${u.gid}::${u.home}:${u.shell}`).join('\n') + '\n',
@@ -57,9 +57,10 @@ export function fixture(t) {
   const run = (exe, args, opts = {}) => {
     let stdout = ''; let status = 0;
     if (exe === '/usr/bin/setpriv' && args.includes('/usr/bin/node')) {
-      const uid = Number(args[0].split('=')[1]), gid = Number(args[1].split('=')[1]);
+      const uid = users.find(u => u.name === args[0].split('=')[1])?.uid ?? Number(args[0].split('=')[1]), gid = groups.find(g => g.name === args[1].split('=')[1])?.gid ?? Number(args[1].split('=')[1]);
       const probeFS = { ...f, accessSync(p, requested) {
-        const st = f.lstatSync(p), shift = st.uid === uid ? 6 : st.gid === gid ? 3 : 0;
+        const held = args.includes('--init-groups') ? groups.filter(g => g.gid === gid || g.members.split(',').includes('shu-coordinator')).map(g => g.gid) : [gid];
+        const st = f.lstatSync(p), shift = st.uid === uid ? 6 : held.includes(st.gid) ? 3 : 0;
         if (((st.mode >> shift) & requested) !== requested) throw Error('EACCES');
       } };
       try { vm.runInNewContext(args.at(-1).replace(/import .*?; /g, ''), {fs: probeFS, path}); }
@@ -104,7 +105,7 @@ export function fixture(t) {
   write(PATHS.wrapper, 'old wrapper', 0o750, 12, 13);
   for (const p of ['/etc/shu/approvals/owner.pub', '/etc/shu/approvals/shu71-owner.pub', '/etc/shu/keys/shu71-activation-ed25519.pem', '/etc/shu/supervisor.env']) write(p, 'private fixture', p.endsWith('/owner.pub') ? 0o644 : 0o600);
   write('/srv/shu/coordinator.env', 'private fixture', 0o600, 999, 982);
-  directory('/srv/shu/state/shu71-evidence'); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
+  directory('/srv/shu/state', 0o700, 999, 982); directory('/srv/shu/state/shu71-evidence', 0o700, 0, 0); directory('/srv/shu/state/workspaces', 0o700, 999, 982);
   directory('/srv/shu/state/workspaces/supervisor', 0o700, 999, 982); directory('/srv/shu/worktrees', 0o3770, 999, 980);
   for (const p of ['/usr/bin/node', '/usr/bin/systemctl', '/usr/bin/flock', '/usr/bin/env', '/usr/sbin/useradd', '/usr/sbin/groupadd', '/usr/sbin/userdel', '/usr/sbin/groupdel', '/usr/sbin/nologin', '/usr/bin/find']) write(p, 'executable fixture', 0o755);
   directory('/run/lock');

@@ -23,6 +23,7 @@ export async function r5Differential(t, keys, candidate, scenario) {
   for (const [label, revision] of [['parent', '5e25c651254a72adbb46fa8f950df95248b640e9'], ['blocked', '0eeadd5f05abc8cd82968a855b2bff8cc137c65a'], ['candidate', null]]) {
     const production = revision ? await historicalProduction(t, revision) : candidate;
     const h = productionFixture(t, keys, production.signingPath), create = () => production(h.id, h.boundary);
+    if (revision) h.owners.set('/srv/shu/state', [0, 0]); // Historical custody; candidate uses the approved service owner.
     assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
     const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
     if (['settlement-plant', 'settlement-interrupt'].includes(scenario)) {

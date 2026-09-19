@@ -17,8 +17,6 @@ const REMOTE = `https://github.com/${REPO}.git`;
 const IDS = ['SHU-140', 'SHU-254'];
 const SERVICES = ['shu-coordinator.timer', 'shu-coordinator.service', 'shu-supervisor.service'];
 const GATES = SERVICES.filter(n => n.endsWith('.service')).map(n => `/etc/systemd/system/${n}.d/90-shu71.conf`);
-const READBACK_CODES = ['DROPIN', 'ACTIVATION'].flatMap(kind =>
-  ['MISSING', 'BYTES', 'CUSTODY', 'MODE', 'DIRECTORY', 'READ'].map(reason => `ACT_${kind}_READBACK_${reason}`));
 export const installedModule = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
 export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), now: () => Date.now(),
   run: (file, args, options) => spawnSync(file, args, { timeout: 30000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8', ...options }),
@@ -34,20 +32,6 @@ export function createShu71Production(id, b = shu71Boundary) {
     need(!r.error && r.status === 0, 'ACT_COMMAND_FAILED');
     return String(r.stdout ?? '');
   };
-  function coordinatorIdentity() {
-    // These are OS system accounts, resolved by name from the host databases.
-    const users = f.readFileSync('/etc/passwd', 'utf8').trim().split('\n').map(line => line.split(':'));
-    const groups = f.readFileSync('/etc/group', 'utf8').trim().split('\n').map(line => line.split(':'));
-    const us = users.filter(row => row[0] === 'shu-coordinator'), gs = groups.filter(row => row[0] === 'shu-coordinator');
-    need(us.length === 1 && gs.length === 1, 'ACT_FILE_CUSTODY');
-    const uid = Number(us[0][2]), gid = Number(gs[0][2]);
-    need(Number.isSafeInteger(uid) && uid > 0 && gid > 0 && Number.isSafeInteger(gid) && Number(us[0][3]) === gid
-      && !users.some(row => row[0] !== 'shu-coordinator' && Number(row[2]) === uid)
-      && !groups.some(row => row[0] !== 'shu-coordinator' && Number(row[2]) === gid), 'ACT_FILE_CUSTODY');
-    const shared = groups.filter(row => row[0] === 'shu-workspace');
-    need(shared.length === 1 && shared[0][3].split(',').includes('shu-coordinator'), 'ACT_FILE_CUSTODY');
-    return { uid, gid };
-  }
   function privateRead(file, uid = 0, exactMode = null, gid = 0) {
     const fd = f.openSync(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
     try {
@@ -65,10 +49,7 @@ export function createShu71Production(id, b = shu71Boundary) {
   function atomic(file, value, uid = 0, gid = 0, mode = 0o600) {
     const parent = path.dirname(file), name = `${file}.pending`;
     const parentStat = f.lstatSync(parent);
-    const owner = parent === '/srv/shu/state' ? coordinatorIdentity() : { uid: 0, gid: 0 };
-    need(parentStat.isDirectory() && !parentStat.isSymbolicLink() && parentStat.uid === owner.uid
-      && (parent !== '/srv/shu/state' || parentStat.gid === owner.gid && (parentStat.mode & 0o7777) === 0o700)
-      && !(parentStat.mode & 0o022), 'ACT_FILE_CUSTODY');
+    need(parentStat.isDirectory() && !parentStat.isSymbolicLink() && parentStat.uid === 0 && !(parentStat.mode & 0o022), 'ACT_FILE_CUSTODY');
     try { f.unlinkSync(name); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     const fd = f.openSync(name, C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW, mode);
     try { f.writeFileSync(fd, value); f.fchownSync(fd, uid, gid); f.fchmodSync(fd, mode); f.fsyncSync(fd); }
@@ -77,39 +58,13 @@ export function createShu71Production(id, b = shu71Boundary) {
     const parentFd = f.openSync(parent, C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
     try { f.fsyncSync(parentFd); } finally { f.closeSync(parentFd); }
   }
-  // Phase-bound read-back compares raw bytes, including the activation signature.
-  // Open without following links and measure/read the same descriptor.
-  function installedReadback(file, value, gid, mode, kind) {
-    const code = reason => `ACT_${kind}_READBACK_${reason}`;
-    let fd;
-    try {
-      if (kind === 'DROPIN') {
-        const parent = f.lstatSync(path.dirname(file));
-        need(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === 0 && parent.gid === 0
-          && (parent.mode & 0o7777) === 0o755, code('DIRECTORY'));
-      }
-      const entry = f.lstatSync(file);
-      need(entry.isFile() && !entry.isSymbolicLink() && entry.nlink === 1, code('CUSTODY'));
-      fd = f.openSync(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
-      const stat = f.fstatSync(fd);
-      need(stat.isFile() && stat.nlink === 1 && stat.uid === 0 && stat.gid === gid, code('CUSTODY'));
-      need((stat.mode & 0o7777) === mode, code('MODE'));
-      const expected = Buffer.from(value);
-      need(stat.size === expected.length && f.readFileSync(fd).equals(expected), code('BYTES'));
-      if (kind === 'ACTIVATION') command('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups',
-        '/usr/bin/node', '--input-type=module', '-e', `import fs from 'node:fs'; fs.accessSync(${JSON.stringify(file)}, fs.constants.R_OK);`]);
-    } catch (error) {
-      if (READBACK_CODES.includes(error.code)) throw error;
-      need(false, code(error.code === 'ENOENT' ? 'MISSING' : 'READ'));
-    } finally { if (fd !== undefined) f.closeSync(fd); }
-  }
   const remove = file => {
     try { f.unlinkSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     const fd = f.openSync(path.dirname(file), C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
     try { f.fsyncSync(fd); } finally { f.closeSync(fd); }
   };
   function credentials() {
-    const raw = privateRead('/srv/shu/coordinator.env', coordinatorIdentity().uid), result = {};
+    const raw = privateRead('/srv/shu/coordinator.env', 999), result = {};
     for (const key of ['GITHUB_TOKEN', 'LINEAR_API_TOKEN']) {
       const matches = raw.split('\n').filter(line => line.startsWith(`${key}=`));
       need(matches.length === 1, 'ACT_CREDENTIAL_UNAVAILABLE');
@@ -149,13 +104,12 @@ export function createShu71Production(id, b = shu71Boundary) {
   }
   function git(spec, args, options = {}) {
     // Git runs as the checkout identity, never as root with a safe.directory bypass.
-    coordinatorIdentity();
     const gitEnv = { ...env };
     if (options.remote) {
       gitEnv.GIT_CONFIG_COUNT = '1'; gitEnv.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
       gitEnv.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${credentials().GITHUB_TOKEN}`).toString('base64')}`;
     }
-    return Buffer.from(command('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups', '/usr/bin/git',
+    return Buffer.from(command('/usr/bin/setpriv', ['--reuid=999', '--regid=999', '--clear-groups', '/usr/bin/git',
       '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-C', spec.checkout, ...args], { env: gitEnv, input: options.input }));
   }
   const gitText = (spec, args, options) => git(spec, args, options).toString().trim();
@@ -227,10 +181,6 @@ export function createShu71Production(id, b = shu71Boundary) {
   async function execute(action) {
     need(['run', 'resume', 'revoke', 'expire'].includes(action), 'ACT_COMMAND_INVALID');
     directory(ROOT); directory(dir);
-    for (const target of [ROOT, dir]) {
-      const s = f.lstatSync(target);
-      need(s.uid === 0 && s.gid === 0 && (s.mode & 0o7777) === 0o700, 'ACT_FILE_CUSTODY');
-    }
     let spec, journal, recovered = false;
     try { spec = JSON.parse(privateRead(`${dir}/custody.json`)); }
     catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -242,13 +192,13 @@ export function createShu71Production(id, b = shu71Boundary) {
     need(spec.pkg?.activation_id === id, 'ACT_OWNER_APPROVAL');
     try {
       try { privateRead(`${dir}/recovery.jsonl`); recovered = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      journal = openActivationJournal(dir, f, recovered ? 'recovery.jsonl' : 'journal.jsonl', coordinatorIdentity());
+      journal = openActivationJournal(dir, f, recovered ? 'recovery.jsonl' : 'journal.jsonl');
     }
     catch {
       // Preserve a damaged log byte-for-byte. Custody is enough to revoke the
       // exact episode, but never to resume forward signing or activation.
       recovered = true;
-      try { journal = openActivationJournal(dir, f, 'recovery.jsonl', coordinatorIdentity()); }
+      try { journal = openActivationJournal(dir, f, 'recovery.jsonl'); }
       catch { journal = { entries: [], append() { throw new Error('ACT_EVIDENCE_WRITE_FAILED'); }, close() {} }; }
     }
     journal.recovered = recovered;
@@ -363,15 +313,9 @@ export function createShu71Production(id, b = shu71Boundary) {
         }
       }, true);
       for (const t of pkg.issue_transitions) await step(`ready-${t.issue_id}`, () => transition(t, t.ready));
-      await step('activation', () => atomic(ACTIVATION_FILE, JSON.stringify(pkg.activation), 0, coordinatorIdentity().gid, 0o640));
-      await step('activation-readback', () => installedReadback(ACTIVATION_FILE, JSON.stringify(pkg.activation), coordinatorIdentity().gid, 0o640, 'ACTIVATION'), true);
-      await step('gate-install', () => {
-        for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0, 0o644); }
-      });
-      await step('dropin-readback', () => {
-        for (const file of GATES) installedReadback(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0o644, 'DROPIN');
-      }, /* remeasure on resume */ true);
+      await step('activation', () => atomic(ACTIVATION_FILE, JSON.stringify(pkg.activation), 0, 999, 0o640));
       await step('gate', () => {
+        for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0, 0o644); }
         command('/usr/bin/systemctl', ['daemon-reload']);
         command('/usr/bin/systemctl', ['restart', 'shu-supervisor.service']);
         command('/usr/bin/systemctl', ['start', 'shu-coordinator.timer']);
@@ -379,7 +323,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
       return { ok: true, state: 'ARMED', activation_id: id };
     } catch (error) {
-      const code = [...READBACK_CODES, ...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
+      const code = [...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';
@@ -407,14 +351,14 @@ export function createShu71Production(id, b = shu71Boundary) {
     // are removable, and a durable inode receipt precedes recursive removal.
     for (const name of f.readdirSync(state)) {
       if (!/^[a-f0-9-]{36}\.workspace\.json$/.test(name)) continue;
-      const record = JSON.parse(privateRead(`${state}/${name}`, coordinatorIdentity().uid));
+      const record = JSON.parse(privateRead(`${state}/${name}`, 999));
       if (record.episode_id !== id) continue;
       need(IDS.includes(record.issue_id) && record.repo === REPO && record.branch === `coordinator/${record.issue_id}`
         && name === `${record.attempt_id}.workspace.json`, 'ACT_FIXTURE_CLEANUP');
       const target = `${root}/${record.attempt_id}`;
       let st;
       try { st = f.lstatSync(target); } catch (e) { if (e.code === 'ENOENT') continue; throw e; }
-      need(st.isDirectory() && !st.isSymbolicLink() && [coordinatorIdentity().uid, 995, 994].includes(st.uid), 'ACT_FIXTURE_CLEANUP');
+      need(st.isDirectory() && !st.isSymbolicLink() && [999, 995, 994].includes(st.uid), 'ACT_FIXTURE_CLEANUP');
       const earlier = journal.entries.find(e => e.event === 'FIXTURE_REMOVE_INTENT' && e.attempt_id === record.attempt_id);
       need(!earlier || earlier.dev === st.dev && earlier.ino === st.ino && earlier.uid === st.uid, 'ACT_FIXTURE_CLEANUP');
       if (!earlier) journal.append({ event: 'FIXTURE_REMOVE_INTENT', attempt_id: record.attempt_id, dev: st.dev, ino: st.ino, uid: st.uid });

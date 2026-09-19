@@ -23,6 +23,7 @@ export async function counterDifferential(t, keys, candidate) {
       create = (await import(pathToFileURL(path.join(root, 'production.mjs')))).createShu71Production;
     }
     const h = productionFixture(t, keys, historicalSigningPath);
+    if (revision) h.owners.set('/srv/shu/state', [0, 0]); // Historical custody; candidate uses the approved service owner.
     assert.equal((await create(h.id,h.boundary).execute('run')).state, 'ARMED'); h.expire();
     h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, '{"attempts":0}', 0o644);
     for (let n=0;n<4;n++) {

@@ -29,7 +29,7 @@ export async function reservationHistoryCheck(createProduction, h, kind = 'PARTI
   // Model local tampering, not a broken hash: rebuild through the real journal
   // writer, then let a fresh production process validate and consume the chain.
   h.write(`${dir}/journal.jsonl`, '');
-  const journal = openActivationJournal(dir, h.boundary.fs);
+  const journal = openActivationJournal(dir, h.boundary.fs, 'journal.jsonl', h.identity);
   for (const { seq, previous, sha256, ...event } of rows) journal.append(event);
   journal.close();
   h.write(`${dir}/automatic-teardown.json`, '{"attempts":32}');

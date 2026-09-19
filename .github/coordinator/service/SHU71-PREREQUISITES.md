@@ -44,8 +44,12 @@ an external policy question; installing this file does not revoke other rules.
 The broker account and its private NSS primary group are named `shu71-evidence`.
 The service runs with `Group=shu-workspace` for shared socket access. Existing names must
 be unique, dedicated, non-login identities. New uid/gid values are selected
-independently from explicit SYS_UID/SYS_GID ranges in `/etc/login.defs`, after
-measuring both databases with fixed `getent` commands. Occupied IDs are never
+independently from resolved SYS_UID/SYS_GID ranges in `/etc/login.defs`, after
+measuring both databases with fixed `getent` commands. Missing system minima
+default to 100; missing system maxima default to the corresponding regular
+minimum minus one (normally 999). Malformed, duplicate or inconsistent declarations
+remain refusals. [Host-reality corrections and proofs](SHU71-HOST-REALITY.md)
+cover executable symlinks, state ancestry and deferred arm-time artifacts. Occupied IDs are never
 selected; uid 996 is forbidden even if otherwise available. An alias to
 messagebus is refused. No unrelated account is modified or added to a group.
 Actual uid/gid are in the durable receipt and stdout result. The renderer's
@@ -91,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L498). Real kernel socket access
+[operative unit render](shu71-production.mjs#L554). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -391,7 +395,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L293), [stop](shu71-production.mjs#L449)).
+([start](shu71-production.mjs#L343), [stop](shu71-production.mjs#L505)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
