@@ -112,7 +112,7 @@ const controls = {
 for(const [name,control] of Object.entries(controls)) test('TARGET_'+name,t=>control(t,shipped));
 const mutants = [
   ['ARGV','ARGV',s=>s.replace("'--no-log-init',","'--no-log-init', '-K', 'CREATE_MAIL_SPOOL=no',")],
-  ...['--no-create-home','--no-log-init','--system'].map(flag=>['PROPERTY_'+flag.slice(2).replaceAll('-','_'),'PROPERTIES',s=>s.replace(`'${flag}', `,'')]),
+  ...['--no-create-home','--no-log-init','--system'].map(flag=>['PROPERTY_'+flag.slice(2).replaceAll('-','_'),'PROPERTIES',s=>flag==='--system'?s.replace("command('/usr/sbin/useradd', ['--system',","command('/usr/sbin/useradd', ["):s.replace(`'${flag}', `,'')]),
   ['HOME','PROPERTIES',s=>s.replace("'--home-dir', '/nonexistent'","'--home-dir', '/wrong-home'")],
   ['SHELL','PROPERTIES',s=>s.replace("'--shell', '/usr/sbin/nologin'","'--shell', '/bin/sh'")],
   ['PRIVATE_GROUP','PROPERTIES',s=>s.replace("'--gid', String(allocated.gid), '--home-dir'","'--gid', 'wrong-group', '--home-dir'")],
@@ -120,8 +120,8 @@ const mutants = [
   ['CONFIGURATION_ARGUMENT','CONFIGURATION',s=>s.replace("argument: args.includes('-K') ? '-K ' + args[args.indexOf('-K') + 1] : null",'argument: null')],
   ['MAIL_DEFAULT','MAIL_DEFAULT',s=>s.replace("defaults.length === 1 && defaults[0] === 'CREATE_MAIL_SPOOL=no'",'true')],
   ['CONFIGURATION','CONFIGURATION',s=>s.replace("r.status === 3 && /unknown item/.test(String(r.stderr))",'false')],
-  ['FILE_UID','FILE',s=>s.replace("'-uid', String(e.uid)","'-uid', '-1'")],
-  ['FILE_GID','FILE',s=>s.replace("'-gid', String(e.gid)","'-gid', '-1'")],
+  ['FILE_UID','FILE',s=>s.replace("'-uid', String(e.uid)","'-uid', String(e.uid + 1)")],
+  ['FILE_GID','FILE',s=>s.replace("'-gid', String(e.gid)","'-gid', String(e.gid + 1)")],
   ['PROCESS','PROCESS',s=>s.replace("!ids.includes(e.uid) && !ids.includes(e.gid)",'true')],
   ...['proc','sys','dev'].map(p=>['PRUNE_'+p.toUpperCase(),'PROC_RACE',s=>s.replace(`'-path', '/${p}'`,`'-path', '/omitted-${p}'`)]),
   ['ENUMERATION','ENUMERATION',s=>s.replace("!r.error && r.status === 0","!r.error && (r.status === 0 || exe === '/usr/bin/find')")],
