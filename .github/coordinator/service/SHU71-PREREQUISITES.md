@@ -882,8 +882,10 @@ names. Every skip in all four runs is a `PERMITTED_SKIPS` entry with its exact
 documented reason; the single focused skip is
 `SHU-71 restricted capability refusal`.
 
-The focused selection is unchanged from the previous lane; every file this
-correction touches is already in it. The full selection is
+The focused selection is the fifteen-entry list printed above under *Validation
+of the idempotent-teardown correction*, unchanged: every file this correction
+touches is covered by it, and the focused total moves with the inventory alone,
+1,495 + 24 = 1,519. The full selection is
 `node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
 
 `PERMITTED_SKIPS` is byte-identical to `9e1a2d0`: **1,093 bytes** including its
@@ -1044,8 +1046,9 @@ Every skip in all four runs is a `PERMITTED_SKIPS` entry with its exact
 documented reason; the single focused skip is
 `SHU-71 restricted capability refusal`.
 
-The focused selection is the previous lane's, extended with the one further
-file this round's gate row affects:
+The focused selection is that same fifteen-entry list, extended with the one
+further file this round's gate row affects. It is printed here in full so that
+neither statement has to be reconstructed by chaining relative references:
 
 ```sh
 node --test \
@@ -1067,7 +1070,9 @@ node --test \
   .github/coordinator/service/test/shu71-host-contract.test.mjs
 ```
 
-The full selection is
+The focused total is the previous lane's 1,519, plus this round's 20 inventory
+names, plus the 30 tests of the newly added `shu71-host-contract.test.mjs`:
+1,569. The full selection is
 `node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
 
 Each of this round's seven production mutants and three pre-mint gate mutants
@@ -1088,3 +1093,62 @@ are strictly additive: 113 test files unchanged, 3,262 → 3,282 names and
 requirement rows, zero removals and zero dropped requirement rows; no test file
 was added. The reviewed teardown effects set and its order are unchanged. Only
 files under `.github/coordinator/**` changed; no push or PR was performed.
+
+#### Correction round: the last unpinned custody term, `s.nlink === 1`
+
+The previous round pinned five of the six custody terms of the
+`retireExpiryTimer()` pre-condition and reported the sixth, `s.nlink === 1`, as
+still enforced by the shipped module and pinned by no shipped control. It is
+not an equivalent mutant: a hardlinked unit file is a real drift shape for a
+durable root-owned unit file. Another name in the filesystem refers to the same
+inode, so the retirement's `unlink` of the unit path leaves the file — and
+whoever holds the other name — behind, with the content systemd loaded still
+writable through that name. Removing the clause was replayed on a copy of the
+module: the teardown reports `{"ok":true,"state":"REVOKED"}`, unlinks
+`/etc/systemd/system/shu71-expiry-<id>.timer`, and the retained second name
+still resolves to the inode afterwards.
+
+No clause changes. New coverage only; no production, `PERMITTED_SKIPS` or
+`host-suite-contract.mjs` byte changed in this round.
+
+| Named control | Proves |
+| --- | --- |
+| `B4_EXPIRY_CUSTODY_REFUSED_hardlinked-timer` (+ `_NAMED_`, `_STEP_NAMED_`, `_BEFORE_DISABLE_`, `_UNITS_RETAINED_`, `_NO_RECEIPT_`, `_PERSISTS_`, `_REPEAT_BEFORE_DISABLE_`, `_RECOVERED_`, `_RECOVERED_UNITS_REMOVED_`) | a journal-proven installed `.timer` unit file that gained a second hard link halts by name, before the command, keeps halting, and completes once the second name is removed |
+| the same suffixes on `_hardlinked-service` | the same, planted on the companion `.service` unit file, which `EXPIRY_UNITS.every(...)` measures with the identical predicate |
+| `B4_EXPIRY_CUSTODY_EXACTLY_ONE_TERM_hardlinked-timer/-service` | only `links` is false on the damaged file, so the control cannot survive the mutant that removes the term it pins |
+| `B4_EXPIRY_CUSTODY_OTHER_UNIT_INTACT_<variant>` (all seven variants) | the companion unit file has every custody term intact, so the refusal is the damaged file's and not incidental damage next to it |
+
+| Named killing mutant | Control that kills it |
+| --- | --- |
+| `B1/B4 mutation: expiry unit hardlink unchecked` (`s.nlink === 1 && ` removed) | `B4_EXPIRY_CUSTODY_REFUSED_hardlinked-timer` |
+
+Both hardlink controls were re-verified individually against that mutant
+outside the suite, and both die by their own named assertion with the shipped
+teardown reporting `{"ok":true,"state":"REVOKED","failures":[]}`. The
+service-side control is not a duplicate of the timer-side one: it additionally
+kills the existing `B1/B4 mutation: expiry companion service file unchecked`
+(`EXPIRY_UNITS.every(...)` → `[EXPIRY_UNITS[0]].every(...)`), which the
+timer-side control survives by construction, because the timer half of the
+`every` is still measured there. With this round, every non-equivalent term of
+`expiryUnitCustody` — shape, links, user, group, group-write and world-write —
+has its own control and its own killing mutant on each of the two durable unit
+files the predicate is applied to. `!s.isSymbolicLink()` remains the one
+equivalent mutant, documented at the predicate.
+
+The control plants the second name at
+`/var/tmp/shu71-expiry-retained-<id>.<unit>` inside the disposable fixture
+tree, with a real `link(2)`; `lstat` in the fixture reports the real `nlink`,
+so the measurement is the production predicate's own, not a modelled answer.
+Nothing else about the file changes — same regular-file shape, same root
+owner and group, same `0644` — and removing the second name restores custody,
+after which the same teardown completes and removes both unit files.
+
+Two statements of record about the focused selection were reconciled in this
+round, above: the expiry-retirement lane's *unchanged from the previous lane*
+sentence now names the fifteen-entry list it refers to, and the previous
+correction round's sentence names the same list plus
+`shu71-host-contract.test.mjs`, with the arithmetic that ties the three focused
+totals together (1,495 → +24 → 1,519 → +20 inventory names → +30 tests from
+the added file → 1,569). The two statements were not numerically in conflict;
+the defect was that neither said which list had actually been run, so the
+selection could only be reconstructed by chaining two relative references.

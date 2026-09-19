@@ -109,6 +109,12 @@ const mutations = [
   ['expiry unit group-writable mode accepted', 's.gid === 0 && !(s.mode & 0o022)', 's.gid === 0 && !(s.mode & 0o002)', custody('group-writable')],
   ['expiry unit world-writable mode accepted', 's.gid === 0 && !(s.mode & 0o022)', 's.gid === 0 && !(s.mode & 0o020)', custody('world-writable')],
   ['expiry unit file shape unchecked', 's.isFile() && !s.isSymbolicLink() && ', '', custody('non-regular-file')],
+  // The one remaining unpinned term. A hardlinked unit file is a real drift
+  // shape: another name still refers to the inode systemd loaded, so unlinking
+  // the unit path leaves the file, and its holder, behind. The control plants
+  // the second name on the timer; the service-file control kills this mutant
+  // too, and is the one that also observes the companion half of `every`.
+  ['expiry unit hardlink unchecked', 's.nlink === 1 && s.uid === 0 && s.gid === 0', 's.uid === 0 && s.gid === 0', custody('hardlinked-timer')],
   ['expiry unit custody predicate vacuous', 'return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022);',
     'return true;', custody('non-root-owner')],
   ['post-reload expiry end state never measured', "      command('/usr/bin/systemctl', ['daemon-reload']);\n      need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT');",

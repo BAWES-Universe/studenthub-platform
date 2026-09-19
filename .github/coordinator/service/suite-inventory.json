@@ -776,6 +776,7 @@
     "B1/B4 mutation: expiry unit group-writable mode accepted",
     "B1/B4 mutation: expiry unit world-writable mode accepted",
     "B1/B4 mutation: expiry unit file shape unchecked",
+    "B1/B4 mutation: expiry unit hardlink unchecked",
     "B1/B4 mutation: expiry unit custody predicate vacuous",
     "B1/B4 mutation: post-reload expiry end state never measured",
     "B1/B4 mutation: refusal predicate evaluated inside need()",
@@ -813,6 +814,8 @@
     "B4 an installed expiry unit file replaced by a group-writable one halts before disabling",
     "B4 an installed expiry unit file replaced by a world-writable one halts before disabling",
     "B4 an installed expiry unit file replaced by a non-regular-file one halts before disabling",
+    "B4 an installed expiry timer unit file with a second hard link halts before disabling",
+    "B4 an installed expiry service unit file with a second hard link halts before disabling",
     "B4 an expiry mechanism still present after the reload is refused, never reported retired",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
@@ -7454,6 +7457,10 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry unit hardlink unchecked",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: expiry unit custody predicate vacuous",
       "capabilities": []
     },
@@ -7599,6 +7606,14 @@
     },
     {
       "name": "B4 an installed expiry unit file replaced by a non-regular-file one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry timer unit file with a second hard link halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry service unit file with a second hard link halts before disabling",
       "capabilities": []
     },
     {

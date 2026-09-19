@@ -251,6 +251,15 @@ for (const variant of ['non-root-owner', 'non-root-group', 'group-writable', 'wo
   });
 }
 
+// The remaining custody term, on each durable unit file in turn: another name
+// in the filesystem still refers to the inode systemd loaded, so unlinking the
+// unit path would leave that name - and whoever holds it - with the file.
+for (const unit of ['timer', 'service']) {
+  test(`B4 an installed expiry ${unit} unit file with a second hard link halts before disabling`, async t => {
+    await expiryCustodyDriftCheck(createShu71Production, productionFixture(t, keys), `hardlinked-${unit}`);
+  });
+}
+
 test('B4 an expiry mechanism still present after the reload is refused, never reported retired', async t => {
   await expiryPostReloadDriftCheck(createShu71Production, productionFixture(t, keys));
 });

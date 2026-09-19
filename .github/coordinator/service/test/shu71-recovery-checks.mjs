@@ -679,7 +679,12 @@ export function predicateRefusalCheck(api) {
 const CUSTODY_VARIANTS = Object.freeze({
   'non-root-owner': 'owner', 'non-root-group': 'group', 'group-writable': 'group_mode',
   'world-writable': 'world_mode', 'non-regular-file': 'shape',
+  'hardlinked-timer': 'links', 'hardlinked-service': 'links',
 });
+// Which durable unit file each variant damages. The predicate is applied to
+// both by `EXPIRY_UNITS.every(...)`, so the link term is planted on each in
+// turn; every earlier variant damages the timer, as it always did.
+const CUSTODY_UNITS = Object.freeze({ 'hardlinked-service': 'service' });
 // A genuine non-regular file with the unit file's own custody: root:root, one
 // link, 0644, and not a symlink, so every other custody term still holds and
 // only the shape term can refuse. Node unlinks the socket path on close, so the
@@ -691,9 +696,22 @@ async function plantNonRegularFile(path) {
   let closed = false;
   return () => closed ? Promise.resolve() : new Promise(resolve => { closed = true; server.close(() => resolve()); });
 }
+// A second name for the unit file's own inode, outside the unit directory: the
+// drift shape a durable root-owned unit file must not have, because whoever
+// holds the other name keeps the inode - and the ability to rewrite what
+// systemd loaded - after the retirement unlinks the unit path. Nothing else
+// about the file changes: same mode, same owner, same regular-file shape, so
+// only `s.nlink === 1` can refuse it. Removing the second name restores it.
+function plantHardlink(h, file, unit) {
+  const other = `/var/tmp/shu71-expiry-retained-${h.id}.${unit}`;
+  fs.mkdirSync(h.root + '/var/tmp', { recursive: true, mode: 0o1777 });
+  fs.linkSync(h.root + file, h.root + other);
+  return async () => fs.rmSync(h.root + other, { force: true });
+}
 export async function expiryCustodyDriftCheck(createProduction, h, variant) {
   const create = () => createProduction(h.id, h.boundary);
-  const file = `/etc/systemd/system/${expiryTimer(h)}`;
+  const unit = CUSTODY_UNITS[variant] ?? 'timer';
+  const file = `/etc/systemd/system/shu71-expiry-${h.id}.${unit}`;
   assert.equal((await create().execute('run')).state, 'ARMED', `B4_EXPIRY_CUSTODY_SETUP_${variant}`);
   assert.ok(h.journal().some(e => e.event === 'ARMED'), `B4_EXPIRY_CUSTODY_JOURNAL_PROVES_INSTALLED_${variant}`);
   for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `B4_EXPIRY_CUSTODY_BOTH_UNITS_PRESENT_${variant}`);
@@ -702,14 +720,23 @@ export async function expiryCustodyDriftCheck(createProduction, h, variant) {
   else if (variant === 'non-root-group') h.owners.set(file, [0, 982]);
   else if (variant === 'group-writable') fs.chmodSync(h.root + file, 0o664);
   else if (variant === 'world-writable') fs.chmodSync(h.root + file, 0o646);
+  else if (CUSTODY_VARIANTS[variant] === 'links') close = plantHardlink(h, file, unit);
   else { fs.rmSync(h.root + file); close = await plantNonRegularFile(h.root + file); }
+  const terms = target => {
+    const s = h.boundary.fs.lstatSync(target);
+    return { shape: s.isFile() && !s.isSymbolicLink(), links: s.nlink === 1, owner: s.uid === 0,
+      group: s.gid === 0, group_mode: !(s.mode & 0o020), world_mode: !(s.mode & 0o002) };
+  };
   try {
     // Exactly one custody term is broken. Anything else would let a control
     // survive on the mutant that removes the term it claims to pin.
-    const s = h.boundary.fs.lstatSync(file);
-    const broken = Object.entries({ shape: s.isFile() && !s.isSymbolicLink(), links: s.nlink === 1, owner: s.uid === 0,
-      group: s.gid === 0, group_mode: !(s.mode & 0o020), world_mode: !(s.mode & 0o002) }).filter(([, ok]) => !ok).map(([term]) => term);
+    const broken = Object.entries(terms(file)).filter(([, ok]) => !ok).map(([term]) => term);
     assert.deepEqual(broken, [CUSTODY_VARIANTS[variant]], `B4_EXPIRY_CUSTODY_EXACTLY_ONE_TERM_${variant}`);
+    // ...and it is broken on exactly one of the two durable unit files, so the
+    // refusal names the damaged file and not incidental damage to its companion.
+    for (const other of expiryUnits(h).filter(p => p !== file))
+      assert.deepEqual(Object.entries(terms(other)).filter(([, ok]) => !ok).map(([term]) => term), [],
+        `B4_EXPIRY_CUSTODY_OTHER_UNIT_INTACT_${variant}`);
     // The modelled host would disable it: the unit file is still there, so the
     // refusal below is the pre-condition's, never a lucky command failure.
     assert.equal(h.exists(`/etc/systemd/system/shu71-expiry-${h.id}.service`), true, `B4_EXPIRY_CUSTODY_COMPANION_PRESENT_${variant}`);
