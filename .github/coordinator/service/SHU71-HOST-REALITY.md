@@ -54,3 +54,69 @@ Both full reports also contain exactly one terminal JSON `complete` event and pa
 [Machine-readable validation and hashes](test/fixtures/host-reality-evidence/validation.json) records the tested revision/tree, constraints, counts, terminal markers, additive inventory proof and byte-identity hashes. Compressed TAP and full reporter outcomes are retained alongside it. The final commit adds only documentation and this validation evidence after the tested implementation.
 
 No target-host access, provisioning, service start, mint, push, PR, merge, GitHub or Linear actions were performed. Real target filesystem/NSS facts and live systemd/kernel behavior cannot be independently closed under the repository-only constraint; the given facts are reproduced in explicit host models. No repository test failure remains open.
+
+## First real target installation: 2026-09-19
+
+The following is measured evidence supplied by ai-orchestrator, not a live run by this code lane. Root ran the canonical checkout at `a3e40ca225a4515102d6fee4f9350e5334803831`:
+
+```sh
+node .github/coordinator/service/provision-shu71-prerequisites.mjs install a3e40ca225a4515102d6fee4f9350e5334803831
+```
+
+It exited 2 with `{"ok":false,"code":"ACT_PREREQUISITE_LOCK_OR_EXECUTION"}`. The inner error was `ACT_PREREQUISITE_ROLLBACK_REQUIRED` at line 303; the original cause had been discarded. The write-ahead receipt remained INSTALLING with only the identity effect, UID 100 / GID 107 and 13 account-file before-states. The group existed but the user did not. No tree, sudoers, wrapper or unit effects had run.
+
+The reviewed command failed with rc 3:
+
+```text
+/usr/sbin/useradd --system --no-create-home --no-log-init -K CREATE_MAIL_SPOOL=no --uid 100 --gid 107 --home-dir /nonexistent --shell /usr/sbin/nologin shu71-evidence
+configuration error - unknown item 'CREATE_MAIL_SPOOL' (notify administrator)
+```
+
+Removing only the rejected override succeeded on that same host (rc 0):
+
+```text
+/usr/sbin/useradd --system --no-create-home --no-log-init --uid 100 --gid 107 --home-dir /nonexistent --shell /usr/sbin/nologin shu71-evidence
+shu71-evidence:x:100:107::/nonexistent:/usr/sbin/nologin
+```
+
+`useradd -D` reports `CREATE_MAIL_SPOOL=no`, supplied by the host's `/etc/login.defs`. `LOG_INIT=yes` is overridden by `--no-log-init`. The fix checks that the effective `useradd -D` output contains exactly one `CREATE_MAIL_SPOOL=no` before creating the group; a missing, duplicate or different default refuses with `ACT_PREREQUISITE_MAIL_SPOOL_DEFAULT`. No `-K` argument is passed. `--no-create-home` suppresses home creation, `--no-log-init` suppresses login-log initialization, and explicit `--home-dir /nonexistent`, `--shell /usr/sbin/nologin` and the allocated named private primary group retain the reviewed account properties. No allocation policy changes: SYS_* declarations are comments (101/999), explicit system IDs in the allocator's range are accepted. The host's automatic top-down allocations (measured UID 993 / GID 978) do not change the explicit allocator.
+
+The old `/usr/bin/find / -uid 100 -o -gid 107` exited **1**, with only these process-fd races:
+
+```text
+/usr/bin/find: '/proc/<pid>/task/<pid>/fd/6': No such file or directory
+/usr/bin/find: '/proc/<pid>/task/<pid>/fdinfo/6': No such file or directory
+```
+
+The corrected file scan prunes `/proc`, `/sys` and `/dev` before testing ownership, retaining traversal of every other mounted tree. It still requires exit zero and empty matches. The separate `/proc/*/status` scan still refuses any UID/GID/Groups use. It tolerates only ENOENT process disappearance; other process-read errors still refuse. Any real file ownership match or enumeration failure outside the pruned trees prevents identity deletion.
+
+Install failure now reports its original code and successful rollback outcome together. If rollback also fails, the top-level code remains `ACT_PREREQUISITE_ROLLBACK_REQUIRED`, `original` carries the original structured refusal, and `rollback` carries `ok:false` and its code. The locked CLI child catches and prints that JSON and exits 2; failed recovery retains the write-ahead evidence. Configuration refusals identify `ACT_PREREQUISITE_USERADD_CONFIGURATION`, command, rejected argument (if supplied), and the measured stderr.
+
+After the diagnostic experiment, **the account was removed and the receipt restored afterwards to its original absent state**. The host is currently clean: no `shu71-evidence` user or group, `/etc/shu/shu71-prerequisites.json`, `/usr/local/lib/shu71`, `/etc/sudoers.d/shu-reviewer`, or `shu71-evidence.service`. The deployment checkout is pinned to `a3e40ca`; both fixture refs exist. `/srv/shu/state/shu71-evidence` is root:root 0700 with its three unchanged episode directories. All three reviewed units are installed inactive with `ENABLE_DISPATCH=false`.
+
+`provision-target-host-fixture.mjs` reproduces the shadow rc 3/stderr, commented ranges with accepted explicit IDs, and the unpruned find rc 1/stderr. The existing forward and rollback crash matrices now run on this shape. Named `TARGET_*` controls and `TARGET_KILL_*` mutants in `provision-target-host.test.mjs` mutate shipped source; a kill requires the corresponding named assertion, never an import or syntax failure. No existing assertion or refusal is removed or renamed. The old partial-installation mutant's source anchor is updated to the new catch signature while retaining its exact assertion.
+
+### Final validation of the target-host correction
+
+The tested implementation is `6a0cd80b22b4d194aeb0a592016405e30e402ff5`, tree `92eb74b850a1219d9423ffc16f20551068910949`. All four final commands began at that commit. The follow-up test commit makes the system-flag mutant target `useradd` specifically and uses adjacent positive IDs for ownership mutants, avoiding `find`'s special negative-number syntax. Production bytes remain those of `7a0a6c7`.
+
+The unchanged namespace harness verifies UID 1000, umask 0022, and absent target accounts/runtime/reviewer sudoers for every run. The focused selection is the prior phase-readback/host-contract selection, including all `provision*.test.mjs`. Full commands use `taskset -c 0-3 node --test --test-concurrency=2` with both coordinator and service test globs. This limits concurrent pressure on the existing one-second controls; it changes no assertion. The nested inventory run inherits the CPU affinity. Plain clears NODE_OPTIONS and SHU_TEST_CLOCK_OFFSET_MS; clock sets the reviewed +31536000000 ms offset and preload. Exact commands and environment are in the validation metadata.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused plain | 1210 | 1210 | 0 | 0 | 1 / 1 |
+| Focused clock | 1210 | 1210 | 0 | 0 | 1 / 1 |
+| Full plain | 3183 | 3175 | 0 | 8 | 1 / 1 |
+| Full clock | 3183 | 3175 | 0 | 8 | 1 / 1 |
+
+Every final command exits zero with no cancelled/todo outcomes. Focused TAP plans are `1..1210`; full plans are `1..3178`, with five nested outcomes. All four structured reports pass unchanged `evaluateSuite`; both full name lists match the committed inventory. The original provisioning matrices retain 296 forward and 92 rollback process-death injections, now against the target-shaped shadow/proc fixture. Each relevant run passes all 11 new controls and 21 named killing mutants.
+
+Exact behavioral assertion names: `TARGET_ARGV`, `TARGET_PROPERTIES`, `TARGET_MAIL_DEFAULT`, `TARGET_CONFIGURATION`, `TARGET_FILE`, `TARGET_PROCESS`, `TARGET_PROC_RACE`, `TARGET_ENUMERATION`, `TARGET_RECOVERY`, `TARGET_IDENTITY_CRASH`, `TARGET_CLI`. The [complete named control and mutant manifest](test/fixtures/target-host-evidence/named-controls.json) also enumerates every mutation-applied and named-kill assertion.
+
+The initial full run with default concurrency reported two failures: the inventory child reported SHU-249 A1 codex-cli/build, and the SHU-250 pre-spawn-marker mutant hit its one-second responsiveness check instead of its intended assertion. The isolated 43-test rerun passed. Final full runs use the constrained scheduling above. No production or existing assertion changes were made to address those timing-sensitive results. An in-progress retry was stopped when the new mutants were tightened; all four final runs were then restarted at the same test commit. The earlier provisioning discovery failure was solely the stale partial-installation mutant anchor, corrected with its name and assertion intact.
+
+[Machine-readable validation](test/fixtures/target-host-evidence/validation.json) records counts, terminal markers, hashes, commands, exact names, the initial failures and scope. Compressed TAP, structured outcomes and harness constraints are retained beside it, including the initial failed full run and isolated timing controls. This completion note and evidence are added after validation; tested production, test and inventory bytes are unchanged.
+
+Inventories are strictly additive: 112 to 113 test files and 3151 to 3183 names/requirements, with every prior row unchanged. PERMITTED_SKIPS is byte-identical to `a3e40ca`: **1093 bytes**, SHA-256 **03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e**; its entire source file is also unchanged. No fixed broker GID, numeric rendered identity, extra effect, or unrelated-file deletion was introduced. All prior findings and the joint evidence-root control remain covered by the passing full suites.
+
+Remaining code or test inconsistencies: **none**. A fresh installation on the real target host has not been performed by this lane; the supplied measurements are reproduced by explicit doubles. Only `.github/coordinator/**` repository files changed. No push was performed.

@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { provisioner, parseCli, PATHS, BROKER } from '../provision-shu71-prerequisites.mjs';
-import { fixture, revision } from './provision-prerequisites-fixture.mjs';
+import { revision } from './provision-prerequisites-fixture.mjs';
+import { targetFixture as fixture } from './provision-target-host-fixture.mjs';
 
 const treeFile = PATHS.tree + '/service/shu71-production.mjs';
 export const refusals = [

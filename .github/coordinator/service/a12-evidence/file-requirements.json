@@ -178,6 +178,12 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/provision-target-host.test.mjs",
+    "capabilities": [],
+    "justification": "Node core filesystem and VM APIs; target shadow, NSS and find boundaries doubled; mutants import shipped source",
+    "call_sites": []
+  },
+  {
     "file": ".github/coordinator/service/test/reporter-amendments.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem/process APIs; external command boundaries doubled or source inspected, no successful external tool operation required",

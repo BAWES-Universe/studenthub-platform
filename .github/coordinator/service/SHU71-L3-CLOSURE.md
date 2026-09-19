@@ -80,7 +80,7 @@ configuration. The broker is a trusted credential consumer, not a secret-export
 endpoint. Receipt metadata and errors contain no credential values. The operative
 [`renderEvidenceBroker()`](shu71-production.mjs#L554) binds
 `User=shu71-evidence` and `Group=shu-workspace`; the provisioner's
-[`identity()` and `sharedAccess()`](provision-shu71-prerequisites.mjs#L128)
+[`identity()` and `sharedAccess()`](provision-shu71-prerequisites.mjs#L131)
 resolve the identities by name and refuse messagebus/UID 996 substitution.
 Actual host identity allocation, coordinator membership, installed-library
 custody, source-file metadata and systemd behavior remain unmeasured host facts.

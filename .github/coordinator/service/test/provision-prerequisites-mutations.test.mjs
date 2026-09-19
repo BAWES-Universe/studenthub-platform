@@ -58,7 +58,7 @@ for (const name of ['partial installation', 'rollback residue']) test(`SHU71 nam
   };
   check(provisioner);
   const m = name === 'partial installation'
-    ? await mutated("try { rollback(j); } catch { need(false, 'ACT_PREREQUISITE_ROLLBACK_REQUIRED'); }", '')
+    ? await mutated("try { rollback(j); } catch (recovery)", "try { /* rollback omitted */ } catch (recovery)")
     : await mutated("remove(PATHS.receipt); need(!stat(PATHS.receipt), 'ACT_ROLLBACK_RESIDUE');", '');
   assert.throws(() => check(m.provisioner), e => e.code === 'ERR_ASSERTION' && e.message.includes(label), label);
 });
