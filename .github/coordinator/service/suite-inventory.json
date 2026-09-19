@@ -755,6 +755,11 @@
     "B1/B4 mutation: untyped exception text returned",
     "B1/B4 mutation: one fixture restoration omitted",
     "B1/B4 mutation: worker kill omitted",
+    "B1/B4 mutation: pre-arm worker drift silently accepted",
+    "B1/B4 mutation: refused worker kill blindly accepted",
+    "B1/B4 mutation: pre-arm expiry drift silently accepted",
+    "B1/B4 mutation: expiry retirement ignores unit liveness",
+    "B1/B4 mutation: non-creation inferred from an empty journal",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
     "B4 cleanup continues after gate failure and one fixture restore failure",
@@ -763,6 +768,17 @@
     "B1/B4 process replacement before and after every forward mutation and durability boundary",
     "B4 process replacement before and after every teardown mutation and durability boundary",
     "B4 fixture cleanup removes only the episode-bound owned attempt and preserves authority",
+    "B4 pre-arm refusal by name completes its own teardown and is re-runnable",
+    "B4 every documented adapter key halts before arming with a complete teardown",
+    "B4 pre-arm fixture cleanup is not blocked by a legitimately skipped worker kill",
+    "B4 pre-arm teardown refuses supervisor drift by name",
+    "B4 pre-arm teardown refuses timer-file drift by name",
+    "B4 pre-arm teardown refuses timer-active drift by name",
+    "B4 pre-arm teardown refuses timer-enabled drift by name",
+    "B4 a refused worker kill is accepted only for a unit measured idle",
+    "B4 a destroyed journal is never proof that nothing was created",
+    "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
+    "B4 a unit that holds no processes still completes its teardown",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -3186,6 +3202,15 @@
     "HOST_KILL_MULTILINK_FOREIGN_OWNER",
     "HOST_KILL_MIRRORED_REFUSAL",
     "HOST_KILL_MIRRORED_INDISCRIMINATE",
+    "HOST_ADAPTER_ENV_GREEN",
+    "HOST_ADAPTER_ENV_HOST_VALUE",
+    "HOST_ADAPTER_ENV_MISSING",
+    "HOST_ADAPTER_ENV_DUPLICATE",
+    "HOST_ADAPTER_ENV_MALFORMED",
+    "HOST_ADAPTER_ENV_CUSTODY",
+    "HOST_KILL_ADAPTER_ENV_PARSER",
+    "HOST_KILL_ADAPTER_ENV_CONTENT_CLASS",
+    "HOST_KILL_ADAPTER_ENV_CUSTODY",
     "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
     "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
     "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
@@ -7301,6 +7326,26 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: pre-arm worker drift silently accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: refused worker kill blindly accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: pre-arm expiry drift silently accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement ignores unit liveness",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: non-creation inferred from an empty journal",
+      "capabilities": []
+    },
+    {
       "name": "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
       "capabilities": []
     },
@@ -7330,6 +7375,50 @@
     },
     {
       "name": "B4 fixture cleanup removes only the episode-bound owned attempt and preserves authority",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm refusal by name completes its own teardown and is re-runnable",
+      "capabilities": []
+    },
+    {
+      "name": "B4 every documented adapter key halts before arming with a complete teardown",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm fixture cleanup is not blocked by a legitimately skipped worker kill",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses supervisor drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses timer-file drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses timer-active drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses timer-enabled drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a refused worker kill is accepted only for a unit measured idle",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a destroyed journal is never proof that nothing was created",
+      "capabilities": []
+    },
+    {
+      "name": "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a unit that holds no processes still completes its teardown",
       "capabilities": []
     },
     {
@@ -25595,6 +25684,78 @@
     },
     {
       "name": "HOST_KILL_MIRRORED_INDISCRIMINATE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ADAPTER_ENV_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ADAPTER_ENV_HOST_VALUE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ADAPTER_ENV_MISSING",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ADAPTER_ENV_DUPLICATE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ADAPTER_ENV_MALFORMED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ADAPTER_ENV_CUSTODY",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ADAPTER_ENV_PARSER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ADAPTER_ENV_CONTENT_CLASS",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ADAPTER_ENV_CUSTODY",
       "capabilities": [
         {
           "name": "shell_toolchain"

@@ -95,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L554). Real kernel socket access
+[operative unit render](shu71-production.mjs#L605). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -205,7 +205,7 @@ refuse. No numeric 999/982 service assumption remains in this entrypoint.
 | SHU71 owner public key | `service/shu71-production.mjs:34–40,160`: root-owned private regular single-link file. provisioner@904fbed:286–289 retains the reviewed, stricter root:root 0600 and nonempty policy; production's privateRead alone does not mandate exact 0600 or GID 0. |
 | `/etc/shu/keys/shu71-activation-ed25519.pem` | D1-a uses the **existing activation private key**. `service/shu71-production.mjs:34–40,255` reads a root-owned regular single-link file with `O_NOFOLLOW`, no group/other permission bits, at most 4 MiB; no exact owner-only mode or GID is required. `service/provision-shu71-prerequisites.mjs:312–316` checks this custody plus nonempty content and retained ancestor custody. No key material is created, copied, renamed, linked, relocated, or duplicated by provisioning. |
 | Shared broker access | `service/SHU-261-VALIDATION.md:12` names `shu-workspace`; `service/shu71-production.mjs:480` renders `User=shu71-evidence`, `Group=shu-workspace`, `RuntimeDirectoryMode=0750`. `service/provision-shu71-prerequisites.mjs:138–146,338–355` resolves the shared group by name, measures coordinator membership with `id -Gn shu-coordinator`, and measures broker ownership/shared GID and separate exact directory/socket modes. `service/fixture-evidence-broker.mjs:31` creates the socket and chmods it to 0660. |
-| Supervisor and coordinator environment files | `service/host-lifecycle.mjs:48–49` and `service/shu71-production.mjs:228–237`: root:root 0600 supervisor file, measured service UID/primary GID 0600 coordinator file; single regular file and custody checks retained. |
+| Supervisor and coordinator environment files | `service/host-lifecycle.mjs:48–49` and `service/shu71-production.mjs:228–237`: root:root 0600 supervisor file, measured service UID/primary GID 0600 coordinator file; single regular file and custody checks retained. **Corrected 2026-09-19 (approved window `shu71-mint-00000017`):** custody alone was checked, so the gate passed while `/srv/shu/coordinator.env` was missing the documented reviewer wrapper key `SHU_REVIEW_MODEL_WRAPPER_JSON` (`docs/SHU-63-activation-contract.md:98`), and the refusal was only reached at arming. The row `/srv/shu/coordinator.env#adapter-keys` now applies the reviewed arm-time parser (`units.mjs` `adapterLaunchEnvironment` → `environmentEntries` / `requireSupervisorAdapterEntries`, the same rules `assertSupervisorLaunchEnvironment` applies) to the same file under the same custody, and reports `adapter_keys: 9`. Named refusals: `ACT_PREREQUISITE_ADAPTER_ENV_REQUIRED` (a documented key is absent; the row carries `key` and `parser_code: SHU71_SUPERVISOR_ENV_REQUIRED`), `ACT_PREREQUISITE_ADAPTER_ENV_CONTENT` (duplicate assignment or ambiguous/empty/dollar/continuation value; `parser_code: SHU251_ENV_CONTENT`), `ACT_PREREQUISITE_CUSTODY` (not the measured service UID/primary GID at exactly 0600). The host value form `SHU_REVIEW_MODEL_WRAPPER_JSON='["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'` is **accepted**; the key has since been added to the host through a separate bounded receipted host-preparation step. No value is ever reported, only key names. |
 | Approvals, keys, evidence root directories | provisioner@904fbed:37–43,291: root:root, directory, no symlinks, no group/world writes, ancestor custody. Production custody primitives: `service/production-lifecycle.mjs:35–49`, `service/shu71-production.mjs:43–46`. Exact root GID remains provisioning policy. |
 | Workspace state and supervisor state | `service/host-lifecycle.mjs:54–56`: service identity UID/GID, directory, 0700; provisioner@904fbed:292–296 retains parent custody and non-symlink checks. UID/GID now measured by name. |
 | `/srv/shu/worktrees` | `service/shu71-production.mjs:328–330`: directory, non-symlink, exactly 03770; **no UID/GID requirement**. `service/SHU-261-VALIDATION.md:12` documents shu-workspace governance. Ownership is reported, not constrained. The fixture uses real host shape 999:980 / 03770. |
@@ -396,7 +396,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L343), [stop](shu71-production.mjs#L505)).
+([start](shu71-production.mjs#L343), [stop](shu71-production.mjs#L556)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -554,3 +554,180 @@ mutants](SHU71-HOST-REALITY.md#second-real-target-precondition-2026-09-19).
 ### Target shadow and rollback compatibility
 
 The first target install at `a3e40ca` exposed a rejected `-K CREATE_MAIL_SPOOL=no` override and unpruned `find /` process-fd races. Identity creation now requires effective `useradd -D` output `CREATE_MAIL_SPOOL=no` and uses `--system --no-create-home --no-log-init --uid <allocated> --gid <allocated> --home-dir /nonexistent --shell /usr/sbin/nologin shu71-evidence`, after creating its dedicated named private group. No home, mail spool or login-log initialization is permitted. Rollback prunes `/proc`, `/sys`, `/dev` from file enumeration while keeping the separate process guard and refusing all other enumeration errors. Failed install JSON preserves the original error and rollback outcome; failed recovery still exits 2 and retains evidence. [Exact measured commands, output and restored clean host state](SHU71-HOST-REALITY.md#first-real-target-installation-2026-09-19).
+
+### SHU-71 idempotent, receipt-aware teardown (approved window `shu71-mint-00000017`)
+
+Measured on the real target host during the owner-approved window, at the
+merged revision, before this correction. The arming attempt refused **by name**
+before the supervisor was started, before the expiry timer was installed and
+before arming:
+
+```json
+{"ok":false,"state":"HALT","code":"SHU71_SUPERVISOR_ENV_REQUIRED",
+ "teardown":{"ok":false,"state":"HALT","code":"ACT_CLEANUP_FAILED",
+   "failures":["ACT_TEARDOWN_WORKERS","ACT_TEARDOWN_FIXTURES","ACT_TEARDOWN_EXPIRY_TIMER"]}}
+```
+
+The refusal itself is correct: `/srv/shu/coordinator.env` carried no
+`SHU_REVIEW_MODEL_WRAPPER_JSON`, the documented reviewer wrapper key whose value
+is documented at `docs/SHU-63-activation-contract.md:98`. **That key is now
+present on the host**, added through a separate bounded receipted
+host-preparation step, with the value
+`["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]`, quoted as
+`'["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]'`.
+
+The defect is what happened next. Measured on the host at that moment:
+
+| Measured fact | Consequence |
+| --- | --- |
+| `systemctl kill --kill-whom=all --signal=SIGKILL shu-supervisor.service` → **rc=1** (the unit was never started; it is `inactive`) | `teardown:workers` failed, which fails the whole step |
+| `systemctl disable --now shu71-expiry-shu71-mint-00000017.timer` → **rc=1** (the unit file was never created) | `teardown:expiry-timer` failed |
+| `teardown:fixtures` requires `teardown:workers` DONE | failed as a consequence (`ACT_FIXTURE_CLEANUP`) |
+| The journal recorded `TEARDOWN_INCOMPLETE` | any later `run`/`resume` at that revision routed straight back into cleanup and failed identically: the activation id could never be released |
+
+The episode was retired by hand (owner decision) and **must never be reused**.
+
+The corrected teardown derives non-creation from the durable journal only.
+`lifecyclePhase(journal, step)` answers `never` **only** when the journal is not
+a recovered log, records this episode's own forward attempt
+(`RUN_ATTEMPT_STARTED`), holds no `ARMED`, and holds neither `INTENT` nor `DONE`
+for the step that creates the resource (`gate` starts the supervisor unit;
+`expiry-watch` installs the timer). Every other journal state, including a
+destroyed or damaged log, is `inconclusive` and takes the fail-closed path.
+
+* `teardown:workers` — where the journal proves the supervisor was never
+  started, the kill is not issued and the unit must be measured idle; a unit
+  that is present or running there is drift and halts by the existing named
+  `ACT_TEARDOWN_DRIFT`. Otherwise the kill is issued exactly as before, and its
+  refusal is accepted only when the command failed (`ACT_COMMAND_FAILED`) *and*
+  the unit is measured `inactive`/`failed` — the obligation this step exists to
+  establish. A stop this same teardown already ordered is measured before
+  signalling again, so re-runs cost the same single operation.
+* `teardown:expiry-timer` — where the journal proves the timer was never
+  installed, `disable --now` is not issued and both `shu71-expiry-<id>.service`
+  and `shu71-expiry-<id>.timer` must be absent, the timer inactive and its
+  `UnitFileState` empty; anything present, enabled or active there halts by
+  `ACT_TEARDOWN_DRIFT`. A durably installed timer is still retired exactly as
+  before, so its disappearance still refuses.
+* `teardown:fixtures` is no longer blocked, because `teardown:workers` now
+  reaches its `DONE` row. Every safety check it performs is unchanged: worktree
+  root mode `03770`, episode-bound attempt ids only, inode receipts
+  (`FIXTURE_REMOVE_INTENT`), no symlink following and no crossing mounts.
+* The gate and activation-file disarm steps remain unconditional and
+  idempotent. No path leaves dispatch enabled.
+* Cleanup is re-runnable: the second run returns `REVOKED` and the whole
+  disposable tree is byte-identical to the settled state.
+
+The refusal now also names the key: the result and the durable `HALTED` row both
+carry `missing_key`. Key names are public contract vocabulary; no value is
+reported.
+
+| Named control | Proves |
+| --- | --- |
+| `B4_PREARM_NAMED_REFUSAL`, `B4_PREARM_REFUSAL_NAMES_KEY`, `B4_PREARM_REFUSAL_DURABLE_KEY` | refusal by name, naming the missing key, durably |
+| `B4_PREARM_TEARDOWN_COMPLETE`, `B4_PREARM_TEARDOWN_NO_FAILURES`, `B4_PREARM_TEARDOWN_REVOKED`, `B4_PREARM_TEARDOWN_RECEIPT_DURABLE` | the teardown completes and its receipt is durable |
+| `B4_PREARM_TEARDOWN_STEP_WORKERS/FIXTURES/EXPIRY-TIMER` | each of the three measured failures now reaches `DONE` |
+| `B4_PREARM_NO_UNIT_STARTED`, `B4_PREARM_NO_UNIT_ENABLED`, `B4_PREARM_NO_START_OR_KILL_COMMAND`, `B4_PREARM_NO_EXPIRY_TIMER`, `B4_PREARM_NO_ACTIVATION_FILE` | no unit started, no timer created, no activation file |
+| `B4_PREARM_NO_WORKTREE`, `B4_PREARM_NO_WORKSPACE`, `B4_PREARM_NO_FIXTURE_MUTATION`, `B4_PREARM_FIXTURES_PRIOR_STATE` | no worker/worktree/workspace created; fixtures in their prior state |
+| `B4_PREARM_DISPATCH_OFF`, `B4_PREARM_ACTIVATION_ID_RELEASED` | dispatch off at every layer; the activation id is released |
+| `B4_PREARM_SECOND_CLEANUP_OK/REVOKED/INERT/NO_WRITES/NO_TIMER/NO_UNIT` | cleanup run twice succeeds and creates or deletes nothing new |
+| `B4_PREARM_EVERY_KEY_<KEY>` | all nine documented adapter keys behave identically |
+| `B4_PREARM_FIXTURE_STEP_NOT_BLOCKED`, `B4_PREARM_FIXTURE_INODE_RECEIPT`, `B4_PREARM_FIXTURE_REMOVED`, `B4_PREARM_FIXTURE_AUTHORITY_RETAINED`, `B4_PREARM_FIXTURE_UNRELATED_RETAINED` | fixtures still cleans its episode-bound attempt and preserves everything else |
+| `B4_PREARM_DRIFT_REFUSED_*`, `B4_PREARM_DRIFT_FAILURE_*`, `B4_PREARM_DRIFT_NO_COMPLETION_*`, `B4_PREARM_DRIFT_NO_KILL_*`, `B4_PREARM_DRIFT_NO_RETIREMENT_*`, `B4_PREARM_DRIFT_DISPATCH_OFF_*` | a running unit, an existing timer file, an active timer and an enabled timer each halt by name |
+| `B4_KILL_FAILURE_NOT_ACCEPTED`, `B4_KILL_FAILURE_NAMED`, `B4_KILL_FAILURE_NO_COMPLETION`, `B4_KILL_FAILURE_RECOVERED` | a kill refused for any other reason stays a failure |
+| `B4_DESTROYED_JOURNAL_NOT_PROOF`, `B4_DESTROYED_JOURNAL_FAIL_CLOSED_KILL`, `B4_DESTROYED_JOURNAL_CREDENTIAL_REVOKED` | a journal that cannot prove non-creation takes the fail-closed path |
+| `B4_PHASE_<phase>_INTERRUPTED/NAMED_OUTCOME/DISPATCH_OFF/CREDENTIAL_REVOKED/REVOKED/RECEIPT/RELEASED/IDEMPOTENT/IDEMPOTENT_INERT` | interruption before arming, after arming, before and after supervisor start, before and after expiry installation, and mid-teardown |
+
+The seven phase-boundary interruptions reuse the existing process-replacement
+fault injection and the recovery fixtures; all seven recoveries complete
+cleanup (`REVOKED`), none wedges, and none leaves dispatch enabled.
+
+| Named killing mutant | Control that kills it |
+| --- | --- |
+| `B1/B4 mutation: pre-arm worker drift silently accepted` | `B4_PREARM_DRIFT_*` (supervisor) |
+| `B1/B4 mutation: refused worker kill blindly accepted` | `B4_KILL_FAILURE_*` |
+| `B1/B4 mutation: pre-arm expiry drift silently accepted` | `B4_PREARM_DRIFT_*` (timer-file) |
+| `B1/B4 mutation: expiry retirement ignores unit liveness` | `B4_PREARM_DRIFT_*` (timer-active) |
+| `B1/B4 mutation: non-creation inferred from an empty journal` | `B4_DESTROYED_JOURNAL_NOT_PROOF` |
+| `HOST_KILL_ADAPTER_ENV_PARSER` | `HOST_ADAPTER_ENV_MISSING` |
+| `HOST_KILL_ADAPTER_ENV_CONTENT_CLASS` | `HOST_ADAPTER_ENV_DUPLICATE` |
+| `HOST_KILL_ADAPTER_ENV_CUSTODY` | `HOST_ADAPTER_ENV_CUSTODY` |
+
+The existing `worker kill omitted` and `P1 retirement re-observation removed`
+mutants keep their names and assertions; only their source anchors moved with
+the two extracted helpers. `PHASE_*_TEARDOWN_WORKERS` is corrected in place: the
+same named assertion now requires the stronger pair — the step reaches its
+durable `DONE` row and issues no kill for a unit this episode never started —
+with the idle measurement asserted immediately below it, as it always was.
+
+The disposable production fixture models the two measured `systemctl` refusals:
+`kill` exits 1 for a unit this episode never started, and `enable`/`disable`
+exit 1 for a unit whose file was never created. The stricter reading of the kill
+refusal — any unit that currently holds no processes — was **not** measured
+during the window; `systemd.killRequiresProcesses` opts into it explicitly, and
+the production fix is correct under either reading. `stop` is deliberately not
+modelled that way: every unit this teardown stops is installed on the host.
+
+#### Validation of the idempotent-teardown correction
+
+Tested implementation `62832ac2ed6603ca99046f5536dc0db43441516e`, tree
+`f7bded590d288275963d69155dd490c4be190440`. All four commands ran from the
+repository root under the CI-like harness: UID 1000, `umask 0022`, target
+accounts absent (`shu-coordinator`, `shu-supervisor`, `shu71-evidence`,
+`shu-workspace`, `shu-reviewer`), `/srv/shu` and `/etc/sudoers.d/shu-reviewer`
+absent, `chmod -R go-w .github/coordinator`, `taskset -c 0-3 node --test
+--test-concurrency=2`, with both the TAP reporter and the unchanged
+`host-suite-contract.mjs` reporter writing separate outputs. Plain unsets
+`NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused plain | 1495 | 1494 | 0 | 1 | 1 / 1 |
+| Focused clock | 1495 | 1494 | 0 | 1 | 1 / 1 |
+| Full plain | 3238 | 3230 | 0 | 8 | 1 / 1 |
+| Full clock | 3238 | 3230 | 0 | 8 | 1 / 1 |
+
+Every command exited zero with zero cancelled and zero todo outcomes. Focused
+TAP plans are `1..1495`; full plans are `1..3233`, with five nested outcomes.
+Each full run's structured report has exactly one terminal `complete` event and
+passes the unchanged `evaluateSuite` validator, and the committed-inventory
+guard reruns the whole suite and matches all 3,238 names. Every skip in all four
+runs is a `PERMITTED_SKIPS` entry with its exact documented reason; the single
+focused skip is `SHU-71 restricted capability refusal`.
+
+The focused selection is the prior lane selection extended with the files this
+correction touches:
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs
+```
+
+The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`.
+
+`PERMITTED_SKIPS` is byte-identical to `873a36e`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,213 → 3,238 names and
+requirement rows, zero removals and zero dropped requirement rows. No new test
+file was added. The reviewed teardown effects set and its order are unchanged.
+Only files under `.github/coordinator/**` changed; no push or PR was performed.

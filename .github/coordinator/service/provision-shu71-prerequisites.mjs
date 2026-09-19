@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { resolveCvtsudoers } from './host-suite-contract.mjs';
 import { renderEvidenceBroker } from './shu71-production.mjs';
+import { adapterLaunchEnvironment, supervisorAdapterKeys } from './units.mjs';
 
 export const PATHS = Object.freeze({
   checkout: '/srv/shu/studenthub-platform', tree: '/usr/local/lib/shu71/coordinator',
@@ -369,7 +370,9 @@ export function provisioner(revision, b = boundary) {
     const check = (p, fn) => { try { const row = { path: p, ok: true, ...fn() }; if (p === '/run/shu71-evidence' || p === EVIDENCE_SOCKET) validateRuntimeRow(row); report.paths.push(row); }
       catch (e) { report.ok = false;
         const code = !e.code ? 'ACT_PREREQUISITE_MISSING' : /^(ACT_|SHU251_)[A-Z0-9_]+$/.test(e.code) ? e.code : e.code === 'ENOENT' ? 'ACT_PREREQUISITE_PATH_MISSING' : 'ACT_PREREQUISITE_MEASUREMENT';
-        report.paths.push({ path: p, ok: false, code, ...(e.mirrored ? { mirrored_code: code, mirrored_from: e.mirrored } : {}) }); } };
+        report.paths.push({ path: p, ok: false, code,
+          ...(typeof e.key === 'string' ? { key: e.key } : {}), ...(typeof e.parser_code === 'string' ? { parser_code: e.parser_code } : {}),
+          ...(e.mirrored ? { mirrored_code: code, mirrored_from: e.mirrored } : {}) }); } };
     // An absent runtime path refuses by mirroring the first failing row. The
     // mirrored code and its source row are named separately so an operator can
     // tell a mirrored refusal from a direct one; the refusal itself is unchanged.
@@ -421,6 +424,26 @@ export function provisioner(revision, b = boundary) {
     for (const [p, mode, owner, group] of files) check(p, () => {
       const { uid, gid } = owner === 'shu-coordinator' ? serviceIdentity() : { uid: owner, gid: group };
       const r = read(p); need(r.mode === mode && r.uid === uid && r.gid === gid && r.bytes.length > 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid, gid, mode };
+    });
+    // Custody alone is not enough: an armed window reads this file through the
+    // reviewed parser, and a coordinator source missing one documented reviewer
+    // wrapper key refuses by name before the supervisor is ever started. Apply
+    // the same parser here, before minting, so that refusal cannot be reached
+    // with an approval already issued. Key names only; no value is reported.
+    check('/srv/shu/coordinator.env#adapter-keys', () => {
+      const { uid, gid } = serviceIdentity(), r = read('/srv/shu/coordinator.env');
+      need(r.uid === uid && r.gid === gid && r.mode === 0o600, 'ACT_PREREQUISITE_CUSTODY');
+      let values;
+      try { values = adapterLaunchEnvironment(Buffer.from(r.bytes, 'base64').toString()); }
+      catch (e) {
+        const required = e.code === 'SHU71_SUPERVISOR_ENV_REQUIRED';
+        // Report the reviewed parser's own refusal name, never its message.
+        const parser = required ? e.code : /^(SHU251_[A-Z0-9_]+):/.exec(String(e.message ?? ''))?.[1] ?? 'SHU251_ENV_CONTENT';
+        throw Object.assign(new Error(required ? 'ACT_PREREQUISITE_ADAPTER_ENV_REQUIRED' : 'ACT_PREREQUISITE_ADAPTER_ENV_CONTENT'),
+          { code: required ? 'ACT_PREREQUISITE_ADAPTER_ENV_REQUIRED' : 'ACT_PREREQUISITE_ADAPTER_ENV_CONTENT',
+            parser_code: parser, ...(typeof e.key === 'string' ? { key: e.key } : {}) });
+      }
+      return { adapter_keys: supervisorAdapterKeys.filter(key => typeof values[key] === 'string').length };
     });
     for (const p of ['/etc/shu/approvals', '/etc/shu/keys']) check(p, () => { custody(p); const s = stat(p); need(s.gid === 0, 'ACT_PREREQUISITE_CUSTODY'); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 }; });
     for (const p of ['/srv/shu/state', '/srv/shu/state/shu71-evidence', '/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor', '/srv/shu/worktrees']) check(p, () => {

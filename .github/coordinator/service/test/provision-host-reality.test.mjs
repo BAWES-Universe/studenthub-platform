@@ -303,3 +303,96 @@ for (const [name, label, anchors, mutate] of [
   assert.throws(() => deployed[label.slice('HOST_'.length)](m.provisioner)(t),
     e => e.code === 'ERR_ASSERTION' && e.message.includes(label), 'HOST_KILL_' + name);
 });
+
+// Measured on the real target host: the approved window refused by name before
+// arming because /srv/shu/coordinator.env carried no SHU_REVIEW_MODEL_WRAPPER_JSON
+// (documented at docs/SHU-63-activation-contract.md:98). The pre-mint gate now
+// applies the reviewed arm-time parser to the same file.
+import { supervisorEnvironment, coordinatorText } from './shu71-supervisor-environment-fixture.mjs';
+import { supervisorAdapterKeys } from '../units.mjs';
+const ADAPTER_ROW = '/srv/shu/coordinator.env#adapter-keys';
+// The exact quoted form the target host uses for both reviewer wrappers.
+const HOST_WRAPPER = '["/usr/bin/sudo","-n","/usr/local/libexec/shu-reviewer-sandbox"]';
+const coordinatorEnv = (h, text) => h.write('/srv/shu/coordinator.env', text, 0o600, 999, 982);
+const adapterReport = (h, impl) => {
+  const report = impl(revision, h.boundary).precondition();
+  return { report, row: report.paths.find(r => r.path === ADAPTER_ROW) };
+};
+const adapterControls = {
+  ADAPTER_ENV_GREEN: impl => t => {
+    const h = prepare(t); impl(revision, h.boundary).install();
+    const { report, row } = adapterReport(h, impl);
+    assert.deepEqual(row, { path: ADAPTER_ROW, ok: true, adapter_keys: supervisorAdapterKeys.length }, 'HOST_ADAPTER_ENV_GREEN');
+    assert.equal(report.ok, true, 'HOST_ADAPTER_ENV_GREEN');
+  },
+  ADAPTER_ENV_HOST_VALUE: impl => t => {
+    const h = prepare(t); impl(revision, h.boundary).install();
+    coordinatorEnv(h, coordinatorText({ ...supervisorEnvironment,
+      SHU_REVIEW_EXEC_WRAPPER_JSON: HOST_WRAPPER, SHU_REVIEW_MODEL_WRAPPER_JSON: HOST_WRAPPER }));
+    const { report, row } = adapterReport(h, impl);
+    assert.equal(row.ok, true, 'HOST_ADAPTER_ENV_HOST_VALUE');
+    assert.equal(report.ok, true, 'HOST_ADAPTER_ENV_HOST_VALUE');
+  },
+  ADAPTER_ENV_MISSING: impl => t => {
+    const h = prepare(t); impl(revision, h.boundary).install();
+    for (const key of supervisorAdapterKeys) {
+      const values = { ...supervisorEnvironment }; delete values[key];
+      coordinatorEnv(h, coordinatorText(values));
+      const { report, row } = adapterReport(h, impl);
+      assert.equal(row.ok, false, 'HOST_ADAPTER_ENV_MISSING');
+      assert.equal(row.code, 'ACT_PREREQUISITE_ADAPTER_ENV_REQUIRED', 'HOST_ADAPTER_ENV_MISSING');
+      assert.equal(row.key, key, 'HOST_ADAPTER_ENV_MISSING');
+      assert.equal(row.parser_code, 'SHU71_SUPERVISOR_ENV_REQUIRED', 'HOST_ADAPTER_ENV_MISSING');
+      assert.equal(report.ok, false, 'HOST_ADAPTER_ENV_MISSING');
+    }
+  },
+  ADAPTER_ENV_DUPLICATE: impl => t => {
+    const h = prepare(t); impl(revision, h.boundary).install();
+    coordinatorEnv(h, coordinatorText() + `SHU_REVIEW_MODEL_WRAPPER_JSON='${HOST_WRAPPER}'\n`);
+    const { report, row } = adapterReport(h, impl);
+    assert.equal(row.ok, false, 'HOST_ADAPTER_ENV_DUPLICATE');
+    assert.equal(row.code, 'ACT_PREREQUISITE_ADAPTER_ENV_CONTENT', 'HOST_ADAPTER_ENV_DUPLICATE');
+    assert.equal(row.parser_code, 'SHU251_ENV_CONTENT', 'HOST_ADAPTER_ENV_DUPLICATE');
+    assert.equal(report.ok, false, 'HOST_ADAPTER_ENV_DUPLICATE');
+  },
+  ADAPTER_ENV_MALFORMED: impl => t => {
+    const h = prepare(t); impl(revision, h.boundary).install();
+    const base = coordinatorText(Object.fromEntries(Object.entries(supervisorEnvironment).filter(([k]) => k !== 'SHU_REVIEW_MODEL_WRAPPER_JSON')));
+    for (const value of [`'${HOST_WRAPPER}`, `"$HOME"`, `''`, `'${HOST_WRAPPER}' trailing`, `'${HOST_WRAPPER}'\\`]) {
+      coordinatorEnv(h, base + `SHU_REVIEW_MODEL_WRAPPER_JSON=${value}\n`);
+      const { report, row } = adapterReport(h, impl);
+      assert.equal(row.ok, false, `HOST_ADAPTER_ENV_MALFORMED: ${value}`);
+      assert.ok(['ACT_PREREQUISITE_ADAPTER_ENV_CONTENT', 'ACT_PREREQUISITE_ADAPTER_ENV_REQUIRED'].includes(row.code), `HOST_ADAPTER_ENV_MALFORMED: ${value}`);
+      assert.equal(report.ok, false, `HOST_ADAPTER_ENV_MALFORMED: ${value}`);
+    }
+    // The reviewed parser's own crossed-secret refusal keeps its own name.
+    coordinatorEnv(h, coordinatorText() + `SHU_SUPERVISOR_SECRET='${'s'.repeat(40)}'\n`);
+    const crossed = adapterReport(h, impl);
+    assert.equal(crossed.row.code, 'ACT_PREREQUISITE_ADAPTER_ENV_CONTENT', 'HOST_ADAPTER_ENV_MALFORMED: crossed secret');
+    assert.equal(crossed.row.parser_code, 'SHU251_ENV_CROSSED', 'HOST_ADAPTER_ENV_MALFORMED: crossed secret');
+    assert.equal(crossed.report.ok, false, 'HOST_ADAPTER_ENV_MALFORMED: crossed secret');
+  },
+  ADAPTER_ENV_CUSTODY: impl => t => {
+    const h = prepare(t); impl(revision, h.boundary).install();
+    h.write('/srv/shu/coordinator.env', coordinatorText(), 0o644, 999, 982);
+    const { report, row } = adapterReport(h, impl);
+    assert.equal(row.ok, false, 'HOST_ADAPTER_ENV_CUSTODY');
+    assert.equal(row.code, 'ACT_PREREQUISITE_CUSTODY', 'HOST_ADAPTER_ENV_CUSTODY');
+    assert.equal(report.ok, false, 'HOST_ADAPTER_ENV_CUSTODY');
+  },
+};
+for (const [name, control] of Object.entries(adapterControls)) test('HOST_' + name, t => control(provisioner)(t));
+for (const [name, label, from, to] of [
+  ['ADAPTER_ENV_PARSER', 'HOST_ADAPTER_ENV_MISSING', "values = adapterLaunchEnvironment(Buffer.from(r.bytes, 'base64').toString());",
+    "values = Object.fromEntries(supervisorAdapterKeys.map(key => [key, 'mutation']));"],
+  ['ADAPTER_ENV_CONTENT_CLASS', 'HOST_ADAPTER_ENV_DUPLICATE', "const required = e.code === 'SHU71_SUPERVISOR_ENV_REQUIRED';", 'const required = true;'],
+  ['ADAPTER_ENV_CUSTODY', 'HOST_ADAPTER_ENV_CUSTODY', "need(r.uid === uid && r.gid === gid && r.mode === 0o600, 'ACT_PREREQUISITE_CUSTODY');",
+    "need(true, 'ACT_PREREQUISITE_CUSTODY');"],
+]) test('HOST_KILL_' + name, async t => {
+  const control = adapterControls[label.slice('HOST_'.length)];
+  control(provisioner)(t);
+  assert.equal(source.split(from).length, 2, 'HOST_MUTATION_SOURCE_' + name);
+  const m = await load(source.replace(from, to));
+  assert.throws(() => { try { control(m.provisioner)(t); } catch (e) { assert.fail('HOST_KILL_' + name + ': ' + e.message); } },
+    e => e.code === 'ERR_ASSERTION' && e.message.includes('HOST_KILL_' + name), 'HOST_KILL_' + name);
+});

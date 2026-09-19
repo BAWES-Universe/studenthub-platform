@@ -383,8 +383,11 @@ export function createShu71Production(id, b = shu71Boundary) {
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
         'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
         ? error.code : 'ACT_PRODUCTION_FAILED';
-      try { journal.append({ event: 'HALTED', code }); } catch { /* safety effects still run */ }
-      if (spec) return { ok: false, state: 'HALT', code, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
+      // Name the documented configuration key the reviewed parser refused on.
+      // Key names are public contract vocabulary; no value is ever reported.
+      const named = typeof error?.key === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(error.key) ? { missing_key: error.key } : {};
+      try { journal.append({ event: 'HALTED', code, ...named }); } catch { /* safety effects still run */ }
+      if (spec) return { ok: false, state: 'HALT', code, ...named, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
       return { ok: false, state: 'HALT', code: 'ACT_OWNER_APPROVAL' };
     } finally { journal.close(); }
   }
@@ -397,6 +400,54 @@ export function createShu71Production(id, b = shu71Boundary) {
     atomic(`/etc/systemd/system/shu71-expiry-${id}.timer`, timer, 0, 0, 0o644);
     command('/usr/bin/systemctl', ['daemon-reload']);
     command('/usr/bin/systemctl', ['enable', '--now', `shu71-expiry-${id}.timer`]);
+  }
+  // Whether this episode ever started the supervisor unit or installed its
+  // expiry timer is a durable journal fact, never an inference from what the
+  // host happens to show now. A halt before arming must still complete its own
+  // teardown; a resource the journal says was never created, yet present or
+  // running, is drift and refuses by name. A damaged log proves nothing about
+  // non-creation, so recovery always takes the fail-closed path.
+  const journalHas = (journal, event, step) => journal.entries.some(e => e.event === event && (step === undefined || e.step === step));
+  // `never` is the only proof of non-creation, and it is durable: this journal
+  // records a forward attempt of its own (RUN_ATTEMPT_STARTED), is not a
+  // recovered log, and holds neither ARMED nor any intent to run the creating
+  // step. A destroyed or recovered log proves nothing and is never `never`.
+  function lifecyclePhase(journal, step) {
+    if (journal.recovered || journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', step)) return 'inconclusive';
+    return journalHas(journal, 'RUN_ATTEMPT_STARTED') && !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';
+  }
+  const unitProperty = (name, property) => command('/usr/bin/systemctl', ['show', `--property=${property}`, '--value', name]).trim();
+  const unitIdle = name => ['inactive', 'failed'].includes(unitProperty(name, 'ActiveState'));
+  const unitFileAbsent = file => { try { f.lstatSync(file); return false; } catch (e) { if (e.code !== 'ENOENT') throw e; return true; } };
+  function killSupervisorWorkers(journal) {
+    const unit = 'shu-supervisor.service', phase = lifecyclePhase(journal, 'gate');
+    // A unit the journal proves this episode never started, yet which is
+    // running, is drift: refuse by name, never silently no-op. A stop this
+    // teardown already ordered is measured before signalling again.
+    if (phase === 'never' || journalHas(journal, 'INTENT', 'teardown:stop-shu-supervisor-service')) {
+      const idle = unitIdle(unit);
+      if (phase === 'never') { need(idle, 'ACT_TEARDOWN_DRIFT'); return; }
+      if (idle) return;
+    }
+    // Otherwise the kill is issued exactly as before. Measured on the target
+    // host it exits 1 for a unit that holds no processes; accept that refusal
+    // only where the unit is measured idle, which is this step's obligation.
+    try { command('/usr/bin/systemctl', ['kill', '--kill-whom=all', '--signal=SIGKILL', unit]); }
+    catch (error) { need(error?.code === 'ACT_COMMAND_FAILED' && unitIdle(unit), 'ACT_TEARDOWN_DRIFT'); }
+  }
+  function retireExpiryTimer(journal) {
+    const timer = `shu71-expiry-${id}.timer`;
+    // Absent, not enabled and not active. Measured on the target host, disable
+    // exits 1 for a unit whose file was never created.
+    const retired = () => unitFileAbsent(`/etc/systemd/system/${timer}`) && unitFileAbsent(`/etc/systemd/system/shu71-expiry-${id}.service`)
+      && unitIdle(timer) && ['', 'not-found'].includes(unitProperty(timer, 'UnitFileState'));
+    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(retired(), 'ACT_TEARDOWN_DRIFT'); return; }
+    // A timer the journal proves was durably installed is retired exactly as
+    // before: its disappearance stays a refusal. Only an installation the
+    // journal cannot vouch for may end with nothing left to retire.
+    const installed = journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');
+    try { command('/usr/bin/systemctl', ['disable', '--now', timer]); }
+    catch (error) { need(!installed && error?.code === 'ACT_COMMAND_FAILED' && retired(), 'ACT_TEARDOWN_DRIFT'); }
   }
   function cleanupWorkspaces(spec, journal) {
     need(journal.entries.some(e => e.event === 'DONE' && e.step === 'teardown:workers'), 'ACT_FIXTURE_CLEANUP');
@@ -490,7 +541,7 @@ export function createShu71Production(id, b = shu71Boundary) {
     const effects = [
       ['gate', () => { for (const file of GATES) { directory(path.dirname(file), 0o755); atomic(file, '[Service]\nEnvironment=ENABLE_DISPATCH=false\n', 0, 0, 0o644); } }],
       ['activation', () => remove(ACTIVATION_FILE)],
-      ['workers', () => command('/usr/bin/systemctl', ['kill', '--kill-whom=all', '--signal=SIGKILL', 'shu-supervisor.service'])],
+      ['workers', () => killSupervisorWorkers(journal)],
       ...SERVICES.map(name => [`stop-${name.replaceAll('.', '-')}`, () => {
         command('/usr/bin/systemctl', ['stop', name]);
         need(['inactive', 'failed'].includes(command('/usr/bin/systemctl', ['show', '--property=ActiveState', '--value', name]).trim()), 'ACT_SERVICE_CLEANUP');
@@ -515,7 +566,7 @@ export function createShu71Production(id, b = shu71Boundary) {
         need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
           .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
         observeTeardown();
-        command('/usr/bin/systemctl', ['disable', '--now', `shu71-expiry-${id}.timer`]);
+        retireExpiryTimer(journal);
       }],
     );
     if (exhausted) {
