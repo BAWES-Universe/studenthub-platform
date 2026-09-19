@@ -24,6 +24,12 @@ export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), no
   run: (file, args, options) => spawnSync(file, args, { timeout: 30000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8', ...options }),
   fetch: (...args) => fetch(...args), sign: (bytes, key) => sign(null, bytes, key) });
 
+// No exception may bypass a check. A predicate evaluated as an argument of
+// need() skips its own refusal when it throws, and the bare error is reported
+// in place of the named one. Evaluate it into a value inside its own try/catch
+// first: anything but a measured true is the refusal the caller named.
+export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };
+
 export function createShu71Production(id, b = shu71Boundary) {
   need(/^[A-Za-z0-9_-]{8,64}$/.test(id) && id !== 'shu71abproof0007', 'ACT_ID_OR_EXPIRY_INVALID');
   need(b.uid() === 0, 'ACT_PROCESS_IDENTITY');
@@ -260,7 +266,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {
         // A successor owns the shared gates. This receipt is historical only.
         if (active && active.activation_id !== id) return { ok: true, state: 'REVOKED', activation_id: id, receipt_scope: 'retired_episode', physical_teardown_observed: false };
-        try { observeTeardown(); }
+        try { observeTeardown(); observeRetiredExpiry(); }
         catch { return { ok: false, state: 'HALT', code: 'ACT_TEARDOWN_DRIFT' }; }
         if (active) remove(`${ROOT}/active.json`);
         return { ok: true, state: 'REVOKED', activation_id: id, physical_teardown_observed: true };
@@ -419,6 +425,22 @@ export function createShu71Production(id, b = shu71Boundary) {
   const unitProperty = (name, property) => command('/usr/bin/systemctl', ['show', `--property=${property}`, '--value', name]).trim();
   const unitIdle = name => ['inactive', 'failed'].includes(unitProperty(name, 'ActiveState'));
   const unitFileAbsent = file => { try { f.lstatSync(file); return false; } catch (e) { if (e.code !== 'ENOENT') throw e; return true; } };
+  // The expiry mechanism is two durable unit files, written by installExpiry as
+  // root-owned 0644 regular files. Both are measured on disk: a systemctl
+  // answer is a cache of what systemd loaded, never a substitute for the files.
+  const expiryTimerUnit = `shu71-expiry-${id}.timer`;
+  const EXPIRY_UNITS = [`/etc/systemd/system/${expiryTimerUnit}`, `/etc/systemd/system/shu71-expiry-${id}.service`];
+  const expiryUnitCustody = file => {
+    const s = f.lstatSync(file);
+    return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022);
+  };
+  // Absent, not enabled and not active. Measured on the target host, disable
+  // exits 1 for a unit whose file was never created.
+  const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)
+    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));
+  // After a completed teardown this episode must leave no expiry mechanism
+  // behind, so a later wake that finds one re-created refuses by name too.
+  function observeRetiredExpiry() { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }
   function killSupervisorWorkers(journal) {
     const unit = 'shu-supervisor.service', phase = lifecyclePhase(journal, 'gate');
     // A unit the journal proves this episode never started, yet which is
@@ -436,18 +458,40 @@ export function createShu71Production(id, b = shu71Boundary) {
     catch (error) { need(error?.code === 'ACT_COMMAND_FAILED' && unitIdle(unit), 'ACT_TEARDOWN_DRIFT'); }
   }
   function retireExpiryTimer(journal) {
-    const timer = `shu71-expiry-${id}.timer`;
-    // Absent, not enabled and not active. Measured on the target host, disable
-    // exits 1 for a unit whose file was never created.
-    const retired = () => unitFileAbsent(`/etc/systemd/system/${timer}`) && unitFileAbsent(`/etc/systemd/system/shu71-expiry-${id}.service`)
-      && unitIdle(timer) && ['', 'not-found'].includes(unitProperty(timer, 'UnitFileState'));
-    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(retired(), 'ACT_TEARDOWN_DRIFT'); return; }
-    // A timer the journal proves was durably installed is retired exactly as
-    // before: its disappearance stays a refusal. Only an installation the
-    // journal cannot vouch for may end with nothing left to retire.
+    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }
+    // A timer the journal proves was durably installed is measured before and
+    // after the command: its disappearance is a refusal. Only an installation
+    // the journal cannot vouch for may end with nothing left to retire.
     const installed = journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');
-    try { command('/usr/bin/systemctl', ['disable', '--now', timer]); }
-    catch (error) { need(!installed && error?.code === 'ACT_COMMAND_FAILED' && retired(), 'ACT_TEARDOWN_DRIFT'); }
+    // Durable receipt for the removal below: a pair this teardown has already
+    // begun unlinking is its own interrupted work, not foreign drift.
+    const removing = journalHas(journal, 'EXPIRY_RETIREMENT_STARTED');
+    // Pre-condition, not only post-condition. Where the journal proves this
+    // episode installed the expiry mechanism, BOTH durable unit files must
+    // still exist under root custody before `disable --now` is issued: systemd
+    // will happily disable a unit it still holds loaded whose file was deleted
+    // or replaced underneath it, and that success must never absorb the drift.
+    if (installed && !removing) need(measuredPredicate(() => EXPIRY_UNITS.every(expiryUnitCustody)), 'ACT_TEARDOWN_DRIFT');
+    try { command('/usr/bin/systemctl', ['disable', '--now', expiryTimerUnit]); }
+    catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }
+    // Post-condition on the success path too: the unit ends not active and not
+    // enabled, and the retirement itself removes both durable unit files, with
+    // a daemon-reload wherever systemd still holds the removed view. Invariant:
+    // after a completed teardown the successor window's pre-mint gate must
+    // pass, and this episode leaves no expiry mechanism behind, so the end
+    // state satisfies the same predicate the never-created branch asserts.
+    need(measuredPredicate(() => unitIdle(expiryTimerUnit)
+      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');
+    if (measuredPredicate(() => !EXPIRY_UNITS.every(unitFileAbsent))) {
+      if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });
+      for (const file of EXPIRY_UNITS) remove(file);
+    }
+    // systemd answers from the units it has loaded. Where it still holds the
+    // removed view, refresh it and measure again; anything else is drift.
+    if (!measuredPredicate(expiryRetired)) {
+      command('/usr/bin/systemctl', ['daemon-reload']);
+      need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT');
+    }
   }
   function cleanupWorkspaces(spec, journal) {
     need(journal.entries.some(e => e.event === 'DONE' && e.step === 'teardown:workers'), 'ACT_FIXTURE_CLEANUP');

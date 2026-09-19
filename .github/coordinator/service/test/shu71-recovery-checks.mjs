@@ -423,6 +423,9 @@ export async function phaseInterruptionCheck(createProduction, h, phase) {
     assert.equal(result.state, 'REVOKED', `B4_PHASE_${phase}_REVOKED`);
     assert.ok(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), `B4_PHASE_${phase}_RECEIPT`);
     assert.equal(h.exists('/srv/shu/state/shu71-evidence/active.json'), false, `B4_PHASE_${phase}_RELEASED`);
+    // A completed teardown leaves no expiry mechanism behind, from every
+    // realistic interrupted journal state this matrix can reach.
+    for (const unit of expiryUnits(h)) assert.equal(h.exists(unit), false, `B4_PHASE_${phase}_EXPIRY_UNITS_REMOVED`);
     const settled = treeSnapshot(h);
     const again = await create().execute('revoke');
     assert.equal(again.ok, true, `B4_PHASE_${phase}_IDEMPOTENT: ${JSON.stringify(again)}`);
@@ -451,4 +454,209 @@ export async function strictKillModelCheck(createProduction, h) {
   const settled = treeSnapshot(h);
   assert.equal((await create().execute('revoke')).ok, true, 'B4_STRICT_KILL_IDEMPOTENT');
   assert.deepEqual(treeSnapshot(h), settled, 'B4_STRICT_KILL_IDEMPOTENT_INERT');
+}
+
+// SHU-71 expiry retirement drift (blocking correction lane). The merged
+// revision issued `systemctl disable --now` for a journal-proven installed
+// timer and checked nothing at all when it succeeded: the two durable unit
+// files could be missing, replaced or left behind and the retirement still
+// reported success. These checks pin the pre-condition, the post-condition,
+// the actual removal and the honest refusal.
+const expiryTimer = h => `shu71-expiry-${h.id}.timer`;
+// Like incomplete(), minus the retirement-command clause: these checks measure
+// the retirement command themselves, in their own bounded event slice.
+function unfinished(h, name) {
+  assert.equal(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), false, `${name}_NO_COMPLETION`);
+  assert.equal(h.exists(lease), true, `${name}_OWNERSHIP_RETAINED`);
+}
+// The journal proves the mechanism was installed and the durable unit file is
+// gone, yet systemd still holds the unit loaded, so `disable --now` succeeds.
+// Only a measurement of the durable files can refuse this.
+export async function expiryFileDriftCheck(createProduction, h, unit = 'timer') {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', `B4_EXPIRY_FILE_DRIFT_SETUP_${unit}`);
+  assert.ok(h.journal().some(e => e.event === 'ARMED'), `B4_EXPIRY_FILE_DRIFT_JOURNAL_PROVES_INSTALLED_${unit}`);
+  h.systemd.unitFileViewCached = true;
+  const file = `/etc/systemd/system/shu71-expiry-${h.id}.${unit}`;
+  fs.rmSync(h.root + file);
+  assert.equal(h.exists(file), false, `B4_EXPIRY_FILE_DRIFT_REAL_${unit}`);
+  // The modelled host answers yes: systemd still holds the unit loaded, so
+  // `disable --now` exits 0 even with the durable file gone. The refusal below
+  // is the pre-condition's, not a lucky command failure. The probe's own effect
+  // on the model is undone, so the measured teardown starts from the armed state.
+  const probe = h.boundary.run('/usr/bin/systemctl', ['disable', '--now', expiryTimer(h)], {});
+  assert.equal(probe.status, 0, `B4_EXPIRY_FILE_DRIFT_DISABLE_WOULD_SUCCEED_${unit}`);
+  assert.equal(h.enabled.has(expiryTimer(h)), false, `B4_EXPIRY_FILE_DRIFT_PROBE_DISABLED_${unit}`);
+  h.enabled.add(expiryTimer(h)); h.active.set(expiryTimer(h), 'active');
+  const start = h.events.length;
+  const result = await create().execute('revoke');
+  assert.equal(result.ok, false, `B4_EXPIRY_FILE_DRIFT_REFUSED_${unit}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `B4_EXPIRY_FILE_DRIFT_NAMED_${unit}`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `B4_EXPIRY_FILE_DRIFT_STEP_NAMED_${unit}`);
+  assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `B4_EXPIRY_FILE_DRIFT_BEFORE_DISABLE_${unit}`);
+  unfinished(h, `B4_EXPIRY_FILE_DRIFT_${unit}`);
+  const repeat = h.events.length;
+  assert.equal((await create().execute('resume')).code, 'ACT_CLEANUP_FAILED', `B4_EXPIRY_FILE_DRIFT_PERSISTS_${unit}`);
+  assert.equal(h.events.slice(repeat).some(e => e.includes('disable --now shu71-expiry-')), false, `B4_EXPIRY_FILE_DRIFT_REPEAT_BEFORE_DISABLE_${unit}`);
+  unfinished(h, `B4_EXPIRY_FILE_DRIFT_REPEAT_${unit}`);
+  // Restoring the durable pair lets the same teardown complete and remove both.
+  h.write(file, unit === 'timer' ? '[Timer]\n' : '[Service]\n', 0o644);
+  h.systemd.unitFileViewCached = false;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `B4_EXPIRY_FILE_DRIFT_RECOVERED_${unit}`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `B4_EXPIRY_FILE_DRIFT_RECOVERED_UNITS_REMOVED_${unit}`);
+}
+// A journal-proven installed timer, both files present, disable succeeding:
+// the retirement completes, leaves no expiry mechanism behind, and a repeat
+// teardown is an inert no-op success. A mechanism re-created afterwards is
+// drift by name on the retired episode's own receipt path.
+export async function expiryRetirementCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_EXPIRY_RETIREMENT_SETUP');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_RETIREMENT_INSTALLED');
+  assert.equal(h.enabled.has(expiryTimer(h)), true, 'B4_EXPIRY_RETIREMENT_ENABLED');
+  const result = await create().execute('revoke');
+  assert.equal(result.state, 'REVOKED', `B4_EXPIRY_RETIREMENT_COMPLETES: ${JSON.stringify(result)}`);
+  assert.ok(h.events.some(e => e.includes('disable --now shu71-expiry-')), 'B4_EXPIRY_RETIREMENT_DISABLED');
+  assert.ok(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), 'B4_EXPIRY_RETIREMENT_RECEIPT');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_UNITS_REMOVED');
+  assert.equal(h.enabled.has(expiryTimer(h)), false, 'B4_EXPIRY_UNIT_NOT_ENABLED');
+  assert.equal(h.active.get(expiryTimer(h)) ?? 'inactive', 'inactive', 'B4_EXPIRY_UNIT_IDLE');
+  const settled = treeSnapshot(h), start = h.events.length;
+  const again = await create().execute('revoke');
+  assert.equal(again.ok, true, `B4_EXPIRY_REPEAT_TEARDOWN_OK: ${JSON.stringify(again)}`);
+  assert.equal(again.state, 'REVOKED', 'B4_EXPIRY_REPEAT_TEARDOWN_REVOKED');
+  assert.deepEqual(treeSnapshot(h), settled, 'B4_EXPIRY_REPEAT_TEARDOWN_INERT');
+  assert.equal(h.events.slice(start).some(e => /^(write:|rename:|unlink:|remove:)/.test(e)), false, 'B4_EXPIRY_REPEAT_TEARDOWN_NO_WRITES');
+  h.write(`/etc/systemd/system/${expiryTimer(h)}`, '[Timer]\n', 0o644);
+  const drifted = await create().execute('revoke');
+  assert.equal(drifted.ok, false, `B4_RETIRED_EPISODE_EXPIRY_DRIFT: ${JSON.stringify(drifted)}`);
+  assert.equal(drifted.code, 'ACT_TEARDOWN_DRIFT', 'B4_RETIRED_EPISODE_EXPIRY_DRIFT_NAMED');
+}
+// A disable that throws is never a silent success, even where the unit is
+// already measurably idle and not enabled and the removal would otherwise
+// leave a clean end state. The refusal is reported by name, never as the
+// bare thrown error.
+export async function expiryDisableFailureCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_EXPIRY_DISABLE_FAILURE_SETUP');
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h));
+  h.faults.before = name => name === `command:/usr/bin/systemctl:disable --now ${expiryTimer(h)}`;
+  const result = await create().execute('revoke');
+  assert.equal(result.ok, false, `B4_EXPIRY_DISABLE_FAILURE_NOT_SILENT: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', 'B4_EXPIRY_DISABLE_FAILURE_NAMED');
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), 'B4_EXPIRY_DISABLE_FAILURE_STEP_NAMED');
+  assert.doesNotMatch(JSON.stringify(result) + JSON.stringify(h.journal()), /SECRET_POISON/, 'B4_EXPIRY_DISABLE_FAILURE_NO_RAW_ERROR');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_DISABLE_FAILURE_UNITS_RETAINED');
+  unfinished(h, 'B4_EXPIRY_DISABLE_FAILURE');
+  h.faults.before = null;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_DISABLE_FAILURE_RECOVERED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_DISABLE_FAILURE_RETIRED_AFTER_RECOVERY');
+}
+// A recovered log proves nothing about non-creation, including when it is an
+// authentic retained prefix of this episode's own journal that records the
+// forward attempt and no creating intent. The timer really is installed.
+export async function recoveredNonCreationCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_RECOVERED_NON_CREATION_SETUP');
+  const rows = h.journal(), stop = rows.findIndex(e => e.event === 'RUN_ATTEMPT_STARTED');
+  assert.ok(stop > 0, 'B4_RECOVERED_PREFIX_AUTHENTIC');
+  assert.equal(rows.slice(0, stop + 1).some(e => e.event === 'ARMED' || e.step === 'expiry-watch'), false, 'B4_RECOVERED_PREFIX_CLAIMS_NON_CREATION');
+  h.write(`/srv/shu/state/shu71-evidence/${h.id}/recovery.jsonl`, rows.slice(0, stop + 1).map(e => JSON.stringify(e)).join('\n') + '\n');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_RECOVERED_TIMER_REALLY_INSTALLED');
+  const result = await create().execute('resume');
+  assert.equal(result.state, 'REVOKED', `B4_RECOVERED_NOT_PROOF_OF_NON_CREATION: ${JSON.stringify(result)}`);
+  assert.ok(h.events.some(e => e.includes('disable --now shu71-expiry-')), 'B4_RECOVERED_FAIL_CLOSED_RETIREMENT');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_RECOVERED_UNITS_REMOVED');
+}
+// The reviewed teardown effect order, as durable journal rows. Disarm precedes
+// credential removal, the worker kill precedes the fixture cleanup that
+// requires it, and the retry mechanism is retired last of all.
+export const teardownEffectOrder = Object.freeze(['gate', 'activation', 'workers',
+  'stop-shu-coordinator-timer', 'stop-shu-coordinator-service', 'stop-shu-supervisor-service', 'reload',
+  'restore-shu-140', 'restore-shu-254', 'fixtures', 'evidence-broker', 'archive', 'manifest', 'expiry-timer']);
+export async function teardownOrderCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_TEARDOWN_ORDER_SETUP');
+  assert.equal((await create().execute('revoke')).state, 'REVOKED', 'B4_TEARDOWN_ORDER_REVOKED');
+  const steps = event => h.journal().filter(e => e.event === event && typeof e.step === 'string' && e.step.startsWith('teardown:'))
+    .map(e => e.step.slice('teardown:'.length));
+  assert.deepEqual(steps('INTENT'), [...teardownEffectOrder], 'B4_TEARDOWN_EFFECT_ORDER');
+  assert.deepEqual(steps('DONE'), [...teardownEffectOrder], 'B4_TEARDOWN_EFFECT_ORDER_COMPLETED');
+}
+// The fixture cleanup's durability precondition: it refuses until the worker
+// kill has reached its own durable DONE row, and removes nothing before then.
+export async function fixturesRequireWorkersCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_FIXTURES_DEPENDENCY_SETUP');
+  const attempt = '33333333-3333-4333-8333-333333333333';
+  h.write(`/srv/shu/state/workspaces/${attempt}.workspace.json`, JSON.stringify({ episode_id: h.id, attempt_id: attempt,
+    issue_id: 'SHU-254', repo: 'BAWES-Universe/studenthub-platform', branch: 'coordinator/SHU-254' }), 0o600, 999);
+  h.write(`/srv/shu/worktrees/${attempt}/result.txt`, 'fixture-only', 0o600, 995);
+  const lstat = h.boundary.fs.lstatSync;
+  h.boundary.fs.lstatSync = p => {
+    const st = lstat(p);
+    return p === `/srv/shu/worktrees/${attempt}` ? new Proxy(st, { get: (target, key) => key === 'uid' ? 995 : Reflect.get(target, key) }) : st;
+  };
+  h.faults.before = name => name.includes(':kill --kill-whom=all');
+  const result = await create().execute('revoke');
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', 'B4_FIXTURES_WORKERS_FAILED');
+  assert.ok(result.failures.includes('ACT_TEARDOWN_WORKERS'), 'B4_FIXTURES_WORKERS_NAMED');
+  assert.ok(result.failures.includes('ACT_TEARDOWN_FIXTURES'), 'B4_FIXTURES_REQUIRE_WORKERS_DONE');
+  assert.equal(h.journal().some(e => e.event === 'DONE' && e.step === 'teardown:fixtures'), false, 'B4_FIXTURES_NO_DONE_WITHOUT_WORKERS');
+  assert.equal(h.journal().some(e => e.event === 'FIXTURE_REMOVE_INTENT'), false, 'B4_FIXTURES_NO_RECEIPT_WITHOUT_WORKERS');
+  assert.equal(h.exists(`/srv/shu/worktrees/${attempt}`), true, 'B4_FIXTURES_DURABILITY_PRECONDITION');
+  h.faults.before = null;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_FIXTURES_DEPENDENCY_RECOVERED');
+  assert.equal(h.exists(`/srv/shu/worktrees/${attempt}`), false, 'B4_FIXTURES_REMOVED_AFTER_WORKERS');
+  assert.equal(h.exists(`/srv/shu/state/workspaces/${attempt}.workspace.json`), true, 'B4_FIXTURES_AUTHORITY_RETAINED_AFTER_WORKERS');
+}
+// systemd's loaded view is a cache. Where the removal is not yet reflected in
+// it, the retirement refreshes the view with a daemon-reload and measures the
+// end state again rather than reporting an unverified success.
+export async function expiryCachedViewCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_EXPIRY_CACHED_VIEW_SETUP');
+  h.systemd.unitFileViewCached = true;
+  const start = h.events.length;
+  const result = await create().execute('revoke');
+  assert.equal(result.state, 'REVOKED', `B4_EXPIRY_RELOAD_REFRESHES_UNIT_VIEW: ${JSON.stringify(result)}`);
+  const slice = h.events.slice(start);
+  const unlink = slice.findIndex(e => e === `unlink:/etc/systemd/system/${expiryTimer(h)}`);
+  assert.ok(unlink >= 0, 'B4_EXPIRY_CACHED_VIEW_REMOVED');
+  assert.ok(slice.slice(unlink).some(e => e === 'command:/usr/bin/systemctl:daemon-reload'), 'B4_EXPIRY_CACHED_VIEW_RELOADED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_CACHED_VIEW_UNITS_REMOVED');
+  assert.equal(h.loaded.has(expiryTimer(h)), false, 'B4_EXPIRY_CACHED_VIEW_UNLOADED');
+}
+// The exit status of `disable --now` is not the end state. A disable that
+// reports success while the unit stays active and enabled is drift, and the
+// durable unit files of a live unit are never destroyed on that report.
+export async function expiryPostConditionCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  assert.equal((await create().execute('run')).state, 'ARMED', 'B4_EXPIRY_POSTCONDITION_SETUP');
+  const run = h.boundary.run;
+  h.boundary.run = (exe, argv, options) => {
+    const result = run(exe, argv, options);
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'disable') { h.active.set(expiryTimer(h), 'active'); h.enabled.add(expiryTimer(h)); }
+    return result;
+  };
+  const result = await create().execute('revoke');
+  assert.equal(result.ok, false, `B4_EXPIRY_POSTCONDITION_REFUSED: ${JSON.stringify(result)}`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), 'B4_EXPIRY_POSTCONDITION_NAMED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, 'B4_EXPIRY_POSTCONDITION_UNITS_RETAINED');
+  unfinished(h, 'B4_EXPIRY_POSTCONDITION');
+  h.boundary.run = run;
+  assert.equal((await create().execute('resume')).state, 'REVOKED', 'B4_EXPIRY_POSTCONDITION_RECOVERED');
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, 'B4_EXPIRY_POSTCONDITION_RETIRED_AFTER_RECOVERY');
+}
+// The Sentry-shaped defect: a predicate evaluated as an argument of need()
+// skips its own refusal when it throws. Measured into a value first, a throw
+// is the named refusal and never a bare error in its place.
+export function predicateRefusalCheck(api) {
+  const boom = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
+  let measured;
+  try { measured = api.measuredPredicate(boom); } catch (error) { measured = error; }
+  assert.equal(measured, false, 'B4_EXPIRY_PREDICATE_THROW_REFUSES');
+  assert.equal(api.measuredPredicate(() => false), false, 'B4_EXPIRY_PREDICATE_FALSE_REFUSES');
+  assert.equal(api.measuredPredicate(() => 'yes'), false, 'B4_EXPIRY_PREDICATE_REQUIRES_MEASURED_TRUE');
+  assert.equal(api.measuredPredicate(() => true), true, 'B4_EXPIRY_PREDICATE_MEASURED_TRUE_PASSES');
 }

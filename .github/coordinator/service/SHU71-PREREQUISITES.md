@@ -95,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L605). Real kernel socket access
+[operative unit render](shu71-production.mjs#L649). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -396,7 +396,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L343), [stop](shu71-production.mjs#L556)).
+([start](shu71-production.mjs#L349), [stop](shu71-production.mjs#L600)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -607,8 +607,10 @@ destroyed or damaged log, is `inconclusive` and takes the fail-closed path.
   installed, `disable --now` is not issued and both `shu71-expiry-<id>.service`
   and `shu71-expiry-<id>.timer` must be absent, the timer inactive and its
   `UnitFileState` empty; anything present, enabled or active there halts by
-  `ACT_TEARDOWN_DRIFT`. A durably installed timer is still retired exactly as
-  before, so its disappearance still refuses.
+  `ACT_TEARDOWN_DRIFT`. A durably installed timer is measured before and after
+  the command, and the retirement removes both unit files; see
+  [expiry retirement drift](#shu-71-expiry-retirement-drift) for the correction
+  that made that true.
 * `teardown:fixtures` is no longer blocked, because `teardown:workers` now
   reaches its `DONE` row. Every safety check it performs is unchanged: worktree
   root mode `03770`, episode-bound attempt ids only, inode receipts
@@ -731,3 +733,118 @@ are strictly additive: 113 test files unchanged, 3,213 → 3,238 names and
 requirement rows, zero removals and zero dropped requirement rows. No new test
 file was added. The reviewed teardown effects set and its order are unchanged.
 Only files under `.github/coordinator/**` changed; no push or PR was performed.
+
+### SHU-71 expiry retirement drift
+
+The idempotent-teardown correction above (`#153`, merged at
+`9e1a2d0aea904c11ef2e4af7301346e7024e2d3e`) closed the never-installed branch.
+It did not close the installed branch, and the window package built on that
+revision claimed it had: that the expiry timer "keeps its equivalent refusal".
+That claim was false at that revision, and the owner held the window on it.
+
+Measured by reading `retireExpiryTimer()` at
+`9e1a2d0aea904c11ef2e4af7301346e7024e2d3e`
+(`.github/coordinator/service/shu71-production.mjs:438-451`):
+
+| Measured defect | Consequence |
+| --- | --- |
+| Where the journal **proves** the mechanism was installed (`ARMED`, or `DONE` for `expiry-watch`) and `systemctl disable --now` **succeeds**, the function performed no check at all. `retired()` ran only in the `catch` branch, and only for the not-installed case. | An installed expiry mechanism whose `.timer` or companion `.service` file had been deleted or replaced underneath it was reported as successfully retired. Drift was silently absorbed. |
+| `observeTeardown()` inspects the gate drop-ins, the activation file and the service `ActiveState`s, never the expiry unit files. | A later wake did not catch it either. |
+| Nothing anywhere removed `/etc/systemd/system/shu71-expiry-<id>.timer` or `…service`. | Even a clean retirement left both durable unit files behind — the exact state the successor window's pre-mint gate and the not-installed branch's own `retired()` predicate both treat as wrong. |
+| `need(retired(), 'ACT_TEARDOWN_DRIFT')` evaluates the predicate **as an argument** of the refusal it guards. | A throw inside `retired()` (for example a non-`ENOENT` `lstat` failure) skips the refusal entirely and reports the bare error in its place. |
+
+Two pre-merge reviews named this line and neither was closed before the merge:
+CodeRabbit raised it as a **functional correctness** finding on
+`.github/coordinator/service/shu71-production.mjs:450`, and Sentry filed a
+**MEDIUM** bug prediction on the same line — an exception thrown inside the
+`retired()` call inside the `need(...)` argument bypasses the intended check and
+misreports the failure. An independent reviewer's finding **F1** ("the clause
+bounding absence-as-success for the expiry timer is enforced in code but pinned
+by no control") is the same clause seen from the coverage side, and its **F3**
+named two further unpinned clauses in this area: the teardown effect **order**
+and the fixture cleanup's **durability precondition**.
+
+The corrected retirement is a pre-condition, a command, and a post-condition:
+
+1. **Pre-condition.** Where the journal proves this episode installed the
+   mechanism, **both** `/etc/systemd/system/shu71-expiry-<id>.timer` and
+   `…/shu71-expiry-<id>.service` must exist as root-owned, single-link, regular
+   files without group or world write **before** `disable --now` is issued.
+   Missing or substituted, either one halts by `ACT_TEARDOWN_DRIFT`. A
+   `systemctl` answer is a cache of what systemd loaded and is never accepted in
+   place of the durable files: systemd will disable a unit it still holds loaded
+   whose file was deleted underneath it, and that success must not absorb drift.
+2. **The not-installed branch is unchanged and exactly as strict.** Absence is
+   accepted only where `lifecyclePhase(journal, 'expiry-watch') === 'never'`
+   proves non-creation; anything present, enabled or active there still halts.
+   The `journal.recovered` conjunct of that proof stays fail-closed.
+3. **Post-condition, on the success path too.** After `disable --now` returns —
+   success or throw — the unit must be measured not active and not enabled, and
+   the retirement itself removes both durable unit files. Where systemd still
+   holds the removed view, a `daemon-reload` refreshes it and the end state is
+   measured again. The end state satisfies the same predicate the
+   never-installed branch asserts. **Invariant:** after a completed teardown the
+   successor window's pre-mint gate must pass, and this episode leaves no expiry
+   mechanism behind. The retired episode's own receipt path now observes that
+   too, so a mechanism re-created afterwards halts by `ACT_TEARDOWN_DRIFT`.
+4. **No exception bypasses a check.** Every refusal in the retirement measures
+   its predicate into a value first, through the exported `measuredPredicate()`:
+   anything but a measured `true` — including a throw — is the refusal the
+   caller named, never a bare error reported in its place.
+
+The removal is crash-safe: a durable `EXPIRY_RETIREMENT_STARTED` journal row
+precedes the two unlinks, so a process replacement between them is this
+teardown's own interrupted work rather than foreign drift, and the retry
+finishes it. Without that receipt the pre-condition would refuse a pair this
+teardown had itself half-removed. The reviewed teardown effects set and its
+order are unchanged; `PERMITTED_SKIPS` is byte-identical.
+
+| Named control | Proves |
+| --- | --- |
+| `B4_EXPIRY_FILE_DRIFT_REFUSED_timer/_service`, `_NAMED_*`, `_STEP_NAMED_*`, `_BEFORE_DISABLE_*`, `_PERSISTS_*`, `_REPEAT_BEFORE_DISABLE_*` | a journal-proven installed mechanism with either durable unit file missing halts by name, before the command, and keeps halting |
+| `B4_EXPIRY_FILE_DRIFT_DISABLE_WOULD_SUCCEED_*`, `_PROBE_DISABLED_*`, `_REAL_*`, `_JOURNAL_PROVES_INSTALLED_*` | the modelled host would have answered `rc=0`: the refusal is the pre-condition's, not a lucky command failure |
+| `B4_EXPIRY_FILE_DRIFT_RECOVERED_*`, `_RECOVERED_UNITS_REMOVED_*` | restoring the pair lets the same teardown complete and remove both |
+| `B4_EXPIRY_RETIREMENT_COMPLETES`, `_DISABLED`, `_RECEIPT`, `B4_EXPIRY_UNITS_REMOVED`, `B4_EXPIRY_UNIT_NOT_ENABLED`, `B4_EXPIRY_UNIT_IDLE` | the happy path completes, and leaves no unit file, no enablement and no live unit |
+| `B4_EXPIRY_REPEAT_TEARDOWN_OK/_REVOKED/_INERT/_NO_WRITES` | a repeat teardown is a no-op success that creates or deletes nothing |
+| `B4_RETIRED_EPISODE_EXPIRY_DRIFT`, `_NAMED` | a mechanism re-created after a completed teardown halts by name on the receipt path |
+| `B4_EXPIRY_DISABLE_FAILURE_NOT_SILENT`, `_NAMED`, `_STEP_NAMED`, `_UNITS_RETAINED`, `_NO_RAW_ERROR`, `_RECOVERED`, `_RETIRED_AFTER_RECOVERY` | a `disable` that throws is a refusal by name — never a silent success, never the bare error text — and stays recoverable |
+| `B4_EXPIRY_POSTCONDITION_REFUSED`, `_NAMED`, `_UNITS_RETAINED`, `_RECOVERED`, `_RETIRED_AFTER_RECOVERY` | a `disable` that reports success while the unit stays active and enabled is drift, and the durable files of a live unit are not destroyed on that report |
+| `B4_EXPIRY_RELOAD_REFRESHES_UNIT_VIEW`, `B4_EXPIRY_CACHED_VIEW_REMOVED/_RELOADED/_UNITS_REMOVED/_UNLOADED` | a stale loaded view is refreshed and re-measured before the retirement completes |
+| `B4_EXPIRY_PREDICATE_THROW_REFUSES`, `_FALSE_REFUSES`, `_REQUIRES_MEASURED_TRUE`, `_MEASURED_TRUE_PASSES` | the Sentry case: a predicate that throws is the named refusal, not a bypass |
+| `B4_RECOVERED_NOT_PROOF_OF_NON_CREATION`, `B4_RECOVERED_PREFIX_AUTHENTIC`, `_PREFIX_CLAIMS_NON_CREATION`, `B4_RECOVERED_TIMER_REALLY_INSTALLED`, `B4_RECOVERED_FAIL_CLOSED_RETIREMENT`, `B4_RECOVERED_UNITS_REMOVED` | the `journal.recovered` conjunct: an authentic retained prefix that records the forward attempt and no creating intent is still not proof of non-creation |
+| `B4_TEARDOWN_EFFECT_ORDER`, `B4_TEARDOWN_EFFECT_ORDER_COMPLETED` | the reviewed effect order, as durable `INTENT` and `DONE` rows |
+| `B4_FIXTURES_REQUIRE_WORKERS_DONE`, `B4_FIXTURES_DURABILITY_PRECONDITION`, `B4_FIXTURES_NO_DONE_WITHOUT_WORKERS`, `B4_FIXTURES_NO_RECEIPT_WITHOUT_WORKERS`, `B4_FIXTURES_WORKERS_FAILED/_NAMED`, `B4_FIXTURES_DEPENDENCY_RECOVERED`, `B4_FIXTURES_REMOVED_AFTER_WORKERS`, `B4_FIXTURES_AUTHORITY_RETAINED_AFTER_WORKERS` | the fixture cleanup refuses, and removes nothing, until the worker kill reaches its own durable `DONE` row |
+| `B4_PHASE_<phase>_EXPIRY_UNITS_REMOVED` | every completed teardown in the seven-phase interruption matrix leaves no expiry mechanism behind |
+
+| Named killing mutant | Control that kills it |
+| --- | --- |
+| `B1/B4 mutation: installed expiry pre-condition omitted` | `B4_EXPIRY_FILE_DRIFT_REFUSED_timer` |
+| `B1/B4 mutation: expiry companion service file unchecked` | `B4_EXPIRY_FILE_DRIFT_REFUSED_service` |
+| `B1/B4 mutation: retired expiry units left behind` | `B4_EXPIRY_RETIREMENT_COMPLETES` / `B4_EXPIRY_UNITS_REMOVED` |
+| `B1/B4 mutation: expiry retirement receipt omitted` | `B4_EXPIRY_RETIREMENT_RECEIPT` |
+| `B1/B4 mutation: retired episode expiry drift unobserved` | `B4_RETIRED_EPISODE_EXPIRY_DRIFT` |
+| `B1/B4 mutation: expiry end state never measured` | `B4_EXPIRY_POSTCONDITION_UNITS_RETAINED` |
+| `B1/B4 mutation: refused expiry disable blindly accepted` | `B4_EXPIRY_DISABLE_FAILURE_NOT_SILENT` |
+| `B1/B4 mutation: stale unit view never refreshed` | `B4_EXPIRY_RELOAD_REFRESHES_UNIT_VIEW` |
+| `B1/B4 mutation: refusal predicate evaluated inside need()` | `B4_EXPIRY_PREDICATE_THROW_REFUSES` |
+| `B1/B4 mutation: recovered log accepted as non-creation proof` | `B4_RECOVERED_NOT_PROOF_OF_NON_CREATION` |
+| `B1/B4 mutation: teardown effect order permuted` | `B4_TEARDOWN_EFFECT_ORDER` |
+| `B1/B4 mutation: fixtures durability precondition removed` | `B4_FIXTURES_REQUIRE_WORKERS_DONE` |
+
+The two existing expiry mutants keep their names and their killing assertions;
+only their source anchors moved with the single `expiryRetired` predicate. The
+disposable production fixture gains one opt-in model, `systemd.unitFileViewCached`,
+which answers unit-file questions from the units systemd has loaded (refreshed
+on `daemon-reload`, and not forgetting a unit that is still running) rather than
+straight from disk. It is off by default, so every previous model answer is
+unchanged; the drift controls turn it on to reproduce a `disable --now` that
+succeeds against a durable file that is no longer there.
+
+Three measured-effect oracles move by exactly the seven effects a completed
+retirement now performs — the end-state measurement (`ActiveState`,
+`UnitFileState`), the durable receipt row, the two unit-file unlinks and the
+final retired measurement (`ActiveState`, `UnitFileState`): `B1_RESUME_EFFECT_COUNT`
+68 → 75, `B1_EXPIRY_EFFECT_COUNT` 72 → 79, and the R8 `cleanupEffects` table with
+its `settled` count. `B1_REVOKE_OBSERVATION_ONLY` moves 4 → 6 for the two
+measurements the retired receipt path now also takes. Every assertion name,
+skip, timeout and deadline is unchanged.

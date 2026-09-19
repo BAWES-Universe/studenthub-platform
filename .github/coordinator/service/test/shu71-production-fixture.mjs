@@ -91,7 +91,8 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   write('/srv/shu/coordinator.env', coordinatorText(), 0o600, 999);
   let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
   let signatures = 0;
-  const active = new Map(), enabled = new Set(), started = new Set(), systemd = { killRequiresProcesses: false };
+  const active = new Map(), enabled = new Set(), started = new Set(), loaded = new Set();
+  const systemd = { killRequiresProcesses: false, unitFileViewCached: false };
   const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
@@ -119,7 +120,19 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           }
           if (argv.includes('--property=User')) { output = identity.user; return; }
           if (argv.includes('--property=Group')) { output = identity.group; return; }
-          const unitFile = unit => fs.existsSync(resolve(`/etc/systemd/system/${unit}`));
+          // systemd answers from the units it has loaded, and refreshes that
+          // view on daemon-reload. Default keeps the previous direct-from-disk
+          // model; systemd.unitFileViewCached opts into the loaded-view reading,
+          // under which a unit file deleted without a reload is still disablable.
+          if (argv[0] === 'daemon-reload') {
+            // A reload re-reads the unit directory; a unit that is still running
+            // is not forgotten because its file went away.
+            loaded.clear();
+            for (const entry of fs.readdirSync(resolve('/etc/systemd/system'))) loaded.add(entry);
+            for (const [unit, state] of active) if (['active', 'activating'].includes(state)) loaded.add(unit);
+            return;
+          }
+          const unitFile = unit => systemd.unitFileViewCached ? loaded.has(unit) : fs.existsSync(resolve(`/etc/systemd/system/${unit}`));
           if (argv[0] === 'show' && argv.includes('--property=UnitFileState')) {
             output = `${unitFile(argv.at(-1)) ? (enabled.has(argv.at(-1)) ? 'enabled' : 'disabled') : ''}\n`; return;
           }
@@ -194,7 +207,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
       });
     },
   };
-  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, systemd, write, signatures: () => signatures,
+  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, loaded, systemd, write, signatures: () => signatures,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),

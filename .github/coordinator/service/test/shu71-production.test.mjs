@@ -196,3 +196,49 @@ test('B4 interruption at every lifecycle phase boundary completes cleanup or hal
 test('B4 a unit that holds no processes still completes its teardown', async t => {
   await strictKillModelCheck(createShu71Production, productionFixture(t, keys));
 });
+
+// SHU-71 expiry retirement drift (blocking correction lane). The merged
+// revision checked nothing at all when `disable --now` succeeded for a
+// journal-proven installed timer, and never removed either durable unit file.
+import * as production from '../shu71-production.mjs';
+import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck, expiryCachedViewCheck,
+  expiryPostConditionCheck, recoveredNonCreationCheck, teardownOrderCheck, fixturesRequireWorkersCheck,
+  predicateRefusalCheck } from './shu71-recovery-checks.mjs';
+
+for (const unit of ['timer', 'service']) {
+  test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
+    await expiryFileDriftCheck(createShu71Production, productionFixture(t, keys), unit);
+  });
+}
+
+test('B4 a completed expiry retirement removes both durable unit files and repeats inertly', async t => {
+  await expiryRetirementCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a disable that throws is a refusal by name, never a silent retirement', async t => {
+  await expiryDisableFailureCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a cached systemd unit view is refreshed and re-measured before retirement completes', async t => {
+  await expiryCachedViewCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a recovered log is never proof that the expiry mechanism was not created', async t => {
+  await recoveredNonCreationCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 the reviewed teardown effect order is durable in the journal', async t => {
+  await teardownOrderCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 fixture cleanup refuses until the worker kill reaches its durable DONE row', async t => {
+  await fixturesRequireWorkersCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a disable that reports success while the unit stays live is drift', async t => {
+  await expiryPostConditionCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a refusal predicate that throws is still the named refusal', () => {
+  predicateRefusalCheck(production);
+});

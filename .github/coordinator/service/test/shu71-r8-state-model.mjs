@@ -71,9 +71,14 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // own lease held; either armed with a credential, or safe after 32 failed timer
 // retirements. No fault remains active during the measured transition.
 // Counts include journal writes and exclude reads, mkdir, chmod/chown and fsync.
+// Each completed retirement adds exactly seven measured effects over the
+// merged revision, which issued `disable --now` and checked nothing: the end
+// state measurement (ActiveState and UnitFileState), the durable
+// EXPIRY_RETIREMENT_STARTED receipt, the two unit-file unlinks, and the final
+// retired measurement (ActiveState and UnitFileState) of the same predicate.
 const cleanupEffects = {
-  armed: { absent: 67, intact: 72, truncated: 73, recovered: 72, 'FORGED-ordered': 66, 'FORGED-partial': 66 },
-  'settlement-ready': { absent: 67, intact: 41, truncated: 69, recovered: 68, 'FORGED-ordered': 66, 'FORGED-partial': 66 },
+  armed: { absent: 74, intact: 79, truncated: 80, recovered: 79, 'FORGED-ordered': 73, 'FORGED-partial': 73 },
+  'settlement-ready': { absent: 74, intact: 48, truncated: 76, recovered: 75, 'FORGED-ordered': 73, 'FORGED-partial': 73 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);
@@ -90,7 +95,7 @@ export function requiredTransition(s) {
     gates: Array(2).fill(`[Service]\nEnvironment=ENABLE_DISPATCH=${orderedResidual && !ready ? 'true' : 'false'}\n`),
     credential: orderedResidual && !ready,
     lease: refused,
-    effects: settled ? 21 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
+    effects: settled ? 28 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
     code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED' : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : null,
     complete: !refused,
   };

@@ -760,6 +760,18 @@
     "B1/B4 mutation: pre-arm expiry drift silently accepted",
     "B1/B4 mutation: expiry retirement ignores unit liveness",
     "B1/B4 mutation: non-creation inferred from an empty journal",
+    "B1/B4 mutation: installed expiry pre-condition omitted",
+    "B1/B4 mutation: expiry companion service file unchecked",
+    "B1/B4 mutation: retired expiry units left behind",
+    "B1/B4 mutation: expiry retirement receipt omitted",
+    "B1/B4 mutation: retired episode expiry drift unobserved",
+    "B1/B4 mutation: expiry end state never measured",
+    "B1/B4 mutation: refused expiry disable blindly accepted",
+    "B1/B4 mutation: stale unit view never refreshed",
+    "B1/B4 mutation: recovered log accepted as non-creation proof",
+    "B1/B4 mutation: teardown effect order permuted",
+    "B1/B4 mutation: fixtures durability precondition removed",
+    "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
     "B4 cleanup continues after gate failure and one fixture restore failure",
@@ -779,6 +791,16 @@
     "B4 a destroyed journal is never proof that nothing was created",
     "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
     "B4 a unit that holds no processes still completes its teardown",
+    "B4 a journal-proven installed expiry timer file that vanished halts before disabling",
+    "B4 a journal-proven installed expiry service file that vanished halts before disabling",
+    "B4 a completed expiry retirement removes both durable unit files and repeats inertly",
+    "B4 a disable that throws is a refusal by name, never a silent retirement",
+    "B4 a cached systemd unit view is refreshed and re-measured before retirement completes",
+    "B4 a recovered log is never proof that the expiry mechanism was not created",
+    "B4 the reviewed teardown effect order is durable in the journal",
+    "B4 fixture cleanup refuses until the worker kill reaches its durable DONE row",
+    "B4 a disable that reports success while the unit stays live is drift",
+    "B4 a refusal predicate that throws is still the named refusal",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -1646,6 +1668,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: SIGNING_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: ARMED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload intact",
@@ -1658,6 +1681,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: SIGNING_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: ARMED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload recovered",
@@ -7346,6 +7370,54 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: installed expiry pre-condition omitted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry companion service file unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: retired expiry units left behind",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement receipt omitted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: retired episode expiry drift unobserved",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry end state never measured",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: refused expiry disable blindly accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: stale unit view never refreshed",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: recovered log accepted as non-creation proof",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: teardown effect order permuted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: fixtures durability precondition removed",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: refusal predicate evaluated inside need()",
+      "capabilities": []
+    },
+    {
       "name": "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
       "capabilities": []
     },
@@ -7419,6 +7491,46 @@
     },
     {
       "name": "B4 a unit that holds no processes still completes its teardown",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry timer file that vanished halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry service file that vanished halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a completed expiry retirement removes both durable unit files and repeats inertly",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that throws is a refusal by name, never a silent retirement",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a cached systemd unit view is refreshed and re-measured before retirement completes",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a recovered log is never proof that the expiry mechanism was not created",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the reviewed teardown effect order is durable in the journal",
+      "capabilities": []
+    },
+    {
+      "name": "B4 fixture cleanup refuses until the worker kill reaches its durable DONE row",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that reports success while the unit stays live is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a refusal predicate that throws is still the named refusal",
       "capabilities": []
     },
     {
@@ -14226,6 +14338,14 @@
       ]
     },
     {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
       "capabilities": [
         {
@@ -14315,6 +14435,14 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
       "capabilities": [
         {
           "name": "git"

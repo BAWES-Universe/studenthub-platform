@@ -237,7 +237,7 @@ test('V8_DOCUMENTATION_LINK_TARGETS', async () => {
       const source = fs.readFileSync(new URL('../' + name, import.meta.url), 'utf8');
       for (const [, file, number] of source.matchAll(/\((shu71-production\.mjs|provision-shu71-prerequisites\.mjs)#L(\d+)\)/g)) {
         const lines = fs.readFileSync(new URL('../' + file, import.meta.url), 'utf8').split('\n');
-        assert.match(lines[Number(number) - 1 + drift], /renderEvidenceBroker|const key = privateRead|step\('evidence-broker'|\['evidence-broker'|check\('\/etc\/shu\/keys|function identity\(/, label);
+        assert.match(lines[Number(number) - 1 + drift], /renderEvidenceBroker|const key = privateRead|step\('evidence-broker'|\['evidence-broker'|check\('\/etc\/shu\/keys|function identity\(|function sharedAccess\(/, label);
       }
     }
   };

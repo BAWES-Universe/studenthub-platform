@@ -14,7 +14,8 @@ const cases = [
   ['NV3 atomic file fsync omitted', 'production', 'f.fchmodSync(fd, mode); f.fsyncSync(fd);', 'f.fchmodSync(fd, mode);', 'durability'],
   ['NV5 active conflict bypassed', 'production', "if (active && active.activation_id !== id) return { ok: false", "if (false) return { ok: false", 'conflict'],
   ['NV6 owner signature bypassed', 'production', "verify(null, canonicalBytes(doc.payload, false), ownerKey, Buffer.from(doc.signature, 'base64'))", 'true', 'owner'],
-  ['F1 receipt observation omitted', 'production', 'try { observeTeardown(); }', 'try { /* omitted */ }', 'receipt'],
+  // Anchor updated in place for the retired-expiry observation; name and assertion unchanged.
+  ['F1 receipt observation omitted', 'production', 'try { observeTeardown(); observeRetiredExpiry(); }', 'try { /* omitted */ }', 'receipt'],
   ['NV4 journal hash chain removed', 'journal', 'payload.seq === index && payload.previous === previous && sha256 === digest(JSON.stringify(payload))', 'payload.seq === index', 'hash'],
   ['journal previous link removed', 'journal', 'payload.previous === previous && ', '', 'link'],
   ['journal sequence removed', 'journal', 'payload.seq === index && ', '', 'sequence'],
