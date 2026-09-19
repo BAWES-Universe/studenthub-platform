@@ -3156,6 +3156,36 @@
     "HOST_KILL_MAX_DEFAULT",
     "HOST_KILL_OCCUPIED_UID",
     "HOST_KILL_NO_WORLD_WRITE",
+    "HOST_CHECKOUT_CENSUS",
+    "HOST_CHECKOUT_ESCAPE",
+    "HOST_CHECKOUT_ESCAPE_EXISTING",
+    "HOST_CHECKOUT_ESCAPE_REALPATH",
+    "HOST_CHECKOUT_DANGLING",
+    "HOST_CHECKOUT_LOOP",
+    "HOST_CHECKOUT_WRITABLE_TARGET",
+    "HOST_CHECKOUT_UNREADABLE_TARGET",
+    "HOST_CHECKOUT_ANCESTOR",
+    "HOST_ENV_MULTILINK",
+    "HOST_INSTALLED_SINGLE_LINK",
+    "HOST_MULTILINK_WRITABLE_TARGET",
+    "HOST_MULTILINK_FOREIGN_OWNER",
+    "HOST_MIRRORED_REFUSAL",
+    "HOST_KILL_CHECKOUT_SYMLINK_BAN",
+    "HOST_KILL_CHECKOUT_CENSUS",
+    "HOST_KILL_CHECKOUT_ESCAPE",
+    "HOST_KILL_CHECKOUT_ESCAPE_RESOLVED",
+    "HOST_KILL_CHECKOUT_ESCAPE_REALPATH",
+    "HOST_KILL_CHECKOUT_DANGLING",
+    "HOST_KILL_CHECKOUT_LOOP",
+    "HOST_KILL_CHECKOUT_WRITABLE_TARGET",
+    "HOST_KILL_CHECKOUT_READ_PROOF",
+    "HOST_KILL_CHECKOUT_ANCESTOR",
+    "HOST_KILL_ENV_MULTILINK",
+    "HOST_KILL_INSTALLED_SINGLE_LINK",
+    "HOST_KILL_MULTILINK_WRITABLE_TARGET",
+    "HOST_KILL_MULTILINK_FOREIGN_OWNER",
+    "HOST_KILL_MIRRORED_REFUSAL",
+    "HOST_KILL_MIRRORED_INDISCRIMINATE",
     "PHASE_REQUIRE_DROPIN_COORDINATOR_MISSING",
     "PHASE_KILL_DROPIN_COORDINATOR_MISSING",
     "PHASE_REQUIRE_DROPIN_COORDINATOR_BYTES",
@@ -25325,6 +25355,246 @@
     },
     {
       "name": "HOST_KILL_NO_WORLD_WRITE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_CENSUS",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_ESCAPE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_ESCAPE_EXISTING",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_ESCAPE_REALPATH",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_DANGLING",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_LOOP",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_WRITABLE_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_UNREADABLE_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_CHECKOUT_ANCESTOR",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_ENV_MULTILINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_INSTALLED_SINGLE_LINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_MULTILINK_WRITABLE_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_MULTILINK_FOREIGN_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_MIRRORED_REFUSAL",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_SYMLINK_BAN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_CENSUS",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_ESCAPE",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_ESCAPE_RESOLVED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_ESCAPE_REALPATH",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_DANGLING",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_LOOP",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_WRITABLE_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_READ_PROOF",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_CHECKOUT_ANCESTOR",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_ENV_MULTILINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_INSTALLED_SINGLE_LINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MULTILINK_WRITABLE_TARGET",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MULTILINK_FOREIGN_OWNER",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MIRRORED_REFUSAL",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_MIRRORED_INDISCRIMINATE",
       "capabilities": [
         {
           "name": "shell_toolchain"

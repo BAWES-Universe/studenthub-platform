@@ -32,24 +32,32 @@
         {
           "path": "/run/shu71-evidence",
           "ok": false,
-          "code": "ACT_TREE_CONTENT"
+          "code": "ACT_TREE_CONTENT",
+          "mirrored_code": "ACT_TREE_CONTENT",
+          "mirrored_from": "/etc/systemd/system/shu71-evidence.service"
         },
         {
           "path": "/run/shu71-evidence/fixture.sock",
           "ok": false,
-          "code": "ACT_TREE_CONTENT"
+          "code": "ACT_TREE_CONTENT",
+          "mirrored_code": "ACT_TREE_CONTENT",
+          "mirrored_from": "/etc/systemd/system/shu71-evidence.service"
         }
       ],
       "runtime_rows": [
         {
           "path": "/run/shu71-evidence",
           "ok": false,
-          "code": "ACT_TREE_CONTENT"
+          "code": "ACT_TREE_CONTENT",
+          "mirrored_code": "ACT_TREE_CONTENT",
+          "mirrored_from": "/etc/systemd/system/shu71-evidence.service"
         },
         {
           "path": "/run/shu71-evidence/fixture.sock",
           "ok": false,
-          "code": "ACT_TREE_CONTENT"
+          "code": "ACT_TREE_CONTENT",
+          "mirrored_code": "ACT_TREE_CONTENT",
+          "mirrored_from": "/etc/systemd/system/shu71-evidence.service"
         }
       ]
     },

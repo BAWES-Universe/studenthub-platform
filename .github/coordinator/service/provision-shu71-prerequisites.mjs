@@ -19,6 +19,36 @@ const EVIDENCE_SOCKET = '/run/shu71-evidence/fixture.sock';
 const ACCOUNT_FILES = [...['/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow', '/etc/subuid', '/etc/subgid'].flatMap(p => [p, p + '-']), '/etc/.pwd.lock'];
 const PREFIX = '.github/coordinator/';
 const need = (v, code) => { if (!v) throw Object.assign(new Error(code), { code }); };
+// A prepared deployment checkout is the live npm workspace: its node_modules
+// entries are in-tree symlinks (19 measured on the target host, zero escapes).
+// The capability is escape prevention, not a symlink ban, and each refusal
+// shape keeps its own name below the generic access refusal.
+const CHECKOUT_CODES = Object.freeze({ access: 'ACT_PREREQUISITE_CHECKOUT_ACCESS',
+  escape: 'ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE', unresolved: 'ACT_PREREQUISITE_CHECKOUT_SYMLINK_UNRESOLVED',
+  writable: 'ACT_PREREQUISITE_CHECKOUT_SYMLINK_WRITABLE' });
+// Executed by the measured service identity: it reads and traverses the whole
+// tree, resolves every symlink chain it meets (refusing loops, dangling links
+// and targets outside the checkout root), requires the resolved target to be
+// readable and not group/world-writable, and reports the symlink census.
+const checkoutProbe = root => `import fs from 'node:fs'; import path from 'node:path'; ` +
+  `const ROOT = ${JSON.stringify(root)}; const CODE = ${JSON.stringify(CHECKOUT_CODES)}; let symlinks = 0;` +
+  ` const refuse = code => { throw Object.assign(Error(code), { checkout: code }); };` +
+  ` const inside = p => p === ROOT || p.startsWith(ROOT + '/');` +
+  ` const permitted = (p, s) => fs.accessSync(p, fs.constants.R_OK | (s.isDirectory() ? fs.constants.X_OK : 0));` +
+  ` function target(link) { const seen = new Set(); let current = link; for (;;) {` +
+  ` if (seen.has(current)) refuse(CODE.unresolved); seen.add(current);` +
+  ` let s; try { s = fs.lstatSync(current); } catch { refuse(CODE.unresolved); }` +
+  ` if (!s.isSymbolicLink()) { let real; try { real = fs.realpathSync(current); } catch { refuse(CODE.unresolved); }` +
+  ` if (!inside(real)) refuse(CODE.escape); return { path: current, stat: s }; }` +
+  ` let destination; try { destination = fs.readlinkSync(current); } catch { refuse(CODE.unresolved); }` +
+  ` current = path.resolve(path.dirname(current), destination);` +
+  ` if (!inside(current)) refuse(CODE.escape); } }` +
+  ` function visit(p) { const s = fs.lstatSync(p);` +
+  ` if (s.isSymbolicLink()) { symlinks++; const t = target(p);` +
+  ` if (t.stat.mode & 0o022) refuse(CODE.writable); permitted(t.path, t.stat); return; }` +
+  ` permitted(p, s); if (s.isDirectory()) for (const n of fs.readdirSync(p)) visit(path.join(p, n)); }` +
+  ` try { visit(ROOT); console.log(JSON.stringify({ ok: true, symlinks })); }` +
+  ` catch (e) { console.log(JSON.stringify({ ok: false, code: e && e.checkout ? e.checkout : CODE.access })); }`;
 const ENV = Object.freeze({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C', HOME: '/nonexistent',
   GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' });
 export const boundary = Object.freeze({ fs, uid: () => process.getuid(),
@@ -49,12 +79,17 @@ export function provisioner(revision, b = boundary) {
       if (current === '/') break;
     }
   }
-  function read(p) {
+  // Single-link custody is a rule for the files this provisioner INSTALLS: it
+  // writes each of them at exactly one path. It is not a property of a
+  // pre-existing system executable that is only measured: /usr/bin/env's
+  // target is cargo's multicall coreutils inode, measured nlink = 115 on the
+  // target host. Only measurement callers pass shared = true.
+  function read(p, shared = false) {
     custody(path.dirname(p));
     const fd = f.openSync(p, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
     try {
       const s = f.fstatSync(fd);
-      need(s.isFile() && s.nlink === 1, 'ACT_PREREQUISITE_CUSTODY');
+      need(s.isFile() && (shared || s.nlink === 1), 'ACT_PREREQUISITE_CUSTODY');
       return { bytes: f.readFileSync(fd).toString('base64'), mode: s.mode & 0o7777, uid: s.uid, gid: s.gid };
     } finally { f.closeSync(fd); }
   }
@@ -122,11 +157,26 @@ export function provisioner(revision, b = boundary) {
   function checkout() {
     const { uid, gid } = serviceIdentity(), s = stat(PATHS.checkout);
     need(s?.isDirectory() && !s.isSymbolicLink() && s.uid === uid, 'ACT_PREREQUISITE_CHECKOUT');
-    // Same read/traverse/no-symlink capability as host-suite-contract.mjs:152.
-    const probe = `import fs from 'node:fs'; import path from 'node:path'; function visit(p){const s=fs.lstatSync(p); if(s.isSymbolicLink()) throw Error('symlink'); fs.accessSync(p,fs.constants.R_OK|(s.isDirectory()?fs.constants.X_OK:0)); if(s.isDirectory()) for(const n of fs.readdirSync(p)) { visit(path.join(p,n)); }} visit(${JSON.stringify(PATHS.checkout)});`;
-    const r = b.run('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups', '/usr/bin/node', '--input-type=module', '-e', probe], { env: ENV });
-    need(!r.error && r.status === 0, 'ACT_PREREQUISITE_CHECKOUT_ACCESS');
-    return { uid: s.uid, gid: s.gid, revision };
+    // A symlinked or writable ancestor would substitute the whole checkout
+    // below a probe that only measures the tree it is given.
+    for (let current = path.dirname(PATHS.checkout); ; current = path.dirname(current)) {
+      const a = stat(current);
+      need(a?.isDirectory() && !a.isSymbolicLink() && a.uid === 0 && !(a.mode & 0o022), 'ACT_PREREQUISITE_CHECKOUT_ANCESTOR');
+      if (current === '/') break;
+    }
+    // Deliberately stronger than the CI capability probe at
+    // host-suite-contract.mjs:152, which keeps its blanket symlink rejection
+    // for the pristine disposable clone it governs. A prepared deployment
+    // checkout contains in-tree symlinks, so this surface proves escape
+    // prevention instead: same whole-tree read/traverse as the service
+    // identity, plus resolved, in-tree, readable, non-writable link targets.
+    const r = b.run('/usr/bin/setpriv', ['--reuid=shu-coordinator', '--regid=shu-coordinator', '--init-groups', '/usr/bin/node', '--input-type=module', '-e', checkoutProbe(PATHS.checkout)], { env: ENV });
+    let measured = null;
+    try { measured = JSON.parse(String(r.stdout ?? '').trim().split('\n').at(-1)); } catch { measured = null; }
+    need(!r.error && r.status === 0 && measured && typeof measured === 'object', 'ACT_PREREQUISITE_CHECKOUT_ACCESS');
+    need(measured.ok === true, Object.values(CHECKOUT_CODES).includes(measured.code) ? measured.code : CHECKOUT_CODES.access);
+    need(Number.isInteger(measured.symlinks) && measured.symlinks >= 0, 'ACT_PREREQUISITE_CHECKOUT_ACCESS');
+    return { uid: s.uid, gid: s.gid, revision, symlinks: measured.symlinks };
   }
   function identity(allowAbsent = false) {
     const { users, groups } = databases(), us = users.filter(p => p.name === BROKER), gs = groups.filter(p => p.name === BROKER);
@@ -317,7 +367,13 @@ export function provisioner(revision, b = boundary) {
   function precondition() {
     const report = { ok: true, revision, paths: [] };
     const check = (p, fn) => { try { const row = { path: p, ok: true, ...fn() }; if (p === '/run/shu71-evidence' || p === EVIDENCE_SOCKET) validateRuntimeRow(row); report.paths.push(row); }
-      catch (e) { report.ok = false; report.paths.push({ path: p, ok: false, code: !e.code ? 'ACT_PREREQUISITE_MISSING' : /^(ACT_|SHU251_)[A-Z0-9_]+$/.test(e.code) ? e.code : e.code === 'ENOENT' ? 'ACT_PREREQUISITE_PATH_MISSING' : 'ACT_PREREQUISITE_MEASUREMENT' }); } };
+      catch (e) { report.ok = false;
+        const code = !e.code ? 'ACT_PREREQUISITE_MISSING' : /^(ACT_|SHU251_)[A-Z0-9_]+$/.test(e.code) ? e.code : e.code === 'ENOENT' ? 'ACT_PREREQUISITE_PATH_MISSING' : 'ACT_PREREQUISITE_MEASUREMENT';
+        report.paths.push({ path: p, ok: false, code, ...(e.mirrored ? { mirrored_code: code, mirrored_from: e.mirrored } : {}) }); } };
+    // An absent runtime path refuses by mirroring the first failing row. The
+    // mirrored code and its source row are named separately so an operator can
+    // tell a mirrored refusal from a direct one; the refusal itself is unchanged.
+    const mirror = row => { if (row) throw Object.assign(new Error(row.code), { code: row.code, mirrored: row.path }); };
     let entries;
     check(PATHS.checkout, () => {
       const measured = checkout(); entries = expected(); return measured;
@@ -394,7 +450,10 @@ export function provisioner(revision, b = boundary) {
         target = path.resolve(path.dirname(p), destination);
         need(p === '/usr/bin/env' && target === '/usr/lib/cargo/bin/coreutils/env' && link.uid === 0 && link.gid === 0, 'ACT_PRODUCTION_EXECUTABLE');
       }
-      const r = read(target);
+      // Measured, never installed: the regular-file, root:root, exact 0755,
+      // nonempty and whole-chain custody requirements are unchanged; only the
+      // installed-file single-link rule is out of scope here.
+      const r = read(target, true);
       need(r.uid === 0 && r.gid === 0 && r.mode === 0o755 && r.bytes.length > 0, 'ACT_PRODUCTION_EXECUTABLE');
       return { uid: r.uid, gid: r.gid, mode: r.mode };
     });
@@ -447,7 +506,7 @@ export function provisioner(revision, b = boundary) {
       const broker = identity(), shared = sharedAccess(), s = stat(p);
       const peer = stat(p === EVIDENCE_SOCKET ? '/run/shu71-evidence' : EVIDENCE_SOCKET);
       if (!s && !peer) {
-        need(report.ok, report.paths.find(r => !r.ok)?.code ?? 'ACT_PREREQUISITE_MISSING');
+        mirror(report.paths.find(r => !r.ok)); need(report.ok, 'ACT_PREREQUISITE_MISSING');
         return { runtime: 'DEFERRED_UNTIL_SERVICE_START' };
       }
       need(peer, 'ACT_BROKER_SOCKET_CUSTODY');

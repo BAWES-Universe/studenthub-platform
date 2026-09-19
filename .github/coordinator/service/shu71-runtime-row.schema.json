@@ -106,6 +106,14 @@
         "code": {
           "type": "string",
           "pattern": "^(ACT_|SHU251_)[A-Z0-9_]+$"
+        },
+        "mirrored_code": {
+          "type": "string",
+          "pattern": "^(ACT_|SHU251_)[A-Z0-9_]+$"
+        },
+        "mirrored_from": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_:.#/-]+$"
         }
       },
       "required": [

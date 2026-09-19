@@ -192,7 +192,8 @@ refuse. No numeric 999/982 service assumption remains in this entrypoint.
 
 | Report row | Reviewed source and retained requirement |
 | --- | --- |
-| Deployment checkout | `service/host-suite-contract.mjs:35,152`: service UID owns checkout; child running as measured service UID/primary GID reads/traverses the entire checkout and rejects symlinks. No checkout GID or mode restriction. `service/host-lifecycle.mjs:58` and provisioner@904fbed:54–55 bind clean HEAD to the requested revision. Service user/group names: `service/README.md:28`, `service/SHU-261-VALIDATION.md:10`. |
+| Deployment checkout | `service/host-suite-contract.mjs:35,152`: service UID owns checkout; child running as measured service UID/primary GID reads/traverses the entire checkout ~~and rejects symlinks~~. **Corrected 2026-09-19 (real prepared host):** the blanket symlink rejection was unsatisfiable for any prepared deployment, because the checkout *is* the live npm workspace: 19 in-tree symlinks under `node_modules` (`@studenthub/*`, `@bawes/actor-assertion`, nine `.bin` entries), **zero escapes**, **0 unreadable entries** measured as `shu-coordinator`, checkout `999:982 755`, every ancestor root-owned, non-symlink and non-writable. The retained capability is therefore escape prevention, not a symlink ban: the whole-tree read/traverse proof as the measured service identity is unchanged, every symlink must resolve as a complete chain (link text and real path) inside the checkout root, and the row reports the symlink census. Named refusals: `ACT_PREREQUISITE_CHECKOUT_SYMLINK_ESCAPE` (target outside the root), `ACT_PREREQUISITE_CHECKOUT_SYMLINK_UNRESOLVED` (dangling link or cycle), `ACT_PREREQUISITE_CHECKOUT_SYMLINK_WRITABLE` (group/world-writable target), `ACT_PREREQUISITE_CHECKOUT_ANCESTOR` (symlinked or writable checkout ancestor), `ACT_PREREQUISITE_CHECKOUT_ACCESS` (unreadable or untraversable entry). No checkout GID or mode restriction. `service/host-lifecycle.mjs:58` and provisioner@904fbed:54–55 bind clean HEAD to the requested revision. Service user/group names: `service/README.md:28`, `service/SHU-261-VALIDATION.md:10`. |
+| Fixed production dependencies (`/usr/bin/{node,systemctl,flock,env,find}`, `/usr/sbin/{useradd,groupadd,userdel,groupdel,nologin}`) | Measured only; never installed, executed or modified by this entrypoint. Each must be a regular file (never a directory, fifo, socket or device) opened `O_NOFOLLOW`, `root:root`, exactly `0755`, non-empty, with no group/world write on it or on any component of its chain, plus the unchanged `/usr/bin/env` chain validation (permitted link destination `../lib/cargo/bin/coreutils/env`, exact resolved target `/usr/lib/cargo/bin/coreutils/env`, root-owned link, root-owned non-writable ancestors). **Corrected 2026-09-19 (real prepared host):** the single-link (`nlink === 1`) rule is custody for the files this provisioner *installs* and stays enforced for every one of them (tree files, `/etc/sudoers.d/shu-reviewer`, the wrapper, the evidence unit, the receipt); it was never a property of a pre-existing system binary. The measured target is cargo's multicall coreutils inode with **nlink = 115** (`/usr/lib/cargo/bin/coreutils/*` and `/usr/bin/coreutils` are the same inode), so applying the install-time rule here made `ACT_PREREQUISITE_CUSTODY` unsatisfiable on the real host. Nothing else in the row was relaxed. |
 | Every installed non-test tree file, and whole-tree inventory | `service/shu71-production.mjs:115–139`: Git blob, root custody, single regular file, no symlinks, non-writable ancestors. provisioner@904fbed:53–99 additionally pins exact Git modes, root GID, no extra files, and no pending residue. |
 | `/etc/sudoers.d/shu-reviewer` | provisioner@904fbed:12,71,76–85: exact reviewed policy bytes, root:root 0440; existing named sudoers refusal codes retained. |
 | Reviewer wrapper | provisioner@904fbed:12,72,76–85: exact reviewed wrapper blob, root:root 0755, custody and drift refusal. |
@@ -535,6 +536,20 @@ final HEAD/tree are reported with the completion response.
 
 See [V1–V10 closure evidence](SHU71-VERDICT-CLOSURE.md) for the new controls,
 static path traversal, explicit V5 justification and V9 generated-path exceptions.
+
+### Real checkout shape and measured-executable custody
+
+The first real `precondition` run after a successful install refused two rows:
+`/srv/shu/studenthub-platform` (`ACT_PREREQUISITE_CHECKOUT_ACCESS`) and
+`/usr/bin/env` (`ACT_PREREQUISITE_CUSTODY`). Both predicates could only hold in a
+fixture. The checkout row now proves escape prevention over the live npm
+workspace and reports its symlink census; the executable rows keep every
+custody requirement except the installed-file single-link rule, which remains
+enforced for every file this entrypoint writes. An absent runtime row that
+mirrors another row's refusal now also carries `mirrored_code` and
+`mirrored_from`; a direct refusal carries neither, and the refusal and exit 2
+are unchanged. [Measured facts, named controls and killing
+mutants](SHU71-HOST-REALITY.md#second-real-target-precondition-2026-09-19).
 
 ### Target shadow and rollback compatibility
 
