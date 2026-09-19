@@ -470,6 +470,9 @@ export async function preparedLaunchOptions(adapter, receipt, env, io = {}, { re
   return { ...options, cwd: workspace.cwd };
 }
 
+// Explicit scope mode is mandatory. General uses an exact lowercase runtime gate
+// and cannot substitute an activation for the committed flag. Bounded preserves
+// the legacy single-run and pair gates below; a pair always takes precedence.
 // dispatchEnabledFor — dispatch requires BOTH gates in DIFFERENT layers (CodeRabbit):
 // the in-repo config flag (enable_dispatch: false committed by default) AND the
 // workflow environment variable. One gate alone never enables dispatch.
@@ -481,7 +484,12 @@ export async function preparedLaunchOptions(adapter, receipt, env, io = {}, { re
 // only ever produced by singleRunActivationStatus(), which fails closed on every
 // binding (missing, malformed, stale, replayed, wrong target, wrong revision).
 export function dispatchEnabledFor(env = {}, config = {}, activation = null) {
+  const mode = config.dispatch_scope_mode;
+  if (mode !== "bounded" && mode !== "general") {
+    throw Object.assign(new Error("DISPATCH_SCOPE_MODE_INVALID: expected bounded or general"), { code: "DISPATCH_SCOPE_MODE_INVALID" });
+  }
   if (config.dispatch_scope?.issue_ids?.length === 2 || activation?.kind === "two-fixture-v1") return activation?.kind === "two-fixture-v1" && activation.state === "armed" && config.enable_dispatch === false && env.ENABLE_DISPATCH === "true";
+  if (mode === "general") return config.enable_dispatch === true && env.ENABLE_DISPATCH === "true";
   const envGate = (env.ENABLE_DISPATCH ?? "false").toLowerCase() === "true";
   if (config.enable_dispatch === true && envGate) return true; // committed path, unchanged
   return envGate && activation?.state === "armed";

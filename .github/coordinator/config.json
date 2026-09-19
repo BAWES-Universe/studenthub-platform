@@ -2,6 +2,7 @@
   "pilot_repo": "BAWES-Universe/studenthub-platform",
   "max_dispatch": 2,
   "enable_dispatch": false,
+  "dispatch_scope_mode": "bounded",
   "routine_merge_authority": {
     "enabled": false,
     "authority_ref": "SHU-259",

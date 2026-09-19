@@ -27,6 +27,7 @@ const REAL = {
   requested_worker: "codex-builder",
 };
 const SCOPED = {
+  dispatch_scope_mode: "bounded",
   max_dispatch: 1,
   adapter_pause_map: {},
   dispatch_scope: { issue_ids: ["SHU-140"] },
