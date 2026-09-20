@@ -3647,7 +3647,11 @@
     "SHU251_REMOTE_INVENTORY mutation: a failed read is reported as a moved inventory again",
     "SHU251_REMOTE_INVENTORY mutation: the transient read is never retried",
     "SHU251_REMOTE_INVENTORY mutation: a definitive absence is treated as a race",
-    "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered"
+    "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered",
+    "SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement",
+    "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
+    "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
+    "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement"
   ],
   "requirements": [
     {
@@ -27990,6 +27994,38 @@
     },
     {
       "name": "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement",
       "capabilities": [
         {
           "name": "shell_toolchain"

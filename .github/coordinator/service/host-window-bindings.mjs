@@ -120,13 +120,46 @@ export function validateWindowSpec(spec) {
 // read finally answered.
 export const INVENTORY_READ = Object.freeze({ attempts: 3, delaysMs: Object.freeze([200, 400]),
   statuses: Object.freeze([408, 425, 429, 500, 502, 503, 504]) });
+// WHETHER THE READ HAS A MEASUREMENT AT ALL, MEASURED RATHER THAN ASSERTED.
+// `ok` is the server's verdict on the REQUEST. It is not evidence that the
+// answer carried the value this path measures, and dispatching on it alone
+// left one of the four enumerated failures still reported as a state claim: a
+// 200 whose body would not parse, or parsed without `commit.sha`, or carried
+// something that is not a branch head, answers `{ ok: true, sha: null }` and
+// was reported as "remote fixture inventory is incomplete or moved" - a claim
+// about the remote made out of an answer that said nothing about it. There are
+// three outcomes and the caller must know WHICH it holds before it may
+// describe the world:
+//   held          - the read answered AND carried a branch head of the only
+//                   shape a branch head has. Only this may describe the world,
+//                   and whatever it says it says on its own authority.
+//   unanswered    - the remote did not answer 2xx. A FAILED MEASUREMENT.
+//   without_value - the remote answered 2xx and the measured field is absent,
+//                   null or unparseable. ALSO A FAILED MEASUREMENT: a 2xx that
+//                   carries no branch head is not the remote saying the
+//                   inventory moved, it is the remote having told us nothing.
+// The vocabulary is closed to these three literals, so nothing a remote can
+// put in a body can ride into the refusal through this field.
+export const INVENTORY_MEASUREMENT = Object.freeze({ held: 'held', unanswered: 'unanswered', without_value: 'without_value' });
+export const inventoryMeasurement = read => read?.ok !== true ? INVENTORY_MEASUREMENT.unanswered
+  : SHA.test(read.sha ?? '') ? INVENTORY_MEASUREMENT.held : INVENTORY_MEASUREMENT.without_value;
+// Which FAILED MEASUREMENTS may be read again, on the same read-only route and
+// under the same bound. A non-2xx is transient only when its status is in the
+// enumerated set: a definitive refusal (400/401/403/410/422) and a definitive
+// absence (404) are ANSWERS and are never re-read. A 2xx that carried no value
+// is transient by the same reasoning that admits a 502 - the remote stated
+// nothing about the branch, and a truncated or shape-shifted body is the read
+// failing rather than the inventory speaking. No VALUE is ever retried: a held
+// measurement is compared against target_sha exactly once, however it reads.
+export const inventoryReadRetryable = read => inventoryMeasurement(read) === INVENTORY_MEASUREMENT.without_value
+  || (read?.ok !== true && INVENTORY_READ.statuses.includes(read?.status));
 export async function measureBranchHeadBounded(request, io = {}) {
   const measure = io.measure ?? measureBranchHead;
   const wait = io.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   let measured = { ok: false, status: null, sha: null };
   for (let attempt = 1; attempt <= INVENTORY_READ.attempts; attempt++) {
     measured = await measure(request);
-    if (measured.ok || !INVENTORY_READ.statuses.includes(measured.status) || attempt === INVENTORY_READ.attempts) break;
+    if (inventoryMeasurement(measured) === INVENTORY_MEASUREMENT.held || !inventoryReadRetryable(measured) || attempt === INVENTORY_READ.attempts) break;
     await wait(INVENTORY_READ.delaysMs[attempt - 1]);
   }
   return measured;
@@ -153,12 +186,17 @@ export async function observeRemoteInventory(spec, io = { run, readRemote: readR
     if (error instanceof HostBindingHalt) throw error;
     return halt(binding, 'remote fixture inventory failed', { error: error.message });
   }
-  // A read that never answered halts under its own reason, BEFORE the line
-  // that would otherwise report it as a moved inventory. The measurement is
-  // only present when this module performed the read itself; an injected
-  // readRemote that supplies none is compared exactly as it is today.
-  if (work?.branch_head_read && work.branch_head_read.ok !== true)
-    halt(binding, 'remote fixture inventory could not be read', { status: work.branch_head_read.status });
+  // A read that yielded no MEASUREMENT halts under its own reason, BEFORE the
+  // line that would otherwise report it as a moved inventory - and which of
+  // the two this is, is decided by whether a branch head was obtained, never
+  // by the status class alone. The measurement is only present when this
+  // module performed the read itself; an injected readRemote that supplies
+  // none is compared exactly as it is today.
+  if (work?.branch_head_read) {
+    const measurement = inventoryMeasurement(work.branch_head_read);
+    if (measurement !== INVENTORY_MEASUREMENT.held)
+      halt(binding, 'remote fixture inventory could not be read', { status: work.branch_head_read.status, measurement });
+  }
   if (work?.branch_head !== spec.fixture.target_sha || !Number.isInteger(work.comment_count) || work.comment_count < 0 || !/^[0-9a-f]{64}$/.test(work.comments_digest ?? '')) halt(binding, 'remote fixture inventory is incomplete or moved');
   return { binding, ok: true, approved_sha: spec.approved_sha, remote_ref: spec.remote_ref,
     fixture_branch_head: work.branch_head, comment_count: work.comment_count, comments_digest: work.comments_digest };
