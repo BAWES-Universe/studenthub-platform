@@ -1275,6 +1275,58 @@ export function createShu71Production(id, b = shu71Boundary) {
       need(measureLocalRef(spec, tracking) === parent, 'ACT_TEARDOWN_BRANCH_TRACKING');
     }
   }
+  // THE MEASUREMENT A COMPLETION ROW MAY NOT SKIP. `restore-branch` above is a
+  // JOURNALLED effect, so a durable `DONE` row makes every later invocation
+  // skip it - and for the EFFECT that is right: a mutation already performed
+  // must not be performed again. The same row also skipped its MEASUREMENT,
+  // and the measurement is the only thing in this teardown that observes state
+  // THIS HOST DOES NOT OWN. Measured consequence: `restore-branch` succeeds, a
+  // LATER teardown effect fails, a third party then advances the lane branch,
+  // and the SECOND invocation - finding the DONE row, skipping the step, and
+  // asking nothing about the ref - ends `TEARDOWN_COMPLETE, failures: []` over
+  // a branch that is no longer where the receipt says it is. A clean receipt
+  // sitting on top of externally changed state.
+  //
+  // So the three refs are re-read HERE, in the final observation, on EVERY
+  // invocation, unconditionally, whatever any DONE row says. Skipping an
+  // effect is allowed on a re-invocation; skipping the final measurement is
+  // not. What it finds is durable as BRANCH_FINAL_MEASURED before any
+  // conclusion is drawn from it, so the refusal can say which value it found.
+  //
+  // WHAT EACH VALUE MEANS, AND WHAT IS NEVER DONE ABOUT IT. The retained
+  // parent is the only value that closes this receipt. A THIRD value is
+  // someone else's write: it HALTS as ACT_TEARDOWN_BRANCH_MOVED and is left
+  // EXACTLY as the third party left it - this function issues no command at
+  // all, so there is no path here by which a foreign value is overwritten,
+  // adopted or fast-forwarded. This run's own published head still standing at
+  // the end of a teardown means the restoration did not happen - `restore-branch`
+  // ran before this point and either restored it or refused - so it HALTS as
+  // ACT_TEARDOWN_BRANCH_UNRESTORED rather than being quietly completed over.
+  // An absent remote-tracking ref is the one tolerated absence, exactly as in
+  // the restoration: this run never creates that ref, and a checkout that has
+  // none is not carrying anything of ours.
+  //
+  // WHEN IT MEASURES AT ALL is the restoration's own gate, unchanged and for
+  // the same reason: without `local-reseed`'s durable INTENT row this episode
+  // cannot have published anything, so a pre-arm refusal still contacts no
+  // remote and reads no credential, and a recovered log - which proves nothing
+  // about non-creation - always measures, fail-closed.
+  //
+  // A READ THAT FAILS IS A FAILURE. Nothing here is wrapped: a refusal from
+  // either read propagates, the observation step fails under its own name and
+  // carries that cause, and `expiry-timer` refuses behind it. There is no
+  // branch on which an unanswered read becomes a silent pass.
+  function observePublishedRefs(spec, journal) {
+    if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;
+    const { branch, expected_parent: parent, expected_seed_head: published } = spec.pkg.reseed;
+    const ref = `refs/heads/${branch}`, tracking = `refs/remotes/origin/${branch}`;
+    const measured = { remote: measureRemoteRef(spec, ref), local: measureLocalRef(spec, ref), tracking: measureLocalRef(spec, tracking) };
+    journal.append({ event: 'BRANCH_FINAL_MEASURED', branch, ...measured });
+    for (const [kind, value] of Object.entries(measured)) {
+      if (value === parent || (kind === 'tracking' && value === '')) continue;
+      need(false, value === published ? 'ACT_TEARDOWN_BRANCH_UNRESTORED' : 'ACT_TEARDOWN_BRANCH_MOVED');
+    }
+  }
   async function cleanup(spec, journal, reason, automatic = false) {
     // Separate from either journal so damaged-log recovery cannot reset the
     // automatic budget. Reserve durably before ordinary effects, including crash
@@ -1347,7 +1399,10 @@ export function createShu71Production(id, b = shu71Boundary) {
         journal_sha256: digest(JSON.stringify(journal.entries)), authorization_expired: reason === 'expiry' }))],
     ];
     // Observation must run on every retry, even when earlier DONE rows exist.
-    effects.push(['observation', observeTeardown]);
+    // That is also why the published refs are measured HERE rather than only
+    // inside `restore-branch`: a completion row may avoid repeating an EFFECT,
+    // but it may not avoid the final MEASUREMENT of externally mutable state.
+    effects.push(['observation', () => { observeTeardown(); observePublishedRefs(spec, journal); }]);
     // Retire the retry mechanism only after every effect and observation passed.
     effects.push(
       ['expiry-timer', () => {

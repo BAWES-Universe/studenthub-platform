@@ -200,7 +200,12 @@ export async function foreignMovementCheck(create, h, which = 'remote') {
   assert.equal(h.refs[which], FOREIGN, 'B7_FOREIGN_NOT_OVERWRITTEN');
   assert.equal(result.ok, false, `${label}: ${JSON.stringify(result)}`);
   assert.equal(result.code, 'ACT_CLEANUP_FAILED', label);
+  // SHU-280 adds the final observation's own reading of the same three refs, so
+  // a foreign value is now named TWICE - once by the step that refused to
+  // restore it, and once by the measurement that refused to close a receipt
+  // over it. Additive: no existing entry is renamed, removed or reordered.
   assert.deepEqual(result.failures, ['ACT_TEARDOWN_RESTORE_BRANCH', 'ACT_TEARDOWN_BRANCH_FOREIGN',
+    'ACT_TEARDOWN_OBSERVATION', 'ACT_TEARDOWN_BRANCH_MOVED',
     'ACT_TEARDOWN_EXPIRY_TIMER', 'ACT_CLEANUP_FAILED'], 'B7_FOREIGN_REFUSED_BY_NAME');
   assert.ok(measurements(h).every(e => e[which] === FOREIGN), 'B7_FOREIGN_VALUE_RECORDED');
   assert.equal(h.journal().at(-1).event, 'TEARDOWN_INCOMPLETE', 'B7_FOREIGN_NOT_A_CLEAN_RECEIPT');
@@ -311,7 +316,11 @@ export const foreignRefs = ['remote', 'local', 'tracking'];
 
 // ---------------------------------------------------------------- mutations
 
-const GATE = "    if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;";
+// SHU-280 gives the final observation the same intent gate, so this line is no
+// longer unique in the module; the restoration's own signature anchors it.
+const GATE = `  function restorePublishedRefs(spec, journal) {
+    if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;`;
+const gateReplacedWith = body => `  function restorePublishedRefs(spec, journal) {\n    ${body}`;
 const FOREIGN_GUARD = "      need(value === published, 'ACT_TEARDOWN_BRANCH_FOREIGN');";
 const REATTEMPT_GUARD = "      need(!branchRestoresIssued.has(kind), 'ACT_TEARDOWN_BRANCH_REATTEMPT');";
 const PUSH = "      try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${published}`, REMOTE, `${parent}:${ref}`], { remote: true }); }";
@@ -322,7 +331,7 @@ const EFFECT = "      ['restore-branch', () => restorePublishedRefs(spec, journa
 export const mutations = [
   // The restoration removed outright - the merged pre-fix behaviour.
   ['the restoration is removed entirely', [[EFFECT, "      ['restore-branch', () => {}],"]], haltAfterPushCheck],
-  ['the restoration returns before measuring anything', [[GATE, '    if (true) return;']], haltAfterPushCheck],
+  ['the restoration returns before measuring anything', [[GATE, gateReplacedWith('if (true) return;')]], haltAfterPushCheck],
   // The restoration weakened: one ref at a time.
   ['the remote is never restored', [[PUSH, '      try { }']], haltAfterPushCheck],
   ['the local branch is never restored', [[LOCAL, '      void 0;']], haltAfterPushCheck],
@@ -357,7 +366,7 @@ export const mutations = [
       PUSH + "\n      catch (error) { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${published}`, REMOTE, `${parent}:${ref}`], { remote: true });"]],
     landedButReportedFailureCheck],
   // The gate widened: a window that never published still measures and claims.
-  ['the intent gate is removed and a never-published window is measured', [[GATE, '    if (false) return;']], neverPushedCheck],
+  ['the intent gate is removed and a never-published window is measured', [[GATE, gateReplacedWith('if (false) return;')]], neverPushedCheck],
 ];
 
 // One anchored substitution, loaded from a disposable path. A module-load or

@@ -96,9 +96,21 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // read-back. The settlement-ready `intact` state is unchanged at 53 because
 // its retained journal still carries the step's DONE row, so the step is
 // skipped entirely.
+// SHU-280 adds the FINAL measurement of the same three refs, in the
+// observation, on every invocation. It is uniform in a way the restoration is
+// not, because no DONE row can skip it:
+// +4 in every state where the same intent gate lets it read - the three reads
+// and the durable BRANCH_FINAL_MEASURED row, and no command beyond them,
+// because the observation never mutates. That includes `settlement-ready`
+// `intact`, whose restoration IS skipped by its retained DONE row (53 -> 57),
+// and the settled transition below (33 -> 37), whose filtered effect list is
+// observation plus retirement and nothing else.
+// +0 wherever the gate skips it, which is exactly where it skips the
+// restoration: an absent or forged journal cannot prove this episode reached
+// `local-reseed`, so nothing is read and no remote is contacted.
 const cleanupEffects = {
-  armed: { absent: 81, intact: 94, truncated: 95, recovered: 94, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
-  'settlement-ready': { absent: 81, intact: 53, truncated: 87, recovered: 86, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
+  armed: { absent: 81, intact: 98, truncated: 99, recovered: 98, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
+  'settlement-ready': { absent: 81, intact: 57, truncated: 91, recovered: 90, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);
@@ -115,7 +127,7 @@ export function requiredTransition(s) {
     gates: Array(2).fill(`[Service]\nEnvironment=ENABLE_DISPATCH=${orderedResidual && !ready ? 'true' : 'false'}\n`),
     credential: orderedResidual && !ready,
     lease: refused,
-    effects: settled ? 33 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
+    effects: settled ? 37 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
     code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED' : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : null,
     complete: !refused,
   };

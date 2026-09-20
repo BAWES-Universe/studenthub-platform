@@ -284,6 +284,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-final-measurement-checks.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",

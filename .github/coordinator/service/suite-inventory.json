@@ -31,6 +31,7 @@
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
     ".github/coordinator/service/test/shu71-host-contract.test.mjs",
@@ -1772,6 +1773,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: INTENT real payload intact",
@@ -1786,6 +1788,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: INTENT real payload recovered",
@@ -3665,6 +3668,24 @@
     "B7 published-branch restore mutation: the once-only rule is dropped and the mutation is re-attempted",
     "B7 published-branch restore mutation: a push that reported failure is pushed again",
     "B7 published-branch restore mutation: the intent gate is removed and a never-published window is measured",
+    "B8 final teardown measurement: a third-party advance after a completed restore halts by name and is left untouched",
+    "B8 final teardown measurement: an unchanged ref on a second invocation is measured again and completes",
+    "B8 final teardown measurement: this run's published head standing at the end is never closed over",
+    "B8 final teardown measurement: an unrestored ref is named, then restored by the invocation that may re-run the step",
+    "B8 final teardown measurement: a final measurement that cannot be taken is a named failure with its cause",
+    "B8 final teardown measurement: a window that never published measures nothing and still completes",
+    "B8 final teardown measurement: a third party that advances the remote ref is refused and never overwritten",
+    "B8 final teardown measurement: a third party that advances the local ref is refused and never overwritten",
+    "B8 final teardown measurement: a third party that advances the tracking ref is refused and never overwritten",
+    "B8 final teardown measurement mutation: the final measurement is removed entirely",
+    "B8 final teardown measurement mutation: the final measurement runs only when the restore has no DONE row",
+    "B8 final teardown measurement mutation: the final measurement is a no-op once it has run in an earlier invocation",
+    "B8 final teardown measurement mutation: the measurement is recorded but never judged",
+    "B8 final teardown measurement mutation: a third value is treated as restorable",
+    "B8 final teardown measurement mutation: the third value is overwritten by an unleased force",
+    "B8 final teardown measurement mutation: a third local head is overwritten by an unconditional update-ref",
+    "B8 final teardown measurement mutation: this run's published head is accepted at the end",
+    "B8 final teardown measurement mutation: a measurement failure is swallowed",
     "PROVIDER remote main tolerates one transient read on either leg",
     "PROVIDER remote main still refuses a persistent read failure and a moved main",
     "PROVIDER a failed provider command names its executable, argv and status",
@@ -15051,6 +15072,14 @@
       ]
     },
     {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
       "capabilities": [
         {
@@ -15156,6 +15185,14 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload recovered",
       "capabilities": [
         {
           "name": "git"
@@ -28077,6 +28114,78 @@
     },
     {
       "name": "B7 published-branch restore mutation: the intent gate is removed and a never-published window is measured",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third-party advance after a completed restore halts by name and is left untouched",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: an unchanged ref on a second invocation is measured again and completes",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: this run's published head standing at the end is never closed over",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: an unrestored ref is named, then restored by the invocation that may re-run the step",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a final measurement that cannot be taken is a named failure with its cause",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a window that never published measures nothing and still completes",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third party that advances the remote ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third party that advances the local ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third party that advances the tracking ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the final measurement is removed entirely",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the final measurement runs only when the restore has no DONE row",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the final measurement is a no-op once it has run in an earlier invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the measurement is recorded but never judged",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: a third value is treated as restorable",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the third value is overwritten by an unleased force",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: a third local head is overwritten by an unconditional update-ref",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: this run's published head is accepted at the end",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: a measurement failure is swallowed",
       "capabilities": []
     },
     {

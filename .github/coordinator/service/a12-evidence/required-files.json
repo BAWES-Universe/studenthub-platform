@@ -29,6 +29,7 @@
   ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-delivery.test.mjs",
   ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
+  ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
   ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-history.test.mjs",
   ".github/coordinator/service/test/shu71-host-contract.test.mjs",
