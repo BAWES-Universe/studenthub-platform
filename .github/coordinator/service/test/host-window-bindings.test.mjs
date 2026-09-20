@@ -4,10 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { measureBranchHead, fetchBranchHead } from '../../reconcile.mjs';
 import {
   BINDING_CODES, HostBindingHalt, capturePriorState, cleanupFixture, deliverStatusCredential,
   observeDriverQuiescence, observeFixtureLaunch, observeRemoteInventory, observeTransport,
   observeWorker, replayAndRelease, rollbackPriorState, validateWindowSpec,
+  readRemoteWork, measureBranchHeadBounded, INVENTORY_READ,
 } from '../host-window-bindings.mjs';
 
 const SHA = 'a'.repeat(40), ATTEMPT = '11111111-2222-4333-8444-555555555555';
@@ -58,6 +61,154 @@ test('SHU251_REMOTE_INVENTORY positive control and mutation', async t => {
   assert.equal((await observeRemoteInventory(spec, good)).ok, true);
   const mutant = { run, readRemote: async () => ({ branch_head: 'c'.repeat(40), comment_count: 3, comments_digest: 'd'.repeat(64) }) };
   await assert.rejects(() => observeRemoteInventory(spec, mutant), named('remote_inventory'));
+});
+
+// A-11. `fetchBranchHead` answered null for a 429, a 5xx, a body that would not
+// parse and a branch that genuinely does not exist alike, and the caller
+// reported every one of them as "remote fixture inventory is incomplete or
+// moved" - a claim about the remote that a read which never answered cannot
+// support. The read is measured now, a transient answer is retried under a
+// small fixed bound, and 404 stays terminal because an answer is not a race.
+test('SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory', async t => {
+  const { spec, order } = fixture(t);
+  const env = { LINEAR_API_TOKEN: 'LINEAR_POISON', GITHUB_TOKEN: 'GITHUB_POISON' };
+  const io = answers => {
+    const seen = [], waits = [];
+    const measure = async () => { const next = answers[Math.min(seen.length, answers.length - 1)]; seen.push(next); return next; };
+    return { seen, waits, io: { measure, wait: async ms => { waits.push(ms); }, comments: async () => [] } };
+  };
+  const answered = sha => ({ ok: true, status: 200, sha });
+  const run = (_file, args) => args[0] === 'status' ? '' : args[0] === 'ls-remote' ? `${SHA}\trefs/heads/main` : SHA;
+  const inventory = async plan => {
+    const { seen, waits, io: seams } = io(plan);
+    const outcome = await observeRemoteInventory(spec, { run, readRemote: s => readRemoteWork(s, env, seams) })
+      .catch(error => ({ halt: error }));
+    return { outcome, seen, waits };
+  };
+  // One transient answer and the inventory still reads.
+  const raced = await inventory([{ ok: false, status: 503, sha: null }, answered(spec.fixture.target_sha)]);
+  assert.equal(raced.outcome.ok, true, `SHU251_INVENTORY_TRANSIENT_RETRIED ${raced.outcome.halt?.message}`);
+  assert.equal(raced.seen.length, 2, 'SHU251_INVENTORY_TRANSIENT_RETRIED');
+  assert.deepEqual(raced.waits, [INVENTORY_READ.delaysMs[0]], 'SHU251_INVENTORY_TRANSIENT_RETRIED');
+  // A read that never answers halts under its OWN reason, naming the status,
+  // and never claims the inventory moved.
+  const failed = await inventory([{ ok: false, status: 503, sha: null }]);
+  assert.ok(named('remote_inventory')(failed.outcome.halt), 'SHU251_INVENTORY_READ_FAILURE_NAMED');
+  assert.match(failed.outcome.halt.message, /could not be read/, 'SHU251_INVENTORY_READ_FAILURE_NAMED');
+  assert.doesNotMatch(failed.outcome.halt.message, /moved/, 'SHU251_INVENTORY_READ_FAILURE_NAMED');
+  assert.equal(failed.outcome.halt.details.status, 503, 'SHU251_INVENTORY_READ_FAILURE_NAMED');
+  assert.equal(failed.seen.length, INVENTORY_READ.attempts, 'SHU251_INVENTORY_READ_BOUNDED');
+  // A 404 is an ANSWER, not a race: terminal on the first read.
+  const absent = await inventory([{ ok: false, status: 404, sha: null }]);
+  assert.ok(named('remote_inventory')(absent.outcome.halt), 'SHU251_INVENTORY_DEFINITIVE_TERMINAL');
+  assert.equal(absent.seen.length, 1, 'SHU251_INVENTORY_DEFINITIVE_TERMINAL');
+  assert.deepEqual(absent.waits, [], 'SHU251_INVENTORY_DEFINITIVE_TERMINAL');
+  // A read that DID answer, with a head that is not the approved one, still
+  // refuses as a moved inventory on that first answer and is never retried.
+  const moved = await inventory([answered('c'.repeat(40))]);
+  assert.ok(named('remote_inventory')(moved.outcome.halt), 'SHU251_INVENTORY_MOVED_STILL_REFUSES');
+  assert.match(moved.outcome.halt.message, /incomplete or moved/, 'SHU251_INVENTORY_MOVED_STILL_REFUSES');
+  assert.equal(moved.seen.length, 1, 'SHU251_INVENTORY_MOVED_STILL_REFUSES');
+  // No token reaches any of it.
+  for (const secret of ['GITHUB_POISON', 'LINEAR_POISON'])
+    for (const { outcome } of [raced, failed, absent, moved])
+      assert.ok(!JSON.stringify(outcome.halt?.message ?? outcome).includes(secret), `SHU251_INVENTORY_CARRIES_NO_SECRET ${secret}`);
+  // fetchBranchHead itself is unchanged: the same null contract every existing
+  // caller was written against, for every one of those answers.
+  for (const plan of [[{ ok: false, status: 503, sha: null }], [{ ok: false, status: 404, sha: null }], [answered(null)]])
+    assert.equal((await measureBranchHeadBounded({ repo: order.repo, branch: order.branch, token: 'x' },
+      { measure: async () => plan[0], wait: async () => {} })).sha, null, 'SHU251_INVENTORY_SHA_CONTRACT');
+});
+
+// The measured read itself, at the transport, and the exact null contract
+// `fetchBranchHead` keeps for every caller that was written against it.
+test('SHU251_REMOTE_INVENTORY measures the branch read without changing fetchBranchHead', async () => {
+  const request = { repo: 'o/r', branch: 'b', token: 'GITHUB_POISON' };
+  const reply = (ok, status, body) => ({ ok, status, json: async () => body });
+  for (const [label, fetchImpl, measured, sha] of [
+    ['answered', async () => reply(true, 200, { commit: { sha: SHA } }), { ok: true, status: 200, sha: SHA }, SHA],
+    ['rate limited', async () => reply(false, 429), { ok: false, status: 429, sha: null }, null],
+    ['absent', async () => reply(false, 404), { ok: false, status: 404, sha: null }, null],
+    ['unparsable', async () => ({ ok: true, status: 200, json: async () => { throw new Error('body'); } }), { ok: true, status: 200, sha: null }, null],
+  ]) {
+    assert.deepEqual(await measureBranchHead({ ...request, fetchImpl }), measured, `SHU251_BRANCH_READ_MEASURED ${label}`);
+    assert.equal(await fetchBranchHead({ ...request, fetchImpl }), sha, `SHU251_BRANCH_READ_SHA_CONTRACT ${label}`);
+  }
+  // An incomplete request still answers without a call, and a transport fault
+  // still THROWS out of both, exactly as it did before.
+  let calls = 0;
+  const counting = async () => { calls++; return reply(true, 200, { commit: { sha: SHA } }); };
+  assert.deepEqual(await measureBranchHead({ repo: 'o/r', branch: 'b', token: '', fetchImpl: counting }), { ok: false, status: null, sha: null }, 'SHU251_BRANCH_READ_MEASURED incomplete');
+  assert.equal(await fetchBranchHead({ repo: 'o/r', branch: 'b', token: '', fetchImpl: counting }), null, 'SHU251_BRANCH_READ_SHA_CONTRACT incomplete');
+  assert.equal(calls, 0, 'SHU251_BRANCH_READ_MEASURED incomplete');
+  const faulting = async () => { throw Object.assign(new Error('reset'), { code: 'ECONNRESET' }); };
+  for (const read of [measureBranchHead, fetchBranchHead])
+    await assert.rejects(() => read({ ...request, fetchImpl: faulting }), e => e.code === 'ECONNRESET', 'SHU251_BRANCH_READ_TRANSPORT_THROWS');
+});
+
+// One anchored substitution per mutant, loaded from a disposable path.
+async function bindingMutant(t, target, before, after) {
+  const urls = { bindings: new URL('../host-window-bindings.mjs', import.meta.url), reconcile: new URL('../../reconcile.mjs', import.meta.url) };
+  const source = Object.fromEntries(Object.entries(urls).map(([key, url]) => [key, fs.readFileSync(url, 'utf8')]));
+  assert.equal(source[target].split(before).length, 2, `SHU251_MUTATION_ANCHOR_UNIQUE ${target}`);
+  const root = fs.mkdtempSync(path.join(tmpdir(), 'shu251-bindings-mutant-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const rewrite = (text, url) => text.replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g, (_, prefix, quote, relative) =>
+    `${prefix}${quote}${relative.endsWith('/reconcile.mjs') ? pathToFileURL(path.join(root, 'reconcile.mjs')).href : new URL(relative, url).href}${quote}`);
+  fs.writeFileSync(path.join(root, 'reconcile.mjs'),
+    rewrite(target === 'reconcile' ? source.reconcile.replace(before, after) : source.reconcile, urls.reconcile));
+  const file = path.join(root, 'bindings.mjs');
+  fs.writeFileSync(file, rewrite(target === 'bindings' ? source.bindings.replace(before, after) : source.bindings, urls.bindings));
+  const bindings = await import(pathToFileURL(file));
+  const reconcile = await import(pathToFileURL(path.join(root, 'reconcile.mjs')));
+  return { ...bindings, measureBranchHead: reconcile.measureBranchHead, fetchBranchHead: reconcile.fetchBranchHead };
+}
+const READ_FAILURE_HALT = `  if (work?.branch_head_read && work.branch_head_read.ok !== true)
+    halt(binding, 'remote fixture inventory could not be read', { status: work.branch_head_read.status });`;
+for (const [name, target, before, after, assertion] of [
+  ['a failed read is reported as a moved inventory again', 'bindings', READ_FAILURE_HALT, '', 'SHU251_INVENTORY_READ_FAILURE_NAMED'],
+  ['the transient read is never retried', 'bindings',
+    '    if (measured.ok || !INVENTORY_READ.statuses.includes(measured.status) || attempt === INVENTORY_READ.attempts) break;',
+    '    break;', 'SHU251_INVENTORY_TRANSIENT_RETRIED'],
+  ['a definitive absence is treated as a race', 'bindings',
+    'statuses: Object.freeze([408, 425, 429, 500, 502, 503, 504])', 'statuses: Object.freeze([404, 408, 425, 429, 500, 502, 503, 504])',
+    'SHU251_INVENTORY_DEFINITIVE_TERMINAL'],
+  ['a non-2xx answer is measured as though it answered', 'reconcile',
+    '  if (!res.ok) return { ok: false, status: res.status, sha: null };', '  if (false) return { ok: false, status: res.status, sha: null };',
+    'SHU251_BRANCH_READ_MEASURED'],
+]) test(`SHU251_REMOTE_INVENTORY mutation: ${name}`, async t => {
+  const mutant = await bindingMutant(t, target, before, after);
+  const pattern = new RegExp(assertion);
+  const run = async module => {
+    if (assertion === 'SHU251_BRANCH_READ_MEASURED') {
+      const reply = { ok: false, status: 429, json: async () => ({ commit: { sha: SHA } }) };
+      assert.deepEqual(await module.measureBranchHead({ repo: 'o/r', branch: 'b', token: 't', fetchImpl: async () => reply }),
+        { ok: false, status: 429, sha: null }, 'SHU251_BRANCH_READ_MEASURED rate limited');
+      return;
+    }
+    const answers = { SHU251_INVENTORY_READ_FAILURE_NAMED: [{ ok: false, status: 503, sha: null }],
+      SHU251_INVENTORY_TRANSIENT_RETRIED: [{ ok: false, status: 503, sha: null }, { ok: true, status: 200, sha: SHA }],
+      SHU251_INVENTORY_DEFINITIVE_TERMINAL: [{ ok: false, status: 404, sha: null }] }[assertion];
+    const { spec } = fixture(t);
+    const seen = [], waits = [];
+    const seams = { measure: async () => { const next = answers[Math.min(seen.length, answers.length - 1)]; seen.push(next); return next; },
+      wait: async ms => { waits.push(ms); }, comments: async () => [] };
+    const run2 = (_file, args) => args[0] === 'status' ? '' : args[0] === 'ls-remote' ? `${SHA}\trefs/heads/main` : SHA;
+    const outcome = await module.observeRemoteInventory(spec, { run: run2, readRemote: s => module.readRemoteWork(s, { LINEAR_API_TOKEN: 'l', GITHUB_TOKEN: 'g' }, seams) })
+      .catch(error => ({ halt: error }));
+    if (assertion === 'SHU251_INVENTORY_TRANSIENT_RETRIED') {
+      assert.equal(outcome.ok, true, 'SHU251_INVENTORY_TRANSIENT_RETRIED');
+      assert.equal(seen.length, 2, 'SHU251_INVENTORY_TRANSIENT_RETRIED');
+    }
+    if (assertion === 'SHU251_INVENTORY_READ_FAILURE_NAMED')
+      assert.match(outcome.halt.message, /could not be read/, 'SHU251_INVENTORY_READ_FAILURE_NAMED');
+    if (assertion === 'SHU251_INVENTORY_DEFINITIVE_TERMINAL') assert.equal(seen.length, 1, 'SHU251_INVENTORY_DEFINITIVE_TERMINAL');
+  };
+  await run(await import('../host-window-bindings.mjs').then(async m => ({ ...m, measureBranchHead: (await import('../../reconcile.mjs')).measureBranchHead })));
+  let killed = null;
+  await assert.rejects(() => run(mutant), error => { killed = error; return error.code === 'ERR_ASSERTION' && pattern.test(error.message); },
+    'SHU251_MUTATION_NAMED_ASSERTION');
+  t.diagnostic(`killed by ${/SHU251_[A-Z_0-9]+/.exec(killed.message)?.[0]}`);
 });
 
 test('SHU251_STATUS_CREDENTIAL positive control and mutation', t => {

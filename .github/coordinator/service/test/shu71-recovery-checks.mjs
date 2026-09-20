@@ -702,11 +702,17 @@ export async function expiryPostConditionCheck(createProduction, h) {
 // The Sentry-shaped defect: a predicate evaluated as an argument of need()
 // skips its own refusal when it throws. Measured into a value first, a throw
 // is the named refusal and never a bare error in its place.
+//
+// A-11/B-11 round: a throw is now its OWN named refusal rather than the state
+// the caller named. The requirement the assertion below pins is unchanged - a
+// predicate that threw may never be a measured true, and may never reach the
+// caller as a bare error - and it is now stated as the name it refuses under.
 export function predicateRefusalCheck(api) {
   const boom = () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); };
   let measured;
   try { measured = api.measuredPredicate(boom); } catch (error) { measured = error; }
-  assert.equal(measured, false, 'B4_EXPIRY_PREDICATE_THROW_REFUSES');
+  assert.equal(measured?.code, 'ACT_TEARDOWN_MEASUREMENT', 'B4_EXPIRY_PREDICATE_THROW_REFUSES');
+  assert.notEqual(measured, true, 'B4_EXPIRY_PREDICATE_THROW_REFUSES');
   assert.equal(api.measuredPredicate(() => false), false, 'B4_EXPIRY_PREDICATE_FALSE_REFUSES');
   assert.equal(api.measuredPredicate(() => 'yes'), false, 'B4_EXPIRY_PREDICATE_REQUIRES_MEASURED_TRUE');
   assert.equal(api.measuredPredicate(() => true), true, 'B4_EXPIRY_PREDICATE_MEASURED_TRUE_PASSES');

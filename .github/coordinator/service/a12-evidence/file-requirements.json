@@ -236,6 +236,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries; the one spawned child is this repository's own module under the running Node binary",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-arming-robustness-checks.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-composition.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects commands and fetch; episode harness injects revision, workspace and launch boundaries",

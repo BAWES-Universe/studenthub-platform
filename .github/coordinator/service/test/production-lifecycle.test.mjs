@@ -428,7 +428,73 @@ test('PROVIDER default entrypoint wiring and no implementation option', async t 
   } finally { defaultIO.pin = oldPin; }
 });
 
-const mutations = cases.map(([code]) => ({ name: code, pattern: `PROVIDER guard ${code}`, from: 'if (!condition) refuse(code);', to: `if (!condition && code !== '${code}') refuse(code);`, assertion: `${code}_REQUIRED` }));
+// Anchor updated in place for the guard's added detail argument; every
+// mutation's name, pattern and killing assertion are unchanged.
+// A-10 / B-15. remoteMain()'s two legs are network READS - `git ls-remote` and
+// a `gh api` GET - behind one guard and with no retry at all, so a single
+// GitHub rate limit or DNS blip aborted every Phase-A step that calls preflight
+// under SHU251_CHECKOUT_REMOTE, which otherwise means main has genuinely moved.
+// And the provider's command wrapper named NOTHING - not the executable, not
+// the argv, not the status - although it carries git, gh, systemctl, flock, id
+// and ss alike.
+const remoteReads = (f, answer) => {
+  f.boundary.readWait = () => {};
+  const attempts = new Map();
+  f.faults.command = (file, args) => {
+    const key = `${file} ${args.join(' ')}`;
+    attempts.set(key, (attempts.get(key) ?? 0) + 1);
+    return answer(file, args, attempts.get(key)) ?? null;
+  };
+  return { attempts, count: needle => [...attempts].filter(([key]) => key.includes(needle)).reduce((a, [, n]) => a + n, 0) };
+};
+test('PROVIDER remote main tolerates one transient read on either leg', async t => {
+  for (const leg of ['ls-remote', 'gh']) {
+    const f = productionFixture(t);
+    const reads = remoteReads(f, (file, args, attempt) =>
+      attempt === 1 && (leg === 'gh' ? file === '/usr/bin/gh' : args.includes('ls-remote')) ? { status: 1, stdout: '', stderr: '' } : undefined);
+    let observed;
+    try { observed = f.provider.remoteMain(); }
+    catch (error) { observed = { remote_sha: `threw:${error?.code}`, api_sha: `threw:${error?.code}` }; }
+    assert.equal(observed.remote_sha, f.spec.window.approved_sha, `PROVIDER_REMOTE_READ_RETRIED_${leg}`);
+    assert.equal(observed.api_sha, f.spec.window.approved_sha, `PROVIDER_REMOTE_READ_RETRIED_${leg}`);
+    assert.equal(reads.count(leg === 'gh' ? '/usr/bin/gh' : 'ls-remote'), 2, `PROVIDER_REMOTE_READ_RETRIED_${leg}`);
+  }
+});
+test('PROVIDER remote main still refuses a persistent read failure and a moved main', async t => {
+  // Persistent: the same refusal it raises today, after a bounded number of
+  // attempts and not one more.
+  const persistent = productionFixture(t);
+  const failing = remoteReads(persistent, file => file === '/usr/bin/gh' ? { status: 1, stdout: '', stderr: '' } : undefined);
+  assert.throws(() => persistent.provider.remoteMain(), named('SHU251_PROVIDER_COMMAND'), 'PROVIDER_REMOTE_READ_PERSISTENT_REFUSED');
+  assert.equal(failing.count('/usr/bin/gh'), 3, 'PROVIDER_REMOTE_READ_BOUNDED');
+  // A SUCCESSFUL answer that disagrees is a moved main, not a race: it refuses
+  // on that first answer, is never read again, and the refusal names the leg.
+  for (const [leg, answer] of [['api_commit', (file) => file === '/usr/bin/gh' ? { status: 0, stdout: `${'f'.repeat(40)}\tf` } : undefined],
+    ['remote_ref', (file, args) => args.includes('ls-remote') ? { status: 0, stdout: `${'f'.repeat(40)}\trefs/heads/main` } : undefined]]) {
+    const f = productionFixture(t);
+    const reads = remoteReads(f, answer);
+    assert.throws(() => f.provider.remoteMain(), error => error.code === 'SHU251_CHECKOUT_REMOTE' && error.message.endsWith(`: ${leg}`),
+      `PROVIDER_REMOTE_MISMATCH_NAMED_${leg}`);
+    assert.equal(reads.count(leg === 'api_commit' ? '/usr/bin/gh' : 'ls-remote'), 1, `PROVIDER_REMOTE_MISMATCH_NOT_RETRIED_${leg}`);
+  }
+});
+test('PROVIDER a failed provider command names its executable, argv and status', async t => {
+  const f = productionFixture(t);
+  remoteReads(f, file => file === '/usr/bin/gh' ? { status: 7, stdout: '', stderr: 'GH_TOKEN=POISON' } : undefined);
+  assert.throws(() => f.provider.remoteMain(), error => error.code === 'SHU251_PROVIDER_COMMAND'
+    && error.message.includes('/usr/bin/gh')
+    && error.message.includes('repos/BAWES-Universe/studenthub-platform/commits/main')
+    && error.message.endsWith(': 7'), 'PROVIDER_COMMAND_NAMED');
+  // A label, never a payload: the `--jq` program is not a command token and is
+  // reported as `-`, and no stderr and no environment value is reported at all.
+  try { f.provider.remoteMain(); }
+  catch (error) {
+    assert.ok(!/POISON|GH_TOKEN/.test(error.message), 'PROVIDER_COMMAND_CARRIES_NO_SECRET');
+    assert.ok(error.message.includes('--jq -'), 'PROVIDER_COMMAND_ARGV_CLOSED');
+  }
+});
+
+const mutations = cases.map(([code]) => ({ name: code, pattern: `PROVIDER guard ${code}`, from: 'if (!condition) refuse(code, detail);', to: `if (!condition && code !== '${code}') refuse(code, detail);`, assertion: `${code}_REQUIRED` }));
 mutations.push(
   { name: 'J1 scratch restored to watched root', pattern: 'J1 prerequisite scratch permits', from: "temp_dir: '/tmp'", to: 'temp_dir: w.workspace_state_dir', assertion: 'J1_PREREQUISITE_RECEIPT_REQUIRED' },
   { name: 'H1 preflight observation omitted', module: 'host-lifecycle', pattern: 'OBSERVATION gate-off actual writes gh$', from: 'await io.lifecycle.observeGateOff(() => execute(step, spec, options, io))', to: 'await execute(step, spec, options, io)', extra: { module: 'host-lifecycle', from: 'await host.gateOffBaseline(baseline);', to: 'void baseline;' }, assertion: 'H1_WRITE_OBSERVATION_REQUIRED' },
@@ -449,6 +515,22 @@ mutations.push(
   { name: 'file fsync', pattern: 'PROVIDER durability order', from: 'f.fsyncSync(handle);', to: 'void handle;', assertion: 'PROVIDER_DURABILITY_REQUIRED' },
   { name: 'directory fsync', pattern: 'PROVIDER durability order', from: 'f.renameSync(temp, `${root}/${name}`); f.fsyncSync(fd);', to: 'f.renameSync(temp, `${root}/${name}`);', assertion: 'PROVIDER_DURABILITY_REQUIRED' },
   { name: 'kernel lock', pattern: 'PROVIDER lock contention', from: "guard('SHU251_WRITER_LOCK', !r.error && r.status === 0);", to: 'void r;', assertion: 'PROVIDER_LOCK_REQUIRED' },
+  { name: 'remote main read retry removed', pattern: 'PROVIDER remote main tolerates one transient',
+    from: "        if (error?.code !== 'SHU251_PROVIDER_COMMAND' || attempt >= REMOTE_READ.attempts) throw error;",
+    to: '        throw error;', assertion: 'PROVIDER_REMOTE_READ_RETRIED_' },
+  { name: 'remote main read retry unbounded', pattern: 'PROVIDER remote main still refuses',
+    from: 'REMOTE_READ = Object.freeze({ attempts: 3,', 'to': 'REMOTE_READ = Object.freeze({ attempts: 9,',
+    assertion: 'PROVIDER_REMOTE_READ_BOUNDED' },
+  { name: 'remote main legs collapsed into one guard', pattern: 'PROVIDER remote main still refuses',
+    from: "    guard('SHU251_CHECKOUT_REMOTE', remote === `${w.approved_sha}\\trefs/heads/main`, 'remote_ref');\n    guard('SHU251_CHECKOUT_REMOTE', api === `${w.approved_sha}\\t${c.approved_tree}`, 'api_commit');",
+    to: "    guard('SHU251_CHECKOUT_REMOTE', remote === `${w.approved_sha}\\trefs/heads/main` && api === `${w.approved_sha}\\t${c.approved_tree}`);",
+    assertion: 'PROVIDER_REMOTE_MISMATCH_NAMED_' },
+  { name: 'provider command names nothing again', pattern: 'PROVIDER a failed provider command names',
+    from: "    guard('SHU251_PROVIDER_COMMAND', !result.error && result.status === 0, `${file} ${providerArguments(args)}: ${result.status}`);",
+    to: "    guard('SHU251_PROVIDER_COMMAND', !result.error && result.status === 0);", assertion: 'PROVIDER_COMMAND_NAMED' },
+  { name: 'provider argv echoed unsanitized', pattern: 'PROVIDER a failed provider command names',
+    from: "  .map(value => typeof value === 'string' && PROVIDER_ARGUMENT.test(value) ? value : '-').join(' ');",
+    to: '  .map(value => String(value)).join(\' \');', assertion: 'PROVIDER_COMMAND_ARGV_CLOSED' },
 );
 for (const mutation of mutations) test(`PROVIDER named mutation ${mutation.name}`, t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-mutation-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));

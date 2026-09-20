@@ -25,6 +25,7 @@
     ".github/coordinator/service/test/service-plane.test.mjs",
     ".github/coordinator/service/test/service.test.mjs",
     ".github/coordinator/service/test/shu71-arming-order.test.mjs",
+    ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
     ".github/coordinator/service/test/shu71-composition.test.mjs",
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
@@ -3556,7 +3557,97 @@
     "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
     "B5 post-push read-back mutation: the reason vocabulary is opened",
     "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
-    "B5 post-push read-back mutation: every reason is retryable once a status matches"
+    "B5 post-push read-back mutation: every reason is retryable once a status matches",
+    "B6 arming robustness: a failed measurement is not a state claim about the host",
+    "B6 arming robustness: a transient unit read is retried and the teardown completes",
+    "B6 arming robustness: a genuinely live expiry companion still refuses by its own name",
+    "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms",
+    "B6 arming robustness: a persistently failing Linear read still refuses under the same name",
+    "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried",
+    "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried",
+    "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused",
+    "B6 arming robustness: a transient ls-remote failure is retried and the window arms",
+    "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation",
+    "B6 arming robustness: a boundary that throws is never retried and echoes no text",
+    "B6 arming robustness: a persistently failing ls-remote names the command it ran",
+    "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg",
+    "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed",
+    "B6 arming robustness: the credential store is opened at most once per invocation",
+    "B6 arming robustness: an absent coordinator credential refuses under its own name",
+    "B6 arming robustness: a short supervisor transport secret refuses under its own name",
+    "B6 arming robustness: the failing binding leg is short-circuited and named",
+    "B6 arming robustness: the package validator own refusal is carried into the halt",
+    "B6 arming robustness: a failed teardown step names its cause as well as its step",
+    "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+    "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+    "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)",
+    "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+    "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+    "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)",
+    "B6 arming robustness: a card read-back that never reaches the target still refuses (never)",
+    "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)",
+    "B6 arming robustness: a push that did not land still refuses (old)",
+    "B6 arming robustness: a push that did not land still refuses (third)",
+    "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+    "B6 arming robustness: a systemctl mutation is attempted exactly once (start)",
+    "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)",
+    "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+    "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)",
+    "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)",
+    "B6 arming robustness: the disagreeing binding leg is named (readback)",
+    "B6 arming robustness: the disagreeing binding leg is named (local)",
+    "B6 arming robustness: the disagreeing binding leg is named (clean)",
+    "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
+    "B6 arming robustness: the CLI names the refusal it caught",
+    "B6 arming robustness: the reported command detail is closed to the reviewed fields",
+    "B6 arming robustness: only a reviewed refusal name reaches a halt record",
+    "B6 arming robustness: only an enumerated host read may be repeated",
+    "B6 arming robustness mutation: a failed measurement is reported as the state the caller named",
+    "B6 arming robustness mutation: the host-command read retry is removed",
+    "B6 arming robustness mutation: the supervisor liveness read-back is removed",
+    "B6 arming robustness mutation: the supervisor SubState term is dropped",
+    "B6 arming robustness mutation: the dispatch timer liveness read-back is removed",
+    "B6 arming robustness mutation: the gate step stops repeating on a resume",
+    "B6 arming robustness mutation: the expiry installation read-back is removed",
+    "B6 arming robustness mutation: the expiry enablement term is dropped",
+    "B6 arming robustness mutation: the expiry durable-file term is dropped",
+    "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door",
+    "B6 arming robustness mutation: the Linear issueUpdate is routed through the retried read door",
+    "B6 arming robustness mutation: the card read-back is never re-read",
+    "B6 arming robustness mutation: the card read-back re-issues the write it is reading back",
+    "B6 arming robustness mutation: the card read-back accepts a card that is not the target",
+    "B6 arming robustness mutation: the host-command read policy allows a single attempt",
+    "B6 arming robustness mutation: the host-command backoff schedule is emptied",
+    "B6 arming robustness mutation: the host-command sleep budget is not enforced",
+    "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure",
+    "B6 arming robustness mutation: the push recovery accepts any remote answer",
+    "B6 arming robustness mutation: the push recovery accepts a third sha",
+    "B6 arming robustness mutation: the credential is resolved on every call again",
+    "B6 arming robustness mutation: the failing command is no longer described",
+    "B6 arming robustness mutation: the halt record drops the measured command detail",
+    "B6 arming robustness mutation: the halt code goes back to an allow-list",
+    "B6 arming robustness mutation: the pre-arm region loses its handler again",
+    "B6 arming robustness mutation: the binding leg is no longer named",
+    "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order",
+    "B6 arming robustness mutation: the package validator code is dropped again",
+    "B6 arming robustness mutation: the teardown records step codes without causes",
+    "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
+    "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
+    "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+    "PROVIDER remote main tolerates one transient read on either leg",
+    "PROVIDER remote main still refuses a persistent read failure and a moved main",
+    "PROVIDER a failed provider command names its executable, argv and status",
+    "PROVIDER named mutation remote main read retry removed",
+    "PROVIDER named mutation remote main read retry unbounded",
+    "PROVIDER named mutation remote main legs collapsed into one guard",
+    "PROVIDER named mutation provider command names nothing again",
+    "PROVIDER named mutation provider argv echoed unsanitized",
+    "SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory",
+    "SHU251_REMOTE_INVENTORY measures the branch read without changing fetchBranchHead",
+    "SHU251_REMOTE_INVENTORY mutation: a failed read is reported as a moved inventory again",
+    "SHU251_REMOTE_INVENTORY mutation: the transient read is never retried",
+    "SHU251_REMOTE_INVENTORY mutation: a definitive absence is treated as a race",
+    "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered"
   ],
   "requirements": [
     {
@@ -27520,6 +27611,390 @@
     {
       "name": "B5 post-push read-back mutation: every reason is retryable once a status matches",
       "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a failed measurement is not a state claim about the host",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a transient unit read is retried and the teardown completes",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely live expiry companion still refuses by its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a persistently failing Linear read still refuses under the same name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a transient ls-remote failure is retried and the window arms",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a boundary that throws is never retried and echoes no text",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a persistently failing ls-remote names the command it ran",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the credential store is opened at most once per invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: an absent coordinator credential refuses under its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a short supervisor transport secret refuses under its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the failing binding leg is short-circuited and named",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the package validator own refusal is carried into the halt",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a failed teardown step names its cause as well as its step",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a card read-back that never reaches the target still refuses (never)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a push that did not land still refuses (old)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a push that did not land still refuses (third)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a systemctl mutation is attempted exactly once (start)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the disagreeing binding leg is named (readback)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the disagreeing binding leg is named (local)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the disagreeing binding leg is named (clean)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the CLI names the refusal it caught",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the reported command detail is closed to the reviewed fields",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: only a reviewed refusal name reaches a halt record",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: only an enumerated host read may be repeated",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command read retry is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the supervisor liveness read-back is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the supervisor SubState term is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the dispatch timer liveness read-back is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the gate step stops repeating on a resume",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the expiry installation read-back is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the expiry enablement term is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the expiry durable-file term is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the Linear issueUpdate is routed through the retried read door",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the card read-back is never re-read",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the card read-back re-issues the write it is reading back",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the card read-back accepts a card that is not the target",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command read policy allows a single attempt",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command backoff schedule is emptied",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command sleep budget is not enforced",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the push recovery accepts any remote answer",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the push recovery accepts a third sha",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the credential is resolved on every call again",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the failing command is no longer described",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the halt record drops the measured command detail",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the halt code goes back to an allow-list",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the pre-arm region loses its handler again",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the binding leg is no longer named",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the package validator code is dropped again",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the teardown records step codes without causes",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER remote main tolerates one transient read on either leg",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER remote main still refuses a persistent read failure and a moved main",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER a failed provider command names its executable, argv and status",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation remote main read retry removed",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation remote main read retry unbounded",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation remote main legs collapsed into one guard",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation provider command names nothing again",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation provider argv echoed unsanitized",
+      "capabilities": []
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY measures the branch read without changing fetchBranchHead",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a failed read is reported as a moved inventory again",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: the transient read is never retried",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a definitive absence is treated as a race",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

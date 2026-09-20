@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { checkStatus } from './check-status.mjs';
 import { signedSupervisorRequest, submitToSupervisor } from '../supervisor.mjs';
-import { fetchBranchHead, fetchIssueComments } from '../reconcile.mjs';
+import { measureBranchHead, fetchIssueComments } from '../reconcile.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -108,12 +108,35 @@ export function validateWindowSpec(spec) {
   return spec;
 }
 
-async function readRemoteWork(spec, env = process.env) {
+// A TRANSIENT ANSWER IS NOT A MOVED INVENTORY. `fetchBranchHead` answers null
+// for a 429, a 5xx, a body that would not parse and a branch that genuinely
+// does not exist alike, and the caller below reported every one of them as
+// "remote fixture inventory is incomplete or moved" - a claim about the remote
+// that a read which never answered cannot support. The read is MEASURED here
+// and a transient answer is retried under a small fixed bound. 404 is NOT in
+// that set: a branch the remote says is absent is an answer, not a race, and
+// still refuses on the first answer exactly as today. The VALUE is never
+// retried - the comparison against target_sha is made once, on whatever the
+// read finally answered.
+export const INVENTORY_READ = Object.freeze({ attempts: 3, delaysMs: Object.freeze([200, 400]),
+  statuses: Object.freeze([408, 425, 429, 500, 502, 503, 504]) });
+export async function measureBranchHeadBounded(request, io = {}) {
+  const measure = io.measure ?? measureBranchHead;
+  const wait = io.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  let measured = { ok: false, status: null, sha: null };
+  for (let attempt = 1; attempt <= INVENTORY_READ.attempts; attempt++) {
+    measured = await measure(request);
+    if (measured.ok || !INVENTORY_READ.statuses.includes(measured.status) || attempt === INVENTORY_READ.attempts) break;
+    await wait(INVENTORY_READ.delaysMs[attempt - 1]);
+  }
+  return measured;
+}
+export async function readRemoteWork(spec, env = process.env, io = {}) {
   const binding = 'remote_inventory', order = boundOrder(spec, binding);
   if (!env.LINEAR_API_TOKEN || !env.GITHUB_TOKEN) halt(binding, 'read-only Linear and GitHub credentials are required');
-  const comments = await fetchIssueComments({ issueId: spec.fixture.issue_id, token: env.LINEAR_API_TOKEN });
-  const branchHead = await fetchBranchHead({ repo: order.repo, branch: order.branch, token: env.GITHUB_TOKEN });
-  return { branch_head: branchHead, comment_count: comments.length,
+  const comments = await (io.comments ?? fetchIssueComments)({ issueId: spec.fixture.issue_id, token: env.LINEAR_API_TOKEN });
+  const branchHead = await measureBranchHeadBounded({ repo: order.repo, branch: order.branch, token: env.GITHUB_TOKEN }, io);
+  return { branch_head: branchHead.sha, branch_head_read: branchHead, comment_count: comments.length,
     comments_digest: digest(Buffer.from(JSON.stringify(comments.map(comment => ({ body: comment.body, createdAt: comment.createdAt, user: comment.user?.id }))))) };
 }
 
@@ -130,6 +153,12 @@ export async function observeRemoteInventory(spec, io = { run, readRemote: readR
     if (error instanceof HostBindingHalt) throw error;
     return halt(binding, 'remote fixture inventory failed', { error: error.message });
   }
+  // A read that never answered halts under its own reason, BEFORE the line
+  // that would otherwise report it as a moved inventory. The measurement is
+  // only present when this module performed the read itself; an injected
+  // readRemote that supplies none is compared exactly as it is today.
+  if (work?.branch_head_read && work.branch_head_read.ok !== true)
+    halt(binding, 'remote fixture inventory could not be read', { status: work.branch_head_read.status });
   if (work?.branch_head !== spec.fixture.target_sha || !Number.isInteger(work.comment_count) || work.comment_count < 0 || !/^[0-9a-f]{64}$/.test(work.comments_digest ?? '')) halt(binding, 'remote fixture inventory is incomplete or moved');
   return { binding, ok: true, approved_sha: spec.approved_sha, remote_ref: spec.remote_ref,
     fixture_branch_head: work.branch_head, comment_count: work.comment_count, comments_digest: work.comments_digest };

@@ -246,7 +246,11 @@ export async function graphqlCodesCheck(create, h) {
   };
   const result = await create(h.id, h.boundary).execute('run');
   assert.equal(result.code, 'ACT_API_FAILED', 'B5_GRAPHQL_CODES_NAMED');
-  assert.deepEqual(result.api_failure, { operation: 'linear:query:Shu71Fixture', reason: 'graphql_errors', codes: ['AUTHENTICATION_ERROR'] }, 'B5_GRAPHQL_CODES_NAMED');
+  // The Linear QUERY now reaches the retried read door, so a failed call on
+  // that route reports its attempt count exactly as the GitHub routes do. A
+  // GraphQL refusal arrives inside a 200 and is never a race, so the count is
+  // one: it gave up on the first answer rather than retrying a refusal.
+  assert.deepEqual(result.api_failure, { operation: 'linear:query:Shu71Fixture', reason: 'graphql_errors', codes: ['AUTHENTICATION_ERROR'], attempts: 1 }, 'B5_GRAPHQL_CODES_NAMED');
   assert.equal(queries, 1, 'B5_GRAPHQL_CODES_NAMED');
   for (const secret of POISON) assert.ok(!JSON.stringify(result).includes(secret), `B5_HALT_CARRIES_NO_SECRET ${secret}`);
 }
@@ -331,8 +335,13 @@ export async function killedBy(t, run) {
 
 const REF_READ = '      const readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);';
 const COMPARE_READ = '        const comparison = await githubRead(`compare/${old}...${next}`);';
-const PUSH = "          git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true });";
+const PUSH = "          try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true }); }";
 const GIVE_UP = '          throw describeApiFailure(error, { attempts: attempt });';
+const BOUND = '        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)\n'
+  + '          || delay > readRetryBudgetMs || !(b.now() < authorizationEnds)) {';
+const HALT_DETAIL = '      const detail = { ...apiFailureRecord(error), ...commandFailureRecord(error), ...bindingLegRecord(error),\n'
+  + "        ...(reviewedCode(error?.package_code) ? { package_code: error.package_code } : {}),\n"
+  + '        ...readRetryRecord(), ...commandRetryRecord() };';
 export const mutations = [
   // The retry removed, at the policy and at each retried call site.
   ['the retry policy allows a single attempt', 'attempts: 5, delaysMs', 'attempts: 1, delaysMs', refRaceCheck],
@@ -342,8 +351,11 @@ export const mutations = [
   // The retry made accepting: a spent budget must never substitute an answer.
   ['an exhausted retry returns an empty answer instead of refusing', GIVE_UP, '          return {};', persistentFailureCheck],
   // The retry made unbounded, by each of its three bounds.
-  ['the overall sleep budget is not enforced', '|| delay > readRetryBudgetMs', '|| false', budgetCheck],
-  ['the authorization expiry does not stop the retry', '|| !(b.now() < authorizationEnds)', '|| false', expiryCheck],
+  // Both bounds now also guard the post-update Linear read-back loop, so each
+  // anchor names the retried-read door's own giving-up condition rather than
+  // the bare clause. Same bound, same control, same killing assertion.
+  ['the overall sleep budget is not enforced', BOUND, BOUND.replace('|| delay > readRetryBudgetMs', '|| false'), budgetCheck],
+  ['the authorization expiry does not stop the retry', BOUND, BOUND.replace('|| !(b.now() < authorizationEnds)', '|| false'), expiryCheck],
   ['a definitive status is treated as transient', 'RETRYABLE_READ_STATUS = Object.freeze([404,', 'RETRYABLE_READ_STATUS = Object.freeze([403, 404,', haltNamesCallCheck],
   // The retry widened from the CALL to the COMPARISON, at both binding sites.
   ['the ref comparison itself is retried until it agrees', REF_READ,
@@ -355,14 +367,15 @@ export const mutations = [
     + "        for (let retry = 1; retry < READ_RETRY.attempts && comparison.status !== 'ahead'; retry++)\n"
     + '          comparison = await githubRead(`compare/${old}...${next}`);', ancestryMismatchCheck],
   // The retry applied to a MUTATION.
+  // Anchor updated in place for the re-read recovery the push now has; the
+  // mutant still replaces the single push with a retry LOOP over the mutation.
   ['the push is retried like a read', PUSH,
-    '          for (let attempt = 1; ; attempt++) {\n'
+    '          try { for (let attempt = 1; ; attempt++) {\n'
     + '            try { git(spec, [\'push\', \'--porcelain\', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true }); break; }\n'
     + '            catch (error) { if (attempt >= READ_RETRY.attempts) throw error; await readWait(READ_RETRY.delaysMs[attempt - 1]); }\n'
-    + '          }', pushNotRetriedCheck],
+    + '          } }', pushNotRetriedCheck],
   // F2: the halt stops naming the call, by each of its two doors.
-  ['the halt record drops the measured API detail',
-    '      const detail = { ...apiFailureRecord(error), ...readRetryRecord() };', '      const detail = {};', haltNamesCallCheck],
+  ['the halt record drops the measured API detail', HALT_DETAIL, '      const detail = {};', haltNamesCallCheck],
   ['a failed call is no longer described at all',
     '    try { error.api = apiFailureDetail({ ...error.api, ...detail }); }', '    try { error.api = undefined; }', haltNamesCallCheck],
   ['the GraphQL error codes are not collected', '.flatMap(error => [error?.extensions?.code, error?.extensions?.type, error?.code])',
@@ -381,8 +394,8 @@ export const closureMutations = [
   ['the GraphQL codes are echoed unfiltered', detailClosureCheck, apiFailureDetail,
     '.filter(code => typeof code === \'string\' && API_CODE_PATTERN.test(code));', '.slice();'],
   ['the transport fault is echoed unfiltered', detailClosureCheck, apiFailureDetail,
-    'if (typeof detail.fault === \'string\' && API_CODE_PATTERN.test(detail.fault)) record.fault = detail.fault;',
-    'if (typeof detail.fault === \'string\') record.fault = detail.fault;'],
+    'if (typeof detail.fault === \'string\' && API_CODE_PATTERN.test(detail.fault)) record.fault = detail.fault;\n  const codes =',
+    'if (typeof detail.fault === \'string\') record.fault = detail.fault;\n  const codes ='],
   ['the reason vocabulary is opened', detailClosureCheck, apiFailureDetail,
     'if (API_REASONS.includes(detail.reason)) record.reason = detail.reason;', 'record.reason = detail.reason;'],
   ['a refusal with no measured detail is retryable', retryableClosureCheck, retryableApiFailure,

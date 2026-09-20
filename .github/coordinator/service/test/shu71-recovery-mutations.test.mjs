@@ -37,7 +37,11 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   // that carries its own code is reported under that code too; dropped, a
   // measurably running companion service is indistinguishable at the module
   // boundary from every other expiry-timer refusal.
-  ['P154D live expiry companion code never surfaced', "      if (error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE') failures.push(error.code);\n", '',
+  // Anchor updated in place for the generalised cause line; the mutation's
+  // name, its control and its killing assertion are unchanged. The single
+  // ACT_TEARDOWN_EXPIRY_SERVICE special case is now every reviewed refusal
+  // name, so dropping the line still drops the companion's own code.
+  ['P154D live expiry companion code never surfaced', "      if (error?.code !== stepCode && reviewedCode(error?.code)) failures.push(error.code);\n", '',
     (create, h) => expiryLiveCompanionCheck(create, h, 'installed'), 'journal', /B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED/],
 ]) test(`recovery mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));
