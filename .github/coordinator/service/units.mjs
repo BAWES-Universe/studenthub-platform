@@ -78,13 +78,23 @@ export function assertSupervisorLaunchEnvironment(source, coordinatorSource) {
   const supervisor = environmentEntries(source);
   assert.ok(supervisor.size === 1 && supervisor.has('SHU_SUPERVISOR_SECRET'),
     Object.assign(new Error('SHU251_ENV_CROSSED: supervisor file contains only its transport secret'), { code: 'SHU251_ENV_CROSSED' }));
+  // A BARE STRING IS NOT A NAMED REFUSAL. assert.ok(cond, '<CODE>: text') throws
+  // an AssertionError whose `code` is ERR_ASSERTION, so this refusal and the one
+  // four lines below never carried their own names at all: the arming path saw
+  // an unnamed error and reported the generic ACT_PRODUCTION_FAILED, and
+  // SHU251_ENV_SUPERVISOR / SHU251_ENV_COORDINATOR existed only inside a message
+  // nothing records. Both now use the Object.assign(new Error(...), { code })
+  // form already used on the line above and the line between them. The
+  // condition, its operands, its ordering and the message text are
+  // byte-unchanged, and the secret's VALUE is interpolated into neither - only
+  // the key name and the length requirement are ever named.
   assert.ok(Buffer.byteLength(supervisor.get('SHU_SUPERVISOR_SECRET') ?? '') >= 32,
-    'SHU251_ENV_SUPERVISOR: transport secret required');
+    Object.assign(new Error('SHU251_ENV_SUPERVISOR: transport secret required'), { code: 'SHU251_ENV_SUPERVISOR' }));
   const coordinator = environmentEntries(coordinatorSource);
   assert.ok(!coordinator.has('SHU_SUPERVISOR_SECRET'), Object.assign(new Error('SHU251_ENV_CROSSED: secret in coordinator file'), { code: 'SHU251_ENV_CROSSED' }));
   requireSupervisorAdapterEntries(coordinator);
   assert.ok(coordinator.has('GITHUB_TOKEN') && coordinator.has('LINEAR_API_TOKEN'),
-    'SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required');
+    Object.assign(new Error('SHU251_ENV_COORDINATOR: GITHUB_TOKEN and LINEAR_API_TOKEN are required'), { code: 'SHU251_ENV_COORDINATOR' }));
   return Object.fromEntries([...supervisor, ...[...coordinator].filter(([key]) => supervisorAdapterKeys.includes(key))]);
 }
 function requireSupervisorAdapterEntries(entries) {

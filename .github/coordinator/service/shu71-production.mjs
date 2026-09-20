@@ -1,7 +1,7 @@
 // Reviewed Phase-B composition. The CLI selects this boundary; it accepts no
 // provider, callback, executable, URL or credential path from the operator.
 import fs from 'node:fs';
-import { measureBrokerRuntime, RUNTIME_CODES } from './shu71-runtime.mjs';
+import { measureBrokerRuntime } from './shu71-runtime.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { canonicalBytes, validateShu71Package } from '../shu71-activation-packag
 import { createReseedAppendIo, verifyReseedCommit } from '../reseed-append-contract.mjs';
 import { assertSupervisorLaunchEnvironment } from './units.mjs';
 import { ACTIVATION_FILE } from './credential-delivery.mjs';
-import { digest, requireActivation as need, openActivationJournal, journalEffect, teardownActivation } from './shu71-journal.mjs';
+import { digest, activationError, reviewedCode, requireActivation as need, openActivationJournal, journalEffect, teardownActivation } from './shu71-journal.mjs';
 const ROOT = '/srv/shu/state/shu71-evidence';
 const REPO = 'BAWES-Universe/studenthub-platform';
 const REMOTE = `https://github.com/${REPO}.git`;
@@ -28,11 +28,194 @@ export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), no
   // host. It is absent outside systemd, which is exactly an operator CLI run.
   fetch: (...args) => fetch(...args), sign: (bytes, key) => sign(null, bytes, key), invocationId: () => process.env.INVOCATION_ID });
 
+// A HALT SAYS ITS OWN NAME. The catch that builds a halt record used to consult
+// a hand-maintained allow-list of codes it was permitted to report, and every
+// refusal the list had not been taught - SHU251_ENV_SUPERVISOR,
+// SHU251_ENV_COORDINATOR, ACT_CREDENTIAL_UNAVAILABLE, every SHU71_RESEED_*, the
+// whole journal family - was reported as the generic ACT_PRODUCTION_FAILED, so
+// an operator could not read what had refused. The reviewed SHAPE decides now
+// (shu71-journal.mjs, REFUSAL_CODE_PATTERN), so a newly named refusal is
+// preserved by construction, and anything that is not a reviewed name - an
+// error with no code, a non-string code, an errno, an AssertionError, arbitrary
+// text - is still ACT_PRODUCTION_FAILED exactly as today.
+export const haltCode = code => reviewedCode(code) ?? 'ACT_PRODUCTION_FAILED';
+
+// A FAILED MEASUREMENT IS NOT A STATE CLAIM. measuredPredicate() maps a
+// predicate that THREW to false, and every teardown site then raised the
+// refusal the caller named - "a live companion survives this removal", "the
+// mechanism is still installed as drift" - for a `systemctl show` that simply
+// never answered. Those names are claims about the host that the code did not
+// measure, and on the unattended path this family is evaluated roughly ten
+// reads at a time, once a second, so one D-Bus hiccup was both a false refusal
+// and a false accusation. A throw is now its own refusal, carrying the failing
+// command; the site is exactly as fail-closed as it was - the value is never
+// true, every refusal that fired still fires - and it never claims a state it
+// did not read again.
+export const measurementFailure = error => Object.assign(activationError('ACT_TEARDOWN_MEASUREMENT'),
+  error?.command !== undefined ? { command: error.command } : {});
 // No exception may bypass a check. A predicate evaluated as an argument of
 // need() skips its own refusal when it throws, and the bare error is reported
 // in place of the named one. Evaluate it into a value inside its own try/catch
-// first: anything but a measured true is the refusal the caller named.
-export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };
+// first: anything but a measured true is the refusal the caller named, and a
+// throw is the named MEASUREMENT refusal rather than the caller's state claim.
+export const measuredPredicate = predicate => { try { return predicate() === true; } catch (error) { throw measurementFailure(error); } };
+
+// WHICH TERM OF A CONJUNCTION DISAGREED. A multi-leg binding check refused
+// under one code with no way to tell a stale local ref from a moved remote from
+// a GitHub answer that had not caught up. Each leg is named and evaluated IN
+// ORDER, stopping at the first that is not a measured true - so the
+// short-circuit, the number of commands and API calls a failing check makes,
+// the code it raises and its conditions are all byte-unchanged, and the refusal
+// gains the leg's NAME. The name is a reviewed literal from this module, held
+// to a closed pattern here as well so nothing else can ever be reported as one;
+// a leg's observed VALUE is never reported.
+const BINDING_LEG_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+export function requireLegs(legs, code) {
+  for (const [leg, term] of legs) {
+    if ((typeof term === 'function' ? term() : term) === true) continue;
+    throw Object.assign(activationError(code), typeof leg === 'string' && BINDING_LEG_PATTERN.test(leg) ? { leg } : {});
+  }
+}
+export const bindingLegRecord = error => typeof error?.leg === 'string' && BINDING_LEG_PATTERN.test(error.leg) ? { binding_leg: error.leg } : {};
+
+// THE POST-PUSH READ-BACK RACE. `remote-push` pushes the reseed commit and then
+// immediately READS the result back: `git/ref/heads/<branch>`, `git/ref/heads/main`
+// and `compare/<old>...<next>`. GitHub answers those routes from replicas and does
+// not compute a comparison for a just-written SHA instantly, so a landed push can
+// be answered 404/5xx for a moment. A single transient answer failed the whole
+// arming even though the push had succeeded and every required condition held -
+// measured on the target host, where the ref, the ancestry and the token were all
+// afterwards exactly what the step demands. These READ-ONLY GETs are therefore
+// retried under this fixed policy, and NOTHING ELSE IS: the push, the Linear
+// issueUpdate, signing, the activation write, the gate drop-ins, every systemctl
+// action and every teardown step still fail on their first error.
+//
+// The bound is fixed and small: five attempts, backing off 1s, 2s, 4s, 8s, so one
+// read waits at most 15s of sleep on top of its own five 10s request timeouts, and
+// a per-invocation budget caps the TOTAL sleep this mechanism may add to a window
+// however many reads race. Retrying also stops at the authorization expiry, so no
+// retry can carry work past the window it was approved for.
+export const READ_RETRY = Object.freeze({ attempts: 5, delaysMs: Object.freeze([1000, 2000, 4000, 8000]), budgetMs: 60000 });
+// TRANSIENT ANSWERS ONLY. 404 is the post-push race itself (a ref or comparison
+// the remote has not published yet); 408/425/429 and 5xx are the server asking to
+// be asked again. A definitive refusal - 400, 401, 403, 410, 422 - is the answer
+// rather than a race and is never retried, so a revoked token or a forbidden route
+// still refuses immediately and is never retried into a later acceptance.
+export const RETRYABLE_READ_STATUS = Object.freeze([404, 408, 409, 425, 429, 500, 502, 503, 504]);
+export const API_REASONS = Object.freeze(['transport', 'response_not_ok', 'response_too_large', 'graphql_errors']);
+// Closed vocabularies. An operation label is a route or a reviewed GraphQL
+// operation name; a code is a GraphQL error code or a transport fault NAME.
+// `%` is admitted because a branch segment is percent-encoded into its route
+// (`git/ref/heads/coordinator%2FSHU-140`); no separator, space, quote or
+// credential character is.
+const API_OPERATION_PATTERN = /^[A-Za-z0-9:/%._-]{1,120}$/;
+const API_CODE_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+// WHAT A FAILED CALL IS ALLOWED TO SAY ABOUT ITSELF. The halt record carried
+// neither the route nor the status, so a real halt could not be attributed to a
+// call at all. This reports the route (or reviewed operation name), the HTTP
+// status, the transport fault name, the GraphQL error CODES and the attempt count
+// - and nothing else. No token, header, URL, query, variable, response body or
+// response text can reach it: every field is re-derived through a closed pattern
+// or a numeric range here, and anything unrecognised is dropped. Idempotent on its
+// own output, so re-sanitizing a detail that has already been through it is safe.
+export function apiFailureDetail(detail = {}) {
+  const record = {};
+  record.operation = typeof detail.operation === 'string' && API_OPERATION_PATTERN.test(detail.operation) ? detail.operation : 'unknown';
+  if (API_REASONS.includes(detail.reason)) record.reason = detail.reason;
+  if (Number.isSafeInteger(detail.status) && detail.status >= 100 && detail.status <= 599) record.status = detail.status;
+  if (typeof detail.fault === 'string' && API_CODE_PATTERN.test(detail.fault)) record.fault = detail.fault;
+  const codes = (Array.isArray(detail.codes) ? detail.codes : []).filter(code => typeof code === 'string' && API_CODE_PATTERN.test(code));
+  if (codes.length) record.codes = [...new Set(codes)].slice(0, 8);
+  if (Number.isSafeInteger(detail.attempts) && detail.attempts > 0) record.attempts = detail.attempts;
+  return record;
+}
+// GraphQL reports its refusals inside a 200. Only the CODES are named.
+export const graphqlErrorCodes = errors => (Array.isArray(errors) ? errors : [])
+  .flatMap(error => [error?.extensions?.code, error?.extensions?.type, error?.code]).filter(code => typeof code === 'string');
+export const apiFailureRecord = error => {
+  const detail = error?.api;
+  return detail !== null && typeof detail === 'object' && !Array.isArray(detail) ? { api_failure: apiFailureDetail(detail) } : {};
+};
+// A RETRYABLE OUTCOME IS A MEASURED ONE. Only a transport/timeout fault or a
+// transient HTTP status qualifies; a refusal that carries no measured API detail
+// - including every non-API refusal - is not retryable at all.
+// THE HOST-COMMAND READ POLICY, and it is deliberately not the API one. Every
+// host process this module runs - `systemctl show`, `id`, and `git ls-remote`
+// under setpriv - was final on its first failure, so a D-Bus hiccup, an EAGAIN
+// under fork pressure or a socket reset on the remote's git front end aborted a
+// whole arming or a whole teardown. Three attempts and 100/200 ms is the whole
+// of it: these are local or near-local reads, not a post-push replica race, and
+// a per-invocation sleep budget caps the TOTAL this mechanism may add however
+// many reads fail.
+//
+// IT IS NOT GATED ON THE AUTHORIZATION EXPIRY, and that is deliberate: the
+// teardown these reads serve runs precisely BECAUSE the window expired, so an
+// expiry gate would switch the mechanism off exactly where it is needed. The
+// bound is absolute instead - at most 300 ms per read and 2 s per invocation -
+// rather than relative to a window.
+export const COMMAND_RETRY = Object.freeze({ attempts: 3, delaysMs: Object.freeze([100, 200]), budgetMs: 2000 });
+// THE ONLY RETRIED HOST COMMANDS, ENUMERATED RATHER THAN PATTERNED, so that no
+// mutation can fall inside by accident. `systemctl show` reads one unit
+// property, `id` reads an account, and `git ls-remote` reads the remote's refs;
+// all three write nothing and repeating one can repeat only a read.
+// daemon-reload, start, restart, stop, kill, enable and disable are absent, and
+// so is every git verb that writes - push, update-ref - and every git verb that
+// is not ls-remote. The COMMAND is retried, never the comparison made on its
+// output: a command that succeeds and answers the wrong value still refuses on
+// that first answer.
+export const readOnlyCommand = (exe, argv) => {
+  const args = Array.isArray(argv) ? argv : [];
+  if (exe === '/usr/bin/systemctl') return args[0] === 'show';
+  if (exe === '/usr/bin/id') return true;
+  // git runs as the checkout identity under setpriv; its verb is the element
+  // after `-C <checkout>`, which is how the argv is built at the one call site.
+  if (exe === '/usr/bin/setpriv' && args.includes('/usr/bin/git')) {
+    const at = args.indexOf('-C');
+    return at >= 0 && args[at + 2] === 'ls-remote';
+  }
+  return false;
+};
+// WHAT A FAILED HOST COMMAND IS ALLOWED TO SAY ABOUT ITSELF. ACT_COMMAND_FAILED
+// named no executable, no argument, no exit status and no signal, so a halt
+// could not be attributed to a command at all - which of the three `ls-remote`
+// sites, which systemctl verb, which unit. This reports the executable, the
+// argv, the exit status, the terminating signal and the spawn fault's NAME, and
+// nothing else.
+//
+// argv IS SAFE AND env IS NOT. git(..., { remote: true }) puts the GitHub token
+// into the CHILD'S ENVIRONMENT as GIT_CONFIG_VALUE_0; the env object is never
+// read here. stderr is not reported either: it is not guaranteed to be free of
+// a header a credential helper or a transport error echoed. Every argv element
+// must be a bare command token - letters, digits and the punctuation a path, a
+// ref, a unit name, a flag or a `--force-with-lease=<ref>:<sha>` is made of -
+// and anything else, including the `node -e` probe source, is reported as
+// `unreportable` in its own position rather than echoed. Idempotent on its own
+// output.
+const COMMAND_EXECUTABLE_PATTERN = /^\/[A-Za-z0-9_./-]{1,120}$/;
+const COMMAND_ARGUMENT_PATTERN = /^[A-Za-z0-9_@%:=+,./-]{1,120}$/;
+export function commandFailureDetail(detail = {}) {
+  const record = {};
+  record.exe = typeof detail.exe === 'string' && COMMAND_EXECUTABLE_PATTERN.test(detail.exe) ? detail.exe : 'unknown';
+  const argv = (Array.isArray(detail.argv) ? detail.argv : []).slice(0, 16)
+    .map(value => typeof value === 'string' && COMMAND_ARGUMENT_PATTERN.test(value) ? value : 'unreportable');
+  if (argv.length) record.argv = argv;
+  if (Number.isSafeInteger(detail.status) && detail.status >= 0 && detail.status <= 255) record.status = detail.status;
+  if (typeof detail.signal === 'string' && API_CODE_PATTERN.test(detail.signal)) record.signal = detail.signal;
+  if (typeof detail.fault === 'string' && API_CODE_PATTERN.test(detail.fault)) record.fault = detail.fault;
+  if (Number.isSafeInteger(detail.attempts) && detail.attempts > 0) record.attempts = detail.attempts;
+  return record;
+}
+export const commandFailureRecord = error => {
+  const detail = error?.command;
+  return detail !== null && typeof detail === 'object' && !Array.isArray(detail) ? { command_failure: commandFailureDetail(detail) } : {};
+};
+
+export const retryableApiFailure = error => {
+  const detail = error?.api;
+  if (detail === null || typeof detail !== 'object') return false;
+  if (detail.reason === 'transport') return true;
+  return detail.reason === 'response_not_ok' && RETRYABLE_READ_STATUS.includes(detail.status);
+};
 
 // A fixture card is MEASURED off Linear as { state_id, assignee_id }, while the
 // approved artifact is canonicalized - keys SORTED - before the owner signs it,
@@ -52,10 +235,67 @@ export function createShu71Production(id, b = shu71Boundary) {
   need(b.uid() === 0, 'ACT_PROCESS_IDENTITY');
   const f = b.fs, C = f.constants, dir = `${ROOT}/${id}`;
   const env = { PATH: '/usr/bin:/bin', LC_ALL: 'C', HOME: '/nonexistent', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' };
-  const command = (exe, args, options = {}) => {
+  // Per-invocation host-command retry state, kept beside the command wrapper it
+  // bounds. The budget is the TOTAL sleep this mechanism may add to one
+  // invocation however many reads fail, so the bound holds across calls and not
+  // merely within one.
+  let commandRetryBudgetMs = COMMAND_RETRY.budgetMs;
+  const commandRetries = [];
+  const recordCommandRetry = (exe, argv, attempts) => {
+    if (commandRetries.length < 16) commandRetries.push(commandFailureDetail({ exe, argv, attempts }));
+  };
+  const commandRetryRecord = () => commandRetries.length ? { command_read_retries: [...commandRetries] } : {};
+  // A synchronous backoff, because every one of these reads is synchronous.
+  // Atomics.wait parks the thread for the requested time rather than spinning.
+  const commandWait = ms => (b.commandWait ?? (delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }))(ms);
+  // Name the failing command on the error the caller already raises. error.code
+  // is never touched here, so the refusal keeps its existing name and
+  // conditions and only gains the measured detail commandFailureDetail permits.
+  const describeCommandFailure = (error, detail) => {
+    try { error.command = commandFailureDetail({ ...error.command, ...detail }); } catch { /* evidence is best-effort, never a new refusal */ }
+    return error;
+  };
+  // ONE MEASURED ATTEMPT. A boundary that THROWS is not a measured command
+  // outcome and propagates exactly as it does today, unretried and undescribed;
+  // only a command that ran and answered badly raises ACT_COMMAND_FAILED, under
+  // the same name and the same condition as before, now carrying what ran.
+  const runCommand = (exe, args, options) => {
     const r = b.run(exe, args, { env, ...options });
-    need(!r.error && r.status === 0, 'ACT_COMMAND_FAILED');
+    try { need(!r.error && r.status === 0, 'ACT_COMMAND_FAILED'); }
+    catch (error) {
+      throw describeCommandFailure(error, { exe, argv: args, status: r.status,
+        signal: r.signal, fault: r.error?.code ?? r.error?.name });
+    }
     return String(r.stdout ?? '');
+  };
+  const command = (exe, args, options = {}) => {
+    // THE RETRIED DOOR FOR HOST PROCESSES, and it opens onto READS ONLY.
+    // Everything that is not in readOnlyCommand's enumerated set - every
+    // systemctl verb but `show`, every git verb but `ls-remote`, the node
+    // access probe, and the push - takes the branch above and is attempted
+    // exactly once, exactly as today. What is retried is the CALL; the value it
+    // returns is handed back unchanged, so a command that succeeds and answers
+    // a wrong sha, a wrong ActiveState or a wrong account still refuses on that
+    // first answer and no budget can convert it into a pass. When the attempts,
+    // the budget or a non-command failure ends the loop the ORIGINAL error is
+    // rethrown, so a persistent failure still refuses under ACT_COMMAND_FAILED.
+    if (!readOnlyCommand(exe, args)) return runCommand(exe, args, options);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const value = runCommand(exe, args, options);
+        if (attempt > 1) recordCommandRetry(exe, args, attempt);
+        return value;
+      } catch (error) {
+        const delay = COMMAND_RETRY.delaysMs[attempt - 1];
+        if (error?.code !== 'ACT_COMMAND_FAILED') throw error;
+        if (attempt >= COMMAND_RETRY.attempts || delay === undefined || delay > commandRetryBudgetMs) {
+          if (attempt > 1) recordCommandRetry(exe, args, attempt);
+          throw describeCommandFailure(error, { attempts: attempt });
+        }
+        commandRetryBudgetMs -= delay;
+        commandWait(delay);
+      }
+    }
   };
   function coordinatorIdentity() {
     // These are OS system accounts, resolved by name from the host databases.
@@ -131,7 +371,19 @@ export function createShu71Production(id, b = shu71Boundary) {
     const fd = f.openSync(path.dirname(file), C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
     try { f.fsyncSync(fd); } finally { f.closeSync(fd); }
   };
-  function credentials() {
+  // ONE CREDENTIAL RESOLUTION PER INVOCATION. This re-read
+  // /srv/shu/coordinator.env - and /etc/passwd and /etc/group with it - on
+  // EVERY API call and EVERY remote git call, so a single arming opened the
+  // credential store a dozen times, and a rotation between two calls of the
+  // same step authenticated the two halves of one run with two different
+  // tokens. It is resolved at most once and reused now. It stays LAZY: an
+  // action that needs no credential - a teardown on a host where the file was
+  // already removed - still never reads it, so no path that succeeds today
+  // starts refusing. The refusal, its two conditions and its key-names-only
+  // evidence are unchanged.
+  let resolvedCredentials = null;
+  const credentials = () => (resolvedCredentials ??= readCredentials());
+  function readCredentials() {
     const raw = privateRead('/srv/shu/coordinator.env', coordinatorIdentity().uid), result = {};
     for (const key of ['GITHUB_TOKEN', 'LINEAR_API_TOKEN']) {
       const matches = raw.split('\n').filter(line => line.startsWith(`${key}=`));
@@ -142,23 +394,105 @@ export function createShu71Production(id, b = shu71Boundary) {
     }
     return result;
   }
-  async function api(url, options = {}) {
-    const result = await b.fetch(url, { ...options, signal: AbortSignal.timeout(10000) });
-    need(result.ok, 'ACT_API_FAILED');
+  // Per-invocation retry state. The budget is the TOTAL sleep this mechanism may
+  // add to one window however many reads race, so the bound holds across calls and
+  // not merely within one. `authorizationEnds` is the approved expiry, set once the
+  // owner-approved spec is in hand; while it is unset nothing is retried at all.
+  let readRetryBudgetMs = READ_RETRY.budgetMs;
+  let authorizationEnds = -Infinity;
+  const readWait = ms => (b.readWait ?? (delay => new Promise(resolve => setTimeout(resolve, delay))))(ms);
+  // A read that RACED and then succeeded leaves evidence of the race; a read that
+  // never retried leaves none, so an unraced window's record is byte-identical to
+  // today's. Bounded in length like every other reported detail.
+  const readRetries = [];
+  const recordReadRetry = (operation, attempts) => {
+    if (readRetries.length < 16) readRetries.push(apiFailureDetail({ operation, attempts }));
+  };
+  const readRetryRecord = () => readRetries.length ? { api_read_retries: [...readRetries] } : {};
+  // Name the failed call on the error the caller already raises. error.code is
+  // never touched here, so every refusal keeps its existing name and conditions
+  // and only gains the measured detail apiFailureDetail() permits.
+  const describeApiFailure = (error, detail) => {
+    try { error.api = apiFailureDetail({ ...error.api, ...detail }); } catch { /* evidence is best-effort, never a new refusal */ }
+    return error;
+  };
+  async function api(url, options = {}, operation = 'unknown') {
+    let result;
+    try { result = await b.fetch(url, { ...options, signal: AbortSignal.timeout(10000) }); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'transport', fault: error?.name }); }
+    try { need(result.ok, 'ACT_API_FAILED'); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'response_not_ok', status: result.status }); }
     const text = await result.text();
-    need(Buffer.byteLength(text) <= 1024 * 1024, 'ACT_API_FAILED');
+    try { need(Buffer.byteLength(text) <= 1024 * 1024, 'ACT_API_FAILED'); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'response_too_large', status: result.status }); }
     return JSON.parse(text);
   }
   const github = route => api(`https://api.github.com/repos/${REPO}/${route}`, {
     headers: { Authorization: `Bearer ${credentials().GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' },
-  });
-  async function linear(query, variables) {
-    const result = await api('https://api.linear.app/graphql', { method: 'POST',
-      headers: { Authorization: credentials().LINEAR_API_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) });
-    need(!result.errors && result.data, 'ACT_API_FAILED'); return result.data;
+  }, `github:${route}`);
+  // THE RETRIED DOOR FOR API CALLS, and it opens onto READS ONLY. It is stated
+  // once and reached through exactly two named wrappers - githubRead() and
+  // linearRead() - and each of those is responsible for proving that what it
+  // passes here is a read. github() sets no method, so every call it makes is a
+  // GET that reads remote state and changes nothing; linearRead() requires the
+  // reviewed operation name to begin `query:`, so the issueUpdate mutation
+  // cannot reach this loop even if a later edit routed it here by mistake.
+  //
+  // IT RETRIES THE CALL, NEVER A COMPARISON. Any 2xx answer is returned to the
+  // caller unchanged - including one carrying the WRONG sha, a compare status
+  // that is not 'ahead', or a fixture card that is not the approved one - so a
+  // genuine state mismatch still refuses on the first answer under
+  // ACT_REF_BINDING / ACT_REVISION_BINDING / ACT_REMOTE_ANCESTRY /
+  // ACT_WRONG_FIXTURE / ACT_PRIOR_STATE_DRIFT and the budget cannot convert it
+  // into a pass. When the budget, the attempt count, the expiry or a definitive
+  // status ends the loop, the ORIGINAL error is rethrown, so a persistent
+  // failure still refuses under the same name as today.
+  async function retriedRead(operation, call) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const value = await call();
+        if (attempt > 1) recordReadRetry(operation, attempt);
+        return value;
+      } catch (error) {
+        const delay = READ_RETRY.delaysMs[attempt - 1];
+        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)
+          || delay > readRetryBudgetMs || !(b.now() < authorizationEnds)) {
+          if (attempt > 1) recordReadRetry(operation, attempt);
+          throw describeApiFailure(error, { attempts: attempt });
+        }
+        readRetryBudgetMs -= delay;
+        await readWait(delay);
+      }
+    }
   }
+  const githubRead = route => retriedRead(`github:${route}`, () => github(route));
+  const linearOperation = query => /^\s*(query|mutation)\s+([A-Za-z0-9_]+)/.exec(query)?.slice(1).join(':') ?? 'unknown';
+  async function linear(query, variables) {
+    const operation = `linear:${linearOperation(query)}`;
+    const result = await api('https://api.linear.app/graphql', { method: 'POST',
+      headers: { Authorization: credentials().LINEAR_API_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) }, operation);
+    try { need(!result.errors && result.data, 'ACT_API_FAILED'); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'graphql_errors', codes: graphqlErrorCodes(result.errors) }); }
+    return result.data;
+  }
+  // THE LINEAR READ DOOR. The fixture card is read at least four times per
+  // arming - once per fixture at `binding`, twice inside each transition, once
+  // per `ready-<id>` step - and each of those was a POST carrying a GraphQL
+  // QUERY with no retry at all, so a single Linear 429, 5xx or socket timeout
+  // aborted the whole arming under a bare ACT_API_FAILED. The query is a read:
+  // it names one issue and asks for four fields. The guard below is the proof
+  // that only a read reaches the retried loop, stated as a refusal rather than
+  // as a comment: the operation name is re-derived from the query TEXT by
+  // linearOperation(), and a query text that does not begin `query <Name>`
+  // refuses before any call is made. `mutation Shu71Fixture` therefore cannot
+  // pass, and the issueUpdate below still fails on its first error.
+  const linearRead = (query, variables) => {
+    const operation = `linear:${linearOperation(query)}`;
+    need(operation.startsWith('linear:query:'), 'ACT_API_FAILED');
+    return retriedRead(operation, () => linear(query, variables));
+  };
   async function issue(t) {
-    const { issue: v } = await linear('query Shu71Fixture($id: String!) { issue(id: $id) { id identifier state { id } assignee { id } } }', { id: t.linear_id });
+    const { issue: v } = await linearRead('query Shu71Fixture($id: String!) { issue(id: $id) { id identifier state { id } assignee { id } } }', { id: t.linear_id });
     need(v?.identifier === t.issue_id && v.id === t.linear_id && v.state?.id, 'ACT_WRONG_FIXTURE');
     return { state_id: v.state.id, assignee_id: v.assignee?.id ?? null };
   }
@@ -168,7 +502,32 @@ export function createShu71Production(id, b = shu71Boundary) {
     need(restoring || sameFixtureCard(current, t.before), 'ACT_PRIOR_STATE_DRIFT');
     const result = await linear('mutation Shu71Fixture($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }',
       { id: t.linear_id, input: { stateId: target.state_id, assigneeId: target.assignee_id } });
-    need(result.issueUpdate?.success === true && sameFixtureCard(await issue(t), target), 'ACT_PARTIAL_ARMING');
+    // A WRITE WE JUST MADE, READ BACK. The update reported success and the very
+    // next read could still answer the PRE-update card, because Linear answers
+    // reads from replicas - so a landed transition halted the whole arming on
+    // ACT_PARTIAL_ARMING over a card that was already correct. This RE-READS.
+    // The mutation above is issued exactly once and is never re-issued: it is
+    // not a compare-and-set, the drift guard two lines up has already been
+    // consumed, and re-writing could overwrite a concurrent human transition.
+    // The re-read is bounded by the same attempt count, the same backoff, the
+    // same shared per-invocation sleep budget and the same authorization expiry
+    // as every other retried read, and it ACCEPTS ONLY the target card: an
+    // update that never landed, a card a concurrent transition moved somewhere
+    // else, and a card that stayed at `before` all run the loop out and refuse
+    // ACT_PARTIAL_ARMING under exactly the name and condition they refuse under
+    // today, because the comparison is re-MADE rather than softened.
+    need(result.issueUpdate?.success === true, 'ACT_PARTIAL_ARMING');
+    let observed = await issue(t), attempts = 1;
+    while (!sameFixtureCard(observed, target) && attempts < READ_RETRY.attempts) {
+      const delay = READ_RETRY.delaysMs[attempts - 1];
+      if (delay === undefined || delay > readRetryBudgetMs || !(b.now() < authorizationEnds)) break;
+      readRetryBudgetMs -= delay;
+      await readWait(delay);
+      observed = await issue(t);
+      attempts++;
+    }
+    if (attempts > 1) recordReadRetry(`linear:readback:${t.issue_id}`, attempts);
+    need(sameFixtureCard(observed, target), 'ACT_PARTIAL_ARMING');
   }
   function git(spec, args, options = {}) {
     // Git runs as the checkout identity, never as root with a safe.directory bypass.
@@ -214,15 +573,31 @@ export function createShu71Production(id, b = shu71Boundary) {
       const ref = `refs/heads/${fixture.branch}`;
       const local = gitText(spec, ['rev-parse', '--verify', ref]);
       const remote = gitText(spec, ['ls-remote', '--refs', REMOTE, ref], { remote: true });
-      const readback = await github(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);
-      need(local === expected && remote === `${expected}\t${ref}` && readback.object?.sha === expected, 'ACT_REF_BINDING');
+      const readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);
+      // The same three terms, in the same order, refusing under the same code -
+      // and the refusal now says WHICH of them disagreed. The three values are
+      // measured above exactly as before, so no read is added or removed.
+      requireLegs([['local', local === expected], ['remote', remote === `${expected}\t${ref}`],
+        ['readback', readback.object?.sha === expected]], 'ACT_REF_BINDING');
       result[fixture.branch] = expected;
     }
     const revision = spec.pkg.coordinator_revision;
-    need(gitText(spec, ['rev-parse', 'HEAD']) === revision && gitText(spec, ['rev-parse', 'refs/heads/main']) === revision
-      && gitText(spec, ['status', '--porcelain']) === '' && gitText(spec, ['rev-parse', 'HEAD^{tree}']) === spec.tree, 'ACT_REVISION_BINDING');
-    need(gitText(spec, ['ls-remote', '--refs', REMOTE, 'refs/heads/main'], { remote: true }) === `${revision}\trefs/heads/main`
-      && (await github('git/ref/heads/main')).object?.sha === revision, 'ACT_REVISION_BINDING');
+    // Each leg is a THUNK, so the short-circuit of the conjunction it replaces
+    // is preserved byte for byte: a disagreeing HEAD still means `status
+    // --porcelain` is never run, and a disagreeing local ls-remote still means
+    // the GitHub read-back is never requested. Only the failing leg's NAME is
+    // added; every command, its order and the refusal code are unchanged.
+    requireLegs([
+      ['head', () => gitText(spec, ['rev-parse', 'HEAD']) === revision],
+      ['main', () => gitText(spec, ['rev-parse', 'refs/heads/main']) === revision],
+      ['clean', () => gitText(spec, ['status', '--porcelain']) === ''],
+      ['tree', () => gitText(spec, ['rev-parse', 'HEAD^{tree}']) === spec.tree],
+    ], 'ACT_REVISION_BINDING');
+    // Two statements rather than two thunks, because the second leg is awaited:
+    // the GitHub read-back is reached only when the local ls-remote agreed,
+    // which is exactly the short-circuit of the `&&` this replaces.
+    requireLegs([['remote_main', gitText(spec, ['ls-remote', '--refs', REMOTE, 'refs/heads/main'], { remote: true }) === `${revision}\trefs/heads/main`]], 'ACT_REVISION_BINDING');
+    requireLegs([['readback_main', (await githubRead('git/ref/heads/main')).object?.sha === revision]], 'ACT_REVISION_BINDING');
     return result;
   }
   function authority() {
@@ -248,33 +623,60 @@ export function createShu71Production(id, b = shu71Boundary) {
     return spec;
   }
   async function execute(action) {
-    need(['run', 'resume', 'revoke', 'expire'].includes(action), 'ACT_COMMAND_INVALID');
-    directory(ROOT); directory(dir);
-    for (const target of [ROOT, dir]) {
-      const s = f.lstatSync(target);
-      need(s.uid === 0 && s.gid === 0 && (s.mode & 0o7777) === 0o700, 'ACT_FILE_CUSTODY');
-    }
     let spec, journal, recovered = false;
-    try { spec = JSON.parse(privateRead(`${dir}/custody.json`)); }
-    catch (e) { if (e.code !== 'ENOENT') throw e; }
-    if (!spec) {
-      spec = authority();
-      // Independent cleanup authority precedes the journal and every mutation.
-      atomic(`${dir}/custody.json`, JSON.stringify(spec));
-    }
-    need(spec.pkg?.activation_id === id, 'ACT_OWNER_APPROVAL');
+    // THE PRE-ARM REGION NAMES ITS OWN REFUSALS. Everything from the action
+    // vocabulary to the journal open sat OUTSIDE the covering try below, so
+    // every refusal it raises - ACT_COMMAND_INVALID, ACT_FILE_CUSTODY from the
+    // episode directories, the five ACT_OWNER_APPROVAL guards inside
+    // authority(), ACT_JOURNAL_CUSTODY / _TORN / _INVALID, and every raw errno
+    // from privateRead and atomic - escaped to the CLI's outer catch and was
+    // printed as one fixed string with no episode, no path and no code. Those
+    // are precisely the refusals that say the operator's approval document, the
+    // episode custody or the journal is wrong: the ones an operator most needs
+    // to read, and the ones that left no evidence at all.
+    //
+    // This handler ADDS THE NAME AND NOTHING ELSE. It runs no effect and
+    // attempts no teardown: nothing in this region has established custody of
+    // anything a teardown could act on, the covering handler's own teardown
+    // branch is unchanged, and a pre-custody failure must not order effects
+    // against an episode it never took custody of. Every refusal's condition,
+    // its code and its ordering are byte-unchanged; a parse failure is reported
+    // as ACT_PRODUCTION_FAILED exactly as today, because a SyntaxError carries
+    // no reviewed code and its message quotes the offending source text.
     try {
-      try { privateRead(`${dir}/recovery.jsonl`); recovered = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      journal = openActivationJournal(dir, f, recovered ? 'recovery.jsonl' : 'journal.jsonl', coordinatorIdentity());
+      need(['run', 'resume', 'revoke', 'expire'].includes(action), 'ACT_COMMAND_INVALID');
+      directory(ROOT); directory(dir);
+      for (const target of [ROOT, dir]) {
+        const s = f.lstatSync(target);
+        need(s.uid === 0 && s.gid === 0 && (s.mode & 0o7777) === 0o700, 'ACT_FILE_CUSTODY');
+      }
+      try { spec = JSON.parse(privateRead(`${dir}/custody.json`)); }
+      catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (!spec) {
+        spec = authority();
+        // Independent cleanup authority precedes the journal and every mutation.
+        atomic(`${dir}/custody.json`, JSON.stringify(spec));
+      }
+      need(spec.pkg?.activation_id === id, 'ACT_OWNER_APPROVAL');
+      // Read retries may never outlive the authorization they are serving.
+      authorizationEnds = Date.parse(spec.pkg.expires_at);
+      try {
+        try { privateRead(`${dir}/recovery.jsonl`); recovered = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        journal = openActivationJournal(dir, f, recovered ? 'recovery.jsonl' : 'journal.jsonl', coordinatorIdentity());
+      }
+      catch {
+        // Preserve a damaged log byte-for-byte. Custody is enough to revoke the
+        // exact episode, but never to resume forward signing or activation.
+        recovered = true;
+        try { journal = openActivationJournal(dir, f, 'recovery.jsonl', coordinatorIdentity()); }
+        catch { journal = { entries: [], append() { throw new Error('ACT_EVIDENCE_WRITE_FAILED'); }, close() {} }; }
+      }
+      journal.recovered = recovered;
+    } catch (error) {
+      try { journal?.close(); } catch { /* the refusal is the outcome */ }
+      return { ok: false, state: 'HALT', code: haltCode(error?.code),
+        ...commandFailureRecord(error), ...apiFailureRecord(error), ...commandRetryRecord() };
     }
-    catch {
-      // Preserve a damaged log byte-for-byte. Custody is enough to revoke the
-      // exact episode, but never to resume forward signing or activation.
-      recovered = true;
-      try { journal = openActivationJournal(dir, f, 'recovery.jsonl', coordinatorIdentity()); }
-      catch { journal = { entries: [], append() { throw new Error('ACT_EVIDENCE_WRITE_FAILED'); }, close() {} }; }
-    }
-    journal.recovered = recovered;
     const initial = journal.entries.find(e => e.event === 'APPROVED');
     try {
       if (!initial) journal.append({ event: 'APPROVED', spec });
@@ -342,7 +744,14 @@ export function createShu71Production(id, b = shu71Boundary) {
         revision: pkg.coordinator_revision, mainRevision: pkg.coordinator_revision, now: new Date(b.now()),
         heads: Object.fromEntries(pkg.fixtures.map(v => [v.branch, v.issue_id === 'SHU-140' ? pkg.reseed.expected_parent : v.seed_head])),
         issues: pkg.fixtures.map(v => ({ issue_id: v.issue_id, linear_id: v.linear_id })) });
-      need(checked.ok, 'ACT_PACKAGE_VALIDATION');
+      // The validator already names WHICH of its guards refused -
+      // ACT_STALE_SEED, ACT_TRUST_ANCHOR_INVALID, ACT_PACKAGE_MALFORMED - and
+      // that name was discarded, so the halt said only "validation". Its own
+      // reviewed CODE is carried through; its `detail` is free text authored
+      // inside the validator and is not reported. The code, the condition and
+      // the ordering of this refusal are unchanged.
+      try { need(checked.ok, 'ACT_PACKAGE_VALIDATION'); }
+      catch (error) { throw Object.assign(error, reviewedCode(checked.code) ? { package_code: checked.code } : {}); }
       await step('expiry-watch', () => installExpiry(spec));
       await step('local-reseed', async () => {
         const adapter = createReseedAppendIo({ git: (args, options) => git(spec, args, options), binding: spec.binding });
@@ -355,12 +764,40 @@ export function createShu71Production(id, b = shu71Boundary) {
         verifyReseedCommit({ git: (args, options) => git(spec, args, options), binding: spec.binding, oid: next });
         const observed = gitText(spec, ['ls-remote', '--refs', REMOTE, ref], { remote: true });
         if (observed !== `${next}\t${ref}`) {
-          need(observed === `${old}\t${ref}`, 'ACT_REF_BINDING');
+          requireLegs([['lease', observed === `${old}\t${ref}`]], 'ACT_REF_BINDING');
           git(spec, ['merge-base', '--is-ancestor', old, next]);
-          git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true });
+          // THE PUSH IS A MUTATION AND IS NEVER RE-ISSUED. A push can LAND and
+          // still report failure - a connection reset after the pack was
+          // accepted, a spawn that hit the 30 s cap - and a re-push can never
+          // succeed afterwards, because the lease is `=old` while the ref is
+          // already `next`, so a retry here cannot converge by construction.
+          // The recovery is therefore a RE-READ, and it accepts the step only
+          // on the one value that means the mutation already happened. A ref
+          // still at `old` means the push really did fail; a ref at any third
+          // sha is someone else's write; both rethrow the ORIGINAL refusal,
+          // ACT_COMMAND_FAILED, carrying the failing command. A read that
+          // itself fails rethrows it too. Nothing here is accepted on trust
+          // either: heads(spec, true) on the next line re-reads this same ref
+          // from the remote AND from the GitHub API and requires it to equal
+          // `next`, and the comparison below re-establishes the ancestry, so
+          // every condition this recovery passes over is measured again
+          // immediately afterwards before the step can complete.
+          try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true }); }
+          catch (error) {
+            let after;
+            try { after = gitText(spec, ['ls-remote', '--refs', REMOTE, ref], { remote: true }); }
+            catch { throw error; }
+            if (after !== `${next}\t${ref}`) throw error;
+            // Recorded the same way every other read that raced is recorded,
+            // and deliberately NOT as a new durable journal class: the reviewed
+            // append inventory is closed, and the evidence a re-read adds
+            // belongs with the other read-retry evidence rather than in a new
+            // row shape of its own.
+            recordReadRetry(`git:ls-remote:${pkg.reseed.branch}`, 2);
+          }
         }
         await heads(spec, true);
-        const comparison = await github(`compare/${old}...${next}`);
+        const comparison = await githubRead(`compare/${old}...${next}`);
         need(comparison.status === 'ahead' && comparison.merge_base_commit?.sha === old, 'ACT_REMOTE_ANCESTRY');
       });
       await step('evidence-broker', () => {
@@ -394,23 +831,68 @@ export function createShu71Production(id, b = shu71Boundary) {
       await step('dropin-readback', () => {
         for (const file of GATES) installedReadback(file, '[Service]\nEnvironment=ENABLE_DISPATCH=true\n', 0, 0o644, 'DROPIN');
       }, /* remeasure on resume */ true);
+      // ARMED IS A MEASURED CLAIM, NOT AN EXIT STATUS. A Type=simple unit's
+      // start job is satisfied once the child has been forked and exec'd, so
+      // `systemctl restart` exits 0 for a supervisor that dies a moment later,
+      // and this step then appended ARMED and returned it - dispatch enabled
+      // behind a supervisor that may not be running, which is the opposite of
+      // a halt and costs more. The state the step claims is READ BACK from
+      // systemd now, exactly as the broker step already reads back its socket,
+      // and a supervisor that is not measurably active-and-running refuses by
+      // its own name BEFORE the ARMED row is written. Nothing is retried here:
+      // `restart` and `start` are mutations and are still issued exactly once
+      // each. The two `show` reads that follow them are reads.
+      //
+      // The step also repeats. It was the only forward step whose effect a
+      // resume could skip while still appending ARMED: `journalEffect` returns
+      // early on a durable DONE row, so a process that died between this step
+      // and the ARMED append resumed into an ARMED claim over gates written by
+      // a process whose supervisor THIS invocation never restarted and never
+      // measured. It is re-established and re-measured on every invocation now,
+      // like activation-readback, dropin-readback and broker-runtime before it.
       await step('gate', () => {
         command('/usr/bin/systemctl', ['daemon-reload']);
         command('/usr/bin/systemctl', ['restart', 'shu-supervisor.service']);
         command('/usr/bin/systemctl', ['start', 'shu-coordinator.timer']);
-      });
+        need(measuredPredicate(() => unitProperty('shu-supervisor.service', 'ActiveState') === 'active'
+          && unitProperty('shu-supervisor.service', 'SubState') === 'running'), 'ACT_GATE_NOT_LIVE');
+        need(measuredPredicate(() => unitProperty('shu-coordinator.timer', 'ActiveState') === 'active'), 'ACT_GATE_NOT_LIVE');
+      }, /* re-establish and re-measure on resume */ true);
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
-      return { ok: true, state: 'ARMED', activation_id: id };
+      return { ok: true, state: 'ARMED', activation_id: id, ...readRetryRecord(), ...commandRetryRecord() };
     } catch (error) {
-      const code = [...READBACK_CODES, ...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
-        'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
-        'ACT_CODE_BINDING', 'ACT_OWNER_APPROVAL', 'ACT_FILE_CUSTODY', 'ACT_API_FAILED', 'ACT_WRONG_FIXTURE', 'ACT_PARTIAL_ARMING'].includes(error?.code)
-        ? error.code : 'ACT_PRODUCTION_FAILED';
+      // A REFUSAL KEEPS ITS OWN NAME. This was a hand-maintained allow-list of
+      // codes the halt was permitted to report, and every refusal reachable on
+      // the arming path that the list had not been taught - SHU251_ENV_*,
+      // ACT_CREDENTIAL_UNAVAILABLE, the twelve SHU71_RESEED_* names, the three
+      // ACT_JOURNAL_* names - was reported as the generic ACT_PRODUCTION_FAILED,
+      // so the operator read "production failed" for a missing GITHUB_TOKEN, a
+      // torn journal or a seed that did not match its contract. haltCode()
+      // admits a name by the reviewed SHAPE instead, so a newly named refusal
+      // is preserved without editing this line; an error with no code, a
+      // non-string code, an errno, an AssertionError or arbitrary text is still
+      // ACT_PRODUCTION_FAILED exactly as before, and the shape itself is what
+      // keeps the door closed - no token, header, URL or message text can be
+      // spelled as one of three fixed prefixes followed by upper case.
+      const code = haltCode(error?.code);
       // Name the documented configuration key the reviewed parser refused on.
       // Key names are public contract vocabulary; no value is ever reported.
       const named = typeof error?.key === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(error.key) ? { missing_key: error.key } : {};
-      try { journal.append({ event: 'HALTED', code, ...named }); } catch { /* safety effects still run */ }
-      if (spec) return { ok: false, state: 'HALT', code, ...named, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
+      // WHICH call failed and WHAT happened. The halt this correction answers
+      // reported ACT_API_FAILED with neither a route nor a status, so the failing
+      // read could not be reconstructed from the evidence at all. The detail is
+      // additive and sanitized by apiFailureDetail(); `code` is unchanged.
+      // The same for the rest of the halt's evidence: WHICH host command failed
+      // and with what status, WHICH leg of a multi-term binding check
+      // disagreed, and WHICH of the package validator's own guards refused -
+      // each re-derived through a closed pattern or a numeric range, each
+      // carrying a name and never a value, and each absent from the record
+      // entirely when the halt has nothing of that kind to report.
+      const detail = { ...apiFailureRecord(error), ...commandFailureRecord(error), ...bindingLegRecord(error),
+        ...(reviewedCode(error?.package_code) ? { package_code: error.package_code } : {}),
+        ...readRetryRecord(), ...commandRetryRecord() };
+      try { journal.append({ event: 'HALTED', code, ...named, ...detail }); } catch { /* safety effects still run */ }
+      if (spec) return { ok: false, state: 'HALT', code, ...named, ...detail, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
       return { ok: false, state: 'HALT', code: 'ACT_OWNER_APPROVAL' };
     } finally { journal.close(); }
   }
@@ -423,6 +905,22 @@ export function createShu71Production(id, b = shu71Boundary) {
     atomic(`/etc/systemd/system/shu71-expiry-${id}.timer`, timer, 0, 0, 0o644);
     command('/usr/bin/systemctl', ['daemon-reload']);
     command('/usr/bin/systemctl', ['enable', '--now', `shu71-expiry-${id}.timer`]);
+    // THE ONLY UNATTENDED TEARDOWN TRIGGER, MEASURED RATHER THAN ASSUMED. The
+    // exit status of `enable --now` was taken as proof the mechanism took;
+    // nothing read back whether the timer is actually enabled and active, nor
+    // whether the two durable unit files are present and in root custody. If
+    // the timer did not take, the `Expiry -> ExecStart ... expire <id>` wake
+    // never fires and the window can stay armed past expires_at until an
+    // operator notices - and every step after this one proceeded regardless.
+    // This asserts the exact end state the teardown side already measures,
+    // negated: both unit files present and held in root custody by the same
+    // predicate retirement uses, the timer enabled, and the timer active. It
+    // refuses by its own name rather than claiming an installation, and a read
+    // that never answered refuses as ACT_TEARDOWN_MEASUREMENT rather than as
+    // either. Reads only: nothing is issued a second time.
+    need(measuredPredicate(() => EXPIRY_UNITS.every(file => !unitFileAbsent(file) && expiryUnitCustody(file))
+      && ['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
+      && unitProperty(expiryTimerUnit, 'ActiveState') === 'active'), 'ACT_EXPIRY_NOT_INSTALLED');
   }
   // Whether this episode ever started the supervisor unit or installed its
   // expiry timer is a durable journal fact, never an inference from what the
@@ -711,7 +1209,14 @@ export function createShu71Production(id, b = shu71Boundary) {
         try { remove(ACTIVATION_FILE); }
         catch { failures.push('ACT_TEARDOWN_ACTIVATION'); }
         return { ok: false, state: 'HALT', code: evidenceUnavailable ? 'ACT_RETRY_BUDGET_EXHAUSTED' : 'ACT_RETRY_BUDGET_UNAVAILABLE',
-          budget_error: error.code === 'ACT_RETRY_BUDGET_INVALID' || error instanceof SyntaxError ? 'ACT_RETRY_BUDGET_INVALID' : 'ACT_RETRY_BUDGET_UNAVAILABLE',
+          // Every cause that is neither the counter's own refusal nor a parse
+          // failure - an ACT_FILE_CUSTODY on the counter file, a raw errno -
+          // was reported as "unavailable", which says only that something went
+          // wrong. Both existing outcomes are produced by the same two
+          // conditions in the same order; a third, reviewed cause is named
+          // instead of being flattened into the default.
+          budget_error: error.code === 'ACT_RETRY_BUDGET_INVALID' || error instanceof SyntaxError ? 'ACT_RETRY_BUDGET_INVALID'
+            : reviewedCode(error?.code) ?? 'ACT_RETRY_BUDGET_UNAVAILABLE',
           failures, operator_action: 'resume_or_revoke' };
       }
     }
@@ -837,5 +1342,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     } else {
       const result = await shu71Cli(argv); process.stdout.write(JSON.stringify(result) + '\n'); process.exitCode = result.ok ? 0 : 1;
     }
-  } catch { process.stdout.write('{"ok":false,"code":"ACT_PRODUCTION_FAILED"}\n'); process.exitCode = 1; }
+  // The last door. Anything that escapes shu71Cli - the argv refusal, a
+  // constructor refusal, a pre-arm refusal the module could not report itself -
+  // reached here and was printed as one fixed string, so the CLI's only
+  // evidence of a refusal said nothing about which refusal it was. It reports
+  // the reviewed name now, through the same closed shape the halt record uses;
+  // anything that is not a reviewed name still prints exactly the line it
+  // printed before.
+  } catch (error) { process.stdout.write(JSON.stringify({ ok: false, code: haltCode(error?.code) }) + '\n'); process.exitCode = 1; }
 }

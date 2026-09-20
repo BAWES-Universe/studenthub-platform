@@ -101,7 +101,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
   let signatures = 0;
   const active = new Map(), enabled = new Set(), started = new Set(), loaded = new Set();
-  const systemd = { killRequiresProcesses: false, unitFileViewCached: false };
+  const systemd = { killRequiresProcesses: false, unitFileViewCached: false, subStates: new Map() };
   // Enablement is a durable INSTALL SYMLINK in <target>.wants/, not a flag on
   // the unit file. `systemctl enable` creates it, `disable` removes it, and
   // removing the unit file does NOT take it with it - which is why a unit whose
@@ -139,7 +139,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   // into a unit's ExecStart. `null` models an operator CLI run, outside systemd
   // entirely, where the variable is absent and nothing is ever excluded.
   const selfInvocation = { id: null };
-  const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
+  const boundary = { fs: f, runtimeWait: async () => {}, readWait: async () => {}, uid: () => 0, now: () => now,
     invocationId: () => selfInvocation.id,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
@@ -194,6 +194,19 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
             output = `${unitFile(unit) || wants.has(unit) ? (enabled.has(unit) ? 'enabled' : 'disabled') : ''}\n`; return;
           }
           if (argv[0] === 'show' && argv.includes('--property=InvocationID')) { output = `${invocationOf(argv.at(-1))}\n`; return; }
+          // systemd reports a unit's SubState independently of its ActiveState:
+          // a Type=simple unit whose process is alive is active/running, a unit
+          // whose start job was satisfied and whose process then died is
+          // reported by the host as active only until systemd notices. The two
+          // are modelled separately here so a control can construct exactly the
+          // state the gate read-back exists for - `restart` exited 0 and the
+          // supervisor is NOT live - which a model deriving one from the other
+          // cannot represent at all. Default derives from ActiveState so every
+          // existing control is unaffected; systemd.subStates pins a unit.
+          if (argv[0] === 'show' && argv.includes('--property=SubState')) {
+            const unit = argv.at(-1), state = active.get(unit) ?? 'inactive';
+            output = `${systemd.subStates.get(unit) ?? (state === 'active' ? 'running' : state === 'activating' ? 'start' : 'dead')}\n`; return;
+          }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
           // Measured on the target host during shu71-mint-00000017: systemctl
           // kill exits 1 for a unit this episode never started, and

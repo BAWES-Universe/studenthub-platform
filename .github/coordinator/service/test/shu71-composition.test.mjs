@@ -37,7 +37,22 @@ async function composition(t) {
   ], 'B1_ADDITIVE_PHASE_JOURNAL_WRITES');
   const readerProbes = p.events.slice(armStart).filter(e => e.startsWith('command:/usr/bin/setpriv:') && e.includes('/usr/bin/node') && e.includes(credential));
   assert.equal(readerProbes.length, 1, 'B1_ADDITIVE_ACTIVATION_READER_PROBE');
-  assert.equal(effects(p, armStart) - phaseRows.length - readerProbes.length, 116 + 5 + 7 + 4, 'B1_ARM_EFFECT_COUNT');
+  // Plus exactly five MEASURED READS this correction adds and no other effect:
+  // the expiry installation reads back its timer's UnitFileState and
+  // ActiveState, and the gate step reads back the supervisor's ActiveState and
+  // SubState and the dispatch timer's ActiveState, each before the state they
+  // stand for is claimed. All five are `systemctl show`; nothing is written,
+  // started, enabled or restarted that was not written, started, enabled or
+  // restarted before.
+  const measuredReadbacks = p.events.slice(armStart).filter(e => [
+    `command:/usr/bin/systemctl:show --property=UnitFileState --value shu71-expiry-${p.id}.timer`,
+    `command:/usr/bin/systemctl:show --property=ActiveState --value shu71-expiry-${p.id}.timer`,
+    'command:/usr/bin/systemctl:show --property=ActiveState --value shu-supervisor.service',
+    'command:/usr/bin/systemctl:show --property=SubState --value shu-supervisor.service',
+    'command:/usr/bin/systemctl:show --property=ActiveState --value shu-coordinator.timer',
+  ].includes(e));
+  assert.equal(measuredReadbacks.length, 5, 'B1_ADDITIVE_MEASURED_READBACKS');
+  assert.equal(effects(p, armStart) - phaseRows.length - readerProbes.length, 116 + 5 + 7 + 4 + 5, 'B1_ARM_EFFECT_COUNT');
   assert.deepEqual(p.events.slice(armStart).filter(e => e.startsWith('command:')).slice(0, 5), [
     'command:/usr/bin/systemctl:show --property=User --value shu-supervisor.service',
     'command:/usr/bin/systemctl:show --property=Group --value shu-supervisor.service',

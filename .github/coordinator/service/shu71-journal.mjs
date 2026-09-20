@@ -6,6 +6,23 @@ import { createHash } from 'node:crypto';
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 export function activationError(code) { return Object.assign(new Error(code), { code }); }
 export function requireActivation(condition, code) { if (!condition) throw activationError(code); }
+// THE REVIEWED REFUSAL VOCABULARY, stated once as a shape rather than as a
+// hand-maintained list. Every refusal this system raises is named
+// `ACT_*`/`SHU251_*`/`SHU71_*`; the allow-list that used to decide which of
+// those a halt was allowed to REPORT had to be extended by hand for every new
+// name, and everything it had not been taught - the environment codes,
+// ACT_CREDENTIAL_UNAVAILABLE, the whole SHU71_RESEED_* family, the journal
+// family - was silently reported as the generic ACT_PRODUCTION_FAILED. A
+// reviewed name is preserved BY CONSTRUCTION now.
+//
+// The shape is also what makes this safe to report: upper case, digits and
+// underscores after one of three fixed prefixes, at most 51 characters. No
+// token, header, URL, path, response body or message text can be spelled that
+// way, so nothing a credential could ride in on is admitted, and an error with
+// no code, a non-string code or arbitrary text is not a reviewed name and is
+// reported exactly as it is today.
+export const REFUSAL_CODE_PATTERN = /^(?:ACT|SHU251|SHU71)_[A-Z0-9_]{2,44}$/;
+export const reviewedCode = code => typeof code === 'string' && REFUSAL_CODE_PATTERN.test(code) ? code : null;
 export function openActivationJournal(directory, f = fs, name = 'journal.jsonl', coordinator = null) {
   const C = f.constants;
   let current = '/';
@@ -77,12 +94,25 @@ export async function teardownActivation(journal, effects, reason) {
       }
     }
     catch (error) {
-      failures.push(`ACT_TEARDOWN_${step.toUpperCase().replaceAll('-', '_')}`);
+      const stepCode = `ACT_TEARDOWN_${step.toUpperCase().replaceAll('-', '_')}`;
+      failures.push(stepCode);
       // The step's own failure says WHICH reviewed effect refused; a refusal
       // that carries its own name says WHY, and is reported under that name too
       // rather than being flattened into the step. Additive: no existing
       // failure entry is renamed, removed or reordered by this.
-      if (error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE') failures.push(error.code);
+      //
+      // Generalised from the single ACT_TEARDOWN_EXPIRY_SERVICE case to EVERY
+      // reviewed refusal name. The teardown reported step codes only, so the
+      // real cause of a failed step - ACT_SERVICE_CLEANUP from a unit that
+      // would not stop, ACT_FILE_CUSTODY from a gate drop-in, ACT_API_FAILED
+      // from a fixture restore, ACT_TEARDOWN_MEASUREMENT from a read that never
+      // answered - was dropped, and an operator reading `failures` learned
+      // which effect refused but never why. The name is admitted by the
+      // reviewed shape rather than by a list, so a newly named refusal is
+      // preserved without editing this line; an errno, an AssertionError or any
+      // other unnamed failure adds nothing, and the step's own code is never
+      // duplicated.
+      if (error?.code !== stepCode && reviewedCode(error?.code)) failures.push(error.code);
       // If journal storage is unavailable, independent safety effects must still
       // be attempted. They are narrow, idempotent and do not grant authority.
       if (step !== 'expiry-timer') {

@@ -36,7 +36,10 @@ test('process identity refuses before all production effects', t => {
 test('approval file custody refuses before authority or signing', async t => {
   const h = productionFixture(t, keys), file = `/etc/shu/approvals/${h.id}.shu71.json`;
   h.write(file, h.read(file), 0o600, 999);
-  await assert.rejects(createShu71Production(h.id, h.boundary).execute('run'), e => e.code === 'ACT_FILE_CUSTODY', 'B1_APPROVAL_CUSTODY');
+  // Returned as a named halt now, not thrown out of the module unnamed.
+  const result = await createShu71Production(h.id, h.boundary).execute('run').catch(error => ({ code: `threw:${error?.code}` }));
+  assert.equal(result.code, 'ACT_FILE_CUSTODY', 'B1_APPROVAL_CUSTODY');
+  assert.equal(result.state, 'HALT', 'B1_APPROVAL_CUSTODY');
   assert.equal(h.signatures(), 0);
 });
 test('fixture ref readback refuses before signing', async t => {

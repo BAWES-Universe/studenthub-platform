@@ -1425,17 +1425,35 @@ export async function fetchIssueComments({ issueId, token, fetchImpl = fetch }) 
   return data?.issue?.comments?.nodes ?? [];
 }
 
-// fetchBranchHead — current commit SHA of a branch (stale-SHA checks in the
-// lifecycle pass). Reads only; contents:read token suffices.
-export async function fetchBranchHead({ repo, branch, token, fetchImpl = fetch }) {
-  if (!token || !repo || !branch) return null;
+// measureBranchHead — the same read, reporting whether it ANSWERED.
+// `fetchBranchHead` answers `null` for a branch that genuinely does not exist
+// AND for a read that never answered - a 429, a 5xx, a body that would not
+// parse - so a caller had no way to tell "the branch moved or is absent" from
+// "the remote could not be read", and at least one caller reported the second
+// as the first. This returns the measurement: `ok` is true only when the server
+// answered 2xx, `status` is the HTTP status it answered with, and `sha` is what
+// the old function returns in every case.
+//
+// Purely additive. A transport fault still THROWS out of here exactly as it did
+// before, the missing-argument case still yields a null sha, a non-2xx still
+// yields a null sha, and fetchBranchHead below is the same function it was -
+// same conditions, same order, same value - so every existing caller keeps the
+// contract it was written against.
+export async function measureBranchHead({ repo, branch, token, fetchImpl = fetch }) {
+  if (!token || !repo || !branch) return { ok: false, status: null, sha: null };
   const res = await fetchImpl(`https://api.github.com/repos/${repo}/branches/${encodeURIComponent(branch)}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
   });
-  if (!res.ok) return null;
+  if (!res.ok) return { ok: false, status: res.status, sha: null };
   const body = await res.json().catch(() => null);
-  return body?.commit?.sha ?? null;
+  return { ok: true, status: res.status, sha: body?.commit?.sha ?? null };
+}
+
+// fetchBranchHead — current commit SHA of a branch (stale-SHA checks in the
+// lifecycle pass). Reads only; contents:read token suffices.
+export async function fetchBranchHead(request) {
+  return (await measureBranchHead(request)).sha;
 }
 
 // Receipt comments: the receipt JSON is embedded in a fenced block so it can be

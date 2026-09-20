@@ -65,7 +65,14 @@ const mutations = [
     const result = await create(h.id, h.boundary).execute('resume');
     assert.equal(result.code, 'ACT_SIGNING_AMBIGUOUS', 'B1_AMBIGUOUS_SIGNING_NOT_REPEATED');
   }],
-  ['untyped exception text returned', "? error.code : 'ACT_PRODUCTION_FAILED';", '? error.code : error.message;', async (create, h) => {
+  // Anchor updated in place for the pattern-based halt code; the mutation's
+  // name, its control and its assertion are unchanged. The hand-maintained
+  // allow-list it used to anchor on is now haltCode(), which admits a reviewed
+  // NAME and maps everything else to ACT_PRODUCTION_FAILED; the mutant is the
+  // same defect expressed against it - report the exception's text in place of
+  // the sanitized code whenever the code is not a reviewed name.
+  ['untyped exception text returned', '      const code = haltCode(error?.code);',
+    "      const code = reviewedCode(error?.code) ?? String(error?.message ?? 'ACT_PRODUCTION_FAILED');", async (create, h) => {
     h.faults.before = name => name === 'card:SHU-140';
     const result = await create(h.id, h.boundary).execute('run');
     assert.doesNotMatch(JSON.stringify(result) + JSON.stringify(h.journal()), /SECRET_POISON/, 'B4_NO_EXCEPTION_TEXT');
@@ -345,7 +352,11 @@ for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${na
 // that shape and dies by the control's own named assertion.
 test('B1/B4 mutation: refusal predicate evaluated inside need()', async t => {
   predicateRefusalCheck(await import('../shu71-production.mjs'));
-  const before = 'export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };';
+  // Anchor updated in place: a throw is now the named MEASUREMENT refusal
+  // rather than a mapped false. The mutant is the same defect - the predicate
+  // evaluated bare, so its exception escapes in place of any named refusal -
+  // and it dies by the same control's same assertion.
+  const before = 'export const measuredPredicate = predicate => { try { return predicate() === true; } catch (error) { throw measurementFailure(error); } };';
   const after = 'export const measuredPredicate = predicate => predicate() === true;';
   assert.equal(source.split(before).length, 2, 'B1_MUTATION_ANCHOR_UNIQUE');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-mutant-'));

@@ -10,7 +10,25 @@ import { hostProbe, preflight as capabilityPreflight } from './host-suite-contra
 
 export const productionBoundary = Object.freeze({ fs, uid: () => process.getuid(), now: () => Date.now(), apiEnv: () => ({ GH_TOKEN: process.env.GH_TOKEN }), wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
   run: (file, args, options) => spawnSync(file, args, { encoding: 'utf8', timeout: 30000, ...options }) });
-function guard(code, condition) { if (!condition) refuse(code); }
+function guard(code, condition, detail = '') { if (!condition) refuse(code, detail); }
+// argv, CLOSED. Every element must be a bare command token - the characters a
+// path, a `gh api` route, a git ref, a unit name or a flag is made of - and
+// anything else is reported as `-` in its own position rather than echoed. The
+// child's ENV is never reported: boundary.apiEnv() injects GH_TOKEN into this
+// wrapper's children, and stderr is not reported either, because a transport
+// error or a credential helper can echo a header into it.
+const PROVIDER_ARGUMENT = /^[A-Za-z0-9_@%:=+,./-]{1,80}$/;
+const providerArguments = args => (Array.isArray(args) ? args : []).slice(0, 8)
+  .map(value => typeof value === 'string' && PROVIDER_ARGUMENT.test(value) ? value : '-').join(' ');
+// Phase-A's read retry, and the only retry in this module. remoteMain()'s two
+// legs are network READS - `git ls-remote` and a `gh api` GET - and each of
+// them aborted every Phase-A step that calls preflight on its first failure, so
+// one GitHub rate limit or one DNS blip refused as SHU251_CHECKOUT_REMOTE, a
+// code that otherwise means main has genuinely moved. Three attempts and
+// 200/400 ms, only for a measured SHU251_PROVIDER_COMMAND failure, and only for
+// the CALL: the values these reads return are compared afterwards and are never
+// retried, so a persistently different sha still refuses on its first answer.
+const REMOTE_READ = Object.freeze({ attempts: 3, delaysMs: Object.freeze([200, 400]) });
 const equal = (a, b) => canonical(a) === canonical(b);
 const identity = s => `${s.dev}:${s.ino}`;
 const mode = s => s.mode & 0o777;
@@ -26,10 +44,28 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
   let custody = null;
   const env = { PATH: '/usr/bin:/bin', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: w.repo_dir };
+  // This wrapper carries git, `gh api`, systemctl, flock, id and ss, and named
+  // NONE of them: the refusal said `SHU251_PROVIDER_COMMAND` and nothing else,
+  // so a failed `gh api` route, a failed `systemctl show` and a failed `git
+  // rev-parse` were indistinguishable in the emitted halt. It now names the
+  // executable, the argv and the exit status, in the shape
+  // phase-a-driver.mjs's own wrapper already uses.
   function command(file, args, options = {}) {
     const result = run(file, args, { env, ...options });
-    guard('SHU251_PROVIDER_COMMAND', !result.error && result.status === 0);
+    guard('SHU251_PROVIDER_COMMAND', !result.error && result.status === 0, `${file} ${providerArguments(args)}: ${result.status}`);
     return result.stdout.trim();
+  }
+  // A synchronous backoff for a synchronous read. Atomics.wait parks the thread
+  // for the requested time rather than spinning; a boundary may supply its own.
+  const readWait = ms => (boundary.readWait ?? (delay => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); }))(ms);
+  function retriedRead(read) {
+    for (let attempt = 1; ; attempt++) {
+      try { return read(); }
+      catch (error) {
+        if (error?.code !== 'SHU251_PROVIDER_COMMAND' || attempt >= REMOTE_READ.attempts) throw error;
+        readWait(REMOTE_READ.delaysMs[attempt - 1]);
+      }
+    }
   }
   function stat(p) { try { return f.lstatSync(p); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
   // Every ancestor is inspected. Operations below pinned directory descriptors
@@ -124,10 +160,15 @@ export function createProductionLifecycle(spec, boundary = productionBoundary) {
   }
   function remoteMain() {
     guard('SHU251_CHECKOUT_REMOTE', /^https:\/\/github\.com\/BAWES-Universe\/studenthub-platform(?:\.git)?$/.test(w.remote_url));
-    const remote = git(['ls-remote', '--exit-code', w.remote_url, 'refs/heads/main']);
-    const api = command('/usr/bin/gh', ['api', 'repos/BAWES-Universe/studenthub-platform/commits/main', '--jq', '[.sha,.commit.tree.sha]|@tsv'],
-      { env: { ...env, ...(boundary.apiEnv?.() ?? {}) } });
-    guard('SHU251_CHECKOUT_REMOTE', remote === `${w.approved_sha}\trefs/heads/main` && api === `${w.approved_sha}\t${c.approved_tree}`);
+    // Both reads are retried; neither COMPARISON is. The guard is split so the
+    // refusal names which leg disagreed - the remote ref or the API commit -
+    // under the same code and the same two conditions, evaluated in the same
+    // order, so a moved main refuses exactly as it does today.
+    const remote = retriedRead(() => git(['ls-remote', '--exit-code', w.remote_url, 'refs/heads/main']));
+    const api = retriedRead(() => command('/usr/bin/gh', ['api', 'repos/BAWES-Universe/studenthub-platform/commits/main', '--jq', '[.sha,.commit.tree.sha]|@tsv'],
+      { env: { ...env, ...(boundary.apiEnv?.() ?? {}) } }));
+    guard('SHU251_CHECKOUT_REMOTE', remote === `${w.approved_sha}\trefs/heads/main`, 'remote_ref');
+    guard('SHU251_CHECKOUT_REMOTE', api === `${w.approved_sha}\t${c.approved_tree}`, 'api_commit');
     return { remote_sha: remote.split('\t')[0], api_sha: api.split('\t')[0], tree: api.split('\t')[1] };
   }
   function checkoutTuple() {

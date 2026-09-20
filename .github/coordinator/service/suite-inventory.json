@@ -25,6 +25,7 @@
     ".github/coordinator/service/test/service-plane.test.mjs",
     ".github/coordinator/service/test/service.test.mjs",
     ".github/coordinator/service/test/shu71-arming-order.test.mjs",
+    ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
     ".github/coordinator/service/test/shu71-composition.test.mjs",
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
@@ -34,6 +35,7 @@
     ".github/coordinator/service/test/shu71-host-contract.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -1944,7 +1946,7 @@
     "a synchronous PASS at the bound head still COMPLETES",
     "a synchronous PASS whose live head cannot be read must HOLD (fail closed)",
     "launch args match the documented CLI contract: exec --json --sandbox workspace-write, never danger-full-access",
-    "a success callback with the broker neither disabled nor configured HOLDs \u2014 never a COMPLETED with nothing pushed",
+    "a success callback with the broker neither disabled nor configured HOLDs — never a COMPLETED with nothing pushed",
     "a network-isolated worker's local evidence is accepted, but a non-http URL never is",
     "a CONFIGURED success path reaches the real broker seam and returns a controlled result, never a crash",
     "an explicit opt-out is the only way to skip the broker, and it still COMPLETEs",
@@ -2041,7 +2043,7 @@
     "SHU-223: existing Codex and Hermes same-family exclusions still hold",
     "SHU-223: independent cross-family verifiers stay eligible",
     "SHU-223: every recognized worker family declares its same-family verifiers",
-    "excluded: unknown / inaccessible state \u2014 never invent backlog",
+    "excluded: unknown / inaccessible state — never invent backlog",
     "excluded: state not Todo (Backlog, In Progress, Done, Canceled)",
     "excluded: active assignee claim",
     "excluded: card naming an out-of-pilot repo",
@@ -2052,13 +2054,13 @@
     "requestedWorkerFor: explicit worker label wins; default codex-builder",
     "snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)",
     "fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract",
-    "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode \u2014 all four launches, nothing seeded, nothing deleted",
-    "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses \u2014 zero writes, zero launches",
-    "SHU-231 A2 (unit): the spend check is the ONLY thing that changed \u2014 an unnamed retained terminal always spends",
+    "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode — all four launches, nothing seeded, nothing deleted",
+    "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses — zero writes, zero launches",
+    "SHU-231 A2 (unit): the spend check is the ONLY thing that changed — an unnamed retained terminal always spends",
     "SHU-231 A3: naming the attempt while REUSING the spent activation_id refuses",
     "SHU-231 A4: a HOLD produced WITHIN the current episode still spends it (SHU-225 untouched)",
     "SHU-231 A5: restart/resume keeps ONE episode identity and one first step",
-    "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot \u2014 capacity stays global",
+    "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot — capacity stays global",
     "SHU-231 A7: a fresh episode never replenishes the cumulative failure budget",
     "SHU-231 A8: with no activation, parking and spending are byte-for-byte unchanged",
     "SHU-231 A9: a callback for the RETIRED attempt cannot satisfy the new attempt",
@@ -2073,7 +2075,7 @@
     "SHU-225 I1/I2: without an armed activation the parking rule is byte-for-byte unchanged",
     "SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor is supplied",
     "SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable",
-    "SHU-225 I3: a successor never takes a second slot \u2014 capacity stays global",
+    "SHU-225 I3: a successor never takes a second slot — capacity stays global",
     "SHU-225 I3: a successor is only selectable once its predecessor's receipt is terminal",
     "SHU-225 I3: a paused successor adapter is skipped, exactly like a first dispatch",
     "SHU-225 I2 (M2): the episode's exception covers only its own bound issue",
@@ -2083,10 +2085,10 @@
     "SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review",
     "SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)",
     "SHU-225 I5 (M4) / I10: the bootstrap is one-shot, and lineage owns routing afterwards",
-    "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused \u2014 independence is CHECKED",
+    "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused — independence is CHECKED",
     "SHU-225 I5/I6 (M9): an unrecognised reviewer lane is refused, never inferred from card text",
     "SHU-225 I6: the activation record's reviewer_lane shape is validated, and stays an exact-key-set surface",
-    "SHU-225 I6: the bootstrap lane comes from the record ONLY \u2014 never from card labels or comment text",
+    "SHU-225 I6: the bootstrap lane comes from the record ONLY — never from card labels or comment text",
     "SHU-225 MUTATIONS: every invariant, live-head boundary, and HOLD stop has a load-bearing guard (M1..M15)",
     "SHU-225 I9: a refused successor path writes nothing (activation refused -> exit 2, zero writes)",
     "SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review -> PASS with NO seeded successor receipts",
@@ -2125,8 +2127,8 @@
     "monitor: missing / corrupt lease -> UNCHANGED (fail closed, never a manufactured failure)",
     "validateCallbackEvidence: missing stage fails closed; only success stages pass",
     "adapterNameFor + adapterModuleFor route hermes-box to hermes-pool",
-    "main(): hermes-box card dispatches through hermes-pool \u2014 lease written, one spawn, durable RUNNING",
-    "main(): second process run polls the same lease \u2014 zero new spawns, state unchanged",
+    "main(): hermes-box card dispatches through hermes-pool — lease written, one spawn, durable RUNNING",
+    "main(): second process run polls the same lease — zero new spawns, state unchanged",
     "main(): worker done WITHOUT callback -> durable HOLD via the pool lease",
     "idempotency key contract matches the cross-adapter convention",
     "F1: the pool's external_run_id satisfies the shared receipt schema",
@@ -2172,7 +2174,7 @@
     "BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest callback wins",
     "BLOCK #3: lifecycle terminal writes use the issue UUID (store rejects identifiers)",
     "BLOCK #4: an unreadable live GitHub head prevents COMPLETED (HOLD, never assume equality)",
-    "BLOCK #5: retries are capped \u2014 after max_failed_attempts the issue parks and never relaunches",
+    "BLOCK #5: retries are capped — after max_failed_attempts the issue parks and never relaunches",
     "SHU-63: the live Linear query uses the supported team filter and requests pagination",
     "SHU-63: fetchLinearIssues follows every Linear page and preserves order",
     "SHU-63: a claimed next page without a usable cursor fails closed",
@@ -2261,7 +2263,7 @@
     "run_status queued/in_progress/suspended keeps RUNNING and updates adapter_status",
     "run completed WITH validated callback -> COMPLETED with evidence links",
     "completed WITHOUT validated callback -> HOLD (never auto-COMPLETED)",
-    "invariant: stale-SHA verdict is rejected \u2014 old PASS never satisfies a changed head",
+    "invariant: stale-SHA verdict is rejected — old PASS never satisfies a changed head",
     "invariant: timeout alone NEVER changes state and NEVER releases the slot",
     "invariant: LAUNCH_UNKNOWN retry reuses the SAME Idempotency-Key (attempt_id immutable)",
     "failure -> FAILED with error code in notes; quota/access failure pauses the adapter",
@@ -2311,9 +2313,9 @@
     "route: BLOCKED review -> revision routes back to the ACTIVE WRITER, same runtime",
     "route: reviewer that EDITED becomes an author and rotates out next round",
     "route: no eligible reviewer -> visible HOLD, never a relaunch storm",
-    "route: revisions are BOUND \u2014 exhaustion is a terminal HOLD at max_revise+1",
+    "route: revisions are BOUND — exhaustion is a terminal HOLD at max_revise+1",
     "route: BLOCKED outcome NEVER leaks into successor orders (revise or next review)",
-    "route: malformed attempt_id is rejected before routing \u2014 no non-UUID successor can be minted",
+    "route: malformed attempt_id is rejected before routing — no non-UUID successor can be minted",
     "route: PASS is terminal (stop before merge)",
     "freshAttempt: deterministic, lineage-traceable, unique per stage/round",
     "shared Git identity can never fabricate independence (derived actor is not a session)",
@@ -2564,7 +2566,7 @@
     "SHU-260 lost response: committed create is recovered by deterministic lookup",
     "SHU-260 raw-text leakage is impossible",
     "SHU-260 missing evidence cannot create or update a repair",
-    "SHU-260 durable incident\u2192repair\u2192PR\u2192verdict\u2192merge lineage and no premature resume",
+    "SHU-260 durable incident→repair→PR→verdict→merge lineage and no premature resume",
     "SHU-260 self-edit: triage has no filesystem or execution-plane capability",
     "SHU-260 mutation M1 unknown-reason auto-routing",
     "SHU-260 mutation M2 product-decision leakage",
@@ -2661,12 +2663,12 @@
     "SHU261 host validation pins every sentinel directory class",
     "SHU261 process marker verifies observable cmdline before confinement",
     "bridge: role/runtime mapping covers the three worker lanes",
-    "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
+    "bridge: provenanceFromReceipt requires a worker identity — anonymous receipts never route",
     "bridge: verdict stages map to the intended routing outcome",
-    "bridge: lane/verdict compatibility \u2014 a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
+    "bridge: lane/verdict compatibility — a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
     "routeSuccessorFromReceipts: completed build -> review order bound to the EVIDENCE result head",
     "routeSuccessorFromReceipts: a review BLOCK routes a REVISE back to the active writer",
-    "routeSuccessorFromReceipts: PASS is terminal \u2014 no successor order",
+    "routeSuccessorFromReceipts: PASS is terminal — no successor order",
     "routeSuccessorFromReceipts: no eligible reviewer -> visible HOLD, nothing minted",
     "routeSuccessorFromReceipts: revision exhaustion is a terminal HOLD, never an endless loop",
     "routeSuccessorFromReceipts: lane mismatch fails closed (builder BLOCK never routes)",
@@ -2680,9 +2682,9 @@
     "wiring: a polled COMPLETED build with an eligible reviewer posts the review directive via the durable backfill pass",
     "wiring: no eligible reviewer -> visible hold, ZERO directives posted",
     "wiring: dispatch-disabled makes zero writes even when a verdict-bearing receipt is seeded",
-    "routing: forged result_sha (\u2260 verified authoritative head) FAILS CLOSED \u2014 attacker cannot choose the successor head",
+    "routing: forged result_sha (≠ verified authoritative head) FAILS CLOSED — attacker cannot choose the successor head",
     "routing: matching authoritative head routes and binds the VERIFIED head, not the volatile evidence",
-    "routing: replay determinism \u2014 same input yields the SAME successor attempt id (backfill dedup key)",
+    "routing: replay determinism — same input yields the SAME successor attempt id (backfill dedup key)",
     "SHU71_POSITIVE: reviewed package validates in prepared and seeded phases",
     "SHU71_ACTIVATION_ID: malformed and previously retained identities HALT",
     "SHU71_STALE_SEED: either lane drifting from its exact seed HALTs",
@@ -2814,8 +2816,8 @@
     "SHU-63 activation: the episode ENDS on PASS, exhausted attempts, or a verdict the routing cannot continue",
     "SHU-63 activation: a mid-episode step with a ROUTABLE successor is never spent early",
     "SHU-63 activation: exhaustion is evaluated BEFORE hold, when the routing reports both",
-    "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns \u2014 or expiry",
-    "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns \u2014 or expiry",
+    "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns — or expiry",
+    "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns — or expiry",
     "SHU-63 activation: the duplicated coherence predicate agrees with reconcile's",
     "SHU-63 activation: the claim-time target check is narrow by construction",
     "SHU-63 activation: the record shape is exactly the reviewed key set",
@@ -3004,7 +3006,7 @@
     "202 with run id but no parseable body -> LAUNCH_UNKNOWN (never a phantom run)",
     "poll response maps the documented statuses and surfaces agent_id as worker_identity",
     "quota/access walls FAIL and demand an adapter pause",
-    "monitorRun with MISSING credentials fails closed (UNCHANGED \u2014 never a manufactured upstream failure)",
+    "monitorRun with MISSING credentials fails closed (UNCHANGED — never a manufactured upstream failure)",
     "SHU-228 mutation: M1 callback before commit",
     "SHU-228 mutation: M2 worker Git directory",
     "SHU-228 mutation: M3 worker index",
@@ -3521,7 +3523,135 @@
     "B1/B4 arming-order mutation: field comparison stops reading state_id",
     "B1/B4 arming order: the field comparison stays closed to the two reviewed keys",
     "B1/B4 arming-order mutation: field comparison accepts a differently-shaped card",
-    "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys"
+    "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys",
+    "B5 post-push read-back: a transient ref read-back is retried and the window arms",
+    "B5 post-push read-back: a landed push whose comparison is not answerable yet still arms",
+    "B5 post-push read-back: a persistently failing read still refuses under the same name",
+    "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried",
+    "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried",
+    "B5 post-push read-back: a failing push is never retried",
+    "B5 post-push read-back: a failing Linear issueUpdate is never retried",
+    "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation",
+    "B5 post-push read-back: retrying stops at the authorization expiry",
+    "B5 post-push read-back: the halt names the failing route and status and carries no secret",
+    "B5 post-push read-back: a GraphQL refusal is named by its codes",
+    "B5 post-push read-back: the reported detail is closed to the reviewed fields",
+    "B5 post-push read-back: only a measured transient outcome is retryable",
+    "B5 post-push read-back mutation: the retry policy allows a single attempt",
+    "B5 post-push read-back mutation: the backoff schedule is emptied",
+    "B5 post-push read-back mutation: the ref read-back goes back to the unretried door",
+    "B5 post-push read-back mutation: the post-push comparison goes back to the unretried door",
+    "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing",
+    "B5 post-push read-back mutation: the overall sleep budget is not enforced",
+    "B5 post-push read-back mutation: the authorization expiry does not stop the retry",
+    "B5 post-push read-back mutation: a definitive status is treated as transient",
+    "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees",
+    "B5 post-push read-back mutation: the ancestry comparison itself is retried until it agrees",
+    "B5 post-push read-back mutation: the push is retried like a read",
+    "B5 post-push read-back mutation: the halt record drops the measured API detail",
+    "B5 post-push read-back mutation: a failed call is no longer described at all",
+    "B5 post-push read-back mutation: the GraphQL error codes are not collected",
+    "B5 post-push read-back mutation: the operation label is echoed unsanitized",
+    "B5 post-push read-back mutation: the status is echoed unchecked",
+    "B5 post-push read-back mutation: the GraphQL codes are echoed unfiltered",
+    "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
+    "B5 post-push read-back mutation: the reason vocabulary is opened",
+    "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
+    "B5 post-push read-back mutation: every reason is retryable once a status matches",
+    "B6 arming robustness: a failed measurement is not a state claim about the host",
+    "B6 arming robustness: a transient unit read is retried and the teardown completes",
+    "B6 arming robustness: a genuinely live expiry companion still refuses by its own name",
+    "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms",
+    "B6 arming robustness: a persistently failing Linear read still refuses under the same name",
+    "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried",
+    "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried",
+    "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused",
+    "B6 arming robustness: a transient ls-remote failure is retried and the window arms",
+    "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation",
+    "B6 arming robustness: a boundary that throws is never retried and echoes no text",
+    "B6 arming robustness: a persistently failing ls-remote names the command it ran",
+    "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg",
+    "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed",
+    "B6 arming robustness: the credential store is opened at most once per invocation",
+    "B6 arming robustness: an absent coordinator credential refuses under its own name",
+    "B6 arming robustness: a short supervisor transport secret refuses under its own name",
+    "B6 arming robustness: the failing binding leg is short-circuited and named",
+    "B6 arming robustness: the package validator own refusal is carried into the halt",
+    "B6 arming robustness: a failed teardown step names its cause as well as its step",
+    "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+    "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+    "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)",
+    "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+    "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+    "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)",
+    "B6 arming robustness: a card read-back that never reaches the target still refuses (never)",
+    "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)",
+    "B6 arming robustness: a push that did not land still refuses (old)",
+    "B6 arming robustness: a push that did not land still refuses (third)",
+    "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+    "B6 arming robustness: a systemctl mutation is attempted exactly once (start)",
+    "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)",
+    "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+    "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)",
+    "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)",
+    "B6 arming robustness: the disagreeing binding leg is named (readback)",
+    "B6 arming robustness: the disagreeing binding leg is named (local)",
+    "B6 arming robustness: the disagreeing binding leg is named (clean)",
+    "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
+    "B6 arming robustness: the CLI names the refusal it caught",
+    "B6 arming robustness: the reported command detail is closed to the reviewed fields",
+    "B6 arming robustness: only a reviewed refusal name reaches a halt record",
+    "B6 arming robustness: only an enumerated host read may be repeated",
+    "B6 arming robustness mutation: a failed measurement is reported as the state the caller named",
+    "B6 arming robustness mutation: the host-command read retry is removed",
+    "B6 arming robustness mutation: the supervisor liveness read-back is removed",
+    "B6 arming robustness mutation: the supervisor SubState term is dropped",
+    "B6 arming robustness mutation: the dispatch timer liveness read-back is removed",
+    "B6 arming robustness mutation: the gate step stops repeating on a resume",
+    "B6 arming robustness mutation: the expiry installation read-back is removed",
+    "B6 arming robustness mutation: the expiry enablement term is dropped",
+    "B6 arming robustness mutation: the expiry durable-file term is dropped",
+    "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door",
+    "B6 arming robustness mutation: the Linear issueUpdate is routed through the retried read door",
+    "B6 arming robustness mutation: the card read-back is never re-read",
+    "B6 arming robustness mutation: the card read-back re-issues the write it is reading back",
+    "B6 arming robustness mutation: the card read-back accepts a card that is not the target",
+    "B6 arming robustness mutation: the host-command read policy allows a single attempt",
+    "B6 arming robustness mutation: the host-command backoff schedule is emptied",
+    "B6 arming robustness mutation: the host-command sleep budget is not enforced",
+    "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure",
+    "B6 arming robustness mutation: the push recovery accepts any remote answer",
+    "B6 arming robustness mutation: the push recovery accepts a third sha",
+    "B6 arming robustness mutation: the credential is resolved on every call again",
+    "B6 arming robustness mutation: the failing command is no longer described",
+    "B6 arming robustness mutation: the halt record drops the measured command detail",
+    "B6 arming robustness mutation: the halt code goes back to an allow-list",
+    "B6 arming robustness mutation: the pre-arm region loses its handler again",
+    "B6 arming robustness mutation: the binding leg is no longer named",
+    "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order",
+    "B6 arming robustness mutation: the package validator code is dropped again",
+    "B6 arming robustness mutation: the teardown records step codes without causes",
+    "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
+    "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
+    "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+    "PROVIDER remote main tolerates one transient read on either leg",
+    "PROVIDER remote main still refuses a persistent read failure and a moved main",
+    "PROVIDER a failed provider command names its executable, argv and status",
+    "PROVIDER named mutation remote main read retry removed",
+    "PROVIDER named mutation remote main read retry unbounded",
+    "PROVIDER named mutation remote main legs collapsed into one guard",
+    "PROVIDER named mutation provider command names nothing again",
+    "PROVIDER named mutation provider argv echoed unsanitized",
+    "SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory",
+    "SHU251_REMOTE_INVENTORY measures the branch read without changing fetchBranchHead",
+    "SHU251_REMOTE_INVENTORY mutation: a failed read is reported as a moved inventory again",
+    "SHU251_REMOTE_INVENTORY mutation: the transient read is never retried",
+    "SHU251_REMOTE_INVENTORY mutation: a definitive absence is treated as a race",
+    "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered",
+    "SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement",
+    "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
+    "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
+    "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement"
   ],
   "requirements": [
     {
@@ -16626,7 +16756,7 @@
       ]
     },
     {
-      "name": "a success callback with the broker neither disabled nor configured HOLDs \u2014 never a COMPLETED with nothing pushed",
+      "name": "a success callback with the broker neither disabled nor configured HOLDs — never a COMPLETED with nothing pushed",
       "capabilities": [
         {
           "name": "linux_proc"
@@ -17420,7 +17550,7 @@
       "capabilities": []
     },
     {
-      "name": "excluded: unknown / inaccessible state \u2014 never invent backlog",
+      "name": "excluded: unknown / inaccessible state — never invent backlog",
       "capabilities": []
     },
     {
@@ -17464,15 +17594,15 @@
       "capabilities": []
     },
     {
-      "name": "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode \u2014 all four launches, nothing seeded, nothing deleted",
+      "name": "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode — all four launches, nothing seeded, nothing deleted",
       "capabilities": []
     },
     {
-      "name": "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses \u2014 zero writes, zero launches",
+      "name": "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses — zero writes, zero launches",
       "capabilities": []
     },
     {
-      "name": "SHU-231 A2 (unit): the spend check is the ONLY thing that changed \u2014 an unnamed retained terminal always spends",
+      "name": "SHU-231 A2 (unit): the spend check is the ONLY thing that changed — an unnamed retained terminal always spends",
       "capabilities": []
     },
     {
@@ -17488,7 +17618,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot \u2014 capacity stays global",
+      "name": "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot — capacity stays global",
       "capabilities": []
     },
     {
@@ -17560,7 +17690,7 @@
       ]
     },
     {
-      "name": "SHU-225 I3: a successor never takes a second slot \u2014 capacity stays global",
+      "name": "SHU-225 I3: a successor never takes a second slot — capacity stays global",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -17640,7 +17770,7 @@
       ]
     },
     {
-      "name": "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused \u2014 independence is CHECKED",
+      "name": "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused — independence is CHECKED",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -17664,7 +17794,7 @@
       ]
     },
     {
-      "name": "SHU-225 I6: the bootstrap lane comes from the record ONLY \u2014 never from card labels or comment text",
+      "name": "SHU-225 I6: the bootstrap lane comes from the record ONLY — never from card labels or comment text",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -18024,11 +18154,11 @@
       "capabilities": []
     },
     {
-      "name": "main(): hermes-box card dispatches through hermes-pool \u2014 lease written, one spawn, durable RUNNING",
+      "name": "main(): hermes-box card dispatches through hermes-pool — lease written, one spawn, durable RUNNING",
       "capabilities": []
     },
     {
-      "name": "main(): second process run polls the same lease \u2014 zero new spawns, state unchanged",
+      "name": "main(): second process run polls the same lease — zero new spawns, state unchanged",
       "capabilities": []
     },
     {
@@ -18212,7 +18342,7 @@
       "capabilities": []
     },
     {
-      "name": "BLOCK #5: retries are capped \u2014 after max_failed_attempts the issue parks and never relaunches",
+      "name": "BLOCK #5: retries are capped — after max_failed_attempts the issue parks and never relaunches",
       "capabilities": []
     },
     {
@@ -18701,7 +18831,7 @@
       "capabilities": []
     },
     {
-      "name": "invariant: stale-SHA verdict is rejected \u2014 old PASS never satisfies a changed head",
+      "name": "invariant: stale-SHA verdict is rejected — old PASS never satisfies a changed head",
       "capabilities": []
     },
     {
@@ -19013,7 +19143,7 @@
       "capabilities": []
     },
     {
-      "name": "route: revisions are BOUND \u2014 exhaustion is a terminal HOLD at max_revise+1",
+      "name": "route: revisions are BOUND — exhaustion is a terminal HOLD at max_revise+1",
       "capabilities": []
     },
     {
@@ -19021,7 +19151,7 @@
       "capabilities": []
     },
     {
-      "name": "route: malformed attempt_id is rejected before routing \u2014 no non-UUID successor can be minted",
+      "name": "route: malformed attempt_id is rejected before routing — no non-UUID successor can be minted",
       "capabilities": []
     },
     {
@@ -20973,7 +21103,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-260 durable incident\u2192repair\u2192PR\u2192verdict\u2192merge lineage and no premature resume",
+      "name": "SHU-260 durable incident→repair→PR→verdict→merge lineage and no premature resume",
       "capabilities": []
     },
     {
@@ -22066,7 +22196,7 @@
       "capabilities": []
     },
     {
-      "name": "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
+      "name": "bridge: provenanceFromReceipt requires a worker identity — anonymous receipts never route",
       "capabilities": []
     },
     {
@@ -22074,7 +22204,7 @@
       "capabilities": []
     },
     {
-      "name": "bridge: lane/verdict compatibility \u2014 a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
+      "name": "bridge: lane/verdict compatibility — a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
       "capabilities": []
     },
     {
@@ -22086,7 +22216,7 @@
       "capabilities": []
     },
     {
-      "name": "routeSuccessorFromReceipts: PASS is terminal \u2014 no successor order",
+      "name": "routeSuccessorFromReceipts: PASS is terminal — no successor order",
       "capabilities": []
     },
     {
@@ -22142,7 +22272,7 @@
       "capabilities": []
     },
     {
-      "name": "routing: forged result_sha (\u2260 verified authoritative head) FAILS CLOSED \u2014 attacker cannot choose the successor head",
+      "name": "routing: forged result_sha (≠ verified authoritative head) FAILS CLOSED — attacker cannot choose the successor head",
       "capabilities": []
     },
     {
@@ -22150,7 +22280,7 @@
       "capabilities": []
     },
     {
-      "name": "routing: replay determinism \u2014 same input yields the SAME successor attempt id (backfill dedup key)",
+      "name": "routing: replay determinism — same input yields the SAME successor attempt id (backfill dedup key)",
       "capabilities": []
     },
     {
@@ -22858,7 +22988,7 @@
       ]
     },
     {
-      "name": "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns \u2014 or expiry",
+      "name": "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns — or expiry",
       "capabilities": [
         {
           "name": "git"
@@ -22866,7 +22996,7 @@
       ]
     },
     {
-      "name": "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns \u2014 or expiry",
+      "name": "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns — or expiry",
       "capabilities": [
         {
           "name": "git"
@@ -24383,7 +24513,7 @@
       "capabilities": []
     },
     {
-      "name": "monitorRun with MISSING credentials fails closed (UNCHANGED \u2014 never a manufactured upstream failure)",
+      "name": "monitorRun with MISSING credentials fails closed (UNCHANGED — never a manufactured upstream failure)",
       "capabilities": []
     },
     {
@@ -27349,6 +27479,558 @@
     {
       "name": "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys",
       "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a transient ref read-back is retried and the window arms",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a landed push whose comparison is not answerable yet still arms",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a persistently failing read still refuses under the same name",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a failing push is never retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a failing Linear issueUpdate is never retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: retrying stops at the authorization expiry",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the halt names the failing route and status and carries no secret",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a GraphQL refusal is named by its codes",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the reported detail is closed to the reviewed fields",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: only a measured transient outcome is retryable",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the retry policy allows a single attempt",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the backoff schedule is emptied",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the ref read-back goes back to the unretried door",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the post-push comparison goes back to the unretried door",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the overall sleep budget is not enforced",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: a definitive status is treated as transient",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the ancestry comparison itself is retried until it agrees",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the push is retried like a read",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the halt record drops the measured API detail",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: a failed call is no longer described at all",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the GraphQL error codes are not collected",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the operation label is echoed unsanitized",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the status is echoed unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the GraphQL codes are echoed unfiltered",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the reason vocabulary is opened",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: every reason is retryable once a status matches",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a failed measurement is not a state claim about the host",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a transient unit read is retried and the teardown completes",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely live expiry companion still refuses by its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a persistently failing Linear read still refuses under the same name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a transient ls-remote failure is retried and the window arms",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a boundary that throws is never retried and echoes no text",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a persistently failing ls-remote names the command it ran",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the credential store is opened at most once per invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: an absent coordinator credential refuses under its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a short supervisor transport secret refuses under its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the failing binding leg is short-circuited and named",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the package validator own refusal is carried into the halt",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a failed teardown step names its cause as well as its step",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a card read-back that never reaches the target still refuses (never)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a push that did not land still refuses (old)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a push that did not land still refuses (third)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a systemctl mutation is attempted exactly once (start)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the disagreeing binding leg is named (readback)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the disagreeing binding leg is named (local)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the disagreeing binding leg is named (clean)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the CLI names the refusal it caught",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the reported command detail is closed to the reviewed fields",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: only a reviewed refusal name reaches a halt record",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: only an enumerated host read may be repeated",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command read retry is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the supervisor liveness read-back is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the supervisor SubState term is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the dispatch timer liveness read-back is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the gate step stops repeating on a resume",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the expiry installation read-back is removed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the expiry enablement term is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the expiry durable-file term is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the Linear issueUpdate is routed through the retried read door",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the card read-back is never re-read",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the card read-back re-issues the write it is reading back",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the card read-back accepts a card that is not the target",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command read policy allows a single attempt",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command backoff schedule is emptied",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command sleep budget is not enforced",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the push recovery accepts any remote answer",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the push recovery accepts a third sha",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the credential is resolved on every call again",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the failing command is no longer described",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the halt record drops the measured command detail",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the halt code goes back to an allow-list",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the pre-arm region loses its handler again",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the binding leg is no longer named",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the package validator code is dropped again",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the teardown records step codes without causes",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER remote main tolerates one transient read on either leg",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER remote main still refuses a persistent read failure and a moved main",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER a failed provider command names its executable, argv and status",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation remote main read retry removed",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation remote main read retry unbounded",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation remote main legs collapsed into one guard",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation provider command names nothing again",
+      "capabilities": []
+    },
+    {
+      "name": "PROVIDER named mutation provider argv echoed unsanitized",
+      "capabilities": []
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY measures the branch read without changing fetchBranchHead",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a failed read is reported as a moved inventory again",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: the transient read is never retried",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a definitive absence is treated as a race",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a non-2xx answer is measured as though it answered",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [
