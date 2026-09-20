@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createShu71Production } from '../shu71-production.mjs';
+import { createShu71Production, sameFixtureCard } from '../shu71-production.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
 const keys = ephemeralPublicSource();
@@ -127,6 +127,25 @@ async function readyDriftCheck(create, h) {
     assert.deepEqual(h.states.get(e.issue_id), e.restore, 'B1_READY_GENUINE_DRIFT_REFUSED');
 }
 
+// Order-insensitivity is not shapelessness. The two-key closure is not
+// reachable through the entrypoint - issue() constructs exactly
+// { state_id, assignee_id } and validateShu71Package's exactObject holds the
+// artifact card to exactly those two keys - so it is proved directly on the
+// exported comparison, which is the only place a differently-shaped object can
+// be presented to it.
+function shapeClosureCheck(sameCard) {
+  assert.equal(sameCard({ state_id: 'S', assignee_id: 'A' }, { assignee_id: 'A', state_id: 'S' }), true, 'B1_SHAPE_BOTH_ORDERS_ACCEPTED');
+  for (const [a, b] of [
+    [{ state_id: 'S', assignee_id: 'A', extra: 1 }, { assignee_id: 'A', state_id: 'S' }],
+    [{ assignee_id: 'A', state_id: 'S' }, { state_id: 'S', assignee_id: 'A', extra: 1 }],
+  ]) assert.equal(sameCard(a, b), false, 'B1_SHAPE_EXTRA_KEY_REFUSED');
+  for (const [a, b] of [
+    [{ state_id: 'S', extra: 1 }, { state_id: 'S', extra: 1 }],
+    [{ assignee_id: 'A', extra: 1 }, { extra: 1, assignee_id: 'A' }],
+  ]) assert.equal(sameCard(a, b), false, 'B1_SHAPE_MISSING_FIELD_REFUSED');
+  assert.equal(sameCard({ state_id: 'S', assignee_id: 'A' }, { assignee_id: 'Z', state_id: 'S' }), false, 'B1_SHAPE_GENUINE_DRIFT_REFUSED');
+}
+
 const controls = [
   ['canonical mint key order arms the window', canonical, canonicalArmsCheck],
   ['construction key order still arms the window', construction, constructionArmsCheck],
@@ -139,6 +158,8 @@ const controls = [
 ];
 for (const [name, fixture, check] of controls)
   test(`B1/B4 arming order: ${name}`, async t => { await check(createShu71Production, fixture(t)); });
+test('B1/B4 arming order: the field comparison stays closed to the two reviewed keys',
+  () => shapeClosureCheck(sameFixtureCard));
 
 const HELPER = "  && FIXTURE_CARD_FIELDS.every(field => a[field] === b[field]);";
 const mutations = [
@@ -167,20 +188,46 @@ const mutations = [
   ['field comparison stops reading state_id', HELPER,
     "  && ['assignee_id'].every(field => a[field] === b[field]);", canonical, readyDriftCheck],
 ];
+// One anchored substitution, loaded from a disposable path. A module-load or
+// syntax error cannot count as a kill.
+async function loadMutant(t, before, after) {
+  assert.equal(source.split(before).length, 2, 'B1_MUTATION_ANCHOR_UNIQUE');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-order-mutant-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const modified = source.replace(before, after).replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
+    (_, prefix, quote, relative) => `${prefix}${quote}${new URL(relative, moduleUrl).href}${quote}`);
+  const file = path.join(root, 'production.mjs'); fs.writeFileSync(file, modified);
+  return import(pathToFileURL(file));
+}
+
+// The killing assertion is reported, not merely counted.
+async function killedBy(t, run) {
+  let killed = null;
+  await assert.rejects(run, error => {
+    killed = error; return error.code === 'ERR_ASSERTION' && /B[14]_/.test(error.message);
+  }, 'B1_MUTATION_NAMED_ASSERTION');
+  t.diagnostic(`killed by ${/B[14]_[A-Z_0-9]+/.exec(killed.message)?.[0]}`);
+}
+
 for (const [name, before, after, fixture, check] of mutations)
   test(`B1/B4 arming-order mutation: ${name}`, async t => {
     await check(createShu71Production, fixture(t));
-    assert.equal(source.split(before).length, 2, 'B1_MUTATION_ANCHOR_UNIQUE');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-order-mutant-'));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const modified = source.replace(before, after).replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
-      (_, prefix, quote, relative) => `${prefix}${quote}${new URL(relative, moduleUrl).href}${quote}`);
-    const file = path.join(root, 'production.mjs'); fs.writeFileSync(file, modified);
-    const mutant = await import(pathToFileURL(file)); // module-load/syntax errors cannot count as kills
-    let killed = null;
-    await assert.rejects(check(mutant.createShu71Production, fixture(t)), error => {
-      killed = error; return error.code === 'ERR_ASSERTION' && /B[14]_/.test(error.message);
-    }, 'B1_MUTATION_NAMED_ASSERTION');
-    // The killing assertion is reported, not merely counted.
-    t.diagnostic(`killed by ${/B[14]_[A-Z_0-9]+/.exec(killed.message)?.[0]}`);
+    const mutant = await loadMutant(t, before, after);
+    await killedBy(t, () => check(mutant.createShu71Production, fixture(t)));
+  });
+
+// The two doors of the two-key closure. Neither is reachable through the
+// entrypoint - the eight controls above all pass under both of these mutants -
+// so each is killed by the direct control instead.
+const shapeMutations = [
+  ['field comparison accepts a differently-shaped card',
+    'Object.keys(card).length === FIXTURE_CARD_FIELDS.length && ', ''],
+  ['field comparison stops requiring both reviewed keys',
+    ' && FIXTURE_CARD_FIELDS.every(field => Object.hasOwn(card, field)))', ')'],
+];
+for (const [name, before, after] of shapeMutations)
+  test(`B1/B4 arming-order mutation: ${name}`, async t => {
+    shapeClosureCheck(sameFixtureCard);
+    const mutant = await loadMutant(t, before, after);
+    await killedBy(t, async () => shapeClosureCheck(mutant.sameFixtureCard));
   });

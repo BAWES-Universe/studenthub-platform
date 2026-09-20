@@ -3518,7 +3518,10 @@
     "B1/B4 arming-order mutation: already-at-target early return reverted to serialization equality",
     "B1/B4 arming-order mutation: field comparison accepts any pair of cards",
     "B1/B4 arming-order mutation: field comparison stops reading assignee_id",
-    "B1/B4 arming-order mutation: field comparison stops reading state_id"
+    "B1/B4 arming-order mutation: field comparison stops reading state_id",
+    "B1/B4 arming order: the field comparison stays closed to the two reviewed keys",
+    "B1/B4 arming-order mutation: field comparison accepts a differently-shaped card",
+    "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys"
   ],
   "requirements": [
     {
@@ -27333,6 +27336,18 @@
     },
     {
       "name": "B1/B4 arming-order mutation: field comparison stops reading state_id",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: the field comparison stays closed to the two reviewed keys",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: field comparison accepts a differently-shaped card",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys",
       "capabilities": []
     }
   ],
