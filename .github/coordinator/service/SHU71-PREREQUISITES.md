@@ -2244,3 +2244,146 @@ which control kills them, for the measured reasons given above:
 `…_service-file-stale-view`) and `expiry retirement ignores unit enablement`
 (now `…_timer-enabled-link`). Several anchors moved in place with the two-unit
 end state and post-condition; no mutant name, control name or assertion changed.
+
+#### Validation of the fourth correction round
+
+Tested implementation `82b6463fe881fe558c90baae82af3a16c21af666`, tree
+`b520b20ea8f5e93186556f05ff66a6dbf882dfa0`. All four commands ran from the
+repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`), which printed
+`CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent
+reviewer=absent` for each: UID 1000, `umask 0022`, target accounts absent
+(`shu-coordinator`, `shu-supervisor`, `shu71-evidence`, `shu-workspace`,
+`messagebus`), `/run` and `/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and
+`/etc/sudoers.d/shu-reviewer` absent, `chmod -R go-w .github/coordinator`,
+`taskset -c 0-3 node --test --test-concurrency=2`, with both the TAP reporter
+and the unchanged `host-suite-contract.mjs` reporter writing separate outputs.
+Plain unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+Every run executed the COMMITTED revision, which the A12 guard requires because
+it reads the inventory from `git show <revision>:suite-inventory.json`.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1645 | 1644 | 0 | 1 | 1 / 1 | 0 | 2.15 → 2.72 |
+| Focused clock | 1645 | 1644 | 0 | 1 | 1 / 1 | 0 | 2.30 → 4.01 |
+| Full plain | 3358 | 3350 | 0 | 8 | 1 / 1 | 0 | 3.39 → 3.10 |
+| Full clock | 3358 | 3350 | 0 | 8 | 1 / 1 | 0 | 2.22 → 2.21 |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line in any of the four TAP outputs. Focused TAP plans are `1..1645`;
+full plans are `1..3353`, with five nested outcomes bringing each full total to
+3,358. Each run's structured report has exactly one terminal `complete` event,
+is terminated by it, and passes the unchanged `evaluateSuite` validator
+(1,645 / 1,645 / 3,358 / 3,358 expected outcomes). Both full runs' 3,358 outcome
+names are exactly the committed inventory's 3,358 names, with identical
+multiplicities — zero missing and zero extra — and `A12 committed inventory
+requirements match real outcomes` passes in both (`ok 2142`). Every skip in all
+four runs is a `PERMITTED_SKIPS` entry carrying that entry's exact documented
+reason, byte-for-byte (checked against the exported object, not by eye); the
+single focused skip is `SHU-71 restricted capability refusal`.
+
+The focused selection is the sixteen-entry list printed for the previous
+correction round, unchanged — every file this round touches is already in it —
+which expands to 23 test files. The focused total is the previous round's 1,623
+plus this round's 22 inventory names: 1,645. The full total is 3,336 plus the
+same 22: 3,358. The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`
+(113 files, unchanged).
+
+Every mutant in `shu71-production-mutations.test.mjs` and
+`shu71-recovery-mutations.test.mjs` was additionally replayed under an
+instrumented harness that recorded the exact assertion whose failure killed it:
+**89 mutants, 89 kills, no survivors** (88 recorded by the instrumented
+predicate; the 89th, `refusal predicate evaluated inside need()`, uses
+`assert.throws` and was re-verified separately). Every `verified` control name
+in the clause table above is a name that replay printed, including every row
+this round added. Two rows were re-attributed as a result of that replay rather
+than of reasoning — `expiry retirement ignores the companion unit file` and
+`expiry retirement ignores unit enablement`, both of which stopped being
+distinguished by their previous controls once the companion's own terms were
+measured, and both of which now name the control that actually kills them.
+
+`PERMITTED_SKIPS` is byte-identical to `9e1a2d0`: **1,093 bytes** including its
+final newline, SHA-256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The entire
+`host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,336 → 3,358 names and
+requirement rows in a 110-insertion / 0-deletion diff, zero removals and zero
+dropped requirement rows; no test file was added. The reviewed teardown effects
+set and its order are unchanged — this round adds a refusal, not an effect. The
+production change moved two documentation line-number links
+(`shu71-production.mjs#L702` → `#L734` in `SHU71-PREREQUISITES.md` and
+`SHU71-L3-CLOSURE.md`, and `#L646` → `#L678`);
+`V8_DOCUMENTATION_LINK_TARGETS` passes, including its own one-line-drift mutant.
+Only files under `.github/coordinator/**` changed; no push or PR was performed.
+
+##### Measured effect counts, and why three pinned numbers moved
+
+Three suites pin exact measured effect counts, and each moved by the same
+amount for the same reason. Measuring the companion adds exactly five commands
+to every completing retirement: the live-companion refusal reads the companion's
+`ActiveState` once, and both the post-condition and the final retired
+measurement now read the companion's `ActiveState` and `UnitFileState` as well
+as the timer's.
+
+* `shu71-r8-state-model.mjs`: `cleanupEffects` and the settled count are each
+  +5, uniformly, across every one of the 720 reachable R8 states that reaches a
+  retirement — measured, not assumed: the replay produced exactly eight distinct
+  (expected, observed) pairs and every one of them differs by five.
+* `shu71-composition.test.mjs`: `B1_RESUME_EFFECT_COUNT` 75 → 80 and
+  `B1_EXPIRY_EFFECT_COUNT` 79 → 84, for the same five.
+* `B1_REVOKE_OBSERVATION_ONLY` 6 → 9: the retired episode's receipt path gains
+  the companion's liveness refusal plus the companion's two terms in
+  `expiryRetired()`.
+
+No assertion was removed or relaxed to make a count fit; the counts are the
+measurement, and they went up because more is measured.
+
+##### What could not be made consistent
+
+Two things, stated rather than smoothed over.
+
+1. **The third absence tolerance is still there, and is still the one place the
+   owner's rule is literally wider than "nothing else excuses absence".** Where
+   the journal vouches for nothing, a MEASURED `expiryRetired()` excuses an
+   absent unit file, because `B4_EXPIRY_UNINSTALLED_RETIRED_COMPLETES` requires
+   a teardown whose mechanism really is gone to complete rather than wedge for
+   ever, and this lane may not delete that assertion. It is unchanged from the
+   previous round except that it is now strictly narrower: `expiryRetired()`
+   measures the whole mechanism rather than the timer half of it, so the state
+   this round found — a live companion behind an absent timer — no longer
+   satisfies it.
+2. **HALT-by-name has a production consequence on the automatic expiry path,
+   and it is not hypothetical.** `installExpiry()` writes
+   `ExecStart=/usr/bin/node <installedModule> expire <id>` into
+   `shu71-expiry-<id>.service`, and the timer's only job is to start it. So when
+   an expiry teardown is triggered BY THE TIMER, the companion service is the
+   process performing that teardown, and systemd reports a running `Type=oneshot`
+   unit as `activating` — which `unitIdle()` does not accept. That teardown will
+   now disarm both gates, remove the credential, stop the services, restore both
+   fixtures, clean the workspaces, archive and write its manifest, and then halt
+   at the expiry-timer step with `ACT_CLEANUP_FAILED` and
+   `ACT_TEARDOWN_EXPIRY_SERVICE`, leaving the expiry mechanism installed and the
+   episode requiring an operator `resume` or `revoke` — which succeeds, because
+   an operator-invoked teardown is not running inside the companion. The
+   direction of the failure is closed, not open: dispatch is off and the
+   credential is gone before the refusal. This is a REAL degradation of
+   unattended expiry and the owner should see it as one. It was not introduced
+   to satisfy the brief carelessly: the brief requires the companion's liveness
+   to be measured and forbids a silent success, the alternative it offers
+   (stop-then-verify) would have the teardown SIGTERM itself under
+   `Restart=on-failure`, and adding a self-identification measurement (comparing
+   `INVOCATION_ID` or `MainPID` against this process) would be a new boundary
+   read with its own attack surface, which is more than this round is scoped to
+   introduce. The state the verifier measured is refused either way. **If the
+   owner wants unattended expiry to self-complete, the correct next step is an
+   explicitly reviewed self-identification measurement, not a weakening of the
+   companion terms.** No modelled state in the suite exercises the self-run
+   shape, because the fixture invokes `execute('expire')` directly rather than
+   through a modelled companion service, and this round did not add that shape
+   to the model — that is a gap in the model, recorded here.
+
+Nothing else in P154D-01 through P154D-05 was left open.
