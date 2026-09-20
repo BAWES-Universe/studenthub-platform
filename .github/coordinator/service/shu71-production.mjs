@@ -34,6 +34,74 @@ export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), no
 // first: anything but a measured true is the refusal the caller named.
 export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };
 
+// THE POST-PUSH READ-BACK RACE. `remote-push` pushes the reseed commit and then
+// immediately READS the result back: `git/ref/heads/<branch>`, `git/ref/heads/main`
+// and `compare/<old>...<next>`. GitHub answers those routes from replicas and does
+// not compute a comparison for a just-written SHA instantly, so a landed push can
+// be answered 404/5xx for a moment. A single transient answer failed the whole
+// arming even though the push had succeeded and every required condition held -
+// measured on the target host, where the ref, the ancestry and the token were all
+// afterwards exactly what the step demands. These READ-ONLY GETs are therefore
+// retried under this fixed policy, and NOTHING ELSE IS: the push, the Linear
+// issueUpdate, signing, the activation write, the gate drop-ins, every systemctl
+// action and every teardown step still fail on their first error.
+//
+// The bound is fixed and small: five attempts, backing off 1s, 2s, 4s, 8s, so one
+// read waits at most 15s of sleep on top of its own five 10s request timeouts, and
+// a per-invocation budget caps the TOTAL sleep this mechanism may add to a window
+// however many reads race. Retrying also stops at the authorization expiry, so no
+// retry can carry work past the window it was approved for.
+export const READ_RETRY = Object.freeze({ attempts: 5, delaysMs: Object.freeze([1000, 2000, 4000, 8000]), budgetMs: 60000 });
+// TRANSIENT ANSWERS ONLY. 404 is the post-push race itself (a ref or comparison
+// the remote has not published yet); 408/425/429 and 5xx are the server asking to
+// be asked again. A definitive refusal - 400, 401, 403, 410, 422 - is the answer
+// rather than a race and is never retried, so a revoked token or a forbidden route
+// still refuses immediately and is never retried into a later acceptance.
+export const RETRYABLE_READ_STATUS = Object.freeze([404, 408, 409, 425, 429, 500, 502, 503, 504]);
+export const API_REASONS = Object.freeze(['transport', 'response_not_ok', 'response_too_large', 'graphql_errors']);
+// Closed vocabularies. An operation label is a route or a reviewed GraphQL
+// operation name; a code is a GraphQL error code or a transport fault NAME.
+// `%` is admitted because a branch segment is percent-encoded into its route
+// (`git/ref/heads/coordinator%2FSHU-140`); no separator, space, quote or
+// credential character is.
+const API_OPERATION_PATTERN = /^[A-Za-z0-9:/%._-]{1,120}$/;
+const API_CODE_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+// WHAT A FAILED CALL IS ALLOWED TO SAY ABOUT ITSELF. The halt record carried
+// neither the route nor the status, so a real halt could not be attributed to a
+// call at all. This reports the route (or reviewed operation name), the HTTP
+// status, the transport fault name, the GraphQL error CODES and the attempt count
+// - and nothing else. No token, header, URL, query, variable, response body or
+// response text can reach it: every field is re-derived through a closed pattern
+// or a numeric range here, and anything unrecognised is dropped. Idempotent on its
+// own output, so re-sanitizing a detail that has already been through it is safe.
+export function apiFailureDetail(detail = {}) {
+  const record = {};
+  record.operation = typeof detail.operation === 'string' && API_OPERATION_PATTERN.test(detail.operation) ? detail.operation : 'unknown';
+  if (API_REASONS.includes(detail.reason)) record.reason = detail.reason;
+  if (Number.isSafeInteger(detail.status) && detail.status >= 100 && detail.status <= 599) record.status = detail.status;
+  if (typeof detail.fault === 'string' && API_CODE_PATTERN.test(detail.fault)) record.fault = detail.fault;
+  const codes = (Array.isArray(detail.codes) ? detail.codes : []).filter(code => typeof code === 'string' && API_CODE_PATTERN.test(code));
+  if (codes.length) record.codes = [...new Set(codes)].slice(0, 8);
+  if (Number.isSafeInteger(detail.attempts) && detail.attempts > 0) record.attempts = detail.attempts;
+  return record;
+}
+// GraphQL reports its refusals inside a 200. Only the CODES are named.
+export const graphqlErrorCodes = errors => (Array.isArray(errors) ? errors : [])
+  .flatMap(error => [error?.extensions?.code, error?.extensions?.type, error?.code]).filter(code => typeof code === 'string');
+export const apiFailureRecord = error => {
+  const detail = error?.api;
+  return detail !== null && typeof detail === 'object' && !Array.isArray(detail) ? { api_failure: apiFailureDetail(detail) } : {};
+};
+// A RETRYABLE OUTCOME IS A MEASURED ONE. Only a transport/timeout fault or a
+// transient HTTP status qualifies; a refusal that carries no measured API detail
+// - including every non-API refusal - is not retryable at all.
+export const retryableApiFailure = error => {
+  const detail = error?.api;
+  if (detail === null || typeof detail !== 'object') return false;
+  if (detail.reason === 'transport') return true;
+  return detail.reason === 'response_not_ok' && RETRYABLE_READ_STATUS.includes(detail.status);
+};
+
 // A fixture card is MEASURED off Linear as { state_id, assignee_id }, while the
 // approved artifact is canonicalized - keys SORTED - before the owner signs it,
 // so the identical card deserializes as { assignee_id, state_id }. Serialization
@@ -142,20 +210,81 @@ export function createShu71Production(id, b = shu71Boundary) {
     }
     return result;
   }
-  async function api(url, options = {}) {
-    const result = await b.fetch(url, { ...options, signal: AbortSignal.timeout(10000) });
-    need(result.ok, 'ACT_API_FAILED');
+  // Per-invocation retry state. The budget is the TOTAL sleep this mechanism may
+  // add to one window however many reads race, so the bound holds across calls and
+  // not merely within one. `authorizationEnds` is the approved expiry, set once the
+  // owner-approved spec is in hand; while it is unset nothing is retried at all.
+  let readRetryBudgetMs = READ_RETRY.budgetMs;
+  let authorizationEnds = -Infinity;
+  const readWait = ms => (b.readWait ?? (delay => new Promise(resolve => setTimeout(resolve, delay))))(ms);
+  // A read that RACED and then succeeded leaves evidence of the race; a read that
+  // never retried leaves none, so an unraced window's record is byte-identical to
+  // today's. Bounded in length like every other reported detail.
+  const readRetries = [];
+  const recordReadRetry = (operation, attempts) => {
+    if (readRetries.length < 16) readRetries.push(apiFailureDetail({ operation, attempts }));
+  };
+  const readRetryRecord = () => readRetries.length ? { api_read_retries: [...readRetries] } : {};
+  // Name the failed call on the error the caller already raises. error.code is
+  // never touched here, so every refusal keeps its existing name and conditions
+  // and only gains the measured detail apiFailureDetail() permits.
+  const describeApiFailure = (error, detail) => {
+    try { error.api = apiFailureDetail({ ...error.api, ...detail }); } catch { /* evidence is best-effort, never a new refusal */ }
+    return error;
+  };
+  async function api(url, options = {}, operation = 'unknown') {
+    let result;
+    try { result = await b.fetch(url, { ...options, signal: AbortSignal.timeout(10000) }); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'transport', fault: error?.name }); }
+    try { need(result.ok, 'ACT_API_FAILED'); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'response_not_ok', status: result.status }); }
     const text = await result.text();
-    need(Buffer.byteLength(text) <= 1024 * 1024, 'ACT_API_FAILED');
+    try { need(Buffer.byteLength(text) <= 1024 * 1024, 'ACT_API_FAILED'); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'response_too_large', status: result.status }); }
     return JSON.parse(text);
   }
   const github = route => api(`https://api.github.com/repos/${REPO}/${route}`, {
     headers: { Authorization: `Bearer ${credentials().GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' },
-  });
+  }, `github:${route}`);
+  // THE ONLY RETRIED DOOR IN THIS MODULE, and it opens onto READS ONLY: github()
+  // sets no method, so every call that reaches here is a GET that reads remote
+  // state and changes nothing, and repeating it can repeat only a read. No
+  // mutation is reachable from this function.
+  //
+  // IT RETRIES THE CALL, NEVER A COMPARISON. Any 2xx answer is returned to the
+  // caller unchanged - including one carrying the WRONG sha, or a compare status
+  // that is not 'ahead' - so a genuine state mismatch still refuses on the first
+  // answer under ACT_REF_BINDING / ACT_REVISION_BINDING / ACT_REMOTE_ANCESTRY and
+  // the budget cannot convert it into a pass. When the budget, the attempt count,
+  // the expiry or a definitive status ends the loop, the ORIGINAL error is
+  // rethrown, so a persistent failure still refuses under the same name as today.
+  async function githubRead(route) {
+    const operation = `github:${route}`;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const value = await github(route);
+        if (attempt > 1) recordReadRetry(operation, attempt);
+        return value;
+      } catch (error) {
+        const delay = READ_RETRY.delaysMs[attempt - 1];
+        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)
+          || delay > readRetryBudgetMs || !(b.now() < authorizationEnds)) {
+          if (attempt > 1) recordReadRetry(operation, attempt);
+          throw describeApiFailure(error, { attempts: attempt });
+        }
+        readRetryBudgetMs -= delay;
+        await readWait(delay);
+      }
+    }
+  }
+  const linearOperation = query => /^\s*(query|mutation)\s+([A-Za-z0-9_]+)/.exec(query)?.slice(1).join(':') ?? 'unknown';
   async function linear(query, variables) {
+    const operation = `linear:${linearOperation(query)}`;
     const result = await api('https://api.linear.app/graphql', { method: 'POST',
-      headers: { Authorization: credentials().LINEAR_API_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) });
-    need(!result.errors && result.data, 'ACT_API_FAILED'); return result.data;
+      headers: { Authorization: credentials().LINEAR_API_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) }, operation);
+    try { need(!result.errors && result.data, 'ACT_API_FAILED'); }
+    catch (error) { throw describeApiFailure(error, { operation, reason: 'graphql_errors', codes: graphqlErrorCodes(result.errors) }); }
+    return result.data;
   }
   async function issue(t) {
     const { issue: v } = await linear('query Shu71Fixture($id: String!) { issue(id: $id) { id identifier state { id } assignee { id } } }', { id: t.linear_id });
@@ -214,7 +343,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       const ref = `refs/heads/${fixture.branch}`;
       const local = gitText(spec, ['rev-parse', '--verify', ref]);
       const remote = gitText(spec, ['ls-remote', '--refs', REMOTE, ref], { remote: true });
-      const readback = await github(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);
+      const readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);
       need(local === expected && remote === `${expected}\t${ref}` && readback.object?.sha === expected, 'ACT_REF_BINDING');
       result[fixture.branch] = expected;
     }
@@ -222,7 +351,7 @@ export function createShu71Production(id, b = shu71Boundary) {
     need(gitText(spec, ['rev-parse', 'HEAD']) === revision && gitText(spec, ['rev-parse', 'refs/heads/main']) === revision
       && gitText(spec, ['status', '--porcelain']) === '' && gitText(spec, ['rev-parse', 'HEAD^{tree}']) === spec.tree, 'ACT_REVISION_BINDING');
     need(gitText(spec, ['ls-remote', '--refs', REMOTE, 'refs/heads/main'], { remote: true }) === `${revision}\trefs/heads/main`
-      && (await github('git/ref/heads/main')).object?.sha === revision, 'ACT_REVISION_BINDING');
+      && (await githubRead('git/ref/heads/main')).object?.sha === revision, 'ACT_REVISION_BINDING');
     return result;
   }
   function authority() {
@@ -263,6 +392,8 @@ export function createShu71Production(id, b = shu71Boundary) {
       atomic(`${dir}/custody.json`, JSON.stringify(spec));
     }
     need(spec.pkg?.activation_id === id, 'ACT_OWNER_APPROVAL');
+    // Read retries may never outlive the authorization they are serving.
+    authorizationEnds = Date.parse(spec.pkg.expires_at);
     try {
       try { privateRead(`${dir}/recovery.jsonl`); recovered = true; } catch (e) { if (e.code !== 'ENOENT') throw e; }
       journal = openActivationJournal(dir, f, recovered ? 'recovery.jsonl' : 'journal.jsonl', coordinatorIdentity());
@@ -360,7 +491,7 @@ export function createShu71Production(id, b = shu71Boundary) {
           git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true });
         }
         await heads(spec, true);
-        const comparison = await github(`compare/${old}...${next}`);
+        const comparison = await githubRead(`compare/${old}...${next}`);
         need(comparison.status === 'ahead' && comparison.merge_base_commit?.sha === old, 'ACT_REMOTE_ANCESTRY');
       });
       await step('evidence-broker', () => {
@@ -400,7 +531,7 @@ export function createShu71Production(id, b = shu71Boundary) {
         command('/usr/bin/systemctl', ['start', 'shu-coordinator.timer']);
       });
       journal.append({ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false });
-      return { ok: true, state: 'ARMED', activation_id: id };
+      return { ok: true, state: 'ARMED', activation_id: id, ...readRetryRecord() };
     } catch (error) {
       const code = [...READBACK_CODES, ...RUNTIME_CODES, 'SHU251_ENV_CROSSED', 'SHU71_SUPERVISOR_ENV_REQUIRED', 'ACT_ID_OR_EXPIRY_INVALID', 'ACT_SIGNING_AMBIGUOUS', 'ACT_REF_BINDING', 'ACT_REVISION_BINDING',
         'ACT_PRIOR_STATE_DRIFT', 'ACT_PACKAGE_VALIDATION', 'ACT_COMMAND_FAILED', 'ACT_REMOTE_ANCESTRY',
@@ -409,8 +540,13 @@ export function createShu71Production(id, b = shu71Boundary) {
       // Name the documented configuration key the reviewed parser refused on.
       // Key names are public contract vocabulary; no value is ever reported.
       const named = typeof error?.key === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(error.key) ? { missing_key: error.key } : {};
-      try { journal.append({ event: 'HALTED', code, ...named }); } catch { /* safety effects still run */ }
-      if (spec) return { ok: false, state: 'HALT', code, ...named, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
+      // WHICH call failed and WHAT happened. The halt this correction answers
+      // reported ACT_API_FAILED with neither a route nor a status, so the failing
+      // read could not be reconstructed from the evidence at all. The detail is
+      // additive and sanitized by apiFailureDetail(); `code` is unchanged.
+      const detail = { ...apiFailureRecord(error), ...readRetryRecord() };
+      try { journal.append({ event: 'HALTED', code, ...named, ...detail }); } catch { /* safety effects still run */ }
+      if (spec) return { ok: false, state: 'HALT', code, ...named, ...detail, teardown: await cleanup(spec, journal, 'failure', action === 'expire') };
       return { ok: false, state: 'HALT', code: 'ACT_OWNER_APPROVAL' };
     } finally { journal.close(); }
   }

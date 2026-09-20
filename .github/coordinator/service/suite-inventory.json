@@ -34,6 +34,7 @@
     ".github/coordinator/service/test/shu71-host-contract.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -1944,7 +1945,7 @@
     "a synchronous PASS at the bound head still COMPLETES",
     "a synchronous PASS whose live head cannot be read must HOLD (fail closed)",
     "launch args match the documented CLI contract: exec --json --sandbox workspace-write, never danger-full-access",
-    "a success callback with the broker neither disabled nor configured HOLDs \u2014 never a COMPLETED with nothing pushed",
+    "a success callback with the broker neither disabled nor configured HOLDs — never a COMPLETED with nothing pushed",
     "a network-isolated worker's local evidence is accepted, but a non-http URL never is",
     "a CONFIGURED success path reaches the real broker seam and returns a controlled result, never a crash",
     "an explicit opt-out is the only way to skip the broker, and it still COMPLETEs",
@@ -2041,7 +2042,7 @@
     "SHU-223: existing Codex and Hermes same-family exclusions still hold",
     "SHU-223: independent cross-family verifiers stay eligible",
     "SHU-223: every recognized worker family declares its same-family verifiers",
-    "excluded: unknown / inaccessible state \u2014 never invent backlog",
+    "excluded: unknown / inaccessible state — never invent backlog",
     "excluded: state not Todo (Backlog, In Progress, Done, Canceled)",
     "excluded: active assignee claim",
     "excluded: card naming an out-of-pilot repo",
@@ -2052,13 +2053,13 @@
     "requestedWorkerFor: explicit worker label wins; default codex-builder",
     "snapshot fixture: two eligible cards, exclusions carry reasons (SHU-219 parent rule)",
     "fixture lane: exactly one card is the fixture card, and only it resolves to the approved fixture contract",
-    "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode \u2014 all four launches, nothing seeded, nothing deleted",
-    "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses \u2014 zero writes, zero launches",
-    "SHU-231 A2 (unit): the spend check is the ONLY thing that changed \u2014 an unnamed retained terminal always spends",
+    "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode — all four launches, nothing seeded, nothing deleted",
+    "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses — zero writes, zero launches",
+    "SHU-231 A2 (unit): the spend check is the ONLY thing that changed — an unnamed retained terminal always spends",
     "SHU-231 A3: naming the attempt while REUSING the spent activation_id refuses",
     "SHU-231 A4: a HOLD produced WITHIN the current episode still spends it (SHU-225 untouched)",
     "SHU-231 A5: restart/resume keeps ONE episode identity and one first step",
-    "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot \u2014 capacity stays global",
+    "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot — capacity stays global",
     "SHU-231 A7: a fresh episode never replenishes the cumulative failure budget",
     "SHU-231 A8: with no activation, parking and spending are byte-for-byte unchanged",
     "SHU-231 A9: a callback for the RETIRED attempt cannot satisfy the new attempt",
@@ -2073,7 +2074,7 @@
     "SHU-225 I1/I2: without an armed activation the parking rule is byte-for-byte unchanged",
     "SHU-225 I1/I2: the SAME receipts DO continue once the episode's successor is supplied",
     "SHU-225 I2 (M1): a terminal receipt on ANOTHER card never becomes selectable",
-    "SHU-225 I3: a successor never takes a second slot \u2014 capacity stays global",
+    "SHU-225 I3: a successor never takes a second slot — capacity stays global",
     "SHU-225 I3: a successor is only selectable once its predecessor's receipt is terminal",
     "SHU-225 I3: a paused successor adapter is skipped, exactly like a first dispatch",
     "SHU-225 I2 (M2): the episode's exception covers only its own bound issue",
@@ -2083,10 +2084,10 @@
     "SHU-225 I5: a fresh BUILD_READY with no review receipt routes exactly ONE bootstrapped review",
     "SHU-225 I5: with no bootstrap declared the routing still holds visibly (no behaviour change)",
     "SHU-225 I5 (M4) / I10: the bootstrap is one-shot, and lineage owns routing afterwards",
-    "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused \u2014 independence is CHECKED",
+    "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused — independence is CHECKED",
     "SHU-225 I5/I6 (M9): an unrecognised reviewer lane is refused, never inferred from card text",
     "SHU-225 I6: the activation record's reviewer_lane shape is validated, and stays an exact-key-set surface",
-    "SHU-225 I6: the bootstrap lane comes from the record ONLY \u2014 never from card labels or comment text",
+    "SHU-225 I6: the bootstrap lane comes from the record ONLY — never from card labels or comment text",
     "SHU-225 MUTATIONS: every invariant, live-head boundary, and HOLD stop has a load-bearing guard (M1..M15)",
     "SHU-225 I9: a refused successor path writes nothing (activation refused -> exit 2, zero writes)",
     "SHU-225: the coordinator drives build -> BLOCK -> revision -> re-review -> PASS with NO seeded successor receipts",
@@ -2125,8 +2126,8 @@
     "monitor: missing / corrupt lease -> UNCHANGED (fail closed, never a manufactured failure)",
     "validateCallbackEvidence: missing stage fails closed; only success stages pass",
     "adapterNameFor + adapterModuleFor route hermes-box to hermes-pool",
-    "main(): hermes-box card dispatches through hermes-pool \u2014 lease written, one spawn, durable RUNNING",
-    "main(): second process run polls the same lease \u2014 zero new spawns, state unchanged",
+    "main(): hermes-box card dispatches through hermes-pool — lease written, one spawn, durable RUNNING",
+    "main(): second process run polls the same lease — zero new spawns, state unchanged",
     "main(): worker done WITHOUT callback -> durable HOLD via the pool lease",
     "idempotency key contract matches the cross-adapter convention",
     "F1: the pool's external_run_id satisfies the shared receipt schema",
@@ -2172,7 +2173,7 @@
     "BLOCK #2: a BLOCKED/FAILED callback never authorizes COMPLETED; newest callback wins",
     "BLOCK #3: lifecycle terminal writes use the issue UUID (store rejects identifiers)",
     "BLOCK #4: an unreadable live GitHub head prevents COMPLETED (HOLD, never assume equality)",
-    "BLOCK #5: retries are capped \u2014 after max_failed_attempts the issue parks and never relaunches",
+    "BLOCK #5: retries are capped — after max_failed_attempts the issue parks and never relaunches",
     "SHU-63: the live Linear query uses the supported team filter and requests pagination",
     "SHU-63: fetchLinearIssues follows every Linear page and preserves order",
     "SHU-63: a claimed next page without a usable cursor fails closed",
@@ -2261,7 +2262,7 @@
     "run_status queued/in_progress/suspended keeps RUNNING and updates adapter_status",
     "run completed WITH validated callback -> COMPLETED with evidence links",
     "completed WITHOUT validated callback -> HOLD (never auto-COMPLETED)",
-    "invariant: stale-SHA verdict is rejected \u2014 old PASS never satisfies a changed head",
+    "invariant: stale-SHA verdict is rejected — old PASS never satisfies a changed head",
     "invariant: timeout alone NEVER changes state and NEVER releases the slot",
     "invariant: LAUNCH_UNKNOWN retry reuses the SAME Idempotency-Key (attempt_id immutable)",
     "failure -> FAILED with error code in notes; quota/access failure pauses the adapter",
@@ -2311,9 +2312,9 @@
     "route: BLOCKED review -> revision routes back to the ACTIVE WRITER, same runtime",
     "route: reviewer that EDITED becomes an author and rotates out next round",
     "route: no eligible reviewer -> visible HOLD, never a relaunch storm",
-    "route: revisions are BOUND \u2014 exhaustion is a terminal HOLD at max_revise+1",
+    "route: revisions are BOUND — exhaustion is a terminal HOLD at max_revise+1",
     "route: BLOCKED outcome NEVER leaks into successor orders (revise or next review)",
-    "route: malformed attempt_id is rejected before routing \u2014 no non-UUID successor can be minted",
+    "route: malformed attempt_id is rejected before routing — no non-UUID successor can be minted",
     "route: PASS is terminal (stop before merge)",
     "freshAttempt: deterministic, lineage-traceable, unique per stage/round",
     "shared Git identity can never fabricate independence (derived actor is not a session)",
@@ -2564,7 +2565,7 @@
     "SHU-260 lost response: committed create is recovered by deterministic lookup",
     "SHU-260 raw-text leakage is impossible",
     "SHU-260 missing evidence cannot create or update a repair",
-    "SHU-260 durable incident\u2192repair\u2192PR\u2192verdict\u2192merge lineage and no premature resume",
+    "SHU-260 durable incident→repair→PR→verdict→merge lineage and no premature resume",
     "SHU-260 self-edit: triage has no filesystem or execution-plane capability",
     "SHU-260 mutation M1 unknown-reason auto-routing",
     "SHU-260 mutation M2 product-decision leakage",
@@ -2661,12 +2662,12 @@
     "SHU261 host validation pins every sentinel directory class",
     "SHU261 process marker verifies observable cmdline before confinement",
     "bridge: role/runtime mapping covers the three worker lanes",
-    "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
+    "bridge: provenanceFromReceipt requires a worker identity — anonymous receipts never route",
     "bridge: verdict stages map to the intended routing outcome",
-    "bridge: lane/verdict compatibility \u2014 a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
+    "bridge: lane/verdict compatibility — a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
     "routeSuccessorFromReceipts: completed build -> review order bound to the EVIDENCE result head",
     "routeSuccessorFromReceipts: a review BLOCK routes a REVISE back to the active writer",
-    "routeSuccessorFromReceipts: PASS is terminal \u2014 no successor order",
+    "routeSuccessorFromReceipts: PASS is terminal — no successor order",
     "routeSuccessorFromReceipts: no eligible reviewer -> visible HOLD, nothing minted",
     "routeSuccessorFromReceipts: revision exhaustion is a terminal HOLD, never an endless loop",
     "routeSuccessorFromReceipts: lane mismatch fails closed (builder BLOCK never routes)",
@@ -2680,9 +2681,9 @@
     "wiring: a polled COMPLETED build with an eligible reviewer posts the review directive via the durable backfill pass",
     "wiring: no eligible reviewer -> visible hold, ZERO directives posted",
     "wiring: dispatch-disabled makes zero writes even when a verdict-bearing receipt is seeded",
-    "routing: forged result_sha (\u2260 verified authoritative head) FAILS CLOSED \u2014 attacker cannot choose the successor head",
+    "routing: forged result_sha (≠ verified authoritative head) FAILS CLOSED — attacker cannot choose the successor head",
     "routing: matching authoritative head routes and binds the VERIFIED head, not the volatile evidence",
-    "routing: replay determinism \u2014 same input yields the SAME successor attempt id (backfill dedup key)",
+    "routing: replay determinism — same input yields the SAME successor attempt id (backfill dedup key)",
     "SHU71_POSITIVE: reviewed package validates in prepared and seeded phases",
     "SHU71_ACTIVATION_ID: malformed and previously retained identities HALT",
     "SHU71_STALE_SEED: either lane drifting from its exact seed HALTs",
@@ -2814,8 +2815,8 @@
     "SHU-63 activation: the episode ENDS on PASS, exhausted attempts, or a verdict the routing cannot continue",
     "SHU-63 activation: a mid-episode step with a ROUTABLE successor is never spent early",
     "SHU-63 activation: exhaustion is evaluated BEFORE hold, when the routing reports both",
-    "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns \u2014 or expiry",
-    "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns \u2014 or expiry",
+    "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns — or expiry",
+    "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns — or expiry",
     "SHU-63 activation: the duplicated coherence predicate agrees with reconcile's",
     "SHU-63 activation: the claim-time target check is narrow by construction",
     "SHU-63 activation: the record shape is exactly the reviewed key set",
@@ -3004,7 +3005,7 @@
     "202 with run id but no parseable body -> LAUNCH_UNKNOWN (never a phantom run)",
     "poll response maps the documented statuses and surfaces agent_id as worker_identity",
     "quota/access walls FAIL and demand an adapter pause",
-    "monitorRun with MISSING credentials fails closed (UNCHANGED \u2014 never a manufactured upstream failure)",
+    "monitorRun with MISSING credentials fails closed (UNCHANGED — never a manufactured upstream failure)",
     "SHU-228 mutation: M1 callback before commit",
     "SHU-228 mutation: M2 worker Git directory",
     "SHU-228 mutation: M3 worker index",
@@ -3521,7 +3522,41 @@
     "B1/B4 arming-order mutation: field comparison stops reading state_id",
     "B1/B4 arming order: the field comparison stays closed to the two reviewed keys",
     "B1/B4 arming-order mutation: field comparison accepts a differently-shaped card",
-    "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys"
+    "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys",
+    "B5 post-push read-back: a transient ref read-back is retried and the window arms",
+    "B5 post-push read-back: a landed push whose comparison is not answerable yet still arms",
+    "B5 post-push read-back: a persistently failing read still refuses under the same name",
+    "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried",
+    "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried",
+    "B5 post-push read-back: a failing push is never retried",
+    "B5 post-push read-back: a failing Linear issueUpdate is never retried",
+    "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation",
+    "B5 post-push read-back: retrying stops at the authorization expiry",
+    "B5 post-push read-back: the halt names the failing route and status and carries no secret",
+    "B5 post-push read-back: a GraphQL refusal is named by its codes",
+    "B5 post-push read-back: the reported detail is closed to the reviewed fields",
+    "B5 post-push read-back: only a measured transient outcome is retryable",
+    "B5 post-push read-back mutation: the retry policy allows a single attempt",
+    "B5 post-push read-back mutation: the backoff schedule is emptied",
+    "B5 post-push read-back mutation: the ref read-back goes back to the unretried door",
+    "B5 post-push read-back mutation: the post-push comparison goes back to the unretried door",
+    "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing",
+    "B5 post-push read-back mutation: the overall sleep budget is not enforced",
+    "B5 post-push read-back mutation: the authorization expiry does not stop the retry",
+    "B5 post-push read-back mutation: a definitive status is treated as transient",
+    "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees",
+    "B5 post-push read-back mutation: the ancestry comparison itself is retried until it agrees",
+    "B5 post-push read-back mutation: the push is retried like a read",
+    "B5 post-push read-back mutation: the halt record drops the measured API detail",
+    "B5 post-push read-back mutation: a failed call is no longer described at all",
+    "B5 post-push read-back mutation: the GraphQL error codes are not collected",
+    "B5 post-push read-back mutation: the operation label is echoed unsanitized",
+    "B5 post-push read-back mutation: the status is echoed unchecked",
+    "B5 post-push read-back mutation: the GraphQL codes are echoed unfiltered",
+    "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
+    "B5 post-push read-back mutation: the reason vocabulary is opened",
+    "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
+    "B5 post-push read-back mutation: every reason is retryable once a status matches"
   ],
   "requirements": [
     {
@@ -16626,7 +16661,7 @@
       ]
     },
     {
-      "name": "a success callback with the broker neither disabled nor configured HOLDs \u2014 never a COMPLETED with nothing pushed",
+      "name": "a success callback with the broker neither disabled nor configured HOLDs — never a COMPLETED with nothing pushed",
       "capabilities": [
         {
           "name": "linux_proc"
@@ -17420,7 +17455,7 @@
       "capabilities": []
     },
     {
-      "name": "excluded: unknown / inaccessible state \u2014 never invent backlog",
+      "name": "excluded: unknown / inaccessible state — never invent backlog",
       "capabilities": []
     },
     {
@@ -17464,15 +17499,15 @@
       "capabilities": []
     },
     {
-      "name": "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode \u2014 all four launches, nothing seeded, nothing deleted",
+      "name": "SHU-231 A1: a RETAINED HOLD does not block a fresh authorized episode — all four launches, nothing seeded, nothing deleted",
       "capabilities": []
     },
     {
-      "name": "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses \u2014 zero writes, zero launches",
+      "name": "SHU-231 A2: the SAME retained HOLD, unnamed, still refuses — zero writes, zero launches",
       "capabilities": []
     },
     {
-      "name": "SHU-231 A2 (unit): the spend check is the ONLY thing that changed \u2014 an unnamed retained terminal always spends",
+      "name": "SHU-231 A2 (unit): the spend check is the ONLY thing that changed — an unnamed retained terminal always spends",
       "capabilities": []
     },
     {
@@ -17488,7 +17523,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot \u2014 capacity stays global",
+      "name": "SHU-231 A6: a prior-episode receipt that is still ACTIVE keeps holding the slot — capacity stays global",
       "capabilities": []
     },
     {
@@ -17560,7 +17595,7 @@
       ]
     },
     {
-      "name": "SHU-225 I3: a successor never takes a second slot \u2014 capacity stays global",
+      "name": "SHU-225 I3: a successor never takes a second slot — capacity stays global",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -17640,7 +17675,7 @@
       ]
     },
     {
-      "name": "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused \u2014 independence is CHECKED",
+      "name": "SHU-225 I5/I6 (M5): a same-family reviewer lane is refused — independence is CHECKED",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -17664,7 +17699,7 @@
       ]
     },
     {
-      "name": "SHU-225 I6: the bootstrap lane comes from the record ONLY \u2014 never from card labels or comment text",
+      "name": "SHU-225 I6: the bootstrap lane comes from the record ONLY — never from card labels or comment text",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -18024,11 +18059,11 @@
       "capabilities": []
     },
     {
-      "name": "main(): hermes-box card dispatches through hermes-pool \u2014 lease written, one spawn, durable RUNNING",
+      "name": "main(): hermes-box card dispatches through hermes-pool — lease written, one spawn, durable RUNNING",
       "capabilities": []
     },
     {
-      "name": "main(): second process run polls the same lease \u2014 zero new spawns, state unchanged",
+      "name": "main(): second process run polls the same lease — zero new spawns, state unchanged",
       "capabilities": []
     },
     {
@@ -18212,7 +18247,7 @@
       "capabilities": []
     },
     {
-      "name": "BLOCK #5: retries are capped \u2014 after max_failed_attempts the issue parks and never relaunches",
+      "name": "BLOCK #5: retries are capped — after max_failed_attempts the issue parks and never relaunches",
       "capabilities": []
     },
     {
@@ -18701,7 +18736,7 @@
       "capabilities": []
     },
     {
-      "name": "invariant: stale-SHA verdict is rejected \u2014 old PASS never satisfies a changed head",
+      "name": "invariant: stale-SHA verdict is rejected — old PASS never satisfies a changed head",
       "capabilities": []
     },
     {
@@ -19013,7 +19048,7 @@
       "capabilities": []
     },
     {
-      "name": "route: revisions are BOUND \u2014 exhaustion is a terminal HOLD at max_revise+1",
+      "name": "route: revisions are BOUND — exhaustion is a terminal HOLD at max_revise+1",
       "capabilities": []
     },
     {
@@ -19021,7 +19056,7 @@
       "capabilities": []
     },
     {
-      "name": "route: malformed attempt_id is rejected before routing \u2014 no non-UUID successor can be minted",
+      "name": "route: malformed attempt_id is rejected before routing — no non-UUID successor can be minted",
       "capabilities": []
     },
     {
@@ -20973,7 +21008,7 @@
       "capabilities": []
     },
     {
-      "name": "SHU-260 durable incident\u2192repair\u2192PR\u2192verdict\u2192merge lineage and no premature resume",
+      "name": "SHU-260 durable incident→repair→PR→verdict→merge lineage and no premature resume",
       "capabilities": []
     },
     {
@@ -22066,7 +22101,7 @@
       "capabilities": []
     },
     {
-      "name": "bridge: provenanceFromReceipt requires a worker identity \u2014 anonymous receipts never route",
+      "name": "bridge: provenanceFromReceipt requires a worker identity — anonymous receipts never route",
       "capabilities": []
     },
     {
@@ -22074,7 +22109,7 @@
       "capabilities": []
     },
     {
-      "name": "bridge: lane/verdict compatibility \u2014 a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
+      "name": "bridge: lane/verdict compatibility — a builder BLOCK is a HOLD, a verifier BUILD_READY is incoherent",
       "capabilities": []
     },
     {
@@ -22086,7 +22121,7 @@
       "capabilities": []
     },
     {
-      "name": "routeSuccessorFromReceipts: PASS is terminal \u2014 no successor order",
+      "name": "routeSuccessorFromReceipts: PASS is terminal — no successor order",
       "capabilities": []
     },
     {
@@ -22142,7 +22177,7 @@
       "capabilities": []
     },
     {
-      "name": "routing: forged result_sha (\u2260 verified authoritative head) FAILS CLOSED \u2014 attacker cannot choose the successor head",
+      "name": "routing: forged result_sha (≠ verified authoritative head) FAILS CLOSED — attacker cannot choose the successor head",
       "capabilities": []
     },
     {
@@ -22150,7 +22185,7 @@
       "capabilities": []
     },
     {
-      "name": "routing: replay determinism \u2014 same input yields the SAME successor attempt id (backfill dedup key)",
+      "name": "routing: replay determinism — same input yields the SAME successor attempt id (backfill dedup key)",
       "capabilities": []
     },
     {
@@ -22858,7 +22893,7 @@
       ]
     },
     {
-      "name": "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns \u2014 or expiry",
+      "name": "SHU-63 activation: an empty reviewer pool keeps the SAME activation alive until availability returns — or expiry",
       "capabilities": [
         {
           "name": "git"
@@ -22866,7 +22901,7 @@
       ]
     },
     {
-      "name": "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns \u2014 or expiry",
+      "name": "SHU-63 activation: no writer to hand the revision to keeps the SAME activation alive until availability returns — or expiry",
       "capabilities": [
         {
           "name": "git"
@@ -24383,7 +24418,7 @@
       "capabilities": []
     },
     {
-      "name": "monitorRun with MISSING credentials fails closed (UNCHANGED \u2014 never a manufactured upstream failure)",
+      "name": "monitorRun with MISSING credentials fails closed (UNCHANGED — never a manufactured upstream failure)",
       "capabilities": []
     },
     {
@@ -27348,6 +27383,142 @@
     },
     {
       "name": "B1/B4 arming-order mutation: field comparison stops requiring both reviewed keys",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a transient ref read-back is retried and the window arms",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a landed push whose comparison is not answerable yet still arms",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a persistently failing read still refuses under the same name",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a failing push is never retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a failing Linear issueUpdate is never retried",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: retrying stops at the authorization expiry",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the halt names the failing route and status and carries no secret",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: a GraphQL refusal is named by its codes",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the reported detail is closed to the reviewed fields",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: only a measured transient outcome is retryable",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the retry policy allows a single attempt",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the backoff schedule is emptied",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the ref read-back goes back to the unretried door",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the post-push comparison goes back to the unretried door",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the overall sleep budget is not enforced",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: a definitive status is treated as transient",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the ancestry comparison itself is retried until it agrees",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the push is retried like a read",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the halt record drops the measured API detail",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: a failed call is no longer described at all",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the GraphQL error codes are not collected",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the operation label is echoed unsanitized",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the status is echoed unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the GraphQL codes are echoed unfiltered",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the reason vocabulary is opened",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: every reason is retryable once a status matches",
       "capabilities": []
     }
   ],

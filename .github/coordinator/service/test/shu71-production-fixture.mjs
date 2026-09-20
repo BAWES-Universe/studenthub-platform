@@ -139,7 +139,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   // into a unit's ExecStart. `null` models an operator CLI run, outside systemd
   // entirely, where the variable is absent and nothing is ever excluded.
   const selfInvocation = { id: null };
-  const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
+  const boundary = { fs: f, runtimeWait: async () => {}, readWait: async () => {}, uid: () => 0, now: () => now,
     invocationId: () => selfInvocation.id,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
