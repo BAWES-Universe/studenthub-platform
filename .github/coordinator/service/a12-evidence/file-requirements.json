@@ -334,6 +334,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-post-completion.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-post-completion-checks.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",

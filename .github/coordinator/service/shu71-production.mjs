@@ -17,6 +17,12 @@ const REMOTE = `https://github.com/${REPO}.git`;
 const IDS = ['SHU-140', 'SHU-254'];
 const SERVICES = ['shu-coordinator.timer', 'shu-coordinator.service', 'shu-supervisor.service'];
 const GATES = SERVICES.filter(n => n.endsWith('.service')).map(n => `/etc/systemd/system/${n}.d/90-shu71.conf`);
+// The refusals a retired episode's re-observation reports UNDER THEIR OWN NAME
+// rather than flattening into ACT_TEARDOWN_DRIFT. Each names a specific value
+// the operator has to act on - a live expiry companion, someone else's write on
+// the lane branch, this run's own published head still standing - and "drift"
+// says none of them. Additive: every other cause keeps the existing code.
+const RETIRED_OBSERVATION_NAMES = Object.freeze(['ACT_TEARDOWN_EXPIRY_SERVICE', 'ACT_TEARDOWN_BRANCH_MOVED', 'ACT_TEARDOWN_BRANCH_UNRESTORED']);
 const READBACK_CODES = ['DROPIN', 'ACTIVATION'].flatMap(kind =>
   ['MISSING', 'BYTES', 'CUSTODY', 'MODE', 'DIRECTORY', 'READ'].map(reason => `ACT_${kind}_READBACK_${reason}`));
 export const installedModule = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
@@ -683,10 +689,49 @@ export function createShu71Production(id, b = shu71Boundary) {
       let active;
       try { active = JSON.parse(privateRead(`${ROOT}/active.json`)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
       if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {
-        // A successor owns the shared gates. This receipt is historical only.
+        // A successor owns the shared gates. This receipt is historical only:
+        // it declares `physical_teardown_observed: false` and asserts nothing
+        // about the host, and the lane's refs now belong to the LIVE episode,
+        // which may legitimately be holding its own published head on them.
+        // Measuring them here would refuse a successor's ordinary arming, so
+        // this is the one `ok: true` that still takes no reading - it makes no
+        // physical claim to disagree with one.
         if (active && active.activation_id !== id) return { ok: true, state: 'REVOKED', activation_id: id, receipt_scope: 'retired_episode', physical_teardown_observed: false };
-        try { observeTeardown(); observeRetiredExpiry(); }
-        catch (error) { return { ok: false, state: 'HALT', code: error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE' ? error.code : 'ACT_TEARDOWN_DRIFT' }; }
+        // AN `ok: true` THAT CLAIMS THE TEARDOWN IS PHYSICALLY OBSERVED MUST
+        // OBSERVE THE PUBLISHED REFS TOO. This path answers a repeat
+        // run/resume/revoke/expire of an episode whose journal already carries
+        // TEARDOWN_COMPLETE. It re-measures the units, the credential and the
+        // gates - because those can drift - and it used to ask nothing about
+        // the three refs the next mint reads, which are the only state here
+        // this host does not own. Measured on the modelled host: invocation
+        // two closes clean with the refs at the retained parent, a third party
+        // then advances the remote, and invocation three returned
+        // `{ ok: true, physical_teardown_observed: true }` with no
+        // BRANCH_FINAL_MEASURED row - a clean answer over externally changed
+        // state, which is the same class the owner ruled blocking for the
+        // teardown's own final observation.
+        //
+        // The refs are therefore re-read here on EVERY such invocation, under
+        // the restoration's own unchanged gate, and the reading is durable as
+        // BRANCH_FINAL_MEASURED before any conclusion is drawn from it. A
+        // third value HALTS as ACT_TEARDOWN_BRANCH_MOVED and is left exactly
+        // as the third party left it; this run's own published head HALTS as
+        // ACT_TEARDOWN_BRANCH_UNRESTORED. This path issues no command but the
+        // two reads, writes no second receipt and repeats no effect: the
+        // durable TEARDOWN_COMPLETE was honest when written, and nothing here
+        // re-runs a completed mutation to "repair" what it finds.
+        try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal); }
+        // The named refusal is REPORTED BY NAME - learning which value stopped
+        // the answer is the whole point of measuring. The two pre-existing
+        // outcomes are unchanged, and an unnamed failure (a read that never
+        // answered) still halts, now carrying its cause rather than only
+        // `ACT_TEARDOWN_DRIFT`.
+        catch (error) {
+          const code = RETIRED_OBSERVATION_NAMES.includes(error?.code) ? error.code : 'ACT_TEARDOWN_DRIFT';
+          return { ok: false, state: 'HALT', code,
+            ...(reviewedCode(error?.code) && error.code !== code ? { observation_error: error.code } : {}),
+            ...commandFailureRecord(error) };
+        }
         if (active) remove(`${ROOT}/active.json`);
         return { ok: true, state: 'REVOKED', activation_id: id, physical_teardown_observed: true };
       }
@@ -1415,7 +1460,17 @@ export function createShu71Production(id, b = shu71Boundary) {
         // process that re-reads the log reaches it too.
         need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
           .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
+        // The re-observation measures the published refs too. It re-read the
+        // units, the credential and the gates and skipped the three refs, so a
+        // write that landed AFTER `observation` read them and BEFORE the
+        // receipt was written was seen by nothing: the step passed and the
+        // invocation closed TEARDOWN_COMPLETE, failures: [] over a moved ref.
+        // Reading them here does not close that window - the receipt is still
+        // written after the last read - but it moves the last reading of the
+        // refs to the last step before the receipt, so the unobservable
+        // interval is this step rather than the whole tail of the teardown.
         observeTeardown();
+        observePublishedRefs(spec, journal);
         retireExpiryTimer(journal);
       }],
     );

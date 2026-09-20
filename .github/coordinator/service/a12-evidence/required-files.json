@@ -35,6 +35,7 @@
   ".github/coordinator/service/test/shu71-host-contract.test.mjs",
   ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
   ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+  ".github/coordinator/service/test/shu71-post-completion.test.mjs",
   ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
   ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-production.test.mjs",

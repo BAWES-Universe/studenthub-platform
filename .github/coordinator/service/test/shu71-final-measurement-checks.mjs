@@ -131,8 +131,12 @@ export async function unchangedSecondInvocationCheck(create, h) {
   assert.equal(mutations(h), moved, 'B8_UNCHANGED_NO_MUTATION_ISSUED');
   assert.equal(restoreRows(h).length, restored, 'B8_EFFECT_NOT_REPEATED');
   // Measured again regardless - the receipt rests on a fresh reading, not on
-  // the DONE row of a step that ran in an earlier process.
-  assert.equal(finalRows(h).length, measured + 1, 'B8_FINAL_MEASURED_AGAIN');
+  // the DONE row of a step that ran in an earlier process. TWO readings, not
+  // one: SHU-280's twelfth round gave the `expiry-timer` re-observation the
+  // same measurement, so a completing invocation reads the refs once in the
+  // `observation` step and once more in the retirement step that follows it.
+  // The property this control pins is unchanged - the count is.
+  assert.equal(finalRows(h).length, measured + 2, 'B8_FINAL_MEASURED_AGAIN');
   assert.deepEqual(found(finalRows(h).at(-1)), retained(h), 'B8_FINAL_MEASUREMENT_RECORDS_WHAT_IT_FOUND');
   return second;
 }

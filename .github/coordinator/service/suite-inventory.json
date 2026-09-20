@@ -37,6 +37,7 @@
     ".github/coordinator/service/test/shu71-host-contract.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    ".github/coordinator/service/test/shu71-post-completion.test.mjs",
     ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
@@ -3686,6 +3687,23 @@
     "B8 final teardown measurement mutation: a third local head is overwritten by an unconditional update-ref",
     "B8 final teardown measurement mutation: this run's published head is accepted at the end",
     "B8 final teardown measurement mutation: a measurement failure is swallowed",
+    "B9 post-completion measurement: a third-party advance after a COMPLETED teardown halts by name and is left untouched",
+    "B9 post-completion measurement: an unchanged ref after a completed teardown is measured again and still answers clean",
+    "B9 post-completion measurement: this run's published head back on the remote after the receipt is never answered over",
+    "B9 post-completion measurement: a post-completion measurement that cannot be taken halts carrying its cause",
+    "B9 post-completion measurement: a write landing between the observation and the receipt is caught by the retirement step",
+    "B9 post-completion measurement: a live successor's scope claims nothing physical and therefore reads nothing",
+    "B9 post-completion measurement: a retired episode that never published contacts no remote on any later wake",
+    "B9 post-completion measurement: a third party that advances the remote ref after the receipt is refused and never overwritten",
+    "B9 post-completion measurement: a third party that advances the local ref after the receipt is refused and never overwritten",
+    "B9 post-completion measurement: a third party that advances the tracking ref after the receipt is refused and never overwritten",
+    "B9 post-completion measurement mutation: the post-completion measurement is removed entirely",
+    "B9 post-completion measurement mutation: the expiry-timer re-observation skips the refs",
+    "B9 post-completion measurement mutation: a measured disagreement is answered ok:true",
+    "B9 post-completion measurement mutation: the named branch refusal is flattened into drift",
+    "B9 post-completion measurement mutation: the third value is overwritten by a leased force before the named refusal",
+    "B9 post-completion measurement mutation: a third local head is overwritten by an unconditional update-ref before the named refusal",
+    "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
     "PROVIDER remote main tolerates one transient read on either leg",
     "PROVIDER remote main still refuses a persistent read failure and a moved main",
     "PROVIDER a failed provider command names its executable, argv and status",
@@ -28186,6 +28204,74 @@
     },
     {
       "name": "B8 final teardown measurement mutation: a measurement failure is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third-party advance after a COMPLETED teardown halts by name and is left untouched",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: an unchanged ref after a completed teardown is measured again and still answers clean",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: this run's published head back on the remote after the receipt is never answered over",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a post-completion measurement that cannot be taken halts carrying its cause",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a write landing between the observation and the receipt is caught by the retirement step",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a live successor's scope claims nothing physical and therefore reads nothing",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a retired episode that never published contacts no remote on any later wake",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third party that advances the remote ref after the receipt is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third party that advances the local ref after the receipt is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third party that advances the tracking ref after the receipt is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the post-completion measurement is removed entirely",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the expiry-timer re-observation skips the refs",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: a measured disagreement is answered ok:true",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the named branch refusal is flattened into drift",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the third value is overwritten by a leased force before the named refusal",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: a third local head is overwritten by an unconditional update-ref before the named refusal",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
       "capabilities": []
     },
     {
