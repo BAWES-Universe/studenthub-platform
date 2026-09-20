@@ -2628,3 +2628,162 @@ successor-window pre-mint gate and the post-window end-state observation are
 byte-unchanged additional controls. The two mutants the fourth round
 re-attributed stay re-attributed. No assertion, name, code, skip, timeout or
 deadline was weakened, renamed or deleted.
+
+#### Validation of the fifth correction round
+
+Tested implementation `c96b08bc0e520ac553f59ebb49bf0f43be74933b`, tree
+`5118187d6a2257eaf1a5eabc8cf88c75e0795914`. All four commands ran from the
+repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`), which printed
+`CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent
+reviewer=absent` for each: UID 1000, `umask 0022`, target accounts absent
+(`shu-coordinator`, `shu-supervisor`, `shu71-evidence`, `shu-workspace`,
+`messagebus`), `/run` and `/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and
+`/etc/sudoers.d/shu-reviewer` absent, `chmod -R go-w .github/coordinator`,
+`taskset -c 0-3 node --test --test-concurrency=2`, with both the TAP reporter
+and the unchanged `host-suite-contract.mjs` reporter writing separate outputs.
+Plain unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+Every run executed the COMMITTED revision, which the A12 guard requires because
+it reads the inventory from `git show <revision>:suite-inventory.json`; the
+working tree was clean (`--untracked-files=all`) for all four.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1652 | 1651 | 0 | 1 | 1 / 1 | 0 | 1.76 → 3.58 |
+| Focused clock | 1652 | 1651 | 0 | 1 | 1 / 1 | 0 | 2.92 → 4.15 |
+| Full plain | 3365 | 3357 | 0 | 8 | 1 / 1 | 0 | 3.82 → 2.81 |
+| Full clock | 3365 | 3357 | 0 | 8 | 1 / 1 | 0 | 2.75 → 2.43 |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line in any of the four TAP outputs. Focused TAP plans are `1..1652`;
+full plans are `1..3360`, with five nested outcomes bringing each full total to
+3,365. Each run's structured report has exactly one terminal `complete` event,
+is terminated by it, and passes the unchanged `evaluateSuite` validator
+(1,652 / 1,652 / 3,365 / 3,365 expected outcomes). Both full runs' 3,365 outcome
+names are exactly the committed inventory's 3,365 names with identical
+multiplicities — zero missing and zero extra, checked with the unchanged
+`suiteNames` against `git show HEAD:…suite-inventory.json` — and
+`A12 committed inventory requirements match real outcomes` passes in both. Every
+skip in all four runs is a `PERMITTED_SKIPS` entry carrying that entry's exact
+documented reason, byte-for-byte (compared against the exported object, not by
+eye); the single focused skip is `SHU-71 restricted capability refusal`.
+
+The focused selection is the sixteen-entry list printed for the previous
+correction round, unchanged — every file this round touches is already in it —
+which expands to 23 test files. The focused total is the previous round's 1,645
+plus this round's 7 inventory names: 1,652. The full total is 3,358 plus the
+same 7: 3,365. The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`
+(113 files, unchanged).
+
+##### Mutant replay
+
+Every mutant in `shu71-production-mutations.test.mjs` and
+`shu71-recovery-mutations.test.mjs` was replayed on the committed revision under
+an instrumented harness that recorded, per mutant, whether its anchor is unique,
+whether the control passes on the UNMUTATED module, and the exact assertion whose
+failure killed it: **92 mutants, 92 kills, no survivors** — 72 + 19 = 91 recorded
+by the instrumented driver with zero baseline failures and zero non-unique
+anchors, and the 92nd, `refusal predicate evaluated inside need()`, uses
+`assert.throws` and is verified in-suite. Every `verified` control name in the
+clause table is a name that replay printed, including every row this round added.
+
+Named specifically because the brief required it: the fourth round's mutant
+`expiry running companion accepted before the disable` still dies, and still
+dies by the companion's own refusal name —
+`B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED`, whose assertion is
+`result.failures.includes('ACT_TEARDOWN_EXPIRY_SERVICE')`. The exclusion did not
+soften it.
+
+##### The timer-triggered path, replayed end to end
+
+The regression this round fixes, replayed against the committed module rather
+than argued about. The companion is `activating`, its reported `InvocationID`
+equals this process's `INVOCATION_ID`, and the automatic expiry teardown runs:
+
+```
+companion ActiveState  = activating
+companion InvocationID = 00000000000000000000000000000005
+process INVOCATION_ID  = 00000000000000000000000000000005
+expire: {"ok":true,"state":"REVOKED","code":null,"failures":[]}
+ACT_TEARDOWN_EXPIRY_SERVICE anywhere in journal or result: false
+ACT_TEARDOWN_DRIFT anywhere in journal or result: false
+… INTENT:teardown:expiry-timer EXPIRY_RETIREMENT_STARTED DONE:teardown:expiry-timer TEARDOWN_COMPLETE
+unit files remaining: .timer=false .service=false
+timer ActiveState/UnitFileState/wants: inactive / "" / false
+stop or kill issued to the companion: false
+```
+
+The teardown reaches `DONE:teardown:expiry-timer` and `TEARDOWN_COMPLETE`,
+neither refusal code appears anywhere in the durable journal or in the returned
+object, both durable unit files are gone, the timer is stopped with no install
+symlink and systemd knows nothing about it, and **no `stop` or `kill` was issued
+to the companion** — the exclusion is a measurement, not an effect.
+
+##### Measured effect counts: unchanged, and why
+
+No pinned effect count moved this round, and that is a consequence of the term
+order rather than luck. `expiryCompanionSurvivesRemoval()` measures liveness
+FIRST, so `show --property=InvocationID` is only ever issued where the companion
+is measurably live — which no completing retirement is. The three suites that
+pin exact measured effect counts (`shu71-r8-state-model.mjs` across all 720
+reachable R8 states, `B1_RESUME_EFFECT_COUNT` 80, `B1_EXPIRY_EFFECT_COUNT` 84,
+and `B1_REVOKE_OBSERVATION_ONLY` 9) are byte-unchanged and all pass.
+
+##### Preservation
+
+`PERMITTED_SKIPS` is byte-identical: **1,093 bytes** including its final newline,
+SHA-256 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`. The
+entire `host-suite-contract.mjs` is unchanged, SHA-256
+`2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`. Inventories
+are strictly additive: 113 test files unchanged, 3,358 → 3,365 names and
+requirement rows in a 35-insertion / 0-deletion diff, zero removals, zero dropped
+requirement rows, and every retained requirement row byte-identical and in its
+original order; no test file was added. Mutant names went 69 → 72 in the
+production table with zero removals and zero renames. The reviewed teardown
+effects set and its order are unchanged — this round adds a measurement, not an
+effect. The production change moved four documentation line-number links
+(`shu71-production.mjs#L313` → `#L317` in `ACTIVATION-WINDOW-RECONCILIATION.md`,
+`#L349` → `#L353` and `#L678` → `#L721` and `#L734` → `#L777` in
+`SHU71-PREREQUISITES.md`, and `#L734` → `#L777` in `SHU71-L3-CLOSURE.md`);
+`V8_DOCUMENTATION_LINK_TARGETS` passes, including its own one-line-drift mutant.
+Only files under `.github/coordinator/**` changed; no push or PR was performed.
+
+##### What could not be made consistent, or pinned
+
+1. **`INVOCATION_ID` has to cross the `env -i` re-exec, and that is a real
+   widening of what the inner process inherits — one variable.** It is disclosed
+   above with the reason it is narrow: equality against the unit's own reported
+   `InvocationID` is the only use, so a planted value excludes nothing, and the
+   only actor who could plant a matching one is root on the host this module
+   already runs as root on. No control can pin the propagation itself, because
+   the fixture calls `execute()` directly and never goes through the CLI
+   re-exec; what the controls pin is the measurement on either side of it. This
+   is the one place in this round where the model cannot represent real state,
+   and it is the same gap shape the fourth round recorded — moved, not closed.
+2. **Mutants A and C are not distinguished from each other by any control.** The
+   exclusion is deliberately stated once and shared by its three sites, so
+   dropping it also drops the post-condition's parity, and a self-run's own
+   `activating` state reaches the post-condition by construction. Each has its
+   own designated killing control and neither survives; no state separates them.
+   The full matrix is printed above rather than reduced to the designations.
+3. **`B4_EXPIRY_SELF_RUN_HIDES_NOTHING` has no mutant that only it
+   distinguishes.** Control 1 already asserts every term of the end state
+   independently of the module's own answer, so any mutant leaving residue
+   behind is caught there too; the residue mutants `retired expiry units left
+   behind` and `expiry disable command never issued` kill control 4 under its
+   own name, but at its self-run SETUP phase. Its distinct value is that the
+   module's success under the exclusion is confirmed a second time by a
+   measurement with nothing excluded — which is a property no mutant in this
+   module can separate from control 1, because the two measure the same
+   predicate from two vantages.
+4. **The third absence tolerance is unchanged and is still the one place the
+   owner's rule is literally wider than "nothing else excuses absence"**, for
+   the reason the fourth round gave: `B4_EXPIRY_UNINSTALLED_RETIRED_COMPLETES`
+   requires a teardown whose mechanism really is gone to complete rather than
+   wedge for ever, and this lane may not delete that assertion.
+5. P154D-03 is unchanged and still a documented residual: custody is shape,
+   ownership, mode and links — **not content**. A foreign `root:root` `0644`
+   body at the unit path is removed and reported clean. Not widened here.
