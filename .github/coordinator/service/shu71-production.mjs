@@ -785,24 +785,41 @@ export async function shu71Cli(argv) {
   need(argv.length === 2 && ['run', 'resume', 'revoke', 'expire'].includes(action) && /^[A-Za-z0-9_-]{8,64}$/.test(id ?? ''), 'ACT_COMMAND_INVALID');
   return createShu71Production(id).execute(action);
 }
+// `env -i` stays: this boundary accepts no operator environment. The one
+// value carried across is INVOCATION_ID, and it is carried because without
+// it the inner process cannot know that it IS the expiry companion and the
+// timer-triggered teardown refuses itself. Carrying it grants nothing on
+// its own: the teardown only ever compares it for EXACT EQUALITY against
+// the unit's own reported InvocationID, so any value that is not that
+// durable systemd fact excludes nothing and a live companion still refuses
+// by name. Passed as one argv element, so no value can inject a second
+// assignment, and omitted entirely when absent so `INVOCATION_ID=` is
+// never invented.
+//
+// P154D-07. THAT PROPAGATION IS LOAD-BEARING, SO IT IS NAMED AND TESTABLE
+// RATHER THAN INLINE AND UNPINNED. Delete the invocation element and every
+// measurement on either side of the lock still passes while the companion's
+// identity is wiped on the real host, the exclusion never applies, and the
+// timer-triggered teardown refuses itself - the exact regression the exclusion
+// exists to prevent. This is also the ONLY place this correction widens what
+// crosses a boundary deliberately built to carry no operator environment, so
+// the width is stated here as a pure function of ONE argument and pinned by its
+// own controls: `env -i` wipes, exactly three assignments cross, the invocation
+// element is built from this argument and from nothing else, it sits
+// immediately after `SHU71_LOCKED=1` and before `/usr/bin/node`, it is ONE argv
+// element so no value can inject a second assignment, and an absent or EMPTY
+// value produces no element at all rather than an invented `INVOCATION_ID=`.
+export function lockedReexecCommand(invocation, argv = []) {
+  return Object.freeze(['/usr/bin/flock', '--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',
+    ...(invocation ? [`INVOCATION_ID=${invocation}`] : []), '/usr/bin/node', installedModule, ...argv]);
+}
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const argv = process.argv.slice(2);
     if (process.env.SHU71_LOCKED !== '1') {
       need(process.getuid() === 0, 'ACT_PROCESS_IDENTITY');
-      // `env -i` stays: this boundary accepts no operator environment. The one
-      // value carried across is INVOCATION_ID, and it is carried because without
-      // it the inner process cannot know that it IS the expiry companion and the
-      // timer-triggered teardown refuses itself. Carrying it grants nothing on
-      // its own: the teardown only ever compares it for EXACT EQUALITY against
-      // the unit's own reported InvocationID, so any value that is not that
-      // durable systemd fact excludes nothing and a live companion still refuses
-      // by name. Passed as one argv element, so no value can inject a second
-      // assignment, and omitted entirely when absent so `INVOCATION_ID=` is
-      // never invented.
-      const invocation = process.env.INVOCATION_ID;
-      const r = spawnSync('/usr/bin/flock', ['--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',
-        ...(invocation ? [`INVOCATION_ID=${invocation}`] : []), '/usr/bin/node', installedModule, ...argv], { stdio: 'inherit' });
+      const [exe, ...args] = lockedReexecCommand(process.env.INVOCATION_ID, argv);
+      const r = spawnSync(exe, args, { stdio: 'inherit' });
       process.exitCode = r.status ?? 1;
     } else {
       const result = await shu71Cli(argv); process.stdout.write(JSON.stringify(result) + '\n'); process.exitCode = result.ok ? 0 : 1;

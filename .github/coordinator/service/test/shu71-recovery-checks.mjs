@@ -1740,3 +1740,154 @@ export async function expirySelfRunPostConditionParityCheck(createProduction, h)
     for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_UNITS_REMOVED`);
   } finally { h.boundary.run = run; }
 }
+
+// SHU-71 expiry-retirement drift, sixth correction round. P154D-07. The fifth
+// round's DISCLOSURE named its own last gap: the propagation of INVOCATION_ID
+// across the CLI's `env -i` re-exec is what makes the exclusion work at all -
+// without it the inner process cannot know that it IS the expiry companion -
+// and NO control pinned the propagation itself. Delete the invocation element
+// and every control the fifth round wrote still passes, while on the host the
+// identity is wiped, the exclusion never applies and the timer-triggered
+// teardown refuses itself. That is also the ONE place this correction widens
+// what crosses a boundary deliberately built to carry no operator environment.
+//
+// The command construction is now `lockedReexecCommand(invocation, argv)`, a
+// pure function of the parent's invocation value. These controls pin the
+// CONSTRUCTED command, term by term, each with its own killing mutant; the
+// runtime half - what really crosses `/usr/bin/env -i` into the process that
+// measures it - is driven end to end in shu71-reexec-boundary.test.mjs.
+//
+// Written out rather than imported from the module under test, so that a
+// mutant which moves them is a mutant these controls see.
+const REEXEC_INSTALLED = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
+const REEXEC_LOCK = ['/usr/bin/flock', '--nonblock', '/run/lock/shu71-production.lock'];
+const REEXEC_WIPE = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1'];
+const REEXEC_ARGV = ['expire', 'shu71reexec00002'];
+const REEXEC_ID = 'deadbeefcafef00d0123456789abcdef';
+// The constructed command for a given invocation element list, byte for byte.
+const reexecExpected = carried => [...REEXEC_LOCK, ...REEXEC_WIPE, ...carried, '/usr/bin/node', REEXEC_INSTALLED, ...REEXEC_ARGV];
+// Every control below builds the command with this process's own
+// INVOCATION_ID REMOVED, so a mutant that reads the value from the environment
+// instead of from its single argument cannot accidentally agree with it.
+const withoutParentInvocation = build => {
+  const had = Object.hasOwn(process.env, 'INVOCATION_ID'), previous = process.env.INVOCATION_ID;
+  delete process.env.INVOCATION_ID;
+  try { return build(); } finally { if (had) process.env.INVOCATION_ID = previous; }
+};
+// Control 1. PRESENT: exactly one INVOCATION_ID element, byte-exact, placed
+// immediately after SHU71_LOCKED=1 and immediately before /usr/bin/node.
+export function reexecInvocationPresentCheck(production) {
+  const name = 'B4_REEXEC_PRESENT';
+  const command = withoutParentInvocation(() => production.lockedReexecCommand(REEXEC_ID, REEXEC_ARGV));
+  assert.deepEqual([...command], reexecExpected([`INVOCATION_ID=${REEXEC_ID}`]), `${name}_BYTE_EXACT`);
+  const carried = command.filter(element => element.startsWith('INVOCATION_ID'));
+  assert.deepEqual(carried, [`INVOCATION_ID=${REEXEC_ID}`], `${name}_EXACTLY_ONE_ELEMENT`);
+  assert.equal(command.indexOf(carried[0]), command.indexOf('SHU71_LOCKED=1') + 1, `${name}_IMMEDIATELY_AFTER_THE_LOCK_FLAG`);
+  assert.equal(command.indexOf(carried[0]) + 1, command.indexOf('/usr/bin/node'), `${name}_IMMEDIATELY_BEFORE_NODE`);
+}
+// Control 2. ABSENT: no INVOCATION_ID in the parent process at all, and NO
+// element - never an invented `INVOCATION_ID=`. The value is read from the
+// parent environment here, exactly as the CLI reads it.
+export function reexecInvocationAbsentCheck(production) {
+  const name = 'B4_REEXEC_ABSENT';
+  const command = withoutParentInvocation(() => {
+    assert.equal(Object.hasOwn(process.env, 'INVOCATION_ID'), false, `${name}_PARENT_HAS_NONE`);
+    assert.equal(process.env.INVOCATION_ID, undefined, `${name}_PARENT_READS_UNDEFINED`);
+    return production.lockedReexecCommand(process.env.INVOCATION_ID, REEXEC_ARGV);
+  });
+  assert.deepEqual([...command], reexecExpected([]), `${name}_BYTE_EXACT`);
+  assert.deepEqual(command.filter(element => element.startsWith('INVOCATION_ID')), [], `${name}_NO_ELEMENT_AT_ALL`);
+  assert.equal(command.includes('INVOCATION_ID='), false, `${name}_NO_INVENTED_EMPTY_ASSIGNMENT`);
+  assert.equal(command.indexOf('SHU71_LOCKED=1') + 1, command.indexOf('/usr/bin/node'), `${name}_NOTHING_BETWEEN_THE_LOCK_FLAG_AND_NODE`);
+}
+// Control 3. EMPTY behaves exactly as absent. `INVOCATION_ID=''` is what a
+// systemd-less start or a deliberately cleared variable produces, and an empty
+// value is not an identity: it must never become `INVOCATION_ID=`, which the
+// inner process would then read as an empty string rather than as absence.
+export function reexecInvocationEmptyCheck(production) {
+  const name = 'B4_REEXEC_EMPTY';
+  const command = withoutParentInvocation(() => {
+    process.env.INVOCATION_ID = '';
+    assert.equal(process.env.INVOCATION_ID, '', `${name}_PARENT_IS_EMPTY`);
+    return production.lockedReexecCommand(process.env.INVOCATION_ID, REEXEC_ARGV);
+  });
+  assert.deepEqual([...command], reexecExpected([]), `${name}_BYTE_EXACT_AS_ABSENT`);
+  assert.deepEqual(command.filter(element => element.startsWith('INVOCATION_ID')), [], `${name}_NO_ELEMENT_AT_ALL`);
+  assert.equal(command.includes('INVOCATION_ID='), false, `${name}_NO_INVENTED_EMPTY_ASSIGNMENT`);
+}
+// Control 4, constructed half. The boundary still takes NO operator
+// environment: the wipe is there, and exactly three assignments cross it.
+export function reexecBoundaryCheck(production) {
+  const name = 'B4_REEXEC_BOUNDARY';
+  const poison = 'B4_REEXEC_OPERATOR_POISON';
+  const command = withoutParentInvocation(() => {
+    process.env[poison] = 'operator-value-that-must-not-cross';
+    try { return production.lockedReexecCommand(REEXEC_ID, REEXEC_ARGV); } finally { delete process.env[poison]; }
+  });
+  assert.equal(command.indexOf('-i'), command.indexOf('/usr/bin/env') + 1, `${name}_ENVIRONMENT_IS_WIPED`);
+  assert.deepEqual(command.slice(command.indexOf('-i') + 1, command.indexOf('/usr/bin/node')),
+    ['PATH=/usr/bin:/bin', 'SHU71_LOCKED=1', `INVOCATION_ID=${REEXEC_ID}`], `${name}_EXACTLY_THREE_ASSIGNMENTS`);
+  assert.deepEqual([...command], reexecExpected([`INVOCATION_ID=${REEXEC_ID}`]), `${name}_BYTE_EXACT`);
+  // Nothing of this process's environment appears anywhere in the command, by
+  // name or by value, and the invocation element's value is the argument.
+  assert.equal(command.some(element => element.includes(poison)), false, `${name}_NO_OPERATOR_NAME_CROSSES`);
+  assert.equal(command.some(element => element.includes('operator-value-that-must-not-cross')), false, `${name}_NO_OPERATOR_VALUE_CROSSES`);
+  assert.deepEqual(command.filter(element => element.startsWith('INVOCATION_ID')), [`INVOCATION_ID=${REEXEC_ID}`], `${name}_ELEMENT_IS_THE_ARGUMENT`);
+}
+// Control 5, constructed half. ONE argv element, so no value can inject a
+// second assignment. A value carrying spaces and `=` stays whole.
+export function reexecSingleElementCheck(production) {
+  const name = 'B4_REEXEC_SINGLE_ELEMENT';
+  const hostile = `${REEXEC_ID} PATH=/evil SHU71_LOCKED=0`;
+  const command = withoutParentInvocation(() => production.lockedReexecCommand(hostile, REEXEC_ARGV));
+  assert.deepEqual([...command], reexecExpected([`INVOCATION_ID=${hostile}`]), `${name}_BYTE_EXACT`);
+  assert.deepEqual(command.slice(command.indexOf('-i') + 1, command.indexOf('/usr/bin/node')),
+    ['PATH=/usr/bin:/bin', 'SHU71_LOCKED=1', `INVOCATION_ID=${hostile}`], `${name}_THREE_ASSIGNMENTS_NOT_FIVE`);
+  assert.equal(command.filter(element => element.startsWith('PATH=')).length, 1, `${name}_ONE_PATH_ASSIGNMENT`);
+  assert.equal(command.includes('PATH=/evil'), false, `${name}_NO_INJECTED_PATH`);
+  assert.equal(command.includes('SHU71_LOCKED=0'), false, `${name}_NO_INJECTED_LOCK_FLAG`);
+  assert.equal(command.filter(element => element.startsWith('SHU71_LOCKED=')).length, 1, `${name}_ONE_LOCK_FLAG`);
+}
+// Control 6. The alignment is EXACT STRING EQUALITY OF TWO NON-EMPTY VALUES and
+// nothing looser. A near miss of the companion's own reported InvocationID -
+// one leading or trailing space, a different case, a prefix, a suffix, or the
+// empty string - is NOT this invocation, excludes nothing, and the live
+// companion refuses by its own name. The same episode then completes on the
+// exact value, so the refusals above were the identity term and not the state.
+export async function expiryInvocationExactEqualityCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = 'B4_EXPIRY_INVOCATION_EXACT_EQUALITY';
+  const companion = expiryCompanion(h);
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  h.active.set(companion, 'activating');
+  h.unitInvocations.set(companion, REEXEC_ID);
+  assert.equal(unitShow(h, companion, 'InvocationID'), REEXEC_ID, `${name}_COMPANION_REPORTS_THE_REAL_ID`);
+  assert.equal(unitShow(h, companion, 'ActiveState'), 'activating', `${name}_COMPANION_MEASURABLY_ACTIVATING`);
+  const misses = [
+    ['leading-space', ` ${REEXEC_ID}`], ['trailing-space', `${REEXEC_ID} `], ['upper-case', REEXEC_ID.toUpperCase()],
+    ['prefix', REEXEC_ID.slice(0, -1)], ['suffix', REEXEC_ID.slice(1)], ['empty', ''],
+  ];
+  for (const [label, miss] of misses) {
+    assert.notEqual(miss, REEXEC_ID, `${name}_${label}_REALLY_DIFFERS`);
+    h.selfInvocation.id = miss;
+    assert.equal(h.boundary.invocationId(), miss, `${name}_${label}_IS_THIS_PROCESS_CLAIM`);
+    const start = h.events.length;
+    const result = await create().execute('revoke');
+    assert.equal(result.ok, false, `${name}_${label}_REFUSED: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_${label}_NAMED`);
+    assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_SERVICE'), `${name}_${label}_COMPANION_REFUSAL_NAMED`);
+    assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_${label}_BEFORE_DISABLE`);
+    assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_${label}_UNITS_NOT_UNLINKED`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_${label}_MECHANISM_SURVIVES`);
+    unfinished(h, name);
+  }
+  // The exact value, same live companion, same journal state: it completes.
+  h.selfInvocation.id = REEXEC_ID;
+  const settled = await create().execute('revoke');
+  assert.equal(settled.ok, true, `${name}_EXACT_MATCH_COMPLETED: ${JSON.stringify(settled)}`);
+  assert.equal(settled.state, 'REVOKED', `${name}_EXACT_MATCH_RETIRED`);
+  assert.deepEqual(settled.failures, [], `${name}_EXACT_MATCH_NO_FAILURES`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_EXACT_MATCH_UNITS_REMOVED`);
+  assert.equal(unitShow(h, companion, 'ActiveState'), 'activating', `${name}_COMPANION_NEVER_STOPPED`);
+  assert.equal(unitShow(h, companion, 'InvocationID'), REEXEC_ID, `${name}_COMPANION_STILL_THIS_INVOCATION`);
+}

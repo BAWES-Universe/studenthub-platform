@@ -16,7 +16,9 @@ import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck, expiry
   expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck, expiryUnlinkCustodyCheck,
   expiryLiveCompanionCheck, expiryArmedWithoutDoneRowCheck,
   expiryCompanionActivePostConditionCheck, expiryCompanionEnabledPostConditionCheck,
-  expirySelfRunCompletesCheck, expirySelfRunPostConditionParityCheck } from './shu71-recovery-checks.mjs';
+  expirySelfRunCompletesCheck, expirySelfRunPostConditionParityCheck,
+  reexecInvocationPresentCheck, reexecInvocationAbsentCheck, reexecInvocationEmptyCheck,
+  reexecBoundaryCheck, reexecSingleElementCheck, expiryInvocationExactEqualityCheck } from './shu71-recovery-checks.mjs';
 const custody = variant => (create, h) => expiryCustodyDriftCheck(create, h, variant);
 // The journal-independent custody requirement of the restructured
 // retireExpiryTimer(): every durable expiry unit file that is PRESENT is held
@@ -314,6 +316,16 @@ const mutations = [
   ['expiry post-condition refuses the invocation performing the removal',
     '\n      && !expiryCompanionSurvivesRemoval()\n', '\n      && unitIdle(expiryServiceUnit)\n',
     expirySelfRunPostConditionParityCheck],
+  // Sixth correction round, P154D-07. The alignment is EXACT string equality of
+  // two non-empty values. Loosen it - trim, lower-case, prefix-match - and a
+  // near miss of the companion's own reported InvocationID starts excluding a
+  // start that is not this one, which is the widening the fifth round's
+  // foreign-invocation control cannot see because that control's two ids share
+  // no prefix at all.
+  ['expiry invocation comparison loosened below exact equality',
+    "    return typeof self === 'string' && self !== '' && unit !== '' && unit === self;",
+    "    return typeof self === 'string' && self.trim() !== '' && unit !== '' && unit.trim().toLowerCase().startsWith(self.trim().toLowerCase());",
+    expiryInvocationExactEqualityCheck],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));
@@ -343,5 +355,56 @@ test('B1/B4 mutation: refusal predicate evaluated inside need()', async t => {
   const file = path.join(root, 'production.mjs'); fs.writeFileSync(file, modified);
   const mutant = await import(pathToFileURL(file));
   assert.throws(() => predicateRefusalCheck(mutant),
+    error => error.code === 'ERR_ASSERTION' && /B[14]_/.test(error.message), 'B1_MUTATION_NAMED_ASSERTION');
+});
+
+// Sixth correction round, P154D-07. The propagation itself, which the fifth
+// round shipped load-bearing and unpinned. `lockedReexecCommand` is a pure
+// function of the parent's invocation value, so its mutants are driven directly
+// against the imported module rather than through a fixture, exactly as the
+// measuredPredicate mutant below is. What really crosses `/usr/bin/env -i` into
+// the process that measures it is attacked again, at runtime, in
+// shu71-reexec-boundary.test.mjs.
+const ELEMENT = '...(invocation ? [`INVOCATION_ID=${invocation}`] : []),';
+const commandMutations = [
+  // 1. PRESENT: the element deleted. Every control the fifth round wrote still
+  // passes; the measurement it protects is correct and dead.
+  ['expiry invocation never crosses the kernel lock', '\n    ' + ELEMENT, '', reexecInvocationPresentCheck],
+  // 2. ABSENT: an element invented where the parent had none, so the inner
+  // process reads `INVOCATION_ID` as an empty string rather than as absence.
+  ['expiry invocation element invented when the parent has none', ELEMENT,
+    '`INVOCATION_ID=${invocation ?? \'\'}`,', reexecInvocationAbsentCheck],
+  // 3. EMPTY treated as a value, which is the same invented assignment reached
+  // through the one state the truthiness test and a defined-ness test differ on.
+  ['empty parent invocation treated as a value', ELEMENT,
+    '...(invocation !== undefined ? [`INVOCATION_ID=${invocation}`] : []),', reexecInvocationEmptyCheck],
+  // 4a. The boundary carries the operator's environment through the lock.
+  ['parent environment carried through the kernel lock',
+    "'/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',",
+    "'/usr/bin/env', '-i', ...Object.entries(process.env).map(([key, value]) => `${key}=${value}`), 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',",
+    reexecBoundaryCheck],
+  // 4b. The wipe itself removed.
+  ['kernel lock no longer wipes the environment', "'/usr/bin/env', '-i', 'PATH=/usr/bin:/bin'",
+    "'/usr/bin/env', 'PATH=/usr/bin:/bin'", reexecBoundaryCheck],
+  // 4c. The element is a NAME=VALUE pair read from somewhere other than the
+  // single invocation value - here, straight back out of the environment the
+  // function was extracted precisely so it would not read.
+  ['expiry invocation element read from the environment, not the argument', ELEMENT,
+    '...(invocation ? [`INVOCATION_ID=${process.env.INVOCATION_ID}`] : []),', reexecBoundaryCheck],
+  // 5. The value split into several argv elements, so a value carrying spaces
+  // and `=` injects a second variable into the inner process's environment.
+  ['expiry invocation value split across argv elements', ELEMENT,
+    "...(invocation ? `INVOCATION_ID=${invocation}`.split(' ') : []),", reexecSingleElementCheck],
+];
+for (const [name, before, after, check] of commandMutations) test(`B1/B4 mutation: ${name}`, async t => {
+  check(await import('../shu71-production.mjs'));
+  assert.equal(source.split(before).length, 2, 'B1_MUTATION_ANCHOR_UNIQUE');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-mutant-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const modified = source.replace(before, after).replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g,
+    (_, prefix, quote, relative) => `${prefix}${quote}${new URL(relative, moduleUrl).href}${quote}`);
+  const file = path.join(root, 'production.mjs'); fs.writeFileSync(file, modified);
+  const mutant = await import(pathToFileURL(file)); // module-load/syntax errors cannot count as kills
+  assert.throws(() => check(mutant),
     error => error.code === 'ERR_ASSERTION' && /B[14]_/.test(error.message), 'B1_MUTATION_NAMED_ASSERTION');
 });

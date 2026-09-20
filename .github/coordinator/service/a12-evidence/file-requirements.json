@@ -326,6 +326,16 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs",
+    "capabilities": [
+      "shell_toolchain"
+    ],
+    "justification": "executes the constructed re-exec command's environment-carrying portion through /usr/bin/env -i and requires it to succeed; every other boundary is doubled or recorded",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs:92"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
     "capabilities": [],
     "justification": "Node core filesystem and VM DAC model; commands, identities and services are doubled; kernel connect is host-only",

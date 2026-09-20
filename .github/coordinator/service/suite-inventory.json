@@ -36,6 +36,7 @@
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs",
     ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
     ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
@@ -3480,7 +3481,28 @@
     "TARGET_KILL_ENUMERATION",
     "TARGET_KILL_ORIGINAL",
     "TARGET_KILL_ROLLBACK_OUTCOME",
-    "TARGET_KILL_CLI"
+    "TARGET_KILL_CLI",
+    "B1/B4 mutation: expiry invocation comparison loosened below exact equality",
+    "B1/B4 mutation: expiry invocation never crosses the kernel lock",
+    "B1/B4 mutation: expiry invocation element invented when the parent has none",
+    "B1/B4 mutation: empty parent invocation treated as a value",
+    "B1/B4 mutation: parent environment carried through the kernel lock",
+    "B1/B4 mutation: kernel lock no longer wipes the environment",
+    "B1/B4 mutation: expiry invocation element read from the environment, not the argument",
+    "B1/B4 mutation: expiry invocation value split across argv elements",
+    "B4 the locked re-exec command carries exactly one INVOCATION_ID element, in place",
+    "B4 the locked re-exec command carries no INVOCATION_ID element when the parent has none",
+    "B4 the locked re-exec command treats an empty parent INVOCATION_ID exactly as absent",
+    "B4 the locked re-exec command wipes the environment and carries exactly three assignments",
+    "B4 the locked re-exec command passes the invocation value as one argv element",
+    "B4 a near miss of the expiry companion's invocation is never this invocation",
+    "B4 the locked re-exec carries this invocation across `env -i` and the inner teardown completes",
+    "B4 a hostile invocation value crosses `env -i` as one variable and cannot inject a second",
+    "B4 mutation: the locked re-exec drops the invocation element",
+    "B4 mutation: the invocation element is read from the environment, not the argument",
+    "B4 mutation: the invocation value is split across argv elements",
+    "B4 mutation: the parent environment is carried through the kernel lock",
+    "B4 mutation: the kernel lock no longer wipes the environment"
   ],
   "requirements": [
     {
@@ -27124,6 +27146,118 @@
     {
       "name": "TARGET_KILL_CLI",
       "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation comparison loosened below exact equality",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation never crosses the kernel lock",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation element invented when the parent has none",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: empty parent invocation treated as a value",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: parent environment carried through the kernel lock",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: kernel lock no longer wipes the environment",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation element read from the environment, not the argument",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation value split across argv elements",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command carries exactly one INVOCATION_ID element, in place",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command carries no INVOCATION_ID element when the parent has none",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command treats an empty parent INVOCATION_ID exactly as absent",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command wipes the environment and carries exactly three assignments",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command passes the invocation value as one argv element",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a near miss of the expiry companion's invocation is never this invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec carries this invocation across `env -i` and the inner teardown completes",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 a hostile invocation value crosses `env -i` as one variable and cannot inject a second",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the locked re-exec drops the invocation element",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the invocation element is read from the environment, not the argument",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the invocation value is split across argv elements",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the parent environment is carried through the kernel lock",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the kernel lock no longer wipes the environment",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

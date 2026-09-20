@@ -216,7 +216,9 @@ import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck,
   expiryUnlinkCustodyCheck, expiryLiveCompanionCheck, expiryArmedWithoutDoneRowCheck,
   fixtureHostStateCheck, expiryCompanionActivePostConditionCheck,
   expiryCompanionEnabledPostConditionCheck, expirySelfRunCompletesCheck,
-  expirySelfRunHidesNothingCheck, expirySelfRunPostConditionParityCheck } from './shu71-recovery-checks.mjs';
+  expirySelfRunHidesNothingCheck, expirySelfRunPostConditionParityCheck,
+  reexecInvocationPresentCheck, reexecInvocationAbsentCheck, reexecInvocationEmptyCheck,
+  reexecBoundaryCheck, reexecSingleElementCheck, expiryInvocationExactEqualityCheck } from './shu71-recovery-checks.mjs';
 
 for (const unit of ['timer', 'service']) {
   test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
@@ -400,4 +402,27 @@ test('B4 a completed self-run still measures fully retired from a non-companion 
 
 test('B4 a disable that leaves this invocation\'s own companion activating is not drift', async t => {
   await expirySelfRunPostConditionParityCheck(createShu71Production, productionFixture(t, keys));
+});
+
+// P154D-07. The propagation that makes the exclusion work. `lockedReexecCommand`
+// is a pure function of the parent's invocation value and the CLI's argv, and
+// these pin the CONSTRUCTED command term by term: present, absent, empty, the
+// boundary that still carries no operator environment, and one argv element so
+// no value can inject a second assignment. What really crosses `/usr/bin/env -i`
+// is driven end to end in shu71-reexec-boundary.test.mjs.
+for (const [label, check] of [
+  ['carries exactly one INVOCATION_ID element, in place', reexecInvocationPresentCheck],
+  ['carries no INVOCATION_ID element when the parent has none', reexecInvocationAbsentCheck],
+  ['treats an empty parent INVOCATION_ID exactly as absent', reexecInvocationEmptyCheck],
+  ['wipes the environment and carries exactly three assignments', reexecBoundaryCheck],
+  ['passes the invocation value as one argv element', reexecSingleElementCheck],
+]) {
+  test(`B4 the locked re-exec command ${label}`, () => { check(production); });
+}
+
+// P154D-07. The alignment is exact string equality of two non-empty values: a
+// near miss of the companion's own reported InvocationID excludes nothing and
+// still refuses by name, and the same episode completes on the exact value.
+test('B4 a near miss of the expiry companion\'s invocation is never this invocation', async t => {
+  await expiryInvocationExactEqualityCheck(createShu71Production, productionFixture(t, keys));
 });

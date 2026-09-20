@@ -34,6 +34,7 @@
   ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-production.test.mjs",
   ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+  ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs",
   ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
   ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
