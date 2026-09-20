@@ -61,12 +61,18 @@ import { historicalProduction, gates } from './shu71-r5-checks.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
 const keys = ephemeralPublicSource();
+// These differentials execute HISTORICAL revisions, which compare the prior
+// state by JSON.stringify and therefore cannot consume a canonically sealed
+// approval at all. A differential must feed all three arms the same bytes, so
+// the one serialization every arm can read is the construction order. The
+// canonical target-host shape is driven against the candidate in
+// shu71-arming-order.test.mjs and, by default, everywhere else.
 for (const [index, revision] of controlRevisions.entries()) {
   test(`historical control semantics: ${revision} reservation and fault ordering`, async t => {
     // Load both real vendored modules. Execute the properties behind the source
     // guard so its assumptions are independently checked on disposable boundaries.
     const production = await historicalProduction(t, revision);
-    const h = productionFixture(t, keys, production.signingPath), create = () => production(h.id, h.boundary);
+    const h = productionFixture(t, keys, production.signingPath, null, { approvalBytes: 'construction' }), create = () => production(h.id, h.boundary);
     h.owners.set('/srv/shu/state', [0, 0]); // Execute the immutable source under its historical custody.
     assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
     const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;
@@ -82,7 +88,7 @@ for (const [index, revision] of controlRevisions.entries()) {
     else assert.ok(reserve >= 0 && reserve < disarm, 'SHU71_CONTROL_RESERVATION_BEFORE_DISARM');
     // Fresh episode: neither previous disarm nor credential removal can mask
     // the historical fault-path difference.
-    const fault = productionFixture(t, keys, production.signingPath);
+    const fault = productionFixture(t, keys, production.signingPath, null, { approvalBytes: 'construction' });
     fault.owners.set('/srv/shu/state', [0, 0]);
     await production(fault.id, fault.boundary).execute('run'); fault.expire();
     fault.write(`/srv/shu/state/shu71-evidence/${fault.id}/automatic-teardown.json`, '{"attempts":0}', 0o644);

@@ -19,10 +19,16 @@ export async function historicalProduction(t, revision) {
     (_, p, q, r) => `${p}${q}${r === './shu71-journal.mjs' ? pathToFileURL(path.join(root, 'journal.mjs')).href : new URL(r, url).href}${q}`));
   return Object.assign((await import(pathToFileURL(path.join(root, 'production.mjs')))).createShu71Production, { signingPath: read('shu71-production.mjs').match(/privateRead\('([^']+\/keys\/[^']+)'\)/)[1] });
 }
+// These differentials execute HISTORICAL revisions, which compare the prior
+// state by JSON.stringify and therefore cannot consume a canonically sealed
+// approval at all. A differential must feed all three arms the same bytes, so
+// the one serialization every arm can read is the construction order. The
+// canonical target-host shape is driven against the candidate in
+// shu71-arming-order.test.mjs and, by default, everywhere else.
 export async function r5Differential(t, keys, candidate, scenario) {
   for (const [label, revision] of [['parent', '5e25c651254a72adbb46fa8f950df95248b640e9'], ['blocked', '0eeadd5f05abc8cd82968a855b2bff8cc137c65a'], ['candidate', null]]) {
     const production = revision ? await historicalProduction(t, revision) : candidate;
-    const h = productionFixture(t, keys, production.signingPath), create = () => production(h.id, h.boundary);
+    const h = productionFixture(t, keys, production.signingPath, null, { approvalBytes: 'construction' }), create = () => production(h.id, h.boundary);
     if (revision) h.owners.set('/srv/shu/state', [0, 0]); // Historical custody; candidate uses the approved service owner.
     assert.equal((await create().execute('run')).state, 'ARMED'); h.expire();
     const budget = `/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`;

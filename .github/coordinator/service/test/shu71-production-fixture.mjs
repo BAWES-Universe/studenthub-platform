@@ -11,7 +11,14 @@ import { digest } from '../shu71-journal.mjs';
 
 // All paths map into this disposable tree. Every command and API is interpreted
 // here. No production command, host service, API or signing key is reachable.
-export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-activation-ed25519.pem', host = null) {
+// `approvalBytes` selects how the owner-approval envelope is SERIALIZED on
+// disk. 'canonical' is what compose-shu71-approval.mjs `seal` actually writes
+// to /etc/shu/approvals/<id>.shu71.json - canonicalBytes sorts every key, so a
+// card recorded as { state_id, assignee_id } is sealed as
+// { assignee_id, state_id } and deserializes in that order on the host. That is
+// the real target-host shape and the default here. 'construction' keeps the
+// mint's in-memory key order so the mirror direction stays covered too.
+export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-activation-ed25519.pem', host = null, options = {}) {
   const h = harness(keys), pkg = h.context.pkg, id = pkg.activation_id;
   pkg.reseed.patch_sha256 = digest(''); pkg.signature = ''; pkg.activation.signature = '';
   const tree = 'd'.repeat(40);
@@ -83,7 +90,9 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   fs.chmodSync(resolve('/srv/shu/worktrees'), 0o3770);
   owners.set('/srv/shu/worktrees', [999, 980]);
   for (const p of ['/srv/shu/state', '/srv/shu/state/workspaces']) { fs.chmodSync(resolve(p), 0o700); owners.set(p, [999, 982]); }
-  write(`/etc/shu/approvals/${id}.shu71.json`, JSON.stringify({ payload: spec, signature: sign(null, canonicalBytes(spec, false), keys.privateKey).toString('base64') }));
+  const approval = { payload: spec, signature: sign(null, canonicalBytes(spec, false), keys.privateKey).toString('base64') };
+  write(`/etc/shu/approvals/${id}.shu71.json`, (options.approvalBytes ?? 'canonical') === 'construction'
+    ? JSON.stringify(approval) : canonicalBytes(approval, false).toString());
   write('/etc/shu/approvals/shu71-owner.pub', keys.publicKey.export({ type: 'spki', format: 'pem' }));
   write(signingPath, keys.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   write('/usr/local/lib/shu71/coordinator/service/shu71-production.mjs', 'reviewed artifact', 0o644);
