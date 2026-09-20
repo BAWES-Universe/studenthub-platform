@@ -3864,7 +3864,7 @@ with its reason.
 | Record | Outcome | Control (and mutant) |
 | --- | --- | --- |
 | **B-11** a transient `systemctl show` reported as a live-companion state claim | CLOSED | `a failed measurement is not a state claim about the host` + `a transient unit read is retried and the teardown completes`; still-refuses: `a genuinely live expiry companion still refuses by its own name`. Mutant `a failed measurement is reported as the state the caller named` → `B6_MEASUREMENT_NOT_A_STATE_CLAIM`; `the host-command read retry is removed` → `B6_TRANSIENT_MEASUREMENT_RETRIED` |
-| **A-11** a transient read reported as "inventory incomplete or moved" | CLOSED | `SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory` + `… measures the branch read without changing fetchBranchHead`. Mutants → `SHU251_INVENTORY_READ_FAILURE_NAMED`, `SHU251_INVENTORY_TRANSIENT_RETRIED`, `SHU251_INVENTORY_DEFINITIVE_TERMINAL`, `SHU251_BRANCH_READ_MEASURED` |
+| **A-11** a transient read reported as "inventory incomplete or moved" | **PARTLY CLOSED by this round — three of the four enumerated conditions. Closed in full by the tenth round below; this row overstated it and is corrected here rather than left standing** | `SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory` + `… measures the branch read without changing fetchBranchHead`. Mutants → `SHU251_INVENTORY_READ_FAILURE_NAMED`, `SHU251_INVENTORY_TRANSIENT_RETRIED`, `SHU251_INVENTORY_DEFINITIVE_TERMINAL`, `SHU251_BRANCH_READ_MEASURED`. The fourth condition — **a 2xx whose body will not yield the measured field** — was NOT closed: this round's dispatch tested `ok !== true`, the HTTP status class, so `{ ok: true, status: 200, sha: null }` still halted `remote fixture inventory is incomplete or moved` after a single read, exactly as before the round. No control and no mutant covered that dispatch |
 | **C-01** `ARMED` claimed from an exit status, and a resume that skipped the restart | CLOSED | `a supervisor that did not come up refuses instead of arming` × 3 (`inactive`, `substate`, `timer`) + `the gate step stops repeating on a resume`. Mutants → `B6_GATE_LIVENESS_MEASURED_*` × 3, `B6_GATE_RESUME_REMEASURES` |
 | **C-02** the expiry mechanism installed with no read-back | CLOSED | `the expiry installation is measured, not assumed` × 3 (`inactive`, `disabled`, `unitfile`). Mutants → `B6_EXPIRY_INSTALLATION_MEASURED_*` × 3 |
 | **A-01** the Linear `issue()` READ never retried | CLOSED | `a transient Linear fixture-card read is retried and the window arms` + `a persistently failing Linear read still refuses under the same name`; still-refuses: `a genuinely drifted fixture card…`, `a genuinely wrong fixture…`. Mutants → `B6_WINDOW_ARMS`, `B6_LINEAR_MUTATION_STILL_UNRETRIED` |
@@ -3885,7 +3885,7 @@ with its reason.
 | **A-03** shared API choke point | ALREADY CLOSED | previous round |
 | **B-02** `ACT_API_FAILED` naming nothing | ALREADY CLOSED | previous round |
 | **B-09** (NON-BLOCKING) `budget_error` conflating every cause | CLOSED as a one-line same-class fix while in the file | both existing outcomes preserved by the same two conditions in the same order; a third reviewed cause is named |
-| **B-12 / B-13** (NON-BLOCKING) teardown post-condition flattening | PARTLY CLOSED | a read fault inside either now refuses `ACT_TEARDOWN_MEASUREMENT` rather than `ACT_TEARDOWN_DRIFT`, and a failed `kill`/`disable` carries `command_failure`. The four-term conjunction at the post-condition is untouched; no term was added or removed |
+| **B-12 / B-13** (NON-BLOCKING) teardown post-condition flattening | PARTLY CLOSED | a read fault inside either now refuses `ACT_TEARDOWN_MEASUREMENT` rather than `ACT_TEARDOWN_DRIFT`, and a failed `kill`/`disable` contributes its own refusal NAME to the teardown's `failures` list (`ACT_TEARDOWN_DRIFT`, `ACT_SERVICE_CLEANUP`, `ACT_COMMAND_FAILED`, …) alongside the step code, in both the returned result and the `TEARDOWN_INCOMPLETE` row. **It does NOT carry `command_failure`, and the first version of this row said it did.** `command_failure` is produced by `commandFailureRecord()` at exactly two sites, both on the FORWARD path — the journal-open handler and `execute()`'s covering handler — where the failing error reaches a halt. A teardown step's error is caught inside `teardownActivation()`, which records NAMES only: `failures` is a list of reviewed codes and the teardown result has no field for command detail, so `command_failure` is absent (`null`) at the module boundary for a failed `kill` and a failed `disable` alike, both before and after this round. Measured, not asserted: see the tenth round below. The four-term conjunction at the post-condition is untouched; no term was added or removed |
 
 That is all 22 BLOCKING records: 20 closed by this round, 2 closed by the
 previous one.
@@ -4235,3 +4235,262 @@ focused runs: at that pinning the focused selection did not finish inside this
 session's budget once `suite-runner-spec.test.mjs` was in it. Nothing the suite
 measures was changed — same constraints, same reporters, same committed
 revision, same files; only the CPU mask and the runner's concurrency.
+
+### Tenth correction round: the condition a status class cannot see
+
+Repository-only. No target host was contacted, no network call was made, and no
+`git push` or `gh` command was run. Two items only — the one blocking record an
+independent verifier found still open at `592232c0`, and the one sentence in the
+ninth round's record that the code does not support. Written against the
+revision it was measured on: `4dd45f04`, tree `d6e11374`. The fix landed as
+`85117f8f`; `4dd45f04` adds the one control assertion described under *Control*
+below and changes no behaviour.
+
+#### F1 — `A-11`: a failed MEASUREMENT was still reported as a claim about the world
+
+The ninth round split the inventory read into a transient failure and a moved
+inventory, and it split them on `ok` — the HTTP status class. That closes three
+of the four conditions the audit enumerated and leaves the fourth exactly as it
+was: **a 2xx whose body will not yield the field being measured.** GitHub's
+branch read answers `{ ok: true, status: 200, sha: null }` when the body did not
+parse, parsed without `commit.sha`, or carried something that is not a branch
+head — and `ok` was true, so the caller fell through to
+
+    SHU251_REMOTE_INVENTORY: remote fixture inventory is incomplete or moved
+
+after ONE read. That is a state claim about the remote built out of an answer
+that said nothing about the remote, it is the defect the record claims to have
+closed, and it is unchanged from the pre-fix revision. It was also not retried,
+though nothing in it is an answer that a second read could not improve on.
+
+`ok` is the server's verdict on the REQUEST. It was never evidence that the
+answer carried the value. **The code now knows whether it HAS a measurement
+before it may describe the world**, and that is measured from the answer rather
+than asserted from its status:
+
+```js
+export const INVENTORY_MEASUREMENT = Object.freeze({ held: 'held', unanswered: 'unanswered', without_value: 'without_value' });
+export const inventoryMeasurement = read => read?.ok !== true ? INVENTORY_MEASUREMENT.unanswered
+  : SHA.test(read.sha ?? '') ? INVENTORY_MEASUREMENT.held : INVENTORY_MEASUREMENT.without_value;
+export const inventoryReadRetryable = read => inventoryMeasurement(read) === INVENTORY_MEASUREMENT.without_value
+  || (read?.ok !== true && INVENTORY_READ.statuses.includes(read?.status));
+```
+
+Three outcomes, one of which may speak for the remote. `held` is the only one,
+and it requires the value to be there AND to have the only shape a branch head
+has. The two dispatch sites consume that single predicate: the bounded read
+stops on `held` and re-reads anything `inventoryReadRetryable` admits, and
+`observeRemoteInventory` halts `remote fixture inventory could not be read` for
+anything that is not `held`, BEFORE the line that would report it as moved. The
+refusal carries the closed token — `held` / `unanswered` / `without_value` —
+and the status, so nothing a remote can put in a body can ride in through it.
+
+The four conditions, each measured on the committed revision:
+
+| Answer | Reads | Waits | Refusal |
+| --- | --- | --- | --- |
+| transient non-2xx (503, 429) | 3 | `[200, 400]` | `… could not be read`, `measurement: unanswered` |
+| **2xx, field null / absent / unparseable / wrong shape** | **3** | **`[200, 400]`** | **`… could not be read`, `measurement: without_value`** |
+| 2xx carrying a branch head that DISAGREES (moved, or a well-formed nonsense sha) | 1 | `[]` | `… is incomplete or moved`, unchanged |
+| definitive (400, 401, 403, 410, 422) and definitive absence (404) | 1 | `[]` | `… could not be read`, terminal |
+
+A 2xx that carried no value is retryable for the same reason a 502 is: the
+remote stated nothing about the branch, and a truncated or shape-shifted body is
+the read failing rather than the inventory speaking. It is the same read-only
+GitHub route the ninth round already admitted to the read policy, under the same
+3-attempt / `[200, 400]` bound — **no new route, no new budget, and no mutation
+is retried anywhere.** No VALUE is ever retried either: a held measurement is
+compared against `target_sha` exactly once, however badly it reads.
+
+**RED.** The new control, driven against the committed defective revision
+`592232c0` with the predicate vocabulary appended as a documented stand-in so it
+can link — the two dispatch sites left exactly as committed — fails on the first
+assertion it makes:
+
+```
+not ok 1 - SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a failed measurement
+  error: 'SHU251_INVENTORY_VALUELESS_NOT_A_STATE_CLAIM null'
+  actual: 'SHU251_REMOTE_INVENTORY: remote fixture inventory is incomplete or moved'
+  operator: 'match'
+```
+
+**Control.** `SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head
+as a failed measurement` asserts all four conditions in one test, so the
+dispatch cannot be right for one and wrong for another: four valueless shapes
+(`sha: null`, the field absent, `'not-a-sha'`, and an object) each retried to
+`INVENTORY_READ.attempts` with waits `[200, 400]` and named `could not be read`
+with `measurement: 'without_value'` and never `moved`; one valueless answer
+followed by a good one still arming on the second read; a disagreeing head and a
+well-formed nonsense head each still refusing `incomplete or moved` on ONE read
+with no wait; the five definitive statuses each terminal on one read; the
+predicate itself over eight answer shapes; and no token in any of it.
+
+One of those four conditions was, at `85117f8f`, weaker in the suite than in the
+table above, and it is recorded rather than quietly repaired. The transient
+non-2xx was asserted at the DISPATCH only by its read COUNT (the ninth round's
+`SHU251_INVENTORY_READ_BOUNDED`) and otherwise only through the predicate table;
+neither the enumerated waits nor the `measurement` token on its refusal was
+pinned, and 429 never reached the dispatch at all — so the transient row claimed
+more than was measured. `4dd45f04` adds it to the same control: 503 and 429 each
+read to `INVENTORY_READ.attempts` on waits `[200, 400]`, refusing `could not be
+read`, never `moved`, carrying `measurement: 'unanswered'` and their own status.
+No behaviour changed, no test name was added — the assertions reuse
+`SHU251_INVENTORY_READ_FAILURE_NAMED` and `SHU251_INVENTORY_TRANSIENT_RETRIED`,
+both already mutant-killing names whose mutants are unchanged — so
+`suite-inventory.json` is unaffected and every row of the table above is now
+backed at the dispatch by an assertion that names it.
+
+**Mutants** — three, each reverting one clause to what this correction replaced,
+each observed killed by its own named assertion:
+
+| Mutant | Dies by |
+| --- | --- |
+| `a 2xx that carried no branch head is reported as a moved inventory` (`if (measurement !== INVENTORY_MEASUREMENT.held)` → `if (work.branch_head_read.ok !== true)`) | `SHU251_INVENTORY_VALUELESS_NOT_A_STATE_CLAIM` — the halt reads `incomplete or moved` |
+| `a 2xx that carried no branch head is never re-read` (the break predicate → `measured.ok`) | `SHU251_INVENTORY_VALUELESS_RETRIED` — 1 read where the policy requires 3 |
+| `any 2xx is treated as a held measurement` (the `SHA.test` term → `held`) | `SHU251_INVENTORY_MEASUREMENT_CLOSED` — both the naming and the re-read collapse |
+
+The ninth round's four A-11 mutants are unchanged in name, control and killing
+assertion; two of their anchors moved onto the text this correction rewrote and
+were re-pointed in place.
+
+#### F2 — `B-13`'s description overstated what the code does
+
+The ninth round's record said a failed `kill`/`disable` "carries
+`command_failure`". It does not, and the record is corrected rather than the
+code: threading command detail into the teardown result would change the shape
+of a reviewed result and a reviewed journal row for a NON-BLOCKING
+diagnosability record, which is not what this round is for.
+
+Measured at the module boundary on the committed revision, forcing `kill` and
+then `disable` to exit non-zero in a real teardown:
+
+```
+kill:    code=ACT_CLEANUP_FAILED  result keys = ["ok","state","code","failures"]
+  failures = ["ACT_TEARDOWN_WORKERS","ACT_TEARDOWN_DRIFT","ACT_TEARDOWN_FIXTURES",
+              "ACT_FIXTURE_CLEANUP","ACT_TEARDOWN_EXPIRY_TIMER","ACT_CLEANUP_FAILED"]
+  command_failure = null        TEARDOWN_INCOMPLETE row carries `failures` and no command detail
+disable: code=ACT_CLEANUP_FAILED
+  failures = ["ACT_TEARDOWN_EXPIRY_TIMER","ACT_TEARDOWN_DRIFT"]
+  command_failure = null
+```
+
+`commandFailureRecord()` is called at exactly two sites, both on the FORWARD
+path — the journal-open handler and `execute()`'s covering handler — where the
+failing error reaches a halt and its detail is sanitized into the result and the
+`HALTED` row. A teardown step's error never reaches either: it is caught inside
+`teardownActivation()`, which records NAMES. What IS carried for a failed
+`kill`/`disable`, and what the ninth round really added, is the step's own
+refusal NAME next to the step code (`ACT_TEARDOWN_DRIFT` beside
+`ACT_TEARDOWN_WORKERS` above, where the pre-fix tree recorded the step code
+alone). The `B-12 / B-13` row now says exactly that, and says explicitly that
+`command_failure` is absent at the boundary for both verbs, before and after.
+
+No code changed for F2. The row above is the change.
+
+#### What did NOT change
+
+No other record was touched. The retry invariant is unchanged — only the
+enumerated read-only host reads and the read-only API routes are retried, and
+every mutation is still attempted exactly once. No refusal code, name,
+condition, skip, timeout or deadline was deleted, renamed or weakened; the only
+message that moves is the one this correction exists to move. `reconcile.mjs` is
+untouched: `measureBranchHead` and `fetchBranchHead` keep the exact contracts the
+ninth round gave them, and the new knowledge is derived in the module that
+consumes them. `PERMITTED_SKIPS` and `host-suite-contract.mjs` are byte-identical.
+`suite-inventory.json` gains four names and their four requirement rows, appended,
+with every existing entry and its order byte-preserved; no file was added, so
+`file-requirements.json` and `required-files.json` are unchanged.
+
+#### Disclosure
+
+* **`S-1`, deliberately not fixed, and named here instead.** A definitive 404
+  refuses `remote fixture inventory could not be read`. The remote DID answer —
+  it said the branch is absent — so that message names a measurement failure
+  where a state claim would be defensible. It errs in the safe direction (it
+  never claims a state it did not measure), the answer count, the code and the
+  terminality are all correct, and changing it would move an existing refusal
+  message that a committed control pins. Out of this round's scope; recorded so
+  it is not rediscovered as new.
+* The `without_value` retry treats an unparseable 2xx as transient. If a remote
+  answers 2xx with a body it will never fill in, this costs three reads and 600 ms
+  before the same refusal. That is a deliberate trade and it is bounded by the
+  same policy as every other read here.
+* `measurement` is the only new field on a refusal. It is closed to three
+  literals from a frozen object, so it cannot carry remote text; `status` was
+  already reported and is unchanged.
+* The other four `fetchBranchHead` callers — `reconcile.mjs:1093/1697/2352` and
+  `durable-handoff.mjs:63` — were re-read and deliberately left alone. Each
+  already maps a null sha to a NOT-VERIFIED outcome (`verified: false`,
+  `branchHeadUnverified`, `headVerified = false`, a `HOLD` reading "stale or
+  **unverifiable**"), so none of them turns a failed measurement into a state
+  claim; what they do not do is distinguish WHICH failure it was, and none of
+  them retries. That is a diagnosability gap, not this defect, and it is outside
+  this round's two items.
+* Nothing about a live host is measured here either. Every statement above is
+  about the committed code exercised through the committed fixtures and through
+  direct calls to the exported predicates. The real-host halt that began this
+  correction is still not reproduced end to end.
+* I did not re-audit the whole tree for other instances of this class this
+  round. The scope was the two items the verifier named.
+* `A-08` and the other deferrals of the ninth round remain deferred, with the
+  reasons that round gave.
+
+#### Validation
+
+All four runs are CI-like — `shu71-ci-like.sh`: uid 1000, umask 0022, the four
+target accounts absent, `/run` and `/etc/sudoers.d` fresh tmpfs — on the
+committed revision `4dd45f04`, with `chmod -R go-w .github/coordinator` applied
+first, one at a time, in the foreground, under `taskset -c 0-9 node --test
+--test-concurrency=4` with both a TAP reporter and the unchanged
+`host-suite-contract.mjs` reporter writing to separate files. The focused
+selection and the full selection are the ninth round's, unchanged.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP plan | `complete` | Exit | Elapsed | Load before → after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Focused plain | 2,141 | 2,140 | 0 | 1 | `1..2141` | 1 / terminal | 0 | 224 s | 0.47 → 2.32 |
+| Focused clock | 2,141 | 2,140 | 0 | 1 | `1..2141` | 1 / terminal | 0 | 230 s | 2.32 → 2.66 |
+| Full plain | 3,532 | 3,524 | 0 | 8 | `1..3527` + one nested `1..5` | 1 / terminal | 0 | 587 s | 2.66 → 1.92 |
+| Full clock | 3,532 | 3,524 | 0 | 8 | `1..3527` + one nested `1..5` | 1 / terminal | 0 | 591 s | 1.92 → 1.64 |
+
+Zero `not ok` lines in all four TAP outputs — counted over the whole file, not
+only the top level, so the nested plan is included — and zero cancelled and zero
+todo outcomes in all four. Each run's structured report has exactly one
+`complete` event and is terminated by it. Both full runs' 3,532 outcome names
+are exactly the committed inventory's 3,532 `names` with identical
+multiplicities — zero missing and zero extra, compared programmatically as
+multisets against `suite-inventory.json` rather than by count — and `A12
+committed inventory requirements match real outcomes` passes in both. Every skip
+in all four runs is a `PERMITTED_SKIPS` key whose reason byte-matches that
+entry's documented reason, checked both on the TAP `# SKIP` directive text and
+on the reporter's `reason` field against the exported object: zero mismatches.
+The single focused skip is `SHU-71 restricted capability refusal`; the eight
+full skips are the eight `PERMITTED_SKIPS` entries.
+
+The counts are the ninth round's plus exactly this round's four names: focused
+2,137 → 2,141, full 3,528 → 3,532, with the skip counts (1 and 8) unchanged.
+
+`PERMITTED_SKIPS` is byte-identical: 1,093 bytes,
+sha256 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+`host-suite-contract.mjs` is byte-identical: 23,885 bytes,
+sha256 `2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9` —
+unchanged not merely in content but by `git diff` against the pre-round base.
+`suite-inventory.json` is strictly additive: 3,528 → 3,532 names and 3,528 →
+3,532 requirement rows, zero removals, every pre-existing entry retained in its
+original relative order, and `files` unchanged at 117.
+`file-requirements.json` and `required-files.json` are untouched.
+
+**Measured on the code revision, not on this record.** The runs were executed
+with the worktree pristine at `4dd45f04` — this section's own text was held
+aside and restored afterwards — so no uncommitted byte was in the tree under
+test. The documentation commit that follows changes only this file, which the
+suite reads under exactly two guards: `V8_DOCUMENTATION_LINK_TARGETS`, which
+resolves `file#Lnnn` links (this round's text adds none), and
+`SHU71_PATH_NEUTRAL_COMMANDS`, which forbids the one provisioning worktree path
+this document must never hard-code (this round's text contains none — and the
+guard is named here rather than quoted, because quoting it is itself the
+violation, as one draft of this paragraph discovered). Both were re-checked
+after that commit.
+
+The four names this round adds are in both selections: they are tests in
+`host-window-bindings.test.mjs`, which is entry 25 of the focused selection and
+matches the full run's `service/test/*.test.mjs` glob.
