@@ -2950,3 +2950,176 @@ and the post-window end-state observation are byte-unchanged additional
 controls. No assertion, name, code, skip, timeout or deadline was weakened,
 renamed or deleted; `PERMITTED_SKIPS` and `host-suite-contract.mjs` are
 byte-identical.
+
+#### Validation of the sixth correction round
+
+Tested implementation `f5b2d6689ba64d59965e7012208858588031513c`, tree
+`5c92ec8c5169f3a9f81f507e2e1d18a67af1a58e` — the round's fix commit
+`1ea29b46076fdf1eaeaa6f09d96b33009079e0c2` plus the record corrections above,
+which change documentation and two source COMMENTS only and leave every test
+name, and therefore all three inventories, unchanged. All four commands ran from
+the repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`), which printed
+`CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent
+reviewer=absent` for each: UID 1000, `umask 0022`, target accounts absent
+(`shu-coordinator`, `shu-supervisor`, `shu71-evidence`, `shu-workspace`,
+`messagebus`), `/run` and `/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and
+`/etc/sudoers.d/shu-reviewer` absent, `chmod -R go-w .github/coordinator`, with
+both the TAP reporter and the unchanged `host-suite-contract.mjs` reporter
+writing separate outputs. Plain unsets `NODE_OPTIONS` and
+`SHU_TEST_CLOCK_OFFSET_MS`; clock sets `SHU_TEST_CLOCK_OFFSET_MS=31536000000`
+and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+Every run executed the COMMITTED revision, which the A12 guard requires because
+it reads the inventory from `git show <revision>:suite-inventory.json`; the
+working tree was clean for all four.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Focused plain | 1673 | 1672 | 0 | 1 | 1 / 1 | 0 | 0.18 → 3.02 |
+| Focused clock | 1673 | 1672 | 0 | 1 | 1 / 1 | 0 | 2.16 → 2.33 |
+| Full plain | 3386 | 3378 | 0 | 8 | 1 / 1 | 0 | 2.05 → 3.46 |
+| Full clock | 3386 | 3378 | 0 | 8 | 1 / 1 | 0 | 2.48 → 3.65 |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line in any of the four TAP outputs. Focused TAP plans are `1..1673`;
+full plans are `1..3381`, with five nested outcomes under one nested `1..5`
+bringing each full total to 3,386. Each run's structured report has exactly one
+terminal `complete` event, is terminated by it, and passes the unchanged
+`evaluateSuite` validator (1,673 / 1,673 / 3,386 / 3,386 expected outcomes).
+Both full runs' 3,386 outcome names are exactly the committed inventory's 3,386
+names with identical multiplicities — zero missing and zero extra, checked
+against `git show HEAD:…suite-inventory.json` — and `A12 committed inventory
+requirements match real outcomes` passes in both. Every skip in all four runs is
+a `PERMITTED_SKIPS` entry carrying that entry's exact documented reason,
+byte-for-byte (compared against the exported object, not by eye); the single
+focused skip is `SHU-71 restricted capability refusal`.
+
+##### The focused selection, and the gap this round closes in it
+
+The previous correction round's focused selection did **not** contain
+`shu71-reexec-boundary.test.mjs`. Its service-side production entry is the glob
+`shu71-production*.test.mjs`, which expands to `shu71-production.test.mjs` and
+`shu71-production-mutations.test.mjs` and matches nothing else — so this round's
+ONLY end-to-end control sat outside the selection that is run first on every
+change to this lane. That is a gap, and it is closed here by naming the file:
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-reexec-boundary.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs \
+  .github/coordinator/service/test/shu71-host-contract.test.mjs
+```
+
+Seventeen entries, expanding to 24 test files — the previous round's 23 plus
+`shu71-reexec-boundary.test.mjs`. The focused total is the previous round's
+1,652 plus this round's 21 inventory names: 1,673; all 21 fall inside the
+selection. The full total is 3,365 plus the same 21: 3,386. The full selection
+is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`
+(114 files, one more than the previous round's 113). All seven of
+`shu71-reexec-boundary.test.mjs`'s tests were present in the outcome stream of
+all four runs above, focused and full alike.
+
+##### Harness throughput, and the one contention failure
+
+The two FULL runs used `taskset -c 0-9 node --test --test-concurrency=4` rather
+than the previous rounds' `taskset -c 0-3 node --test --test-concurrency=2`.
+This is disclosed because it differs from the earlier rounds: at `-c 0-3` with
+concurrency 2 the full selection did not finish inside this session's wall-clock
+ceiling (it reached 2,152 of 3,386 outcomes in 590 s and was terminated), so the
+pinning was widened to fit. Nothing the suite measures was changed — same
+constraints, same reporters, same committed revision, same files; only the CPU
+mask and the runner's concurrency. The two FOCUSED runs kept `-c 0-3` with
+concurrency 2 and finished in 63 s each.
+
+An intermediate full plain attempt at `taskset -c 0-7 --test-concurrency=4`
+produced one failure: `SHU251 live worker restart adopts once and recovers
+durable completion`, at `service/test/residual.test.mjs:65`, the unnamed
+`assert.equal(response.ok, true)` inside the harness's `launchBuilder` — a live
+supervisor daemon, a real Unix socket and a detached worker, on a host already
+carrying a five-minute load average near 5. That whole file then passed in
+isolation under the same CI-like conditions, unchanged, 11 tests / 11 pass /
+0 fail / 0 skip / `1..11` / exit 0, and the full plain run reported in the table
+above — at `-c 0-9`, which gives each runner more headroom — passed all 3,386.
+No assertion, timeout or deadline was relaxed. Resource contention is a possible
+explanation, not an independently proved cause; it is recorded here rather than
+dropped.
+
+##### Mutant replay
+
+Every mutant this round introduced was replayed on the committed revision and
+the assertion that killed it was READ OFF the failure, not inferred from the
+table. **Thirteen mutants, thirteen kills, no survivors.**
+
+The eight in-process mutants of `shu71-production-mutations.test.mjs` were
+driven through their own controls, each first verified to PASS on the unmutated
+module:
+
+| Replayed mutant | Killing assertion observed |
+| --- | --- |
+| `expiry invocation never crosses the kernel lock` | `B4_REEXEC_PRESENT_BYTE_EXACT` |
+| `expiry invocation element invented when the parent has none` | `B4_REEXEC_ABSENT_BYTE_EXACT` |
+| `empty parent invocation treated as a value` | `B4_REEXEC_EMPTY_BYTE_EXACT_AS_ABSENT` |
+| `parent environment carried through the kernel lock` | `B4_REEXEC_BOUNDARY_EXACTLY_THREE_ASSIGNMENTS` |
+| `kernel lock no longer wipes the environment` | `B4_REEXEC_BOUNDARY_ENVIRONMENT_IS_WIPED` |
+| `expiry invocation element read from the environment, not the argument` | `B4_REEXEC_BOUNDARY_EXACTLY_THREE_ASSIGNMENTS` |
+| `expiry invocation value split across argv elements` | `B4_REEXEC_SINGLE_ELEMENT_BYTE_EXACT` |
+| `expiry invocation comparison loosened below exact equality` | `B4_EXPIRY_INVOCATION_EXACT_EQUALITY_leading-space_REFUSED` |
+
+The five end-to-end mutants of `shu71-reexec-boundary.test.mjs` were replayed in
+place, with each `assert.throws` instrumented to record the assertion the
+control really died on:
+
+| Replayed mutant | Killing assertion observed |
+| --- | --- |
+| `B4 mutation: the locked re-exec drops the invocation element` | `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` |
+| `B4 mutation: the invocation element is read from the environment, not the argument` | `B4_REEXEC_END_TO_END_INNER_OBSERVED_THE_PROPAGATED_ID` |
+| `B4 mutation: the invocation value is split across argv elements` | `B4_REEXEC_ONE_VARIABLE_ONE_ARGV_ELEMENT` |
+| `B4 mutation: the parent environment is carried through the kernel lock` | `B4_REEXEC_END_TO_END_NO_OPERATOR_VALUE_IN_THE_COMMAND` |
+| `B4 mutation: the kernel lock no longer wipes the environment` | `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` |
+
+**Where the poisoned-environment mutant dies, precisely.** It does NOT reach the
+inner process. Under that mutant the constructed command grows from 12 elements
+to 162 and carries `SHU71_REEXEC_POISON=operator-value-that-must-not-cross`;
+`B4_REEXEC_END_TO_END_NO_OPERATOR_VALUE_IN_THE_COMMAND` is the first assertion
+`reexecEndToEnd` makes after construction, so the control dies there and
+`lockedChild` is never called. Executed separately, purely to characterise the
+mutant, that command's inner process inherits 151 variables including both
+poison names, and its teardown still reports `{"ok":true,"state":"REVOKED"}` —
+so the widened boundary is invisible to the teardown's own result and is caught
+only by the measurement of what crosses. On the UNMUTATED module both poison
+names and both poison values are absent from all 12 elements of the constructed
+command, and the inner process's environment is exactly `INVOCATION_ID`, `PATH`,
+`SHU71_LOCKED` with values `deadbeefcafef00d0123456789abcdef`,
+`/usr/bin:/bin` and `1` — no poison name and no poison value on either side.
+
+**The three argv rows above were re-measured.** The real CLI entry was run in
+its own process for the present, absent (`delete env.INVOCATION_ID`) and empty
+(`INVOCATION_ID=''`) cases, and the recorded commands are byte-identical to the
+three rows printed earlier in this section.
+
+##### Every control name in this section resolves to an assertion the tree emits
+
+Each `B4_*` name in the round's tables was resolved against the names the
+committed tree really produces — literal or composed from a `name` binding plus
+a template suffix — and the emitted names were captured from a probed run of
+`shu71-reexec-boundary.test.mjs`. Two did not resolve, and both are corrected
+above: `B4_REEXEC_ONE_VARIABLE_NO_SECOND_VARIABLE`, which no assertion emits,
+and the mis-attribution of the poisoned-environment mutant. Every remaining name
+in this section resolves, and every mutant/control pair in the two tables above
+is one this round observed by replay.
