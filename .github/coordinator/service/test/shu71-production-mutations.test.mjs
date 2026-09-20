@@ -15,7 +15,8 @@ import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck, expiry
   expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck, expiryJournalBlindCustodyCheck,
   expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck, expiryUnlinkCustodyCheck,
   expiryLiveCompanionCheck, expiryArmedWithoutDoneRowCheck,
-  expiryCompanionActivePostConditionCheck, expiryCompanionEnabledPostConditionCheck } from './shu71-recovery-checks.mjs';
+  expiryCompanionActivePostConditionCheck, expiryCompanionEnabledPostConditionCheck,
+  expirySelfRunCompletesCheck, expirySelfRunPostConditionParityCheck } from './shu71-recovery-checks.mjs';
 const custody = variant => (create, h) => expiryCustodyDriftCheck(create, h, variant);
 // The journal-independent custody requirement of the restructured
 // retireExpiryTimer(): every durable expiry unit file that is PRESENT is held
@@ -109,11 +110,11 @@ const mutations = [
   // is idle and unknown in both states, and both durable files are absent, so
   // only the named conjunct can refuse; without it the mechanism is reported
   // retired while the companion runs, or while its install symlink survives.
-  ['expiry retirement ignores companion liveness', "\n    && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
+  ['expiry retirement ignores companion liveness', "\n    && !expiryCompanionSurvivesRemoval() && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
     "\n    && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
     (create, h) => preArmDriftCheck(create, h, 'service-active')],
-  ['expiry retirement ignores companion enablement', "\n    && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
-    '\n    && unitIdle(expiryServiceUnit);', (create, h) => preArmDriftCheck(create, h, 'service-enabled-link')],
+  ['expiry retirement ignores companion enablement', "\n    && !expiryCompanionSurvivesRemoval() && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
+    '\n    && !expiryCompanionSurvivesRemoval();', (create, h) => preArmDriftCheck(create, h, 'service-enabled-link')],
   // ...and the absence conjunct itself. Measured, not assumed: each unit's own
   // UnitFileState answers for its own file wherever systemd's loaded view is
   // fresh, so the ONLY state that distinguishes this mutant is a durable unit
@@ -140,7 +141,7 @@ const mutations = [
   ['expiry retirement receipt omitted', "if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });",
     "if (false) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });", expiryRetirementCheck],
   ['retired episode expiry drift unobserved', 'try { observeTeardown(); observeRetiredExpiry(); }', 'try { observeTeardown(); }', expiryRetirementCheck],
-  ['expiry end state never measured', "    need(measuredPredicate(() => unitIdle(expiryTimerUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitIdle(expiryServiceUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');\n",
+  ['expiry end state never measured', "    need(measuredPredicate(() => unitIdle(expiryTimerUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && !expiryCompanionSurvivesRemoval()\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');\n",
     '', expiryPostConditionCheck],
   ['refused expiry disable blindly accepted', "catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }",
     'catch { /* mutation: accept any disable refusal */ }', expiryDisableFailureCheck],
@@ -210,13 +211,13 @@ const mutations = [
   ['expiry post-condition unit liveness inert', 'measuredPredicate(() => unitIdle(expiryTimerUnit)\n',
     'measuredPredicate(() => true\n', expiryActivePostConditionCheck],
   ['expiry post-condition enablement unchecked',
-    "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitIdle(expiryServiceUnit)",
-    '\n      && unitIdle(expiryServiceUnit)', expiryEnabledPostConditionCheck],
+    "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && !expiryCompanionSurvivesRemoval()",
+    '\n      && !expiryCompanionSurvivesRemoval()', expiryEnabledPostConditionCheck],
   // P154D-02. The companion halves of the same post-condition. `disable --now`
   // reports nothing about the service it triggers, so a disable that leaves it
   // running or enabled is drift the exit status cannot report - and an inert
   // conjunct destroys the durable unit files of a live or still-enabled unit.
-  ['expiry post-condition companion liveness inert', '\n      && unitIdle(expiryServiceUnit)\n', '\n      && true\n',
+  ['expiry post-condition companion liveness inert', '\n      && !expiryCompanionSurvivesRemoval()\n', '\n      && true\n',
     expiryCompanionActivePostConditionCheck],
   ['expiry post-condition companion enablement unchecked',
     "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');",
@@ -281,7 +282,7 @@ const mutations = [
   ['live expiry companion reported as generic drift', "code: error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE' ? error.code : 'ACT_TEARDOWN_DRIFT'",
     "code: 'ACT_TEARDOWN_DRIFT'", (create, h) => expiryLiveCompanionCheck(create, h, 'retired-episode')],
   ['expiry companion refusal predicate vacuous',
-    "const requireIdleExpiryCompanion = () => need(measuredPredicate(() => unitIdle(expiryServiceUnit)), 'ACT_TEARDOWN_EXPIRY_SERVICE');",
+    "const requireIdleExpiryCompanion = () => need(measuredPredicate(() => !expiryCompanionSurvivesRemoval()), 'ACT_TEARDOWN_EXPIRY_SERVICE');",
     'const requireIdleExpiryCompanion = () => {};', (create, h) => expiryLiveCompanionCheck(create, h, 'installed')],
   // P154D-01. The FIRST disjunct of the `installed` derivation, which the
   // previous round declared an equivalent mutant on a writer-side argument. The
@@ -290,6 +291,29 @@ const mutations = [
   // accepted, and there ARMED is the only thing that proves the installation.
   ['expiry installation proven only by the DONE row', "journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');",
     "journalHas(journal, 'DONE', 'expiry-watch');", expiryArmedWithoutDoneRowCheck],
+  // Fifth correction round, P154D-06. The exclusion must be EXACTLY as wide as
+  // the invocation performing the removal and no wider, so it is attacked from
+  // both sides and at both of its sites. Each mutant below is killed by a
+  // different named control.
+  //
+  // A: drop the exclusion entirely and the mechanism refuses the invocation
+  // that is removing it - the shipped regression, restored.
+  ['expiry teardown refuses the invocation performing it',
+    'const expiryCompanionSurvivesRemoval = () => !unitIdle(expiryServiceUnit) && !expiryCompanionIsThisInvocation();',
+    'const expiryCompanionSurvivesRemoval = () => !unitIdle(expiryServiceUnit);', expirySelfRunCompletesCheck],
+  // B: widen it so ANY companion with an invocation of its own is treated as
+  // self. On a real host every live unit has one, so this is the loophole that
+  // would tolerate a foreign live companion; the exact-equality-of-two-non-empty
+  // -values term is what stops it.
+  ['expiry invocation exclusion widened to any live companion',
+    "    return typeof self === 'string' && self !== '' && unit !== '' && unit === self;",
+    "    return unit !== '';", (create, h) => expiryLiveCompanionCheck(create, h, 'foreign-invocation')],
+  // C: keep the exclusion at the refusal before the disable and drop its parity
+  // at the post-condition, where a self-invocation is still `activating` by
+  // construction and would trip ACT_TEARDOWN_DRIFT after its own removal.
+  ['expiry post-condition refuses the invocation performing the removal',
+    '\n      && !expiryCompanionSurvivesRemoval()\n', '\n      && unitIdle(expiryServiceUnit)\n',
+    expirySelfRunPostConditionParityCheck],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

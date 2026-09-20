@@ -111,7 +111,27 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     },
     delete(unit) { try { fs.unlinkSync(resolve(wantsPath(unit))); } catch (e) { if (e.code !== 'ENOENT') throw e; } },
   };
+  // systemd mints a fresh 128-bit InvocationID every time a unit STARTS, exports
+  // that start's own id to its own processes as INVOCATION_ID, and keeps
+  // ANSWERING with it after the unit exits - so an idle unit's id is STALE
+  // rather than empty, and only a unit that never ran has none at all. Modelled
+  // as first-class per-unit state rather than as a per-argv reply: a unit that
+  // is measurably live has an id whether it was started through `run` or placed
+  // directly in `active`, a restart mints a new one, a stop keeps the old one,
+  // and `h.unitInvocations` lets a control pin or read an exact value.
+  const invocations = new Map();
+  let minted = 0;
+  const mintInvocation = unit => invocations.set(unit, (++minted).toString(16).padStart(32, '0'));
+  const invocationOf = unit => {
+    if (['active', 'activating'].includes(active.get(unit) ?? 'inactive') && !invocations.has(unit)) mintInvocation(unit);
+    return invocations.get(unit) ?? '';
+  };
+  // This process's own systemd invocation, exactly as INVOCATION_ID carries it
+  // into a unit's ExecStart. `null` models an operator CLI run, outside systemd
+  // entirely, where the variable is absent and nothing is ever excluded.
+  const selfInvocation = { id: null };
   const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
+    invocationId: () => selfInvocation.id,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
       let output = '';
@@ -164,6 +184,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
             const unit = argv.at(-1);
             output = `${unitFile(unit) || wants.has(unit) ? (enabled.has(unit) ? 'enabled' : 'disabled') : ''}\n`; return;
           }
+          if (argv[0] === 'show' && argv.includes('--property=InvocationID')) { output = `${invocationOf(argv.at(-1))}\n`; return; }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
           // Measured on the target host during shu71-mint-00000017: systemctl
           // kill exits 1 for a unit this episode never started, and
@@ -184,10 +205,10 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
             // enable/disable create and remove the durable install symlink.
             if (argv[0] === 'enable') { enabled.add(unit); wants.add(unit); }
             else { enabled.delete(unit); wants.delete(unit); }
-            if (argv.includes('--now')) { active.set(unit, argv[0] === 'enable' ? 'active' : 'inactive'); if (argv[0] === 'enable') started.add(unit); }
+            if (argv.includes('--now')) { active.set(unit, argv[0] === 'enable' ? 'active' : 'inactive'); if (argv[0] === 'enable') { started.add(unit); mintInvocation(unit); } }
             return;
           }
-          if (['start', 'restart'].includes(argv[0])) { active.set(argv[1], 'active'); started.add(argv[1]); }
+          if (['start', 'restart'].includes(argv[0])) { active.set(argv[1], 'active'); started.add(argv[1]); mintInvocation(argv[1]); }
           if (argv[0] === 'stop') active.set(argv[1], 'inactive');
           return;
         }
@@ -238,6 +259,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     },
   };
   return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, loaded, wants, systemd, write, signatures: () => signatures,
+    unitInvocations: invocations, selfInvocation,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),

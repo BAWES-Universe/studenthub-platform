@@ -95,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L734). Real kernel socket access
+[operative unit render](shu71-production.mjs#L777). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -396,7 +396,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L349), [stop](shu71-production.mjs#L678)).
+([start](shu71-production.mjs#L353), [stop](shu71-production.mjs#L721)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -1963,6 +1963,13 @@ The refusal carries its own name, `ACT_TEARDOWN_EXPIRY_SERVICE`, raised by
 const requireIdleExpiryCompanion = () => need(measuredPredicate(() => unitIdle(expiryServiceUnit)), 'ACT_TEARDOWN_EXPIRY_SERVICE');
 ```
 
+> **Superseded in place by P154D-06 below, and only in its companion-LIVENESS
+> term.** The predicate as printed here refused the invocation performing the
+> removal, which is the regression the fifth round fixes; the shipped form is
+> `need(measuredPredicate(() => !expiryCompanionSurvivesRemoval()), 'ACT_TEARDOWN_EXPIRY_SERVICE')`.
+> The name, the three statement sites, the ordering before `disable --now` and
+> every file and enablement term are unchanged by that round.
+
 and it is stated in three places, each pinned by its own control and mutant:
 
 1. in `retireExpiryTimer()`, after the never-created branch and **before the
@@ -1991,6 +1998,10 @@ const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)
   && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
   && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));
 ```
+
+> **P154D-06, same note:** the companion's liveness term is now
+> `!expiryCompanionSurvivesRemoval()`. The durable-file term, both
+> `UnitFileState` terms and the timer's own liveness term are byte-unchanged.
 
 and the post-condition after the disable measures the same four unit/term pairs
 rather than the timer's two. Because every site that consults the tolerance
@@ -2356,8 +2367,11 @@ Two things, stated rather than smoothed over.
    measures the whole mechanism rather than the timer half of it, so the state
    this round found — a live companion behind an absent timer — no longer
    satisfies it.
-2. **HALT-by-name has a production consequence on the automatic expiry path,
-   and it is not hypothetical.** `installExpiry()` writes
+2. **HALT-by-name had a production consequence on the automatic expiry path,
+   and it was not hypothetical. The owner ruled on it and it is FIXED by
+   P154D-06 below; the paragraph is retained unedited as the record of what the
+   fourth round shipped and disclosed, not as a description of current
+   behaviour.** `installExpiry()` writes
    `ExecStart=/usr/bin/node <installedModule> expire <id>` into
    `shu71-expiry-<id>.service`, and the timer's only job is to start it. So when
    an expiry teardown is triggered BY THE TIMER, the companion service is the
@@ -2387,3 +2401,230 @@ Two things, stated rather than smoothed over.
    to the model — that is a gap in the model, recorded here.
 
 Nothing else in P154D-01 through P154D-05 was left open.
+
+### Fifth correction round: the teardown proves gone the mechanism MINUS the invocation performing the removal
+
+#### P154D-06, the regression, and that it was ours
+
+The fourth round's DISCLOSURE raised a consequence and asked for a ruling. The
+ruling is not "accept it". Measured in the shipped tree, `installExpiry()` writes
+
+```
+ExecStart=/usr/bin/node <installedModule> expire <id>
+```
+
+into `shu71-expiry-<id>.service`, and the timer written beside it carries
+`Unit=shu71-expiry-<id>.service`. **The companion service IS the process that
+performs the teardown.** `unitIdle()` is `ActiveState ∈ {inactive, failed}`, and
+a running `Type=oneshot` unit reports `activating`. So with the fourth round's
+terms the timer-triggered path — the ONLY unattended path this mechanism exists
+for — did its teardown work, then refused `ACT_TEARDOWN_EXPIRY_SERVICE` on
+itself, died non-zero, and was restarted by `Restart=on-failure` under
+`OnUnitActiveSec=1s` until the start limit tripped. Net effect: the window left
+torn-down-but-not-retired, needing an operator `resume`/`revoke`, with the
+expiry mechanism still installed. That is the "its teardown could not complete"
+class that already cost one activation ID in this workstream, and it contradicts
+the pinned requirement that expiry triggers PHYSICAL gate removal, worker and
+service cleanup with no operator. A refusal that fires on the very invocation
+doing the removal is not defence in depth; it is a self-defeating guard.
+
+The pre-existing requirement that expiry must self-complete is retained and is
+now also REQUIRED to be controlled.
+
+#### The rule
+
+The mechanism this teardown must prove gone is the expiry mechanism **minus the
+invocation performing the removal**. Stated at the point of measurement:
+
+```js
+const expiryCompanionIsThisInvocation = () => {
+  const unit = unitProperty(expiryServiceUnit, 'InvocationID'), self = b.invocationId();
+  return typeof self === 'string' && self !== '' && unit !== '' && unit === self;
+};
+const expiryCompanionSurvivesRemoval = () => !unitIdle(expiryServiceUnit) && !expiryCompanionIsThisInvocation();
+```
+
+* **A companion survives this removal** when it is measurably NOT idle **and**
+  it is NOT the invocation running this removal. `ACT_TEARDOWN_EXPIRY_SERVICE`
+  is refused exactly when that predicate is true; otherwise the teardown
+  proceeds.
+* **Only the companion's own LIVENESS term gained the exclusion.** The durable
+  unit-file terms and the `UnitFileState` enablement terms of BOTH units are
+  byte-unchanged and exactly as strict as the fourth round left them. Custody is
+  untouched. `retireExpiryTimer()`'s ordering and every other clause are
+  untouched.
+* **Liveness is measured FIRST**, so an idle companion never consults the
+  identity at all, and an `InvocationID` left behind by a start that has already
+  exited cannot excuse anything. This is also why every completing retirement
+  issues exactly the same commands it issued before: the identity read only
+  happens where the companion is live.
+* **The exclusion is bounded by exact invocation identity and by nothing else.**
+  No live companion attributable to anything else is ever tolerated, and no
+  journal row, durable receipt or absence tolerance reaches this term — the
+  refusal still sits after the never-created branch and BEFORE the absence
+  clause and before `disable --now`, where the fourth round put it.
+* Required in its **negated** form through `measuredPredicate()` at every site,
+  so an unreadable id, a `show` that exits non-zero, a boundary without the port
+  or any other throw is the named refusal, not a bare error and never a pass.
+
+#### The exact measurement, and every direction it can fail in
+
+The exclusion is measured from a durable systemd fact, not from a flag, an
+environment-presence test, or anything the removal path sets about itself:
+
+| Side | Measurement |
+| --- | --- |
+| the unit's current start | `systemctl show --property=InvocationID --value shu71-expiry-<id>.service`, through the same `unitProperty()` helper every other unit measurement uses |
+| this process's own start | `INVOCATION_ID`, read through the new `shu71Boundary.invocationId()` measurement port (`() => process.env.INVOCATION_ID`) |
+| the comparison | exact string equality of two NON-EMPTY values, and nothing else |
+
+systemd mints a fresh 128-bit InvocationID every time a unit starts and exports
+that start's own id to that start's own processes as `INVOCATION_ID`. Equality
+of the two is therefore a statement about ONE start, which is what makes it
+usable as an identity rather than as a capability. Failure directions, each
+closed:
+
+* **`INVOCATION_ID` absent** — this process is not running under systemd, i.e.
+  an operator CLI run. `typeof self === 'string'` is false, nothing is excluded,
+  and any live companion refuses by name. This is the fourth round's behaviour,
+  preserved exactly, and it is what `B4_EXPIRY_LIVE_COMPANION_INSTALLED`,
+  `…_JOURNAL_BLIND` and `…_RETIRED_EPISODE` continue to measure.
+* **Either value empty** — a unit that never ran in this boot answers with the
+  empty string, and an empty `INVOCATION_ID` is not an identity. Both
+  non-emptiness terms are required, so `'' === ''` can never exclude.
+* **Unreadable** — `unitProperty()` goes through `command()`, which refuses
+  `ACT_COMMAND_FAILED` on a non-zero exit; inside `measuredPredicate()` that is
+  a measured `false`, so the negated requirement refuses by name. Fail-closed.
+* **Equal but stale** — a companion whose start has EXITED is idle, and liveness
+  is measured first, so the stale id is never compared. A leftover process from
+  invocation X facing a unit that has since restarted into invocation Y compares
+  X against Y, which differs, and refuses. The only tolerated state is a live
+  companion whose CURRENT start is this process's own.
+* **Foreign, with an id on both sides** — this process is under systemd and the
+  live companion belongs to a different start. Presence on either side excludes
+  nothing; only equality does. Pinned by `B4_EXPIRY_LIVE_COMPANION_FOREIGN_INVOCATION`.
+
+#### `env -i` and why one variable is now carried across the re-exec
+
+Disclosed because it is the one place this round touched outside the three
+measurement sites. The CLI re-execs itself under
+`flock … /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 /usr/bin/node …`, so
+**`INVOCATION_ID` was being wiped before `execute('expire')` ever ran**. Without
+carrying it, the inner process cannot know that it IS the expiry companion and
+the timer-triggered teardown refuses itself exactly as before — the measurement
+would be correct and dead. The value is now appended as a single argv element,
+and only when present, so `INVOCATION_ID=` is never invented and no value can
+inject a second assignment:
+
+```js
+const invocation = process.env.INVOCATION_ID;
+spawnSync('/usr/bin/flock', ['--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',
+  ...(invocation ? [`INVOCATION_ID=${invocation}`] : []), '/usr/bin/node', installedModule, ...argv], { stdio: 'inherit' });
+```
+
+`env -i` stays, and nothing else crosses. Carrying this one value grants nothing
+on its own: the teardown only ever compares it for EXACT EQUALITY against the
+unit's own reported `InvocationID`, so a value that is not that durable systemd
+fact excludes nothing and a live companion still refuses by name. A root
+operator who reads the live companion's actual `InvocationID` and exports it can
+make this process claim that start — but that operator already holds root on the
+host this module runs as root on, and can invoke `revoke` directly; the
+exclusion widens no boundary they were outside of.
+
+`invocationId` is a **measurement port, not a reviewed effect.** It reads one
+environment variable and changes nothing on the host, the reviewed teardown
+effects set and its order are unchanged, and this round adds no command. Had a
+new effect been required, the rules say stop and disclose; none was.
+
+#### New clause-table rows
+
+| Clause or ordering | Named control | Named killing mutant | Kill |
+| --- | --- | --- | --- |
+| **P154D-06** the invocation exclusion itself — `&& !expiryCompanionIsThisInvocation()` | `B4_EXPIRY_SELF_RUN_COMPLETES_COMPLETED` | `expiry teardown refuses the invocation performing it` | verified |
+| **P154D-06** the exclusion's EQUALITY term and its two non-emptiness terms (`self !== ''`, `unit !== ''`, `unit === self`) | `B4_EXPIRY_LIVE_COMPANION_FOREIGN_INVOCATION_REFUSED` | `expiry invocation exclusion widened to any live companion` | verified |
+| **P154D-06** `expiryCompanionSurvivesRemoval()` — the companion-liveness term, now `!unitIdle(expiryServiceUnit)` with the exclusion, at `requireIdleExpiryCompanion()` and inside `expiryRetired()` | `B4_EXPIRY_SELF_RUN_COMPLETES_COMPLETED` | `expiry teardown refuses the invocation performing it` | verified |
+| **P154D-06** the same exclusion's PARITY at the post-condition after `disable --now` | `B4_EXPIRY_SELF_RUN_POST_CONDITION_PARITY_COMPLETED` | `expiry post-condition refuses the invocation performing the removal` | verified |
+| **P154D-06** the exclusion hides no surviving mechanism (same episode, non-companion vantage) | `B4_EXPIRY_SELF_RUN_HIDES_NOTHING_COMPLETED` | `retired expiry units left behind`, `expiry disable command never issued` | verified |
+
+The four rows the fourth round wrote for the companion keep their controls,
+their mutants and their `verified` status; only the printed predicate text moved
+with the term:
+
+| Row | Then | Now |
+| --- | --- | --- |
+| **P154D-02** the live-companion refusal's predicate and its `ACT_TEARDOWN_EXPIRY_SERVICE` name | `unitIdle(expiryServiceUnit)` | `!expiryCompanionSurvivesRemoval()` |
+| **P154D-02** `expiryRetired()` — COMPANION liveness | `unitIdle(expiryServiceUnit)` | `!expiryCompanionSurvivesRemoval()` |
+| **P154D-02** post-condition conjunct — COMPANION liveness | `unitIdle(expiryServiceUnit)` | `!expiryCompanionSurvivesRemoval()` |
+| **P154D-02** `expiryRetired()` — COMPANION enablement | unchanged | unchanged |
+
+#### New controls and new mutants
+
+| New control (test name) | Proves |
+| --- | --- |
+| `B4 a timer-triggered expiry teardown running inside its own companion service completes` | **control 1**, the shape the fourth round recorded as an unmodelled gap: `execute('expire')` from inside a modelled `shu71-expiry-<id>.service` whose reported `InvocationID` equals this process's `INVOCATION_ID` and whose `ActiveState` is `activating`. The teardown COMPLETES — `ok:true`, `state:REVOKED`, `code:null`, `failures:[]`, a durable `TEARDOWN_COMPLETE` and removal receipt, no `ACT_TEARDOWN_EXPIRY_SERVICE` and no `ACT_TEARDOWN_DRIFT` — the `disable --now` is issued, the timer ends stopped, not enabled and with no leftover install symlink, and both durable unit files are gone. Nothing was stopped or killed to achieve it and the companion is still exactly as live, under exactly the same invocation, afterwards |
+| `B4 a completed self-run still measures fully retired from a non-companion vantage` | **control 4**: the SAME episode measured again with no `INVOCATION_ID` at all, so no term is excluded from anything. The retired episode's receipt path returns `physical_teardown_observed: true`, which is `observeTeardown()` plus `observeRetiredExpiry()` executed, and the end state is independently re-measured through the interface the module reads. This is what proves the exclusion does not paper over a surviving mechanism |
+| `B4 a disable that leaves this invocation's own companion activating is not drift` | the post-condition half of the exclusion, ISOLATED: the companion is idle at the refusal before `disable --now`, so that refusal cannot be what this control observes, and becomes this invocation only afterwards. The timer's own two end-state terms are spotless, so only the companion's post-condition term can refuse |
+| `B4 a measurably running expiry companion service is never a clean retirement, foreign-invocation` | **control 3's sharp form**: this process really is under systemd with its own `INVOCATION_ID` and the live companion belongs to a DIFFERENT start. Both ids are asserted present, asserted to differ, and the refusal is still `ACT_TEARDOWN_EXPIRY_SERVICE` with no `stop`, no `disable --now`, nothing unlinked and no receipt |
+
+| New killing mutant | Control that kills it |
+| --- | --- |
+| `B1/B4 mutation: expiry teardown refuses the invocation performing it` | `B4_EXPIRY_SELF_RUN_COMPLETES_COMPLETED` |
+| `B1/B4 mutation: expiry invocation exclusion widened to any live companion` | `B4_EXPIRY_LIVE_COMPANION_FOREIGN_INVOCATION_REFUSED` |
+| `B1/B4 mutation: expiry post-condition refuses the invocation performing the removal` | `B4_EXPIRY_SELF_RUN_POST_CONDITION_PARITY_COMPLETED` |
+
+Each of the three is killed by a different named control, which is the
+requirement. The full cross-kill matrix was replayed rather than reasoned about,
+and it is printed here rather than reduced to the three designations, because
+one cell of it is a limitation:
+
+| Mutant | `…_SELF_RUN_COMPLETES` | `…_SELF_RUN_HIDES_NOTHING` | `…_SELF_RUN_POST_CONDITION_PARITY` | `…_LIVE_COMPANION_FOREIGN_INVOCATION` | `…_LIVE_COMPANION_INSTALLED` | `…_LIVE_COMPANION_JOURNAL_BLIND` | `…_LIVE_COMPANION_RETIRED_EPISODE` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **A** drop the exclusion | `_COMPLETED` | `_COMPLETED` | `_COMPLETED` | survives | survives | survives | survives |
+| **B** widen it to any live companion | survives | survives | survives | `_REFUSED` | `_REFUSED` | `_REFUSED` | `_REFUSED` |
+| **C** drop the post-condition parity | `_COMPLETED` | `_COMPLETED` | `_COMPLETED` | survives | survives | survives | survives |
+| **D** `retired expiry units left behind` | `_COMPLETED` | `_COMPLETED` | `_COMPLETED` | `_RECOVERED` | `_RECOVERED` | `_RECOVERED` | `_TEARDOWN_COMPLETED` |
+| **E** `expiry disable command never issued` | `_COMPLETED` | `_COMPLETED` | `_INVOCATION_PLANTED_BY_DISABLE` | `_RECOVERED` | `_RECOVERED` | survives | `_TEARDOWN_COMPLETED` |
+
+* **B is exactly the right shape**: it survives every self-run control — widening
+  the exclusion makes a self-run complete just as it should — and dies on every
+  live-companion control, which is why the foreign case is what pins the
+  equality term, and why "the exclusion must be exactly as wide as the
+  invocation and no wider" is a two-sided claim with a control on each side.
+* **A and C are not distinguished from each other by any control, and that is a
+  real limitation, stated rather than papered over.** The exclusion is deliberately
+  stated ONCE and shared by all three sites, so dropping it (A) removes the
+  post-condition's parity as well; and a self-run's own `activating` state
+  reaches the post-condition by construction, so dropping the parity alone (C)
+  also refuses the self-run. Each has its own designated killing control, each
+  dies by that control's own named assertion, and neither can survive — but no
+  state in this module separates "the refusal before the disable lost the
+  exclusion" from "the post-condition lost it". Stating the term once is worth
+  more than the extra attributability would be: a second, independent copy is
+  exactly how the two sites would drift apart.
+* D and E are pre-existing mutants attributed to `B4_EXPIRY_RETIREMENT_COMPLETES`
+  and unchanged. They are replayed here only because the brief requires control
+  4 to die when a mechanism really does survive; they were not re-attributed.
+
+#### P154D-04 extended, not reopened
+
+The fixture's fidelity control gains a fifth section and keeps every assertion
+it had. Invocation identity is **first-class modelled state on both sides**, not
+a per-argv reply: an `invocations` map per unit, minted on the start transitions
+and on first measurement of a unit that is live however it became live, retained
+after the unit exits (so an idle unit's id is STALE, not empty), fresh on a
+restart, and empty only for a unit that never ran; plus a `selfInvocation`
+holder that `b.invocationId()` reads, representable both as absent (operator CLI
+run) and as exactly a named unit's current id (a unit's own `ExecStart`).
+`B4_FIXTURE_REPRESENTS_*` drives all of that against the same interface the
+module reads and fails by its own name if the model cannot represent it.
+
+#### What this round did NOT change
+
+P154D-01's pinned ARMED disjunct and retracted equivalence claim, P154D-04's
+fixture-fidelity controls, P154D-05's corrected widened-vs-narrowed prose, and
+P154D-03 as a documented residual all stand as the fourth round built them.
+Custody is still shape, ownership, mode and links — **not** content. The
+successor-window pre-mint gate and the post-window end-state observation are
+byte-unchanged additional controls. The two mutants the fourth round
+re-attributed stay re-attributed. No assertion, name, code, skip, timeout or
+deadline was weakened, renamed or deleted.

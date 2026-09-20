@@ -1386,7 +1386,18 @@ export async function expiryLiveCompanionCheck(createProduction, h, state = 'ins
     for (const path of expiryUnits(h)) fs.rmSync(h.root + path);
     h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h)); h.wants.delete(expiryTimer(h));
   }
+  // P154D-06, the FOREIGN half of the invocation exclusion. This process really
+  // is running under systemd and really does have an INVOCATION_ID, and the live
+  // companion belongs to a DIFFERENT start. The exclusion is bounded by exact
+  // invocation identity, so presence of an id on either side excludes nothing
+  // and the refusal is by its own name, exactly as for an operator CLI run.
+  if (state === 'foreign-invocation') h.selfInvocation.id = 'f'.repeat(32);
   h.active.set(companion, 'active');
+  if (state === 'foreign-invocation') {
+    assert.match(unitShow(h, companion, 'InvocationID'), /^[0-9a-f]{32}$/, `${name}_COMPANION_HAS_ITS_OWN_INVOCATION`);
+    assert.match(h.boundary.invocationId(), /^[0-9a-f]{32}$/, `${name}_PROCESS_HAS_AN_INVOCATION`);
+    assert.notEqual(unitShow(h, companion, 'InvocationID'), h.boundary.invocationId(), `${name}_INVOCATIONS_DIFFER`);
+  }
   // The state, measured through the same interface the module reads, before
   // the teardown runs: nothing here is assumed.
   assert.equal(unitShow(h, companion, 'ActiveState'), 'active', `${name}_COMPANION_MEASURABLY_ACTIVE`);
@@ -1547,4 +1558,185 @@ export function fixtureHostStateCheck(h) {
   h.wants.delete(companion);
   place(timer, false);
   assert.equal(state(companion), '', `${name}_LINK_REMOVED_IS_NOT_FOUND`);
+  // (5) P154D-06. Invocation identity, on BOTH sides, as first-class modelled
+  // state rather than a per-argv reply: a unit that is measurably live answers
+  // with an id of its own however it became live, a restart answers with a
+  // DIFFERENT id, an exited start still answers with its own (stale, not
+  // empty), a unit that never ran answers empty, and this process's own
+  // INVOCATION_ID is representable both absent (an operator CLI run) and equal
+  // to a named unit's current id (a unit's own ExecStart).
+  const invocation = unit => unitShow(h, unit, 'InvocationID');
+  assert.equal(invocation(companion), '', `${name}_NEVER_RAN_HAS_NO_INVOCATION`);
+  h.active.set(companion, 'activating');
+  const first = invocation(companion);
+  assert.match(first, /^[0-9a-f]{32}$/, `${name}_LIVE_UNIT_HAS_AN_INVOCATION`);
+  assert.equal(invocation(companion), first, `${name}_INVOCATION_IS_STABLE`);
+  h.active.set(companion, 'inactive');
+  assert.equal(invocation(companion), first, `${name}_EXITED_START_ANSWERS_STALE`);
+  h.write(file(companion), '[Service]\n', 0o644);
+  h.boundary.run('/usr/bin/systemctl', ['start', companion], {});
+  const second = invocation(companion);
+  assert.match(second, /^[0-9a-f]{32}$/, `${name}_RESTART_HAS_AN_INVOCATION`);
+  assert.notEqual(second, first, `${name}_RESTART_MINTS_A_NEW_INVOCATION`);
+  assert.equal(h.boundary.invocationId(), null, `${name}_PROCESS_OUTSIDE_SYSTEMD_HAS_NONE`);
+  h.selfInvocation.id = second;
+  assert.equal(h.boundary.invocationId(), second, `${name}_PROCESS_IS_A_NAMED_INVOCATION`);
+  h.selfInvocation.id = null;
+  h.active.set(companion, 'inactive');
+  place(companion, false);
+}
+
+// SHU-71 expiry-retirement drift, fifth correction round. P154D-06. The fourth
+// round's HALT-by-name refusal was correct about the state the verifier
+// measured and WRONG about one state it could not distinguish from it: the
+// timer-triggered path itself. `installExpiry()` writes
+// `ExecStart=/usr/bin/node <installedModule> expire <id>` into
+// `shu71-expiry-<id>.service` and the timer's `Unit=` names that service, so on
+// the only unattended path this mechanism exists for the companion service IS
+// the process performing the teardown, and a running `Type=oneshot` unit reports
+// `activating`. The shipped refusal therefore fired on the very invocation doing
+// the removal: the window was left torn down but not retired, the process died
+// non-zero and `Restart=on-failure` under `OnUnitActiveSec=1s` restarted it
+// until the start limit tripped, requiring an operator `resume`/`revoke` with
+// the expiry mechanism still installed.
+//
+// The rule is now: the teardown proves gone the expiry mechanism MINUS the
+// invocation performing the removal, bounded by exact invocation identity and
+// by nothing else. These controls drive both directions of that bound - the
+// shape the fourth round recorded as an unmodelled gap, and the parity of the
+// same exclusion at the post-condition after `disable --now`.
+//
+// The modelled companion start is real state, not a per-argv reply: the unit is
+// placed in the fixture's `active` map as `activating`, the fixture answers
+// `InvocationID` for it from its own first-class per-unit invocation state, and
+// this process's `INVOCATION_ID` is set to exactly that value through
+// `h.selfInvocation`, which is what `b.invocationId()` reads.
+const selfRunCompanion = (h, name, state = 'activating') => {
+  const companion = expiryCompanion(h);
+  h.active.set(companion, state);
+  const invocation = unitShow(h, companion, 'InvocationID');
+  assert.match(invocation, /^[0-9a-f]{32}$/, `${name}_COMPANION_START_HAS_AN_INVOCATION`);
+  h.selfInvocation.id = invocation;
+  assert.equal(unitShow(h, companion, 'ActiveState'), state, `${name}_COMPANION_MEASURABLY_${state.toUpperCase()}`);
+  assert.equal(h.boundary.invocationId(), invocation, `${name}_PROCESS_IS_THAT_INVOCATION`);
+  return invocation;
+};
+// Control 1. The timer fires, systemd starts the companion, and the companion
+// runs `expire <id>`. The teardown must COMPLETE: no ACT_TEARDOWN_EXPIRY_SERVICE
+// on itself, no ACT_TEARDOWN_DRIFT from its own `activating` state, the timer
+// stopped and not enabled with no leftover install symlink, and both durable
+// unit files gone.
+// The prefix is a parameter for the same reason the live-companion control's is:
+// control 4 below drives this same self-run shape as its own SETUP and must
+// report under its own name, so a mutant that leaves residue behind is
+// attributed to the control that observed it rather than to this one.
+export async function expirySelfRunCompletesCheck(createProduction, h, name = 'B4_EXPIRY_SELF_RUN_COMPLETES') {
+  const create = () => createProduction(h.id, h.boundary);
+  const companion = expiryCompanion(h);
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  assert.ok(h.journal().some(e => e.event === 'ARMED'), `${name}_JOURNAL_PROVES_INSTALLED`);
+  for (const path of expiryUnits(h)) {
+    assert.equal(h.exists(path), true, `${name}_MECHANISM_INSTALLED`);
+    assert.deepEqual(Object.entries(custodyTerms(h, path)).filter(([, ok]) => !ok).map(([term]) => term), [], `${name}_UNITS_IN_CUSTODY`);
+  }
+  assert.equal(h.enabled.has(expiryTimer(h)), true, `${name}_TIMER_ENABLED`);
+  assert.equal(h.wants.has(expiryTimer(h)), true, `${name}_TIMER_LINK_INSTALLED`);
+  const invocation = selfRunCompanion(h, name);
+  h.expire();
+  const start = h.events.length;
+  const result = await create().execute('expire');
+  // Nothing was stopped or signalled to make this work: the exclusion is a
+  // measurement, and the companion is still exactly as live as it was.
+  assert.equal(h.events.slice(start).some(e => e.includes(`:stop ${companion}`)), false, `${name}_NO_STOP_ISSUED`);
+  assert.equal(h.events.slice(start).some(e => e.includes(`:kill`) && e.includes(companion)), false, `${name}_NO_KILL_ISSUED`);
+  assert.equal(unitShow(h, companion, 'ActiveState'), 'activating', `${name}_STILL_THIS_INVOCATION_LIVE`);
+  assert.equal(unitShow(h, companion, 'InvocationID'), invocation, `${name}_STILL_THIS_INVOCATION_ID`);
+  assert.equal(result.ok, true, `${name}_COMPLETED: ${JSON.stringify(result)}`);
+  assert.equal(result.state, 'REVOKED', `${name}_RETIRED`);
+  assert.equal(result.code, null, `${name}_NO_REFUSAL_CODE`);
+  assert.deepEqual(result.failures, [], `${name}_NO_FAILURES`);
+  assert.ok(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), `${name}_RECEIPT_DURABLE`);
+  assert.ok(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), `${name}_REMOVAL_RECEIPT`);
+  // The mechanism really is retired, measured through the same interface the
+  // module reads: the timer is stopped, not enabled, its install symlink is
+  // gone, systemd knows nothing about it, and both unit files are unlinked.
+  assert.ok(h.events.slice(start).some(e => e.includes(`disable --now ${expiryTimer(h)}`)), `${name}_DISABLE_ISSUED`);
+  assert.equal(unitShow(h, expiryTimer(h), 'ActiveState'), 'inactive', `${name}_TIMER_STOPPED`);
+  assert.equal(h.enabled.has(expiryTimer(h)), false, `${name}_TIMER_NOT_ENABLED`);
+  assert.equal(h.wants.has(expiryTimer(h)), false, `${name}_TIMER_LINK_REMOVED`);
+  assert.equal(unitShow(h, expiryTimer(h), 'UnitFileState'), '', `${name}_TIMER_UNKNOWN`);
+  assert.equal(unitShow(h, companion, 'UnitFileState'), '', `${name}_COMPANION_UNKNOWN`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_UNITS_REMOVED`);
+  return invocation;
+}
+// Control 4. The exclusion hides nothing. The same episode is measured AGAIN
+// from a non-companion vantage - the invocation has ended and this process has
+// no INVOCATION_ID at all, so no term is excluded from anything - and the
+// retired episode's own receipt path must still observe a fully retired
+// mechanism. This is what proves the exclusion does not paper over a surviving
+// mechanism: leave the timer enabled or either unit file in place and
+// `observeRetiredExpiry()` refuses here, where nothing is excluded.
+export async function expirySelfRunHidesNothingCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = 'B4_EXPIRY_SELF_RUN_HIDES_NOTHING';
+  const companion = expiryCompanion(h);
+  await expirySelfRunCompletesCheck(createProduction, h, name);
+  // The invocation is over: the oneshot exited and this vantage is an operator
+  // run outside systemd entirely.
+  h.active.set(companion, 'inactive');
+  h.selfInvocation.id = null;
+  assert.equal(h.boundary.invocationId(), null, `${name}_NO_INVOCATION_TO_EXCLUDE`);
+  assert.equal(unitShow(h, companion, 'ActiveState'), 'inactive', `${name}_COMPANION_EXITED`);
+  const observed = await create().execute('revoke');
+  assert.equal(observed.ok, true, `${name}_OBSERVED: ${JSON.stringify(observed)}`);
+  assert.equal(observed.state, 'REVOKED', `${name}_STILL_RETIRED`);
+  assert.equal(observed.physical_teardown_observed, true, `${name}_END_STATE_MEASURED`);
+  // Measured independently of the module's own answer, through the interface it
+  // reads, so the assertion names say what was true rather than what was returned.
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_UNITS_STILL_ABSENT`);
+  for (const unit of [expiryTimer(h), companion]) {
+    assert.equal(unitShow(h, unit, 'ActiveState'), 'inactive', `${name}_IDLE_${unit.split('.').pop()}`);
+    assert.equal(unitShow(h, unit, 'UnitFileState'), '', `${name}_NOT_ENABLED_${unit.split('.').pop()}`);
+    assert.equal(h.wants.has(unit), false, `${name}_NO_LEFTOVER_LINK_${unit.split('.').pop()}`);
+  }
+}
+// Control for the POST-CONDITION half of the same exclusion, isolated. The
+// companion is idle at the refusal before `disable --now` - so that refusal
+// cannot be what this control observes - and becomes THIS INVOCATION only
+// afterwards, which is where a self-invocation's own `activating` state would
+// otherwise trip ACT_TEARDOWN_DRIFT. The timer's own end state is spotless, so
+// only the companion's post-condition term can produce a refusal here.
+export async function expirySelfRunPostConditionParityCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = 'B4_EXPIRY_SELF_RUN_POST_CONDITION_PARITY';
+  const companion = expiryCompanion(h);
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  const run = h.boundary.run;
+  const raw = (unit, property) => String(run('/usr/bin/systemctl', ['show', `--property=${property}`, '--value', unit], {}).stdout ?? '').trim();
+  let planted = null;
+  h.boundary.run = (exe, argv, options) => {
+    const result = run(exe, argv, options);
+    if (exe === '/usr/bin/systemctl' && argv[0] === 'disable' && argv.at(-1) === expiryTimer(h) && planted === null) {
+      h.active.set(companion, 'activating');
+      planted = raw(companion, 'InvocationID');
+      h.selfInvocation.id = planted;
+    }
+    return result;
+  };
+  try {
+    assert.equal(unitShow(h, companion, 'ActiveState'), 'inactive', `${name}_COMPANION_IDLE_BEFORE_DISABLE`);
+    assert.equal(h.boundary.invocationId(), null, `${name}_NO_INVOCATION_BEFORE_DISABLE`);
+    const result = await create().execute('revoke');
+    // The state at the point of measurement: the companion is live and IS this
+    // invocation, and the timer's own two terms are spotless.
+    assert.match(planted ?? '', /^[0-9a-f]{32}$/, `${name}_INVOCATION_PLANTED_BY_DISABLE`);
+    assert.equal(h.active.get(companion), 'activating', `${name}_COMPANION_ACTIVATING_AFTER_DISABLE`);
+    assert.equal(h.selfInvocation.id, planted, `${name}_COMPANION_IS_THIS_INVOCATION`);
+    assert.equal(h.active.get(expiryTimer(h)) ?? 'inactive', 'inactive', `${name}_TIMER_IDLE`);
+    assert.equal(h.enabled.has(expiryTimer(h)), false, `${name}_TIMER_NOT_ENABLED`);
+    assert.equal(result.ok, true, `${name}_COMPLETED: ${JSON.stringify(result)}`);
+    assert.equal(result.state, 'REVOKED', `${name}_RETIRED`);
+    assert.deepEqual(result.failures, [], `${name}_NO_FAILURES`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_UNITS_REMOVED`);
+  } finally { h.boundary.run = run; }
 }

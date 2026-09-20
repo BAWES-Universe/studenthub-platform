@@ -22,7 +22,11 @@ const READBACK_CODES = ['DROPIN', 'ACTIVATION'].flatMap(kind =>
 export const installedModule = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
 export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), now: () => Date.now(),
   run: (file, args, options) => spawnSync(file, args, { timeout: 30000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8', ...options }),
-  fetch: (...args) => fetch(...args), sign: (bytes, key) => sign(null, bytes, key) });
+  // invocationId is a MEASUREMENT PORT, not a reviewed effect: systemd mints a
+  // fresh InvocationID every time a unit starts and exports that start's own id
+  // to its own processes as INVOCATION_ID, so reading it changes nothing on the
+  // host. It is absent outside systemd, which is exactly an operator CLI run.
+  fetch: (...args) => fetch(...args), sign: (bytes, key) => sign(null, bytes, key), invocationId: () => process.env.INVOCATION_ID });
 
 // No exception may bypass a check. A predicate evaluated as an argument of
 // need() skips its own refusal when it throws, and the bare error is reported
@@ -437,6 +441,42 @@ export function createShu71Production(id, b = shu71Boundary) {
   // refusal name so it is never reported as, or confused with, other drift.
   const expiryServiceUnit = `shu71-expiry-${id}.service`;
   const EXPIRY_UNITS = [`/etc/systemd/system/${expiryTimerUnit}`, `/etc/systemd/system/${expiryServiceUnit}`];
+  // THE MECHANISM THIS TEARDOWN MUST PROVE GONE IS THE EXPIRY MECHANISM MINUS
+  // THE INVOCATION PERFORMING THE REMOVAL. installExpiry() writes
+  // `ExecStart=/usr/bin/node <installedModule> expire <id>` into
+  // shu71-expiry-<id>.service and the timer's only job is to start it, so on the
+  // timer-triggered path - the ONLY unattended path this mechanism exists for -
+  // the companion service IS the process performing the teardown, and systemd
+  // reports a running Type=oneshot unit as `activating`, which unitIdle() does
+  // not accept. A refusal that fires on the very invocation doing the removal is
+  // not defence in depth: it leaves the window torn down but not retired, dies
+  // non-zero and is restarted by `Restart=on-failure` until the start limit
+  // trips. So the companion's own LIVENESS term - and only that term - excludes
+  // this invocation. The file and enablement terms of BOTH units are untouched.
+  //
+  // The exclusion is bounded by EXACT INVOCATION IDENTITY and by nothing else.
+  // It is measured from a durable systemd fact, never from a flag, an
+  // environment-presence test, or anything the removal path sets about itself:
+  // `systemctl show -p InvocationID --value shu71-expiry-<id>.service` is the
+  // id of the unit's CURRENT start, INVOCATION_ID is the id systemd exported to
+  // this process's own start, and only exact string equality of two NON-EMPTY
+  // values excludes. Where this process is not running under systemd the id is
+  // absent (an operator CLI run) and NOTHING is excluded: any live companion
+  // refuses by name. No live companion attributable to anything else is ever
+  // tolerated, and no journal row, durable receipt or absence tolerance reaches
+  // this term.
+  const expiryCompanionIsThisInvocation = () => {
+    const unit = unitProperty(expiryServiceUnit, 'InvocationID'), self = b.invocationId();
+    return typeof self === 'string' && self !== '' && unit !== '' && unit === self;
+  };
+  // A COMPANION SURVIVES THIS REMOVAL when it is measurably NOT idle AND it is
+  // NOT the invocation running this removal. Liveness is measured FIRST, so an
+  // idle companion never consults the identity at all: an InvocationID left
+  // behind by a start that has already exited is stale by construction and can
+  // excuse nothing. Every site requires the NEGATION of this through
+  // measuredPredicate(), so an unreadable id, a `show` that exits non-zero, a
+  // boundary without the port, or any other throw is the named refusal.
+  const expiryCompanionSurvivesRemoval = () => !unitIdle(expiryServiceUnit) && !expiryCompanionIsThisInvocation();
   // Custody terms, each pinned by its own control and killing mutant: the file
   // shape (a non-regular file replacing the unit refuses), one link, root user,
   // root group, and neither group- nor world-writable. `!s.isSymbolicLink()` is
@@ -457,7 +497,7 @@ export function createShu71Production(id, b = shu71Boundary) {
   // folded into a loop so that each has its own mutant and its own control.
   const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)
     && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
-    && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));
+    && !expiryCompanionSurvivesRemoval() && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));
   // A LIVE COMPANION IS ITS OWN REFUSAL. `disable --now <timer>` stops the
   // timer and leaves the service it triggers running, so a teardown that only
   // measured the timer reported a clean retirement over a service that was
@@ -465,7 +505,7 @@ export function createShu71Production(id, b = shu71Boundary) {
   // would otherwise disable the timer around a live mechanism, and it is a
   // refusal rather than a stop: stopping is a new reviewed effect, and this
   // lane may not add one.
-  const requireIdleExpiryCompanion = () => need(measuredPredicate(() => unitIdle(expiryServiceUnit)), 'ACT_TEARDOWN_EXPIRY_SERVICE');
+  const requireIdleExpiryCompanion = () => need(measuredPredicate(() => !expiryCompanionSurvivesRemoval()), 'ACT_TEARDOWN_EXPIRY_SERVICE');
   // After a completed teardown this episode must leave no expiry mechanism
   // behind, so a later wake that finds one re-created refuses by name too.
   function observeRetiredExpiry() { requireIdleExpiryCompanion(); need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }
@@ -545,7 +585,10 @@ export function createShu71Production(id, b = shu71Boundary) {
     // Post-condition on the success path too: BOTH units end not active and not
     // enabled - the companion is measured here as well, because a disable that
     // starts or re-enables the service it triggers is exactly the drift the
-    // exit status cannot report - and the retirement itself removes both
+    // exit status cannot report, and with the SAME invocation exclusion as the
+    // refusal above, because a self-invocation is still `activating` here by
+    // construction and must not trip ACT_TEARDOWN_DRIFT while a live companion
+    // that is not this invocation still must - and the retirement itself removes both
     // durable unit files, with a daemon-reload wherever systemd still holds the
     // removed view. Invariant:
     // after a completed teardown the successor window's pre-mint gate must
@@ -553,7 +596,7 @@ export function createShu71Production(id, b = shu71Boundary) {
     // state satisfies the same predicate the never-created branch asserts.
     need(measuredPredicate(() => unitIdle(expiryTimerUnit)
       && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
-      && unitIdle(expiryServiceUnit)
+      && !expiryCompanionSurvivesRemoval()
       && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');
     if (measuredPredicate(() => !EXPIRY_UNITS.every(unitFileAbsent))) {
       // Measured again, immediately before the unlink. `disable --now` has run
@@ -747,7 +790,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const argv = process.argv.slice(2);
     if (process.env.SHU71_LOCKED !== '1') {
       need(process.getuid() === 0, 'ACT_PROCESS_IDENTITY');
-      const r = spawnSync('/usr/bin/flock', ['--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1', '/usr/bin/node', installedModule, ...argv], { stdio: 'inherit' });
+      // `env -i` stays: this boundary accepts no operator environment. The one
+      // value carried across is INVOCATION_ID, and it is carried because without
+      // it the inner process cannot know that it IS the expiry companion and the
+      // timer-triggered teardown refuses itself. Carrying it grants nothing on
+      // its own: the teardown only ever compares it for EXACT EQUALITY against
+      // the unit's own reported InvocationID, so any value that is not that
+      // durable systemd fact excludes nothing and a live companion still refuses
+      // by name. Passed as one argv element, so no value can inject a second
+      // assignment, and omitted entirely when absent so `INVOCATION_ID=` is
+      // never invented.
+      const invocation = process.env.INVOCATION_ID;
+      const r = spawnSync('/usr/bin/flock', ['--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',
+        ...(invocation ? [`INVOCATION_ID=${invocation}`] : []), '/usr/bin/node', installedModule, ...argv], { stdio: 'inherit' });
       process.exitCode = r.status ?? 1;
     } else {
       const result = await shu71Cli(argv); process.stdout.write(JSON.stringify(result) + '\n'); process.exitCode = result.ok ? 0 : 1;

@@ -813,6 +813,9 @@
     "B1/B4 mutation: live expiry companion reported as generic drift",
     "B1/B4 mutation: expiry companion refusal predicate vacuous",
     "B1/B4 mutation: expiry installation proven only by the DONE row",
+    "B1/B4 mutation: expiry teardown refuses the invocation performing it",
+    "B1/B4 mutation: expiry invocation exclusion widened to any live companion",
+    "B1/B4 mutation: expiry post-condition refuses the invocation performing the removal",
     "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
@@ -885,10 +888,14 @@
     "B4 a measurably running expiry companion service is never a clean retirement, installed",
     "B4 a measurably running expiry companion service is never a clean retirement, journal-blind",
     "B4 a measurably running expiry companion service is never a clean retirement, retired-episode",
+    "B4 a measurably running expiry companion service is never a clean retirement, foreign-invocation",
     "B4 a disable that leaves the expiry companion service active is drift",
     "B4 a disable that leaves the expiry companion service enabled is drift",
     "B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed",
     "B4 the modelled host represents every expiry unit state these controls claim",
+    "B4 a timer-triggered expiry teardown running inside its own companion service completes",
+    "B4 a completed self-run still measures fully retired from a non-companion vantage",
+    "B4 a disable that leaves this invocation's own companion activating is not drift",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -7678,6 +7685,18 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry teardown refuses the invocation performing it",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation exclusion widened to any live companion",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition refuses the invocation performing the removal",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: refusal predicate evaluated inside need()",
       "capabilities": []
     },
@@ -7966,6 +7985,10 @@
       "capabilities": []
     },
     {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, foreign-invocation",
+      "capabilities": []
+    },
+    {
       "name": "B4 a disable that leaves the expiry companion service active is drift",
       "capabilities": []
     },
@@ -7979,6 +8002,18 @@
     },
     {
       "name": "B4 the modelled host represents every expiry unit state these controls claim",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a timer-triggered expiry teardown running inside its own companion service completes",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a completed self-run still measures fully retired from a non-companion vantage",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves this invocation's own companion activating is not drift",
       "capabilities": []
     },
     {

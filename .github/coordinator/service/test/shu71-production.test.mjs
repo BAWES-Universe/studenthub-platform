@@ -215,7 +215,8 @@ import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck,
   expiryJournalBlindCustodyCheck, expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck,
   expiryUnlinkCustodyCheck, expiryLiveCompanionCheck, expiryArmedWithoutDoneRowCheck,
   fixtureHostStateCheck, expiryCompanionActivePostConditionCheck,
-  expiryCompanionEnabledPostConditionCheck } from './shu71-recovery-checks.mjs';
+  expiryCompanionEnabledPostConditionCheck, expirySelfRunCompletesCheck,
+  expirySelfRunHidesNothingCheck, expirySelfRunPostConditionParityCheck } from './shu71-recovery-checks.mjs';
 
 for (const unit of ['timer', 'service']) {
   test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
@@ -352,7 +353,7 @@ test('B4 expiry custody is measured again immediately before the unlink', async 
 // door it is reachable by - the journal-proven installed state, the verifier's
 // own journal-blind state, and the retired episode's receipt path - and require
 // a refusal that carries the companion's own name instead of `ok:true`.
-for (const state of ['installed', 'journal-blind', 'retired-episode']) {
+for (const state of ['installed', 'journal-blind', 'retired-episode', 'foreign-invocation']) {
   test(`B4 a measurably running expiry companion service is never a clean retirement, ${state}`, async t => {
     await expiryLiveCompanionCheck(createShu71Production, productionFixture(t, keys), state);
   });
@@ -378,4 +379,25 @@ test('B4 a chain-valid recovered log holding ARMED proves the expiry mechanism w
 // own name if the model cannot represent it.
 test('B4 the modelled host represents every expiry unit state these controls claim', t => {
   fixtureHostStateCheck(productionFixture(t, keys));
+});
+
+// P154D-06. The mechanism this teardown must prove gone is the expiry mechanism
+// MINUS the invocation performing the removal. The timer's `Unit=` names
+// `shu71-expiry-<id>.service`, whose `ExecStart` is this module's `expire <id>`,
+// so on the only unattended path the mechanism exists for the companion service
+// IS the process performing the teardown and reports `activating`. These pin
+// both directions of the bound: the self-run completes, the same episode still
+// measures fully retired from a vantage that excludes nothing, and the parity of
+// the exclusion at the post-condition after `disable --now` is isolated from the
+// refusal before it.
+test('B4 a timer-triggered expiry teardown running inside its own companion service completes', async t => {
+  await expirySelfRunCompletesCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a completed self-run still measures fully retired from a non-companion vantage', async t => {
+  await expirySelfRunHidesNothingCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a disable that leaves this invocation\'s own companion activating is not drift', async t => {
+  await expirySelfRunPostConditionParityCheck(createShu71Production, productionFixture(t, keys));
 });
