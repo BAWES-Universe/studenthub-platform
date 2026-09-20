@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
+import { digest } from '../shu71-journal.mjs';
 export async function gateRecoveryCheck(createProduction, h, retry = 'resume') {
   const create = () => createProduction(h.id, h.boundary);
   await create().execute('run');
@@ -256,7 +257,11 @@ export function treeSnapshot(h, root = '') {
   const result = {};
   const visit = p => {
     const st = fs.lstatSync(h.root + p);
-    result[p] = st.isDirectory() ? 'dir' : fs.readFileSync(h.root + p).toString('base64');
+    // Install symlinks are compared as links, never followed: a leftover
+    // <target>.wants/<unit> whose unit file is gone is a dangling link, and
+    // reading through it would turn real modelled state into an ENOENT.
+    result[p] = st.isSymbolicLink() ? `link:${fs.readlinkSync(h.root + p)}`
+      : st.isDirectory() ? 'dir' : fs.readFileSync(h.root + p).toString('base64');
     if (st.isDirectory()) for (const n of fs.readdirSync(h.root + p).sort()) visit(`${p}/${n}`);
   };
   visit(root); return result;
@@ -335,7 +340,8 @@ export async function preArmFixtureCleanupCheck(createProduction, h) {
 // Drift: the journal proves the resource was never created, yet the host shows
 // it present or running. Each case must refuse by name, never silently no-op.
 export async function preArmDriftCheck(createProduction, h, drift = 'supervisor') {
-  const timer = `shu71-expiry-${h.id}.timer`;
+  const timer = `shu71-expiry-${h.id}.timer`, service = `shu71-expiry-${h.id}.service`;
+  let restore = () => {};
   if (drift === 'supervisor') h.active.set('shu-supervisor.service', 'active');
   else if (drift === 'timer-file') h.write(`/etc/systemd/system/${timer}`, '[Timer]\n', 0o644);
   else if (drift === 'timer-active') h.active.set(timer, 'active');
@@ -351,8 +357,40 @@ export async function preArmDriftCheck(createProduction, h, drift = 'supervisor'
   // only `EXPIRY_UNITS.every(unitFileAbsent)` can refuse the leftover half of a
   // mechanism the journal proves was never created.
   else if (drift === 'service-file') h.write(`/etc/systemd/system/shu71-expiry-${h.id}.service`, '[Service]\n', 0o644);
+  // P154D-02. The companion service is MEASURABLY RUNNING and nothing else is:
+  // no unit file anywhere, the timer idle and unknown to systemd. Every other
+  // term of expiryRetired() is satisfied, so only the companion's own liveness
+  // conjunct can refuse - and without it the teardown issues no stop, leaves
+  // the service running and reports a clean retirement, which is the exact
+  // state the verifier measured.
+  else if (drift === 'service-active') h.active.set(service, 'active');
+  // P154D-04. Enablement survives the unit file: `enable` writes an install
+  // symlink under <target>.wants/, and removing the unit file does not remove
+  // it. Both durable files are absent here and the leftover link is the whole
+  // drift, so only the companion's enablement conjunct can refuse. The
+  // `disabled` half is the same leftover link with the unit not enabled: a
+  // residue of the mechanism either way, and neither answer is `not-found`.
+  else if (drift === 'service-enabled-link') h.wants.add(service), h.enabled.add(service);
+  else if (drift === 'service-disabled-link') h.wants.add(service);
+  else if (drift === 'timer-enabled-link') h.wants.add(timer), h.enabled.add(timer);
+  // The companion's durable FILE, measured where systemd's loaded view cannot
+  // stand in for it: the file is planted after systemd's last reload, so it is
+  // on disk and absent from the loaded view. Liveness and enablement both
+  // answer the retired answer, and only EXPIRY_UNITS.every(unitFileAbsent) can
+  // refuse the leftover half of the mechanism.
+  else if (drift === 'service-file-stale-view') {
+    h.systemd.unitFileViewCached = true;
+    const run = h.boundary.run;
+    restore = () => { h.boundary.run = run; h.systemd.unitFileViewCached = false; };
+    h.boundary.run = (exe, argv, options) => {
+      const result = run(exe, argv, options);
+      if (exe === '/usr/bin/systemctl' && argv[0] === 'daemon-reload') h.write(`/etc/systemd/system/${service}`, '[Service]\n', 0o644);
+      return result;
+    };
+  }
   else h.enabled.add(timer), h.write(`/etc/systemd/system/${timer}`, '[Timer]\n', 0o644);
   const result = await preArmEnvHalt(createProduction, h);
+  restore();
   assert.equal(result.code, 'SHU71_SUPERVISOR_ENV_REQUIRED', `B4_PREARM_DRIFT_NAMED_REFUSAL_${drift}`);
   assert.equal(result.teardown.ok, false, `B4_PREARM_DRIFT_REFUSED_${drift}: ${JSON.stringify(result.teardown)}`);
   assert.equal(result.teardown.code, 'ACT_CLEANUP_FAILED', `B4_PREARM_DRIFT_NAMED_CLEANUP_${drift}`);
@@ -933,13 +971,20 @@ export async function expiryDisableExitFailureCheck(createProduction, h) {
 // or still enabled, which is what each control observes.
 async function expiryPostConditionConjunct(createProduction, h, variant) {
   const create = () => createProduction(h.id, h.boundary);
-  const name = `B4_EXPIRY_POSTCONDITION_${variant.toUpperCase()}`;
+  const name = `B4_EXPIRY_POSTCONDITION_${variant.toUpperCase().replaceAll('-', '_')}`;
+  const companion = `shu71-expiry-${h.id}.service`;
   assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
   const run = h.boundary.run;
   h.boundary.run = (exe, argv, options) => {
     const result = run(exe, argv, options);
     if (exe === '/usr/bin/systemctl' && argv[0] === 'disable' && argv.at(-1) === expiryTimer(h)) {
       if (variant === 'active') h.active.set(expiryTimer(h), 'active');
+      // P154D-02. The COMPANION halves of the same post-condition: a disable
+      // that leaves the service it triggers running, or enabled, is drift the
+      // exit status cannot report, and the timer's own end state is spotless in
+      // both - so only the companion conjunct being measured can refuse.
+      else if (variant === 'service-active') h.active.set(companion, 'active');
+      else if (variant === 'service-enabled') h.enabled.add(companion);
       else h.enabled.add(expiryTimer(h));
     }
     return result;
@@ -948,17 +993,25 @@ async function expiryPostConditionConjunct(createProduction, h, variant) {
   // Exactly one conjunct is false at the point of measurement.
   assert.equal(h.active.get(expiryTimer(h)) ?? 'inactive', variant === 'active' ? 'active' : 'inactive', `${name}_ACTIVE_STATE`);
   assert.equal(h.enabled.has(expiryTimer(h)), variant === 'enabled', `${name}_ENABLED_STATE`);
+  assert.equal(h.active.get(companion) ?? 'inactive', variant === 'service-active' ? 'active' : 'inactive', `${name}_COMPANION_ACTIVE_STATE`);
+  assert.equal(h.enabled.has(companion), variant === 'service-enabled', `${name}_COMPANION_ENABLED_STATE`);
   assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
   assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
   assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
   for (const path of expiryUnits(h)) assert.equal(h.exists(path), true, `${name}_UNITS_RETAINED`);
   unfinished(h, name);
   h.boundary.run = run;
+  // Nothing in the teardown stops or disables the companion, so the drift this
+  // control planted on it is cleared here before the recovery retry: the rule
+  // refuses the drift, and the same teardown completes once it is gone.
+  h.active.set(companion, 'inactive'); h.enabled.delete(companion);
   assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
   for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RETIRED_AFTER_RECOVERY`);
 }
 export const expiryActivePostConditionCheck = (createProduction, h) => expiryPostConditionConjunct(createProduction, h, 'active');
 export const expiryEnabledPostConditionCheck = (createProduction, h) => expiryPostConditionConjunct(createProduction, h, 'enabled');
+export const expiryCompanionActivePostConditionCheck = (createProduction, h) => expiryPostConditionConjunct(createProduction, h, 'service-active');
+export const expiryCompanionEnabledPostConditionCheck = (createProduction, h) => expiryPostConditionConjunct(createProduction, h, 'service-enabled');
 // The other door of the same catch: a disable that exits non-zero where the
 // journal CANNOT vouch for the installation. `retired`: the mechanism really is
 // absent, `disable` exits 1 because the unit file was never created, and the
@@ -976,7 +1029,10 @@ export async function expiryUninstalledDisableCheck(createProduction, h, variant
   assert.ok(stop > 0, `${name}_PREFIX_AUTHENTIC`);
   assert.equal(rows.slice(0, stop + 1).some(e => e.event === 'ARMED' || e.step === 'expiry-watch'), false, `${name}_PREFIX_NOT_INSTALLED`);
   h.write(`/srv/shu/state/shu71-evidence/${h.id}/recovery.jsonl`, rows.slice(0, stop + 1).map(e => JSON.stringify(e)).join('\n') + '\n');
-  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h));
+  // Not enabled means the install symlink is gone too: enablement is a durable
+  // link under <target>.wants/ that outlives the unit file, so a mechanism that
+  // is claimed to be entirely absent must have no link left behind either.
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h)); h.wants.delete(expiryTimer(h));
   const run = h.boundary.run;
   let exits = 0;
   if (variant === 'retired') for (const path of expiryUnits(h)) fs.rmSync(h.root + path);
@@ -1170,7 +1226,7 @@ export async function expiryAbsenceAccountedCheck(createProduction, h, state, sh
     recoverLogWithoutInstallation(h, name);
   }
   h.active.set(timer.replace('/etc/systemd/system/', ''), 'inactive');
-  h.enabled.delete(expiryTimer(h));
+  h.enabled.delete(expiryTimer(h)); h.wants.delete(expiryTimer(h));
   for (const path of shape === 'retired' ? expiryUnits(h) : [service]) fs.rmSync(h.root + path);
   // Measured before the teardown: the file that is still there is in perfect
   // root custody, so only the unaccounted-for ABSENCE of its companion can
@@ -1219,7 +1275,7 @@ export async function expiryVanishedMechanismCheck(createProduction, h, proof = 
   assert.ok(h.journal().some(e => e.event === 'DONE' && e.step === 'expiry-watch'), `${name}_JOURNAL_PROVES_INSTALLED`);
   assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
   for (const path of expiryUnits(h)) { assert.equal(h.exists(path), true, `${name}_INSTALLED`); fs.rmSync(h.root + path); }
-  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h));
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h)); h.wants.delete(expiryTimer(h));
   const start = h.events.length;
   const result = await create().execute('revoke');
   assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
@@ -1273,4 +1329,222 @@ export async function expiryUnlinkCustodyCheck(createProduction, h) {
   // The second name gone, the same teardown completes and removes both.
   assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
   for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+
+// SHU-71 expiry-retirement drift, fourth correction round. An independent
+// verifier reviewed `56a1a33334e209ff4d90eb464342ddee22922f69`, could not break
+// the custody restructure through any of five doors, and returned BLOCK on a
+// different property: the end-state tolerance measured the TIMER only. The
+// mechanism is two units - the timer exists to START the companion service, and
+// `disable --now <timer>` does not touch that service - so a teardown could
+// report `{"ok":true,"state":"REVOKED"}`, issue no stop, and leave
+// `shu71-expiry-<id>.service` measurably ACTIVE. The controls below construct
+// that state through each door it is reachable by.
+const expiryCompanion = h => `shu71-expiry-${h.id}.service`;
+// Ask the modelled host, exactly as the module does.
+const unitShow = (h, unit, property) =>
+  String(h.boundary.run('/usr/bin/systemctl', ['show', `--property=${property}`, '--value', unit], {}).stdout ?? '').trim();
+// P154D-02. A measurably RUNNING companion service is a mechanism that is not
+// retired, and it must never coexist with a reported clean retirement.
+//
+// `installed`: the journal proves this episode created the mechanism, both
+// durable unit files are present and in perfect root custody, the timer is
+// exactly where a legitimate teardown finds it - and the companion is live. The
+// refusal carries its own name, `ACT_TEARDOWN_EXPIRY_SERVICE`, reported in
+// `failures[]` alongside the reviewed effect step's own name, and it fires
+// BEFORE `disable --now` so the timer is never disabled around a live service.
+//
+// `journal-blind`: the verifier's measured state, rebuilt term for term - a
+// recovered log, BOTH durable unit files deleted, no removal receipt, the timer
+// `ActiveState=inactive` with an empty `UnitFileState`, and the companion
+// active. This is the state that returned `ok:true` with no stop command.
+//
+// `retired-episode`: the same drift on the retired episode's own receipt path,
+// where the refusal code is observable literally at the module boundary.
+export async function expiryLiveCompanionCheck(createProduction, h, state = 'installed') {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = `B4_EXPIRY_LIVE_COMPANION_${state.toUpperCase().replaceAll('-', '_')}`;
+  const companion = expiryCompanion(h);
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  if (state === 'retired-episode') {
+    assert.equal((await create().execute('revoke')).state, 'REVOKED', `${name}_TEARDOWN_COMPLETED`);
+    assert.ok(h.journal().some(e => e.event === 'TEARDOWN_COMPLETE'), `${name}_RECEIPT_DURABLE`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_MECHANISM_REMOVED`);
+    h.active.set(companion, 'active');
+    assert.equal(unitShow(h, companion, 'ActiveState'), 'active', `${name}_COMPANION_MEASURABLY_ACTIVE`);
+    const drifted = await create().execute('revoke');
+    assert.equal(drifted.ok, false, `${name}_REFUSED: ${JSON.stringify(drifted)}`);
+    assert.equal(drifted.state, 'HALT', `${name}_HALTS`);
+    assert.equal(drifted.code, 'ACT_TEARDOWN_EXPIRY_SERVICE', `${name}_NAMED`);
+    h.active.set(companion, 'inactive');
+    const settled = await create().execute('revoke');
+    assert.equal(settled.state, 'REVOKED', `${name}_RECOVERED: ${JSON.stringify(settled)}`);
+    return;
+  }
+  if (state === 'journal-blind') {
+    recoverLogWithoutInstallation(h, name);
+    for (const path of expiryUnits(h)) fs.rmSync(h.root + path);
+    h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h)); h.wants.delete(expiryTimer(h));
+  }
+  h.active.set(companion, 'active');
+  // The state, measured through the same interface the module reads, before
+  // the teardown runs: nothing here is assumed.
+  assert.equal(unitShow(h, companion, 'ActiveState'), 'active', `${name}_COMPANION_MEASURABLY_ACTIVE`);
+  if (state === 'journal-blind') {
+    assert.equal(unitShow(h, expiryTimer(h), 'ActiveState'), 'inactive', `${name}_TIMER_IDLE`);
+    assert.equal(unitShow(h, expiryTimer(h), 'UnitFileState'), '', `${name}_TIMER_UNKNOWN`);
+    for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_BOTH_UNIT_FILES_DELETED`);
+    assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
+  } else {
+    assert.ok(h.journal().some(e => e.event === 'ARMED'), `${name}_JOURNAL_PROVES_INSTALLED`);
+    for (const path of expiryUnits(h)) {
+      assert.equal(h.exists(path), true, `${name}_BOTH_UNIT_FILES_PRESENT`);
+      assert.deepEqual(Object.entries(custodyTerms(h, path)).filter(([, ok]) => !ok).map(([term]) => term), [], `${name}_UNITS_IN_CUSTODY`);
+    }
+  }
+  const start = h.events.length;
+  const result = await create().execute(state === 'journal-blind' ? 'resume' : 'revoke');
+  assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_SERVICE'), `${name}_COMPANION_REFUSAL_NAMED`);
+  // No completion, no stop issued to the companion, no disable of the timer
+  // around it, and nothing unlinked.
+  assert.equal(h.events.slice(start).some(e => e.includes(`:stop ${companion}`)), false, `${name}_NO_STOP_ISSUED`);
+  assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_BEFORE_DISABLE`);
+  assert.equal(h.events.slice(start).some(e => e.startsWith('unlink:/etc/systemd/system/shu71-expiry-')), false, `${name}_UNITS_NOT_UNLINKED`);
+  assert.equal(h.journal().some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_STILL_NO_RECEIPT`);
+  assert.equal(unitShow(h, companion, 'ActiveState'), 'active', `${name}_COMPANION_STILL_RUNNING`);
+  unfinished(h, name);
+  // The companion measurably gone, the same teardown completes in the same
+  // journal state: the rule refuses a live mechanism, not the state around it.
+  h.active.set(companion, 'inactive');
+  if (state === 'journal-blind') {
+    for (const [path, body] of expiryUnits(h).map(p => [p, p.endsWith('.timer') ? '[Timer]\n' : '[Service]\n'])) h.write(path, body, 0o644);
+  }
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+// P154D-01. The `journalHas(journal, 'ARMED')` disjunct of `installed` was
+// declared an equivalent mutant on a WRITER-side argument: every journal this
+// module produces is prefix-closed, so ARMED implies the `expiry-watch` DONE
+// row. The reader's input space is larger. `recovery.jsonl` is accepted on a
+// keyless sha256 chain with no prefix check, so a chain-valid log holding ARMED
+// with the DONE row removed and the chain recomputed is a log this module will
+// read - and with it, `installed` is true only because of the ARMED disjunct.
+// The state below is otherwise a spotless retirement, so dropping the disjunct
+// makes it complete with `ok:true, state:REVOKED` and issue the disable.
+const rechainJournal = rows => {
+  let previous = '0'.repeat(64);
+  return rows.map((row, seq) => {
+    const { seq: _seq, previous: _previous, sha256: _sha256, ...event } = row;
+    const payload = { seq, previous, ...event };
+    const sha256 = digest(JSON.stringify(payload));
+    previous = sha256;
+    return { ...payload, sha256 };
+  });
+};
+export async function expiryArmedWithoutDoneRowCheck(createProduction, h) {
+  const create = () => createProduction(h.id, h.boundary);
+  const name = 'B4_EXPIRY_ARMED_WITHOUT_DONE_ROW';
+  const recovery = `/srv/shu/state/shu71-evidence/${h.id}/recovery.jsonl`;
+  assert.equal((await create().execute('run')).state, 'ARMED', `${name}_SETUP`);
+  const rows = rechainJournal(h.journal().filter(e => !(e.event === 'DONE' && e.step === 'expiry-watch')));
+  // The log the READER accepts: chain-valid, holding ARMED, with the creating
+  // step's durable DONE row removed. No writer of this module produces it; the
+  // keyless chain reader takes it without a prefix check.
+  assert.ok(rows.some(e => e.event === 'ARMED'), `${name}_HOLDS_ARMED`);
+  assert.equal(rows.some(e => e.event === 'DONE' && e.step === 'expiry-watch'), false, `${name}_DONE_ROW_REMOVED`);
+  assert.equal(rows.some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_NO_RECEIPT`);
+  let previous = '0'.repeat(64);
+  for (const [index, row] of rows.entries()) {
+    const { sha256, ...payload } = row;
+    assert.equal(payload.seq === index && payload.previous === previous && sha256 === digest(JSON.stringify(payload)), true, `${name}_CHAIN_VALID`);
+    previous = sha256;
+  }
+  h.write(recovery, rows.map(e => JSON.stringify(e)).join('\n') + '\n');
+  // The rest of the verifier's state: the mechanism has vanished entirely and
+  // nothing accounts for it - no receipt, and a journal that (without the ARMED
+  // disjunct) would vouch for no installation at all.
+  for (const path of expiryUnits(h)) fs.rmSync(h.root + path);
+  h.active.set(expiryTimer(h), 'inactive'); h.enabled.delete(expiryTimer(h)); h.wants.delete(expiryTimer(h));
+  assert.equal(unitShow(h, expiryTimer(h), 'UnitFileState'), '', `${name}_TIMER_UNKNOWN`);
+  assert.equal(unitShow(h, expiryCompanion(h), 'UnitFileState'), '', `${name}_COMPANION_UNKNOWN`);
+  const start = h.events.length;
+  const result = await create().execute('resume');
+  // Proof the reader really accepted this chain rather than falling into the
+  // damaged-log path: this teardown appended its own rows to that same file.
+  const written = fs.readFileSync(h.root + recovery, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(written.some(e => e.event === 'ARMED'), `${name}_READER_ACCEPTED_CHAIN`);
+  assert.ok(written.some(e => ['REVOKE_REQUESTED', 'AUTHORIZATION_EXPIRED'].includes(e.event)), `${name}_READER_APPENDED_TO_CHAIN`);
+  assert.equal(result.ok, false, `${name}_REFUSED: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 'ACT_CLEANUP_FAILED', `${name}_NAMED`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_EXPIRY_TIMER'), `${name}_STEP_NAMED`);
+  assert.equal(h.events.slice(start).some(e => e.includes('disable --now shu71-expiry-')), false, `${name}_BEFORE_DISABLE`);
+  assert.equal(written.some(e => e.event === 'EXPIRY_RETIREMENT_STARTED'), false, `${name}_STILL_NO_RECEIPT`);
+  unfinished(h, name);
+  // The durable pair restored, the same teardown completes and removes both.
+  for (const [path, body] of expiryUnits(h).map(p => [p, p.endsWith('.timer') ? '[Timer]\n' : '[Service]\n'])) h.write(path, body, 0o644);
+  assert.equal((await create().execute('resume')).state, 'REVOKED', `${name}_RECOVERED`);
+  for (const path of expiryUnits(h)) assert.equal(h.exists(path), false, `${name}_RECOVERED_UNITS_REMOVED`);
+}
+// P154D-04. The fixture's own fidelity, falsifiable rather than asserted in
+// prose. Every state the controls above claim to model is driven here against
+// the SAME modelled host interface the module reads, and each assertion fails
+// by its own name if the model cannot represent the state it claims to.
+export function fixtureHostStateCheck(h) {
+  const name = 'B4_FIXTURE_REPRESENTS';
+  const timer = expiryTimer(h), companion = expiryCompanion(h);
+  const file = unit => `/etc/systemd/system/${unit}`;
+  const state = unit => unitShow(h, unit, 'UnitFileState');
+  const liveness = unit => unitShow(h, unit, 'ActiveState');
+  const place = (unit, present) => present
+    ? h.write(file(unit), unit.endsWith('.timer') ? '[Timer]\n' : '[Service]\n', 0o644)
+    : fs.rmSync(h.root + file(unit), { force: true });
+  // (1) The two durable unit files, present and absent INDEPENDENTLY - all four
+  // combinations, including the half-present case in either direction.
+  for (const [t, s] of [[true, true], [true, false], [false, true], [false, false]]) {
+    place(timer, t); place(companion, s);
+    assert.equal(h.exists(file(timer)), t, `${name}_TIMER_FILE_${t}_${s}`);
+    assert.equal(h.exists(file(companion)), s, `${name}_COMPANION_FILE_${t}_${s}`);
+    assert.equal(state(timer), t ? 'disabled' : '', `${name}_TIMER_STATE_${t}_${s}`);
+    assert.equal(state(companion), s ? 'disabled' : '', `${name}_COMPANION_STATE_${t}_${s}`);
+  }
+  // (2) A companion measurably ACTIVE while its own unit file is absent and the
+  // timer is inactive and not found - the verifier's measured state.
+  place(timer, false); place(companion, false);
+  h.active.set(companion, 'active');
+  assert.equal(liveness(companion), 'active', `${name}_COMPANION_ACTIVE_WITHOUT_FILE`);
+  assert.equal(h.exists(file(companion)), false, `${name}_COMPANION_ACTIVE_FILE_ABSENT`);
+  assert.equal(liveness(timer), 'inactive', `${name}_TIMER_INACTIVE_BESIDE_LIVE_COMPANION`);
+  assert.equal(state(timer), '', `${name}_TIMER_NOT_FOUND_BESIDE_LIVE_COMPANION`);
+  h.active.set(companion, 'inactive');
+  // (3) Enablement that OUTLIVES the unit file: the install symlink under
+  // <target>.wants/ is not removed with it, so the host still answers for a
+  // unit whose file is gone - `enabled` and, for the same leftover link with
+  // the unit not enabled, `disabled`. Neither is the empty answer.
+  for (const unit of [timer, companion]) {
+    h.wants.add(unit); h.enabled.add(unit);
+    assert.equal(h.exists(file(unit)), false, `${name}_LEFTOVER_LINK_FILE_ABSENT_${unit.split('.').pop()}`);
+    assert.equal(h.wants.has(unit), true, `${name}_LEFTOVER_LINK_PRESENT_${unit.split('.').pop()}`);
+    assert.equal(state(unit), 'enabled', `${name}_ENABLED_WITHOUT_FILE_${unit.split('.').pop()}`);
+    h.enabled.delete(unit);
+    assert.equal(state(unit), 'disabled', `${name}_DISABLED_WITHOUT_FILE_${unit.split('.').pop()}`);
+  }
+  // (4) daemon-reload rebuilds the LOADED view and does not erase a still-present
+  // install symlink. Both halves are measured: the link survives and still
+  // answers, and the loaded view really was rebuilt from the unit directory.
+  h.systemd.unitFileViewCached = true;
+  place(timer, true);
+  assert.equal(state(timer), 'disabled', `${name}_STALE_VIEW_ANSWERS_FROM_LINK`);
+  h.wants.delete(timer);
+  assert.equal(state(timer), '', `${name}_STALE_LOADED_VIEW_HIDES_PRESENT_FILE`);
+  h.boundary.run('/usr/bin/systemctl', ['daemon-reload'], {});
+  assert.equal(state(timer), 'disabled', `${name}_RELOAD_REBUILDS_LOADED_VIEW`);
+  assert.equal(h.wants.has(companion), true, `${name}_RELOAD_KEEPS_WANTS_LINK`);
+  assert.equal(state(companion), 'disabled', `${name}_RELOAD_KEEPS_ENABLEMENT_ANSWER`);
+  h.systemd.unitFileViewCached = false;
+  h.wants.delete(companion);
+  place(timer, false);
+  assert.equal(state(companion), '', `${name}_LINK_REMOVED_IS_NOT_FOUND`);
 }

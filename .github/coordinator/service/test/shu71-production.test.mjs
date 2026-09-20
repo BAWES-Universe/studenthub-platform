@@ -172,7 +172,13 @@ test('B4 pre-arm fixture cleanup is not blocked by a legitimately skipped worker
   await preArmFixtureCleanupCheck(createShu71Production, productionFixture(t, keys));
 });
 
-for (const drift of ['supervisor', 'timer-file', 'timer-active', 'timer-enabled', 'both-files', 'service-file']) {
+// P154D-02/P154D-04 extend this list with the COMPANION's own three terms and
+// with the two states the previous fixture could not represent at all: a unit
+// whose durable file is gone while a leftover <target>.wants/ install symlink
+// still answers for its enablement, and a unit file that is on disk but absent
+// from systemd's loaded view.
+for (const drift of ['supervisor', 'timer-file', 'timer-active', 'timer-enabled', 'both-files', 'service-file',
+  'service-active', 'service-enabled-link', 'service-disabled-link', 'timer-enabled-link', 'service-file-stale-view']) {
   test(`B4 pre-arm teardown refuses ${drift} drift by name`, async t => {
     await preArmDriftCheck(createShu71Production, productionFixture(t, keys), drift);
   });
@@ -207,7 +213,9 @@ import { expiryFileDriftCheck, expiryRetirementCheck, expiryDisableFailureCheck,
   expiryInterruptedCustodyDriftCheck, expiryDisableExitFailureCheck, expiryActivePostConditionCheck,
   expiryEnabledPostConditionCheck, expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck,
   expiryJournalBlindCustodyCheck, expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck,
-  expiryUnlinkCustodyCheck } from './shu71-recovery-checks.mjs';
+  expiryUnlinkCustodyCheck, expiryLiveCompanionCheck, expiryArmedWithoutDoneRowCheck,
+  fixtureHostStateCheck, expiryCompanionActivePostConditionCheck,
+  expiryCompanionEnabledPostConditionCheck } from './shu71-recovery-checks.mjs';
 
 for (const unit of ['timer', 'service']) {
   test(`B4 a journal-proven installed expiry ${unit} file that vanished halts before disabling`, async t => {
@@ -336,4 +344,38 @@ for (const proof of ['armed', 'done-row']) {
 
 test('B4 expiry custody is measured again immediately before the unlink', async t => {
   await expiryUnlinkCustodyCheck(createShu71Production, productionFixture(t, keys));
+});
+
+// Fourth correction round, P154D-02. The mechanism is TWO units: the timer only
+// exists to start the companion service, and `disable --now <timer>` does not
+// touch that service. These reach a measurably RUNNING companion through each
+// door it is reachable by - the journal-proven installed state, the verifier's
+// own journal-blind state, and the retired episode's receipt path - and require
+// a refusal that carries the companion's own name instead of `ok:true`.
+for (const state of ['installed', 'journal-blind', 'retired-episode']) {
+  test(`B4 a measurably running expiry companion service is never a clean retirement, ${state}`, async t => {
+    await expiryLiveCompanionCheck(createShu71Production, productionFixture(t, keys), state);
+  });
+}
+
+test('B4 a disable that leaves the expiry companion service active is drift', async t => {
+  await expiryCompanionActivePostConditionCheck(createShu71Production, productionFixture(t, keys));
+});
+
+test('B4 a disable that leaves the expiry companion service enabled is drift', async t => {
+  await expiryCompanionEnabledPostConditionCheck(createShu71Production, productionFixture(t, keys));
+});
+
+// P154D-01. The ARMED disjunct of `installed`, pinned rather than declared
+// equivalent: the reader accepts a chain-valid recovered log holding ARMED
+// without the creating step's durable DONE row, which no writer here produces.
+test('B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed', async t => {
+  await expiryArmedWithoutDoneRowCheck(createShu71Production, productionFixture(t, keys));
+});
+
+// P154D-04. The fixture's own fidelity is falsifiable: every host state these
+// controls claim to model is driven against the modelled host and fails by its
+// own name if the model cannot represent it.
+test('B4 the modelled host represents every expiry unit state these controls claim', t => {
+  fixtureHostStateCheck(productionFixture(t, keys));
 });

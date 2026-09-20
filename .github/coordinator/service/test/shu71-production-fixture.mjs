@@ -93,6 +93,24 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   let signatures = 0;
   const active = new Map(), enabled = new Set(), started = new Set(), loaded = new Set();
   const systemd = { killRequiresProcesses: false, unitFileViewCached: false };
+  // Enablement is a durable INSTALL SYMLINK in <target>.wants/, not a flag on
+  // the unit file. `systemctl enable` creates it, `disable` removes it, and
+  // removing the unit file does NOT take it with it - which is why a unit whose
+  // own file is gone can still answer `enabled` or `disabled` rather than the
+  // empty string. A model that derives enablement from the unit file alone
+  // cannot represent that host state at all, so it is modelled as a real
+  // symlink in a real directory here, independently of `enabled`, and
+  // `daemon-reload` rebuilds the loaded view without touching it.
+  const WANTS_DIR = '/etc/systemd/system/timers.target.wants';
+  const wantsPath = unit => `${WANTS_DIR}/${unit}`;
+  const wants = {
+    has(unit) { try { fs.lstatSync(resolve(wantsPath(unit))); return true; } catch { return false; } },
+    add(unit) {
+      directory(WANTS_DIR);
+      if (!this.has(unit)) fs.symlinkSync(`/etc/systemd/system/${unit}`, resolve(wantsPath(unit)));
+    },
+    delete(unit) { try { fs.unlinkSync(resolve(wantsPath(unit))); } catch (e) { if (e.code !== 'ENOENT') throw e; } },
+  };
   const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
@@ -126,15 +144,25 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           // under which a unit file deleted without a reload is still disablable.
           if (argv[0] === 'daemon-reload') {
             // A reload re-reads the unit directory; a unit that is still running
-            // is not forgotten because its file went away.
+            // is not forgotten because its file went away, and the install
+            // symlinks in <target>.wants/ are not touched by it at all - only
+            // the loaded view of unit FILES is rebuilt, which is why directory
+            // entries such as `<unit>.d` and `timers.target.wants` are not units.
             loaded.clear();
-            for (const entry of fs.readdirSync(resolve('/etc/systemd/system'))) loaded.add(entry);
+            for (const entry of fs.readdirSync(resolve('/etc/systemd/system'), { withFileTypes: true }))
+              if (!entry.isDirectory()) loaded.add(entry.name);
             for (const [unit, state] of active) if (['active', 'activating'].includes(state)) loaded.add(unit);
             return;
           }
           const unitFile = unit => systemd.unitFileViewCached ? loaded.has(unit) : fs.existsSync(resolve(`/etc/systemd/system/${unit}`));
           if (argv[0] === 'show' && argv.includes('--property=UnitFileState')) {
-            output = `${unitFile(argv.at(-1)) ? (enabled.has(argv.at(-1)) ? 'enabled' : 'disabled') : ''}\n`; return;
+            // systemd answers from the unit file where it has one, and from the
+            // install symlink it still finds in <target>.wants/ where it does
+            // not. Only a unit with neither is unknown, and only then is the
+            // answer empty - so `unit file gone, .wants symlink left behind` is
+            // `enabled`/`disabled` here, exactly as the host reports it.
+            const unit = argv.at(-1);
+            output = `${unitFile(unit) || wants.has(unit) ? (enabled.has(unit) ? 'enabled' : 'disabled') : ''}\n`; return;
           }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
           // Measured on the target host during shu71-mint-00000017: systemctl
@@ -153,7 +181,9 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           if (['enable', 'disable'].includes(argv[0])) {
             const unit = argv.at(-1);
             if (!unitFile(unit)) { output = null; return; }
-            if (argv[0] === 'enable') enabled.add(unit); else enabled.delete(unit);
+            // enable/disable create and remove the durable install symlink.
+            if (argv[0] === 'enable') { enabled.add(unit); wants.add(unit); }
+            else { enabled.delete(unit); wants.delete(unit); }
             if (argv.includes('--now')) { active.set(unit, argv[0] === 'enable' ? 'active' : 'inactive'); if (argv[0] === 'enable') started.add(unit); }
             return;
           }
@@ -207,7 +237,7 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
       });
     },
   };
-  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, loaded, systemd, write, signatures: () => signatures,
+  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, loaded, wants, systemd, write, signatures: () => signatures,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),

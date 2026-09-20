@@ -13,7 +13,9 @@ import { preArmDriftCheck, workerKillFailureCheck, destroyedJournalCheck, expiry
   expiryPostReloadDriftCheck, expiryInterruptedRemovalCheck, expiryInterruptedCustodyDriftCheck,
   expiryDisableExitFailureCheck, expiryActivePostConditionCheck, expiryEnabledPostConditionCheck,
   expiryUninstalledDisableCheck, expiryInstalledBeforeArmedCheck, expiryJournalBlindCustodyCheck,
-  expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck, expiryUnlinkCustodyCheck } from './shu71-recovery-checks.mjs';
+  expiryAbsenceAccountedCheck, expiryVanishedMechanismCheck, expiryUnlinkCustodyCheck,
+  expiryLiveCompanionCheck, expiryArmedWithoutDoneRowCheck,
+  expiryCompanionActivePostConditionCheck, expiryCompanionEnabledPostConditionCheck } from './shu71-recovery-checks.mjs';
 const custody = variant => (create, h) => expiryCustodyDriftCheck(create, h, variant);
 // The journal-independent custody requirement of the restructured
 // retireExpiryTimer(): every durable expiry unit file that is PRESENT is held
@@ -90,17 +92,35 @@ const mutations = [
     "if (false) { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }", (create, h) => preArmDriftCheck(create, h, 'both-files')],
   // Split so each half of expiryRetired()'s tail is killed by a control that
   // reaches THAT half: `timer-active` leaves the enablement half satisfied, and
-  // the stale-loaded-view control leaves the liveness half satisfied.
-  ['expiry retirement ignores unit liveness', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));",
-    "\n    && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));",
+  // the stale-loaded-view control leaves the liveness half satisfied. Anchors
+  // updated in place for the two-unit end state; names and assertions unchanged.
+  ['expiry retirement ignores unit liveness', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n",
+    "\n    && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n",
     (create, h) => preArmDriftCheck(create, h, 'timer-active')],
-  ['expiry retirement ignores unit enablement', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'));",
-    '\n    && unitIdle(expiryTimerUnit);', expiryCachedViewCheck],
-  // ...and the absence conjunct itself. Measured, not assumed: the timer's
-  // UnitFileState covers the timer file, so only the leftover COMPANION unit
-  // file distinguishes this mutant, and `service-file` is the drift that does.
+  // Re-anchored control, same mutant name and assertions: with the COMPANION's
+  // own enablement conjunct now measured, the stale-loaded-view state forces the
+  // daemon-reload through the companion term too, so it no longer distinguishes
+  // this mutant. The state that does is a TIMER whose durable file is gone while
+  // its leftover <target>.wants/ install symlink still answers `enabled` - every
+  // other term of the predicate is the retired answer there.
+  ['expiry retirement ignores unit enablement', "\n    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n",
+    '\n    && unitIdle(expiryTimerUnit)\n', (create, h) => preArmDriftCheck(create, h, 'timer-enabled-link')],
+  // P154D-02. The COMPANION's own liveness and enablement conjuncts. The timer
+  // is idle and unknown in both states, and both durable files are absent, so
+  // only the named conjunct can refuse; without it the mechanism is reported
+  // retired while the companion runs, or while its install symlink survives.
+  ['expiry retirement ignores companion liveness', "\n    && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
+    "\n    && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
+    (create, h) => preArmDriftCheck(create, h, 'service-active')],
+  ['expiry retirement ignores companion enablement', "\n    && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));",
+    '\n    && unitIdle(expiryServiceUnit);', (create, h) => preArmDriftCheck(create, h, 'service-enabled-link')],
+  // ...and the absence conjunct itself. Measured, not assumed: each unit's own
+  // UnitFileState answers for its own file wherever systemd's loaded view is
+  // fresh, so the ONLY state that distinguishes this mutant is a durable unit
+  // file that is on disk and absent from the loaded view - which is why the
+  // control plants the companion file after systemd's last reload.
   ['expiry retirement ignores the companion unit file', "const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)\n    && unitIdle(expiryTimerUnit)",
-    'const expiryRetired = () => unitIdle(expiryTimerUnit)', (create, h) => preArmDriftCheck(create, h, 'service-file')],
+    'const expiryRetired = () => unitIdle(expiryTimerUnit)', (create, h) => preArmDriftCheck(create, h, 'service-file-stale-view')],
   ['non-creation inferred from an empty journal', "return journalHas(journal, 'RUN_ATTEMPT_STARTED') && !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';",
     "return !journalHas(journal, 'INTENT', step) ? 'never' : 'inconclusive';", destroyedJournalCheck],
   // SHU-71 expiry retirement drift: pre-condition, post-condition, the removal
@@ -120,7 +140,7 @@ const mutations = [
   ['expiry retirement receipt omitted', "if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });",
     "if (false) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });", expiryRetirementCheck],
   ['retired episode expiry drift unobserved', 'try { observeTeardown(); observeRetiredExpiry(); }', 'try { observeTeardown(); }', expiryRetirementCheck],
-  ['expiry end state never measured', "    need(measuredPredicate(() => unitIdle(expiryTimerUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');\n",
+  ['expiry end state never measured', "    need(measuredPredicate(() => unitIdle(expiryTimerUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitIdle(expiryServiceUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');\n",
     '', expiryPostConditionCheck],
   ['refused expiry disable blindly accepted', "catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }",
     'catch { /* mutation: accept any disable refusal */ }', expiryDisableFailureCheck],
@@ -190,8 +210,17 @@ const mutations = [
   ['expiry post-condition unit liveness inert', 'measuredPredicate(() => unitIdle(expiryTimerUnit)\n',
     'measuredPredicate(() => true\n', expiryActivePostConditionCheck],
   ['expiry post-condition enablement unchecked',
-    "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');",
-    "), 'ACT_TEARDOWN_DRIFT');", expiryEnabledPostConditionCheck],
+    "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && unitIdle(expiryServiceUnit)",
+    '\n      && unitIdle(expiryServiceUnit)', expiryEnabledPostConditionCheck],
+  // P154D-02. The companion halves of the same post-condition. `disable --now`
+  // reports nothing about the service it triggers, so a disable that leaves it
+  // running or enabled is drift the exit status cannot report - and an inert
+  // conjunct destroys the durable unit files of a live or still-enabled unit.
+  ['expiry post-condition companion liveness inert', '\n      && unitIdle(expiryServiceUnit)\n', '\n      && true\n',
+    expiryCompanionActivePostConditionCheck],
+  ['expiry post-condition companion enablement unchecked',
+    "\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');",
+    "), 'ACT_TEARDOWN_DRIFT');", expiryCompanionEnabledPostConditionCheck],
   // The remaining clauses of the sweep: the second disjunct of the `installed`
   // derivation, the disable command itself, and the removal loop's own guard.
   // `installed` no longer gates custody at all, so it is observable only where
@@ -239,6 +268,28 @@ const mutations = [
     (create, h) => expiryVanishedMechanismCheck(create, h, 'armed')],
   ['unretired expiry absence accepted', "\n      || !installed && expiryRetired()), 'ACT_TEARDOWN_DRIFT');", "\n      || !installed), 'ACT_TEARDOWN_DRIFT');",
     (create, h) => expiryAbsenceAccountedCheck(create, h, 'interrupted-install', 'half')],
+  // Fourth correction round, P154D-02. The mechanism is TWO units and a live
+  // companion is its own refusal. Each mutant below removes one of the three
+  // places that refusal is stated, and each is killed by the control that
+  // reaches a measurably RUNNING companion through the matching door.
+  ['expiry running companion accepted before the disable', '\n    requireIdleExpiryCompanion();\n    // Absence, accounted for.', '\n    // Absence, accounted for.',
+    (create, h) => expiryLiveCompanionCheck(create, h, 'installed')],
+  ['retired episode expiry companion liveness unobserved',
+    "function observeRetiredExpiry() { requireIdleExpiryCompanion(); need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }",
+    "function observeRetiredExpiry() { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }",
+    (create, h) => expiryLiveCompanionCheck(create, h, 'retired-episode')],
+  ['live expiry companion reported as generic drift', "code: error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE' ? error.code : 'ACT_TEARDOWN_DRIFT'",
+    "code: 'ACT_TEARDOWN_DRIFT'", (create, h) => expiryLiveCompanionCheck(create, h, 'retired-episode')],
+  ['expiry companion refusal predicate vacuous',
+    "const requireIdleExpiryCompanion = () => need(measuredPredicate(() => unitIdle(expiryServiceUnit)), 'ACT_TEARDOWN_EXPIRY_SERVICE');",
+    'const requireIdleExpiryCompanion = () => {};', (create, h) => expiryLiveCompanionCheck(create, h, 'installed')],
+  // P154D-01. The FIRST disjunct of the `installed` derivation, which the
+  // previous round declared an equivalent mutant on a writer-side argument. The
+  // reader's input space is larger than the writer's output: a chain-valid
+  // recovered log holding ARMED without the creating step's durable DONE row is
+  // accepted, and there ARMED is the only thing that proves the installation.
+  ['expiry installation proven only by the DONE row', "journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');",
+    "journalHas(journal, 'DONE', 'expiry-watch');", expiryArmedWithoutDoneRowCheck],
 ];
 for (const [name, before, after, check] of mutations) test(`B1/B4 mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));

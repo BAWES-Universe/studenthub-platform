@@ -760,6 +760,8 @@
     "B1/B4 mutation: pre-arm expiry drift silently accepted",
     "B1/B4 mutation: expiry retirement ignores unit liveness",
     "B1/B4 mutation: expiry retirement ignores unit enablement",
+    "B1/B4 mutation: expiry retirement ignores companion liveness",
+    "B1/B4 mutation: expiry retirement ignores companion enablement",
     "B1/B4 mutation: expiry retirement ignores the companion unit file",
     "B1/B4 mutation: non-creation inferred from an empty journal",
     "B1/B4 mutation: installed expiry pre-condition omitted",
@@ -791,6 +793,8 @@
     "B1/B4 mutation: uninstalled expiry disable accepted with the mechanism present",
     "B1/B4 mutation: expiry post-condition unit liveness inert",
     "B1/B4 mutation: expiry post-condition enablement unchecked",
+    "B1/B4 mutation: expiry post-condition companion liveness inert",
+    "B1/B4 mutation: expiry post-condition companion enablement unchecked",
     "B1/B4 mutation: expiry installation proven only by ARMED",
     "B1/B4 mutation: expiry disable command never issued",
     "B1/B4 mutation: expiry removal issued with nothing to remove",
@@ -804,6 +808,11 @@
     "B1/B4 mutation: unaccounted expiry absence accepted",
     "B1/B4 mutation: journal-proven installed expiry absence accepted",
     "B1/B4 mutation: unretired expiry absence accepted",
+    "B1/B4 mutation: expiry running companion accepted before the disable",
+    "B1/B4 mutation: retired episode expiry companion liveness unobserved",
+    "B1/B4 mutation: live expiry companion reported as generic drift",
+    "B1/B4 mutation: expiry companion refusal predicate vacuous",
+    "B1/B4 mutation: expiry installation proven only by the DONE row",
     "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
@@ -822,6 +831,11 @@
     "B4 pre-arm teardown refuses timer-enabled drift by name",
     "B4 pre-arm teardown refuses both-files drift by name",
     "B4 pre-arm teardown refuses service-file drift by name",
+    "B4 pre-arm teardown refuses service-active drift by name",
+    "B4 pre-arm teardown refuses service-enabled-link drift by name",
+    "B4 pre-arm teardown refuses service-disabled-link drift by name",
+    "B4 pre-arm teardown refuses timer-enabled-link drift by name",
+    "B4 pre-arm teardown refuses service-file-stale-view drift by name",
     "B4 a refused worker kill is accepted only for a unit measured idle",
     "B4 a destroyed journal is never proof that nothing was created",
     "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
@@ -868,6 +882,13 @@
     "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, armed",
     "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, done-row",
     "B4 expiry custody is measured again immediately before the unlink",
+    "B4 a measurably running expiry companion service is never a clean retirement, installed",
+    "B4 a measurably running expiry companion service is never a clean retirement, journal-blind",
+    "B4 a measurably running expiry companion service is never a clean retirement, retired-episode",
+    "B4 a disable that leaves the expiry companion service active is drift",
+    "B4 a disable that leaves the expiry companion service enabled is drift",
+    "B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed",
+    "B4 the modelled host represents every expiry unit state these controls claim",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -886,6 +907,7 @@
     "recovery mutation: R7 V12 descending chain accepted",
     "recovery mutation: R7 V14 damaged journal bypasses evidence",
     "recovery mutation: P3 automatic budget removed",
+    "recovery mutation: P154D live expiry companion code never surfaced",
     "R8 demonstrated mutant W7 dies on the state table",
     "R8 demonstrated mutant W13 dies on the state table",
     "R8 demonstrated mutant W1b dies on the state table",
@@ -7444,6 +7466,14 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry retirement ignores companion liveness",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement ignores companion enablement",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: expiry retirement ignores the companion unit file",
       "capabilities": []
     },
@@ -7568,6 +7598,14 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry post-condition companion liveness inert",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition companion enablement unchecked",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: expiry installation proven only by ARMED",
       "capabilities": []
     },
@@ -7617,6 +7655,26 @@
     },
     {
       "name": "B1/B4 mutation: unretired expiry absence accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry running companion accepted before the disable",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: retired episode expiry companion liveness unobserved",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: live expiry companion reported as generic drift",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry companion refusal predicate vacuous",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry installation proven only by the DONE row",
       "capabilities": []
     },
     {
@@ -7689,6 +7747,26 @@
     },
     {
       "name": "B4 pre-arm teardown refuses service-file drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-active drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-enabled-link drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-disabled-link drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses timer-enabled-link drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-file-stale-view drift by name",
       "capabilities": []
     },
     {
@@ -7876,6 +7954,34 @@
       "capabilities": []
     },
     {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, installed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, journal-blind",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, retired-episode",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry companion service active is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry companion service enabled is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the modelled host represents every expiry unit state these controls claim",
+      "capabilities": []
+    },
+    {
       "name": "recovery mutation: gate DONE suppresses repair",
       "capabilities": []
     },
@@ -7945,6 +8051,10 @@
     },
     {
       "name": "recovery mutation: P3 automatic budget removed",
+      "capabilities": []
+    },
+    {
+      "name": "recovery mutation: P154D live expiry companion code never surfaced",
       "capabilities": []
     },
     {

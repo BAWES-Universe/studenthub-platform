@@ -76,8 +76,13 @@ export async function teardownActivation(journal, effects, reason) {
         await journalEffect(journal, `teardown:${step}`, effect, repeat);
       }
     }
-    catch {
+    catch (error) {
       failures.push(`ACT_TEARDOWN_${step.toUpperCase().replaceAll('-', '_')}`);
+      // The step's own failure says WHICH reviewed effect refused; a refusal
+      // that carries its own name says WHY, and is reported under that name too
+      // rather than being flattened into the step. Additive: no existing
+      // failure entry is renamed, removed or reordered by this.
+      if (error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE') failures.push(error.code);
       // If journal storage is unavailable, independent safety effects must still
       // be attempted. They are narrow, idempotent and do not grant authority.
       if (step !== 'expiry-timer') {

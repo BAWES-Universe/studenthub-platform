@@ -95,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L702). Real kernel socket access
+[operative unit render](shu71-production.mjs#L734). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -396,7 +396,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L349), [stop](shu71-production.mjs#L646)).
+([start](shu71-production.mjs#L349), [stop](shu71-production.mjs#L678)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -1638,7 +1638,7 @@ assertion names; mutant names are the `B1/B4 mutation:` test names.
 | Clause or ordering | Named control | Named killing mutant | Kill |
 | --- | --- | --- | --- |
 | `installed` — the `journalHas(journal, 'DONE', 'expiry-watch')` disjunct | `B4_EXPIRY_VANISHED_DONE_ROW_REFUSED` | `expiry installation proven only by ARMED` | verified |
-| `installed` — the `journalHas(journal, 'ARMED')` disjunct | *equivalent mutant, reasoning below* | — | n/a |
+| `installed` — the `journalHas(journal, 'ARMED')` disjunct | ~~*equivalent mutant, reasoning below*~~ **falsified by P154D-01; pinned in the fourth round's table below** | `expiry installation proven only by the DONE row` | verified |
 | `removing` — the receipt derivation | `B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_COMPLETES` | `expiry removal receipt never re-read` | verified |
 | **P154C-01** custody NOT gated on journal-proven installation | `B4_EXPIRY_JOURNAL_BLIND_CUSTODY_interrupted-install_hardlinked-timer_REFUSED` | `expiry custody conditioned on journal-proven installation` | verified |
 | **P154C-01** custody NOT gated on a recovered log | `B4_EXPIRY_JOURNAL_BLIND_CUSTODY_recovered_hardlinked-timer_REFUSED` | `expiry custody conditioned on a recovered log` | verified |
@@ -1704,14 +1704,19 @@ re-attacked this round rather than carried over on trust:
 1. `!s.isSymbolicLink()` in `expiryUnitCustody`. `s` is an `lstat` result, so a
    symlink already fails `isFile()`; removing the term alone cannot change any
    outcome. Confirmed as genuine by the previous verifier's **F-07**.
-2. The `journalHas(journal, 'ARMED')` disjunct of `installed`. `ARMED` is
-   appended strictly after `step('expiry-watch', …)` has reached its durable
-   `DONE` row, and every journal this module can produce — including a recovered
-   log, which is a retained *prefix* — is prefix-closed, so no journal that
-   holds `ARMED` can lack the `DONE` row. Re-attacked this round with the new
-   `B4_EXPIRY_VANISHED_ARMED_*` control, whose state holds both rows: the mutant
-   that drops the disjunct still refuses there, exactly as predicted. The second
-   disjunct is **not** equivalent and is pinned in the table above.
+2. ~~The `journalHas(journal, 'ARMED')` disjunct of `installed`.~~ **This entry
+   was WRONG and P154D-01 falsified it.** The argument it made — "every journal
+   this module can produce, including a recovered log, is prefix-closed, so no
+   journal that holds `ARMED` can lack the `DONE` row" — is about the WRITER.
+   The clause is evaluated against whatever the READER accepts, and
+   `openActivationJournal` accepts `recovery.jsonl` on a keyless sha256 chain
+   with no prefix check at all, so a chain-valid log holding `ARMED` with the
+   `DONE`/`expiry-watch` row removed and the chain recomputed is inside the
+   reader's input space. The disjunct is retained and is now pinned by
+   `B4_EXPIRY_ARMED_WITHOUT_DONE_ROW_REFUSED` and its mutant `expiry
+   installation proven only by the DONE row`, in the fourth round's table below.
+   The second disjunct is **not** equivalent either and is pinned in the table
+   above.
 3. The `expiry-timer` effect's durable-`DONE` pre-condition and the in-memory
    guard it duplicates (`shu71-journal.mjs`, `if (step === 'expiry-timer' &&
    failures.length)`) are a deliberately redundant **pair**: each alone produces
@@ -1792,11 +1797,18 @@ timer file, so only a leftover COMPANION `.service` file distinguishes the
 mutant at all. Each of the three conjuncts is now killed independently by the
 control the table names.
 
-**P154C-04** is fixed by narrowing the pattern, not by softening the comment.
-`V8_DOCUMENTATION_LINK_TARGETS` now reads the link TEXT: where the text names a
-symbol as `` `name()` `` **and** the target is a function DEFINITION line, that
-definition must be `name`'s own, so `identity()` and `sharedAccess()` can no
-longer be exchanged. Verified by hand: swapping the two targets in
+**P154C-04** is fixed by ADDING a rule, not by narrowing the alternation and not
+by softening the comment. **P154D-05 corrects this paragraph**, which previously
+said "fixed by narrowing the pattern": the alternation in
+`shu71-verdict-closures.test.mjs` was WIDENED, not narrowed — an alternative
+`function sharedAccess\(` was added to it when `SHU71-L3-CLOSURE.md` split one
+broker-identity link in two, and it is still there. What removes the
+swappability is the new text-to-definition rule, and nothing else:
+`V8_DOCUMENTATION_LINK_TARGETS` now reads the link TEXT, and where the text
+names a symbol as `` `name()` `` **and** the target is a function DEFINITION
+line, that definition must be `name`'s own, so `identity()` and
+`sharedAccess()` can no longer be exchanged. The control is not weakened by this
+correction; only the sentence describing it is. Verified by hand: swapping the two targets in
 `SHU71-L3-CLOSURE.md` fails the test, and swapping them back passes it. The
 in-test comment now states exactly two claims and no more — the alternation with
 the exact line number, and the text-to-definition rule — and explicitly records
@@ -1895,3 +1907,340 @@ journal claim: no journal row can satisfy it. The half-present mechanism — the
 case where that tolerance would actually hide drift — is now refused, which it
 was not before this round. Everything else in P154C-01 through P154C-04 is
 consistent, and nothing else was left open.
+
+#### Fourth correction round: the expiry mechanism is TWO units
+
+A fourth independent verifier (family-separated) attacked
+`56a1a33334e209ff4d90eb464342ddee22922f69` and could not reopen the custody
+defect through any of five doors — installed, interrupted install, recovered
+log, retry-with-receipt, half-present journal-blind. It could construct no state
+in which a PRESENT, out-of-custody durable expiry unit file is unlinked, and no
+state in which drift is reported as a clean retirement *on the custody
+property*. Thirty of its thirty-one mutants died; the survivor is the one this
+document also calls equivalent. **The custody restructure holds and nothing
+about it is redesigned by this round.**
+
+What it found instead is that the disclosed end-state tolerance measured the
+WRONG SCOPE. `shu71-expiry-<id>.timer` exists for exactly one purpose: to start
+`shu71-expiry-<id>.service`. `disable --now <timer>` stops the timer and does
+not touch the service. Yet `expiryRetired()` measured `ActiveState` and
+`UnitFileState` of **the timer only**, and `observeTeardown()` covers only
+`SERVICES` + `shu71-evidence.service`, so nothing in the module ever measured
+the companion's liveness at all. The verifier's `V154D_PROBE_service` state —
+journal-blind on a recovered log, BOTH durable unit files deleted, no removal
+receipt, timer `ActiveState=inactive` with an empty `UnitFileState`, and the
+companion service measurably **active** — returned
+`{"ok":true,"state":"REVOKED","code":null,"failures":[]}`, issued no
+`stop shu71-expiry-` command, and left the companion running. The sentence "the
+mechanism is measurably and entirely gone" overstated what was measured, and a
+state that reports success while the mechanism was not actually retired is
+blocking whatever its width.
+
+##### P154D-02, and which of the two mechanisms this round implemented
+
+**HALT by name. Not stop-then-verify.** Stated plainly because the owner's brief
+allows either and requires the choice to be disclosed:
+
+* A refusal needs no new reviewed effect, and this lane's rules hold the
+  reviewed effects set unchanged. Stopping the companion would be a new,
+  separately reviewed effect with its own custody discipline and its own
+  re-measurement, which those rules forbid this lane from adding.
+* Issuing `systemctl stop shu71-expiry-<id>.service` is not a safe default
+  anywhere near this code path. In production the expiry timer's whole job is to
+  START that service, and the service's `ExecStart` is
+  `/usr/bin/node <installedModule> expire <id>` — so on the automatic expiry
+  path the live companion may be the very process performing the teardown. A
+  "stop" there is the teardown SIGTERMing itself, under `Restart=on-failure`.
+* The state the verifier measured — a companion running with both durable unit
+  files already deleted and no receipt — is not a legitimate teardown in
+  progress under any reading. Refusing it is the correct outcome, not a
+  convenience.
+
+The refusal carries its own name, `ACT_TEARDOWN_EXPIRY_SERVICE`, raised by
+`requireIdleExpiryCompanion()`:
+
+```js
+const requireIdleExpiryCompanion = () => need(measuredPredicate(() => unitIdle(expiryServiceUnit)), 'ACT_TEARDOWN_EXPIRY_SERVICE');
+```
+
+and it is stated in three places, each pinned by its own control and mutant:
+
+1. in `retireExpiryTimer()`, after the never-created branch and **before the
+   absence clause and before `disable --now`**, so nothing is ever disabled
+   around a live companion and no unit file is ever unlinked under one;
+2. in `observeRetiredExpiry()`, so the retired episode's own receipt path
+   refuses a companion that came back;
+3. in `teardownActivation()` (`shu71-journal.mjs`), which now pushes the code
+   into `failures[]` alongside the reviewed effect step's own name.
+
+On the third point, exactly what is and is not observable, because the brief
+asked for the name to appear in `failures[]`: `teardownActivation()` derives one
+entry per refusing effect from the reviewed STEP name, and that vocabulary is
+pinned — an expiry refusal is and stays `ACT_TEARDOWN_EXPIRY_TIMER`. The
+additive line pushes `ACT_TEARDOWN_EXPIRY_SERVICE` **as well**, so the step name
+still says WHICH effect refused and the code says WHY. No existing entry is
+renamed, removed or reordered, and the literal code is also returned at the
+module boundary on the retired episode's receipt path
+(`code: 'ACT_TEARDOWN_EXPIRY_SERVICE'`), which is where a control asserts it
+directly.
+
+##### The end-state tolerance now measures both units, term by term
+
+```js
+const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)
+  && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
+  && unitIdle(expiryServiceUnit) && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));
+```
+
+and the post-condition after the disable measures the same four unit/term pairs
+rather than the timer's two. Because every site that consults the tolerance
+consults `expiryRetired()` itself, applying it at EVERY site is not a matter of
+remembering to: the never-created branch, `installed`'s third case, the
+`disable`-failure catch branch, the post-reload re-measure and
+`observeRetiredExpiry()` all read the same predicate, and the one place that
+did not — the post-condition — is extended in place. There is no timer-only
+form left in the module. The four pairs are written out rather than folded into
+a loop over the unit names precisely so that each has its own mutant and its own
+control; a loop would have collapsed the companion's two terms into one
+mutation, which is the "covered by another" this round is not allowed.
+
+The absence tolerances are unchanged and stay exactly as narrow as they were:
+absence is excused by the never-created branch, by the durable removal receipt,
+or by a measured `expiryRetired()` — which is now a measurement of the whole
+mechanism rather than of half of it, making that third tolerance strictly
+narrower than before.
+
+##### P154D-04: the fixture can now represent the states, and says so falsifiably
+
+The old model derived `UnitFileState` from the unit FILE alone, so it answered
+`''` for any unit whose file was absent, and the host state "unit file gone,
+`timers.target.wants/<unit>` symlink still there" was not representable at all.
+Enablement on a real host is a durable INSTALL SYMLINK: `enable` creates it,
+`disable` removes it, and deleting the unit file does not take it with it, so
+systemd still answers for a unit whose own file is gone. The fixture now models
+that link as a real symlink in a real directory, independently of the `enabled`
+set:
+
+* `enable`/`disable` create and remove `/etc/systemd/system/timers.target.wants/<unit>`;
+* `UnitFileState` answers from the unit file where there is one and from the
+  leftover link where there is not, and is empty only for a unit with neither;
+* `daemon-reload` rebuilds the loaded view from the unit directory's FILES and
+  does not touch the link (directory entries such as `<unit>.d` and
+  `timers.target.wants` are no longer mistaken for units);
+* `h.wants` (`has`/`add`/`delete`) is exposed so controls drive that state
+  directly rather than answering a per-argv reply or editing a returned string.
+
+`B4 the modelled host represents every expiry unit state these controls claim`
+drives all of it against the same interface the module reads, and fails by its
+own name (`B4_FIXTURE_REPRESENTS_*`) if the model cannot represent what the
+controls claim: all four timer/companion file combinations including both
+half-present directions; a companion measurably ACTIVE while its own file is
+absent and the timer is inactive and not found; a unit whose file is absent
+answering `enabled`, and the same leftover link answering `disabled`; a unit
+file on disk but absent from a stale loaded view; and a `daemon-reload` that
+rebuilds the loaded view while the install symlink survives and still answers.
+
+Two consequences of that fidelity, recorded rather than smoothed over:
+
+* Three shipped controls (`expiryUninstalledDisableCheck`,
+  `expiryAbsenceAccountedCheck`, `expiryVanishedMechanismCheck`) removed the
+  durable unit files by hand and cleared `enabled` while leaving the install
+  symlink behind — a state that now correctly reads as residue of the
+  mechanism. Each now deletes the link too, so the state it constructs is the
+  one it claims ("the mechanism really is gone"). No assertion in them changed.
+* `expiry retirement ignores unit enablement` is re-anchored onto a new control.
+  With the COMPANION's enablement measured, the stale-loaded-view state forces
+  the `daemon-reload` through the companion term as well, so it no longer
+  distinguishes that mutant. The state that does is a TIMER whose durable file
+  is gone while its leftover `.wants` link still answers `enabled` — which the
+  fixture could not represent before this round. The mutant's name and the
+  control `expiryCachedViewCheck` are both unchanged and both still run.
+
+##### P154D-01: the ARMED disjunct is pinned, not declared equivalent
+
+The previous round's equivalence entry argued from the WRITER: `ARMED` is
+appended strictly after `step('expiry-watch', …)` reaches its durable `DONE`
+row, and every journal this module produces is prefix-closed. The clause is
+evaluated against whatever the READER accepts, and the reader's input space is
+larger. `openActivationJournal` accepts `recovery.jsonl` on a keyless sha256
+chain with **no prefix check**: each row must carry `seq === index`,
+`previous === <previous row's sha256>` and `sha256 === digest(JSON.stringify(payload))`,
+and nothing else. A test can write such a file by hand. So the control writes
+one: this episode's own journal with the `DONE`/`expiry-watch` row removed and
+the chain recomputed from scratch, holding `ARMED`, with both durable unit files
+deleted, no removal receipt, the timer idle with an empty `UnitFileState` and no
+leftover link. The control proves the reader really accepted that chain rather
+than falling to the damaged-log path, by requiring this teardown's own rows to
+have been appended to that same file.
+
+In that state `installed` is true only because of the ARMED disjunct, the
+mechanism has vanished with nothing accounting for it, and the teardown halts
+before the disable. Delete the disjunct and `installed` is false, the
+`!installed && expiryRetired()` tolerance is satisfied by a spotless end state,
+the disable is issued and the episode reports `ok:true, state:REVOKED`. The
+disjunct is kept, the equivalence entry is retracted in place above, and the row
+is pinned below. The writer-side prefix-closure argument is not used anywhere in
+this document to excuse a clause.
+
+##### P154D-03: unchanged, and still a documented residual
+
+Custody is shape, ownership, mode and links — not content. A foreign
+`root:root` `0644` body at the unit path is removed and reported clean. The
+verifier confirms that matches the requirement as stated. Custody is NOT widened
+to content in this round.
+
+##### RETAINED, unchanged and unweakened
+
+The successor-window pre-mint gate (`/etc/systemd/system#shu71-expiry`, which
+refuses to arm while ANY `shu71-expiry-*` unit file is present) and the
+post-window end-state observation are unchanged by this round, byte for byte.
+They are ADDITIONAL controls. Nothing above is closed by them, and nothing above
+would be closed by them: the gate runs in the successor's window, not in this
+one, and the observation runs after it. Every item above is closed by a code
+change and a control in this window.
+
+##### Every load-bearing clause and ordering, re-issued for the RESTRUCTURED function AND the new companion measurement
+
+Each row is a clause or an ordering of `retireExpiryTimer()`, of
+`observeRetiredExpiry()`, of `expiryRetired()` or of what they call, with the
+control that pins it, the mutant that control kills, and whether that kill was
+observed by name this round. `verified` means an instrumented replay recorded
+the exact assertion whose failure killed the mutant: **eighty-nine mutants,
+eighty-nine kills, no survivors**, and every control name below is a name that
+replay printed. Attack this table rather than rediscovering it.
+
+| Clause or ordering | Named control | Named killing mutant | Kill |
+| --- | --- | --- | --- |
+| `installed` — the `journalHas(journal, 'ARMED')` disjunct **(P154D-01, was declared equivalent)** | `B4_EXPIRY_ARMED_WITHOUT_DONE_ROW_REFUSED` | `expiry installation proven only by the DONE row` | verified |
+| `installed` — the `journalHas(journal, 'DONE', 'expiry-watch')` disjunct | `B4_EXPIRY_VANISHED_DONE_ROW_REFUSED` | `expiry installation proven only by ARMED` | verified |
+| `removing` — the receipt derivation | `B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_COMPLETES` | `expiry removal receipt never re-read` | verified |
+| custody NOT gated on journal-proven installation | `B4_EXPIRY_JOURNAL_BLIND_CUSTODY_interrupted-install_hardlinked-timer_REFUSED` | `expiry custody conditioned on journal-proven installation` | verified |
+| custody NOT gated on a recovered log | `B4_EXPIRY_JOURNAL_BLIND_CUSTODY_recovered_hardlinked-timer_REFUSED` | `expiry custody conditioned on a recovered log` | verified |
+| custody NOT gated on the durable removal receipt | `B4_EXPIRY_INTERRUPTED_CUSTODY_timer_REFUSED`, `…_service_REFUSED` | `interrupted removal bypasses expiry custody`, `… companion custody` | verified |
+| custody measured over BOTH durable unit files | `B4_EXPIRY_CUSTODY_REFUSED_hardlinked-service` | `expiry custody predicate ignores the companion unit file` | verified |
+| custody's `unitFileAbsent(file) ||` tolerance of an absent file | `B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_COMPLETES` | `expiry custody measured on absent unit files` | verified |
+| custody measured BEFORE `disable --now` | `B4_EXPIRY_CUSTODY_BEFORE_DISABLE_non-root-owner` | `expiry custody measured only after the disable` | verified |
+| custody measured AGAIN immediately before the unlink | `B4_EXPIRY_UNLINK_CUSTODY_REFUSED` | `expiry custody never re-measured before the unlink` | verified |
+| custody `s.isFile()` | `B4_EXPIRY_CUSTODY_REFUSED_non-regular-file` | `expiry unit file shape unchecked` | verified |
+| custody `s.nlink === 1` | `B4_EXPIRY_CUSTODY_REFUSED_hardlinked-timer` | `expiry unit hardlink unchecked` | verified |
+| custody `s.uid === 0` | `B4_EXPIRY_CUSTODY_REFUSED_non-root-owner` | `expiry unit owner unchecked` | verified |
+| custody `s.gid === 0` | `B4_EXPIRY_CUSTODY_REFUSED_non-root-group` | `expiry unit group unchecked` | verified |
+| custody `!(s.mode & 0o020)` | `B4_EXPIRY_CUSTODY_REFUSED_group-writable` | `expiry unit group-writable mode accepted` | verified |
+| custody `!(s.mode & 0o002)` | `B4_EXPIRY_CUSTODY_REFUSED_world-writable` | `expiry unit world-writable mode accepted` | verified |
+| the custody term predicate as a whole | `B4_EXPIRY_CUSTODY_REFUSED_non-root-owner` | `expiry unit custody predicate vacuous` | verified |
+| custody `!s.isSymbolicLink()` | *equivalent mutant, reader-side reasoning below* | — | n/a |
+| the `never` early branch and its `need(expiryRetired)` | `B4_PREARM_DRIFT_REFUSED_both-files` | `pre-arm expiry drift silently accepted` | verified |
+| `lifecyclePhase`'s `journal.recovered` conjunct | `B4_RECOVERED_NOT_PROOF_OF_NON_CREATION` | `recovered log accepted as non-creation proof` | verified |
+| `lifecyclePhase`'s `RUN_ATTEMPT_STARTED` conjunct | `B4_DESTROYED_JOURNAL_NOT_PROOF` | `non-creation inferred from an empty journal` | verified |
+| **P154D-02** the live-companion refusal, stated in `retireExpiryTimer()` before the absence clause and the disable | `B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED` | `expiry running companion accepted before the disable` | verified |
+| **P154D-02** that refusal's predicate (`unitIdle(expiryServiceUnit)`) and its `ACT_TEARDOWN_EXPIRY_SERVICE` name | `B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED` | `expiry companion refusal predicate vacuous` | verified |
+| **P154D-02** the same refusal in `observeRetiredExpiry()` | `B4_EXPIRY_LIVE_COMPANION_RETIRED_EPISODE_NAMED` | `retired episode expiry companion liveness unobserved` | verified |
+| **P154D-02** the receipt path reporting the companion's own code, not generic drift | `B4_EXPIRY_LIVE_COMPANION_RETIRED_EPISODE_NAMED` | `live expiry companion reported as generic drift` | verified |
+| **P154D-02** `teardownActivation()` surfacing that code in `failures[]` | `B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED` | `P154D live expiry companion code never surfaced` | verified |
+| the absence clause as a whole | `B4_EXPIRY_FILE_DRIFT_REFUSED_timer` | `installed expiry pre-condition omitted` | verified |
+| absence — presence of the companion `.service` file | `B4_EXPIRY_FILE_DRIFT_REFUSED_service` | `expiry companion service file unchecked` | verified |
+| absence — the `removing ||` disjunct | `B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_COMPLETES` | `expiry presence pre-condition ignores the removal receipt` | verified |
+| absence — the `|| !installed && expiryRetired()` disjunct | `B4_EXPIRY_UNINSTALLED_RETIRED_COMMAND_ISSUED` | `unaccounted expiry absence accepted` | verified |
+| absence — its `!installed &&` half | `B4_EXPIRY_VANISHED_ARMED_BEFORE_DISABLE` | `journal-proven installed expiry absence accepted` | verified |
+| absence — its `expiryRetired()` half | `B4_EXPIRY_ABSENCE_interrupted-install_half_REFUSED` | `unretired expiry absence accepted` | verified |
+| the `disable --now` command itself | `B4_EXPIRY_RETIREMENT_COMPLETES` | `expiry disable command never issued` | verified |
+| catch door A — a throw carrying **no** `ACT_COMMAND_FAILED` code | `B4_EXPIRY_DISABLE_FAILURE_UNITS_RETAINED` | `refused expiry disable blindly accepted` | verified |
+| catch door B — `systemctl disable` **exiting non-zero** | `B4_EXPIRY_DISABLE_EXIT_REFUSED` | `expiry disable exit-status refusal conjuncts dropped` | verified |
+| catch conjunct `removing ||` | `B4_EXPIRY_INTERRUPTED_REMOVAL_RETRY_COMPLETES` | `interrupted expiry disable refusal rejected` | verified |
+| catch conjunct `!installed && …` | `B4_EXPIRY_UNINSTALLED_RETIRED_COMPLETES` | `uninstalled expiry disable refusal rejected` | verified |
+| catch conjunct `… && expiryRetired()` | `B4_EXPIRY_UNINSTALLED_PRESENT_REFUSED` | `uninstalled expiry disable accepted with the mechanism present` | verified |
+| post-condition conjunct — TIMER liveness | `B4_EXPIRY_POSTCONDITION_ACTIVE_UNITS_RETAINED` | `expiry post-condition unit liveness inert` | verified |
+| post-condition conjunct — TIMER enablement | `B4_EXPIRY_POSTCONDITION_ENABLED_REFUSED` | `expiry post-condition enablement unchecked` | verified |
+| **P154D-02** post-condition conjunct — COMPANION liveness | `B4_EXPIRY_POSTCONDITION_SERVICE_ACTIVE_UNITS_RETAINED` | `expiry post-condition companion liveness inert` | verified |
+| **P154D-02** post-condition conjunct — COMPANION enablement | `B4_EXPIRY_POSTCONDITION_SERVICE_ENABLED_REFUSED` | `expiry post-condition companion enablement unchecked` | verified |
+| the post-condition as a whole | `B4_EXPIRY_POSTCONDITION_UNITS_RETAINED` | `expiry end state never measured` | verified |
+| the removal loop | `B4_EXPIRY_RETIREMENT_COMPLETES` | `retired expiry units left behind` | verified |
+| the removal loop's `!EXPIRY_UNITS.every(unitFileAbsent)` guard | `B4_EXPIRY_UNINSTALLED_RETIRED_NOTHING_TO_REMOVE` | `expiry removal issued with nothing to remove` | verified |
+| the receipt append | `B4_EXPIRY_RETIREMENT_RECEIPT` | `expiry retirement receipt omitted` | verified |
+| the receipt append's POSITION, before the loop | `B4_EXPIRY_INTERRUPTED_REMOVAL_RECEIPT_BEFORE_REMOVAL` | `expiry removal receipt appended after the unlinks` | verified |
+| the `daemon-reload` on a stale loaded view | `B4_EXPIRY_RELOAD_REFRESHES_UNIT_VIEW` | `stale unit view never refreshed` | verified |
+| the post-reload re-measure | `B4_EXPIRY_POST_RELOAD_REFUSED` | `post-reload expiry end state never measured` | verified |
+| `expiryRetired()` — the durable-file absence conjunct, over BOTH files | `B4_PREARM_DRIFT_REFUSED_service-file-stale-view` | `expiry retirement ignores the companion unit file` | verified |
+| `expiryRetired()` — TIMER liveness `unitIdle(expiryTimerUnit)` | `B4_PREARM_DRIFT_REFUSED_timer-active` | `expiry retirement ignores unit liveness` | verified |
+| `expiryRetired()` — TIMER enablement | `B4_PREARM_DRIFT_REFUSED_timer-enabled-link` | `expiry retirement ignores unit enablement` | verified |
+| **P154D-02** `expiryRetired()` — COMPANION liveness `unitIdle(expiryServiceUnit)` | `B4_PREARM_DRIFT_REFUSED_service-active` | `expiry retirement ignores companion liveness` | verified |
+| **P154D-02** `expiryRetired()` — COMPANION enablement | `B4_PREARM_DRIFT_REFUSED_service-enabled-link` | `expiry retirement ignores companion enablement` | verified |
+| `observeRetiredExpiry()` on the retired episode's receipt path | `B4_RETIRED_EPISODE_EXPIRY_DRIFT` | `retired episode expiry drift unobserved` | verified |
+| `observeTeardown()` re-run immediately before the retirement | `B4_RETIREMENT_REOBSERVATION` | `P1 retirement re-observation removed` | verified |
+| the effect's durable-`DONE` pre-condition (defence in depth) | *equivalent pair, reasoning below* | — | n/a |
+
+Every row has both a control and a mutant, or an equivalent-mutant entry with
+its reasoning. There are **no rows with neither**, and **no row is marked
+"covered by another"**. Three rows would have been, and were not, because the
+attempt to falsify them succeeded and produced a new control instead:
+
+* the COMPANION file-absence conjunct. Each unit's own `UnitFileState` answers
+  for its own file wherever systemd's loaded view is fresh, so a present
+  companion file refuses through the enablement conjunct anyway and
+  `B4_PREARM_DRIFT_REFUSED_service-file` does not distinguish the mutant. The
+  state that does is a companion file on disk and absent from the loaded view,
+  planted after systemd's last reload — `…_service-file-stale-view`. (The
+  `service-file` control still runs and still passes.)
+* the TIMER enablement conjunct, for the mirror-image reason, now pinned by the
+  leftover-`.wants` state `…_timer-enabled-link`.
+* the COMPANION enablement conjunct, which needs both files absent and only the
+  leftover install symlink present — `…_service-enabled-link`. The `disabled`
+  form of the same leftover link is `…_service-disabled-link`, which runs as an
+  additional control: a leftover link is residue of the mechanism under either
+  answer, and neither answer is empty.
+
+##### The two equivalent mutants, re-attacked this round, reasoned about the READER
+
+1. `!s.isSymbolicLink()` in `expiryUnitCustody`. `s` is an `lstat` result, so a
+   symlink already fails `isFile()`; removing the term alone cannot change any
+   outcome for ANY input the predicate can be handed, whatever wrote it — the
+   argument is about `lstat`'s answer, not about who created the file.
+   Confirmed independently by two verifiers (**F-07**, and again this round).
+2. The `expiry-timer` effect's durable-`DONE` pre-condition and the in-memory
+   guard it duplicates (`shu71-journal.mjs`, `if (step === 'expiry-timer' &&
+   failures.length)`) are a deliberately redundant **pair**: each alone produces
+   the identical refusal for every input either can see, so each single-guard
+   mutant survives, and the two-file mutant expressing "drop both" cannot be
+   written in a harness that mutates one file at a time. Unchanged by this
+   round, which touches neither guard.
+
+The third equivalence this document used to claim — the `ARMED` disjunct of
+`installed` — is **retracted**: it reasoned about the writer, the reader accepts
+more than the writer produces, and the clause is pinned in the table above.
+
+##### New controls and new mutants
+
+| New control (test name) | Proves |
+| --- | --- |
+| `B4 a measurably running expiry companion service is never a clean retirement, installed` | journal-proven installed, both durable files present and in perfect root custody, companion ACTIVE: halts with `ACT_TEARDOWN_EXPIRY_SERVICE` in `failures[]` beside `ACT_TEARDOWN_EXPIRY_TIMER`, issues no `stop`, no `disable --now`, unlinks nothing, writes no receipt; with the companion measurably gone the same teardown completes and removes both |
+| `B4 … , journal-blind` | the verifier's `V154D_PROBE_service` rebuilt term for term — recovered log, BOTH files deleted, no receipt, timer `inactive` with empty `UnitFileState`, companion ACTIVE — measured through the same interface the module reads, and refused |
+| `B4 … , retired-episode` | the same drift on the retired episode's receipt path, where the refusal code is observable literally: `code === 'ACT_TEARDOWN_EXPIRY_SERVICE'` |
+| `B4 a disable that leaves the expiry companion service active is drift` | the companion liveness half of the post-condition, with the timer's own end state spotless |
+| `B4 a disable that leaves the expiry companion service enabled is drift` | the companion enablement half of the same |
+| `B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed` | **P154D-01**: the reader accepts a keyless-chain `recovery.jsonl` holding ARMED with the `DONE`/`expiry-watch` row removed and the chain recomputed; the control proves the reader accepted it by requiring this teardown's own rows appended to that file |
+| `B4 the modelled host represents every expiry unit state these controls claim` | **P154D-04**: the fixture's own fidelity, falsifiable by name |
+| `B4 pre-arm teardown refuses service-active drift by name` | the companion liveness conjunct of `expiryRetired()`, reached through the never-created branch so nothing shadows it |
+| `B4 pre-arm teardown refuses service-enabled-link drift by name` | the companion enablement conjunct, on a leftover install symlink with both unit files absent |
+| `B4 pre-arm teardown refuses service-disabled-link drift by name` | the same leftover link answering `disabled`: residue either way |
+| `B4 pre-arm teardown refuses timer-enabled-link drift by name` | the timer enablement conjunct, on the same shape |
+| `B4 pre-arm teardown refuses service-file-stale-view drift by name` | the durable-file absence conjunct, in the only state that distinguishes it from the enablement conjuncts |
+
+| New killing mutant | Control that kills it |
+| --- | --- |
+| `B1/B4 mutation: expiry retirement ignores companion liveness` | `B4_PREARM_DRIFT_REFUSED_service-active` |
+| `B1/B4 mutation: expiry retirement ignores companion enablement` | `B4_PREARM_DRIFT_REFUSED_service-enabled-link` |
+| `B1/B4 mutation: expiry running companion accepted before the disable` | `B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED` |
+| `B1/B4 mutation: expiry companion refusal predicate vacuous` | `B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED` |
+| `B1/B4 mutation: retired episode expiry companion liveness unobserved` | `B4_EXPIRY_LIVE_COMPANION_RETIRED_EPISODE_NAMED` |
+| `B1/B4 mutation: live expiry companion reported as generic drift` | `B4_EXPIRY_LIVE_COMPANION_RETIRED_EPISODE_NAMED` |
+| `B1/B4 mutation: expiry post-condition companion liveness inert` | `B4_EXPIRY_POSTCONDITION_SERVICE_ACTIVE_UNITS_RETAINED` |
+| `B1/B4 mutation: expiry post-condition companion enablement unchecked` | `B4_EXPIRY_POSTCONDITION_SERVICE_ENABLED_REFUSED` |
+| `B1/B4 mutation: expiry installation proven only by the DONE row` | `B4_EXPIRY_ARMED_WITHOUT_DONE_ROW_REFUSED` |
+| `recovery mutation: P154D live expiry companion code never surfaced` | `B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED` |
+
+Two existing mutants keep their names and their assertions and changed only
+which control kills them, for the measured reasons given above:
+`expiry retirement ignores the companion unit file` (now
+`…_service-file-stale-view`) and `expiry retirement ignores unit enablement`
+(now `…_timer-enabled-link`). Several anchors moved in place with the two-unit
+end state and post-condition; no mutant name, control name or assertion changed.

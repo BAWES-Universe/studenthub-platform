@@ -76,9 +76,14 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // state measurement (ActiveState and UnitFileState), the durable
 // EXPIRY_RETIREMENT_STARTED receipt, the two unit-file unlinks, and the final
 // retired measurement (ActiveState and UnitFileState) of the same predicate.
+// P154D-02 adds exactly five more, uniformly across every completing state: the
+// expiry mechanism is TWO units, so the live-companion refusal measures the
+// companion's ActiveState once, and both the post-condition and the final
+// retired measurement now read the companion's ActiveState and UnitFileState
+// as well as the timer's.
 const cleanupEffects = {
-  armed: { absent: 74, intact: 79, truncated: 80, recovered: 79, 'FORGED-ordered': 73, 'FORGED-partial': 73 },
-  'settlement-ready': { absent: 74, intact: 48, truncated: 76, recovered: 75, 'FORGED-ordered': 73, 'FORGED-partial': 73 },
+  armed: { absent: 79, intact: 84, truncated: 85, recovered: 84, 'FORGED-ordered': 78, 'FORGED-partial': 78 },
+  'settlement-ready': { absent: 79, intact: 53, truncated: 81, recovered: 80, 'FORGED-ordered': 78, 'FORGED-partial': 78 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);
@@ -95,7 +100,7 @@ export function requiredTransition(s) {
     gates: Array(2).fill(`[Service]\nEnvironment=ENABLE_DISPATCH=${orderedResidual && !ready ? 'true' : 'false'}\n`),
     credential: orderedResidual && !ready,
     lease: refused,
-    effects: settled ? 28 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
+    effects: settled ? 33 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
     code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED' : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : null,
     complete: !refused,
   };
