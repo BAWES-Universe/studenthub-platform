@@ -3123,3 +3123,345 @@ above: `B4_REEXEC_ONE_VARIABLE_NO_SECOND_VARIABLE`, which no assertion emits,
 and the mis-attribution of the poisoned-environment mutant. Every remaining name
 in this section resolves, and every mutant/control pair in the two tables above
 is one this round observed by replay.
+
+### Seventh correction round: the arming comparison is over the FIELDS, not the rendering
+
+#### P276-01, and why a fully green suite never saw it
+
+The production arming entrypoint refused `ACT_PRIOR_STATE_DRIFT` on the target
+host for `shu71-mint-00000019` while both fixture cards were exactly where the
+signed artifact required them. `issue()` MEASURES a card off Linear and
+constructs it as `{ state_id, assignee_id }`. The owner approval is sealed by
+`compose-shu71-approval.mjs` `seal`, which writes `canonicalBytes(doc, false)` -
+and `canonicalBytes` SORTS every key - so the identical card is stored, and
+therefore deserialized on the host, as `{ assignee_id, state_id }`. The four
+comparisons were `JSON.stringify` equality, which compares the RENDERING rather
+than the card, so on a real host they can never match and the window cannot arm
+at all.
+
+The suite was green because `productionFixture` sealed its approval envelope
+with `JSON.stringify(approval)` - the mint's own in-memory construction order -
+which is the one serialization the broken comparison can satisfy. The fixture
+happened to agree with the code instead of with the sealer.
+
+#### The fix, and exactly what it newly accepts
+
+`shu71-production.mjs` exports `FIXTURE_CARD_FIELDS` and `sameFixtureCard(a, b)`,
+which compares the two named fields and holds BOTH sides closed to exactly those
+two keys. All four sites use it:
+
+| Site | Expression |
+| --- | --- |
+| `shu71-production.mjs:167` | `if (sameFixtureCard(current, target)) return;` |
+| `shu71-production.mjs:168` | `need(restoring \|\| sameFixtureCard(current, t.before), 'ACT_PRIOR_STATE_DRIFT')` |
+| `shu71-production.mjs:171` | `need(... && sameFixtureCard(await issue(t), target), 'ACT_PARTIAL_ARMING')` |
+| `shu71-production.mjs:319` | `need(sameFixtureCard(await issue(t), t.before), 'ACT_PRIOR_STATE_DRIFT')` |
+
+The only newly accepted input is a different key ORDER. Refusal codes, their
+names and their conditions are unchanged: a card genuinely in the wrong state
+still refuses `ACT_PRIOR_STATE_DRIFT`, and a partial arming still refuses
+`ACT_PARTIAL_ARMING`. `productionFixture` now seals with `canonicalBytes`, the
+real target-host shape, by default.
+
+#### The RED, measured on the unmodified revision
+
+`6bf87512` is the last revision before the fix. Its `shu71-production.mjs` was
+copied out of Git and loaded from a disposable path with its relative imports
+rebound to the checked-out siblings - the same loading the in-process mutant
+harness uses - and the round's target-host-shape control
+(`canonicalArmsCheck`, byte-for-byte) was run against it:
+
+```
+pre-fix module: 6bf87512:.github/coordinator/service/shu71-production.mjs
+  exports sameFixtureCard: false
+  JSON.stringify comparison sites: 4
+
+RESULT: control FAILED on the pre-fix revision -- RED observed.
+  error.code            : ERR_ASSERTION
+  failed assertion name : B1_BINDING_PRIOR_STATE_FIELD_EQUAL
+  operator              : strictEqual
+  actual                : "ACT_PRIOR_STATE_DRIFT"
+  expected              : null
+```
+
+The same control against the committed head passes, with
+`exports sameFixtureCard: true` and zero `JSON.stringify` comparison sites.
+
+The reach of the defect was measured the same way, by writing the `6bf87512`
+module bytes into the worktree and running the existing production proofs
+against the corrected (canonical) fixture default:
+
+| File | Tests | Pre-fix pass | Pre-fix fail | Head pass | Head fail |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `shu71-production.test.mjs` | 85 | 21 | 64 | 85 | 0 |
+| `shu71-production-mutations.test.mjs` | 81 | 15 | 66 | 81 | 0 |
+
+`shu71-arming-order.test.mjs` cannot even load against `6bf87512`: it imports
+`sameFixtureCard`, which that revision does not export, so the file fails as a
+whole rather than test by test. That is recorded rather than counted as 18 kills.
+
+#### New controls, the gap they left, and the gap this round closes
+
+`shu71-arming-order.test.mjs` carries nine controls and nine mutants.
+
+Eight controls drive the real entrypoint: the canonical (mint) key order arming,
+the mirror construction order, the ready pair, the post-update read-back
+(`ACT_PARTIAL_ARMING`), the restore read-back, the already-at-target early
+return, and two genuine-drift refusals - one at each `ACT_PRIOR_STATE_DRIFT`
+site.
+
+Those eight were not enough. The two-key closure inside `sameFixtureCard()` is
+NOT reachable through the entrypoint: `issue()` constructs exactly two keys and
+`validateShu71Package`'s `exactObject` holds the artifact card to exactly two, so
+no window can present a third key or a missing one. Both doors of the closure
+were therefore SURVIVORS - dropping the key-count guard, and dropping the
+`Object.hasOwn` guard, each left all fifteen then-committed arming-order tests
+passing. This round adds the ninth control, directly on the exported comparison:
+it accepts the same card in both key orders, refuses a field-equal card carrying
+a third key, refuses a two-key card missing a reviewed field, and still refuses
+a genuinely different assignee. Both mutants die on it.
+
+#### The mutant x control matrix
+
+Every mutant was run against EVERY control on the committed head. A cell is a
+KILL only when the control threw an `ERR_ASSERTION` carrying a `B1_`/`B4_` name,
+and that name was READ OFF the thrown error. All nine controls pass on the
+unmutated module. **Nine mutants, nine killed, zero survivors.**
+
+| Mutant | Paired control | Killing assertion observed | Controls that kill it |
+| --- | --- | --- | ---: |
+| binding prior-state -> `JSON.stringify` equality | canonical mint key order arms the window | `B1_BINDING_PRIOR_STATE_FIELD_EQUAL` | 5 / 9 |
+| transition prior-state -> `JSON.stringify` equality | both fixtures reach the reviewed ready state | `B1_READY_PRIOR_STATE_FIELD_EQUAL` | 5 / 9 |
+| post-update `target` -> `JSON.stringify` equality | post-update ready read-back | `B1_READY_READBACK_FIELD_EQUAL` | 5 / 9 |
+| already-at-target early return -> `JSON.stringify` equality | a card already at its target is not rewritten | `B4_RESTORE_IDEMPOTENT_NO_WRITE` | 1 / 9 |
+| field comparison accepts any pair of cards | a genuinely drifted assignee still refuses | `B1_GENUINE_DRIFT_REFUSED` | 4 / 9 |
+| field comparison stops reading `assignee_id` | a genuinely drifted assignee still refuses | `B1_GENUINE_DRIFT_REFUSED` | 2 / 9 |
+| field comparison stops reading `state_id` | a card that drifts in state still refuses | `B1_READY_GENUINE_DRIFT_REFUSED` | 2 / 9 |
+| field comparison accepts a differently-shaped card | the field comparison stays closed | `B1_SHAPE_EXTRA_KEY_REFUSED` | 1 / 9 |
+| field comparison stops requiring both reviewed keys | the field comparison stays closed | `B1_SHAPE_MISSING_FIELD_REFUSED` | 1 / 9 |
+
+Two facts in that matrix are disclosed rather than smoothed over.
+
+**The mirror-order control kills nothing.** `construction key order still arms
+the window` is the only control that kills no mutant in this set, and that is
+expected: every mutant here either reverts a site to serialization equality -
+which the construction order satisfies, since that is precisely why the broken
+code passed the old suite - or widens the comparison, which an arming control
+cannot see. It is a non-regression guard for the opposite serialization, not a
+killer, and it is reported as such.
+
+**The restore path is covered by two controls, one of which is a killer.**
+`restore read-back accepts a field-equal card` kills the three site-reverting
+mutants that pass through `transition(t, t.restore, true)`; `a card already at
+its target is not rewritten` is the sole killer of the early-return mutant.
+
+#### Audit: every constructed-vs-artifact comparison under `service/`
+
+The comparison mechanisms in `.github/coordinator/service/*.mjs` are exactly
+four, and only one of them is sensitive to key order.
+
+| Mechanism | Order-sensitive? |
+| --- | --- |
+| `canonical()` (`phase-a-driver.mjs:53`) - sorts keys recursively | no |
+| `canonicalBytes()` (`shu71-activation-package.mjs:31`) - sorts keys recursively | no |
+| `assert.deepEqual` / `isDeepStrictEqual` | no |
+| raw `JSON.stringify(a) === JSON.stringify(b)` | **yes** |
+
+Per-site verdicts for every order-sensitive site, plus the sites named in the
+brief:
+
+| Site | Verdict | Reasoning |
+| --- | --- | --- |
+| `shu71-production.mjs:167,168,171,319` | **fixed** | The defect. Constructed card vs a CANONICALLY SEALED artifact: two different producers, one of which sorts. Now `sameFixtureCard()`. |
+| `provision-shu71-prerequisites.mjs:275` | already order-safe | Both sides are `{ bytes, mode, uid, gid }` in one literal order: `current` from `read()`, `e.before` from `read()` through the receipt, `e.after` from a literal with the same order. The receipt is written by `save()` as `JSON.stringify(j)` and read by `JSON.parse` - no canonicalizer anywhere on the path, and `JSON.parse` preserves key order. |
+| `provision-shu71-prerequisites.mjs:277,311` | already order-safe | Same two producers as `:275`: `read()` against a journal `before` that `read()` produced. |
+| `provision-shu71-prerequisites.mjs:306,315` | already order-safe | Same, for `ACCOUNT_FILES` entries: `account.before` is `read()` output round-tripped through the same `JSON.stringify` receipt. |
+| `provision-shu71-prerequisites.mjs:414` | already order-safe | `j.broker` is the receipt's copy of `identity()`/`allocate()` output, both `{ name, uid, gid }`; the right side is a fresh `identity()`. Same module, same literal order, `JSON.stringify`/`JSON.parse` receipt. |
+| `provision-shu71-prerequisites.mjs:264` | not this class | Compares ARRAYS of paths (`e.accounts.map(a => a.path)` against `ACCOUNT_FILES`); array order is the reviewed contract, not an object key order. |
+| `host-window-bindings.mjs:48` (`exactKeys`) | already order-safe | Both operands are `Object.keys(...).sort()` - explicitly sorted before comparison. |
+| `host-window-bindings.mjs:266` | not this class | Compares content DIGESTS and `Buffer.equals` of unit bytes. |
+| `suite-runner-spec.mjs:10` (`equal`) | not this class | Used only on arrays: the sorted supplementary-group list (`:22`) and the tracked test-file list (`:52`). |
+| `host-lifecycle.mjs` - all `equal()` / `keys()` guards | already order-safe | `equal` is `canonical(a) === canonical(b)`, and `canonical()` sorts every object's keys recursively before rendering. |
+| `production-lifecycle.mjs` - all `equal()` guards, including `approval()` | already order-safe | Same `canonical()`. `approval()` additionally compares `a.spec_sha256` against `hash(canonical(bound))` - canonicalized on BOTH sides, which is the pattern the arming sites now match in spirit. |
+| `compose-shu71-approval.mjs:11,47` (`same`) | already order-safe | `canonicalBytes(a).equals(canonicalBytes(b))`: both sides sorted. |
+| `mint-shu71-package.mjs:22` (`same`) | already order-safe | Same `canonicalBytes` on both sides. |
+| `shu71-production.mjs:336-337` | already order-safe | `digest(canonicalBytes(...))` on both the adopted signed package and the approved package. |
+| `shu71-production.mjs:231` | already order-safe | Signature verification over `canonicalBytes(doc.payload, false)`. |
+| `shu71-production.mjs:389-390` (`installedReadback`) | already order-safe | Compares BYTES (`Buffer.equals`). The expected bytes are `JSON.stringify(pkg.activation)`; the file was written by the same expression from the same object, and on the repeat path `pkg` is re-parsed from the same durable `signed-package.json`. `ACTIVATION_FILE` has exactly one producer. |
+| `shu71-journal.mjs:32,42` | already order-safe | A `JSON.stringify` hash chain written and verified by the same module, round-tripped through `JSON.parse`. Byte-exactness is the point of the chain. |
+| `install.mjs:43,56` | already order-safe | `assert.deepEqual` against a `JSON.parse`d backup: key-order-insensitive. `:37` compares sorted key arrays. |
+| `residual-validation.mjs:49,54` | already order-safe | `assert.deepEqual`, and a sorted key-set comparison. |
+| `reviewer-host-validation.mjs:50`, `units.mjs:197,200`, `reviewer-isolation.mjs:71,108`, `phase-a-driver.mjs:281,345` | not this class | Buffers, byte comparisons, or arrays of strings. |
+
+One residual is recorded, not changed. `disposable-suite.mjs:21` binds a
+disposable run to `sha256(JSON.stringify(spec))`, recomputed in each later
+invocation (`create`, `run`, `remove`) from the same operator spec FILE, which
+every entrypoint loads with `JSON.parse` (`host-suite-contract.mjs:312`). It is
+order-safe as deployed, because nothing between the phases re-serializes the
+spec. It is the same class in principle: a spec file regenerated with sorted
+keys between `create` and `run` would refuse `SHU251_SUITE_DISPOSABLE` rather
+than run. It is disclosed here and left alone - changing it would be a new
+reviewed behaviour, which this round does not introduce.
+
+#### The two collateral commits, and the `approvalBytes` affordance
+
+`a18647d` rebinds two kinds of existing proof to the corrected fixture default.
+
+*Historical differentials.* `counterDifferential`
+(`shu71-r4-differential.mjs`), `r5Differential` (`shu71-r5-checks.mjs`) and the
+`historical control semantics` proofs (`shu71-history.test.mjs`) execute
+VENDORED PRIOR revisions of `shu71-production.mjs`. Those revisions compare the
+prior state by `JSON.stringify` and cannot consume a canonically sealed approval
+at all, and a differential must feed its `parent`, `blocked` and `candidate`
+arms the SAME bytes. Four call sites - one in `counterDifferential`, one in
+`r5Differential`, two in `shu71-history.test.mjs` - therefore pin
+`approvalBytes: 'construction'` explicitly. (The commit message says "three call
+sites"; it is three helpers and four call sites. The correction is recorded
+here; the commit is not rewritten.)
+
+*Documentation links.* `V8_DOCUMENTATION_LINK_TARGETS` pins markdown links to
+EXACT line numbers in `shu71-production.mjs` and
+`provision-shu71-prerequisites.mjs`, and fails on a one-line drift.
+`sameFixtureCard()` added thirteen lines above every `shu71-production.mjs`
+target, so each moved by exactly thirteen:
+
+| Document | Link text | Before | After |
+| --- | --- | ---: | ---: |
+| `ACTIVATION-WINDOW-RECONCILIATION.md` | `signing step in shu71-production.mjs` | `#L317` | `#L330` |
+| `SHU71-L3-CLOSURE.md` | `` `renderEvidenceBroker()` `` | `#L777` | `#L790` |
+| `SHU71-PREREQUISITES.md` | `operative unit render` | `#L777` | `#L790` |
+| `SHU71-PREREQUISITES.md` | `start` | `#L353` | `#L366` |
+| `SHU71-PREREQUISITES.md` | `stop` | `#L721` | `#L734` |
+
+That is FIVE link targets across three documents, not the four the commit
+message claims. No link TEXT, target symbol, document or assertion changed; the
+three `provision-shu71-prerequisites.mjs` links are untouched because that file
+did not change.
+
+`da488cc` rebinds three more proofs. NV2's mutation anchor in
+`shu71-trust-mutations.test.mjs` is updated IN PLACE to the expression it now
+attacks - `result.issueUpdate?.success === true && sameFixtureCard(await issue(t), target)`
+- with its case name (`NV2 transition readback omitted`), its mutation
+(`result.issueUpdate?.success === true`) and its killing assertion unchanged.
+`CONTRACT_PRE_FIX_ACTIVATION_UNREADABLE` (`shu71-host-contract.test.mjs`) and the
+six `PHASE_PRE_FIX_*` controls (`shu71-phase-readback.test.mjs`) execute vendored
+PRIOR revisions to demonstrate the defects those revisions had, so only those
+controls pin `approvalBytes: 'construction'`, through a new optional argument on
+their own local fixture helpers (`prepared`, `scenario`). Every current-module
+control in both files keeps the real target-host shape.
+
+*The affordance itself.* `productionFixture(t, keys, signingPath, host, options)`
+takes `options.approvalBytes`. It changes ONE thing: how the owner-approval
+envelope is SERIALIZED on disk at
+`/etc/shu/approvals/<id>.shu71.json`. `'canonical'` - the DEFAULT - writes
+`canonicalBytes(approval, false)`, byte-for-byte what `compose-shu71-approval.mjs`
+`seal` writes on the real host. `'construction'` writes `JSON.stringify(approval)`,
+the mint's in-memory key order. The payload, the signature and every field value
+are identical either way; only the byte order of the keys differs. The
+historical differentials stay meaningful with it because a differential's claim
+is about the DIFFERENCE between the arms under identical input - and all three
+arms are fed the identical construction-order bytes - not about which
+serialization the host uses. The default for every current-module control,
+including every arming-order control that drives the entrypoint except the
+deliberate mirror control, remains the real canonical target-host shape.
+
+#### What this round did NOT change
+
+No new reviewed effect. No production module was touched by the evidence
+commit; the only production change in this round is the four comparison sites
+and the exported helper above it. No refusal code, condition or name was added,
+renamed or removed. The mutant harness keeps its existing assertion names,
+`B1_MUTATION_ANCHOR_UNIQUE` and `B1_MUTATION_NAMED_ASSERTION`, moved verbatim
+into the shared `loadMutant()` / `killedBy()` helpers. No assertion, name, code,
+skip, timeout or deadline was weakened, renamed or deleted anywhere in the
+round: measured against `6bf87512`, the inventory gained 18 names and one file
+with ZERO removals, and `names` and `requirements` are strict prefix extensions.
+`PERMITTED_SKIPS` (1,093 bytes, sha256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`) and
+`host-suite-contract.mjs` (sha256 `2a19d72c…58e9`) are byte-identical.
+
+#### Validation of the seventh correction round
+
+Tested implementation `af89f75519b62f735d157b0e53424070a3b833fa`, tree
+`a648e7f762876d9aec57c2b73310eeb1be79107a` — the round's three fix commits plus
+the shape-closure control commit. This record section follows it and changes
+documentation only: it adds no test name, so all three inventories are
+unchanged by it. The worktree was clean for all four runs.
+
+All four commands ran from the repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`), which printed
+`CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent
+reviewer=absent` for each: UID 1000, `umask 0022`, target accounts absent
+(`shu71-evidence`, `shu-coordinator`, `shu-workspace`, `messagebus` — filtered
+out of `/etc/passwd` and `/etc/group` and re-checked with `getent` inside the
+namespace), `/run` and `/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and
+`/etc/sudoers.d/shu-reviewer` absent, `chmod -R go-w .github/coordinator`, with
+both the TAP reporter and the unchanged `host-suite-contract.mjs` reporter
+writing separate outputs. Plain unsets `NODE_OPTIONS` and
+`SHU_TEST_CLOCK_OFFSET_MS`; clock sets `SHU_TEST_CLOCK_OFFSET_MS=31536000000`
+and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+Focused used `taskset -c 0-3 node --test --test-concurrency=2`; full used
+`taskset -c 0-9 node --test --test-concurrency=4`, the same pinning the sixth
+round disclosed. The four runs were executed strictly one at a time.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end | Duration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| Focused plain | 1691 | 1690 | 0 | 1 | 1 / 1 | 0 | 1.19 → 2.65 | 66.9 s |
+| Focused clock | 1691 | 1690 | 0 | 1 | 1 / 1 | 0 | 1.75 → 2.48 | 73.6 s |
+| Full plain | 3404 | 3396 | 0 | 8 | 1 / 1 | 0 | 2.44 → 2.02 | 583.4 s |
+| Full clock | 3404 | 3396 | 0 | 8 | 1 / 1 | 0 | 1.79 → 2.97 | 521.1 s |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line in any of the four TAP outputs. Focused TAP plans are `1..1691`;
+full plans are `1..3399`, with five nested outcomes under one nested `1..5`
+bringing each full total to 3,404. Each run's structured report has exactly one
+terminal `complete` event, is terminated by it, and passes the unchanged
+`evaluateSuite` validator (1,691 / 1,691 / 3,404 / 3,404 expected outcomes).
+Both full runs' 3,404 outcome names are exactly the committed inventory's 3,404
+names with identical multiplicities — zero missing and zero extra — and `A12
+committed inventory requirements match real outcomes` passes in both. Every
+skip in all four runs is a `PERMITTED_SKIPS` entry carrying that entry's exact
+documented reason, byte-for-byte, compared against the exported object rather
+than by eye; the single focused skip is `SHU-71 restricted capability refusal`.
+
+##### The focused selection missed the round's own control file
+
+The focused selection's service-side globs are `provision*.test.mjs`,
+`shu71-production*.test.mjs` and `shu71-trust*.test.mjs`. NONE of them matches
+`shu71-arming-order.test.mjs`, so this round's only dedicated control file sat
+outside the selection that is run first on every change to this lane — the same
+kind of gap the sixth round closed for `shu71-reexec-boundary.test.mjs`. It is
+closed the same way, by NAMING the file:
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-reexec-boundary.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs \
+  .github/coordinator/service/test/shu71-host-contract.test.mjs \
+  .github/coordinator/service/test/shu71-arming-order.test.mjs
+```
+
+Eighteen entries expanding to 25 test files — the sixth round's 17 entries and
+24 files plus this one. The focused total is the sixth round's 1,673 plus this
+round's 18 inventory names: 1,691; all 18 fall inside the selection. The full
+total is 3,386 plus the same 18: 3,404. The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`
+(115 files, one more than the sixth round's 114). All eighteen of
+`shu71-arming-order.test.mjs`'s tests — the nine controls and the nine mutants —
+were present in the outcome stream of all four runs above, focused and full
+alike, and each mutation test emitted its `killed by B1_…`/`B4_…` diagnostic.
