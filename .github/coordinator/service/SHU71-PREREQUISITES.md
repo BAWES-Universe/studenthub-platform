@@ -4731,3 +4731,231 @@ The thirty names this round adds are in both selections:
 and matches the full run's `service/test/*.test.mjs` glob, and the two
 exhausted-invariance names come from `shu71-trust.test.mjs`, which the focused
 selection already carries as `shu71-trust*.test.mjs`.
+
+### Twelfth correction round: the measurement a completion row may not skip
+
+Repository-only. No target host was contacted, no network call was made, and no
+`git push` or `gh` command was run.
+
+The eleventh round moved the restoration of the published fixture refs into the
+reviewed teardown as `restore-branch`, and proved it. `restore-branch` is a
+JOURNALLED effect, so a durable `DONE` row makes every later invocation skip it
+— and for the EFFECT that is right: a mutation already performed must not be
+performed again. The same row skipped its MEASUREMENT with it, and the
+measurement is the only thing in that teardown that observes state the host does
+not own.
+
+The independent verifier measured the consequence and the owner ruled it
+blocking. `restore-branch` SUCCEEDS; a LATER teardown effect fails, so the
+invocation ends `TEARDOWN_INCOMPLETE` and the episode stays open; a third party
+then advances the lane branch; and the SECOND invocation — finding the `DONE`
+row, skipping the step, and asking nothing about the ref — ends
+`TEARDOWN_COMPLETE, failures: []` while the ref is advanced. A clean receipt
+sitting on top of externally changed state.
+
+The owner's ruling, verbatim:
+
+> A completion row may avoid repeating an effect, but it may not avoid final
+> measurement of externally mutable state. If a branch changes after an earlier
+> restore and before a later teardown invocation, the result must HALT by name
+> and leave the third-party value untouched. It must not emit a clean teardown
+> receipt.
+
+#### The RED, reproduced on the pre-fix revision
+
+Measured by loading `004d27b6`'s `shu71-production.mjs` into the unchanged
+`productionFixture` and running this round's controls against it. The owner's
+scenario, verbatim output:
+
+```
+second invocation result : {"ok":true,"state":"REVOKED","code":null,"failures":[]}
+last journal row         : {"seq":76,...,"event":"TEARDOWN_COMPLETE","failures":[]}
+refs after               : {"remote":"ffffffffffffffffffffffffffffffffffffffff",
+                            "local":"0d3b65a4...","tracking":"0d3b65a4..."}
+BRANCH_FINAL_MEASURED    : 0 rows
+```
+
+`ok:true`, `REVOKED`, `failures: []`, `TEARDOWN_COMPLETE` — over a remote ref a
+third party moved to `ffffffff…`, with the refs never read. Eight of this
+round's nine controls fail on that revision. The ninth —
+*a window that never published measures nothing and still completes* — passes
+there and here: it pins the gate this round does **not** change.
+
+#### What the final observation now does
+
+`observeTeardown()` already ran on every invocation, DONE rows or not; that is
+what the `observation` step is for. It now also measures the three refs the next
+mint reads (`mint-shu71-package.mjs`, `repositoryFacts`): the branch on the
+remote, the branch in the checkout, and the checkout's remote-tracking ref. One
+`ls-remote` and two `for-each-ref`, on EVERY invocation, unconditionally,
+whatever `restore-branch` or anything else recorded. What it finds is durable as
+`BRANCH_FINAL_MEASURED` — branch and all three observed values — appended
+BEFORE any conclusion is drawn from it, so the refusal says which value it
+found.
+
+The retained parent is the only value that closes the receipt:
+
+* a THIRD value is someone else's write. It HALTS under
+  `ACT_TEARDOWN_BRANCH_MOVED` and is left EXACTLY as the third party left it.
+  This function issues no command at all — not a push, not an `update-ref` —
+  so there is no path here by which a foreign value is overwritten, adopted or
+  fast-forwarded;
+* this run's own published head still standing at the end means the restoration
+  did not hold. It HALTS under `ACT_TEARDOWN_BRANCH_UNRESTORED` rather than
+  being quietly completed over. The two are named separately because they mean
+  different things to an operator;
+* an absent remote-tracking ref is the one tolerated absence, exactly as in the
+  restoration: this run never creates that ref, and a checkout that has none is
+  not carrying anything of ours;
+* a read that FAILS is a failure. Nothing is wrapped: the refusal propagates,
+  the step fails as `ACT_TEARDOWN_OBSERVATION` carrying `ACT_COMMAND_FAILED`,
+  and `expiry-timer` refuses behind it.
+
+Because the `observation` step is never journal-skipped and `expiry-timer`
+refuses whenever any earlier step failed, `TEARDOWN_COMPLETE, failures: []` is
+unreachable while any measured ref disagrees.
+
+#### The four outcomes, each pinned by a control
+
+| State on the second invocation | Outcome | Control |
+| --- | --- | --- |
+| ref still at the retained parent | clean receipt, measured again | `an unchanged ref on a second invocation is measured again and completes` |
+| ref advanced by a third party | HALT `ACT_TEARDOWN_BRANCH_MOVED`, untouched | `a third-party advance after a completed restore halts by name and is left untouched` (and one per ref) |
+| ref at this run's published head, restore already DONE | HALT `ACT_TEARDOWN_BRANCH_UNRESTORED`, untouched | `this run's published head standing at the end is never closed over` |
+| ref at this run's published head, restore NOT done | named in the failing invocation, restored by the next one | `an unrestored ref is named, then restored by the invocation that may re-run the step` |
+| the measurement itself fails | `ACT_TEARDOWN_OBSERVATION` + `ACT_COMMAND_FAILED` | `a final measurement that cannot be taken is a named failure with its cause` |
+
+#### What did NOT change
+
+The restoration's semantics are untouched: the same `local-reseed` intent gate,
+the same tolerated absence of a remote-tracking ref, the same lease/refuse, the
+same at-most-once mutation per invocation, the same cause-carrying failures. The
+mint's `MINT_LINEAGE` refusal is untouched. No mutation's acceptance is widened
+— the measurement mutates nothing at all, and issues no command beyond the three
+reads.
+
+Two existing B7 items are reconciled in place, additively:
+`B7_FOREIGN_REFUSED_BY_NAME`'s expected failure list gains
+`ACT_TEARDOWN_OBSERVATION` and `ACT_TEARDOWN_BRANCH_MOVED` behind the two
+entries it already carried — a foreign value is now named twice, once by the
+step that refused to restore it and once by the measurement that refused to
+close over it — and the B7 gate mutation is re-anchored on
+`restorePublishedRefs`'s own signature, because its gate line is no longer
+unique in the module. No mutation name, control or killing assertion is
+removed, renamed or reordered.
+
+#### The mutants, and the named assertion that kills each
+
+| Mutation | Killed by |
+| --- | --- |
+| the final measurement is removed entirely | `B8_FINAL_MEASURED_AGAIN` |
+| the final measurement runs only when the restore has no DONE row | `B8_FINAL_MEASURED_AGAIN` |
+| the final measurement is a no-op once it has run in an earlier invocation | `B8_FINAL_MEASURED_AGAIN` |
+| the measurement is recorded but never judged | `B8_THIRD_VALUE_NOT_A_CLEAN_RECEIPT` |
+| a third value is treated as restorable | `B8_THIRD_VALUE_UNTOUCHED` |
+| the third value is overwritten by an unleased force | `B8_THIRD_VALUE_UNTOUCHED` |
+| a third local head is overwritten by an unconditional update-ref | `B8_THIRD_VALUE_UNTOUCHED` |
+| this run's published head is accepted at the end | `B8_UNRESTORED_HALTS_BY_NAME` |
+| a measurement failure is swallowed | `B8_MEASUREMENT_FAILURE` |
+
+The eleventh round's fifteen mutants are re-killed unchanged in the same runs.
+
+#### What could NOT be closed, and why
+
+* **The receipt is written after the last read.** The final measurement proves
+  the refs were at the retained parent when it read them, not that they stayed
+  there. A third-party write that lands between that read and
+  `journal.append({ event, failures })` — including during `expiry-timer`, which
+  re-runs `observeTeardown()` but does NOT re-measure the refs — produces a
+  clean receipt over changed state. This is the remaining route, it is narrowed
+  from "any time after the earlier invocation's restore" to "inside one
+  invocation's closing window", and no read can close it.
+* **A ref left at this run's published head with `restore-branch` already DONE
+  is halted, not restored.** Re-running a completed mutation would widen its
+  acceptance, which this round is forbidden to do, so the teardown names the
+  state and refuses the receipt and an operator repairs it.
+* **The intent gate is unchanged**, so a window that somehow published without
+  `local-reseed`'s durable INTENT row would not be measured. The gate is what
+  keeps a pre-arm teardown from reading a credential it does not need.
+* **Only the reseed branch is measured.** `coordinator/SHU-254` is bound at its
+  fixed seed head and no reviewed step writes it.
+* **The settlement allowance is consumed before the measurement runs.** On the
+  exhausted-settlement path the allowance is reserved, then the filtered
+  `observation` + `expiry-timer` effects run; a third-party movement discovered
+  there costs that one allowance.
+* **This is proved against `productionFixture`,** which models the three refs
+  and git's own push/`update-ref` refusal rules. No live host, remote or
+  credential was touched.
+
+#### The focused selection
+
+The eleventh round's twenty-nine entries plus
+`.github/coordinator/service/test/shu71-final-measurement.test.mjs`, this
+round's own control file — thirty entries expanding to 37 test files.
+`suite-runner-spec.test.mjs` is still deliberately NOT in it, for the reason
+recorded under the eleventh round: its `A12 committed inventory requirements
+match real outcomes` guard spawns a complete nested run with a 600 s cap of its
+own. It belongs to the FULL runs, where it ran and passed in both.
+
+#### Validation
+
+All four runs are CI-like — uid 1000, umask 0022, the four target accounts
+(`shu-coordinator`, `shu-supervisor`, `shu-workspace`, `shu71-evidence`) absent
+as both users and groups, `chmod -R go-w .github/coordinator` applied first — on
+the committed revision `25d46cc0`, tree `365bde34`, one at a time, in the
+foreground, under `taskset -c 0-9 node --test --test-concurrency=4` with both a
+TAP reporter and the unchanged `host-suite-contract.mjs` reporter writing to
+separate files. Plain unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`;
+clock sets `SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | TAP plan | `complete` | Exit | Elapsed | Load before → after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Focused plain | 2,191 | 2,190 | 0 | 1 | `1..2191` | 1 / terminal | 0 | 244 s | 1.00 → 3.01 |
+| Focused clock | 2,191 | 2,190 | 0 | 1 | `1..2191` | 1 / terminal | 0 | 228 s | 2.16 → 2.19 |
+| Full plain | 3,582 | 3,574 | 0 | 8 | `1..3577` + one nested `1..5` | 1 / terminal | 0 | 497 s | 2.01 → 4.27 |
+| Full clock | 3,582 | 3,574 | 0 | 8 | `1..3577` + one nested `1..5` | 1 / terminal | 0 | 500 s | 3.33 → 3.37 |
+
+Zero `not ok` lines in all four TAP outputs — counted over the whole file, not
+only the top level, so the nested plan is included — and zero cancelled and zero
+todo outcomes in all four. Each run's structured report has exactly one
+`complete` event and is terminated by it. Both full runs' 3,582 outcome names
+are exactly the committed inventory's 3,582 `names` with identical
+multiplicities — zero missing and zero extra, compared programmatically as
+multisets against `suite-inventory.json` — and `A12 committed inventory
+requirements match real outcomes` passes in both. Every skip in all four runs is
+a `PERMITTED_SKIPS` key whose reason byte-matches that entry's value, compared
+against the exported object rather than by eye: zero mismatches. The single
+focused skip is `SHU-71 restricted capability refusal`; the eight full skips are
+the eight `PERMITTED_SKIPS` entries.
+
+The counts are the eleventh round's plus exactly this round's twenty names:
+focused 2,171 → 2,191, full 3,562 → 3,582, with the skip counts (1 and 8)
+unchanged. Eighteen are the new test file's; two are the
+`BRANCH_FINAL_MEASURED` real-payload rows the exhausted-invariance sweep
+generates for every journal class, intact and recovered.
+
+`PERMITTED_SKIPS` is byte-identical: 1,093 bytes,
+sha256 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+`host-suite-contract.mjs` is byte-identical: 23,885 bytes,
+sha256 `2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`.
+All three inventories are strictly additive with zero removals and the existing
+order preserved: `git diff --numstat` reports 109/0, 8/0 and 1/0 insertions and
+deletions for `suite-inventory.json`, `file-requirements.json` and
+`required-files.json`. `suite-inventory.json` gains one file (118 → 119), 20
+names (3,562 → 3,582) and the 20 matching requirement rows in the same order.
+
+**Deviation from the eleventh round's harness, disclosed.** That round's
+CI-like script also gave `/run` and `/etc/sudoers.d` fresh tmpfs mounts; this
+round could not, having no elevation in this session. Everything else — uid,
+umask, absent accounts, `go-w`, CPU mask, concurrency, reporters, foreground,
+one at a time — is the same. The eight full skips and their reasons are
+unchanged from that round, which is the observable those mounts bear on.
+
+**Measured on the code revision, not on this record.** The four runs were
+executed with the worktree pristine at `25d46cc0`. The documentation commit that
+follows changes only this file, which the suite reads under exactly two guards:
+`V8_DOCUMENTATION_LINK_TARGETS`, which resolves `file#Lnnn` links (this round
+repoints two existing links, in the code commit that moved them, and adds none),
+and `SHU71_PATH_NEUTRAL_COMMANDS`. Both were re-checked after that commit,
+together with a re-run of the focused selection.
