@@ -55,7 +55,7 @@ needed. Missing, wrong and drifted bindings fail closed. See the
 
 The operative activation private-key path is
 `/etc/shu/keys/shu71-activation-ed25519.pem`: production reads it to sign both
-payloads ([signing step in shu71-production.mjs](shu71-production.mjs#L317)), and
+payloads ([signing step in shu71-production.mjs](shu71-production.mjs#L330)), and
 [`precondition()`](provision-shu71-prerequisites.mjs#L416) requires its custody.
 The key must be a root-owned, non-symlink, single-link regular file with no
 group/other permission bits, nonempty and at most 4 MiB; neither exact 0600 nor

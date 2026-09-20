@@ -7,6 +7,12 @@ import path from 'node:path';
 import { historicalSource } from './shu71-history.mjs';
 import { pathToFileURL } from 'node:url';
 import { productionFixture } from './shu71-production-fixture.mjs';
+// These differentials execute HISTORICAL revisions, which compare the prior
+// state by JSON.stringify and therefore cannot consume a canonically sealed
+// approval at all. A differential must feed all three arms the same bytes, so
+// the one serialization every arm can read is the construction order. The
+// canonical target-host shape is driven against the candidate in
+// shu71-arming-order.test.mjs and, by default, everywhere else.
 export async function counterDifferential(t, keys, candidate) {
   const url = new URL('../shu71-production.mjs', import.meta.url);
   for (const [label, revision] of [['parent', '5e25c651254a72adbb46fa8f950df95248b640e9'], ['blocked', 'e9a68c156a0b8631b314d8d14c626ba31014a882'], ['candidate', null]]) {
@@ -22,7 +28,7 @@ export async function counterDifferential(t, keys, candidate) {
       fs.writeFileSync(path.join(root, 'production.mjs'), source);
       create = (await import(pathToFileURL(path.join(root, 'production.mjs')))).createShu71Production;
     }
-    const h = productionFixture(t, keys, historicalSigningPath);
+    const h = productionFixture(t, keys, historicalSigningPath, null, { approvalBytes: 'construction' });
     if (revision) h.owners.set('/srv/shu/state', [0, 0]); // Historical custody; candidate uses the approved service owner.
     assert.equal((await create(h.id,h.boundary).execute('run')).state, 'ARMED'); h.expire();
     h.write(`/srv/shu/state/shu71-evidence/${h.id}/automatic-teardown.json`, '{"attempts":0}', 0o644);
