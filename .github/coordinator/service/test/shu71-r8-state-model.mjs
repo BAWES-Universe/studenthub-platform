@@ -108,9 +108,21 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // +0 wherever the gate skips it, which is exactly where it skips the
 // restoration: an absent or forged journal cannot prove this episode reached
 // `local-reseed`, so nothing is read and no remote is contacted.
+// SHU-280's THIRTEENTH round adds the same measurement to the `expiry-timer`
+// re-observation, which re-read the units and skipped the refs, so a write
+// landing between the `observation` step and the receipt was seen by nothing.
+// It is uniform in exactly the same way and for the same reason:
+// +4 in every state where the same intent gate lets it read - the three reads
+// and a second durable BRANCH_FINAL_MEASURED row, and no command beyond them.
+// That includes the settled transition (37 -> 41), whose filtered effect list
+// is observation plus retirement, and the settlement-ready `intact` state
+// (57 -> 61).
+// +0 wherever the gate skips it (81 and 80 are unchanged), and +0 on every
+// state whose teardown never reaches the retirement step at all - a refused
+// transition stays at 7 or 8.
 const cleanupEffects = {
-  armed: { absent: 81, intact: 98, truncated: 99, recovered: 98, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
-  'settlement-ready': { absent: 81, intact: 57, truncated: 91, recovered: 90, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
+  armed: { absent: 81, intact: 102, truncated: 103, recovered: 102, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
+  'settlement-ready': { absent: 81, intact: 61, truncated: 95, recovered: 94, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);
@@ -127,7 +139,7 @@ export function requiredTransition(s) {
     gates: Array(2).fill(`[Service]\nEnvironment=ENABLE_DISPATCH=${orderedResidual && !ready ? 'true' : 'false'}\n`),
     credential: orderedResidual && !ready,
     lease: refused,
-    effects: settled ? 37 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
+    effects: settled ? 41 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
     code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED' : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : null,
     complete: !refused,
   };

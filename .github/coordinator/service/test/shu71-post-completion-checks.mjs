@@ -61,6 +61,8 @@ const pushes = h => h.events.filter(e => e.startsWith('command:') && e.includes(
 const updates = h => h.events.filter(e => e.startsWith('command:') && e.includes(' update-ref '));
 const mutations = h => [...pushes(h), ...updates(h)].length;
 const remoteReads = h => h.events.filter(e => e.startsWith('command:') && e.includes(' ls-remote ')).length;
+const localReads = h => h.events.filter(e => e.startsWith('command:') && e.includes(' for-each-ref ')).length;
+const writes = h => h.events.filter(e => /^(write:|rename:|unlink:|remove:)/.test(e)).length;
 
 // THE SETUP THE RULING DESCRIBES, taken one step further than the previous
 // round's: the window arms and publishes, and the teardown COMPLETES. There is
@@ -89,6 +91,7 @@ export async function postCompletionMovementCheck(create, h, which = 'remote') {
   const label = `B9_POST_COMPLETION_${which.toUpperCase()}`;
   await armedThenCompletedTeardown(create, h);
   const measured = finalRows(h).length, moved = mutations(h), closed = receipts(h).length;
+  const reads = remoteReads(h) + localReads(h);
   h.refs[which] = FOREIGN;
   const before = { ...lineage(h) };
   const third = await create(h.id, h.boundary).execute('resume');
@@ -99,8 +102,10 @@ export async function postCompletionMovementCheck(create, h, which = 'remote') {
   assert.equal(third.physical_teardown_observed, undefined, `B9_POST_COMPLETION_NOT_A_CLEAN_ANSWER: ${label}`);
   // Named, not flattened into "drift": the operator has to know WHICH value.
   assert.equal(third.code, 'ACT_TEARDOWN_BRANCH_MOVED', `B9_POST_COMPLETION_HALTS_BY_NAME: ${label}`);
-  // Measured, and the reading is durable before any conclusion is drawn.
-  assert.equal(finalRows(h).length, measured + 1, `B9_POST_COMPLETION_MEASURED: ${label}`);
+  // Measured: three reads were taken, and the reading the refusal rests on is
+  // durable - it is the only thing that says WHICH value stopped the answer.
+  assert.equal(remoteReads(h) + localReads(h), reads + 3, `B9_POST_COMPLETION_MEASURED: ${label}`);
+  assert.equal(finalRows(h).length, measured + 1, `B9_POST_COMPLETION_REFUSAL_IS_DURABLE: ${label}`);
   assert.deepEqual(found(finalRows(h).at(-1)), { ...retained(h), [which]: FOREIGN },
     `B9_POST_COMPLETION_RECORDS_WHAT_IT_FOUND: ${label}`);
   // Never overwritten, never adopted, never fast-forwarded: this path issues
@@ -123,12 +128,19 @@ export async function postCompletionUnchangedCheck(create, h) {
   const label = 'B9_POST_COMPLETION_UNCHANGED';
   await armedThenCompletedTeardown(create, h);
   const measured = finalRows(h).length, moved = mutations(h), closed = receipts(h).length;
+  const reads = remoteReads(h) + localReads(h), written = writes(h), rows = h.journal().length;
   const third = await create(h.id, h.boundary).execute('resume');
   assert.equal(third.ok, true, `${label}_NO_FALSE_HALT: ${JSON.stringify(third)}`);
   assert.equal(third.state, 'REVOKED', `${label}_NO_FALSE_HALT`);
   assert.equal(third.physical_teardown_observed, true, `${label}_NO_FALSE_HALT`);
-  assert.equal(finalRows(h).length, measured + 1, `${label}_MEASURED_ANYWAY`);
-  assert.deepEqual(found(finalRows(h).at(-1)), retained(h), `${label}_RECORDS_WHAT_IT_FOUND`);
+  // The three reads WERE taken - that is the whole point - and because they
+  // agreed, this repeat invocation of a settled episode stayed physically
+  // inert: no journal row, no write of any kind. A measurement that recorded
+  // unconditionally here would append another row on every later wake.
+  assert.equal(remoteReads(h) + localReads(h), reads + 3, `${label}_MEASURED_ANYWAY`);
+  assert.equal(finalRows(h).length, measured, `${label}_STAYS_INERT`);
+  assert.equal(h.journal().length, rows, `${label}_STAYS_INERT`);
+  assert.equal(writes(h), written, `${label}_STAYS_INERT`);
   assert.deepEqual(lineage(h), retained(h), `${label}_MOVES_NOTHING`);
   assert.equal(mutations(h), moved, `${label}_NO_MUTATION_ISSUED`);
   assert.equal(receipts(h).length, closed, 'B9_POST_COMPLETION_NO_NEW_RECEIPT');
@@ -225,7 +237,7 @@ export async function expiryTimerWindowCheck(create, h) {
 export async function successorScopeStillUnmeasuredCheck(create, h) {
   const label = 'B9_SUCCESSOR_SCOPE';
   await armedThenCompletedTeardown(create, h);
-  const measured = finalRows(h).length, reads = remoteReads(h);
+  const measured = finalRows(h).length, reads = remoteReads(h) + localReads(h);
   h.write('/srv/shu/state/shu71-evidence/active.json', JSON.stringify({ activation_id: 'shu71-successor-0001' }), 0o600);
   h.refs.remote = FOREIGN;
   const third = await create(h.id, h.boundary).execute('resume');
@@ -233,7 +245,7 @@ export async function successorScopeStillUnmeasuredCheck(create, h) {
   assert.equal(third.receipt_scope, 'retired_episode', `${label}_CLAIMS_NOTHING_PHYSICAL`);
   assert.equal(third.physical_teardown_observed, false, `${label}_CLAIMS_NOTHING_PHYSICAL`);
   assert.equal(finalRows(h).length, measured, `${label}_TAKES_NO_READING`);
-  assert.equal(remoteReads(h), reads, `${label}_TAKES_NO_READING`);
+  assert.equal(remoteReads(h) + localReads(h), reads, `${label}_TAKES_NO_READING`);
   assert.equal(h.refs.remote, FOREIGN, `${label}_TOUCHES_NOTHING`);
   return third;
 }
@@ -253,12 +265,12 @@ export async function retiredNeverPublishedCheck(create, h) {
   assert.equal(first.teardown.ok, true, `${label}_SETUP: ${JSON.stringify(first.teardown)}`);
   assert.equal(h.journal().some(e => e.event === 'INTENT' && e.step === 'local-reseed'), false, `${label}_SETUP`);
   assert.equal(h.journal().at(-1).event, 'TEARDOWN_COMPLETE', `${label}_SETUP_COMPLETION_ROW`);
-  const reads = remoteReads(h);
+  const reads = remoteReads(h) + localReads(h);
   const second = await create(h.id, h.boundary).execute('resume');
   assert.equal(second.ok, true, `${label}_STILL_CLEAN: ${JSON.stringify(second)}`);
   assert.equal(second.physical_teardown_observed, true, `${label}_STILL_CLEAN`);
   assert.deepEqual(finalRows(h), [], `${label}_NO_FINAL_MEASUREMENT`);
-  assert.equal(remoteReads(h), reads, `${label}_CONTACTS_NO_REMOTE`);
+  assert.equal(remoteReads(h) + localReads(h), reads, `${label}_CONTACTS_NO_REMOTE`);
   assert.deepEqual(lineage(h), retained(h), `${label}_MOVES_NOTHING`);
   return second;
 }
@@ -276,7 +288,8 @@ export const movedRefs = ['remote', 'local', 'tracking'];
 
 // ---------------------------------------------------------------- mutations
 
-const POST = '        try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal); }';
+const POST = '        try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal, true); }';
+const RECORD = "    if (!(settled && Object.entries(measured).every(agrees))) journal.append({ event: 'BRANCH_FINAL_MEASURED', branch, ...measured });";
 const TIMER = `        observeTeardown();
         observePublishedRefs(spec, journal);
         retireExpiryTimer(journal);`;
@@ -288,34 +301,46 @@ export const mutations2 = [
   // behaviour, exactly as it was measured and disclosed.
   ['the post-completion measurement is removed entirely',
     [[POST, '        try { observeTeardown(); observeRetiredExpiry(); }']], postCompletionMovementCheck],
+  // The same removal, seen from the control that pins the OTHER direction:
+  // a clean re-invocation must still have taken the three reads.
+  ['the post-completion measurement is removed and the clean answer stops reading',
+    [[POST, '        try { observeTeardown(); observeRetiredExpiry(); }']], postCompletionUnchangedCheck],
   // The retirement step's re-observation back to units-only.
   ['the expiry-timer re-observation skips the refs',
     [[TIMER, '        observeTeardown();\n        retireExpiryTimer(journal);']], expiryTimerWindowCheck],
   // Measured, disagreed with, and answered clean anyway.
   ['a measured disagreement is answered ok:true',
-    [[POST, '        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal); } catch (e) { if (!/BRANCH/.test(e?.code ?? \'\')) throw e; } }']],
+    [[POST, '        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal, true); } catch (e) { if (!/BRANCH/.test(e?.code ?? \'\')) throw e; } }']],
     postCompletionMovementCheck],
   // The name flattened back into "drift": measured, refused, and the operator
   // never learns which value stopped it.
   ['the named branch refusal is flattened into drift',
     [[CATCH, "          const code = 'ACT_TEARDOWN_DRIFT';"]], postCompletionMovementCheck],
+  // Refused, and the reading the refusal rests on never made durable.
+  ['the refused reading is never recorded',
+    [[RECORD, '    if (!settled) journal.append({ event: \'BRANCH_FINAL_MEASURED\', branch, ...measured });']],
+    postCompletionMovementCheck],
+  // The reading recorded on every wake, settled or not: a repeat invocation of
+  // an episode that AGREES with its own receipt is no longer inert.
+  ['the reading is recorded even when it agrees',
+    [[RECORD, "    journal.append({ event: 'BRANCH_FINAL_MEASURED', branch, ...measured });"]],
+    postCompletionUnchangedCheck],
   // The third party's value put back by this path - the widening the round
   // forbids, in its two shapes: a lease pinned to whatever the ref holds, and
-  // an unconditional clobber of the local head.
-  // The refusal still happens and is still named - and the value is put back
-  // anyway. The kill has to come from the ref, not from the answer.
-  ['the third value is overwritten by a leased force before the named refusal',
-    [[POST, "        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal); }\n"
-      + "          catch (e) { const r = spec.pkg.reseed, k = `refs/heads/${r.branch}`;\n"
-      + "            git(spec, ['push', '--porcelain', `--force-with-lease=${k}:${measureRemoteRef(spec, k)}`, REMOTE, `${r.expected_parent}:${k}`], { remote: true }); throw e; } }"]],
+  // an unconditional clobber of the local head. The refusal still happens and
+  // is still named; the kill has to come from the REF, not from the answer.
+  ['the third remote value is overwritten by a force push before the named refusal',
+    [[POST, "        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal, true); }\n"
+      + "          catch (e) { const r = spec.pkg.reseed;\n"
+      + "            git(spec, ['push', '--porcelain', '--force', REMOTE, `${r.expected_parent}:refs/heads/${r.branch}`], { remote: true }); throw e; } }"]],
     postCompletionMovementCheck],
   ['a third local head is overwritten by an unconditional update-ref before the named refusal',
-    [[POST, "        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal); }\n"
+    [[POST, "        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal, true); }\n"
       + "          catch (e) { const r = spec.pkg.reseed; git(spec, ['update-ref', `refs/heads/${r.branch}`, r.expected_parent]); throw e; } }"]],
     localMoved],
   // A read that never answered turned into a pass.
   ['a post-completion read failure is swallowed',
-    [[POST, '        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal); } catch { /* mutant */ } }']],
+    [[POST, '        try { observeTeardown(); observeRetiredExpiry(); try { observePublishedRefs(spec, journal, true); } catch { /* mutant */ } }']],
     postCompletionReadFailureCheck],
 ];
 

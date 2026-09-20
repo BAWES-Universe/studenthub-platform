@@ -251,7 +251,12 @@ export const movedRefs = ['remote', 'local', 'tracking'];
 // ---------------------------------------------------------------- mutations
 
 const OBSERVATION = "    effects.push(['observation', () => { observeTeardown(); observePublishedRefs(spec, journal); }]);";
-const GATE = `  function observePublishedRefs(spec, journal) {
+// Re-anchored by SHU-280's thirteenth round, which gave the same function a
+// `settled` caller - the post-completion path, which writes no receipt and so
+// records only a DISAGREEING reading. The gate itself is unchanged, and so are
+// both mutations below: they put a completion row back in charge of the
+// measurement, which is exactly what this round's own controls forbid too.
+const GATE = `  function observePublishedRefs(spec, journal, settled = false) {
     if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;`;
 const JUDGE = "      need(false, value === published ? 'ACT_TEARDOWN_BRANCH_UNRESTORED' : 'ACT_TEARDOWN_BRANCH_MOVED');";
 const remoteMoved = (create, h) => thirdPartyMovementCheck(create, h, 'remote');

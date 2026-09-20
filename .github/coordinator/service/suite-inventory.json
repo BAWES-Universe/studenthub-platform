@@ -3698,10 +3698,13 @@
     "B9 post-completion measurement: a third party that advances the local ref after the receipt is refused and never overwritten",
     "B9 post-completion measurement: a third party that advances the tracking ref after the receipt is refused and never overwritten",
     "B9 post-completion measurement mutation: the post-completion measurement is removed entirely",
+    "B9 post-completion measurement mutation: the post-completion measurement is removed and the clean answer stops reading",
     "B9 post-completion measurement mutation: the expiry-timer re-observation skips the refs",
     "B9 post-completion measurement mutation: a measured disagreement is answered ok:true",
     "B9 post-completion measurement mutation: the named branch refusal is flattened into drift",
-    "B9 post-completion measurement mutation: the third value is overwritten by a leased force before the named refusal",
+    "B9 post-completion measurement mutation: the refused reading is never recorded",
+    "B9 post-completion measurement mutation: the reading is recorded even when it agrees",
+    "B9 post-completion measurement mutation: the third remote value is overwritten by a force push before the named refusal",
     "B9 post-completion measurement mutation: a third local head is overwritten by an unconditional update-ref before the named refusal",
     "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
     "PROVIDER remote main tolerates one transient read on either leg",
@@ -28251,6 +28254,10 @@
       "capabilities": []
     },
     {
+      "name": "B9 post-completion measurement mutation: the post-completion measurement is removed and the clean answer stops reading",
+      "capabilities": []
+    },
+    {
       "name": "B9 post-completion measurement mutation: the expiry-timer re-observation skips the refs",
       "capabilities": []
     },
@@ -28263,7 +28270,15 @@
       "capabilities": []
     },
     {
-      "name": "B9 post-completion measurement mutation: the third value is overwritten by a leased force before the named refusal",
+      "name": "B9 post-completion measurement mutation: the refused reading is never recorded",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the reading is recorded even when it agrees",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the third remote value is overwritten by a force push before the named refusal",
       "capabilities": []
     },
     {

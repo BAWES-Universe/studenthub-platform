@@ -712,15 +712,24 @@ export function createShu71Production(id, b = shu71Boundary) {
         // teardown's own final observation.
         //
         // The refs are therefore re-read here on EVERY such invocation, under
-        // the restoration's own unchanged gate, and the reading is durable as
-        // BRANCH_FINAL_MEASURED before any conclusion is drawn from it. A
-        // third value HALTS as ACT_TEARDOWN_BRANCH_MOVED and is left exactly
-        // as the third party left it; this run's own published head HALTS as
-        // ACT_TEARDOWN_BRANCH_UNRESTORED. This path issues no command but the
-        // two reads, writes no second receipt and repeats no effect: the
-        // durable TEARDOWN_COMPLETE was honest when written, and nothing here
-        // re-runs a completed mutation to "repair" what it finds.
-        try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal); }
+        // the restoration's own unchanged gate. A third value HALTS as
+        // ACT_TEARDOWN_BRANCH_MOVED and is left exactly as the third party
+        // left it; this run's own published head HALTS as
+        // ACT_TEARDOWN_BRANCH_UNRESTORED; and the reading a refusal rests on
+        // is durable as BRANCH_FINAL_MEASURED, so the refusal says WHICH value
+        // it found. This path issues no command but the three reads, writes no
+        // second receipt and repeats no effect: the durable TEARDOWN_COMPLETE
+        // was honest when written, and nothing here re-runs a completed
+        // mutation to "repair" what it finds.
+        //
+        // `settled` is the third argument, and it withholds ONE thing: the
+        // recording of a reading that AGREES. This invocation writes no
+        // receipt, so nothing here rests on a row having landed first, and a
+        // wake that confirms its own receipt must leave the host exactly as it
+        // found it - otherwise every later wake of every retired episode
+        // appends another row forever. Same function, same gate, same
+        // judgement, same refusal, same durable row on disagreement.
+        try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal, true); }
         // The named refusal is REPORTED BY NAME - learning which value stopped
         // the answer is the whole point of measuring. The two pre-existing
         // outcomes are unchanged, and an unnamed failure (a read that never
@@ -1361,14 +1370,26 @@ export function createShu71Production(id, b = shu71Boundary) {
   // either read propagates, the observation step fails under its own name and
   // carries that cause, and `expiry-timer` refuses behind it. There is no
   // branch on which an unanswered read becomes a silent pass.
-  function observePublishedRefs(spec, journal) {
+  // WHEN THE READING IS RECORDED. In a teardown, ALWAYS and BEFORE any
+  // conclusion: the receipt about to be written rests on it, so the refusal
+  // and the completion alike must be able to say what was read. `settled` is
+  // the one caller that writes no receipt at all - a repeat invocation of an
+  // episode whose journal already carries TEARDOWN_COMPLETE - and there an
+  // AGREEING reading is not recorded, because a wake that confirms its own
+  // receipt must leave the host exactly as it found it; recording there would
+  // append another row on every later wake of every retired episode, forever.
+  // A DISAGREEING reading is recorded on every path without exception: it is
+  // the only thing that says WHICH value stopped the answer. Nothing else
+  // moves with this flag - not the gate, not the judgement, not the refusal.
+  function observePublishedRefs(spec, journal, settled = false) {
     if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;
     const { branch, expected_parent: parent, expected_seed_head: published } = spec.pkg.reseed;
     const ref = `refs/heads/${branch}`, tracking = `refs/remotes/origin/${branch}`;
     const measured = { remote: measureRemoteRef(spec, ref), local: measureLocalRef(spec, ref), tracking: measureLocalRef(spec, tracking) };
-    journal.append({ event: 'BRANCH_FINAL_MEASURED', branch, ...measured });
+    const agrees = ([kind, value]) => value === parent || (kind === 'tracking' && value === '');
+    if (!(settled && Object.entries(measured).every(agrees))) journal.append({ event: 'BRANCH_FINAL_MEASURED', branch, ...measured });
     for (const [kind, value] of Object.entries(measured)) {
-      if (value === parent || (kind === 'tracking' && value === '')) continue;
+      if (agrees([kind, value])) continue;
       need(false, value === published ? 'ACT_TEARDOWN_BRANCH_UNRESTORED' : 'ACT_TEARDOWN_BRANCH_MOVED');
     }
   }

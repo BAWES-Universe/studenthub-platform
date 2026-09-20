@@ -186,7 +186,10 @@ test('B1_SINGLE_LANE: production credential drives coordinator build BLOCK revis
   // EVERY invocation whatever the restoration's DONE row says: the three reads
   // that take it - one ls-remote and two for-each-ref - and its durable
   // BRANCH_FINAL_MEASURED row. No command is issued from it.
-  assert.equal(effects(c.p, cleanupStart), 94, 'B1_RESUME_EFFECT_COUNT');
+  // +4 more for the same measurement in the `expiry-timer` re-observation,
+  // which re-read the units and skipped the refs: its three reads and its own
+  // BRANCH_FINAL_MEASURED row. That is the LAST reading before the receipt.
+  assert.equal(effects(c.p, cleanupStart), 98, 'B1_RESUME_EFFECT_COUNT');
   assert.deepEqual(shared(c.p), [gates.map(() => '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'), null, null].flat(), 'B1_RETIRED_STATE_TABLE');
   assert.equal(c.p.journal().filter(e => e.event === 'TEARDOWN_COMPLETE').length, 1, 'B1_ONE_COMPLETION_RECORD');
   const repeatStart = c.p.events.length;
@@ -194,7 +197,12 @@ test('B1_SINGLE_LANE: production credential drives coordinator build BLOCK revis
   // +2: the retired receipt path also observes that no expiry mechanism is back,
   // and +3 more now that "no expiry mechanism" means BOTH units: the companion's
   // own liveness refusal and its liveness and enablement in the same predicate.
-  assert.equal(effects(c.p, repeatStart), 9, 'B1_REVOKE_OBSERVATION_ONLY');
+  // +3 for SHU-280's thirteenth round: that path now measures the three
+  // published refs too, because an `ok:true` claiming the teardown is
+  // physically observed may not skip the one state this host does not own.
+  // THREE, not four: the reading agreed, so no row was written and this
+  // repeat invocation of a settled episode stayed inert.
+  assert.equal(effects(c.p, repeatStart), 12, 'B1_REVOKE_OBSERVATION_ONLY');
 });
 
 test('B1_TWO_LANES: B completes while A revision remains running, then A completes', async t => {
@@ -218,9 +226,10 @@ test('B1_TWO_LANES: B completes while A revision remains running, then A complet
   c.p.expire();
   const cleanupStart = c.p.events.length;
   assert.equal((await c.execute('expire')).state, 'REVOKED', 'B1_EXPIRED_TEARDOWN');
-  // +10 and +4, as above: the expiry path restores the published branch too,
-  // and measures it again in its own final observation.
-  assert.equal(effects(c.p, cleanupStart), 98, 'B1_EXPIRY_EFFECT_COUNT');
+  // +10, +4 and +4, as above: the expiry path restores the published branch
+  // too, measures it again in its own final observation, and measures it once
+  // more in the retirement step that immediately precedes the receipt.
+  assert.equal(effects(c.p, cleanupStart), 102, 'B1_EXPIRY_EFFECT_COUNT');
   assert.deepEqual(gates.map(g => c.p.read(g)), gates.map(() => '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'), 'B1_EXPIRED_GATES');
   assert.equal(c.p.journal().filter(e => e.event === 'TEARDOWN_COMPLETE').length, 1, 'B1_EXPIRED_ONE_COMPLETION');
   assert.equal(c.p.exists(credential), false, 'B1_EXPIRED_CREDENTIAL_REVOKED');
