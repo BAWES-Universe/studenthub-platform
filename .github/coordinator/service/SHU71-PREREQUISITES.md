@@ -4886,6 +4886,22 @@ The eleventh round's fifteen mutants are re-killed unchanged in the same runs.
 * **This is proved against `productionFixture`,** which models the three refs
   and git's own push/`update-ref` refusal rules. No live host, remote or
   credential was touched.
+* **The post-completion re-observation does not measure the branch, and it was
+  measured saying so.** Once an episode's journal carries `TEARDOWN_COMPLETE`,
+  a later invocation takes the historical-receipt path in `execute()`, which
+  runs `observeTeardown()` and `observeRetiredExpiry()` and returns. Probed on
+  the modelled host: invocation two closes clean
+  (`{"ok":true,"state":"REVOKED","failures":[]}`) with the refs at the retained
+  parent; a third party then advances the remote to `ffffffff…`; invocation
+  three returns
+  `{"ok":true,"state":"REVOKED","activation_id":"…","physical_teardown_observed":true}`
+  and takes no `BRANCH_FINAL_MEASURED` row. No NEW receipt is emitted — the
+  durable `TEARDOWN_COMPLETE` is the one written while the refs WERE at the
+  parent, and it was honest when written — but that path REPORTS `ok:true` over
+  a ref a third party has since moved. It is outside this round's scope, which
+  is the teardown's own final observation, and giving it the measurement would
+  read a remote on every wake of every retired episode; it is recorded here
+  rather than left to be rediscovered.
 
 #### The focused selection
 
