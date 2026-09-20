@@ -38,7 +38,12 @@ export const trustChecks = {
   async owner(create, h) {
     const file = `/etc/shu/approvals/${h.id}.shu71.json`, doc = JSON.parse(h.read(file));
     doc.payload.tree = 'f'.repeat(40); h.write(file, JSON.stringify(doc));
-    await assert.rejects(create(h.id, h.boundary).execute('run'), e => e.code === 'ACT_OWNER_APPROVAL', 'B1_OWNER_ED25519');
+    // A pre-arm refusal is RETURNED as a named halt now rather than escaping
+    // the module to be printed as one fixed string. The refusal, its code and
+    // its position before any signing are unchanged.
+    const result = await create(h.id, h.boundary).execute('run').catch(error => ({ code: `threw:${error?.code}` }));
+    assert.equal(result.code, 'ACT_OWNER_APPROVAL', 'B1_OWNER_ED25519');
+    assert.equal(result.state, 'HALT', 'B1_OWNER_ED25519');
     assert.equal(h.signatures(), 0, 'B1_OWNER_BEFORE_SIGN');
   },
   async receipt(create, h) {

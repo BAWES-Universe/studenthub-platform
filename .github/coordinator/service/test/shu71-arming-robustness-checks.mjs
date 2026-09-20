@@ -458,8 +458,7 @@ export async function pushLandedThenFailedCheck(create, h) {
   };
   const result = await armed(create, h);
   assert.equal(pushes, 1, 'B6_PUSH_NEVER_REISSUED');
-  assert.ok(h.journal().some(e => e.event === 'REMOTE_PUSH_READ_BACK'), `B6_PUSH_READ_BACK_RECORDED ${JSON.stringify(result)}`);
-  assert.ok(result.api_read_retries?.some(entry => entry.operation.startsWith('git:ls-remote:')), 'B6_PUSH_READ_BACK_RECORDED');
+  assert.ok(result.api_read_retries?.some(entry => entry.operation.startsWith('git:ls-remote:')), `B6_PUSH_READ_BACK_RECORDED ${JSON.stringify(result)}`);
 }
 
 // The recovery accepts exactly one value and nothing else. `old` means the push
@@ -478,7 +477,7 @@ export async function pushFailedRefusesCheck(create, h, variant = 'old') {
   const result = await create(h.id, h.boundary).execute('run');
   assert.equal(result.code, 'ACT_COMMAND_FAILED', `B6_PUSH_FAILURE_REFUSED_${variant} ${JSON.stringify(result)}`);
   assert.equal(pushes, 1, `B6_PUSH_NEVER_REISSUED_${variant}`);
-  assert.ok(!h.journal().some(e => e.event === 'REMOTE_PUSH_READ_BACK'), `B6_PUSH_READ_BACK_NOT_ACCEPTED_${variant}`);
+  assert.equal(result.api_read_retries, undefined, `B6_PUSH_READ_BACK_NOT_ACCEPTED_${variant}`);
   assert.equal(h.exists(ACTIVATION), false, `B6_PUSH_FAILURE_REFUSED_${variant}`);
 }
 

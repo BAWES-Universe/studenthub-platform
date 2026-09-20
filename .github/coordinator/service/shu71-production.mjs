@@ -788,8 +788,12 @@ export function createShu71Production(id, b = shu71Boundary) {
             try { after = gitText(spec, ['ls-remote', '--refs', REMOTE, ref], { remote: true }); }
             catch { throw error; }
             if (after !== `${next}\t${ref}`) throw error;
+            // Recorded the same way every other read that raced is recorded,
+            // and deliberately NOT as a new durable journal class: the reviewed
+            // append inventory is closed, and the evidence a re-read adds
+            // belongs with the other read-retry evidence rather than in a new
+            // row shape of its own.
             recordReadRetry(`git:ls-remote:${pkg.reseed.branch}`, 2);
-            journal.append({ event: 'REMOTE_PUSH_READ_BACK', branch: pkg.reseed.branch });
           }
         }
         await heads(spec, true);
@@ -1206,11 +1210,11 @@ export function createShu71Production(id, b = shu71Boundary) {
         catch { failures.push('ACT_TEARDOWN_ACTIVATION'); }
         return { ok: false, state: 'HALT', code: evidenceUnavailable ? 'ACT_RETRY_BUDGET_EXHAUSTED' : 'ACT_RETRY_BUDGET_UNAVAILABLE',
           // Every cause that is neither the counter's own refusal nor a parse
-          // failure - an ACT_FILE_CUSTODY on automatic-teardown.json, a raw
-          // errno - was reported as "unavailable", which says only that
-          // something went wrong. Both existing outcomes are produced by the
-          // same two conditions in the same order; a third, reviewed cause is
-          // named instead of being flattened into the default.
+          // failure - an ACT_FILE_CUSTODY on the counter file, a raw errno -
+          // was reported as "unavailable", which says only that something went
+          // wrong. Both existing outcomes are produced by the same two
+          // conditions in the same order; a third, reviewed cause is named
+          // instead of being flattened into the default.
           budget_error: error.code === 'ACT_RETRY_BUDGET_INVALID' || error instanceof SyntaxError ? 'ACT_RETRY_BUDGET_INVALID'
             : reviewedCode(error?.code) ?? 'ACT_RETRY_BUDGET_UNAVAILABLE',
           failures, operator_action: 'resume_or_revoke' };

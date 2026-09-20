@@ -173,9 +173,13 @@ const mutations = [
     "need(restoring || sameFixtureCard(current, t.before), 'ACT_PRIOR_STATE_DRIFT');",
     "need(restoring || JSON.stringify(current) === JSON.stringify(t.before), 'ACT_PRIOR_STATE_DRIFT');",
     canonical, readyPairCheck],
+  // Anchor updated in place for the bounded re-read of the post-update
+  // read-back; the mutation's name, its control and its assertion are
+  // unchanged - the terminal comparison is the same comparison, made on the
+  // value the bounded re-read settled on.
   ['post-update target comparison reverted to serialization equality',
-    "need(result.issueUpdate?.success === true && sameFixtureCard(await issue(t), target), 'ACT_PARTIAL_ARMING');",
-    "need(result.issueUpdate?.success === true && JSON.stringify(await issue(t)) === JSON.stringify(target), 'ACT_PARTIAL_ARMING');",
+    "    need(sameFixtureCard(observed, target), 'ACT_PARTIAL_ARMING');",
+    "    need(JSON.stringify(observed) === JSON.stringify(target), 'ACT_PARTIAL_ARMING');",
     canonical, readyReadbackCheck],
   ['already-at-target early return reverted to serialization equality',
     'if (sameFixtureCard(current, target)) return;',
