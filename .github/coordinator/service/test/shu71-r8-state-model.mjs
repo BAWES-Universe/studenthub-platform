@@ -71,9 +71,19 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // own lease held; either armed with a credential, or safe after 32 failed timer
 // retirements. No fault remains active during the measured transition.
 // Counts include journal writes and exclude reads, mkdir, chmod/chown and fsync.
+// Each completed retirement adds exactly seven measured effects over the
+// merged revision, which issued `disable --now` and checked nothing: the end
+// state measurement (ActiveState and UnitFileState), the durable
+// EXPIRY_RETIREMENT_STARTED receipt, the two unit-file unlinks, and the final
+// retired measurement (ActiveState and UnitFileState) of the same predicate.
+// P154D-02 adds exactly five more, uniformly across every completing state: the
+// expiry mechanism is TWO units, so the live-companion refusal measures the
+// companion's ActiveState once, and both the post-condition and the final
+// retired measurement now read the companion's ActiveState and UnitFileState
+// as well as the timer's.
 const cleanupEffects = {
-  armed: { absent: 67, intact: 72, truncated: 73, recovered: 72, 'FORGED-ordered': 66, 'FORGED-partial': 66 },
-  'settlement-ready': { absent: 67, intact: 41, truncated: 69, recovered: 68, 'FORGED-ordered': 66, 'FORGED-partial': 66 },
+  armed: { absent: 79, intact: 84, truncated: 85, recovered: 84, 'FORGED-ordered': 78, 'FORGED-partial': 78 },
+  'settlement-ready': { absent: 79, intact: 53, truncated: 81, recovered: 80, 'FORGED-ordered': 78, 'FORGED-partial': 78 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);
@@ -90,7 +100,7 @@ export function requiredTransition(s) {
     gates: Array(2).fill(`[Service]\nEnvironment=ENABLE_DISPATCH=${orderedResidual && !ready ? 'true' : 'false'}\n`),
     credential: orderedResidual && !ready,
     lease: refused,
-    effects: settled ? 21 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
+    effects: settled ? 33 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
     code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED' : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : null,
     complete: !refused,
   };

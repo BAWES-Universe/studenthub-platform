@@ -10,6 +10,11 @@ const source = fs.readFileSync(url, 'utf8');
 const load = text => import('data:text/javascript;base64,' + Buffer.from(text.replace(/from '\.\/(.*?)'/g, (_, p) => `from '${new URL('../' + p, import.meta.url)}'`)).toString('base64'));
 const defs = 'UID_MIN 1000\nUID_MAX 60000\nGID_MIN 1000\nGID_MAX 60000\n';
 const state = ['/srv/shu/state', '/srv/shu/state/workspaces', '/srv/shu/state/workspaces/supervisor', '/srv/shu/state/shu71-evidence'];
+// A foreign episode's expiry mechanism: the pre-mint gate runs before this
+// run's activation ID exists, so every shu71-expiry-* unit is another one's.
+const EXPIRY_ROW = '/etc/systemd/system#shu71-expiry';
+const EXPIRY_TIMER = '/etc/systemd/system/shu71-expiry-shu71-mint-00000017.timer';
+const EXPIRY_SERVICE = '/etc/systemd/system/shu71-expiry-shu71-mint-00000017.service';
 const gates = ['shu-supervisor.service', 'shu-coordinator.service'].flatMap(n => ['/etc/systemd/system/' + n + '.d', '/etc/systemd/system/' + n + '.d/90-shu71.conf']);
 // Measured prepared-deployment shape: the checkout is the live npm workspace
 // and holds exactly 19 in-tree symlinks, every one resolving inside the
@@ -109,8 +114,27 @@ const checks = [
   ['ROOT_ANCESTOR', h => h.owners.set('/srv/shu', [999, 982]), '/srv/shu/state', 'ACT_PREREQUISITE_CUSTODY'],
   ['ACTIVATION_PRESENT', h => h.write('/srv/shu/state/shu71-activation.json', '{}'), '/srv/shu/state/shu71-activation.json', 'ACT_PRODUCTION_ACTIVATION_PRESENT'],
   ...['shu-supervisor.service', 'shu-coordinator.service', 'shu-coordinator.timer'].map(n => ['HARD_UNIT_' + n, h => h.remove('/etc/systemd/system/' + n), '/etc/systemd/system/' + n, 'ACT_PREREQUISITE_PATH_MISSING']),
+  // A retired episode's expiry mechanism blocks the successor window here, as a
+  // measurement rather than an inference about what its teardown left behind.
+  ['EXPIRY_UNIT_TIMER_PRESENT', h => h.write(EXPIRY_TIMER, '[Timer]\n'), EXPIRY_ROW, 'ACT_PRODUCTION_EXPIRY_UNIT_PRESENT'],
+  ['EXPIRY_UNIT_SERVICE_PRESENT', h => h.write(EXPIRY_SERVICE, '[Service]\n'), EXPIRY_ROW, 'ACT_PRODUCTION_EXPIRY_UNIT_PRESENT'],
+  ['EXPIRY_UNIT_ENABLED', h => {
+    // The durable record `systemctl enable` writes, with no unit file of its own.
+    h.directory('/etc/systemd/system/timers.target.wants');
+    fs.symlinkSync(EXPIRY_TIMER, h.root + '/etc/systemd/system/timers.target.wants/' + path.basename(EXPIRY_TIMER));
+  }, EXPIRY_ROW, 'ACT_PRODUCTION_EXPIRY_UNIT_ENABLED'],
 ];
+const expiryCheck = name => checks.find(c => c[0] === name).slice(1);
 for (const [name, ...args] of checks) test('HOST_' + name, t => refusal('HOST_' + name, ...args)(provisioner)(t));
+// The successor gate passes where no expiry mechanism is installed, which is
+// the target host's measured state: it refuses drift, it does not block arming.
+test('HOST_EXPIRY_UNITS_ABSENT_GREEN', t => {
+  const h = prepare(t); provisioner(revision, h.boundary).install();
+  const report = provisioner(revision, h.boundary).precondition();
+  const row = report.paths.find(r => r.path === EXPIRY_ROW);
+  assert.deepEqual([row?.ok, row?.state], [true, 'NO_EXPIRY_MECHANISM'], 'HOST_EXPIRY_UNITS_ABSENT_GREEN');
+  assert.equal(report.ok, true, 'HOST_EXPIRY_UNITS_ABSENT_GREEN');
+});
 for (const [name, extra] of [
   ['DUPLICATE', 'SYS_UID_MIN 100\nSYS_UID_MIN 101\n'], ['MALFORMED', 'SYS_UID_MIN nope\n'],
   ['REVERSED', 'SYS_UID_MIN 500\nSYS_UID_MAX 200\n'], ['OVERLAP', 'SYS_GID_MAX 1000\n'],
@@ -135,6 +159,14 @@ const mutants = [
   ['ENV_FOREIGN_TARGET', "target === '/usr/lib/cargo/bin/coreutils/env'", 'true', refusal('HOST_ENV_FOREIGN_TARGET', ...checks[0].slice(1))],
   ['ENV_FOREIGN_OWNER', 'r.uid === 0 && r.gid === 0 && r.mode === 0o755', 'r.gid === 0 && r.mode === 0o755', refusal('HOST_ENV_FOREIGN_OWNER', ...checks[1].slice(1))],
   ['ENV_WRITABLE', 'r.mode === 0o755', 'true', refusal('HOST_ENV_WRITABLE', ...checks[3].slice(1))],
+  // The successor gate's own clauses: the installed unit files and the enable
+  // symlink, each refusing by its own name when its clause is removed.
+  ['EXPIRY_UNIT_PRESENT', "need(!f.readdirSync('/etc/systemd/system').some(expiry), 'ACT_PRODUCTION_EXPIRY_UNIT_PRESENT');", '',
+    refusal('HOST_EXPIRY_UNIT_TIMER_PRESENT', ...expiryCheck('EXPIRY_UNIT_TIMER_PRESENT'))],
+  ['EXPIRY_UNIT_COMPANION', "n.startsWith('shu71-expiry-') && (n.endsWith('.timer') || n.endsWith('.service'))", "n.startsWith('shu71-expiry-') && n.endsWith('.timer')",
+    refusal('HOST_EXPIRY_UNIT_SERVICE_PRESENT', ...expiryCheck('EXPIRY_UNIT_SERVICE_PRESENT'))],
+  ['EXPIRY_UNIT_ENABLED', "need(!enabled.length, 'ACT_PRODUCTION_EXPIRY_UNIT_ENABLED');", '',
+    refusal('HOST_EXPIRY_UNIT_ENABLED', ...expiryCheck('EXPIRY_UNIT_ENABLED'))],
   ['STATE_SYMLINK', 's?.isDirectory() && !s.isSymbolicLink() && s.uid === owner.uid', 's && s.uid === owner.uid', impl => t => {
     const h = prepare(t); impl(revision, h.boundary).install();
     const original = h.f.lstatSync; h.f.lstatSync = p => { const s = original(p); return p !== '/srv/shu/state' ? s : new Proxy(s, { get: (s,k) => k === 'isSymbolicLink' ? () => true : Reflect.get(s,k) }); };

@@ -36,6 +36,7 @@
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-reexec-boundary.test.mjs",
     ".github/coordinator/service/test/shu71-runtime-window.test.mjs",
     ".github/coordinator/service/test/shu71-state-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-supervisor-environment.test.mjs",
@@ -759,7 +760,64 @@
     "B1/B4 mutation: refused worker kill blindly accepted",
     "B1/B4 mutation: pre-arm expiry drift silently accepted",
     "B1/B4 mutation: expiry retirement ignores unit liveness",
+    "B1/B4 mutation: expiry retirement ignores unit enablement",
+    "B1/B4 mutation: expiry retirement ignores companion liveness",
+    "B1/B4 mutation: expiry retirement ignores companion enablement",
+    "B1/B4 mutation: expiry retirement ignores the companion unit file",
     "B1/B4 mutation: non-creation inferred from an empty journal",
+    "B1/B4 mutation: installed expiry pre-condition omitted",
+    "B1/B4 mutation: expiry companion service file unchecked",
+    "B1/B4 mutation: retired expiry units left behind",
+    "B1/B4 mutation: expiry retirement receipt omitted",
+    "B1/B4 mutation: retired episode expiry drift unobserved",
+    "B1/B4 mutation: expiry end state never measured",
+    "B1/B4 mutation: refused expiry disable blindly accepted",
+    "B1/B4 mutation: stale unit view never refreshed",
+    "B1/B4 mutation: recovered log accepted as non-creation proof",
+    "B1/B4 mutation: teardown effect order permuted",
+    "B1/B4 mutation: fixtures durability precondition removed",
+    "B1/B4 mutation: expiry unit owner unchecked",
+    "B1/B4 mutation: expiry unit group unchecked",
+    "B1/B4 mutation: expiry unit group-writable mode accepted",
+    "B1/B4 mutation: expiry unit world-writable mode accepted",
+    "B1/B4 mutation: expiry unit file shape unchecked",
+    "B1/B4 mutation: expiry unit hardlink unchecked",
+    "B1/B4 mutation: expiry unit custody predicate vacuous",
+    "B1/B4 mutation: post-reload expiry end state never measured",
+    "B1/B4 mutation: interrupted removal bypasses expiry custody",
+    "B1/B4 mutation: interrupted removal bypasses companion custody",
+    "B1/B4 mutation: expiry removal receipt appended after the unlinks",
+    "B1/B4 mutation: expiry removal receipt never re-read",
+    "B1/B4 mutation: expiry disable exit-status refusal conjuncts dropped",
+    "B1/B4 mutation: interrupted expiry disable refusal rejected",
+    "B1/B4 mutation: uninstalled expiry disable refusal rejected",
+    "B1/B4 mutation: uninstalled expiry disable accepted with the mechanism present",
+    "B1/B4 mutation: expiry post-condition unit liveness inert",
+    "B1/B4 mutation: expiry post-condition enablement unchecked",
+    "B1/B4 mutation: expiry post-condition companion liveness inert",
+    "B1/B4 mutation: expiry post-condition companion enablement unchecked",
+    "B1/B4 mutation: expiry installation proven only by ARMED",
+    "B1/B4 mutation: expiry disable command never issued",
+    "B1/B4 mutation: expiry removal issued with nothing to remove",
+    "B1/B4 mutation: expiry custody conditioned on journal-proven installation",
+    "B1/B4 mutation: expiry custody conditioned on a recovered log",
+    "B1/B4 mutation: expiry custody predicate ignores the companion unit file",
+    "B1/B4 mutation: expiry custody measured on absent unit files",
+    "B1/B4 mutation: expiry custody measured only after the disable",
+    "B1/B4 mutation: expiry custody never re-measured before the unlink",
+    "B1/B4 mutation: expiry presence pre-condition ignores the removal receipt",
+    "B1/B4 mutation: unaccounted expiry absence accepted",
+    "B1/B4 mutation: journal-proven installed expiry absence accepted",
+    "B1/B4 mutation: unretired expiry absence accepted",
+    "B1/B4 mutation: expiry running companion accepted before the disable",
+    "B1/B4 mutation: retired episode expiry companion liveness unobserved",
+    "B1/B4 mutation: live expiry companion reported as generic drift",
+    "B1/B4 mutation: expiry companion refusal predicate vacuous",
+    "B1/B4 mutation: expiry installation proven only by the DONE row",
+    "B1/B4 mutation: expiry teardown refuses the invocation performing it",
+    "B1/B4 mutation: expiry invocation exclusion widened to any live companion",
+    "B1/B4 mutation: expiry post-condition refuses the invocation performing the removal",
+    "B1/B4 mutation: refusal predicate evaluated inside need()",
     "B1 production composition binds, signs, appends, leases, verifies, transitions, installs and revokes",
     "B4 production expiry performs physical teardown after process replacement",
     "B4 cleanup continues after gate failure and one fixture restore failure",
@@ -775,10 +833,70 @@
     "B4 pre-arm teardown refuses timer-file drift by name",
     "B4 pre-arm teardown refuses timer-active drift by name",
     "B4 pre-arm teardown refuses timer-enabled drift by name",
+    "B4 pre-arm teardown refuses both-files drift by name",
+    "B4 pre-arm teardown refuses service-file drift by name",
+    "B4 pre-arm teardown refuses service-active drift by name",
+    "B4 pre-arm teardown refuses service-enabled-link drift by name",
+    "B4 pre-arm teardown refuses service-disabled-link drift by name",
+    "B4 pre-arm teardown refuses timer-enabled-link drift by name",
+    "B4 pre-arm teardown refuses service-file-stale-view drift by name",
     "B4 a refused worker kill is accepted only for a unit measured idle",
     "B4 a destroyed journal is never proof that nothing was created",
     "B4 interruption at every lifecycle phase boundary completes cleanup or halts by name",
     "B4 a unit that holds no processes still completes its teardown",
+    "B4 a journal-proven installed expiry timer file that vanished halts before disabling",
+    "B4 a journal-proven installed expiry service file that vanished halts before disabling",
+    "B4 a completed expiry retirement removes both durable unit files and repeats inertly",
+    "B4 a disable that throws is a refusal by name, never a silent retirement",
+    "B4 a cached systemd unit view is refreshed and re-measured before retirement completes",
+    "B4 a recovered log is never proof that the expiry mechanism was not created",
+    "B4 the reviewed teardown effect order is durable in the journal",
+    "B4 fixture cleanup refuses until the worker kill reaches its durable DONE row",
+    "B4 a disable that reports success while the unit stays live is drift",
+    "B4 a refusal predicate that throws is still the named refusal",
+    "B4 an installed expiry unit file replaced by a non-root-owner one halts before disabling",
+    "B4 an installed expiry unit file replaced by a non-root-group one halts before disabling",
+    "B4 an installed expiry unit file replaced by a group-writable one halts before disabling",
+    "B4 an installed expiry unit file replaced by a world-writable one halts before disabling",
+    "B4 an installed expiry unit file replaced by a non-regular-file one halts before disabling",
+    "B4 an installed expiry timer unit file with a second hard link halts before disabling",
+    "B4 an installed expiry service unit file with a second hard link halts before disabling",
+    "B4 an expiry mechanism still present after the reload is refused, never reported retired",
+    "B4 a teardown interrupted inside the removal loop retries on its durable receipt",
+    "B4 the removal receipt never waives custody of a present expiry timer unit file",
+    "B4 the removal receipt never waives custody of a present expiry service unit file",
+    "B4 a disable that exits non-zero for an installed timer is a refusal, not a retirement",
+    "B4 a disable that leaves the expiry unit active but not enabled is drift",
+    "B4 a disable that leaves the expiry unit enabled but not active is drift",
+    "B4 a disable refused where the journal cannot vouch for the installation, mechanism retired",
+    "B4 a disable refused where the journal cannot vouch for the installation, mechanism present",
+    "B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-owner",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-group",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, group-writable",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, world-writable",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-regular-file",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-timer",
+    "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-service",
+    "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-timer",
+    "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-service",
+    "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install retired",
+    "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install half",
+    "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, recovered half",
+    "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, armed",
+    "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, done-row",
+    "B4 expiry custody is measured again immediately before the unlink",
+    "B4 a measurably running expiry companion service is never a clean retirement, installed",
+    "B4 a measurably running expiry companion service is never a clean retirement, journal-blind",
+    "B4 a measurably running expiry companion service is never a clean retirement, retired-episode",
+    "B4 a measurably running expiry companion service is never a clean retirement, foreign-invocation",
+    "B4 a disable that leaves the expiry companion service active is drift",
+    "B4 a disable that leaves the expiry companion service enabled is drift",
+    "B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed",
+    "B4 the modelled host represents every expiry unit state these controls claim",
+    "B4 a timer-triggered expiry teardown running inside its own companion service completes",
+    "B4 a completed self-run still measures fully retired from a non-companion vantage",
+    "B4 a disable that leaves this invocation's own companion activating is not drift",
     "recovery mutation: gate DONE suppresses repair",
     "recovery mutation: broker DONE suppresses repair",
     "recovery mutation: service DONE suppresses repair",
@@ -797,6 +915,7 @@
     "recovery mutation: R7 V12 descending chain accepted",
     "recovery mutation: R7 V14 damaged journal bypasses evidence",
     "recovery mutation: P3 automatic budget removed",
+    "recovery mutation: P154D live expiry companion code never surfaced",
     "R8 demonstrated mutant W7 dies on the state table",
     "R8 demonstrated mutant W13 dies on the state table",
     "R8 demonstrated mutant W1b dies on the state table",
@@ -1646,6 +1765,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: SIGNING_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: ARMED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload intact",
@@ -1658,6 +1778,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: SIGNING_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: ARMED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload recovered",
@@ -3149,6 +3270,10 @@
     "HOST_HARD_UNIT_shu-supervisor.service",
     "HOST_HARD_UNIT_shu-coordinator.service",
     "HOST_HARD_UNIT_shu-coordinator.timer",
+    "HOST_EXPIRY_UNIT_TIMER_PRESENT",
+    "HOST_EXPIRY_UNIT_SERVICE_PRESENT",
+    "HOST_EXPIRY_UNIT_ENABLED",
+    "HOST_EXPIRY_UNITS_ABSENT_GREEN",
     "HOST_RANGE_DUPLICATE",
     "HOST_RANGE_MALFORMED",
     "HOST_RANGE_REVERSED",
@@ -3167,6 +3292,9 @@
     "HOST_KILL_ENV_FOREIGN_OWNER",
     "HOST_KILL_ENV_WRITABLE",
     "HOST_KILL_STATE_SYMLINK",
+    "HOST_KILL_EXPIRY_UNIT_PRESENT",
+    "HOST_KILL_EXPIRY_UNIT_COMPANION",
+    "HOST_KILL_EXPIRY_UNIT_ENABLED",
     "HOST_KILL_DUPLICATE",
     "HOST_KILL_MALFORMED",
     "HOST_KILL_MAX_DEFAULT",
@@ -3353,7 +3481,28 @@
     "TARGET_KILL_ENUMERATION",
     "TARGET_KILL_ORIGINAL",
     "TARGET_KILL_ROLLBACK_OUTCOME",
-    "TARGET_KILL_CLI"
+    "TARGET_KILL_CLI",
+    "B1/B4 mutation: expiry invocation comparison loosened below exact equality",
+    "B1/B4 mutation: expiry invocation never crosses the kernel lock",
+    "B1/B4 mutation: expiry invocation element invented when the parent has none",
+    "B1/B4 mutation: empty parent invocation treated as a value",
+    "B1/B4 mutation: parent environment carried through the kernel lock",
+    "B1/B4 mutation: kernel lock no longer wipes the environment",
+    "B1/B4 mutation: expiry invocation element read from the environment, not the argument",
+    "B1/B4 mutation: expiry invocation value split across argv elements",
+    "B4 the locked re-exec command carries exactly one INVOCATION_ID element, in place",
+    "B4 the locked re-exec command carries no INVOCATION_ID element when the parent has none",
+    "B4 the locked re-exec command treats an empty parent INVOCATION_ID exactly as absent",
+    "B4 the locked re-exec command wipes the environment and carries exactly three assignments",
+    "B4 the locked re-exec command passes the invocation value as one argv element",
+    "B4 a near miss of the expiry companion's invocation is never this invocation",
+    "B4 the locked re-exec carries this invocation across `env -i` and the inner teardown completes",
+    "B4 a hostile invocation value crosses `env -i` as one variable and cannot inject a second",
+    "B4 mutation: the locked re-exec drops the invocation element",
+    "B4 mutation: the invocation element is read from the environment, not the argument",
+    "B4 mutation: the invocation value is split across argv elements",
+    "B4 mutation: the parent environment is carried through the kernel lock",
+    "B4 mutation: the kernel lock no longer wipes the environment"
   ],
   "requirements": [
     {
@@ -7342,7 +7491,235 @@
       "capabilities": []
     },
     {
+      "name": "B1/B4 mutation: expiry retirement ignores unit enablement",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement ignores companion liveness",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement ignores companion enablement",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement ignores the companion unit file",
+      "capabilities": []
+    },
+    {
       "name": "B1/B4 mutation: non-creation inferred from an empty journal",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: installed expiry pre-condition omitted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry companion service file unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: retired expiry units left behind",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry retirement receipt omitted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: retired episode expiry drift unobserved",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry end state never measured",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: refused expiry disable blindly accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: stale unit view never refreshed",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: recovered log accepted as non-creation proof",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: teardown effect order permuted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: fixtures durability precondition removed",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit owner unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit group unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit group-writable mode accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit world-writable mode accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit file shape unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit hardlink unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry unit custody predicate vacuous",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: post-reload expiry end state never measured",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: interrupted removal bypasses expiry custody",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: interrupted removal bypasses companion custody",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry removal receipt appended after the unlinks",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry removal receipt never re-read",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry disable exit-status refusal conjuncts dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: interrupted expiry disable refusal rejected",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: uninstalled expiry disable refusal rejected",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: uninstalled expiry disable accepted with the mechanism present",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition unit liveness inert",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition enablement unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition companion liveness inert",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition companion enablement unchecked",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry installation proven only by ARMED",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry disable command never issued",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry removal issued with nothing to remove",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody conditioned on journal-proven installation",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody conditioned on a recovered log",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody predicate ignores the companion unit file",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody measured on absent unit files",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody measured only after the disable",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry custody never re-measured before the unlink",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry presence pre-condition ignores the removal receipt",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: unaccounted expiry absence accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: journal-proven installed expiry absence accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: unretired expiry absence accepted",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry running companion accepted before the disable",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: retired episode expiry companion liveness unobserved",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: live expiry companion reported as generic drift",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry companion refusal predicate vacuous",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry installation proven only by the DONE row",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry teardown refuses the invocation performing it",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation exclusion widened to any live companion",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry post-condition refuses the invocation performing the removal",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: refusal predicate evaluated inside need()",
       "capabilities": []
     },
     {
@@ -7406,6 +7783,34 @@
       "capabilities": []
     },
     {
+      "name": "B4 pre-arm teardown refuses both-files drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-file drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-active drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-enabled-link drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-disabled-link drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses timer-enabled-link drift by name",
+      "capabilities": []
+    },
+    {
+      "name": "B4 pre-arm teardown refuses service-file-stale-view drift by name",
+      "capabilities": []
+    },
+    {
       "name": "B4 a refused worker kill is accepted only for a unit measured idle",
       "capabilities": []
     },
@@ -7419,6 +7824,218 @@
     },
     {
       "name": "B4 a unit that holds no processes still completes its teardown",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry timer file that vanished halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry service file that vanished halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a completed expiry retirement removes both durable unit files and repeats inertly",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that throws is a refusal by name, never a silent retirement",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a cached systemd unit view is refreshed and re-measured before retirement completes",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a recovered log is never proof that the expiry mechanism was not created",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the reviewed teardown effect order is durable in the journal",
+      "capabilities": []
+    },
+    {
+      "name": "B4 fixture cleanup refuses until the worker kill reaches its durable DONE row",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that reports success while the unit stays live is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a refusal predicate that throws is still the named refusal",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a non-root-owner one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a non-root-group one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a group-writable one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a world-writable one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry unit file replaced by a non-regular-file one halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry timer unit file with a second hard link halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an installed expiry service unit file with a second hard link halts before disabling",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an expiry mechanism still present after the reload is refused, never reported retired",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a teardown interrupted inside the removal loop retries on its durable receipt",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the removal receipt never waives custody of a present expiry timer unit file",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the removal receipt never waives custody of a present expiry service unit file",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that exits non-zero for an installed timer is a refusal, not a retirement",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry unit active but not enabled is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry unit enabled but not active is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable refused where the journal cannot vouch for the installation, mechanism retired",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable refused where the journal cannot vouch for the installation, mechanism present",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an expiry mechanism installed but not yet ARMED is still journal-proven installed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-owner",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-root-group",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, group-writable",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, world-writable",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, non-regular-file",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-timer",
+      "capabilities": []
+    },
+    {
+      "name": "B4 an install interrupted before its durable row still holds a present expiry unit file in custody, hardlinked-service",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-timer",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a recovered log never waives custody of a present expiry unit file, hardlinked-service",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install retired",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, interrupted-install half",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal that accounts for nothing excuses expiry absence only when measurably retired, recovered half",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, armed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a journal-proven installed expiry mechanism that vanished entirely is drift, done-row",
+      "capabilities": []
+    },
+    {
+      "name": "B4 expiry custody is measured again immediately before the unlink",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, installed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, journal-blind",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, retired-episode",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a measurably running expiry companion service is never a clean retirement, foreign-invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry companion service active is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves the expiry companion service enabled is drift",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a chain-valid recovered log holding ARMED proves the expiry mechanism was installed",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the modelled host represents every expiry unit state these controls claim",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a timer-triggered expiry teardown running inside its own companion service completes",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a completed self-run still measures fully retired from a non-companion vantage",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a disable that leaves this invocation's own companion activating is not drift",
       "capabilities": []
     },
     {
@@ -7491,6 +8108,10 @@
     },
     {
       "name": "recovery mutation: P3 automatic budget removed",
+      "capabilities": []
+    },
+    {
+      "name": "recovery mutation: P154D live expiry companion code never surfaced",
       "capabilities": []
     },
     {
@@ -14226,6 +14847,14 @@
       ]
     },
     {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
       "capabilities": [
         {
@@ -14315,6 +14944,14 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
       "capabilities": [
         {
           "name": "git"
@@ -25267,6 +25904,38 @@
       ]
     },
     {
+      "name": "HOST_EXPIRY_UNIT_TIMER_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_EXPIRY_UNIT_SERVICE_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_EXPIRY_UNIT_ENABLED",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_EXPIRY_UNITS_ABSENT_GREEN",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
       "name": "HOST_RANGE_DUPLICATE",
       "capabilities": [
         {
@@ -25404,6 +26073,30 @@
     },
     {
       "name": "HOST_KILL_STATE_SYMLINK",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_EXPIRY_UNIT_PRESENT",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_EXPIRY_UNIT_COMPANION",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "HOST_KILL_EXPIRY_UNIT_ENABLED",
       "capabilities": [
         {
           "name": "shell_toolchain"
@@ -26453,6 +27146,118 @@
     {
       "name": "TARGET_KILL_CLI",
       "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation comparison loosened below exact equality",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation never crosses the kernel lock",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation element invented when the parent has none",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: empty parent invocation treated as a value",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: parent environment carried through the kernel lock",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: kernel lock no longer wipes the environment",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation element read from the environment, not the argument",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 mutation: expiry invocation value split across argv elements",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command carries exactly one INVOCATION_ID element, in place",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command carries no INVOCATION_ID element when the parent has none",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command treats an empty parent INVOCATION_ID exactly as absent",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command wipes the environment and carries exactly three assignments",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec command passes the invocation value as one argv element",
+      "capabilities": []
+    },
+    {
+      "name": "B4 a near miss of the expiry companion's invocation is never this invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B4 the locked re-exec carries this invocation across `env -i` and the inner teardown completes",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 a hostile invocation value crosses `env -i` as one variable and cannot inject a second",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the locked re-exec drops the invocation element",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the invocation element is read from the environment, not the argument",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the invocation value is split across argv elements",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the parent environment is carried through the kernel lock",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
+    },
+    {
+      "name": "B4 mutation: the kernel lock no longer wipes the environment",
+      "capabilities": [
+        {
+          "name": "shell_toolchain"
+        }
+      ]
     }
   ],
   "runtime_artifacts": [

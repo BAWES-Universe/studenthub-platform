@@ -159,12 +159,20 @@ test('B1_SINGLE_LANE: production credential drives coordinator build BLOCK revis
   assert.equal(c.heads.get('coordinator/SHU-254'), c.pkg.fixtures[1].seed_head, 'B1_SINGLE_OTHER_HEAD_UNTOUCHED');
   const cleanupStart = c.p.events.length;
   assert.equal((await c.execute('resume')).state, 'REVOKED', 'B1_RESUME_REVOKES_ARMED');
-  assert.equal(effects(c.p, cleanupStart), 68, 'B1_RESUME_EFFECT_COUNT');
+  // +7 over the merged revision: the retirement's end-state measurement, its
+  // durable receipt, the two unit-file unlinks and the final retired measurement.
+  // +5 more for the COMPANION unit, which nothing measured before: the live
+  // companion refusal, and the companion's liveness and enablement in both the
+  // post-condition and the final retired measurement.
+  assert.equal(effects(c.p, cleanupStart), 80, 'B1_RESUME_EFFECT_COUNT');
   assert.deepEqual(shared(c.p), [gates.map(() => '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'), null, null].flat(), 'B1_RETIRED_STATE_TABLE');
   assert.equal(c.p.journal().filter(e => e.event === 'TEARDOWN_COMPLETE').length, 1, 'B1_ONE_COMPLETION_RECORD');
   const repeatStart = c.p.events.length;
   assert.equal((await c.execute('revoke')).state, 'REVOKED', 'B1_REVOKE_IDEMPOTENT');
-  assert.equal(effects(c.p, repeatStart), 4, 'B1_REVOKE_OBSERVATION_ONLY');
+  // +2: the retired receipt path also observes that no expiry mechanism is back,
+  // and +3 more now that "no expiry mechanism" means BOTH units: the companion's
+  // own liveness refusal and its liveness and enablement in the same predicate.
+  assert.equal(effects(c.p, repeatStart), 9, 'B1_REVOKE_OBSERVATION_ONLY');
 });
 
 test('B1_TWO_LANES: B completes while A revision remains running, then A completes', async t => {
@@ -188,7 +196,7 @@ test('B1_TWO_LANES: B completes while A revision remains running, then A complet
   c.p.expire();
   const cleanupStart = c.p.events.length;
   assert.equal((await c.execute('expire')).state, 'REVOKED', 'B1_EXPIRED_TEARDOWN');
-  assert.equal(effects(c.p, cleanupStart), 72, 'B1_EXPIRY_EFFECT_COUNT');
+  assert.equal(effects(c.p, cleanupStart), 84, 'B1_EXPIRY_EFFECT_COUNT');
   assert.deepEqual(gates.map(g => c.p.read(g)), gates.map(() => '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'), 'B1_EXPIRED_GATES');
   assert.equal(c.p.journal().filter(e => e.event === 'TEARDOWN_COMPLETE').length, 1, 'B1_EXPIRED_ONE_COMPLETION');
   assert.equal(c.p.exists(credential), false, 'B1_EXPIRED_CREDENTIAL_REVOKED');

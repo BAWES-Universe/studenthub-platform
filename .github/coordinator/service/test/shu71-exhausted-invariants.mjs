@@ -41,6 +41,7 @@ export const journalInventory = [
   { event: 'BROKER_RUNTIME_MEASURED', payload: h => JSON.parse(h.read(`/srv/shu/state/shu71-evidence/${h.id}/broker-runtime.json`)) },
   { event: 'ARMED', payload: h => ({ authorization_expires_at: h.spec.pkg.expires_at, teardown_complete: false }) },
   { event: 'HALTED', payload: () => ({ code: 'ACT_PRODUCTION_FAILED' }) },
+  { event: 'EXPIRY_RETIREMENT_STARTED' },
   { event: 'FIXTURE_REMOVE_INTENT', payload: () => ({ attempt_id: '12345678-1234-1234-1234-123456789abc', dev: 1, ino: 2, uid: 999 }) },
   { event: 'AUTOMATIC_TEARDOWN_RESERVED', payload: () => ({ attempts: 2 }) },
   { event: 'SETTLEMENT_STARTED' }, { event: 'INTENT', payload: () => ({ step: 'teardown:gate' }) },

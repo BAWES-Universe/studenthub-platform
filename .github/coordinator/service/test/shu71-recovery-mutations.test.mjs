@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { createShu71Production } from '../shu71-production.mjs';
 import { productionFixture } from './shu71-production-fixture.mjs';
 import { ephemeralPublicSource } from '../../test/fixture/ephemeral-public-source.mjs';
-import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck } from './shu71-recovery-checks.mjs';
+import { gateRecoveryCheck, serviceRecoveryCheck, retirementWindowCheck, activationRecoveryCheck, onceOnlyRestoreCheck, boundedReplayCheck, counterFaultCheck, manualBudgetCheck, exhaustedSettlementCheck, expiryLiveCompanionCheck } from './shu71-recovery-checks.mjs';
 import { plantedCounterCheck, plantedSettlementCheck } from './shu71-r5-checks.mjs';
 import { reservationHistoryCheck } from './shu71-r6-checks.mjs';
 import { damagedJournalCheck } from './shu71-r7-checks.mjs';
@@ -32,6 +32,13 @@ for (const [name, before, after, check, target = 'journal', assertion = /B4_/] o
   ['R7 V12 descending chain accepted', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'reservations.length === 32 && (reservations.every((e, i) => e.attempts === i + 1) || reservations.every((e, i) => e.attempts === 32 - i))', (create, h) => reservationHistoryCheck(create, h, 'DESCENDING', 32), 'production', /B4_R6_DESCENDING_EVIDENCE_REFUSED/],
   ['R7 V14 damaged journal bypasses evidence', 'reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1)', 'journal.recovered || (reservations.length === 32 && reservations.every((e, i) => e.attempts === i + 1))', damagedJournalCheck, 'production', /B4_R7_RECOVERY_BOTH_GATES_DISARMED/],
   ['P3 automatic budget removed', 'if (attempts >= 32)', 'if (false)', boundedReplayCheck, 'production', /B4_AUTOMATIC_REPLAY_BOUNDED/],
+  // P154D-02. teardownActivation() names each failure after the reviewed effect
+  // step that refused, which says WHICH effect failed but never WHY. A refusal
+  // that carries its own code is reported under that code too; dropped, a
+  // measurably running companion service is indistinguishable at the module
+  // boundary from every other expiry-timer refusal.
+  ['P154D live expiry companion code never surfaced', "      if (error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE') failures.push(error.code);\n", '',
+    (create, h) => expiryLiveCompanionCheck(create, h, 'installed'), 'journal', /B4_EXPIRY_LIVE_COMPANION_INSTALLED_COMPANION_REFUSAL_NAMED/],
 ]) test(`recovery mutation: ${name}`, async t => {
   await check(createShu71Production, productionFixture(t, keys));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shu71-recovery-mutant-'));

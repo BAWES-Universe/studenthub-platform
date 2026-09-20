@@ -91,8 +91,47 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   write('/srv/shu/coordinator.env', coordinatorText(), 0o600, 999);
   let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
   let signatures = 0;
-  const active = new Map(), enabled = new Set(), started = new Set(), systemd = { killRequiresProcesses: false };
+  const active = new Map(), enabled = new Set(), started = new Set(), loaded = new Set();
+  const systemd = { killRequiresProcesses: false, unitFileViewCached: false };
+  // Enablement is a durable INSTALL SYMLINK in <target>.wants/, not a flag on
+  // the unit file. `systemctl enable` creates it, `disable` removes it, and
+  // removing the unit file does NOT take it with it - which is why a unit whose
+  // own file is gone can still answer `enabled` or `disabled` rather than the
+  // empty string. A model that derives enablement from the unit file alone
+  // cannot represent that host state at all, so it is modelled as a real
+  // symlink in a real directory here, independently of `enabled`, and
+  // `daemon-reload` rebuilds the loaded view without touching it.
+  const WANTS_DIR = '/etc/systemd/system/timers.target.wants';
+  const wantsPath = unit => `${WANTS_DIR}/${unit}`;
+  const wants = {
+    has(unit) { try { fs.lstatSync(resolve(wantsPath(unit))); return true; } catch { return false; } },
+    add(unit) {
+      directory(WANTS_DIR);
+      if (!this.has(unit)) fs.symlinkSync(`/etc/systemd/system/${unit}`, resolve(wantsPath(unit)));
+    },
+    delete(unit) { try { fs.unlinkSync(resolve(wantsPath(unit))); } catch (e) { if (e.code !== 'ENOENT') throw e; } },
+  };
+  // systemd mints a fresh 128-bit InvocationID every time a unit STARTS, exports
+  // that start's own id to its own processes as INVOCATION_ID, and keeps
+  // ANSWERING with it after the unit exits - so an idle unit's id is STALE
+  // rather than empty, and only a unit that never ran has none at all. Modelled
+  // as first-class per-unit state rather than as a per-argv reply: a unit that
+  // is measurably live has an id whether it was started through `run` or placed
+  // directly in `active`, a restart mints a new one, a stop keeps the old one,
+  // and `h.unitInvocations` lets a control pin or read an exact value.
+  const invocations = new Map();
+  let minted = 0;
+  const mintInvocation = unit => invocations.set(unit, (++minted).toString(16).padStart(32, '0'));
+  const invocationOf = unit => {
+    if (['active', 'activating'].includes(active.get(unit) ?? 'inactive') && !invocations.has(unit)) mintInvocation(unit);
+    return invocations.get(unit) ?? '';
+  };
+  // This process's own systemd invocation, exactly as INVOCATION_ID carries it
+  // into a unit's ExecStart. `null` models an operator CLI run, outside systemd
+  // entirely, where the variable is absent and nothing is ever excluded.
+  const selfInvocation = { id: null };
   const boundary = { fs: f, runtimeWait: async () => {}, uid: () => 0, now: () => now,
+    invocationId: () => selfInvocation.id,
     sign(bytes, key) { signatures++; return effect('sign', () => sign(null, bytes, key)); },
     run(exe, argv, options) {
       let output = '';
@@ -119,10 +158,33 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           }
           if (argv.includes('--property=User')) { output = identity.user; return; }
           if (argv.includes('--property=Group')) { output = identity.group; return; }
-          const unitFile = unit => fs.existsSync(resolve(`/etc/systemd/system/${unit}`));
-          if (argv[0] === 'show' && argv.includes('--property=UnitFileState')) {
-            output = `${unitFile(argv.at(-1)) ? (enabled.has(argv.at(-1)) ? 'enabled' : 'disabled') : ''}\n`; return;
+          // systemd answers from the units it has loaded, and refreshes that
+          // view on daemon-reload. Default keeps the previous direct-from-disk
+          // model; systemd.unitFileViewCached opts into the loaded-view reading,
+          // under which a unit file deleted without a reload is still disablable.
+          if (argv[0] === 'daemon-reload') {
+            // A reload re-reads the unit directory; a unit that is still running
+            // is not forgotten because its file went away, and the install
+            // symlinks in <target>.wants/ are not touched by it at all - only
+            // the loaded view of unit FILES is rebuilt, which is why directory
+            // entries such as `<unit>.d` and `timers.target.wants` are not units.
+            loaded.clear();
+            for (const entry of fs.readdirSync(resolve('/etc/systemd/system'), { withFileTypes: true }))
+              if (!entry.isDirectory()) loaded.add(entry.name);
+            for (const [unit, state] of active) if (['active', 'activating'].includes(state)) loaded.add(unit);
+            return;
           }
+          const unitFile = unit => systemd.unitFileViewCached ? loaded.has(unit) : fs.existsSync(resolve(`/etc/systemd/system/${unit}`));
+          if (argv[0] === 'show' && argv.includes('--property=UnitFileState')) {
+            // systemd answers from the unit file where it has one, and from the
+            // install symlink it still finds in <target>.wants/ where it does
+            // not. Only a unit with neither is unknown, and only then is the
+            // answer empty - so `unit file gone, .wants symlink left behind` is
+            // `enabled`/`disabled` here, exactly as the host reports it.
+            const unit = argv.at(-1);
+            output = `${unitFile(unit) || wants.has(unit) ? (enabled.has(unit) ? 'enabled' : 'disabled') : ''}\n`; return;
+          }
+          if (argv[0] === 'show' && argv.includes('--property=InvocationID')) { output = `${invocationOf(argv.at(-1))}\n`; return; }
           if (argv[0] === 'show') output = `${active.get(argv.at(-1)) ?? 'inactive'}\n`;
           // Measured on the target host during shu71-mint-00000017: systemctl
           // kill exits 1 for a unit this episode never started, and
@@ -140,11 +202,13 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
           if (['enable', 'disable'].includes(argv[0])) {
             const unit = argv.at(-1);
             if (!unitFile(unit)) { output = null; return; }
-            if (argv[0] === 'enable') enabled.add(unit); else enabled.delete(unit);
-            if (argv.includes('--now')) { active.set(unit, argv[0] === 'enable' ? 'active' : 'inactive'); if (argv[0] === 'enable') started.add(unit); }
+            // enable/disable create and remove the durable install symlink.
+            if (argv[0] === 'enable') { enabled.add(unit); wants.add(unit); }
+            else { enabled.delete(unit); wants.delete(unit); }
+            if (argv.includes('--now')) { active.set(unit, argv[0] === 'enable' ? 'active' : 'inactive'); if (argv[0] === 'enable') { started.add(unit); mintInvocation(unit); } }
             return;
           }
-          if (['start', 'restart'].includes(argv[0])) { active.set(argv[1], 'active'); started.add(argv[1]); }
+          if (['start', 'restart'].includes(argv[0])) { active.set(argv[1], 'active'); started.add(argv[1]); mintInvocation(argv[1]); }
           if (argv[0] === 'stop') active.set(argv[1], 'inactive');
           return;
         }
@@ -194,7 +258,8 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
       });
     },
   };
-  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, systemd, write, signatures: () => signatures,
+  return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, loaded, wants, systemd, write, signatures: () => signatures,
+    unitInvocations: invocations, selfInvocation,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),
     read: p => fs.readFileSync(resolve(p), 'utf8'), exists: p => fs.existsSync(resolve(p)),

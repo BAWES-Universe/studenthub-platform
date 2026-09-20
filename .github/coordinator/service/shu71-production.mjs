@@ -22,7 +22,17 @@ const READBACK_CODES = ['DROPIN', 'ACTIVATION'].flatMap(kind =>
 export const installedModule = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
 export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), now: () => Date.now(),
   run: (file, args, options) => spawnSync(file, args, { timeout: 30000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8', ...options }),
-  fetch: (...args) => fetch(...args), sign: (bytes, key) => sign(null, bytes, key) });
+  // invocationId is a MEASUREMENT PORT, not a reviewed effect: systemd mints a
+  // fresh InvocationID every time a unit starts and exports that start's own id
+  // to its own processes as INVOCATION_ID, so reading it changes nothing on the
+  // host. It is absent outside systemd, which is exactly an operator CLI run.
+  fetch: (...args) => fetch(...args), sign: (bytes, key) => sign(null, bytes, key), invocationId: () => process.env.INVOCATION_ID });
+
+// No exception may bypass a check. A predicate evaluated as an argument of
+// need() skips its own refusal when it throws, and the bare error is reported
+// in place of the named one. Evaluate it into a value inside its own try/catch
+// first: anything but a measured true is the refusal the caller named.
+export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };
 
 export function createShu71Production(id, b = shu71Boundary) {
   need(/^[A-Za-z0-9_-]{8,64}$/.test(id) && id !== 'shu71abproof0007', 'ACT_ID_OR_EXPIRY_INVALID');
@@ -260,8 +270,8 @@ export function createShu71Production(id, b = shu71Boundary) {
       if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {
         // A successor owns the shared gates. This receipt is historical only.
         if (active && active.activation_id !== id) return { ok: true, state: 'REVOKED', activation_id: id, receipt_scope: 'retired_episode', physical_teardown_observed: false };
-        try { observeTeardown(); }
-        catch { return { ok: false, state: 'HALT', code: 'ACT_TEARDOWN_DRIFT' }; }
+        try { observeTeardown(); observeRetiredExpiry(); }
+        catch (error) { return { ok: false, state: 'HALT', code: error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE' ? error.code : 'ACT_TEARDOWN_DRIFT' }; }
         if (active) remove(`${ROOT}/active.json`);
         return { ok: true, state: 'REVOKED', activation_id: id, physical_teardown_observed: true };
       }
@@ -419,6 +429,86 @@ export function createShu71Production(id, b = shu71Boundary) {
   const unitProperty = (name, property) => command('/usr/bin/systemctl', ['show', `--property=${property}`, '--value', name]).trim();
   const unitIdle = name => ['inactive', 'failed'].includes(unitProperty(name, 'ActiveState'));
   const unitFileAbsent = file => { try { f.lstatSync(file); return false; } catch (e) { if (e.code !== 'ENOENT') throw e; return true; } };
+  // The expiry mechanism is two durable unit files, written by installExpiry as
+  // root-owned 0644 regular files. Both are measured on disk: a systemctl
+  // answer is a cache of what systemd loaded, never a substitute for the files.
+  const expiryTimerUnit = `shu71-expiry-${id}.timer`;
+  // The mechanism is TWO units, not one. The timer exists only to start the
+  // companion service, and `disable --now <timer>` does not touch that service,
+  // so a measurably live companion is a mechanism that is still running however
+  // quiet the timer looks. Every tolerance below therefore measures BOTH units -
+  // durable file, liveness and enablement - and a live companion has its own
+  // refusal name so it is never reported as, or confused with, other drift.
+  const expiryServiceUnit = `shu71-expiry-${id}.service`;
+  const EXPIRY_UNITS = [`/etc/systemd/system/${expiryTimerUnit}`, `/etc/systemd/system/${expiryServiceUnit}`];
+  // THE MECHANISM THIS TEARDOWN MUST PROVE GONE IS THE EXPIRY MECHANISM MINUS
+  // THE INVOCATION PERFORMING THE REMOVAL. installExpiry() writes
+  // `ExecStart=/usr/bin/node <installedModule> expire <id>` into
+  // shu71-expiry-<id>.service and the timer's only job is to start it, so on the
+  // timer-triggered path - the ONLY unattended path this mechanism exists for -
+  // the companion service IS the process performing the teardown, and systemd
+  // reports a running Type=oneshot unit as `activating`, which unitIdle() does
+  // not accept. A refusal that fires on the very invocation doing the removal is
+  // not defence in depth: it leaves the window torn down but not retired, dies
+  // non-zero and is restarted by `Restart=on-failure` until the start limit
+  // trips. So the companion's own LIVENESS term - and only that term - excludes
+  // this invocation. The file and enablement terms of BOTH units are untouched.
+  //
+  // The exclusion is bounded by EXACT INVOCATION IDENTITY and by nothing else.
+  // It is measured from a durable systemd fact, never from a flag, an
+  // environment-presence test, or anything the removal path sets about itself:
+  // `systemctl show -p InvocationID --value shu71-expiry-<id>.service` is the
+  // id of the unit's CURRENT start, INVOCATION_ID is the id systemd exported to
+  // this process's own start, and only exact string equality of two NON-EMPTY
+  // values excludes. Where this process is not running under systemd the id is
+  // absent (an operator CLI run) and NOTHING is excluded: any live companion
+  // refuses by name. No live companion attributable to anything else is ever
+  // tolerated, and no journal row, durable receipt or absence tolerance reaches
+  // this term.
+  const expiryCompanionIsThisInvocation = () => {
+    const unit = unitProperty(expiryServiceUnit, 'InvocationID'), self = b.invocationId();
+    return typeof self === 'string' && self !== '' && unit !== '' && unit === self;
+  };
+  // A COMPANION SURVIVES THIS REMOVAL when it is measurably NOT idle AND it is
+  // NOT the invocation running this removal. Liveness is measured FIRST, so an
+  // idle companion never consults the identity at all: an InvocationID left
+  // behind by a start that has already exited is stale by construction and can
+  // excuse nothing. Every site requires the NEGATION of this through
+  // measuredPredicate(), so an unreadable id, a `show` that exits non-zero, a
+  // boundary without the port, or any other throw is the named refusal.
+  const expiryCompanionSurvivesRemoval = () => !unitIdle(expiryServiceUnit) && !expiryCompanionIsThisInvocation();
+  // Custody terms, each pinned by its own control and killing mutant: the file
+  // shape (a non-regular file replacing the unit refuses), one link, root user,
+  // root group, and neither group- nor world-writable. `!s.isSymbolicLink()` is
+  // an EQUIVALENT mutant and deliberately has no control of its own: `s` is an
+  // lstat result, so a symlink is already `isFile() === false`, and removing
+  // that term alone cannot change any outcome. It is retained as a statement of
+  // the requirement at the point of measurement, not as a reachable branch.
+  const expiryUnitCustody = file => {
+    const s = f.lstatSync(file);
+    return s.isFile() && !s.isSymbolicLink() && s.nlink === 1 && s.uid === 0 && s.gid === 0 && !(s.mode & 0o022);
+  };
+  // Absent, not enabled and not active - for EVERY unit of the mechanism, not
+  // for the timer alone. Measured on the target host, disable exits 1 for a
+  // unit whose file was never created; and enablement survives the unit file,
+  // because it is an install symlink in <target>.wants/ that removing the unit
+  // file does not take with it, so a unit whose file is gone can still answer
+  // `enabled`. Each of the four unit/term pairs is written out rather than
+  // folded into a loop so that each has its own mutant and its own control.
+  const expiryRetired = () => EXPIRY_UNITS.every(unitFileAbsent)
+    && unitIdle(expiryTimerUnit) && ['', 'not-found'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
+    && !expiryCompanionSurvivesRemoval() && ['', 'not-found'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'));
+  // A LIVE COMPANION IS ITS OWN REFUSAL. `disable --now <timer>` stops the
+  // timer and leaves the service it triggers running, so a teardown that only
+  // measured the timer reported a clean retirement over a service that was
+  // still executing. This refuses by its own name, before the command that
+  // would otherwise disable the timer around a live mechanism, and it is a
+  // refusal rather than a stop: stopping is a new reviewed effect, and this
+  // lane may not add one.
+  const requireIdleExpiryCompanion = () => need(measuredPredicate(() => !expiryCompanionSurvivesRemoval()), 'ACT_TEARDOWN_EXPIRY_SERVICE');
+  // After a completed teardown this episode must leave no expiry mechanism
+  // behind, so a later wake that finds one re-created refuses by name too.
+  function observeRetiredExpiry() { requireIdleExpiryCompanion(); need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }
   function killSupervisorWorkers(journal) {
     const unit = 'shu-supervisor.service', phase = lifecyclePhase(journal, 'gate');
     // A unit the journal proves this episode never started, yet which is
@@ -435,19 +525,94 @@ export function createShu71Production(id, b = shu71Boundary) {
     try { command('/usr/bin/systemctl', ['kill', '--kill-whom=all', '--signal=SIGKILL', unit]); }
     catch (error) { need(error?.code === 'ACT_COMMAND_FAILED' && unitIdle(unit), 'ACT_TEARDOWN_DRIFT'); }
   }
+  // THE RULE of this function, stated once at the top so that no later edit can
+  // quietly make it conditional again: CUSTODY IS A PROPERTY OF THE REMOVAL,
+  // NOT OF THE JOURNAL. Every durable expiry unit file that is PRESENT is
+  // measured and must be held in root custody - regular file, not a symlink,
+  // one link, uid 0, gid 0, neither group- nor world-writable - before this
+  // teardown disables anything, and measured again immediately before the
+  // unlink. A present file that fails custody refuses by name whatever
+  // `installed`, `removing`, the durable receipt or a recovered log say: there
+  // is no journal state that authorises removing a file we do not hold in
+  // custody, and three separate rounds of this defect reopened exactly by
+  // putting one more journal condition in front of that measurement.
+  // The journal's only role here is ABSENCE. A missing unit file must be
+  // accounted for - by the branch where the journal proves the mechanism was
+  // never created, by the durable removal receipt that proves THIS teardown
+  // already began the removal, or, where the journal vouches for nothing at
+  // all, by a MEASURED fully retired mechanism rather than by any journal claim
+  // - and in every one of those cases each PRESENT file still passes the
+  // custody measurement above.
   function retireExpiryTimer(journal) {
-    const timer = `shu71-expiry-${id}.timer`;
-    // Absent, not enabled and not active. Measured on the target host, disable
-    // exits 1 for a unit whose file was never created.
-    const retired = () => unitFileAbsent(`/etc/systemd/system/${timer}`) && unitFileAbsent(`/etc/systemd/system/shu71-expiry-${id}.service`)
-      && unitIdle(timer) && ['', 'not-found'].includes(unitProperty(timer, 'UnitFileState'));
-    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(retired(), 'ACT_TEARDOWN_DRIFT'); return; }
-    // A timer the journal proves was durably installed is retired exactly as
-    // before: its disappearance stays a refusal. Only an installation the
-    // journal cannot vouch for may end with nothing left to retire.
+    // What the journal proves, read once. Both are facts about ABSENCE only.
+    // `installed`: this episode durably created the mechanism, so a unit file
+    // that is gone is unexplained. `removing`: this teardown already began
+    // unlinking, so a unit file that is gone is the completed half of its own
+    // interrupted work rather than foreign drift. Neither is ever a custody
+    // waiver, and neither may gate the custody measurement below.
     const installed = journalHas(journal, 'ARMED') || journalHas(journal, 'DONE', 'expiry-watch');
-    try { command('/usr/bin/systemctl', ['disable', '--now', timer]); }
-    catch (error) { need(!installed && error?.code === 'ACT_COMMAND_FAILED' && retired(), 'ACT_TEARDOWN_DRIFT'); }
+    const removing = journalHas(journal, 'EXPIRY_RETIREMENT_STARTED');
+    // Journal-independent by construction: this predicate reads the disk and
+    // nothing else, takes no journal argument, and is required before the
+    // never-created branch, so no path through this function reaches an effect
+    // without having measured every unit file that is actually there.
+    const custodyOfPresentUnits = () => EXPIRY_UNITS.every(file => unitFileAbsent(file) || expiryUnitCustody(file));
+    const requireCustodyOfPresentUnits = () => need(measuredPredicate(custodyOfPresentUnits), 'ACT_TEARDOWN_DRIFT');
+    requireCustodyOfPresentUnits();
+    if (lifecyclePhase(journal, 'expiry-watch') === 'never') { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); return; }
+    // Before any tolerance for ABSENCE is even consulted: a live companion is
+    // a mechanism that is measurably still running, whatever the journal or the
+    // durable files say, and it halts under its own name rather than being
+    // absorbed into a generic drift refusal. Placed after the never-created
+    // branch so that branch's own end-state measurement stays reachable.
+    requireIdleExpiryCompanion();
+    // Absence, accounted for. `disable --now` needs a unit file that exists,
+    // and systemd will happily disable a unit it still holds loaded whose file
+    // was deleted or replaced underneath it; that success must never absorb the
+    // drift. So where the journal proves this episode installed the mechanism,
+    // BOTH durable unit files must still be there unless the receipt explains
+    // the gap; and where the journal proves nothing - a recovered log, or an
+    // install interrupted before its durable DONE row - a gap is accepted only
+    // against a measured, fully retired mechanism, never against the journal's
+    // silence. A half-present mechanism nobody can account for is drift.
+    // This clause reads the journal because it is about PRESENCE, which is what
+    // the command it guards requires; the custody measurement above is not
+    // conditioned on anything and must never become so.
+    need(measuredPredicate(() => removing || EXPIRY_UNITS.every(file => !unitFileAbsent(file))
+      || !installed && expiryRetired()), 'ACT_TEARDOWN_DRIFT');
+    try { command('/usr/bin/systemctl', ['disable', '--now', expiryTimerUnit]); }
+    catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }
+    // Post-condition on the success path too: BOTH units end not active and not
+    // enabled - the companion is measured here as well, because a disable that
+    // starts or re-enables the service it triggers is exactly the drift the
+    // exit status cannot report, and with the SAME invocation exclusion as the
+    // refusal above, because a self-invocation is still `activating` here by
+    // construction and must not trip ACT_TEARDOWN_DRIFT while a live companion
+    // that is not this invocation still must - and the retirement itself removes both
+    // durable unit files, with a daemon-reload wherever systemd still holds the
+    // removed view. Invariant:
+    // after a completed teardown the successor window's pre-mint gate must
+    // pass, and this episode leaves no expiry mechanism behind, so the end
+    // state satisfies the same predicate the never-created branch asserts.
+    need(measuredPredicate(() => unitIdle(expiryTimerUnit)
+      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))
+      && !expiryCompanionSurvivesRemoval()
+      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');
+    if (measuredPredicate(() => !EXPIRY_UNITS.every(unitFileAbsent))) {
+      // Measured again, immediately before the unlink. `disable --now` has run
+      // since the measurement at the top, so the file this loop is about to
+      // remove is the one we must hold in custody NOW, not the one we held
+      // before the command.
+      requireCustodyOfPresentUnits();
+      if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });
+      for (const file of EXPIRY_UNITS) remove(file);
+    }
+    // systemd answers from the units it has loaded. Where it still holds the
+    // removed view, refresh it and measure again; anything else is drift.
+    if (!measuredPredicate(expiryRetired)) {
+      command('/usr/bin/systemctl', ['daemon-reload']);
+      need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT');
+    }
   }
   function cleanupWorkspaces(spec, journal) {
     need(journal.entries.some(e => e.event === 'DONE' && e.step === 'teardown:workers'), 'ACT_FIXTURE_CLEANUP');
@@ -563,6 +728,13 @@ export function createShu71Production(id, b = shu71Boundary) {
     // Retire the retry mechanism only after every effect and observation passed.
     effects.push(
       ['expiry-timer', () => {
+        // Defence in depth, kept deliberately: teardownActivation() already
+        // refuses this step when any earlier effect failed (shu71-journal.mjs,
+        // `if (step === 'expiry-timer' && failures.length)`), throwing
+        // ACT_CLEANUP_FAILED independently. This precondition is the same
+        // requirement stated against the durable journal rows rather than
+        // against one process's in-memory failure list, so a retry in a fresh
+        // process that re-reads the log reaches it too.
         need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
           .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
         observeTeardown();
@@ -613,12 +785,41 @@ export async function shu71Cli(argv) {
   need(argv.length === 2 && ['run', 'resume', 'revoke', 'expire'].includes(action) && /^[A-Za-z0-9_-]{8,64}$/.test(id ?? ''), 'ACT_COMMAND_INVALID');
   return createShu71Production(id).execute(action);
 }
+// `env -i` stays: this boundary accepts no operator environment. The one
+// value carried across is INVOCATION_ID, and it is carried because without
+// it the inner process cannot know that it IS the expiry companion and the
+// timer-triggered teardown refuses itself. Carrying it grants nothing on
+// its own: the teardown only ever compares it for EXACT EQUALITY against
+// the unit's own reported InvocationID, so any value that is not that
+// durable systemd fact excludes nothing and a live companion still refuses
+// by name. Passed as one argv element, so no value can inject a second
+// assignment, and omitted entirely when absent so `INVOCATION_ID=` is
+// never invented.
+//
+// P154D-07. THAT PROPAGATION IS LOAD-BEARING, SO IT IS NAMED AND TESTABLE
+// RATHER THAN INLINE AND UNPINNED. Delete the invocation element and every
+// measurement on either side of the lock still passes while the companion's
+// identity is wiped on the real host, the exclusion never applies, and the
+// timer-triggered teardown refuses itself - the exact regression the exclusion
+// exists to prevent. This is also the ONLY place this correction widens what
+// crosses a boundary deliberately built to carry no operator environment, so
+// the width is stated here as a pure function of ONE argument and pinned by its
+// own controls: `env -i` wipes, exactly three assignments cross, the invocation
+// element is built from this argument and from nothing else, it sits
+// immediately after `SHU71_LOCKED=1` and before `/usr/bin/node`, it is ONE argv
+// element so no value can inject a second assignment, and an absent or EMPTY
+// value produces no element at all rather than an invented `INVOCATION_ID=`.
+export function lockedReexecCommand(invocation, argv = []) {
+  return Object.freeze(['/usr/bin/flock', '--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1',
+    ...(invocation ? [`INVOCATION_ID=${invocation}`] : []), '/usr/bin/node', installedModule, ...argv]);
+}
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const argv = process.argv.slice(2);
     if (process.env.SHU71_LOCKED !== '1') {
       need(process.getuid() === 0, 'ACT_PROCESS_IDENTITY');
-      const r = spawnSync('/usr/bin/flock', ['--nonblock', '/run/lock/shu71-production.lock', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'SHU71_LOCKED=1', '/usr/bin/node', installedModule, ...argv], { stdio: 'inherit' });
+      const [exe, ...args] = lockedReexecCommand(process.env.INVOCATION_ID, argv);
+      const r = spawnSync(exe, args, { stdio: 'inherit' });
       process.exitCode = r.status ?? 1;
     } else {
       const result = await shu71Cli(argv); process.stdout.write(JSON.stringify(result) + '\n'); process.exitCode = result.ok ? 0 : 1;
