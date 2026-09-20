@@ -22,8 +22,8 @@ async function load(t, n, text) {
   fs.writeFileSync(file, text.replace(/(from\s+)(['"])(\.{1,2}\/[^'"]+)\2/g, (_, p, q, r) => `${p}${q}${new URL(r, new URL(n, base))}${q}`));
   return { ...await import(pathToFileURL(file)), sourceUrl: pathToFileURL(file).href };
 }
-function prepared(t, impl = provisioner) {
-  const host = fixture(t), window = productionFixture(t, keys, undefined, host);
+function prepared(t, impl = provisioner, options = {}) {
+  const host = fixture(t), window = productionFixture(t, keys, undefined, host, options);
   host.remove('/usr/local/lib/shu71/coordinator');
   impl(revision, host.boundary).install();
   host.remove('/run/shu71-evidence');
@@ -79,8 +79,12 @@ async function reader(t, production) {
   assert.equal(allowed(window,activation,999,[982,980],4),false,'READER_JOURNAL_GROUP_REFUSED');
 }
 test('CONTRACT_READER_UID_NE_GID',t=>reader(t,createShu71Production));
+// PRE-FIX controls below execute a HISTORICAL revision, which compares the
+// prior state by JSON.stringify and cannot consume a canonically sealed
+// approval at all. Only those controls pin the construction order; every
+// current-module control keeps the real target-host shape.
 test('CONTRACT_PRE_FIX_ACTIVATION_UNREADABLE',async t=>{
-  const {host,window}=prepared(t); host.owners.set('/srv/shu/state',[0,0]); fs.chmodSync(host.root+'/srv/shu/state',0o755);
+  const {host,window}=prepared(t,provisioner,{approvalBytes:'construction'}); host.owners.set('/srv/shu/state',[0,0]); fs.chmodSync(host.root+'/srv/shu/state',0o755);
   const old=await load(t,'shu71-production.mjs',historical('shu71-production.mjs'));
   assert.equal((await old.createShu71Production(window.id,window.boundary).execute('run')).state,'ARMED','PRE_FIX_WRITES_ACTIVATION');
   assert.deepEqual(window.owners.get(activation),[0,999],'PRE_FIX_BINDS_SYSTEMD_JOURNAL');

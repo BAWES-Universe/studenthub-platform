@@ -44,8 +44,8 @@ const damage = {
   SIGNATURE: (h, file) => { const doc = JSON.parse(h.read(file)); doc.signature = 'A'.repeat(doc.signature.length); fs.writeFileSync(h.root + file, JSON.stringify(doc)); },
 };
 const reason = name => name.startsWith('DIRECTORY') ? 'DIRECTORY' : name.includes('MODE') ? 'MODE' : ['UID', 'GID', 'SYMLINK'].includes(name) ? 'CUSTODY' : name === 'SIGNATURE' ? 'BYTES' : name;
-function scenario(t, file, failure) {
-  const h = productionFixture(t, keys);
+function scenario(t, file, failure, options = {}) {
+  const h = productionFixture(t, keys, undefined, null, options);
   let damaged = false;
   h.faults.after = event => {
     // One-shot post-rename corruption: teardown gets the unmodified boundary.
@@ -108,8 +108,12 @@ for (const { file, failure, label } of cases) {
       e => e.code === 'ERR_ASSERTION' && e.message.includes(`PHASE_${file === activation ? 'ACTIVATION' : 'DROPIN'}_${failure}_`), `PHASE_NAMED_KILL_${label}`);
   });
 }
+// PRE-FIX controls below execute a HISTORICAL revision, which compares the
+// prior state by JSON.stringify and cannot consume a canonically sealed
+// approval at all. Only those controls pin the construction order; every
+// current-module control keeps the real target-host shape.
 for (const file of [...gates, activation]) for (const failure of ['MISSING', 'BYTES']) test(`PHASE_PRE_FIX_${file === activation ? 'ACTIVATION' : file.includes('supervisor') ? 'DROPIN_SUPERVISOR' : 'DROPIN_COORDINATOR'}_${failure}_ACCEPTED`, async t => {
-  const create = await load(t, historical), h = scenario(t, file, failure);
+  const create = await load(t, historical), h = scenario(t, file, failure, { approvalBytes: 'construction' });
   h.owners.set('/srv/shu/state', [0, 0]);
   assert.equal((await create(h.id, h.boundary).execute('run')).state, 'ARMED', 'PHASE_PRE_FIX_ACCEPTS_DAMAGED_ARTIFACT');
   assert.ok(h.events.some(e => e.includes(':restart shu-supervisor.service')), 'PHASE_PRE_FIX_RESTARTS');

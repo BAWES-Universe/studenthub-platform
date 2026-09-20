@@ -10,7 +10,8 @@ import { trustChecks, journalCheck } from './shu71-trust-checks.mjs';
 const keys = ephemeralPublicSource();
 const cases = [
   ['NV1 installation omitted', 'production', 'verifyInstallation(spec);', '/* omitted */', 'installation'],
-  ['NV2 transition readback omitted', 'production', "result.issueUpdate?.success === true && JSON.stringify(await issue(t)) === JSON.stringify(target)", 'result.issueUpdate?.success === true', 'transition'],
+    // Anchor updated in place for the field comparison; name and assertion unchanged.
+  ['NV2 transition readback omitted', 'production', "result.issueUpdate?.success === true && sameFixtureCard(await issue(t), target)", 'result.issueUpdate?.success === true', 'transition'],
   ['NV3 atomic file fsync omitted', 'production', 'f.fchmodSync(fd, mode); f.fsyncSync(fd);', 'f.fchmodSync(fd, mode);', 'durability'],
   ['NV5 active conflict bypassed', 'production', "if (active && active.activation_id !== id) return { ok: false", "if (false) return { ok: false", 'conflict'],
   ['NV6 owner signature bypassed', 'production', "verify(null, canonicalBytes(doc.payload, false), ownerKey, Buffer.from(doc.signature, 'base64'))", 'true', 'owner'],
