@@ -1175,6 +1175,106 @@ export function createShu71Production(id, b = shu71Boundary) {
       need(['inactive', 'failed'].includes(command('/usr/bin/systemctl', ['show', '--property=ActiveState', '--value', name]).trim()), 'ACT_TEARDOWN_DRIFT');
     }
   }
+  // THE ONE THING A RUN CHANGES OUTSIDE ITSELF. Everything else this window
+  // touches - the gate drop-ins, the activation credential, the units, the
+  // fixture cards, the attempt directories - is restored or removed by the
+  // effects above, and the signed package promises `teardown = restore`. The
+  // fixture lane's BRANCH was not. An approved window armed through `sign`,
+  // `expiry-watch`, `local-reseed` and `remote-push`, the push LANDED, the run
+  // then halted on a later read, and its teardown reported ok:true,
+  // TEARDOWN_COMPLETE, failures:[] over a remote branch still carrying the
+  // reseed commit and a local branch still carrying it too. The next mint
+  // refused MINT_LINEAGE - correctly, because the mint requires that branch at
+  // its retained parent, the reseed being performed BY the arming rather than
+  // left behind by it - and the window could not be re-approved until a hand
+  // repair moved three refs back. The repair is reviewed code now.
+  //
+  // WHAT IS RESTORED, AND ON WHAT CONDITION. The run knows exactly what it
+  // published: `expected_seed_head` for `refs/heads/<branch>`, returning to
+  // `expected_parent`. Each of the three refs the mint reads - the remote ref,
+  // the checkout's local ref, and the checkout's remote-tracking ref - is
+  // MEASURED first and then moved only when it holds EXACTLY the value this run
+  // published. A ref already at the retained parent is a no-op: nothing was
+  // published, or the restoration already happened. Any other value is someone
+  // else's write, and it REFUSES by name rather than being overwritten; the
+  // measured values are durable in the journal, so the refusal says which value
+  // it found. The remote update carries `--force-with-lease=<ref>:<published>`,
+  // so even the refusal's own race - a foreign write landing between the read
+  // and the push - cannot clobber it; and the local updates are
+  // `update-ref <ref> <parent> <published>`, which is the same compare-and-set
+  // at the ref lock.
+  //
+  // THIS DOES NOT WEAKEN THE MINT. The mint's MINT_LINEAGE refusal on an
+  // unexplained branch advance is correct behaviour and is untouched: a branch
+  // this teardown refused to restore still stops the next window, which is the
+  // point. Nor does it widen any mutation: each restoration is issued AT MOST
+  // ONCE per invocation (`issued`), a refused restore stays refused, and a push
+  // that reports failure is recovered by a RE-READ that accepts only the one
+  // value meaning the mutation already happened - never by pushing again.
+  //
+  // WHEN IT MEASURES AT ALL. `local-reseed` is the step that creates the
+  // published commit and the first step that could move any of these refs, so
+  // its durable INTENT row is what proves this episode may have published
+  // something. Without it - a pre-arm refusal, a revoke of a window that never
+  // ran - nothing is measured, no remote is contacted and no credential is
+  // read, exactly as the fixture-card restores above are gated on their own
+  // `ready-<id>` intent. A recovered log proves nothing about non-creation and
+  // always measures, fail-closed.
+  const branchRestoresIssued = new Set();
+  const measureLocalRef = (spec, ref) => gitText(spec, ['for-each-ref', '--format=%(objectname)', ref]);
+  const measureRemoteRef = (spec, ref) => {
+    const [value, name] = gitText(spec, ['ls-remote', '--refs', REMOTE, ref], { remote: true }).split('\t');
+    return name === ref && /^[a-f0-9]{40}$/.test(value) ? value : '';
+  };
+  function restorePublishedRefs(spec, journal) {
+    if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;
+    const { branch, expected_parent: parent, expected_seed_head: published } = spec.pkg.reseed;
+    const ref = `refs/heads/${branch}`, tracking = `refs/remotes/origin/${branch}`;
+    const measured = { remote: measureRemoteRef(spec, ref), local: measureLocalRef(spec, ref), tracking: measureLocalRef(spec, tracking) };
+    journal.append({ event: 'BRANCH_RESTORE_MEASURED', branch, ...measured });
+    // A ref is restorable only when it holds exactly what this run published.
+    // Every other value - including an absent head - is refused under its own
+    // name, and the mutation is never issued twice in one invocation.
+    const restorable = (kind, value) => {
+      if (value === parent) return false;
+      need(value === published, 'ACT_TEARDOWN_BRANCH_FOREIGN');
+      need(!branchRestoresIssued.has(kind), 'ACT_TEARDOWN_BRANCH_REATTEMPT');
+      branchRestoresIssued.add(kind);
+      return true;
+    };
+    if (restorable('remote', measured.remote)) {
+      // The lease is pinned to the exact value this run published, so a branch
+      // moved by anyone else between the measurement and this command is
+      // refused by git itself rather than overwritten.
+      try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${published}`, REMOTE, `${parent}:${ref}`], { remote: true }); }
+      catch (error) {
+        // A push can LAND and still report failure. The recovery is a RE-READ
+        // that accepts only the one value meaning the mutation already
+        // happened; anything else - including a read that itself fails -
+        // rethrows the original refusal, and the push is never re-issued.
+        let after;
+        try { after = measureRemoteRef(spec, ref); } catch { throw error; }
+        if (after !== parent) throw error;
+        recordReadRetry(`git:ls-remote:${branch}`, 2);
+      }
+      need(measureRemoteRef(spec, ref) === parent, 'ACT_TEARDOWN_BRANCH_REMOTE');
+    }
+    if (restorable('local', measured.local)) {
+      git(spec, ['update-ref', ref, parent, published]);
+      need(measureLocalRef(spec, ref) === parent, 'ACT_TEARDOWN_BRANCH_LOCAL');
+    }
+    // The remote-tracking ref is a LOCAL CACHE of the remote's ref, and the
+    // mint reads it as one of the three terms of its lineage check, so a box
+    // left with `refs/remotes/origin/<branch>` at the published head is not
+    // restored. It is the one ref here this run never creates: where the
+    // checkout has no such ref at all there is nothing of ours to move and
+    // nothing is invented, while a tracking ref holding a third value is
+    // refused exactly like the other two.
+    if (measured.tracking !== '' && restorable('tracking', measured.tracking)) {
+      git(spec, ['update-ref', tracking, parent, published]);
+      need(measureLocalRef(spec, tracking) === parent, 'ACT_TEARDOWN_BRANCH_TRACKING');
+    }
+  }
   async function cleanup(spec, journal, reason, automatic = false) {
     // Separate from either journal so damaged-log recovery cannot reset the
     // automatic budget. Reserve durably before ordinary effects, including crash
@@ -1235,6 +1335,11 @@ export function createShu71Production(id, b = shu71Boundary) {
         need(t, 'ACT_WRONG_FIXTURE');
         if (journal.recovered || journal.entries.some(e => e.event === 'INTENT' && e.step === `ready-${id}`)) await transition(t, t.restore, true);
       }]),
+      // The published branch is restored here: after the timer, the coordinator
+      // and the supervisor have been stopped, so nothing on this host can be
+      // pushing to that lane while its refs are moved back, and before the
+      // archive and the observation that close the receipt.
+      ['restore-branch', () => restorePublishedRefs(spec, journal)],
       ['fixtures', () => cleanupWorkspaces(spec, journal)],
       ['evidence-broker', () => command('/usr/bin/systemctl', ['stop', 'shu71-evidence.service'])],
       ['archive', () => atomic(`${dir}/activation.json`, JSON.stringify({ activation_id: id, pkg: spec.pkg, retained: true, broker_runtime: (() => { const last = journal.entries.findLast(e => ['RUN_ATTEMPT_STARTED', 'BROKER_RUNTIME_CHECK_STARTED', 'BROKER_RUNTIME_MEASURED'].includes(e.event)); if (last?.event !== 'BROKER_RUNTIME_MEASURED') return null; const { rows, coordinator_access, kernel_connect } = last; return { rows, coordinator_access, kernel_connect }; })() }))],

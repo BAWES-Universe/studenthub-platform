@@ -624,7 +624,7 @@ export async function recoveredNonCreationCheck(createProduction, h) {
 // requires it, and the retry mechanism is retired last of all.
 export const teardownEffectOrder = Object.freeze(['gate', 'activation', 'workers',
   'stop-shu-coordinator-timer', 'stop-shu-coordinator-service', 'stop-shu-supervisor-service', 'reload',
-  'restore-shu-140', 'restore-shu-254', 'fixtures', 'evidence-broker', 'archive', 'manifest', 'expiry-timer']);
+  'restore-shu-140', 'restore-shu-254', 'restore-branch', 'fixtures', 'evidence-broker', 'archive', 'manifest', 'expiry-timer']);
 export async function teardownOrderCheck(createProduction, h) {
   const create = () => createProduction(h.id, h.boundary);
   assert.equal((await create().execute('run')).state, 'ARMED', 'B4_TEARDOWN_ORDER_SETUP');

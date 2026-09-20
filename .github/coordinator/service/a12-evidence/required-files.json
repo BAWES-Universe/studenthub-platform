@@ -24,6 +24,7 @@
   ".github/coordinator/service/test/service.test.mjs",
   ".github/coordinator/service/test/shu71-arming-order.test.mjs",
   ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+  ".github/coordinator/service/test/shu71-branch-restore.test.mjs",
   ".github/coordinator/service/test/shu71-composition.test.mjs",
   ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
   ".github/coordinator/service/test/shu71-delivery.test.mjs",

@@ -95,7 +95,7 @@ owner-only permissions, permit worktree writes through the service sandbox,
 or expose arbitrary file reads, API requests, commands or credentials to clients.
 See the [authority disclosure](SHU71-L3-CLOSURE.md#least-privilege-delivery),
 [workspace layout](SHU-261-VALIDATION.md#L12) and
-[operative unit render](shu71-production.mjs#L1295). Real kernel socket access
+[operative unit render](shu71-production.mjs#L1400). Real kernel socket access
 must still be proved in the authorized window; the static report cannot prove it.
 No running unit, remote ref, credential validity or live fixture launch is claimed here.
 
@@ -396,7 +396,7 @@ returned `VERIFIED`; the immediately following read-only `precondition()` failed
 only `/run/shu71-evidence` and its `fixture.sock`, both with
 `ACT_BROKER_SOCKET_CUSTODY`. Installation never creates those runtime artifacts.
 Production starts the service during M4 and stops it at teardown
-([start](shu71-production.mjs#L803), [stop](shu71-production.mjs#L1239)).
+([start](shu71-production.mjs#L803), [stop](shu71-production.mjs#L1344)).
 
 The corrected gate evaluates runtime paths after **all** static checks. With
 both absent and all static checks passing, both rows explicitly contain
@@ -4494,3 +4494,107 @@ after that commit.
 The four names this round adds are in both selections: they are tests in
 `host-window-bindings.test.mjs`, which is entry 25 of the focused selection and
 matches the full run's `service/test/*.test.mjs` glob.
+
+### Eleventh correction round: the one thing the run changes outside itself
+
+The M3/M4 window's signed package promises `teardown = restore`. On the target
+host an approved window armed, ran through `sign`, `expiry-watch`,
+`local-reseed` and `remote-push` — and the push LANDED:
+`refs/heads/coordinator/SHU-140` carried the reseed commit
+`21e41fef6966604039cd9cbea4ad7151c80ed68a`, whose parent is the retained parent
+`6e5ad86cc0a993097d2e642132077b665ad49481` — and the run then halted on a later
+read. Its teardown completed with `ok:true`, `TEARDOWN_COMPLETE`,
+`failures:[]`: it restored the fixture cards, stopped the units and retained the
+evidence. It did **not** restore the branch it had published. The next mint
+refused `MINT_LINEAGE`, a hand repair was performed, and the owner declined the
+approval block for exactly that reason — the reviewed teardown still did not do
+it, so the promise was unbacked by code.
+
+Everything else a window touches is already put back by a reviewed effect: the
+gate drop-ins, the activation credential, the units, the fixture cards, the
+attempt directories. The fixture lane's BRANCH was the only thing the run
+changes outside itself that nothing restored.
+
+#### What the teardown now does, and on what condition
+
+A new reviewed teardown effect, `restore-branch`, sits between the fixture-card
+restores and the workspace cleanup — after the timer, the coordinator and the
+supervisor have been stopped, so nothing on this host can be pushing to that
+lane while its refs are moved, and before the archive and the observation that
+close the receipt. It restores the three refs the next mint reads
+(`mint-shu71-package.mjs`, `repositoryFacts`): the branch on the remote, the
+branch in the checkout, and the checkout's remote-tracking ref.
+
+Each ref is MEASURED first — one `ls-remote` and two `for-each-ref` — and the
+measurement is durable: `BRANCH_RESTORE_MEASURED` carries the branch and all
+three observed values, so a refusal says which value it found. A ref is then
+moved only when it holds EXACTLY `expected_seed_head`, the value this run
+published, back to EXACTLY `expected_parent`, the retained parent:
+
+* a ref already at the retained parent is a no-op — nothing was published, or
+  the restoration already happened — and claims nothing;
+* any other value is someone else's write and REFUSES under
+  `ACT_TEARDOWN_BRANCH_FOREIGN`, which the step reports as
+  `ACT_TEARDOWN_RESTORE_BRANCH` plus that cause, never as a clean receipt;
+* the remote update carries `--force-with-lease=<ref>:<published>` and the
+  local updates are `update-ref <ref> <parent> <published>`, so even a foreign
+  write that lands between the measurement and the command is refused by git
+  itself rather than clobbered;
+* the remote-tracking ref is the one ref here this run never creates: where the
+  checkout has no such ref at all there is nothing of ours to move and nothing
+  is invented, while a tracking ref holding a third value refuses like the
+  other two.
+
+`local-reseed` is the first step that can move any of these refs, so its durable
+INTENT row is what proves this episode may have published something. Without it
+— a pre-arm refusal, a revoke of a window that never ran — nothing is measured,
+no remote is contacted and no credential is read, exactly as the fixture-card
+restores are gated on their own `ready-<id>` intent. A recovered log proves
+nothing about non-creation and always measures, fail-closed.
+
+#### What did NOT change
+
+The mint's `MINT_LINEAGE` refusal on an unexplained branch advance is CORRECT
+behaviour and is untouched: a branch this teardown refuses to restore still
+stops the next window, which is the point. No mutation's acceptance is widened
+and no mutation is retried: each restoration is issued at most once per
+invocation (`ACT_TEARDOWN_BRANCH_REATTEMPT` if anything asks twice, including
+the independent safety re-attempt `teardownActivation` makes for every failed
+step), a refused restore stays refused, and a push that reports failure is
+recovered by a RE-READ that accepts only the one value meaning the mutation
+already happened — the same discipline `remote-push` already uses. The existing
+teardown step codes, the closed refusal vocabulary and the reviewed append
+inventory are unchanged except by addition.
+
+#### The five new refusal codes, each an addition rather than a change
+
+| Code | Condition |
+| --- | --- |
+| `ACT_TEARDOWN_RESTORE_BRANCH` | derived by `teardownActivation` from the new step's name, like every other step code |
+| `ACT_TEARDOWN_BRANCH_FOREIGN` | a measured ref holds neither this run's published head nor the retained parent |
+| `ACT_TEARDOWN_BRANCH_REATTEMPT` | a restoration mutation was already issued in this invocation |
+| `ACT_TEARDOWN_BRANCH_REMOTE` / `_LOCAL` / `_TRACKING` | the post-condition: the ref did not end at the retained parent |
+
+#### The successor model this correction corrects with it
+
+`B1_CROSS_TEARDOWN` built each successor package with
+`expected_parent = <predecessor's expected_seed_head>`, which only made sense
+while the reseed was left behind on the branch. The mint binds `expected_parent`
+to the fixed retained parent and refuses `MINT_LINEAGE` for anything else, so
+the successor now differs from its predecessor only in `expected_seed_head` —
+which is what the fixture models, and what the restored branch makes possible.
+
+#### Fixture fidelity this round required
+
+`shu71-production-fixture.mjs` modelled the lane as two values and hard-coded
+the push's result. It now models the three refs independently — branch, local
+branch, remote-tracking ref — and applies git's own rules rather than a fixed
+string match: `--force-with-lease` lands only while the remote still holds the
+leased value and EXITS NON-ZERO otherwise, an unleased push lands when it is
+forced or when it fast-forwards, `update-ref` with an expected old value is a
+compare-and-set that exits non-zero on anything else and without one is an
+unconditional write, and a push moves the ref to the sha its REFSPEC names. A
+model that derives one ref from another, or that accepts any push that carries
+a lease-shaped argument, cannot represent either the published state or a
+foreign write — and cannot tell a leased restoration from an unleased one, so
+three of this round's mutants would have survived it.
