@@ -24,6 +24,7 @@
     ".github/coordinator/service/test/residual.test.mjs",
     ".github/coordinator/service/test/service-plane.test.mjs",
     ".github/coordinator/service/test/service.test.mjs",
+    ".github/coordinator/service/test/shu71-arming-order.test.mjs",
     ".github/coordinator/service/test/shu71-composition.test.mjs",
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
@@ -3502,7 +3503,22 @@
     "B4 mutation: the invocation element is read from the environment, not the argument",
     "B4 mutation: the invocation value is split across argv elements",
     "B4 mutation: the parent environment is carried through the kernel lock",
-    "B4 mutation: the kernel lock no longer wipes the environment"
+    "B4 mutation: the kernel lock no longer wipes the environment",
+    "B1/B4 arming order: canonical mint key order arms the window",
+    "B1/B4 arming order: construction key order still arms the window",
+    "B1/B4 arming order: both fixtures reach the reviewed ready state",
+    "B1/B4 arming order: post-update ready read-back accepts a field-equal card",
+    "B1/B4 arming order: restore read-back accepts a field-equal card",
+    "B1/B4 arming order: a card already at its target is not rewritten",
+    "B1/B4 arming order: a genuinely drifted assignee still refuses before arming",
+    "B1/B4 arming order: a card that drifts in state before its transition still refuses",
+    "B1/B4 arming-order mutation: arming binding prior-state comparison reverted to serialization equality",
+    "B1/B4 arming-order mutation: transition prior-state comparison reverted to serialization equality",
+    "B1/B4 arming-order mutation: post-update target comparison reverted to serialization equality",
+    "B1/B4 arming-order mutation: already-at-target early return reverted to serialization equality",
+    "B1/B4 arming-order mutation: field comparison accepts any pair of cards",
+    "B1/B4 arming-order mutation: field comparison stops reading assignee_id",
+    "B1/B4 arming-order mutation: field comparison stops reading state_id"
   ],
   "requirements": [
     {
@@ -27258,6 +27274,66 @@
           "name": "shell_toolchain"
         }
       ]
+    },
+    {
+      "name": "B1/B4 arming order: canonical mint key order arms the window",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: construction key order still arms the window",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: both fixtures reach the reviewed ready state",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: post-update ready read-back accepts a field-equal card",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: restore read-back accepts a field-equal card",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: a card already at its target is not rewritten",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: a genuinely drifted assignee still refuses before arming",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming order: a card that drifts in state before its transition still refuses",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: arming binding prior-state comparison reverted to serialization equality",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: transition prior-state comparison reverted to serialization equality",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: post-update target comparison reverted to serialization equality",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: already-at-target early return reverted to serialization equality",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: field comparison accepts any pair of cards",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: field comparison stops reading assignee_id",
+      "capabilities": []
+    },
+    {
+      "name": "B1/B4 arming-order mutation: field comparison stops reading state_id",
+      "capabilities": []
     }
   ],
   "runtime_artifacts": [

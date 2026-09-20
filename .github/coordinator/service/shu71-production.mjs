@@ -34,6 +34,19 @@ export const shu71Boundary = Object.freeze({ fs, uid: () => process.getuid(), no
 // first: anything but a measured true is the refusal the caller named.
 export const measuredPredicate = predicate => { try { return predicate() === true; } catch { return false; } };
 
+// A fixture card is MEASURED off Linear as { state_id, assignee_id }, while the
+// approved artifact is canonicalized - keys SORTED - before the owner signs it,
+// so the identical card deserializes as { assignee_id, state_id }. Serialization
+// equality compares the rendering, not the card, so on a real host it can never
+// match and the window cannot arm at all. Compare the named FIELDS. Both sides
+// are already closed to exactly these two keys (issue() constructs them;
+// validateShu71Package's exactObject holds the artifact to them), and that
+// closure is required here too so nothing but key ORDER is newly accepted.
+export const FIXTURE_CARD_FIELDS = Object.freeze(['assignee_id', 'state_id']);
+export const sameFixtureCard = (a, b) => [a, b].every(card => card !== null && typeof card === 'object' && !Array.isArray(card)
+  && Object.keys(card).length === FIXTURE_CARD_FIELDS.length && FIXTURE_CARD_FIELDS.every(field => Object.hasOwn(card, field)))
+  && FIXTURE_CARD_FIELDS.every(field => a[field] === b[field]);
+
 export function createShu71Production(id, b = shu71Boundary) {
   need(/^[A-Za-z0-9_-]{8,64}$/.test(id) && id !== 'shu71abproof0007', 'ACT_ID_OR_EXPIRY_INVALID');
   need(b.uid() === 0, 'ACT_PROCESS_IDENTITY');
@@ -151,11 +164,11 @@ export function createShu71Production(id, b = shu71Boundary) {
   }
   async function transition(t, target, restoring = false) {
     const current = await issue(t);
-    if (JSON.stringify(current) === JSON.stringify(target)) return;
-    need(restoring || JSON.stringify(current) === JSON.stringify(t.before), 'ACT_PRIOR_STATE_DRIFT');
+    if (sameFixtureCard(current, target)) return;
+    need(restoring || sameFixtureCard(current, t.before), 'ACT_PRIOR_STATE_DRIFT');
     const result = await linear('mutation Shu71Fixture($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }',
       { id: t.linear_id, input: { stateId: target.state_id, assigneeId: target.assignee_id } });
-    need(result.issueUpdate?.success === true && JSON.stringify(await issue(t)) === JSON.stringify(target), 'ACT_PARTIAL_ARMING');
+    need(result.issueUpdate?.success === true && sameFixtureCard(await issue(t), target), 'ACT_PARTIAL_ARMING');
   }
   function git(spec, args, options = {}) {
     // Git runs as the checkout identity, never as root with a safe.directory bypass.
@@ -303,7 +316,7 @@ export function createShu71Production(id, b = shu71Boundary) {
       }, repeat);
       await step('binding', async () => {
         await heads(spec);
-        for (const t of spec.pkg.issue_transitions) need(JSON.stringify(await issue(t)) === JSON.stringify(t.before), 'ACT_PRIOR_STATE_DRIFT');
+        for (const t of spec.pkg.issue_transitions) need(sameFixtureCard(await issue(t), t.before), 'ACT_PRIOR_STATE_DRIFT');
       });
       await step('sign', async () => {
         // If completion is ambiguous, never consume the key again. A durable
