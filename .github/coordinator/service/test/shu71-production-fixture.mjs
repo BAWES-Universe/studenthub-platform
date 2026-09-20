@@ -98,7 +98,14 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
   write('/usr/local/lib/shu71/coordinator/service/shu71-production.mjs', 'reviewed artifact', 0o644);
   write('/etc/shu/supervisor.env', secretText());
   write('/srv/shu/coordinator.env', coordinatorText(), 0o600, 999);
-  let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local;
+  // The SHU-140 lane's lineage is THREE refs, and the mint reads all three:
+  // the branch on the remote, the branch in this checkout, and the checkout's
+  // remote-tracking cache of it. They are modelled as independent per-ref
+  // state - a model that derives one from another cannot represent a run that
+  // published to the remote and left the local refs behind, nor a foreign
+  // write to exactly one of them. `null` models a ref that does not resolve.
+  const LANE_BRANCH = `refs/heads/${pkg.reseed.branch}`, LANE_TRACKING = `refs/remotes/origin/${pkg.reseed.branch}`;
+  let now = +h.context.now, local = pkg.reseed.expected_parent, remote = local, tracking = local;
   let signatures = 0;
   const active = new Map(), enabled = new Set(), started = new Set(), loaded = new Set();
   const systemd = { killRequiresProcesses: false, unitFileViewCached: false, subStates: new Map() };
@@ -238,12 +245,21 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
         if (exe !== '/usr/bin/setpriv') throw new Error('unexpected command');
         const args = argv.slice(argv.indexOf('-C') + 2), [verb, ...rest] = args;
         const ref = rest.at(-1);
+        // A local ref resolves to its own value, and a ref that does not exist
+        // resolves to nothing at all - which `for-each-ref` reports as an empty
+        // answer with a zero exit status rather than as a failed command.
+        const localRef = name => name === LANE_BRANCH ? local
+          : name === LANE_TRACKING ? tracking
+          : name === 'refs/heads/coordinator/SHU-254' ? pkg.fixtures[1].seed_head : undefined;
         if (verb === 'rev-parse') {
           if (ref === '--show-object-format') output = 'sha1\n';
           else if (ref === 'HEAD^{tree}') output = `${spec.tree}\n`;
           else if (ref === 'refs/heads/coordinator/SHU-140') output = `${local}\n`;
           else if (ref === 'refs/heads/coordinator/SHU-254') output = `${pkg.fixtures[1].seed_head}\n`;
           else output = `${pkg.coordinator_revision}\n`;
+        } else if (verb === 'for-each-ref') {
+          if (localRef(ref) === undefined) throw new Error(`unexpected git for-each-ref ${ref}`);
+          output = `${localRef(ref) ?? ''}\n`;
         } else if (verb === 'ls-remote') {
           const sha = ref.endsWith('SHU-140') ? remote : ref.endsWith('SHU-254') ? pkg.fixtures[1].seed_head : pkg.coordinator_revision;
           output = `${sha}\t${ref}\n`;
@@ -253,10 +269,33 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
         else if (verb === 'ls-tree' && rest.includes('.github/coordinator')) output = `100644 blob ${'e'.repeat(40)}\t.github/coordinator/service/shu71-production.mjs\0`;
         else if (verb === 'ls-tree') output = Object.entries(SEALED_SEED_BLOBS).map(([name, sha]) => `100644 blob ${sha}\t${name}\0`).join('');
         else if (verb === 'update-ref') {
-          if (rest[2] !== local) throw new Error('old mismatch'); local = rest[1];
+          // update-ref is the ref lock's own compare-and-set, and it addresses
+          // the ref it is GIVEN: the branch and the remote-tracking ref are two
+          // refs, never one value.
+          const [name, value, expect] = rest;
+          const current = localRef(name);
+          if (current === undefined) throw new Error(`unexpected git update-ref ${name}`);
+          // With an expected old value this is git's compare-and-set and it
+          // EXITS NON-ZERO when the ref holds anything else; without one it is
+          // an unconditional write. Modelling both is what lets a control tell
+          // a leased restoration from an unconditional one.
+          if (expect !== undefined && expect !== current) { output = null; return; }
+          if (name === LANE_BRANCH) local = value; else tracking = value;
         } else if (verb === 'push') {
-          if (!rest.includes(`--force-with-lease=refs/heads/coordinator/SHU-140:${remote}`)) throw new Error('lease absent');
-          remote = pkg.reseed.expected_seed_head;
+          // The ref ends at the sha the REFSPEC names - which is what makes a
+          // restoring push back to the retained parent representable at all -
+          // and whether the update is allowed is git's own rule, not a fixed
+          // string match: --force-with-lease lands only while the remote still
+          // holds the leased value and is refused otherwise; an unleased push
+          // lands when it is forced or when it fast-forwards, which in this
+          // lane is only the retained parent to the published seed head.
+          const [value, name] = rest.at(-1).split(':');
+          if (name !== LANE_BRANCH) throw new Error(`unexpected git push ${name}`);
+          const lease = rest.find(a => a.startsWith('--force-with-lease='));
+          const forced = rest.includes('--force') || rest.includes('-f') || rest.at(-1).startsWith('+');
+          const fastForward = remote === pkg.reseed.expected_parent && value === pkg.reseed.expected_seed_head;
+          if (lease === undefined ? !(forced || fastForward) : lease !== `--force-with-lease=${name}:${remote}`) { output = null; return; }
+          remote = value;
         } else if (!['status', 'check-ref-format', 'merge-base'].includes(verb)) throw new Error(`unexpected git ${verb}`);
       });
       return { status: output === null ? 1 : 0, stdout: output };
@@ -281,6 +320,11 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
     },
   };
   return { ...h, spec, id, root, identity, owners, boundary, events, faults, active, enabled, started, loaded, wants, systemd, write, signatures: () => signatures,
+    // The lane's three refs, readable and writable by a control so it can
+    // construct a published, a restored and a foreign state exactly.
+    refs: { get local() { return local; }, set local(v) { local = v; },
+      get remote() { return remote; }, set remote(v) { remote = v; },
+      get tracking() { return tracking; }, set tracking(v) { tracking = v; } },
     unitInvocations: invocations, selfInvocation,
     expire: () => { now = Date.parse(pkg.expires_at); },
     journal: () => fs.readFileSync(resolve(`${pkg.cleanup.evidence_dir}/${id}/journal.jsonl`), 'utf8').trim().split('\n').map(JSON.parse),

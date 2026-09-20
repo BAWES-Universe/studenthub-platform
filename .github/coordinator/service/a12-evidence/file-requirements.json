@@ -244,6 +244,14 @@
     ]
   },
   {
+    "file": ".github/coordinator/service/test/shu71-branch-restore.test.mjs",
+    "capabilities": [],
+    "justification": "productionFixture injects command/API boundaries; mutants imported in-process and exercised using disposable Node filesystem/crypto boundaries",
+    "call_sites": [
+      ".github/coordinator/service/test/shu71-branch-restore-checks.mjs"
+    ]
+  },
+  {
     "file": ".github/coordinator/service/test/shu71-composition.test.mjs",
     "capabilities": [],
     "justification": "productionFixture injects commands and fetch; episode harness injects revision, workspace and launch boundaries",

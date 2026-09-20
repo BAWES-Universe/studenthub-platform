@@ -37,6 +37,7 @@ export const appendSites = {
     "{ event: 'ARMED', authorization_expires_at: pkg.expires_at, teardown_complete: false }",
     "{ event: 'HALTED', code, ...named, ...detail }", "{ event: 'EXPIRY_RETIREMENT_STARTED' }",
     "{ event: 'FIXTURE_REMOVE_INTENT', attempt_id: record.attempt_id, dev: st.dev, ino: st.ino, uid: st.uid }",
+    "{ event: 'BRANCH_RESTORE_MEASURED', branch, ...measured }",
     "{ event: 'AUTOMATIC_TEARDOWN_RESERVED', attempts: attempts + 1 }", "{ event: 'SETTLEMENT_STARTED' }",
   ],
   'shu71-journal.mjs': ["{ event: 'INTENT', step }", "{ event: 'DONE', step }",

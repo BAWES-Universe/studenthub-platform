@@ -26,6 +26,7 @@
     ".github/coordinator/service/test/service.test.mjs",
     ".github/coordinator/service/test/shu71-arming-order.test.mjs",
     ".github/coordinator/service/test/shu71-arming-robustness.test.mjs",
+    ".github/coordinator/service/test/shu71-branch-restore.test.mjs",
     ".github/coordinator/service/test/shu71-composition.test.mjs",
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
@@ -1770,6 +1771,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: INTENT real payload intact",
@@ -1783,6 +1785,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: HALTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: INTENT real payload recovered",
@@ -3634,6 +3637,34 @@
     "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
     "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
     "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+    "B7 published-branch restore: a halt after the remote push restores the branch it published",
+    "B7 published-branch restore: a completed run restores the branch on the ordinary revoke path",
+    "B7 published-branch restore: a fetched remote-tracking ref is restored too",
+    "B7 published-branch restore: a teardown that runs twice is a clean no-op",
+    "B7 published-branch restore: a window that never reached the reseed measures and claims nothing",
+    "B7 published-branch restore: a local reseed that was never pushed restores the local ref only",
+    "B7 published-branch restore: a landed push that reported failure is re-read, never pushed again",
+    "B7 published-branch restore: a restoration that cannot complete is a named teardown failure",
+    "B7 published-branch restore: a remote moved between the measurement and the push is never clobbered",
+    "B7 published-branch restore: a local branch moved between the measurement and the update is never clobbered",
+    "B7 published-branch restore: a foreign remote head is refused by name and never overwritten",
+    "B7 published-branch restore: a foreign local head is refused by name and never overwritten",
+    "B7 published-branch restore: a foreign tracking head is refused by name and never overwritten",
+    "B7 published-branch restore mutation: the restoration is removed entirely",
+    "B7 published-branch restore mutation: the restoration returns before measuring anything",
+    "B7 published-branch restore mutation: the remote is never restored",
+    "B7 published-branch restore mutation: the local branch is never restored",
+    "B7 published-branch restore mutation: the remote-tracking ref is never restored",
+    "B7 published-branch restore mutation: the current-head check is dropped",
+    "B7 published-branch restore mutation: a descendant is accepted as licence to restore",
+    "B7 published-branch restore mutation: a foreign head is restored anyway, leased to whatever it holds",
+    "B7 published-branch restore mutation: a foreign local head is restored anyway",
+    "B7 published-branch restore mutation: the local update drops its expected old value",
+    "B7 published-branch restore mutation: the remote update uses an unleased force",
+    "B7 published-branch restore mutation: a failed restoration is swallowed",
+    "B7 published-branch restore mutation: the once-only rule is dropped and the mutation is re-attempted",
+    "B7 published-branch restore mutation: a push that reported failure is pushed again",
+    "B7 published-branch restore mutation: the intent gate is removed and a never-published window is measured",
     "PROVIDER remote main tolerates one transient read on either leg",
     "PROVIDER remote main still refuses a persistent read failure and a moved main",
     "PROVIDER a failed provider command names its executable, argv and status",
@@ -15012,6 +15043,14 @@
       ]
     },
     {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
       "capabilities": [
         {
@@ -15109,6 +15148,14 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload recovered",
       "capabilities": [
         {
           "name": "git"
@@ -27918,6 +27965,118 @@
     },
     {
       "name": "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a halt after the remote push restores the branch it published",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a completed run restores the branch on the ordinary revoke path",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a fetched remote-tracking ref is restored too",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a teardown that runs twice is a clean no-op",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a window that never reached the reseed measures and claims nothing",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a local reseed that was never pushed restores the local ref only",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a landed push that reported failure is re-read, never pushed again",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a restoration that cannot complete is a named teardown failure",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a remote moved between the measurement and the push is never clobbered",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a local branch moved between the measurement and the update is never clobbered",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a foreign remote head is refused by name and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a foreign local head is refused by name and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore: a foreign tracking head is refused by name and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the restoration is removed entirely",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the restoration returns before measuring anything",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the remote is never restored",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the local branch is never restored",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the remote-tracking ref is never restored",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the current-head check is dropped",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: a descendant is accepted as licence to restore",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: a foreign head is restored anyway, leased to whatever it holds",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: a foreign local head is restored anyway",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the local update drops its expected old value",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the remote update uses an unleased force",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: a failed restoration is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the once-only rule is dropped and the mutation is re-attempted",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: a push that reported failure is pushed again",
+      "capabilities": []
+    },
+    {
+      "name": "B7 published-branch restore mutation: the intent gate is removed and a never-published window is measured",
       "capabilities": []
     },
     {

@@ -81,9 +81,24 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // companion's ActiveState once, and both the post-condition and the final
 // retired measurement now read the companion's ActiveState and UnitFileState
 // as well as the timer's.
+// SHU-279 adds the published-branch restoration, and it is NOT uniform: what it
+// costs is exactly what the journal in front of it permits it to do.
+// +2 wherever the intent gate skips it (an absent or forged journal cannot
+// prove this episode reached `local-reseed`): the step's own INTENT and DONE
+// rows and nothing else - no command, no remote, no credential.
+// +6 where it measures and finds nothing to move (the settlement-ready states,
+// whose 32 earlier wakes already restored the refs, reached through a journal
+// that no longer carries the DONE row): those two rows, the durable
+// measurement row, and the three reads that took it - one ls-remote and two
+// for-each-ref.
+// +10 where it measures a published branch and restores it: those six, plus
+// the leased push and its read-back and the local update-ref and its
+// read-back. The settlement-ready `intact` state is unchanged at 53 because
+// its retained journal still carries the step's DONE row, so the step is
+// skipped entirely.
 const cleanupEffects = {
-  armed: { absent: 79, intact: 84, truncated: 85, recovered: 84, 'FORGED-ordered': 78, 'FORGED-partial': 78 },
-  'settlement-ready': { absent: 79, intact: 53, truncated: 81, recovered: 80, 'FORGED-ordered': 78, 'FORGED-partial': 78 },
+  armed: { absent: 81, intact: 94, truncated: 95, recovered: 94, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
+  'settlement-ready': { absent: 81, intact: 53, truncated: 87, recovered: 86, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);

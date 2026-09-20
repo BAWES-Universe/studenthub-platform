@@ -179,7 +179,10 @@ test('B1_SINGLE_LANE: production credential drives coordinator build BLOCK revis
   // +5 more for the COMPANION unit, which nothing measured before: the live
   // companion refusal, and the companion's liveness and enablement in both the
   // post-condition and the final retired measurement.
-  assert.equal(effects(c.p, cleanupStart), 80, 'B1_RESUME_EFFECT_COUNT');
+  // +10 for the SHU-279 published-branch restoration: the step's INTENT and
+  // DONE rows, its durable measurement row, the three reads that took it, and
+  // the leased push and the local update-ref with a read-back each.
+  assert.equal(effects(c.p, cleanupStart), 90, 'B1_RESUME_EFFECT_COUNT');
   assert.deepEqual(shared(c.p), [gates.map(() => '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'), null, null].flat(), 'B1_RETIRED_STATE_TABLE');
   assert.equal(c.p.journal().filter(e => e.event === 'TEARDOWN_COMPLETE').length, 1, 'B1_ONE_COMPLETION_RECORD');
   const repeatStart = c.p.events.length;
@@ -211,7 +214,8 @@ test('B1_TWO_LANES: B completes while A revision remains running, then A complet
   c.p.expire();
   const cleanupStart = c.p.events.length;
   assert.equal((await c.execute('expire')).state, 'REVOKED', 'B1_EXPIRED_TEARDOWN');
-  assert.equal(effects(c.p, cleanupStart), 84, 'B1_EXPIRY_EFFECT_COUNT');
+  // +10, as above: the expiry path restores the published branch too.
+  assert.equal(effects(c.p, cleanupStart), 94, 'B1_EXPIRY_EFFECT_COUNT');
   assert.deepEqual(gates.map(g => c.p.read(g)), gates.map(() => '[Service]\nEnvironment=ENABLE_DISPATCH=false\n'), 'B1_EXPIRED_GATES');
   assert.equal(c.p.journal().filter(e => e.event === 'TEARDOWN_COMPLETE').length, 1, 'B1_EXPIRED_ONE_COMPLETION');
   assert.equal(c.p.exists(credential), false, 'B1_EXPIRED_CREDENTIAL_REVOKED');
@@ -227,7 +231,12 @@ test('B1_CROSS_TEARDOWN: retired A wake protects B, retired B wake protects next
   let current = p.id;
   for (const [direction, next, seed] of [['A_TO_B', 'shu71-successor-B', '5'], ['B_TO_A', 'shu71-successor-A', '6']]) {
     const pkg = p.spec.pkg;
-    pkg.reseed.expected_parent = pkg.reseed.expected_seed_head;
+    // A SUCCESSOR'S PARENT IS THE RETAINED PARENT, NOT ITS PREDECESSOR'S SEED
+    // HEAD. The mint binds `expected_parent` to the fixed retained parent and
+    // refuses MINT_LINEAGE for anything else (mint-shu71-package.mjs), because
+    // the reseed is performed BY each arming and put back by its teardown
+    // rather than left behind for the next window to build on. Only the seed
+    // head differs between episodes.
     pkg.reseed.expected_seed_head = seed.repeat(40);
     Object.assign(p.spec.binding, pkg.reseed);
     pkg.fixtures[0].seed_head = pkg.reseed.expected_seed_head;
