@@ -163,6 +163,19 @@ test('SHU251_REMOTE_INVENTORY refuses a 2xx that carried no branch head as a fai
   assert.equal(raced.outcome.ok, true, `SHU251_INVENTORY_VALUELESS_RETRIED raced ${raced.outcome.halt?.message}`);
   assert.equal(raced.seen.length, 2, 'SHU251_INVENTORY_VALUELESS_RETRIED raced');
   assert.deepEqual(raced.waits, [INVENTORY_READ.delaysMs[0]], 'SHU251_INVENTORY_VALUELESS_RETRIED raced');
+  // The transient non-2xx, at the DISPATCH and not only at the predicate: read
+  // to the bound on the enumerated waits, then named as the failed measurement
+  // it is, carrying the same closed token as every other failure to measure.
+  for (const status of [503, 429]) {
+    const { outcome, seen, waits } = await inventory([{ ok: false, status, sha: null }]);
+    assert.ok(named('remote_inventory')(outcome.halt), `SHU251_INVENTORY_READ_FAILURE_NAMED ${status}`);
+    assert.match(outcome.halt.message, /could not be read/, `SHU251_INVENTORY_READ_FAILURE_NAMED ${status}`);
+    assert.doesNotMatch(outcome.halt.message, /moved/, `SHU251_INVENTORY_READ_FAILURE_NAMED ${status}`);
+    assert.equal(outcome.halt.details.measurement, 'unanswered', `SHU251_INVENTORY_READ_FAILURE_NAMED ${status}`);
+    assert.equal(outcome.halt.details.status, status, `SHU251_INVENTORY_READ_FAILURE_NAMED ${status}`);
+    assert.equal(seen.length, INVENTORY_READ.attempts, `SHU251_INVENTORY_TRANSIENT_RETRIED ${status}`);
+    assert.deepEqual(waits, [...INVENTORY_READ.delaysMs], `SHU251_INVENTORY_TRANSIENT_RETRIED ${status}`);
+  }
   // A HELD measurement still speaks for the remote, however bad its answer is.
   // A head that disagrees and a head that is a well-formed nonsense sha are both
   // answers: one read, no retry, and the inventory's own refusal by its own name.
