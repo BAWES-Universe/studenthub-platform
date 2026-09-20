@@ -3828,3 +3828,410 @@ thirty-four of `shu71-postpush-readback.test.mjs`'s tests — the thirteen
 controls and the twenty-one mutants — were present in the outcome stream of all
 four runs above, focused and full alike, and each mutation test emitted its
 `killed by B5_…` diagnostic.
+
+### Ninth correction round: the rest of the class the post-push read-back belonged to
+
+Repository-only. No target host was contacted, no network call was made, and no
+`git push` or `gh` command was run. Written against the revision it was measured
+on: `a3030ad6`, tree `98bf16f6`.
+
+#### The input, and what it was not allowed to do
+
+An independent read-only audit of the arming and lifecycle path ranked 42
+findings, 22 of them BLOCKING, and froze every citation at `b4aedf2a` — the
+revision this branch is based on. Every site was re-read against the CURRENT
+file before it was changed, because the previous round had already moved lines
+and already closed some of the records.
+
+**Already closed by the previous round, and not re-opened here.** `A-03` (the
+shared API choke point resolving every status class identically) is closed by
+`githubRead`, `RETRYABLE_READ_STATUS` and `retryableApiFailure`: 400, 401, 403,
+410 and 422 are excluded by construction and the policy is applied per route and
+per verb. `B-02` (`ACT_API_FAILED` carrying no route, status, reason or
+operation, and `linear()` discarding `result.errors`) is closed by
+`apiFailureDetail`, `describeApiFailure`, `graphqlErrorCodes` and
+`linearOperation` — the audit's note that "the Linear route at `:158` is
+unrepaired" was written against the frozen revision and is not true of the
+current one, which reports `linear:query:Shu71Fixture` / `linear:mutation:Shu71Fixture`
+with `reason: 'graphql_errors'` and the error CODES. The known example at
+`:217`/`:225`/`:363` is closed. **`A-08` is NOT closed by the previous round**,
+and the audit's own table marks it NON-BLOCKING: its three gaps are about the
+BROKER-RUNTIME loop, which that round did not touch. It is deferred again below,
+with its reason.
+
+#### What this round closed, record by record
+
+| Record | Outcome | Control (and mutant) |
+| --- | --- | --- |
+| **B-11** a transient `systemctl show` reported as a live-companion state claim | CLOSED | `a failed measurement is not a state claim about the host` + `a transient unit read is retried and the teardown completes`; still-refuses: `a genuinely live expiry companion still refuses by its own name`. Mutant `a failed measurement is reported as the state the caller named` → `B6_MEASUREMENT_NOT_A_STATE_CLAIM`; `the host-command read retry is removed` → `B6_TRANSIENT_MEASUREMENT_RETRIED` |
+| **A-11** a transient read reported as "inventory incomplete or moved" | CLOSED | `SHU251_REMOTE_INVENTORY distinguishes a failed read from a moved inventory` + `… measures the branch read without changing fetchBranchHead`. Mutants → `SHU251_INVENTORY_READ_FAILURE_NAMED`, `SHU251_INVENTORY_TRANSIENT_RETRIED`, `SHU251_INVENTORY_DEFINITIVE_TERMINAL`, `SHU251_BRANCH_READ_MEASURED` |
+| **C-01** `ARMED` claimed from an exit status, and a resume that skipped the restart | CLOSED | `a supervisor that did not come up refuses instead of arming` × 3 (`inactive`, `substate`, `timer`) + `the gate step stops repeating on a resume`. Mutants → `B6_GATE_LIVENESS_MEASURED_*` × 3, `B6_GATE_RESUME_REMEASURES` |
+| **C-02** the expiry mechanism installed with no read-back | CLOSED | `the expiry installation is measured, not assumed` × 3 (`inactive`, `disabled`, `unitfile`). Mutants → `B6_EXPIRY_INSTALLATION_MEASURED_*` × 3 |
+| **A-01** the Linear `issue()` READ never retried | CLOSED | `a transient Linear fixture-card read is retried and the window arms` + `a persistently failing Linear read still refuses under the same name`; still-refuses: `a genuinely drifted fixture card…`, `a genuinely wrong fixture…`. Mutants → `B6_WINDOW_ARMS`, `B6_LINEAR_MUTATION_STILL_UNRETRIED` |
+| **A-02** `git ls-remote` at three sites, never retried, naming nothing | CLOSED | `a transient ls-remote failure is retried and the window arms` + `a persistently failing ls-remote names the command it ran`; still-refuses: `a genuinely wrong remote sha refuses and names the leg`. Mutants → `B6_WINDOW_ARMS` × 2, `B6_COMMAND_RETRY_BUDGET_BOUNDED` |
+| **A-04** the post-update Linear read-back racing a write we just made | CLOSED | `a stale read-back of a landed card transition is re-read, not refused`; still-refuses: `a card read-back that never reaches the target still refuses` × 2 (`never`, `elsewhere`). Mutants → `B6_WINDOW_ARMS`, `B6_CARD_READBACK_REFUSES_*` × 2 |
+| **A-05** every host process final on its first failure | CLOSED | the ls-remote and measurement controls above, plus `the host-read sleep budget is bounded across the whole invocation`, `a boundary that throws is never retried and echoes no text`, `a systemctl mutation is attempted exactly once` × 3, `only an enumerated host read may be repeated`. Mutants → `B6_COMMAND_RETRY_BUDGET_BOUNDED`, `B6_BOUNDARY_THROW_NOT_RETRIED`, `B6_WINDOW_ARMS` × 2 |
+| **A-10** Phase-A `remoteMain()`'s two reads under one guard, unretried | CLOSED | `PROVIDER remote main tolerates one transient read on either leg` + `PROVIDER remote main still refuses a persistent read failure and a moved main`. Mutants → `PROVIDER_REMOTE_READ_RETRIED_*`, `PROVIDER_REMOTE_READ_BOUNDED`, `PROVIDER_REMOTE_MISMATCH_NAMED_*` |
+| **A-06 / C-04** an ambiguous push with no re-read-and-accept recovery | CLOSED | `a landed push that reported failure is re-read, not re-pushed`; still-refuses: `a push that did not land still refuses` × 2 (`old`, `third`). Mutants → `B6_PUSH_FAILURE_REFUSED_*` × 2 |
+| **A-07** the credential store re-read on every call | CLOSED | `the credential store is opened at most once per invocation` + `an absent coordinator credential refuses under its own name`. Mutant → `B6_CREDENTIAL_RESOLVED_ONCE` |
+| **B-01** pre-arm refusals outside the try/catch, printed as one fixed string | CLOSED | `a pre-arm refusal names itself and orders no effect` × 3 (`approval`, `custody`, `action`) + `the CLI names the refusal it caught`. Mutant → `B6_PRE_ARM_RETURNS_A_HALT_*` |
+| **B-03** `ACT_COMMAND_FAILED` naming no executable, argv, status or stderr | CLOSED | `a persistently failing ls-remote names the command it ran` + `the reported command detail is closed to the reviewed fields`. Mutants → `B6_COMMAND_FAILURE_NAMED` × 2 |
+| **B-04** the catch allow-list flattening real refusal names | CLOSED | `an absent coordinator credential refuses under its own name`, `a short supervisor transport secret refuses under its own name`, `only a reviewed refusal name reaches a halt record`. Mutants → `B6_ENV_REFUSAL_NAMED`, `B6_HALT_CODE_REJECTS_EVERYTHING_ELSE` |
+| **B-05** `ACT_PACKAGE_VALIDATION` discarding the validator's own code | CLOSED | `the package validator own refusal is carried into the halt`. Mutant → `B6_PACKAGE_VALIDATION_NAMED` |
+| **B-06** multi-leg conjunctions collapsed into one code | CLOSED | `the disagreeing binding leg is named` × 3 (`readback`, `local`, `clean`) + `the failing binding leg is short-circuited and named`. Mutants → `B6_BINDING_LEG_NAMED_*`, `B6_BINDING_LEG_SHORT_CIRCUIT` |
+| **B-07** `units.mjs` bare-string asserts that never throw the named refusal | CLOSED | `a short supervisor transport secret refuses under its own name` + `an absent coordinator credential refuses under its own name`. Mutants → `B6_SUPERVISOR_SECRET_REFUSAL_NAMED`, `B6_ENV_REFUSAL_NAMED` |
+| **B-08** teardown failures recording step codes only | CLOSED | `a failed teardown step names its cause as well as its step`. Mutant → `B6_TEARDOWN_CAUSE_NAMED` |
+| **B-15** the Phase-A provider's least informative refusal | CLOSED | `PROVIDER a failed provider command names its executable, argv and status`. Mutants → `PROVIDER_COMMAND_NAMED`, `PROVIDER_COMMAND_ARGV_CLOSED` |
+| **A-03** shared API choke point | ALREADY CLOSED | previous round |
+| **B-02** `ACT_API_FAILED` naming nothing | ALREADY CLOSED | previous round |
+| **B-09** (NON-BLOCKING) `budget_error` conflating every cause | CLOSED as a one-line same-class fix while in the file | both existing outcomes preserved by the same two conditions in the same order; a third reviewed cause is named |
+| **B-12 / B-13** (NON-BLOCKING) teardown post-condition flattening | PARTLY CLOSED | a read fault inside either now refuses `ACT_TEARDOWN_MEASUREMENT` rather than `ACT_TEARDOWN_DRIFT`, and a failed `kill`/`disable` carries `command_failure`. The four-term conjunction at the post-condition is untouched; no term was added or removed |
+
+That is all 22 BLOCKING records: 20 closed by this round, 2 closed by the
+previous one.
+
+#### The clause-level change at each site
+
+**`shu71-production.mjs`**
+
+* `measuredPredicate` — a throw is `measurementFailure(error)`, a named
+  `ACT_TEARDOWN_MEASUREMENT` carrying the failing command, instead of `false`.
+  One edit; all twelve call sites inherit it with no text change, which is why
+  every existing mutation anchored on them still anchors.
+* `haltCode` / `reviewedCode` / `REFUSAL_CODE_PATTERN` (the last two in
+  `shu71-journal.mjs`) — the halt's allow-list becomes
+  `/^(?:ACT|SHU251|SHU71)_[A-Z0-9_]{2,44}$/`. That shape cannot spell a token, a
+  header, a URL or message text, so admitting a name by shape closes the door
+  rather than opening it.
+* `requireLegs(legs, code)` — each leg is a NAME and a term, evaluated in order
+  and stopping at the first that is not a measured `true`. Terms may be thunks,
+  so the short-circuit of the conjunction each one replaces is preserved: a
+  disagreeing `HEAD` still means `status --porcelain` is never run.
+* `COMMAND_RETRY` / `readOnlyCommand` / `commandFailureDetail` /
+  `commandFailureRecord` — the host-read policy, its ENUMERATED membership, and
+  the closed vocabulary a failed command may report.
+* `command()` splits into `runCommand` (one measured attempt, raising the same
+  `ACT_COMMAND_FAILED` under the same condition, now carrying `{exe, argv,
+  status, signal, fault}`) and the bounded loop around it. A boundary that
+  THROWS propagates unretried and undescribed, exactly as today.
+* `credentials()` memoised per invocation, still lazy.
+* `retriedRead(operation, call)` — the single retried API loop, reached through
+  `githubRead` and `linearRead`; `linearRead` refuses unless the reviewed
+  operation name begins `query:`.
+* `transition()` — `need(success)` then a bounded re-READ accepting only the
+  target card, then the same terminal `ACT_PARTIAL_ARMING`.
+* `heads()` — three named legs for `ACT_REF_BINDING`; four thunked legs and then
+  two statements for `ACT_REVISION_BINDING`.
+* `remote-push` — the push in a `try`, and on failure one re-read of
+  `ls-remote` accepting only `${next}\t${ref}`, otherwise rethrowing the
+  ORIGINAL error.
+* the package validation — `package_code` carried through.
+* `installExpiry()` — a measured post-condition, `ACT_EXPIRY_NOT_INSTALLED`.
+* the `gate` step — two measured post-conditions, `ACT_GATE_NOT_LIVE`, and
+  `repeat = true`.
+* `execute()` — the pre-arm region gets its own handler returning a named halt
+  and ordering no effect; the covering handler's `code` becomes `haltCode(...)`
+  and its detail gains `command_failure`, `binding_leg`, `package_code` and
+  `command_read_retries`.
+* `cleanup()` — `budget_error` names a reviewed cause.
+* the CLI's outer catch — reports `haltCode(error?.code)`.
+
+**`shu71-journal.mjs`** — `REFUSAL_CODE_PATTERN`/`reviewedCode`; and
+`teardownActivation` pushes the cause code for ANY reviewed name, never
+duplicating the step's own.
+
+**`units.mjs`** — two `assert.ok(cond, '<CODE>: text')` become
+`assert.ok(cond, Object.assign(new Error('<CODE>: text'), { code: '<CODE>' }))`.
+Conditions, operands, ordering and message text byte-unchanged.
+
+**`production-lifecycle.mjs`** — `guard(code, condition, detail)`;
+`providerArguments` (closed argv, `env` never read); `REMOTE_READ` and
+`retriedRead` for `SHU251_PROVIDER_COMMAND` only; `remoteMain`'s guard split
+into two statements under the SAME code with the leg named.
+
+**`reconcile.mjs`** — `measureBranchHead` added; `fetchBranchHead` delegates to
+it and is behaviourally identical (same throw on transport, same null on
+`!ok`, same null on missing arguments, same sha).
+
+**`host-window-bindings.mjs`** — `INVENTORY_READ`, `measureBranchHeadBounded`,
+`readRemoteWork(spec, env, io)`; and a halt for a read that never answered,
+placed BEFORE the line that would otherwise call it a moved inventory.
+
+#### The three new refusal codes, and why each is an addition rather than a change
+
+`ACT_TEARDOWN_MEASUREMENT`, `ACT_GATE_NOT_LIVE` and `ACT_EXPIRY_NOT_INSTALLED`.
+The first replaces a FALSE ACCUSATION — the module used to report a read it
+never got as the state the caller named, and it is exactly as fail-closed now.
+The other two refuse where the module previously returned `ok: true, state:
+'ARMED'` over an unmeasured supervisor and an unmeasured expiry mechanism. No
+existing code was renamed, no existing condition was weakened, and no existing
+skip, timeout or deadline was touched.
+
+#### RED: the committed controls against the pre-fix revision
+
+The round's committed check functions were run against `ec44ba8`'s modules, with
+only the test files and fixtures taken from this revision. Four exports the
+control file names at link time do not exist on that revision, so inert
+stand-ins were appended for them; every control whose SUBJECT is one of those is
+recorded below rather than counted as a kill.
+
+**36 of the 44 end-to-end and closure controls FAIL on the pre-fix revision.**
+The eight that pass are recorded as passing, not presented as kills:
+
+| Passes pre-fix | Why that is correct |
+| --- | --- |
+| `a genuinely live expiry companion still refuses by its own name` | a still-refuses control: it must pass on both revisions |
+| `a genuinely drifted fixture card refuses instead of being retried` | same |
+| `a genuinely wrong fixture refuses instead of being retried` | same |
+| `a push that did not land still refuses` (`old`, `third`) | same |
+| `the Linear issueUpdate mutation is still final on its first error` | same |
+| `a boundary that throws is never retried and echoes no text` | same — pre-fix nothing is retried at all |
+| `only an enumerated host read may be repeated` | NOT APPLICABLE: it exercises the inert stand-in, because `readOnlyCommand` does not exist pre-fix |
+
+`the reported command detail is closed to the reviewed fields` and `only a
+reviewed refusal name reaches a halt record` are counted among the 36 failures;
+what they measure is that the pre-fix revision has no such sanitizer and no such
+mapping at all.
+
+For the sibling modules the mutants ARE the RED: each restores the pre-fix
+expression exactly — `guard(code, condition)` without a detail, the single
+collapsed `SHU251_CHECKOUT_REMOTE` guard, `if (!res.ok) return null`'s measured
+form, the removed inventory halt — and each dies by a named assertion.
+
+#### Mutants: 41 introduced, 41 kills, every one observed
+
+Thirty-six emitted a `killed by …` diagnostic that was read off the thrown
+error and captured from a run of the committed revision; the remaining five are
+the Phase-A provider mutants, whose harness spawns a child and itself asserts
+that the child's failure output contains the named assertion.
+
+| Mutant | Killing assertion observed |
+| --- | --- |
+| a failed measurement is reported as the state the caller named | `B6_MEASUREMENT_NOT_A_STATE_CLAIM` |
+| the host-command read retry is removed | `B6_TRANSIENT_MEASUREMENT_RETRIED` |
+| the supervisor liveness read-back is removed | `B6_GATE_LIVENESS_MEASURED_inactive` |
+| the supervisor SubState term is dropped | `B6_GATE_LIVENESS_MEASURED_substate` |
+| the dispatch timer liveness read-back is removed | `B6_GATE_LIVENESS_MEASURED_timer` |
+| the gate step stops repeating on a resume | `B6_GATE_RESUME_REMEASURES` |
+| the expiry installation read-back is removed | `B6_EXPIRY_INSTALLATION_MEASURED_inactive` |
+| the expiry enablement term is dropped | `B6_EXPIRY_INSTALLATION_MEASURED_disabled` |
+| the expiry durable-file term is dropped | `B6_EXPIRY_INSTALLATION_MEASURED_unitfile` |
+| the Linear fixture-card read goes back to the unretried door | `B6_WINDOW_ARMS` |
+| the Linear issueUpdate is routed through the retried read door | `B6_LINEAR_MUTATION_STILL_UNRETRIED` |
+| the card read-back is never re-read | `B6_WINDOW_ARMS` |
+| the card read-back re-issues the write it is reading back | `B6_CARD_READBACK_REFUSES_never` |
+| the card read-back accepts a card that is not the target | `B6_CARD_READBACK_REFUSES_elsewhere` |
+| the host-command read policy allows a single attempt | `B6_WINDOW_ARMS` |
+| the host-command backoff schedule is emptied | `B6_WINDOW_ARMS` |
+| the host-command sleep budget is not enforced | `B6_COMMAND_RETRY_BUDGET_BOUNDED` |
+| the host-command retry repeats a boundary fault as well as a command failure | `B6_BOUNDARY_THROW_NOT_RETRIED` |
+| the push recovery accepts any remote answer | `B6_PUSH_FAILURE_REFUSED_old` |
+| the push recovery accepts a third sha | `B6_PUSH_FAILURE_REFUSED_third` |
+| the credential is resolved on every call again | `B6_CREDENTIAL_RESOLVED_ONCE` |
+| the failing command is no longer described | `B6_COMMAND_FAILURE_NAMED` |
+| the halt record drops the measured command detail | `B6_COMMAND_FAILURE_NAMED` |
+| the halt code goes back to an allow-list | `B6_ENV_REFUSAL_NAMED` |
+| the pre-arm region loses its handler again | `B6_PRE_ARM_RETURNS_A_HALT_approval` |
+| the binding leg is no longer named | `B6_BINDING_LEG_NAMED_readback` |
+| the binding legs are evaluated eagerly instead of in order | `B6_BINDING_LEG_SHORT_CIRCUIT` |
+| the package validator code is dropped again | `B6_PACKAGE_VALIDATION_NAMED` |
+| the teardown records step codes without causes | `B6_TEARDOWN_CAUSE_NAMED` |
+| the supervisor secret refusal goes back to a bare string | `B6_SUPERVISOR_SECRET_REFUSAL_NAMED` |
+| the coordinator credential refusal goes back to a bare string | `B6_ENV_REFUSAL_NAMED` |
+| the reviewed refusal shape admits arbitrary text | `B6_HALT_CODE_REJECTS_EVERYTHING_ELSE` |
+| `SHU251_REMOTE_INVENTORY`: a failed read is reported as a moved inventory again | `SHU251_INVENTORY_READ_FAILURE_NAMED` |
+| `SHU251_REMOTE_INVENTORY`: the transient read is never retried | `SHU251_INVENTORY_TRANSIENT_RETRIED` |
+| `SHU251_REMOTE_INVENTORY`: a definitive absence is treated as a race | `SHU251_INVENTORY_DEFINITIVE_TERMINAL` |
+| `SHU251_REMOTE_INVENTORY`: a non-2xx answer is measured as though it answered | `SHU251_BRANCH_READ_MEASURED` |
+| `PROVIDER`: remote main read retry removed | `PROVIDER_REMOTE_READ_RETRIED_` |
+| `PROVIDER`: remote main read retry unbounded | `PROVIDER_REMOTE_READ_BOUNDED` |
+| `PROVIDER`: remote main legs collapsed into one guard | `PROVIDER_REMOTE_MISMATCH_NAMED_` |
+| `PROVIDER`: provider command names nothing again | `PROVIDER_COMMAND_NAMED` |
+| `PROVIDER`: provider argv echoed unsanitized | `PROVIDER_COMMAND_ARGV_CLOSED` |
+
+`B6_WINDOW_ARMS` is the shared assertion of `armed()`: "this window did not
+arm". Four mutants die on it, and each is named above so that no kill is
+reported as more specific than it is.
+
+#### What could NOT be closed, and why
+
+| Record | Status | Reason, and what closing it would need |
+| --- | --- | --- |
+| **B-10** lock contention is silent | DEFERRED | `flock --nonblock` exits 1 on contention, and the locked child ALSO exits 1 for an ordinary refusal it has already reported on stdout. The parent cannot tell them apart from the exit status alone, so emitting `{"ok":false,"code":"ACT_LOCK_HELD"}` on `status === 1` would double-report every ordinary halt. Closing it needs a distinguishable signal — `flock --conflict-exit-code`, or a child marker the parent reads — which is a new reviewed effect on the re-exec boundary this lane may not widen |
+| **B-14** a missing supervisor unit reported as `ACT_FILE_CUSTODY` | DEFERRED | `systemctl show` for a unit with no unit file exits **0 with empty output**, so no command failure is raised and `command_failure` does not reach the halt. Distinguishing it needs a NEW refusal code for an existing condition that currently refuses `ACT_FILE_CUSTODY`, which is a reviewed code change rather than a diagnosability one |
+| **A-08** the broker-runtime loop's three gaps | DEFERRED | (i) widening its retryable-code list is exactly the "keep the code allow-list" entry in the audit's own inverse-risk register; (ii) reporting exhaustion under a different name changes an existing refusal's code; (iii) recording the attempt count is safe but is evidence for a loop no record in the blocking set names. NON-BLOCKING in the audit's own ranking |
+| **C-03** the broker loop has no wall-clock deadline | DEFERRED | adding a deadline adds a BOUND that did not exist, and the brief holds every existing timeout and deadline fixed. NON-BLOCKING |
+| **C-04's second half** `merge-base --is-ancestor` exit 1 reported as `ACT_COMMAND_FAILED` | DEFERRED DELIBERATELY | giving it `ACT_REMOTE_ANCESTRY` would change an existing refusal's code. The diagnosability need is met instead: the halt now carries `{exe: '/usr/bin/setpriv', argv: [… 'merge-base', '--is-ancestor', old, next], status: 1}`, which identifies the site exactly |
+| **B-19** an unreachable branch that would mislabel the halt code | NOT REACHABLE | the pre-arm region got its OWN handler rather than widening the existing `try`, so `spec` is still truthy on every path reaching `:414` and the branch is unreachable exactly as before. It is left alone because an unreachable line cannot be pinned by a control |
+| **C-05 to C-09, A-09, A-12 to A-14, B-16 to B-18** | DEFERRED | all NON-BLOCKING, all outside the class this round was asked to close, and none is a one-line same-class fix in a file this round opens |
+
+#### Disclosure
+
+**Where a retry could still mask a genuine refusal.** Five places, stated as
+risks rather than as claims that they cannot happen.
+
+1. **The post-update card re-read (`A-04`) is the closest thing to a retried
+   comparison in the module.** It re-MAKES the comparison rather than softening
+   it, and it accepts only the target, so a card that is `before`, a card a
+   concurrent transition moved elsewhere, and a mutation that never landed all
+   run the loop out and refuse `ACT_PARTIAL_ARMING`. What it CAN mask is a
+   genuine `ACT_PARTIAL_ARMING` that would have fired sooner — up to four extra
+   reads and 15 s of sleep — if a concurrent writer happened to set the card to
+   the target during the loop. That outcome is indistinguishable from the
+   arming's own write having landed late, and no read can tell them apart.
+2. **The push recovery (`A-06`) accepts a step whose mutation reported
+   failure.** It accepts only on `${next}\t${ref}`, and `heads(spec, true)` on
+   the very next line re-reads that same ref from the remote AND from the GitHub
+   API and requires it to equal `next`, and the ancestry comparison follows — so
+   every condition the recovery passes over is re-measured before the step can
+   complete. The residual risk is a remote that answers `next` to `ls-remote`
+   and to the API while the push genuinely failed, which is a lying remote
+   rather than a race.
+3. **The host-command read retry is NOT gated on the authorization expiry.** It
+   is bounded absolutely instead — at most 300 ms per read and 2 s per
+   invocation — because the teardown these reads serve runs precisely BECAUSE
+   the window expired, and an expiry gate would switch the mechanism off exactly
+   where it is needed. A window can therefore be extended by at most 2 s of
+   sleep past `expires_at` by this mechanism. This differs from the API policy's
+   four bounds and is disclosed rather than hidden.
+4. **`id -u <account>` for a genuinely missing account is now attempted three
+   times** before refusing. The refusal, its code and its condition are
+   unchanged; only 300 ms of latency is added to a definitive answer.
+5. **`ACT_TEARDOWN_MEASUREMENT` is a new name for an outcome that previously
+   refused under a state-claim name.** Any consumer matching on
+   `ACT_TEARDOWN_EXPIRY_SERVICE` or `ACT_TEARDOWN_DRIFT` to detect a read fault
+   will stop matching. The step code in `failures[]` is unchanged, and the new
+   code is ADDED alongside it.
+
+**What could not be pinned.** `B-19`'s branch is unreachable and has no control.
+`B-12`/`B-13`'s four-term post-condition keeps every term and gains no new
+mutant of its own this round; the terms' existing mutants and controls are
+unchanged and still run.
+
+**Changed beyond the records themselves.**
+
+* The push recovery does NOT append a durable journal row. A
+  `REMOTE_PUSH_READ_BACK` class was written and then withdrawn: the reviewed
+  journal APPEND INVENTORY is a closed contract, and the evidence a re-read adds
+  belongs with the other read-retry evidence. It is recorded through
+  `api_read_retries` as `git:ls-remote:<branch>` instead.
+* `RUNTIME_CODES` is no longer imported by `shu71-production.mjs` — the
+  allow-list that used it is gone — so the import was removed.
+* Five `shu71-production.mjs#L<n>` documentation links are repointed at the
+  lines their targets occupy now. `V8_DOCUMENTATION_LINK_TARGETS` requires the
+  exact line and still dies on a one-line drift.
+* `B1_ARM_EFFECT_COUNT` gains exactly five, and those five are now asserted
+  individually by name in `B1_ADDITIVE_MEASURED_READBACKS`. All five are
+  `systemctl show`.
+* Two pre-arm controls in `shu71-trust*.test.mjs` and two mutation anchors
+  (`NV2`, and the arming-order post-update mutant) are reconciled in place; the
+  mutation names, their controls and their killing assertions are unchanged.
+* `readRemoteWork`, `measureBranchHeadBounded` and `INVENTORY_READ` are exported
+  from `host-window-bindings.mjs` so the A-11 controls can drive the real read
+  with an injected measurement instead of replacing the whole `readRemote`.
+* `productionFixture` models `SubState` independently of `ActiveState`, because
+  a model that derives one from the other cannot represent the state `C-01`
+  exists for — `restart` exited 0 and the supervisor is not live. The default
+  derives from `ActiveState`, so no existing control is affected.
+* `Atomics.wait` is used for the two SYNCHRONOUS backoffs (the host-command
+  retry and Phase-A's `remoteMain`). It parks the thread rather than spinning,
+  it is inside this process only, and both call sites accept a boundary
+  override, which every control uses.
+
+#### Validation
+
+All four runs are CI-like — `shu71-ci-like.sh`: uid 1000, umask 0022, the four
+target accounts absent, `/run` and `/etc/sudoers.d` fresh tmpfs — on the
+committed revision `a3030ad6`, with `chmod -R go-w .github/coordinator` applied
+first, one at a time, in the foreground.
+
+| Run | Tests | Pass | Fail | Skip | TAP plan | complete markers | Exit | Elapsed | Load before → after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Focused plain | 2,137 | 2,136 | 0 | 1 | `1..2137` | 1 / terminal | 0 | 210 s | 1.31 → 2.35 |
+| Focused clock | 2,137 | 2,136 | 0 | 1 | `1..2137` | 1 / terminal | 0 | 211 s | 1.58 → 2.65 |
+| Full plain | 3,528 | 3,520 | 0 | 8 | `1..3523` + 5 nested | 1 / terminal | 0 | 584 s | 1.81 → 2.36 |
+| Full clock | 3,528 | 3,520 | 0 | 8 | `1..3523` + 5 nested | 1 / terminal | 0 | 560 s | 1.29 → 2.57 |
+
+Zero `not ok` lines in all four TAP outputs; zero cancelled and zero todo
+outcomes. Each run's structured report has exactly one terminal `complete`
+event and is terminated by it. Both full runs' 3,528 outcome names are exactly
+the committed inventory's 3,528 names with identical multiplicities — zero
+missing and zero extra, checked programmatically against
+`suite-inventory.json` — and `A12 committed inventory requirements match real
+outcomes` passes in both. Every skip in all four runs is a `PERMITTED_SKIPS`
+entry carrying that entry's exact documented reason, compared byte-for-byte
+against the exported object rather than by eye; the single focused skip is
+`SHU-71 restricted capability refusal`.
+
+`PERMITTED_SKIPS` is byte-identical: 1,093 bytes,
+sha256 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+`host-suite-contract.mjs` is byte-identical: 23,885 bytes,
+sha256 `2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`.
+All three inventories are strictly additive with zero removals and the existing
+order preserved: `suite-inventory.json` gains one file (117), 90 names (3,528)
+and the 90 matching requirement rows in the same order; `file-requirements.json`
+and `required-files.json` gain the one new file in sorted position.
+
+##### The focused selection, and the entry it must not contain
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-postpush-readback.test.mjs \
+  .github/coordinator/service/test/shu71-arming-robustness.test.mjs \
+  .github/coordinator/service/test/shu71-arming-order.test.mjs \
+  .github/coordinator/service/test/shu71-reexec-boundary.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-delta-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs \
+  .github/coordinator/service/test/shu71-host-contract.test.mjs \
+  .github/coordinator/service/test/shu71-history.test.mjs \
+  .github/coordinator/service/test/production-lifecycle.test.mjs \
+  .github/coordinator/service/test/host-lifecycle.test.mjs \
+  .github/coordinator/service/test/host-window-bindings.test.mjs \
+  .github/coordinator/service/test/service-plane.test.mjs \
+  .github/coordinator/service/test/environment-content.test.mjs \
+  .github/coordinator/service/test/environment-content-mutations.test.mjs
+```
+
+Twenty-eight entries expanding to 35 test files — the previous round's
+seventeen, plus `shu71-arming-robustness.test.mjs` (this round's own control
+file), `shu71-arming-order.test.mjs`, `shu71-delta-mutations.test.mjs`,
+`shu71-history.test.mjs`, `production-lifecycle.test.mjs`,
+`host-lifecycle.test.mjs`, `host-window-bindings.test.mjs`,
+`service-plane.test.mjs` and the two `environment-content` files, so that every
+file this round touches or whose reviewed contract it moves is inside it.
+
+**`suite-runner-spec.test.mjs` is deliberately NOT in it, and that is recorded
+rather than left to be rediscovered.** Its `A12 committed inventory requirements
+match real outcomes` guard SPAWNS a complete nested 3,527-outcome run with a
+600 s cap of its own. Adding it to the focused selection made the focused run a
+full run plus 2,137 tests: the first attempt failed `A12_INVENTORY_REAL_RUN` at
+3,478 of 3,527 outcomes — the nested run hit its own timeout under contention —
+and, with the pin widened, failed `SHU250_RESPONSIVE: tick must return within
+1000ms without awaiting worker` twice in a row at 2,679 ms. Both files pass in
+isolation under the same CI-like conditions: `supervisor-dispatch.test.mjs`
+27/27, and the nested command reproduced standalone gives 3,527 outcomes, 8
+skips, zero failures, exit 0 in 452 s. That guard belongs in the FULL runs,
+where it passes in both, and it ran in both.
+
+##### Harness throughput
+
+All four runs used `taskset -c 0-9 node --test --test-concurrency=4`. This is
+disclosed because the previous round used `-c 0-3 --test-concurrency=2` for its
+focused runs: at that pinning the focused selection did not finish inside this
+session's budget once `suite-runner-spec.test.mjs` was in it. Nothing the suite
+measures was changed — same constraints, same reporters, same committed
+revision, same files; only the CPU mask and the runner's concurrency.
