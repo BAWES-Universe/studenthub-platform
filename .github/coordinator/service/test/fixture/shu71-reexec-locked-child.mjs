@@ -2,9 +2,9 @@
 //
 // It is started by the REAL constructed command - real `/usr/bin/env -i`, real
 // `PATH=/usr/bin:/bin`, real `SHU71_LOCKED=1`, real invocation element - with
-// only the trailing `/usr/bin/node <installedModule>` pair replaced, because
-// `/usr/local/lib/shu71/...` is a root-owned installation path that is absent on
-// a suite host running as the service identity. It therefore inherits exactly
+// the whole tail from `/usr/bin/node` on replaced - that pair and the
+// `expire <id>` argv alike - because `/usr/local/lib/shu71/...` is a root-owned
+// path absent on a suite host running as the service identity. It inherits
 // the environment the boundary really hands the inner process, and reports:
 //
 //   1. the environment it actually received, by KEY - never by operator value;

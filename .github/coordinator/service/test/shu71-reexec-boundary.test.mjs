@@ -23,11 +23,11 @@
 //     built. Two substitutions, both measured and both disclosed: the
 //     `/usr/bin/flock --nonblock /run/lock/shu71-production.lock` prefix is
 //     dropped, and asserted byte-exact on the constructed command instead; and
-//     the trailing `/usr/bin/node <installedModule>` pair is replaced by this
-//     harness's inner driver, because `/usr/local/lib/shu71/...` is a
-//     root-owned installation path that is absent on a suite host running as
-//     the service identity, and the inner `SHU71_LOCKED=1` path then requires
-//     real UID 0 and a real /srv/shu tree.
+//     the WHOLE TAIL from `/usr/bin/node` on - that binary, <installedModule>
+//     and the `expire <id>` argv behind them - is replaced by this harness's
+//     inner driver and its own arguments, because `/usr/local/lib/shu71/...` is
+//     a root-owned path absent on a suite host running as the service identity,
+//     and the inner `SHU71_LOCKED=1` path needs real UID 0 and a /srv/shu tree.
 //   * The inner process measures the environment it really inherited, reads the
 //     module's own measurement port, and drives a timer-triggered teardown
 //     whose ONLY source of self-identity is the value that crossed `env -i`.

@@ -2796,7 +2796,7 @@ The fifth round disclosed it in its own words: `INVOCATION_ID` had to cross the
 CLI's `env -i` re-exec or the exclusion would be **"correct and dead"**, and
 **no control pinned the propagation itself**. That left the one clause the whole
 fifth round depends on load-bearing and untested at the same time. Delete
-`...(invocation ? [`INVOCATION_ID=${invocation}`] : [])` and every control the
+``...(invocation ? [`INVOCATION_ID=${invocation}`] : [])`` and every control the
 fifth round wrote still passes, while on the real host the companion's identity
 is wiped before `execute('expire')` ever runs, the exclusion never applies, and
 the timer-triggered teardown refuses itself — the exact regression P154D-06
@@ -2829,11 +2829,11 @@ after `SHU71_LOCKED=1` and immediately before `/usr/bin/node`, `stdio: 'inherit'
 unchanged. The exact argv, measured by running the REAL CLI entry point in its
 own process for each of the three cases:
 
-| Parent `INVOCATION_ID` | Constructed argv |
+| Parent `INVOCATION_ID` | Constructed argv, for `expire shu71reexec00001` |
 | --- | --- |
-| `deadbeefdeadbeefdeadbeefdeadbeef` | `/usr/bin/flock --nonblock /run/lock/shu71-production.lock /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 INVOCATION_ID=deadbeefdeadbeefdeadbeefdeadbeef /usr/bin/node /usr/local/lib/shu71/coordinator/service/shu71-production.mjs expire <id>` |
-| absent (`env -u INVOCATION_ID`) | `/usr/bin/flock --nonblock /run/lock/shu71-production.lock /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 /usr/bin/node /usr/local/lib/shu71/coordinator/service/shu71-production.mjs expire <id>` |
-| empty (`INVOCATION_ID=`) | `/usr/bin/flock --nonblock /run/lock/shu71-production.lock /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 /usr/bin/node /usr/local/lib/shu71/coordinator/service/shu71-production.mjs expire <id>` |
+| `deadbeefcafef00d0123456789abcdef` | `/usr/bin/flock --nonblock /run/lock/shu71-production.lock /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 INVOCATION_ID=deadbeefcafef00d0123456789abcdef /usr/bin/node /usr/local/lib/shu71/coordinator/service/shu71-production.mjs expire shu71reexec00001` |
+| absent (`env -u INVOCATION_ID`) | `/usr/bin/flock --nonblock /run/lock/shu71-production.lock /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 /usr/bin/node /usr/local/lib/shu71/coordinator/service/shu71-production.mjs expire shu71reexec00001` |
+| empty (`INVOCATION_ID=`) | `/usr/bin/flock --nonblock /run/lock/shu71-production.lock /usr/bin/env -i PATH=/usr/bin:/bin SHU71_LOCKED=1 /usr/bin/node /usr/local/lib/shu71/coordinator/service/shu71-production.mjs expire shu71reexec00001` |
 
 Empty is **absent**, not a value: `INVOCATION_ID=` is never invented, so the
 inner process reads absence as absence and excludes nothing, rather than reading
@@ -2843,12 +2843,12 @@ an empty string that a loosened comparison could one day treat as a match.
 
 | Clause or ordering | Named control | Named killing mutant | Kill |
 | --- | --- | --- | --- |
-| **P154D-07** the propagation itself — `...(invocation ? [`INVOCATION_ID=${invocation}`] : [])`, one element, byte-exact, immediately after `SHU71_LOCKED=1` and before `/usr/bin/node` | `B4_REEXEC_PRESENT_BYTE_EXACT` | `expiry invocation never crosses the kernel lock` | verified |
-| **P154D-07** the propagation, END TO END: the value really crosses `env -i` into the process that measures it, and the timer-triggered teardown there COMPLETES | `B4_REEXEC_END_TO_END_INNER_OBSERVED_THE_PROPAGATED_ID`, `B4_REEXEC_END_TO_END_COMPLETED` | `B4 mutation: the locked re-exec drops the invocation element` | verified |
+| **P154D-07** the propagation itself — ``...(invocation ? [`INVOCATION_ID=${invocation}`] : [])``, one element, byte-exact, immediately after `SHU71_LOCKED=1` and before `/usr/bin/node` | `B4_REEXEC_PRESENT_BYTE_EXACT` | `expiry invocation never crosses the kernel lock` | verified |
+| **P154D-07** the propagation, END TO END: the value really crosses `env -i` into the process that measures it, and the timer-triggered teardown there COMPLETES | `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE`, `B4_REEXEC_END_TO_END_INNER_OBSERVED_THE_PROPAGATED_ID`, `B4_REEXEC_END_TO_END_COMPLETED` | `B4 mutation: the locked re-exec drops the invocation element` | verified |
 | **P154D-07** absent parent invocation carries NO element — never an invented `INVOCATION_ID=` | `B4_REEXEC_ABSENT_NO_INVENTED_EMPTY_ASSIGNMENT` | `expiry invocation element invented when the parent has none` | verified |
 | **P154D-07** an EMPTY parent invocation behaves exactly as absent | `B4_REEXEC_EMPTY_NO_INVENTED_EMPTY_ASSIGNMENT` | `empty parent invocation treated as a value` | verified |
 | **P154D-07** the value is built from the single invocation ARGUMENT and from nothing else | `B4_REEXEC_BOUNDARY_ELEMENT_IS_THE_ARGUMENT` | `expiry invocation element read from the environment, not the argument` | verified |
-| **P154D-07** ONE argv element, so no value can inject a second assignment | `B4_REEXEC_SINGLE_ELEMENT_BYTE_EXACT`, `B4_REEXEC_ONE_VARIABLE_NO_SECOND_VARIABLE` (runtime) | `expiry invocation value split across argv elements`, `B4 mutation: the invocation value is split across argv elements` | verified |
+| **P154D-07** ONE argv element, so no value can inject a second assignment | `B4_REEXEC_SINGLE_ELEMENT_BYTE_EXACT`, `B4_REEXEC_ONE_VARIABLE_ONE_ARGV_ELEMENT`, `B4_REEXEC_ONE_VARIABLE_INNER_ENVIRONMENT_IS_EXACTLY_THREE` (runtime) | `expiry invocation value split across argv elements`, `B4 mutation: the invocation value is split across argv elements` | verified |
 | **THE BOUNDARY** `env -i` is present, so the lock carries no operator environment | `B4_REEXEC_BOUNDARY_ENVIRONMENT_IS_WIPED`, `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` (runtime) | `kernel lock no longer wipes the environment`, `B4 mutation: the kernel lock no longer wipes the environment` | verified |
 | **THE BOUNDARY** exactly three assignments cross it — `PATH`, `SHU71_LOCKED`, and the invocation element | `B4_REEXEC_BOUNDARY_EXACTLY_THREE_ASSIGNMENTS`, `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` (runtime) | `parent environment carried through the kernel lock`, `B4 mutation: the parent environment is carried through the kernel lock` | verified |
 | **P154D-06/07** alignment is EXACT string equality of two non-empty values — no trim, no case folding, no prefix match | `B4_EXPIRY_INVOCATION_EXACT_EQUALITY_<miss>_REFUSED` | `expiry invocation comparison loosened below exact equality` | verified |
@@ -2881,10 +2881,10 @@ The fifth round's five P154D-06 rows keep their controls, their mutants and thei
 | `B1/B4 mutation: expiry invocation element read from the environment, not the argument` | `reexecBoundaryCheck` | `B4_REEXEC_BOUNDARY_EXACTLY_THREE_ASSIGNMENTS` |
 | `B1/B4 mutation: expiry invocation value split across argv elements` | `reexecSingleElementCheck` | `B4_REEXEC_SINGLE_ELEMENT_BYTE_EXACT` |
 | `B1/B4 mutation: expiry invocation comparison loosened below exact equality` | `expiryInvocationExactEqualityCheck` | `B4_EXPIRY_INVOCATION_EXACT_EQUALITY_leading-space_REFUSED` |
-| `B4 mutation: the locked re-exec drops the invocation element` | `reexecEndToEnd` | `B4_REEXEC_END_TO_END_INNER_OBSERVED_THE_PROPAGATED_ID` |
+| `B4 mutation: the locked re-exec drops the invocation element` | `reexecEndToEnd` | `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` |
 | `B4 mutation: the invocation element is read from the environment, not the argument` | `reexecEndToEnd` | `B4_REEXEC_END_TO_END_INNER_OBSERVED_THE_PROPAGATED_ID` |
 | `B4 mutation: the invocation value is split across argv elements` | `reexecOneVariable` | `B4_REEXEC_ONE_VARIABLE_ONE_ARGV_ELEMENT` |
-| `B4 mutation: the parent environment is carried through the kernel lock` | `reexecEndToEnd` | `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` |
+| `B4 mutation: the parent environment is carried through the kernel lock` | `reexecEndToEnd` | `B4_REEXEC_END_TO_END_NO_OPERATOR_VALUE_IN_THE_COMMAND` |
 | `B4 mutation: the kernel lock no longer wipes the environment` | `reexecEndToEnd` | `B4_REEXEC_END_TO_END_INNER_ENVIRONMENT_IS_EXACTLY_THREE` |
 
 #### How far the REAL path is driven, and exactly where it stops
@@ -2893,8 +2893,10 @@ Stated here rather than claimed away, because the brief requires the limit to be
 measured rather than asserted.
 
 **What is real.** The module's real top-level CLI branch executes in its own
-process, with a real `INVOCATION_ID` in its parent environment and a real
-operator environment around it. It reads `process.env.INVOCATION_ID` itself,
+process, with a real `INVOCATION_ID` in its parent environment and an
+operator environment around it — this suite's own environment, with
+`NODE_TEST_CONTEXT` and `SHU71_LOCKED` removed so the CLI takes the outer branch,
+and two planted poison variables added. It reads `process.env.INVOCATION_ID` itself,
 calls the real `lockedReexecCommand`, and hands the result to `spawnSync`. The
 command it produced is then really executed, by `/usr/bin/env`, with the real
 `-i` and the real assignments the module built; the inner process really
@@ -2909,9 +2911,16 @@ resolves to a recording module FOR THE MODULE UNDER TEST ONLY, so the single
 
 **The two substitutions in the executed command, both measured.** The
 `/usr/bin/flock --nonblock /run/lock/shu71-production.lock` prefix is not
-executed; it is asserted byte-exact on the constructed command instead. The
-trailing `/usr/bin/node <installedModule>` pair is replaced by this harness's
-inner driver.
+executed; it is asserted byte-exact on the constructed command instead. And the
+WHOLE TAIL from `/usr/bin/node` onwards is replaced by this harness's inner
+driver: not only the `/usr/bin/node <installedModule>` pair but also the
+`expire <id>` argv behind it, which is dropped with them. So what is executed is
+`/usr/bin/env -i <the three assignments the module built> <this node> <inner
+driver> <report path> <planted companion id>`, and the action and id that crossed
+the lock drive nothing — the inner driver runs `execute('expire')` against the
+fixture's OWN activation id. What the substitution preserves, and what these
+controls are about, is the environment-carrying portion: `/usr/bin/env`, `-i`,
+and the three assignments, byte-for-byte as the module built them.
 
 **Why.** `installedModule` is `/usr/local/lib/shu71/coordinator/service/shu71-production.mjs`;
 `/usr/local/lib` is `drwxr-xr-x root root` and the suite runs as the service
@@ -2923,7 +2932,11 @@ measurement port `shu71Boundary.invocationId()`, and drives the real
 `execute('expire')` against the same modelled host every other control uses. Its
 ONLY source of self-identity is the value that crossed `env -i`; the companion's
 reported `InvocationID` is planted from argv, which is the durable systemd fact
-`systemctl show -p InvocationID` answers with.
+`systemctl show -p InvocationID` answers with. "Timer-triggered" throughout this
+section means the `expire` action the expiry unit's
+`ExecStart=/usr/bin/node <installedModule> expire <id>` runs, driven after the
+fixture's modelled clock is advanced to `expires_at`; no real systemd timer fires
+in this suite, and none of these controls claims one does.
 
 #### What this round did NOT change
 
