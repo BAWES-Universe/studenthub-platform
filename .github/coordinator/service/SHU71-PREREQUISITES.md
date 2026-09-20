@@ -3465,3 +3465,366 @@ total is 3,386 plus the same 18: 3,404. The full selection is
 `shu71-arming-order.test.mjs`'s tests — the nine controls and the nine mutants —
 were present in the outcome stream of all four runs above, focused and full
 alike, and each mutation test emitted its `killed by B1_…`/`B4_…` diagnostic.
+
+### Eighth correction round: the post-push read-back is retried, and a failed call names itself
+
+#### P277-01 and P277-02, measured on the target host
+
+An approved window was armed through the documented entrypoint
+`shu71-production.mjs run <id>`. The previous round's defect is gone: `binding`
+PASSED on the real host and the run continued through `sign`, `expiry-watch`,
+`local-reseed` and `remote-push`, where it halted:
+
+```json
+{"ok":false,"state":"HALT","code":"ACT_API_FAILED","teardown":{"ok":true,"state":"REVOKED","code":null,"failures":[]}}
+```
+
+**The push had already landed.** Measured read-only afterwards:
+`refs/heads/coordinator/SHU-140` on the remote is the reseed commit
+`21e41fef6966604039cd9cbea4ad7151c80ed68a`; the ancestry call the step requires
+answers `status: 'ahead'` with `merge_base_commit.sha` =
+`6e5ad86cc0a993097d2e642132077b665ad49481` — exactly the values the code demands;
+and the coordinator's own token answers 200 on the compare route and on both ref
+routes, with 4,949 requests of headroom. So the call that failed was a transient
+answer to a READ whose condition already held.
+
+**P277-01.** `remote-push` pushes a fresh seed commit and then IMMEDIATELY reads
+the result back — `git/ref/heads/<branch>` and `git/ref/heads/main` inside
+`heads(spec, true)`, then `compare/<old>...<next>`. GitHub answers those routes
+from replicas and does not compute a comparison for a just-written SHA
+instantly, so a landed push can be answered 404 or 5xx for a moment. A single
+transient non-2xx failed the entire arming even though the push had succeeded
+and every required condition held.
+
+**P277-02.** `ACT_API_FAILED` is raised only by `need(result.ok, …)` and its two
+siblings, and the halt record carried neither the route nor the status. **The
+failing call cannot be identified from the episode evidence at all** — not from
+the returned record, not from the `HALTED` journal row, not from anything else
+this module writes. That is stated plainly rather than guessed at: this round
+did not determine which of the seven reads answered non-2xx, only that one of
+them did and that every one of them answers correctly now.
+
+#### The fix: one retried door, and it opens onto reads only
+
+| Site | Clause before | Clause after |
+| --- | --- | --- |
+| `api()` fetch | `const result = await b.fetch(url, …)` | unchanged call, wrapped: a transport throw is re-thrown **unchanged** with `{ operation, reason: 'transport', fault }` attached |
+| `api()` status | `need(result.ok, 'ACT_API_FAILED')` | same refusal, same name, carrying `{ operation, reason: 'response_not_ok', status }` |
+| `api()` size | `need(Buffer.byteLength(text) <= 1024*1024, 'ACT_API_FAILED')` | same refusal, carrying `{ operation, reason: 'response_too_large', status }` |
+| `github()` | `api(url, { headers })` | `api(url, { headers }, \`github:${route}\`)` |
+| `githubRead()` | — | **new**: bounded retry around `github()`; the only retried call in the module |
+| `heads()` ref read-back | `const readback = await github(\`git/ref/heads/…\`)` | `await githubRead(…)`; the `need(…, 'ACT_REF_BINDING')` is unchanged and stays OUTSIDE the retry |
+| `heads()` main ref | `(await github('git/ref/heads/main')).object?.sha === revision` | `(await githubRead('git/ref/heads/main')).object?.sha === revision`; `ACT_REVISION_BINDING` unchanged |
+| `remote-push` compare | `const comparison = await github(\`compare/${old}...${next}\`)` | `await githubRead(…)`; `need(comparison.status === 'ahead' && comparison.merge_base_commit?.sha === old, 'ACT_REMOTE_ANCESTRY')` unchanged and outside |
+| `linear()` | `need(!result.errors && result.data, 'ACT_API_FAILED')` | same refusal, carrying `{ operation: 'linear:<query\|mutation>:<name>', reason: 'graphql_errors', codes }` |
+| `execute()` after the spec | — | `authorizationEnds = Date.parse(spec.pkg.expires_at)` |
+| `execute()` halt | `journal.append({ event: 'HALTED', code, ...named })` | `journal.append({ event: 'HALTED', code, ...named, ...detail })` |
+| `execute()` halt return | `{ ok: false, state: 'HALT', code, ...named, teardown }` | `{ ok: false, state: 'HALT', code, ...named, ...detail, teardown }` |
+| `execute()` ARMED return | `{ ok: true, state: 'ARMED', activation_id: id }` | `{ ok: true, state: 'ARMED', activation_id: id, ...readRetryRecord() }` — absent unless a read actually raced |
+
+`githubRead()` **retries the CALL, never a COMPARISON.** Any 2xx answer is
+returned to the caller unchanged, including one carrying the WRONG sha or a
+compare status that is not `ahead`, so a genuine state mismatch still refuses on
+the first answer under `ACT_REF_BINDING` / `ACT_REVISION_BINDING` /
+`ACT_REMOTE_ANCESTRY`. `github()` sets no method, so every call reaching the
+retried door is a GET; no mutation is reachable from it.
+
+#### The retry policy, and why its bound is safe
+
+```js
+export const READ_RETRY = Object.freeze({ attempts: 5, delaysMs: Object.freeze([1000, 2000, 4000, 8000]), budgetMs: 60000 });
+export const RETRYABLE_READ_STATUS = Object.freeze([404, 408, 409, 425, 429, 500, 502, 503, 504]);
+```
+
+Four bounds, each with its own control and its own killing mutant:
+
+1. **Attempts.** Five per read, backing off 1s, 2s, 4s, 8s — at most 15s of sleep
+   and five 10s request timeouts for one read.
+2. **An overall budget.** `budgetMs` is the TOTAL sleep this mechanism may add to
+   ONE invocation, decremented across calls, so seven racing reads cannot
+   multiply the per-call bound. Once it is spent the next failure refuses on its
+   first attempt.
+3. **The authorization expiry.** A retry is never waited out past
+   `spec.pkg.expires_at`, so no retry can carry work into a window it was not
+   approved for. While `authorizationEnds` is unset nothing retries at all.
+4. **The outcome.** Only a transport/timeout fault or a transient status
+   qualifies. `400`, `401`, `403`, `410` and `422` are the ANSWER rather than a
+   race and are never retried, so a revoked token or a forbidden route still
+   refuses immediately.
+
+When any bound ends the loop the ORIGINAL error is rethrown, so a persistent
+failure still refuses under exactly the name it refuses under today.
+
+#### Every call this module makes, and which ones retry
+
+| Call | Method | Retried | Why |
+| --- | --- | --- | --- |
+| `githubRead('git/ref/heads/<branch>')` | GET | **yes** | reads back a ref this episode may have just written |
+| `githubRead('git/ref/heads/main')` | GET | **yes** | same route family, same replica lag |
+| `githubRead('compare/<old>...<next>')` | GET | **yes** | the exact call the target host halted on |
+| `linear('query Shu71Fixture …')` | POST | no | GraphQL over POST, not a GET; `linear()` is shared with the mutation below, so a retry there could repeat a write |
+| `linear('mutation Shu71Fixture …')` | POST | no | a mutation |
+| `git push --force-with-lease` | — | no | a mutation |
+| signing, the activation write, the gate drop-ins, every `systemctl`, every teardown step | — | no | mutations, or safety effects that must fail loudly |
+
+#### What a failed call is allowed to say about itself
+
+`apiFailureDetail()` re-derives every reported field through a closed pattern or
+a numeric range, so no token, header, URL, query, variable, response body or
+response text can reach a record:
+
+* `operation` — a route label or a reviewed GraphQL operation name, matched
+  against `/^[A-Za-z0-9:/%._-]{1,120}$/`. `%` is admitted because a branch
+  segment is percent-encoded into its route
+  (`git/ref/heads/coordinator%2FSHU-140`); no separator, space, quote, `@`, `?`
+  or `#` is, so a URL carrying credentials, a query string or a fragment is
+  reported as `unknown` rather than echoed.
+* `reason` — one of `transport`, `response_not_ok`, `response_too_large`,
+  `graphql_errors`.
+* `status` — a safe integer in `[100, 599]`.
+* `fault` — a transport error NAME (`TimeoutError`, `TypeError`), matched against
+  `/^[A-Za-z0-9_.-]{1,64}$/`.
+* `codes` — GraphQL error codes under the same pattern, de-duplicated and capped
+  at eight.
+* `attempts` — a positive safe integer.
+
+It is idempotent on its own output, and `error.code` is never touched by any of
+it, so every refusal keeps its existing name and conditions.
+
+#### The RED, measured on the unmodified revision
+
+`b4aedf2a` is the last revision before this round. Its `shu71-production.mjs`
+was copied out of Git and loaded from a disposable path with its relative
+imports rebound to the checked-out siblings — the same loading the in-process
+mutant harness uses — and the round's committed check functions were run against
+it unchanged:
+
+```
+pre-fix module: b4aedf2a96fb1aa3487a31be307462640711ddb2:.github/coordinator/service/shu71-production.mjs
+  exports READ_RETRY           : false
+  exports apiFailureDetail     : false
+  githubRead call sites        : 0
+  bare github(...) read sites  : 3
+
+RED   a transient ref read-back is retried and the window arms
+        B5_REF_READ_RACE_RETRIED  strictEqual  actual "HALT"  expected "ARMED"
+RED   a landed push whose comparison is not answerable yet still arms
+        B5_COMPARE_RACE_RETRIED   strictEqual  actual "HALT"  expected "ARMED"
+RED   a persistently failing read still refuses under the same name
+        B5_PERSISTENT_FAILURE_REFUSED  strictEqual  actual 1  expected 5
+green a genuinely wrong ref sha refuses instead of being retried
+green a genuinely wrong ancestry refuses instead of being retried
+green a failing push is never retried
+RED   a failing Linear issueUpdate is never retried            (B5_LINEAR_MUTATION_NOT_RETRIED)
+RED   the retry sleep budget is bounded across the whole invocation (B5_RETRY_BUDGET_BOUNDED)
+RED   retrying stops at the authorization expiry               (B5_RETRY_STOPS_AT_EXPIRY)
+RED   the halt names the failing route and status              (B5_HALT_NAMES_THE_CALL)
+RED   a GraphQL refusal is named by its codes                  (B5_GRAPHQL_CODES_NAMED)
+
+pre-fix: 8 of 11 end-to-end controls FAIL, 3 pass.
+```
+
+The three that PASS are exactly the ones asserting that a genuine mismatch, or a
+mutation, is NOT retried — which a revision with no retry at all satisfies
+trivially. They are recorded as passing rather than presented as kills: they
+pin the fix against its own failure mode, not against the pre-fix revision. The
+two closure controls cannot run against `b4aedf2a` at all, because it exports
+neither `apiFailureDetail` nor `retryableApiFailure`; that is recorded rather
+than counted.
+
+#### New controls and new mutants
+
+`shu71-postpush-readback-checks.mjs` holds eleven end-to-end controls and two
+closure controls; `shu71-postpush-readback.test.mjs` drives them and the
+twenty-one mutants. The checks module follows the existing
+`shu71-r5-checks.mjs` / `shu71-trust-checks.mjs` pattern so that the SAME check
+functions serve the suite, the matrix below and the RED above.
+
+Controls:
+
+1. a transient ref read-back is retried and the window arms
+2. a landed push whose comparison is not answerable yet still arms
+3. a persistently failing read still refuses under the same name
+4. a genuinely wrong ref sha refuses instead of being retried
+5. a genuinely wrong ancestry refuses instead of being retried
+6. a failing push is never retried
+7. a failing Linear issueUpdate is never retried
+8. the retry sleep budget is bounded across the whole invocation
+9. retrying stops at the authorization expiry
+10. the halt names the failing route and status and carries no secret
+11. a GraphQL refusal is named by its codes
+12. the reported detail is closed to the reviewed fields
+13. only a measured transient outcome is retryable
+
+Controls 4 and 5 are the ones that matter most: the ref (resp. the comparison)
+answers 200 with a WRONG value on its first answer and the right value on every
+answer afterwards. A correct retry never sees the difference, refuses on that
+first answer and never reads the route again — so the budget cannot convert a
+real mismatch into a pass. Controls 10 and 11 assert, against the returned
+record AND the durable `HALTED` row, that none of `GITHUB_POISON`,
+`LINEAR_POISON`, the supervisor secret, `Authorization`, `Bearer` or
+`x-access-token` appears anywhere in the evidence.
+
+#### The mutant x control matrix
+
+Every mutant was run against EVERY control on the committed head, out of band,
+driving the committed check functions unchanged. A cell is a KILL only when the
+control threw an `ERR_ASSERTION` carrying a `B5_` name, and that name was READ
+OFF the thrown error. All thirteen controls pass on the unmutated module.
+**Twenty-one mutants, twenty-one killed, zero survivors.**
+
+| Mutant | Paired control's killing assertion | Controls that kill it |
+| --- | --- | ---: |
+| the retry policy allows a single attempt | `B5_REF_READ_RACE_RETRIED` | 5 / 13 |
+| the backoff schedule is emptied | `B5_COMPARE_RACE_RETRIED` | 5 / 13 |
+| the ref read-back goes back to the unretried door | `B5_REF_READ_RACE_RETRIED` | 3 / 13 |
+| the post-push comparison goes back to the unretried door | `B5_COMPARE_RACE_RETRIED` | 3 / 13 |
+| an exhausted retry returns an empty answer instead of refusing | `B5_PERSISTENT_FAILURE_REFUSED` | 4 / 13 |
+| the overall sleep budget is not enforced | `B5_RETRY_BUDGET_BOUNDED` | 1 / 13 |
+| the authorization expiry does not stop the retry | `B5_RETRY_STOPS_AT_EXPIRY` | 1 / 13 |
+| a definitive status is treated as transient | `B5_HALT_NAMES_THE_CALL` | 2 / 13 |
+| the ref comparison itself is retried until it agrees | `B5_REF_MISMATCH_NOT_RETRIED` | 1 / 13 |
+| the ancestry comparison itself is retried until it agrees | `B5_ANCESTRY_MISMATCH_NOT_RETRIED` | 1 / 13 |
+| the push is retried like a read | `B5_PUSH_NOT_RETRIED` | 1 / 13 |
+| the halt record drops the measured API detail | `B5_HALT_NAMES_THE_CALL` | 6 / 13 |
+| a failed call is no longer described at all | `B5_HALT_NAMES_THE_CALL` | 8 / 13 |
+| the GraphQL error codes are not collected | `B5_GRAPHQL_CODES_NAMED` | 1 / 13 |
+| the operation label is echoed unsanitized | `B5_DETAIL_OPERATION_CLOSED` | 1 / 13 |
+| the status is echoed unchecked | `B5_DETAIL_STATUS_CLOSED` | 4 / 13 |
+| the GraphQL codes are echoed unfiltered | `B5_DETAIL_CODES_CLOSED` | 1 / 13 |
+| the transport fault is echoed unfiltered | `B5_DETAIL_FAULT_CLOSED` | 1 / 13 |
+| the reason vocabulary is opened | `B5_DETAIL_REASON_CLOSED` | 3 / 13 |
+| a refusal with no measured detail is retryable | `B5_RETRYABLE_REQUIRES_MEASURED_DETAIL` | 1 / 13 |
+| every reason is retryable once a status matches | `B5_RETRYABLE_REASON_CLOSED` | 1 / 13 |
+
+Seven of the twenty-one are killed by exactly ONE control. Each of those seven
+attacks a clause that no other control reaches: the overall budget, the expiry
+stop, either of the two comparison-widenings, the push retry, and four of the
+sanitizer's own doors. They are the reason those controls exist at all.
+
+#### Where the retry could in principle mask a genuine refusal
+
+Stated rather than smoothed over.
+
+* **A 404 that is real.** A branch or a comparison that genuinely does not exist
+  answers 404, and 404 is on the retryable list because it is also the post-push
+  race. Such a read is retried five times and then refuses `ACT_API_FAILED` —
+  the same code, roughly fifteen seconds later. Nothing is accepted that was not
+  accepted before; only the refusal is slower.
+* **A 5xx that is really a broken remote.** Same shape, same code, same outcome.
+* **A read that recovers between a wrong answer and a right one.** This is the
+  one case the retry deliberately does NOT cover: any 2xx answer, right or
+  wrong, ends the retry and is handed to the binding comparison. Controls 4 and
+  5 pin exactly that, and two mutants that widen the retry from the call to the
+  comparison die on them.
+* **The post-update Linear read-back** inside `transition()` races a write we
+  just made, and is NOT retried. That is a KNOWN residual: it is a GraphQL POST
+  through the same `linear()` function as the `issueUpdate` mutation, and a
+  retry at that layer could repeat a write. Narrowing it safely would need a
+  separate read-only door on the Linear side, which this lane does not add. It
+  has not been observed to fail on the target host.
+* **The `git ls-remote` reads** inside `heads()` and `remote-push` are not
+  retried either: they are local `git` invocations through `command()`, which
+  refuses `ACT_COMMAND_FAILED` on a non-zero exit, and no reviewed effect in this
+  lane may start retrying a command.
+
+#### What this round did NOT change
+
+No new reviewed effect, no new command, no widened acceptance. No refusal code,
+condition or name was added, renamed or removed: `ACT_API_FAILED`,
+`ACT_REMOTE_ANCESTRY`, `ACT_REF_BINDING`, `ACT_REVISION_BINDING`,
+`ACT_PARTIAL_ARMING` and `ACT_PRIOR_STATE_DRIFT` all keep their exact conditions,
+and a persistent failure and a genuine state mismatch both still refuse. The
+retry adds no request that was not already made and repeats no write. Success
+paths are byte-identical unless a read actually raced: `api_read_retries` is
+absent when nothing retried. `PERMITTED_SKIPS` (1,093 bytes, sha256
+`03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`) and
+`host-suite-contract.mjs` (sha256 `2a19d72c…58e9`) are byte-identical. Measured
+against `b4aedf2a`, the inventory gained 34 names and one file with ZERO
+removals, and `names` and `requirements` are strict prefix extensions.
+
+#### Validation of the eighth correction round
+
+Tested implementation `f2a018e0cfe578c60345fa5f5ec18559f02225fd`, tree
+`dddfbf6d5c263ff14d6e64fe4c564506668698ef` — the round's fix commit plus the
+checks-module commit. This record section follows it and changes documentation
+only: it adds no test name, so all three inventories are unchanged by it. The
+worktree was clean for all four runs, before and after.
+
+All four commands ran from the repository root under the CI-like harness
+(`service/test/fixture/shu71-ci-like.sh`), which printed
+`CI_CONSTRAINTS uid=1000 umask=0022 target_accounts=absent runtime=absent
+reviewer=absent` for each: UID 1000, `umask 0022`, target accounts absent
+(`shu71-evidence`, `shu-coordinator`, `shu-workspace`, `messagebus`), `/run` and
+`/etc/sudoers.d` tmpfs, `/run/shu71-evidence` and `/etc/sudoers.d/shu-reviewer`
+absent, `chmod -R go-w .github/coordinator`, with both the TAP reporter and the
+unchanged `host-suite-contract.mjs` reporter writing separate outputs. Plain
+unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+Focused used `taskset -c 0-3 node --test --test-concurrency=2`; full used
+`taskset -c 0-9 node --test --test-concurrency=4`. The four runs were executed
+strictly one at a time.
+
+| Run | Tests | Pass | Fail | Skip | Terminal TAP / JSON markers | Exit | Load at start → end | Duration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| Focused plain | 1725 | 1724 | 0 | 1 | 1 / 1 | 0 | 1.98 → 4.56 | 78.0 s |
+| Focused clock | 1725 | 1724 | 0 | 1 | 1 / 1 | 0 | 4.56 → 4.31 | 78.9 s |
+| Full plain | 3438 | 3430 | 0 | 8 | 1 / 1 | 0 | 4.31 → 3.38 | 539.0 s |
+| Full clock | 3438 | 3430 | 0 | 8 | 1 / 1 | 0 | 3.38 → 3.15 | 515.3 s |
+
+Every command exited zero with zero cancelled and zero todo outcomes, and no
+`not ok` line in any of the four TAP outputs. Focused TAP plans are `1..1725`;
+full plans are `1..3433`, with five nested outcomes under one nested `1..5`
+bringing each full total to 3,438. Each run's structured report has exactly one
+terminal `complete` event, is terminated by it, and passes the unchanged
+`evaluateSuite` validator (1,725 / 1,725 / 3,438 / 3,438 expected outcomes).
+Both full runs' 3,438 outcome names are exactly the committed inventory's 3,438
+names with identical multiplicities — zero missing and zero extra — and `A12
+committed inventory requirements match real outcomes` passes in both, reporting
+`f2a018e0…; 116 files; 3437 child outcomes plus this guard`. Every skip in all
+four runs is a `PERMITTED_SKIPS` entry carrying that entry's exact documented
+reason, byte-for-byte, compared against the exported object rather than by eye;
+the single focused skip is `SHU-71 restricted capability refusal`.
+
+##### The focused selection missed the round's own control file again
+
+The focused selection's service-side globs are `provision*.test.mjs`,
+`shu71-production*.test.mjs` and `shu71-trust*.test.mjs`. NONE of them matches
+`shu71-postpush-readback.test.mjs` — the same gap the sixth and seventh rounds
+closed for their own control files. It is closed the same way, by NAMING it:
+
+```sh
+node --test \
+  .github/coordinator/test/shu71-activation-package.test.mjs \
+  .github/coordinator/test/shu71-battery.test.mjs \
+  .github/coordinator/test/shu71-public-key.test.mjs \
+  .github/coordinator/test/single-run-activation.test.mjs \
+  .github/coordinator/test/supervisor.test.mjs \
+  .github/coordinator/test/supervisor-dispatch.test.mjs \
+  .github/coordinator/service/test/provision*.test.mjs \
+  .github/coordinator/service/test/shu71-owner-decisions.test.mjs \
+  .github/coordinator/service/test/shu71-phase-readback.test.mjs \
+  .github/coordinator/service/test/shu71-production*.test.mjs \
+  .github/coordinator/service/test/shu71-reexec-boundary.test.mjs \
+  .github/coordinator/service/test/shu71-recovery-mutations.test.mjs \
+  .github/coordinator/service/test/shu71-supervisor-environment.test.mjs \
+  .github/coordinator/service/test/shu71-composition.test.mjs \
+  .github/coordinator/service/test/shu71-trust*.test.mjs \
+  .github/coordinator/service/test/shu71-verdict-closures.test.mjs \
+  .github/coordinator/service/test/shu71-host-contract.test.mjs \
+  .github/coordinator/service/test/shu71-arming-order.test.mjs \
+  .github/coordinator/service/test/shu71-postpush-readback.test.mjs
+```
+
+Nineteen entries expanding to 26 test files — the seventh round's 18 entries and
+25 files plus this one. The focused total is the seventh round's 1,691 plus this
+round's 34 inventory names: 1,725; all 34 fall inside the selection. The full
+total is 3,404 plus the same 34: 3,438. The full selection is
+`node --test .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs`
+(116 files, one more than the seventh round's 115), which is exactly what
+`npm run test:coordinator` runs — its globs already cover the new file. All
+thirty-four of `shu71-postpush-readback.test.mjs`'s tests — the thirteen
+controls and the twenty-one mutants — were present in the outcome stream of all
+four runs above, focused and full alike, and each mutation test emitted its
+`killed by B5_…` diagnostic.
