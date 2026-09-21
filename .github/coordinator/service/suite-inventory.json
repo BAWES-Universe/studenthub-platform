@@ -3575,6 +3575,10 @@
     "B5 post-push read-back mutation: the exact parent count is not required",
     "B5 post-push read-back mutation: the ref is not required to still carry the reseed commit",
     "B5 post-push read-back mutation: the patch-bearing comparison comes back",
+    "B5 post-push read-back: the first parent position alone is wrong and refuses under its own name",
+    "B5 post-push read-back: the second parent position alone is wrong and refuses under its own name",
+    "B5 post-push read-back mutation: the first parent position is not required",
+    "B5 post-push read-back mutation: the second parent position is not required",
     "B6 arming robustness: a failed measurement is not a state claim about the host",
     "B6 arming robustness: a transient unit read is retried and the teardown completes",
     "B6 arming robustness: a genuinely live expiry companion still refuses by its own name",
@@ -27780,6 +27784,22 @@
     },
     {
       "name": "B5 post-push read-back mutation: the patch-bearing comparison comes back",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the first parent position alone is wrong and refuses under its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back: the second parent position alone is wrong and refuses under its own name",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the first parent position is not required",
+      "capabilities": []
+    },
+    {
+      "name": "B5 post-push read-back mutation: the second parent position is not required",
       "capabilities": []
     },
     {

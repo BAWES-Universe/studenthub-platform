@@ -5503,3 +5503,78 @@ exact bytes this commit lands.
 2,234 passing, 0 failing, one permitted skip — the same zero-failure result as at the code
 revision — and `V8_DOCUMENTATION_LINK_TARGETS`, which resolves the three links this round
 repointed at the exact line number it pins, passes over this file.
+
+## Sixteenth correction: each parent position is its own term (F3)
+
+The fifteenth round stated the ancestry claim term by term in prose and pinned the
+two parent *positions* with a single clause and a single control that reversed
+BOTH parents at once. An independent verifier found the consequence: a mutant that
+removes `reseedParents[0]` alone - or `reseedParents[1]` alone - survived the
+entire committed control set, because with one position dropped the other still
+disagrees with the reversed pair, so the reversal control kept passing. The
+behaviour was never in doubt, and the verifier said so: the shipped read refuses
+both single-position shapes. The *proof* was the gap, and this correction closes
+it with one named control and one killing mutant per position.
+
+* `B5 post-push read-back: the first parent position alone is wrong and refuses
+  under its own name` corrupts only position 0, and asserts the shape it served
+  BEFORE reading the refusal - the signed reseed sha is still the commit's own
+  sha, the count is still two, position 1 is still the approved execution
+  revision, exactly one entry differs from the genuine pair, and the ref still
+  carries the commit - so "every other term remained true" is measured, not
+  claimed. It then asserts `ACT_REMOTE_ANCESTRY`, exactly one read of the route,
+  no retry delay, and no activation file.
+* the mirror control for position 1, with its own assertion name.
+* `the first parent position is not required` removes the anchor
+  `reseedParents[0] === spec.binding.expected_parent && ` and is killed by
+  `B5_ANCESTRY_PARENT_0_REQUIRED`.
+* `the second parent position is not required` removes the anchor
+  ` && reseedParents[1] === spec.binding.approvedExecutionRevision` and is killed
+  by `B5_ANCESTRY_PARENT_1_REQUIRED`.
+
+Neither single-position survivor is killed by the reversal control that previously
+stood in for both, which is what the killing names above record. The shipped read
+is untouched: this correction changes tests, the committed inventory, and this
+record only - no production behaviour.
+
+**The four modes at the code revision.** The worktree was pristine at `6152c34` (tree
+`45a36880`, `dirty=0`) for every mode, `TMPDIR` pinned to `/tmp`:
+
+* focused, plain: exit 0, 241s, 2,239 ok / 0 not ok
+* focused, shifted clock: exit 0, 247s, 2,239 ok / 0 not ok
+* full, plain: exit 0, 525s, 3,625 ok / 0 not ok
+* full, shifted clock: **exit 1 on the first observation** - 508s, 3,624 ok / **1 not ok**. The
+  failure was the A12 guard itself (test 2414), whose internal re-run of the whole suite caught a
+  single intermittent failure in `residual.test.mjs` - `SHU251 mutation: terminal receipt lost
+  after restart` - in a file this correction does not touch and outside the focused selection.
+  An identical re-run of the same mode, with nothing else running on the box, returned exit 0,
+  3,630 tests, 3,622 pass, 8 skipped, 0 fail, with the guard reporting
+  `121 files; 3629 child outcomes plus this guard`.
+
+That intermittent is the one already recorded as a known flake in an earlier round; it is a
+property of the suite, not of this change, and the first observation ran while the cold-review
+gate and the pre-arm probe were executing on the same box, which is the likely trigger for a
+timing-sensitive test. It is stated here at the same weight as the green runs rather than
+summarised away: a mode that came back red once, for a reason, and green on an identical repeat
+is not the same claim as an unbroken green, and the difference belongs in the record.
+
+**Focused selection after the documentation commit.** Re-run against the exact bytes this
+commit lands, unchanged, with the committed inventory in place: green, and the guards that read
+this file (`V8_DOCUMENTATION_LINK_TARGETS` among them) pass over it. No production file is
+touched by this correction, which a diff of `256e5ee..6152c34` shows: two paths, the test module
+and the committed suite inventory.
+
+**The ref term is measured by these controls, not left true by construction.** The first
+submission of this section said the position controls assert "the ref still carries the commit"
+while the code asserted only properties of the served commit object; an independent verifier
+caught the difference and was right. The controls now observe the reseed-ref answers the fixture
+actually serves and assert that the last one still carries the signed reseed commit, so the
+sentence is true because the code measures it. Falsifiability was checked rather than assumed:
+serving a foreign sha on that route makes both controls fire with their own tokens
+(`B5_ANCESTRY_PARENT_0_REQUIRED`, `B5_ANCESTRY_PARENT_1_REQUIRED`).
+
+**Also corrected here:** this section carried one paragraph duplicated verbatim (reported by the
+verifier as F2); the duplicate is removed. The older orphan stub in the fifteenth section
+(`**Focused selection after the documentation commit.**` followed immediately by the real
+paragraph) is left as merged and is recorded here as a known cosmetic leftover, not fixed in
+this correction.

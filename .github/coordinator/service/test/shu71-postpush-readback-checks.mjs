@@ -196,6 +196,91 @@ export async function parentCountCheck(create, h) {
   assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_PARENT_COUNT_REQUIRED');
 }
 
+// Observe the reseed-ref answers as the fixture actually serves them, so a control can
+// ASSERT the ref term instead of leaving it true by construction. Reads the body once and
+// re-serves it, because the fixture's answers are plain objects with a single-use text().
+function observeRefAnswers(h, route, seen) {
+  const inner = h.boundary.fetch;
+  h.boundary.fetch = async (url, options) => {
+    const response = await inner(url, options);
+    if (url.startsWith(PREFIX) && url.slice(PREFIX.length) === route && typeof response?.text === 'function') {
+      const body = await response.text();
+      try { seen.push(JSON.parse(body)?.object?.sha ?? null); } catch { seen.push(null); }
+      return { ok: response.ok, status: response.status, text: async () => body };
+    }
+    return response;
+  };
+}
+
+// EACH PARENT POSITION IS ITS OWN TERM. "The pair, in order" is not one claim
+// but two - the retained parent must be the FIRST parent and the approved
+// execution revision the SECOND - and reversing the pair (above) can be refused
+// for either position alone, so it pins neither. This control corrupts ONLY
+// position 0 and leaves every other term of the claim true: the signed reseed
+// sha is still the commit's own sha, the count is still two, position 1 is still
+// the approved execution revision, and the ref still carries the commit. It is
+// refused under the ancestry name on the first answer by this control's own
+// assertion, and the shape it served is asserted before the refusal is read, so
+// a mutant that drops this position alone is killed here and nowhere else.
+export async function parentPositionZeroCheck(create, h) {
+  const route = commitRoute(h);
+  const genuine = [h.spec.pkg.reseed.expected_parent, h.spec.binding.approvedExecutionRevision];
+  const foreign = 'f'.repeat(40);
+  let served = null;
+  const reads = interceptReads(h, (r, attempt) => (r === route && attempt === 1
+    ? { rewrite: body => (served = { ...body, parents: [{ sha: foreign }, ...body.parents.slice(1)] }) }
+    : undefined));
+  const refShas = [];
+  observeRefAnswers(h, REF140, refShas);
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.ok(served, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  // The ref term is MEASURED here, not left true by construction: the last ref answer this
+  // run received must still carry the signed reseed commit.
+  assert.ok(refShas.length > 0, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(refShas[refShas.length - 1], h.spec.pkg.reseed.expected_seed_head,
+    'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(served.sha, h.spec.pkg.reseed.expected_seed_head, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(served.parents.length, 2, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(served.parents[1].sha, genuine[1], 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(served.parents.filter((parent, index) => parent.sha !== genuine[index]).length, 1,
+    'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(served.parents[0].sha, foreign, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(result.code, 'ACT_REMOTE_ANCESTRY', 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(reads.count(route), 1, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.deepEqual(reads.delays, [], 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+}
+
+// ...and the mirror: ONLY position 1 is corrupted, the count, the signed sha,
+// position 0 and the ref all remain true, and this control's own assertion is
+// the one that fires.
+export async function parentPositionOneCheck(create, h) {
+  const route = commitRoute(h);
+  const genuine = [h.spec.pkg.reseed.expected_parent, h.spec.binding.approvedExecutionRevision];
+  const foreign = 'f'.repeat(40);
+  let served = null;
+  const reads = interceptReads(h, (r, attempt) => (r === route && attempt === 1
+    ? { rewrite: body => (served = { ...body, parents: [...body.parents.slice(0, 1), { sha: foreign }] }) }
+    : undefined));
+  const refShas = [];
+  observeRefAnswers(h, REF140, refShas);
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.ok(served, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.ok(refShas.length > 0, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(refShas[refShas.length - 1], h.spec.pkg.reseed.expected_seed_head,
+    'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(served.sha, h.spec.pkg.reseed.expected_seed_head, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(served.parents.length, 2, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(served.parents[0].sha, genuine[0], 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(served.parents.filter((parent, index) => parent.sha !== genuine[index]).length, 1,
+    'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(served.parents[1].sha, foreign, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(result.code, 'ACT_REMOTE_ANCESTRY', 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(reads.count(route), 1, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.deepEqual(reads.delays, [], 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+}
+
 // A REF THAT MOVED BETWEEN THE TWO READS IS SOMEONE ELSE'S WRITE. The commit
 // object still agrees with the signed reseed sha and its parents still agree, so
 // only the ref read that follows it can see the third value - and it refuses
@@ -385,6 +470,10 @@ export const controls = [
   ['a genuinely wrong ancestry refuses instead of being retried', ancestryMismatchCheck],
   ['parents in the other order refuse instead of being retried', parentOrderCheck],
   ['a third parent refuses instead of being retried', parentCountCheck],
+  ['the first parent position alone is wrong and refuses under its own name',
+    parentPositionZeroCheck],
+  ['the second parent position alone is wrong and refuses under its own name',
+    parentPositionOneCheck],
   ['a ref that moved after the push refuses instead of being retried', refMovedAfterPushCheck],
   ['a failing push is never retried', pushNotRetriedCheck],
   ['a failing Linear issueUpdate is never retried', linearMutationNotRetriedCheck],
@@ -421,6 +510,14 @@ const RESEED_REF_READ = '        const reseedRef = await githubRead(`git/ref/hea
 const ANCESTRY_SHA = 'reseedCommit.sha === next && ';
 const ANCESTRY_PARENTS = 'reseedParents[0] === spec.binding.expected_parent && reseedParents[1] === spec.binding.approvedExecutionRevision';
 const ANCESTRY_COUNT = 'reseedParents.length === 2\n          && ';
+// F3 closed: the two positions used to be one clause, pinned by a control that
+// reversed BOTH parents, so a mutant that dropped either position alone survived
+// the whole control set. Each position now has its own anchor, its own control
+// and its own killing mutant - and each survivor of the earlier arrangement is
+// killed here by the position control alone, which the reported killing
+// assertion names.
+const ANCESTRY_PARENT_0 = 'reseedParents[0] === spec.binding.expected_parent && ';
+const ANCESTRY_PARENT_1 = ' && reseedParents[1] === spec.binding.approvedExecutionRevision';
 const ANCESTRY_REF = '\n          && reseedRef.object?.sha === next';
 // The route that answered 200 with 1,667,573 bytes of file patches and refused a
 // landed push. It is never requested by a successful run - and this round's
@@ -465,6 +562,12 @@ export const mutations = [
   ['the parent order is not required', ANCESTRY_PARENTS,
     'reseedParents.includes(spec.binding.expected_parent) && reseedParents.includes(spec.binding.approvedExecutionRevision)', parentOrderCheck],
   ['the exact parent count is not required', ANCESTRY_COUNT, '', parentCountCheck],
+  // Each POSITION of the pair removed alone. Neither survivor of the old
+  // arrangement is caught by the reversal control above - with one position
+  // dropped the other still disagrees with the reversed pair - so each is killed
+  // only by the control that measures that position.
+  ['the first parent position is not required', ANCESTRY_PARENT_0, '', parentPositionZeroCheck],
+  ['the second parent position is not required', ANCESTRY_PARENT_1, '', parentPositionOneCheck],
   ['the ref is not required to still carry the reseed commit', ANCESTRY_REF, '', refMovedAfterPushCheck],
   // ...and the route whose 1,667,573-byte body refused a landed push cannot come
   // back without a control failing: this mutant puts the comparison read back in
