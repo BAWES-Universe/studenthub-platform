@@ -5586,14 +5586,23 @@ verdicts, the package record, the pre-arm probe and the digest witnesses, and re
 APPROVE** with five objections. Four were record or coverage gaps, closed here and in the package;
 one was a hole in the enforcement of a term the block seals, and it is closed with a control.
 
-**The hole.** `heads()` binds **every** fixture the package pins, not only the one being reseeded:
-per fixture it measures the local `rev-parse --verify`, the remote `ls-remote --refs` and the GitHub
-`git/ref` read-back, and it refuses under `ACT_REF_BINDING`, naming the leg that disagreed. Every
-committed control, however, mutated fixture_1's (`SHU-140`) legs only. A loop that silently stopped
-covering fixture_2 - or that skipped its three legs - would have refused nothing on a moved
-`coordinator/SHU-254` while the block seals that head as `6c9c1490`, and no committed assertion would
-have noticed. That is the same class of unpinned sealed term the owner refused
-`shu71-mint-00000024` for, so it is blocking, not low.
+**The hole, as measured - this paragraph replaces a wider claim a first draft made and the round's
+independent verifier falsified.** `heads()` binds **every** fixture the package pins, not only the one
+being reseeded: per fixture it measures the local `rev-parse --verify`, the remote `ls-remote --refs`
+and the GitHub `git/ref` read-back, and it refuses under `ACT_REF_BINDING`, naming the leg that
+disagreed. What the committed baseline at `a51c8490` actually pinned for the second fixture, taken file
+by file rather than asserted:
+
+- its **readback** leg had one committed assertion, and a weak one - `shu71-production-mutations.test.mjs`
+  ("post-push readback omitted") serves a foreign sha on the SHU-254 ref **after** the push and asserts
+  `state === 'HALT'` (`B1_REMOTE_READBACK_REFUSED`): post-push only, no refusal code, and no leg named;
+- its **local** and **remote** legs had none: a mutant that neuters either one for fixture_2 alone
+  leaves the parent's **whole** committed suite green (measured below).
+
+So the gap was narrower than the first draft's "no committed assertion would have noticed", which was
+false. What remains true, and is what makes this blocking: the **local** and **remote** legs of a
+fixture whose head the block seals had no committed assertion at all, which is the same class of
+unpinned sealed term the owner refused `shu71-mint-00000024` for.
 
 `secondFixtureRefBindingCheck` mutates exactly one leg of the second fixture at a time - readback,
 remote, local - and each refusal is asserted by its own name with the other two legs agreeing, in the
@@ -5604,11 +5613,33 @@ result, in the leg field and in the journal:
 - *the second fixture skips its own binding legs* (the expected head is recorded and the three legs
   are skipped for any fixture that is not `SHU-140`).
 
-**RED at the parent, measured.** Both mutants **survive all 39 controls committed at `a51c8490`**
-(0 kills), measured by running the parent's own control matrix, variants included, over each mutant
-through the parent's own loader (`red-at-parent-280h.tap`). They pin a hole rather than restating a
-kill some other control already made. At this revision each of the second fixture's three legs fails
-alone, and the pair of mutants dies on the control's own named assertion.
+**RED at the parent, with the scope measured instead of assumed.** Two mutants were added first - the
+fixture loop truncated to the first fixture, and the second fixture skipping its legs. At the parent
+they survive all 39 controls committed in B6 (`red-at-parent-280h.tap`), but they do **not** pin a
+hole: five committed tests **outside** B6 kill them at the parent (the B1/B4 post-push read-back,
+`B1_SINGLE_LANE`, `B1_TWO_LANES`, and two B5 sleep-budget checks). The first draft's claim that they
+"pin a hole rather than restating a kill" was false - the scope measured was B6, the sentence claimed
+the committed suite - and the round's verifier caught it. They are kept, and described for what they
+are: they pin the loop's shape, not the per-leg semantics.
+
+What pins the term is the per-leg enforcement set added in response: each neuters exactly one of
+fixture_2's legs while keeping every read it already made. At this head each is killed by exactly one
+variant of the control - `local` by `local`, `remote` by `remote`, `readback` by `readback` - where the
+two earlier mutants are killed by all three variants, which is the discrimination the reviewer measured
+as missing. Against the parent's whole committed suite, name-diffed against an unmutated baseline run
+of the same export:
+
+    parent a51c8490, whole committed suite, unmutated baseline run of the same export:
+      baseline                     exit 0    0 failures
+      fixture_2 LOCAL leg neutered     exit 0    0 failures   <- the parent never noticed this leg
+      fixture_2 REMOTE leg neutered    exit 0    0 failures   <- nor this one
+      fixture_2 READBACK leg neutered  exit 1    2 failures   <- `B1/B4 mutation: post-push readback
+                                                               omitted` (a real kill: that leg had
+                                                               committed cover) plus the A12 guard,
+                                                               which red-fails whenever any row fails
+                                                               inside its own run
+    (`parent-suite-survival.txt`, `parent-suite-survival-run.log`; the parent worktree is restored from
+    git after every run and ended clean.)
 
 **The reseed terms are enforced twice, and that is now stated precisely.** The local acceptance
 `verifyReseedCommit` runs inside the `remote-push` step **before** the push; the post-push read-back
@@ -5631,15 +5662,7 @@ that would arm: the full scope is run at it as well.
 **Focused selection after this correction.** The committed focused selection is run at this head, and
 the four modes follow in the same lane:
 
-Four modes at this head (`d09b1dd7`, tree `0a14bf91`, tree clean before and after, one mode at a time):
-
-    focused plain   exit 0   2244 ok / 0 not ok   (276s)
-    focused clock   exit 0   2244 ok / 0 not ok   (261s)
-    full plain      exit 0   3630 ok / 0 not ok   (546s)
-    full clock      exit 1   3629 ok / 1 not ok   (534s)   - see below
-
-The A12 committed-inventory guard runs inside the full scope and is green there, so the two new
-control rows and the two mutant rows move with the tests they describe.
+FOURMODE_PLACEHOLDER
 
 **The one red in the four modes, characterised further rather than summarised away.** The full-clock
 observation failed on `SHU251 live worker restart adopts once and recovers durable completion`
@@ -5668,6 +5691,18 @@ not captured anywhere. Until then this stays an explicit owner-facing acceptance
 red-fails on any non-pass, so it can refuse or delay a run and can never let an escape through
 silently, and the affected family is unrelated to the ancestry claim this window arms - it is a
 pre-existing test in a file neither this round nor the previous one touches.
+
+**The first verification of this head returned FAIL, and this is what changed.** An independent
+verifier (a different model family, no lane history) confirmed the control itself as sound,
+non-vacuous and leg-discriminating, and failed the round on its own record: two load-bearing RED
+statements were false against the machine - both corrected above, with the sentences that were wrong
+left visible rather than quietly rewritten - and both of the first two mutants restated kills the
+committed suite already made, which is the reason the three per-leg enforcement mutants exist. Its
+third finding, that neither mutant separated one leg from another, is addressed by those three and
+measured here as one variant each. Its remaining two findings were not blocking: it could not
+reproduce the single full-clock red (and confirmed every citation around it, including that
+`residual.test.mjs:65` is the discarded `response.ok` assertion and that the file is absent from the
+focused selection), and it disclosed an instability in one of its own four parent-export runs.
 
 **What this round does not do.** It does not touch a production line: `shu71-production.mjs` is
 byte-identical to `a51c8490`, and the change is two controls, two mutants, the committed inventory rows

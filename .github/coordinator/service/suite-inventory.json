@@ -3622,6 +3622,9 @@
     "B6 arming robustness: the second fixture is bound too, leg by leg (remote)",
     "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
     "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+    "B6 arming robustness mutation: fixture_2 keeps every read but loses its LOCAL leg check",
+    "B6 arming robustness mutation: fixture_2 keeps every read but loses its REMOTE leg check",
+    "B6 arming robustness mutation: fixture_2 keeps every read but loses its READBACK leg check",
     "B6 arming robustness mutation: the second fixture skips its own binding legs",
     "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
     "B6 arming robustness: the CLI names the refusal it caught",
@@ -27977,6 +27980,18 @@
     },
     {
       "name": "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its LOCAL leg check",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its REMOTE leg check",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its READBACK leg check",
       "capabilities": []
     },
     {
