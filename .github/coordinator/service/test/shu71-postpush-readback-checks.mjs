@@ -196,6 +196,22 @@ export async function parentCountCheck(create, h) {
   assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_PARENT_COUNT_REQUIRED');
 }
 
+// Observe the reseed-ref answers as the fixture actually serves them, so a control can
+// ASSERT the ref term instead of leaving it true by construction. Reads the body once and
+// re-serves it, because the fixture's answers are plain objects with a single-use text().
+function observeRefAnswers(h, route, seen) {
+  const inner = h.boundary.fetch;
+  h.boundary.fetch = async (url, options) => {
+    const response = await inner(url, options);
+    if (url.startsWith(PREFIX) && url.slice(PREFIX.length) === route && typeof response?.text === 'function') {
+      const body = await response.text();
+      try { seen.push(JSON.parse(body)?.object?.sha ?? null); } catch { seen.push(null); }
+      return { ok: response.ok, status: response.status, text: async () => body };
+    }
+    return response;
+  };
+}
+
 // EACH PARENT POSITION IS ITS OWN TERM. "The pair, in order" is not one claim
 // but two - the retained parent must be the FIRST parent and the approved
 // execution revision the SECOND - and reversing the pair (above) can be refused
@@ -214,8 +230,15 @@ export async function parentPositionZeroCheck(create, h) {
   const reads = interceptReads(h, (r, attempt) => (r === route && attempt === 1
     ? { rewrite: body => (served = { ...body, parents: [{ sha: foreign }, ...body.parents.slice(1)] }) }
     : undefined));
+  const refShas = [];
+  observeRefAnswers(h, REF140, refShas);
   const result = await create(h.id, h.boundary).execute('run');
   assert.ok(served, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  // The ref term is MEASURED here, not left true by construction: the last ref answer this
+  // run received must still carry the signed reseed commit.
+  assert.ok(refShas.length > 0, 'B5_ANCESTRY_PARENT_0_REQUIRED');
+  assert.equal(refShas[refShas.length - 1], h.spec.pkg.reseed.expected_seed_head,
+    'B5_ANCESTRY_PARENT_0_REQUIRED');
   assert.equal(served.sha, h.spec.pkg.reseed.expected_seed_head, 'B5_ANCESTRY_PARENT_0_REQUIRED');
   assert.equal(served.parents.length, 2, 'B5_ANCESTRY_PARENT_0_REQUIRED');
   assert.equal(served.parents[1].sha, genuine[1], 'B5_ANCESTRY_PARENT_0_REQUIRED');
@@ -239,8 +262,13 @@ export async function parentPositionOneCheck(create, h) {
   const reads = interceptReads(h, (r, attempt) => (r === route && attempt === 1
     ? { rewrite: body => (served = { ...body, parents: [...body.parents.slice(0, 1), { sha: foreign }] }) }
     : undefined));
+  const refShas = [];
+  observeRefAnswers(h, REF140, refShas);
   const result = await create(h.id, h.boundary).execute('run');
   assert.ok(served, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.ok(refShas.length > 0, 'B5_ANCESTRY_PARENT_1_REQUIRED');
+  assert.equal(refShas[refShas.length - 1], h.spec.pkg.reseed.expected_seed_head,
+    'B5_ANCESTRY_PARENT_1_REQUIRED');
   assert.equal(served.sha, h.spec.pkg.reseed.expected_seed_head, 'B5_ANCESTRY_PARENT_1_REQUIRED');
   assert.equal(served.parents.length, 2, 'B5_ANCESTRY_PARENT_1_REQUIRED');
   assert.equal(served.parents[0].sha, genuine[0], 'B5_ANCESTRY_PARENT_1_REQUIRED');

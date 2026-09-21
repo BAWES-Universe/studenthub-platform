@@ -5564,8 +5564,17 @@ this file (`V8_DOCUMENTATION_LINK_TARGETS` among them) pass over it. No producti
 touched by this correction, which a diff of `256e5ee..6152c34` shows: two paths, the test module
 and the committed suite inventory.
 
-**Focused selection after the documentation commit.** Re-run against the exact bytes this
-commit lands, unchanged, with the committed inventory in place: green, and the guards that read
-this file (`V8_DOCUMENTATION_LINK_TARGETS` among them) pass over it. No production file is
-touched by this correction, which a diff of `256e5ee..6152c34` shows: two paths, the test module
-and the committed suite inventory.
+**The ref term is measured by these controls, not left true by construction.** The first
+submission of this section said the position controls assert "the ref still carries the commit"
+while the code asserted only properties of the served commit object; an independent verifier
+caught the difference and was right. The controls now observe the reseed-ref answers the fixture
+actually serves and assert that the last one still carries the signed reseed commit, so the
+sentence is true because the code measures it. Falsifiability was checked rather than assumed:
+serving a foreign sha on that route makes both controls fire with their own tokens
+(`B5_ANCESTRY_PARENT_0_REQUIRED`, `B5_ANCESTRY_PARENT_1_REQUIRED`).
+
+**Also corrected here:** this section carried one paragraph duplicated verbatim (reported by the
+verifier as F2); the duplicate is removed. The older orphan stub in the fifteenth section
+(`**Focused selection after the documentation commit.**` followed immediately by the real
+paragraph) is left as merged and is recorded here as a known cosmetic leftover, not fixed in
+this correction.
