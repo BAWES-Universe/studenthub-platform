@@ -5373,3 +5373,133 @@ follows changes only this file, which the suite reads under exactly two guards:
 repoints three existing links, in the code commits that moved them, and adds
 none), and `SHU71_PATH_NEUTRAL_COMMANDS`. Both were re-checked after that
 commit, together with a re-run of the focused selection.
+
+### Fifteenth correction round: the post-push ancestry read is bounded by the commit, not by the diff
+
+**The refusal this round closes, measured.** An owner-approved window armed
+through the documented entrypoint took `binding`, `sign`, `expiry-watch`,
+`local-reseed` and the push, and then HALTED:
+
+```
+{"ok":false,"state":"HALT","code":"ACT_API_FAILED",
+ "api_failure":{"operation":"github:compare/<parent>...<reseed>","reason":"response_too_large","status":200,"attempts":1},
+ "teardown":{"ok":true,"state":"REVOKED","code":null,"failures":[]}}
+```
+
+The push had LANDED. The reviewed teardown measured the lane branch back — the
+remote, the checkout and the remote-tracking ref all at the retained parent
+again — and left both dispatch gates at `ENABLE_DISPATCH=false`, with no
+activation file and no unit running. What refused was the READ that is supposed
+to confirm the push. Measured read-only afterwards against the live repository,
+for the bound pair that window carried:
+
+| read | http | bytes |
+| --- | --- | --- |
+| `compare/<parent>...<reseed>` — what the code asked for | 200 | 1,667,573 |
+| the same route with `?per_page=1` | 200 | 1,289,506 |
+
+`status: ahead`, `ahead_by: 27`, `behind_by: 0`, and the `files` array
+truncated by GitHub at 300 **with patches**: the body IS the patch array,
+`per_page` bounds the commit list and not it, and the body grows with the diff
+the reseed merge brings — so the route refuses a landed push more certainly as
+`main` advances, against this module's unchanged 1 MiB read cap.
+
+**What the round changes: the READ, and nothing else. The claim and its refusal
+name are unchanged.**
+
+was (this round's parent, `182c5db`):
+
+```js
+const comparison = await githubRead(`compare/${old}...${next}`);
+need(comparison.status === 'ahead' && comparison.merge_base_commit?.sha === old, 'ACT_REMOTE_ANCESTRY');
+```
+
+is now:
+
+```js
+const reseedCommit = await githubRead(`git/commits/${next}`);
+const reseedRef = await githubRead(`git/ref/heads/${encodeURIComponent(pkg.reseed.branch)}`);
+const reseedParents = Array.isArray(reseedCommit.parents) ? reseedCommit.parents.map(parent => parent?.sha) : [];
+need(reseedCommit.sha === next && reseedParents.length === 2
+  && reseedParents[0] === spec.binding.expected_parent && reseedParents[1] === spec.binding.approvedExecutionRevision
+  && reseedRef.object?.sha === next, 'ACT_REMOTE_ANCESTRY');
+```
+
+The Git Data route answers the COMMIT OBJECT alone — parents and tree pointers,
+kilobytes, no patch array. Five terms are now asserted, not one:
+
+1. `next` is the SIGNED reseed sha the package binds;
+2. the parent list is exactly two long;
+3. its first parent is the parent this package retained;
+4. its second parent is the approved execution revision — the same pair in the
+   same order `verifyReseedCommit()` binds locally above, so the remote read and
+   the local verification cannot drift apart;
+5. the branch is still AT `next` when it is read a second time, after
+   `heads(spec, true)` has already required it once.
+
+A foreign sha, a missing or malformed object, reversed parents, a third parent,
+or a ref that moved between the two reads each refuse `ACT_REMOTE_ANCESTRY` on
+the FIRST answer. Both reads reach the retried read door, so only their RACES
+retry — the rule the eighth round established is unchanged and is now measured
+on the commit object and the ref rather than on a comparison.
+
+**The 1 MiB cap is unchanged**, and the route that caused the refusal cannot
+come back silently: one control asserts that a window which arms never requests
+`compare/` at all, and one mutant puts the comparison read back to prove the
+control sees it.
+
+**Controls and mutants added**, all in
+`test/shu71-postpush-readback-checks.mjs`, driven by
+`test/shu71-postpush-readback.test.mjs`:
+
+| control | what it measures |
+| --- | --- |
+| a landed push whose reseed commit read is not answerable yet still arms | the read's RACES retry, and the retry is recorded |
+| arming never asks for the patch-bearing comparison | the route that refused a landed push is not requested by a successful run |
+| a genuinely wrong ancestry refuses instead of being retried | a foreign sha on every answer refuses on the first |
+| parents in the other order refuse instead of being retried | the order term, alone |
+| a third parent refuses instead of being retried | the count term, alone — a superset merge the order terms cannot see |
+| a ref that moved after the push refuses instead of being retried | the second ref read, alone, with the commit object still agreeing |
+
+and one mutant per term of the claim — the signed sha not compared, the order
+not required, the count not required, the ref not required — each killed by the
+control that measures that term alone, plus the read going back to the
+unretried door, the read retried until it agrees, and the patch-bearing
+comparison coming back.
+
+**The committed suite inventory moves with the tests.** `suite-inventory.json` — which the A12
+guard reads out of the COMMITTED revision, so it cannot be updated after the fact — gains exactly
+the nine tests this round adds and the four it renames, and nothing else. The guard's own internal
+run at this round's head reports `121 files; 3625 child outcomes plus this guard`, 18/18.
+
+**Superseded text in this file.** The eighth round's table row
+`remote-push compare` and the sentence below that table which cites "a compare
+status that is not `ahead`" describe the read as it stood then. The RULE they
+state is unchanged — any 2xx answer is returned to the caller unchanged, so a
+genuine state mismatch still refuses on the first answer — and it is now
+measured on the commit object and the ref instead of on a comparison.
+
+**Validation of the fifteenth correction round.** The four runs were executed with the worktree PRISTINE at the code revision
+`cfd128af` (tree `4ca2e2d8`) — `dirty=0` at start and at finish, `TMPDIR` pinned to a plain
+directory, one mode at a time, `taskset -c 0-9`, `--test-concurrency=4`, the same
+`host-suite-contract` reporter and per-mode `timeout` the earlier rounds used:
+
+| mode | exit | seconds | TAP ok | TAP not ok |
+| --- | --- | --- | --- | --- |
+| focused, plain | 0 | 238 | 2,235 | 0 |
+| focused, clock-shifted | 0 | 237 | 2,235 | 0 |
+| full, plain | 0 | 518 | 3,621 | 0 |
+| full, clock-shifted | 0 | 487 | 3,621 | 0 |
+
+The focused selection is unchanged (32 files) and its count rises by exactly the nine tests this
+round adds — 2,226 to 2,235 — and the full selection by the same nine, 3,612 to 3,621. The A12
+guard re-ran the whole suite inside both full runs and reported `121 files; 3625 child outcomes
+plus this guard` at this revision, 18/18.
+
+**Focused selection after the documentation commit.** The re-check below was run against the
+exact bytes this commit lands.
+
+**Focused selection after the documentation commit.** The focused selection was re-run against these exact bytes, unchanged (32 files): 2,235 tests,
+2,234 passing, 0 failing, one permitted skip — the same zero-failure result as at the code
+revision — and `V8_DOCUMENTATION_LINK_TARGETS`, which resolves the three links this round
+repointed at the exact line number it pins, passes over this file.
