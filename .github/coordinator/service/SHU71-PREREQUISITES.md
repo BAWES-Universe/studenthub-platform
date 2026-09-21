@@ -4846,7 +4846,14 @@ removed, renamed or reordered.
 
 #### The mutants, and the named assertion that kills each
 
-| Mutation | Killed by |
+Recorded as observed at THIS round's committed and validated head, `25d46cc0`
+(see the Validation section below). **Superseded for five of these nine rows as
+of the fourteenth round's head, `acbf9d1` onward** — see the correction
+immediately below the table; the earlier column is kept because it is what this
+round's own run actually printed, and none of these nine kills is lost, only
+renamed.
+
+| Mutation | Killed by (twelfth round's head, `25d46cc0`) |
 | --- | --- |
 | the final measurement is removed entirely | `B8_FINAL_MEASURED_AGAIN` |
 | the final measurement runs only when the restore has no DONE row | `B8_FINAL_MEASURED_AGAIN` |
@@ -4859,6 +4866,50 @@ removed, renamed or reordered.
 | a measurement failure is swallowed | `B8_MEASUREMENT_FAILURE` |
 
 The eleventh round's fifteen mutants are re-killed unchanged in the same runs.
+
+**Correction, made in the SHU-280 lane's fourteenth round (`acbf9d1`), recorded
+here rather than in a new section because it corrects THIS table.** The fourteenth
+round removed `observePublishedRefs()`'s `local-reseed` intent gate (see the
+twelfth round's own committed head above for what that predicate was) and
+re-anchored the `GATE` mutation string in
+`shu71-final-measurement-checks.mjs` onto the bare function signature. That file's
+nine `mutations2` entries, their edits and their check functions are otherwise
+byte-for-byte the same ones this table names — no mutation was added, removed or
+reworded — but changing what the mutated function does upstream of a shared
+multi-assertion check function moves which assertion inside that function throws
+FIRST for five of the nine. All nine still die; zero survive. Measured two ways,
+both against the exact revisions this table already cites: (1) the committed
+revision `acbf9d1`, worktree pristine, by running `node --test
+--test-reporter=tap
+.github/coordinator/service/test/shu71-final-measurement.test.mjs` and reading
+the `# killed by …` diagnostic each mutation subtest prints — the literal
+`t.diagnostic` output of `killedBy()` in `shu71-final-measurement-checks.mjs`;
+(2) the same command re-run against `25d46cc0` checked out standalone in an
+adjacent worktree (`git worktree add --detach … 25d46cc0`), which reproduces the
+left-hand column exactly, confirming the five-row move is a consequence of the
+fourteenth round's own change and not of anything the thirteenth round did in
+between:
+
+| Mutation | Killed by, `25d46cc0` (as recorded above) | Killed by, `acbf9d1` onward (measured) |
+| --- | --- | --- |
+| the final measurement is removed entirely | `B8_FINAL_MEASURED_AGAIN` | `B8_THIRD_VALUE_HALTS_BY_NAME` |
+| the final measurement runs only when the restore has no DONE row | `B8_FINAL_MEASURED_AGAIN` | unchanged — `B8_FINAL_MEASURED_AGAIN` |
+| the final measurement is a no-op once it has run in an earlier invocation | `B8_FINAL_MEASURED_AGAIN` | unchanged — `B8_FINAL_MEASURED_AGAIN` |
+| the measurement is recorded but never judged | `B8_THIRD_VALUE_NOT_A_CLEAN_RECEIPT` | unchanged — `B8_THIRD_VALUE_NOT_A_CLEAN_RECEIPT` |
+| a third value is treated as restorable | `B8_THIRD_VALUE_UNTOUCHED` | `B8_FINAL_MEASUREMENT_RECORDS_WHAT_IT_FOUND` |
+| the third value is overwritten by an unleased force | `B8_THIRD_VALUE_UNTOUCHED` | `B8_FINAL_MEASUREMENT_RECORDS_WHAT_IT_FOUND` |
+| a third local head is overwritten by an unconditional update-ref | `B8_THIRD_VALUE_UNTOUCHED` | `B8_FINAL_MEASUREMENT_RECORDS_WHAT_IT_FOUND` |
+| this run's published head is accepted at the end | `B8_UNRESTORED_HALTS_BY_NAME` | unchanged — `B8_UNRESTORED_HALTS_BY_NAME` |
+| a measurement failure is swallowed | `B8_MEASUREMENT_FAILURE` | `B8_MEASUREMENT_FAILURE_NAMES_THE_STEP` |
+
+The ninth row moves too, and is recorded as moving rather than folded into the
+"unchanged" set: at `25d46cc0` the mutant leaves `measurementFailureCheck`'s
+`second.ok === false` assertion (message `` `${label}: …` ``, literally
+`B8_MEASUREMENT_FAILURE: …`) to fire first; at `acbf9d1` that assertion passes
+and the next one — `second.failures.includes('ACT_TEARDOWN_OBSERVATION')`,
+named `B8_MEASUREMENT_FAILURE_NAMES_THE_STEP` — fires instead, because the
+gate's removal changes what the mutated, exception-swallowing observation call
+leaves in `second.failures` on this path.
 
 #### What could NOT be closed, and why
 
