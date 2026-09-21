@@ -45,6 +45,8 @@ export const journalInventory = [
   { event: 'FIXTURE_REMOVE_INTENT', payload: () => ({ attempt_id: '12345678-1234-1234-1234-123456789abc', dev: 1, ino: 2, uid: 999 }) },
   { event: 'BRANCH_RESTORE_MEASURED', payload: h => ({ branch: h.spec.pkg.reseed.branch,
     remote: h.spec.pkg.reseed.expected_parent, local: h.spec.pkg.reseed.expected_parent, tracking: h.spec.pkg.reseed.expected_parent }) },
+  { event: 'BRANCH_FINAL_MEASURED', payload: h => ({ branch: h.spec.pkg.reseed.branch,
+    remote: h.spec.pkg.reseed.expected_parent, local: h.spec.pkg.reseed.expected_parent, tracking: h.spec.pkg.reseed.expected_parent }) },
   { event: 'AUTOMATIC_TEARDOWN_RESERVED', payload: () => ({ attempts: 2 }) },
   { event: 'SETTLEMENT_STARTED' }, { event: 'INTENT', payload: () => ({ step: 'teardown:gate' }) },
   { event: 'DONE', payload: () => ({ step: 'teardown:gate' }) },

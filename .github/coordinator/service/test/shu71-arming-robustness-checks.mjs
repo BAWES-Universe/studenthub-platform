@@ -415,7 +415,12 @@ export async function lsRemotePersistentCheck(create, h) {
   assert.ok(result.command_failure?.argv.includes('refs/heads/coordinator/SHU-140'), 'B6_COMMAND_FAILURE_NAMED');
   assert.equal(result.command_failure?.status, 1, 'B6_COMMAND_FAILURE_NAMED');
   assert.equal(result.command_failure?.attempts, COMMAND_RETRY.attempts, 'B6_COMMAND_FAILURE_NAMED');
-  assert.equal(commands.count(' ls-remote '), COMMAND_RETRY.attempts, 'B6_LS_REMOTE_PERSISTENT_BOUNDED');
+  // `repeated`, not `count`: SHU-280's fourteenth round gives the teardown's
+  // final observation its own reading of this ref on every path, so the
+  // INVOCATION now reaches this command again after the halt. What this
+  // control pins is unchanged and is what `repeated` states - the longest run
+  // of identical consecutive attempts, which is exactly the retry bound.
+  assert.equal(commands.repeated(' ls-remote '), COMMAND_RETRY.attempts, 'B6_LS_REMOTE_PERSISTENT_BOUNDED');
   const halted = h.journal().filter(e => e.event === 'HALTED');
   assert.equal(halted.at(-1)?.command_failure?.status, 1, 'B6_COMMAND_FAILURE_IN_JOURNAL');
   noSecret('B6_COMMAND_FAILURE_CARRIES_NO_SECRET', result, h.journal());
@@ -433,7 +438,10 @@ export async function lsRemoteWrongShaCheck(create, h) {
   const result = await create(h.id, h.boundary).execute('run');
   assert.equal(result.code, 'ACT_REF_BINDING', 'B6_LS_REMOTE_WRONG_SHA_NOT_RETRIED');
   assert.equal(result.binding_leg, 'remote', `B6_BINDING_LEG_NAMED ${JSON.stringify(result)}`);
-  assert.equal(commands.count(' ls-remote '), 1, 'B6_LS_REMOTE_WRONG_SHA_NOT_RETRIED');
+  // `repeated` for the same reason as above: the teardown's own observation
+  // reads this ref once more, and "not retried" is a statement about
+  // consecutive attempts, not about how often the invocation reaches it.
+  assert.equal(commands.repeated(' ls-remote '), 1, 'B6_LS_REMOTE_WRONG_SHA_NOT_RETRIED');
   assert.deepEqual(commands.delays, [], 'B6_LS_REMOTE_WRONG_SHA_NOT_RETRIED');
   assert.equal(h.exists(ACTIVATION), false, 'B6_LS_REMOTE_WRONG_SHA_NOT_RETRIED');
 }

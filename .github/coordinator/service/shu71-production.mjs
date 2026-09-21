@@ -17,6 +17,12 @@ const REMOTE = `https://github.com/${REPO}.git`;
 const IDS = ['SHU-140', 'SHU-254'];
 const SERVICES = ['shu-coordinator.timer', 'shu-coordinator.service', 'shu-supervisor.service'];
 const GATES = SERVICES.filter(n => n.endsWith('.service')).map(n => `/etc/systemd/system/${n}.d/90-shu71.conf`);
+// The refusals a retired episode's re-observation reports UNDER THEIR OWN NAME
+// rather than flattening into ACT_TEARDOWN_DRIFT. Each names a specific value
+// the operator has to act on - a live expiry companion, someone else's write on
+// the lane branch, this run's own published head still standing - and "drift"
+// says none of them. Additive: every other cause keeps the existing code.
+const RETIRED_OBSERVATION_NAMES = Object.freeze(['ACT_TEARDOWN_EXPIRY_SERVICE', 'ACT_TEARDOWN_BRANCH_MOVED', 'ACT_TEARDOWN_BRANCH_UNRESTORED']);
 const READBACK_CODES = ['DROPIN', 'ACTIVATION'].flatMap(kind =>
   ['MISSING', 'BYTES', 'CUSTODY', 'MODE', 'DIRECTORY', 'READ'].map(reason => `ACT_${kind}_READBACK_${reason}`));
 export const installedModule = '/usr/local/lib/shu71/coordinator/service/shu71-production.mjs';
@@ -683,10 +689,61 @@ export function createShu71Production(id, b = shu71Boundary) {
       let active;
       try { active = JSON.parse(privateRead(`${ROOT}/active.json`)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
       if (journal.entries.some(e => e.event === 'TEARDOWN_COMPLETE')) {
-        // A successor owns the shared gates. This receipt is historical only.
+        // A successor owns the shared gates. This receipt is historical only:
+        // it declares `physical_teardown_observed: false` and asserts nothing
+        // about the host, and the lane's refs now belong to the LIVE episode,
+        // which may legitimately be holding its own published head on them.
+        // Measuring them here would refuse a successor's ordinary arming, so
+        // this is the one `ok: true` that still takes no reading - it makes no
+        // physical claim to disagree with one.
         if (active && active.activation_id !== id) return { ok: true, state: 'REVOKED', activation_id: id, receipt_scope: 'retired_episode', physical_teardown_observed: false };
-        try { observeTeardown(); observeRetiredExpiry(); }
-        catch (error) { return { ok: false, state: 'HALT', code: error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE' ? error.code : 'ACT_TEARDOWN_DRIFT' }; }
+        // AN `ok: true` THAT CLAIMS THE TEARDOWN IS PHYSICALLY OBSERVED MUST
+        // OBSERVE THE PUBLISHED REFS TOO. This path answers a repeat
+        // run/resume/revoke/expire of an episode whose journal already carries
+        // TEARDOWN_COMPLETE. It re-measures the units, the credential and the
+        // gates - because those can drift - and it used to ask nothing about
+        // the three refs the next mint reads, which are the only state here
+        // this host does not own. Measured on the modelled host: invocation
+        // two closes clean with the refs at the retained parent, a third party
+        // then advances the remote, and invocation three returned
+        // `{ ok: true, physical_teardown_observed: true }` with no
+        // BRANCH_FINAL_MEASURED row - a clean answer over externally changed
+        // state, which is the same class the owner ruled blocking for the
+        // teardown's own final observation.
+        //
+        // The refs are therefore re-read here on EVERY such invocation. SHU-280's
+        // fourteenth round took the restoration's `local-reseed` intent gate off
+        // that reading, so this holds for a retired episode that never published
+        // too: an answer of this shape may not rest on an unread ref whatever
+        // the episode's own history says. A third value HALTS as
+        // ACT_TEARDOWN_BRANCH_MOVED and is left exactly as the third party
+        // left it; this run's own published head HALTS as
+        // ACT_TEARDOWN_BRANCH_UNRESTORED; and the reading a refusal rests on
+        // is durable as BRANCH_FINAL_MEASURED, so the refusal says WHICH value
+        // it found. This path issues no command but the three reads, writes no
+        // second receipt and repeats no effect: the durable TEARDOWN_COMPLETE
+        // was honest when written, and nothing here re-runs a completed
+        // mutation to "repair" what it finds.
+        //
+        // `settled` is the third argument, and it withholds ONE thing: the
+        // recording of a reading that AGREES. This invocation writes no
+        // receipt, so nothing here rests on a row having landed first, and a
+        // wake that confirms its own receipt must leave the host exactly as it
+        // found it - otherwise every later wake of every retired episode
+        // appends another row forever. Same function, same three reads, same
+        // judgement, same refusal, same durable row on disagreement.
+        try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal, true); }
+        // The named refusal is REPORTED BY NAME - learning which value stopped
+        // the answer is the whole point of measuring. The two pre-existing
+        // outcomes are unchanged, and an unnamed failure (a read that never
+        // answered) still halts, now carrying its cause rather than only
+        // `ACT_TEARDOWN_DRIFT`.
+        catch (error) {
+          const code = RETIRED_OBSERVATION_NAMES.includes(error?.code) ? error.code : 'ACT_TEARDOWN_DRIFT';
+          return { ok: false, state: 'HALT', code,
+            ...(reviewedCode(error?.code) && error.code !== code ? { observation_error: error.code } : {}),
+            ...commandFailureRecord(error) };
+        }
         if (active) remove(`${ROOT}/active.json`);
         return { ok: true, state: 'REVOKED', activation_id: id, physical_teardown_observed: true };
       }
@@ -1212,14 +1269,20 @@ export function createShu71Production(id, b = shu71Boundary) {
   // that reports failure is recovered by a RE-READ that accepts only the one
   // value meaning the mutation already happened - never by pushing again.
   //
-  // WHEN IT MEASURES AT ALL. `local-reseed` is the step that creates the
+  // WHEN IT RESTORES AT ALL. `local-reseed` is the step that creates the
   // published commit and the first step that could move any of these refs, so
   // its durable INTENT row is what proves this episode may have published
   // something. Without it - a pre-arm refusal, a revoke of a window that never
-  // ran - nothing is measured, no remote is contacted and no credential is
-  // read, exactly as the fixture-card restores above are gated on their own
-  // `ready-<id>` intent. A recovered log proves nothing about non-creation and
-  // always measures, fail-closed.
+  // ran - this step measures nothing and MOVES nothing, exactly as the
+  // fixture-card restores above are gated on their own `ready-<id>` intent. A
+  // recovered log proves nothing about non-creation and always measures,
+  // fail-closed.
+  //
+  // THE GATE STOPS AT THE EFFECT. It used to cover the final OBSERVATION too,
+  // and that let a pre-arm teardown emit a clean receipt over a ref it had not
+  // read; `observePublishedRefs` below is therefore ungated and does contact
+  // the remote on this path. Nothing here changes: a pre-arm teardown still
+  // issues no push and no `update-ref`.
   const branchRestoresIssued = new Set();
   const measureLocalRef = (spec, ref) => gitText(spec, ['for-each-ref', '--format=%(objectname)', ref]);
   const measureRemoteRef = (spec, ref) => {
@@ -1273,6 +1336,103 @@ export function createShu71Production(id, b = shu71Boundary) {
     if (measured.tracking !== '' && restorable('tracking', measured.tracking)) {
       git(spec, ['update-ref', tracking, parent, published]);
       need(measureLocalRef(spec, tracking) === parent, 'ACT_TEARDOWN_BRANCH_TRACKING');
+    }
+  }
+  // THE MEASUREMENT A COMPLETION ROW MAY NOT SKIP. `restore-branch` above is a
+  // JOURNALLED effect, so a durable `DONE` row makes every later invocation
+  // skip it - and for the EFFECT that is right: a mutation already performed
+  // must not be performed again. The same row also skipped its MEASUREMENT,
+  // and the measurement is the only thing in this teardown that observes state
+  // THIS HOST DOES NOT OWN. Measured consequence: `restore-branch` succeeds, a
+  // LATER teardown effect fails, a third party then advances the lane branch,
+  // and the SECOND invocation - finding the DONE row, skipping the step, and
+  // asking nothing about the ref - ends `TEARDOWN_COMPLETE, failures: []` over
+  // a branch that is no longer where the receipt says it is. A clean receipt
+  // sitting on top of externally changed state.
+  //
+  // So the three refs are re-read HERE, in the final observation, on EVERY
+  // invocation, unconditionally, whatever any DONE row says. Skipping an
+  // effect is allowed on a re-invocation; skipping the final measurement is
+  // not. What it finds is durable as BRANCH_FINAL_MEASURED before any
+  // conclusion is drawn from it, so the refusal can say which value it found.
+  //
+  // WHAT EACH VALUE MEANS, AND WHAT IS NEVER DONE ABOUT IT. The retained
+  // parent is the only value that closes this receipt. A THIRD value is
+  // someone else's write: it HALTS as ACT_TEARDOWN_BRANCH_MOVED and is left
+  // EXACTLY as the third party left it - this function issues no command at
+  // all, so there is no path here by which a foreign value is overwritten,
+  // adopted or fast-forwarded. This run's own published head still standing at
+  // the end of a teardown means the restoration did not happen - `restore-branch`
+  // ran before this point and either restored it or refused - so it HALTS as
+  // ACT_TEARDOWN_BRANCH_UNRESTORED rather than being quietly completed over.
+  // An absent remote-tracking ref is the one tolerated absence, exactly as in
+  // the restoration: this run never creates that ref, and a checkout that has
+  // none is not carrying anything of ours.
+  //
+  // IT MEASURES ON EVERY PATH, AND THE INTENT GATE IS GONE FROM HERE. This
+  // asked `did THIS run publish` - the restoration's own gate - and skipped all
+  // three reads when the answer was no. That is a question about this episode's
+  // history; the receipt makes a claim about the HOST. Measured on the modelled
+  // host and ruled blocking by the owner: a window that halts BEFORE
+  // `local-reseed` - a `binding` read that never answers, a package guard that
+  // refuses - returns an embedded teardown of
+  // `{"ok":true,"state":"REVOKED","code":null,"failures":[]}` while the lane
+  // ref stands at a foreign value, because nothing on that path asked. A clean
+  // teardown receipt over externally mutable state this host does not own,
+  // which is the class the owner has now blocked twice:
+  //
+  //   "A completion row may avoid repeating an effect, but it may not avoid
+  //    final measurement of externally mutable state... the result must HALT by
+  //    name and leave the third-party value untouched. It must not emit a clean
+  //    teardown receipt."
+  //
+  // The measured value is compared against WHAT THE PACKAGE REQUIRES - the
+  // retained parent - not against what this run happens to have done, so the
+  // judgement below is the same on every path: the retained parent closes the
+  // receipt, this run's published head is ACT_TEARDOWN_BRANCH_UNRESTORED, any
+  // other value is ACT_TEARDOWN_BRANCH_MOVED, and nothing is written back.
+  //
+  // WHAT THE GATE WAS PROTECTING IS PRESERVED WHERE IT BELONGS: on the EFFECT.
+  // `restorePublishedRefs` keeps its gate byte-for-byte, so a pre-arm teardown
+  // still issues no push, no `update-ref` and no restoration of any kind, and
+  // this function issues no command but the three reads. What the gate also
+  // bought - one spared `ls-remote` and one spared credential read on a run
+  // that published nothing - is what is given up, deliberately: a read the
+  // receipt depends on is not an optional read. A host where that read cannot
+  // be taken - an absent or malformed `/srv/shu/coordinator.env`, a remote that
+  // never answers - does not get a quiet pass: the refusal propagates, the
+  // `observation` step fails as ACT_TEARDOWN_OBSERVATION carrying its own cause
+  // (ACT_CREDENTIAL_UNAVAILABLE, ACT_COMMAND_FAILED), `expiry-timer` refuses
+  // behind it, and the invocation ends TEARDOWN_INCOMPLETE. The one path that
+  // still answers without reading is the LIVE-SUCCESSOR scope above, which
+  // declares `physical_teardown_observed: false` and makes no physical claim at
+  // all; and a pre-custody refusal, which returns no teardown to be clean.
+  //
+  // A READ THAT FAILS IS A FAILURE. Nothing here is wrapped: a refusal from
+  // either read propagates, the observation step fails under its own name and
+  // carries that cause, and `expiry-timer` refuses behind it. There is no
+  // branch on which an unanswered read becomes a silent pass.
+  // WHEN THE READING IS RECORDED. In a teardown, ALWAYS and BEFORE any
+  // conclusion: the receipt about to be written rests on it, so the refusal
+  // and the completion alike must be able to say what was read. `settled` is
+  // the one caller that writes no receipt at all - a repeat invocation of an
+  // episode whose journal already carries TEARDOWN_COMPLETE - and there an
+  // AGREEING reading is not recorded, because a wake that confirms its own
+  // receipt must leave the host exactly as it found it; recording there would
+  // append another row on every later wake of every retired episode, forever.
+  // A DISAGREEING reading is recorded on every path without exception: it is
+  // the only thing that says WHICH value stopped the answer. Nothing else
+  // moves with this flag - not which refs are read, not the judgement, not the
+  // refusal.
+  function observePublishedRefs(spec, journal, settled = false) {
+    const { branch, expected_parent: parent, expected_seed_head: published } = spec.pkg.reseed;
+    const ref = `refs/heads/${branch}`, tracking = `refs/remotes/origin/${branch}`;
+    const measured = { remote: measureRemoteRef(spec, ref), local: measureLocalRef(spec, ref), tracking: measureLocalRef(spec, tracking) };
+    const agrees = ([kind, value]) => value === parent || (kind === 'tracking' && value === '');
+    if (!(settled && Object.entries(measured).every(agrees))) journal.append({ event: 'BRANCH_FINAL_MEASURED', branch, ...measured });
+    for (const [kind, value] of Object.entries(measured)) {
+      if (agrees([kind, value])) continue;
+      need(false, value === published ? 'ACT_TEARDOWN_BRANCH_UNRESTORED' : 'ACT_TEARDOWN_BRANCH_MOVED');
     }
   }
   async function cleanup(spec, journal, reason, automatic = false) {
@@ -1347,7 +1507,10 @@ export function createShu71Production(id, b = shu71Boundary) {
         journal_sha256: digest(JSON.stringify(journal.entries)), authorization_expired: reason === 'expiry' }))],
     ];
     // Observation must run on every retry, even when earlier DONE rows exist.
-    effects.push(['observation', observeTeardown]);
+    // That is also why the published refs are measured HERE rather than only
+    // inside `restore-branch`: a completion row may avoid repeating an EFFECT,
+    // but it may not avoid the final MEASUREMENT of externally mutable state.
+    effects.push(['observation', () => { observeTeardown(); observePublishedRefs(spec, journal); }]);
     // Retire the retry mechanism only after every effect and observation passed.
     effects.push(
       ['expiry-timer', () => {
@@ -1360,7 +1523,17 @@ export function createShu71Production(id, b = shu71Boundary) {
         // process that re-reads the log reaches it too.
         need(journal.entries.filter(e => e.event === 'INTENT' && e.step.startsWith('teardown:') && e.step !== 'teardown:expiry-timer' && e.step !== 'teardown:manifest')
           .every(e => journal.entries.some(v => v.event === 'DONE' && v.step === e.step)), 'ACT_CLEANUP_FAILED');
+        // The re-observation measures the published refs too. It re-read the
+        // units, the credential and the gates and skipped the three refs, so a
+        // write that landed AFTER `observation` read them and BEFORE the
+        // receipt was written was seen by nothing: the step passed and the
+        // invocation closed TEARDOWN_COMPLETE, failures: [] over a moved ref.
+        // Reading them here does not close that window - the receipt is still
+        // written after the last read - but it moves the last reading of the
+        // refs to the last step before the receipt, so the unobservable
+        // interval is this step rather than the whole tail of the teardown.
         observeTeardown();
+        observePublishedRefs(spec, journal);
         retireExpiryTimer(journal);
       }],
     );

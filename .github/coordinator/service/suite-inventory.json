@@ -31,12 +31,15 @@
     ".github/coordinator/service/test/shu71-delivery-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-delivery.test.mjs",
     ".github/coordinator/service/test/shu71-delta-mutations.test.mjs",
+    ".github/coordinator/service/test/shu71-final-measurement.test.mjs",
     ".github/coordinator/service/test/shu71-final-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-history.test.mjs",
     ".github/coordinator/service/test/shu71-host-contract.test.mjs",
     ".github/coordinator/service/test/shu71-owner-decisions.test.mjs",
     ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
+    ".github/coordinator/service/test/shu71-post-completion.test.mjs",
     ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+    ".github/coordinator/service/test/shu71-prearm-measurement.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -1772,6 +1775,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload intact",
+    "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload intact",
     "exhausted invariant: NON_RESERVATION_ROWS: INTENT real payload intact",
@@ -1786,6 +1790,7 @@
     "exhausted invariant: NON_RESERVATION_ROWS: EXPIRY_RETIREMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: FIXTURE_REMOVE_INTENT real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload recovered",
+    "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: SETTLEMENT_STARTED real payload recovered",
     "exhausted invariant: NON_RESERVATION_ROWS: INTENT real payload recovered",
@@ -3665,6 +3670,59 @@
     "B7 published-branch restore mutation: the once-only rule is dropped and the mutation is re-attempted",
     "B7 published-branch restore mutation: a push that reported failure is pushed again",
     "B7 published-branch restore mutation: the intent gate is removed and a never-published window is measured",
+    "B8 final teardown measurement: a third-party advance after a completed restore halts by name and is left untouched",
+    "B8 final teardown measurement: an unchanged ref on a second invocation is measured again and completes",
+    "B8 final teardown measurement: this run's published head standing at the end is never closed over",
+    "B8 final teardown measurement: an unrestored ref is named, then restored by the invocation that may re-run the step",
+    "B8 final teardown measurement: a final measurement that cannot be taken is a named failure with its cause",
+    "B8 final teardown measurement: a window that never published is measured anyway and still completes",
+    "B8 final teardown measurement: a third party that advances the remote ref is refused and never overwritten",
+    "B8 final teardown measurement: a third party that advances the local ref is refused and never overwritten",
+    "B8 final teardown measurement: a third party that advances the tracking ref is refused and never overwritten",
+    "B8 final teardown measurement mutation: the final measurement is removed entirely",
+    "B8 final teardown measurement mutation: the final measurement runs only when the restore has no DONE row",
+    "B8 final teardown measurement mutation: the final measurement is a no-op once it has run in an earlier invocation",
+    "B8 final teardown measurement mutation: the measurement is recorded but never judged",
+    "B8 final teardown measurement mutation: a third value is treated as restorable",
+    "B8 final teardown measurement mutation: the third value is overwritten by an unleased force",
+    "B8 final teardown measurement mutation: a third local head is overwritten by an unconditional update-ref",
+    "B8 final teardown measurement mutation: this run's published head is accepted at the end",
+    "B8 final teardown measurement mutation: a measurement failure is swallowed",
+    "B9 post-completion measurement: a third-party advance after a COMPLETED teardown halts by name and is left untouched",
+    "B9 post-completion measurement: an unchanged ref after a completed teardown is measured again and still answers clean",
+    "B9 post-completion measurement: this run's published head back on the remote after the receipt is never answered over",
+    "B9 post-completion measurement: a post-completion measurement that cannot be taken halts carrying its cause",
+    "B9 post-completion measurement: a write landing between the observation and the receipt is caught by the retirement step",
+    "B9 post-completion measurement: a live successor's scope claims nothing physical and therefore reads nothing",
+    "B9 post-completion measurement: a retired episode that never published is measured on every later wake too",
+    "B9 post-completion measurement: a third party that advances the remote ref after the receipt is refused and never overwritten",
+    "B9 post-completion measurement: a third party that advances the local ref after the receipt is refused and never overwritten",
+    "B9 post-completion measurement: a third party that advances the tracking ref after the receipt is refused and never overwritten",
+    "B9 post-completion measurement mutation: the post-completion measurement is removed entirely",
+    "B9 post-completion measurement mutation: the post-completion measurement is removed and the clean answer stops reading",
+    "B9 post-completion measurement mutation: the expiry-timer re-observation skips the refs",
+    "B9 post-completion measurement mutation: a measured disagreement is answered ok:true",
+    "B9 post-completion measurement mutation: the named branch refusal is flattened into drift",
+    "B9 post-completion measurement mutation: the refused reading is never recorded",
+    "B9 post-completion measurement mutation: the reading is recorded even when it agrees",
+    "B9 post-completion measurement mutation: the third remote value is overwritten by a force push before the named refusal",
+    "B9 post-completion measurement mutation: a third local head is overwritten by an unconditional update-ref before the named refusal",
+    "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
+    "B10 pre-arm teardown measurement: a pre-arm halt with the ref at the retained parent measures and still completes",
+    "B10 pre-arm teardown measurement: a pre-arm halt over a third-party value halts by name and leaves it untouched",
+    "B10 pre-arm teardown measurement: a pre-arm halt over the package's published head is never closed over",
+    "B10 pre-arm teardown measurement: a pre-arm teardown that cannot read the credential is not a clean success",
+    "B10 pre-arm teardown measurement: a revoke of a window that never ran measures the refs too",
+    "B10 pre-arm teardown measurement: a third party holding the remote ref is refused and never overwritten",
+    "B10 pre-arm teardown measurement: a third party holding the local ref is refused and never overwritten",
+    "B10 pre-arm teardown measurement: a third party holding the tracking ref is refused and never overwritten",
+    "B10 pre-arm teardown measurement mutation: the intent gate is reinstated over the measurement",
+    "B10 pre-arm teardown measurement mutation: the pre-reseed path skips the measurement in the observation step",
+    "B10 pre-arm teardown measurement mutation: a third value is answered ok:true on a path that never published",
+    "B10 pre-arm teardown measurement mutation: a third local head is answered ok:true on a path that never published",
+    "B10 pre-arm teardown measurement mutation: a measurement failure is swallowed on the pre-arm path",
+    "B10 pre-arm teardown measurement mutation: the pre-arm path puts a third value back before refusing",
+    "B10 pre-arm teardown measurement mutation: the published head is accepted on a path that never published it",
     "PROVIDER remote main tolerates one transient read on either leg",
     "PROVIDER remote main still refuses a persistent read failure and a moved main",
     "PROVIDER a failed provider command names its executable, argv and status",
@@ -15051,6 +15109,14 @@
       ]
     },
     {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload intact",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: AUTOMATIC_TEARDOWN_RESERVED real payload intact",
       "capabilities": [
         {
@@ -15156,6 +15222,14 @@
     },
     {
       "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_RESTORE_MEASURED real payload recovered",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "exhausted invariant: NON_RESERVATION_ROWS: BRANCH_FINAL_MEASURED real payload recovered",
       "capabilities": [
         {
           "name": "git"
@@ -28077,6 +28151,218 @@
     },
     {
       "name": "B7 published-branch restore mutation: the intent gate is removed and a never-published window is measured",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third-party advance after a completed restore halts by name and is left untouched",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: an unchanged ref on a second invocation is measured again and completes",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: this run's published head standing at the end is never closed over",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: an unrestored ref is named, then restored by the invocation that may re-run the step",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a final measurement that cannot be taken is a named failure with its cause",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a window that never published is measured anyway and still completes",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third party that advances the remote ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third party that advances the local ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement: a third party that advances the tracking ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the final measurement is removed entirely",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the final measurement runs only when the restore has no DONE row",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the final measurement is a no-op once it has run in an earlier invocation",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the measurement is recorded but never judged",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: a third value is treated as restorable",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: the third value is overwritten by an unleased force",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: a third local head is overwritten by an unconditional update-ref",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: this run's published head is accepted at the end",
+      "capabilities": []
+    },
+    {
+      "name": "B8 final teardown measurement mutation: a measurement failure is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third-party advance after a COMPLETED teardown halts by name and is left untouched",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: an unchanged ref after a completed teardown is measured again and still answers clean",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: this run's published head back on the remote after the receipt is never answered over",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a post-completion measurement that cannot be taken halts carrying its cause",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a write landing between the observation and the receipt is caught by the retirement step",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a live successor's scope claims nothing physical and therefore reads nothing",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a retired episode that never published is measured on every later wake too",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third party that advances the remote ref after the receipt is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third party that advances the local ref after the receipt is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement: a third party that advances the tracking ref after the receipt is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the post-completion measurement is removed entirely",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the post-completion measurement is removed and the clean answer stops reading",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the expiry-timer re-observation skips the refs",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: a measured disagreement is answered ok:true",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the named branch refusal is flattened into drift",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the refused reading is never recorded",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the reading is recorded even when it agrees",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: the third remote value is overwritten by a force push before the named refusal",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: a third local head is overwritten by an unconditional update-ref before the named refusal",
+      "capabilities": []
+    },
+    {
+      "name": "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm halt with the ref at the retained parent measures and still completes",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm halt over a third-party value halts by name and leaves it untouched",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm halt over the package's published head is never closed over",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm teardown that cannot read the credential is not a clean success",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a revoke of a window that never ran measures the refs too",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a third party holding the remote ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a third party holding the local ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a third party holding the tracking ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the intent gate is reinstated over the measurement",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the pre-reseed path skips the measurement in the observation step",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: a third value is answered ok:true on a path that never published",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: a third local head is answered ok:true on a path that never published",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: a measurement failure is swallowed on the pre-arm path",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the pre-arm path puts a third value back before refusing",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the published head is accepted on a path that never published it",
       "capabilities": []
     },
     {

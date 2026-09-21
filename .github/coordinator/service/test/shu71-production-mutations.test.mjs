@@ -149,7 +149,11 @@ const mutations = [
   ['retired expiry units left behind', 'for (const file of EXPIRY_UNITS) remove(file);', 'for (const file of []) remove(file);', expiryRetirementCheck],
   ['expiry retirement receipt omitted', "if (!removing) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });",
     "if (false) journal.append({ event: 'EXPIRY_RETIREMENT_STARTED' });", expiryRetirementCheck],
-  ['retired episode expiry drift unobserved', 'try { observeTeardown(); observeRetiredExpiry(); }', 'try { observeTeardown(); }', expiryRetirementCheck],
+  // Re-anchored by SHU-280's thirteenth round, which gave this line the
+  // published-ref measurement. The mutation is unchanged: drop the retired
+  // expiry observation and nothing else.
+  ['retired episode expiry drift unobserved', 'try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal, true); }',
+    'try { observeTeardown(); observePublishedRefs(spec, journal, true); }', expiryRetirementCheck],
   ['expiry end state never measured', "    need(measuredPredicate(() => unitIdle(expiryTimerUnit)\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryTimerUnit, 'UnitFileState'))\n      && !expiryCompanionSurvivesRemoval()\n      && !['enabled', 'enabled-runtime'].includes(unitProperty(expiryServiceUnit, 'UnitFileState'))), 'ACT_TEARDOWN_DRIFT');\n",
     '', expiryPostConditionCheck],
   ['refused expiry disable blindly accepted', "catch (error) { need(measuredPredicate(() => error?.code === 'ACT_COMMAND_FAILED' && (removing || !installed && expiryRetired())), 'ACT_TEARDOWN_DRIFT'); }",
@@ -288,8 +292,12 @@ const mutations = [
     "function observeRetiredExpiry() { requireIdleExpiryCompanion(); need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }",
     "function observeRetiredExpiry() { need(measuredPredicate(expiryRetired), 'ACT_TEARDOWN_DRIFT'); }",
     (create, h) => expiryLiveCompanionCheck(create, h, 'retired-episode')],
-  ['live expiry companion reported as generic drift', "code: error?.code === 'ACT_TEARDOWN_EXPIRY_SERVICE' ? error.code : 'ACT_TEARDOWN_DRIFT'",
-    "code: 'ACT_TEARDOWN_DRIFT'", (create, h) => expiryLiveCompanionCheck(create, h, 'retired-episode')],
+  // Re-anchored by SHU-280's thirteenth round, which moved the same choice
+  // into a named list so the two branch refusals survive to the caller too.
+  // The mutation is unchanged: flatten every cause into generic drift.
+  ['live expiry companion reported as generic drift',
+    "const code = RETIRED_OBSERVATION_NAMES.includes(error?.code) ? error.code : 'ACT_TEARDOWN_DRIFT';",
+    "const code = 'ACT_TEARDOWN_DRIFT';", (create, h) => expiryLiveCompanionCheck(create, h, 'retired-episode')],
   ['expiry companion refusal predicate vacuous',
     "const requireIdleExpiryCompanion = () => need(measuredPredicate(() => !expiryCompanionSurvivesRemoval()), 'ACT_TEARDOWN_EXPIRY_SERVICE');",
     'const requireIdleExpiryCompanion = () => {};', (create, h) => expiryLiveCompanionCheck(create, h, 'installed')],
