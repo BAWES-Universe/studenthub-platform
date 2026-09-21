@@ -48,9 +48,9 @@ test('fixture ref readback refuses before signing', async t => {
   assert.equal((await createShu71Production(h.id, h.boundary).execute('run')).code, 'ACT_REF_BINDING', 'B1_REF_BINDING');
   assert.equal(h.signatures(), 0);
 });
-test('remote ancestry refuses diverged comparison after push', async t => {
+test('remote ancestry refuses a commit that is not the signed reseed', async t => {
   const h = productionFixture(t, keys), fetch = h.boundary.fetch;
-  h.boundary.fetch = (url, opts) => url.includes('/compare/') ? Promise.resolve({ ok: true, text: async () => JSON.stringify({ status: 'diverged' }) }) : fetch(url, opts);
+  h.boundary.fetch = (url, opts) => url.includes('/git/commits/') ? Promise.resolve({ ok: true, text: async () => JSON.stringify({ sha: 'f'.repeat(40), parents: [] }) }) : fetch(url, opts);
   assert.equal((await createShu71Production(h.id, h.boundary).execute('run')).code, 'ACT_REMOTE_ANCESTRY', 'B1_REMOTE_ANCESTRY');
   assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false);
 });

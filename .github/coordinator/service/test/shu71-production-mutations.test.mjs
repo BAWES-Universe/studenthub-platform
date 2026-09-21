@@ -46,9 +46,16 @@ const mutations = [
     await basic(create, h); h.expire();
     assert.equal((await create(h.id, h.boundary).execute('expire')).state, 'REVOKED', 'B4_PHYSICAL_EXPIRY');
   }],
-  ['remote ancestry guard bypassed', "need(comparison.status === 'ahead'", "need(true || comparison.status === 'ahead'", async (create, h) => {
+  // The guard is now a conjunction over the commit object and the ref; the mutant
+  // bypasses its FIRST term (the signed reseed sha) and the check below answers a
+  // commit object that satisfies every OTHER term - the bound parents in order,
+  // and the ref still carrying the reseed commit - so only the bypassed term can
+  // make the difference between a HALT and an arming.
+  ['remote ancestry guard bypassed', 'need(reseedCommit.sha === next', 'need(true || reseedCommit.sha === next', async (create, h) => {
     const fetch = h.boundary.fetch;
-    h.boundary.fetch = async (url, opts) => url.includes('/compare/') ? { ok: true, text: async () => JSON.stringify({ status: 'diverged' }) } : fetch(url, opts);
+    h.boundary.fetch = async (url, opts) => url.includes('/git/commits/')
+      ? { ok: true, text: async () => JSON.stringify({ sha: 'f'.repeat(40), parents: [{ sha: h.spec.pkg.reseed.expected_parent }, { sha: h.spec.pkg.coordinator_revision }] }) }
+      : fetch(url, opts);
     assert.equal((await create(h.id, h.boundary).execute('run')).state, 'HALT', 'B1_REMOTE_ANCESTRY_REFUSED');
   }],
   ['post-push readback omitted', 'await heads(spec, true);', '/* mutation: omit post-push readback */', async (create, h) => {

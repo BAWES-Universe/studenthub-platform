@@ -313,6 +313,14 @@ export function productionFixture(t, keys, signingPath = '/etc/shu/keys/shu71-ac
             const state = h.states.get(transition.issue_id);
             result = { data: { issue: { id: transition.linear_id, identifier: transition.issue_id, state: { id: state.state_id }, assignee: state.assignee_id && { id: state.assignee_id } } } };
           }
+        } else if (url.includes('/git/commits/')) {
+          // The Git Data route answers the COMMIT OBJECT alone - parents and tree
+          // pointers, no `files` array and no patches. That absence is what bounds
+          // the post-push ancestry read; the `compare/` route below carries the
+          // patches for up to 300 changed files and is retained only so a control
+          // can prove no successful run asks for it.
+          const sha = url.slice(url.indexOf('/git/commits/') + '/git/commits/'.length);
+          result = { sha, tree: { sha: pkg.reseed.expected_parent }, parents: [{ sha: pkg.reseed.expected_parent }, { sha: pkg.coordinator_revision }] };
         } else if (url.includes('/compare/')) result = { status: 'ahead', merge_base_commit: { sha: pkg.reseed.expected_parent } };
         else result = { object: { sha: url.endsWith('main') ? pkg.coordinator_revision : url.endsWith('SHU-140') ? remote : pkg.fixtures[1].seed_head } };
         return { ok: true, text: async () => JSON.stringify(result) };
