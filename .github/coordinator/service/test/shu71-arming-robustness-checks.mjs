@@ -659,6 +659,33 @@ export async function bindingLegNamedCheck(create, h, leg = 'readback') {
   assert.equal(h.journal().filter(e => e.event === 'HALTED').at(-1)?.binding_leg, leg, `B6_BINDING_LEG_IN_JOURNAL_${leg}`);
 }
 
+// WHICH FIXTURE - AND THEREFORE WHETHER THE SECOND ONE IS BOUND AT ALL.
+// `heads()` walks every fixture the package pins, and fixture_2's head is a term
+// of the sealed block (the window arms two slots). The controls above mutate
+// fixture_1's legs only, so a loop that silently stopped covering the second
+// fixture - or that skipped its legs - would refuse nothing on a moved
+// coordinator/SHU-254 and no committed assertion would notice. Each leg of the
+// second fixture now fails alone, under its own name, while the other two agree.
+export async function secondFixtureRefBindingCheck(create, h, leg = 'readback') {
+  clean(h);
+  const foreign = `${'e'.repeat(40)}`;
+  if (leg === 'readback') {
+    const inner = h.boundary.fetch;
+    h.boundary.fetch = async (url, options) => url.includes('SHU-254')
+      ? replied({ object: { sha: foreign } }) : inner(url, options);
+  }
+  if (leg === 'remote') interceptCommands(h, (exe, key) =>
+    key.includes(' ls-remote ') && key.endsWith('refs/heads/coordinator/SHU-254')
+      ? { status: 0, stdout: `${foreign}\trefs/heads/coordinator/SHU-254\n` } : undefined);
+  if (leg === 'local') interceptCommands(h, (exe, key) =>
+    key.includes(' rev-parse --verify refs/heads/coordinator/SHU-254')
+      ? { status: 0, stdout: `${foreign}\n` } : undefined);
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.equal(result.code, 'ACT_REF_BINDING', `B6_SECOND_FIXTURE_REF_BINDING ${leg} ${JSON.stringify(result)}`);
+  assert.equal(result.binding_leg, leg, `B6_SECOND_FIXTURE_REF_BINDING_LEG ${leg}`);
+  assert.equal(h.journal().filter(e => e.event === 'HALTED').at(-1)?.binding_leg, leg, `B6_SECOND_FIXTURE_REF_IN_JOURNAL ${leg}`);
+}
+
 // The legs SHORT-CIRCUIT exactly as the conjunction they replace did: a
 // disagreeing HEAD still means `status --porcelain` is never run at all, so
 // naming the leg added no command and no API call to any path.
@@ -819,6 +846,7 @@ export const variantControls = [
   ['a systemctl mutation is attempted exactly once', commandMutationNotRetriedCheck, ['restart', 'start', 'enable']],
   ['a pre-arm refusal names itself and orders no effect', preArmRefusalNamedCheck, ['approval', 'custody', 'action']],
   ['the disagreeing binding leg is named', bindingLegNamedCheck, ['readback', 'local', 'clean']],
+  ['the second fixture is bound too, leg by leg', secondFixtureRefBindingCheck, ['readback', 'remote', 'local']],
 ];
 
 // One anchored substitution, loaded from a disposable path, across the three
@@ -926,6 +954,14 @@ export const mutations = [
   ['the pre-arm region loses its handler again', '      return { ok: false, state: \'HALT\', code: haltCode(error?.code),',
     '      throw error;\n      return { ok: false, state: \'HALT\', code: haltCode(error?.code),',
     (create, h) => preArmRefusalNamedCheck(create, h, 'approval')],
+  ['the fixture loop covers only the first fixture',
+    '    for (const fixture of spec.pkg.fixtures) {',
+    '    for (const fixture of spec.pkg.fixtures.slice(0, 1)) {',
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'readback')],
+  ['the second fixture skips its own binding legs',
+    "      const expected = fixture.issue_id === 'SHU-140' && !seeded ? spec.pkg.reseed.expected_parent : fixture.seed_head;",
+    "      const expected = fixture.issue_id === 'SHU-140' && !seeded ? spec.pkg.reseed.expected_parent : fixture.seed_head;\n      if (fixture.issue_id !== 'SHU-140') { result[fixture.branch] = expected; continue; }",
+    (create, h) => secondFixtureRefBindingCheck(create, h, 'local')],
   ['the binding leg is no longer named', "    throw Object.assign(activationError(code), typeof leg === 'string' && BINDING_LEG_PATTERN.test(leg) ? { leg } : {});",
     '    throw activationError(code);', (create, h) => bindingLegNamedCheck(create, h, 'readback')],
   ['the binding legs are evaluated eagerly instead of in order',

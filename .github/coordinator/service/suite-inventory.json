@@ -3618,6 +3618,11 @@
     "B6 arming robustness: the disagreeing binding leg is named (readback)",
     "B6 arming robustness: the disagreeing binding leg is named (local)",
     "B6 arming robustness: the disagreeing binding leg is named (clean)",
+    "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+    "B6 arming robustness: the second fixture is bound too, leg by leg (remote)",
+    "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
+    "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+    "B6 arming robustness mutation: the second fixture skips its own binding legs",
     "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error",
     "B6 arming robustness: the CLI names the refusal it caught",
     "B6 arming robustness: the reported command detail is closed to the reviewed fields",
@@ -27956,6 +27961,26 @@
     },
     {
       "name": "B6 arming robustness: the disagreeing binding leg is named (clean)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the second fixture is bound too, leg by leg (remote)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the second fixture skips its own binding legs",
       "capabilities": []
     },
     {
