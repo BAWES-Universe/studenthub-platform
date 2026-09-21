@@ -4901,7 +4901,10 @@ The eleventh round's fifteen mutants are re-killed unchanged in the same runs.
   a ref a third party has since moved. It is outside this round's scope, which
   is the teardown's own final observation, and giving it the measurement would
   read a remote on every wake of every retired episode; it is recorded here
-  rather than left to be rediscovered.
+  rather than left to be rediscovered. **Closed in the thirteenth round below,
+  together with the `expiry-timer` half of the first bullet. The owner ruled
+  that the cost does not excuse the class; the inertness of a repeat wake is
+  preserved by recording only a DISAGREEING reading on that path.**
 
 #### The focused selection
 
@@ -4975,3 +4978,347 @@ follows changes only this file, which the suite reads under exactly two guards:
 repoints two existing links, in the code commit that moved them, and adds none),
 and `SHU71_PATH_NEUTRAL_COMMANDS`. Both were re-checked after that commit,
 together with a re-run of the focused selection.
+
+### Thirteenth correction round: the `ok:true` a written receipt may not stand on
+
+Repository-only. No target host was contacted, no network call was made, and no
+`git push` or `gh` command was run.
+
+The twelfth round gave the teardown's own final observation an unconditional
+re-measurement of the three refs the next mint reads, and proved it. Its own
+disclosure named two paths that measurement did not reach, and the owner had
+already ruled that class blocking:
+
+> A completion row may avoid repeating an effect, but it may not avoid final
+> measurement of externally mutable state… the result must HALT by name and
+> leave the third-party value untouched. It must not emit a clean teardown
+> receipt.
+
+An invocation that returns `ok:true` over a ref a third party has advanced is
+exactly that, whether or not it writes a new receipt. Both paths are closed
+here.
+
+**(1) The post-completion path.** Once an episode's journal carries
+`TEARDOWN_COMPLETE`, a repeat `run`/`resume`/`revoke`/`expire` takes the
+historical-receipt branch of `execute()`. It re-measured the units, the
+activation credential and the gate drop-ins — because those drift — and asked
+nothing about the refs, then answered
+`{ ok: true, state: "REVOKED", physical_teardown_observed: true }`.
+
+**(2) The `expiry-timer` re-observation.** The last step of a teardown re-runs
+`observeTeardown()` as defence in depth against drift between the `observation`
+step and the retirement, and re-read everything EXCEPT the refs. A write landing
+in that interval was seen by nothing and the invocation closed
+`TEARDOWN_COMPLETE, failures: []` over a moved ref.
+
+#### The RED, reproduced on the pre-fix revision
+
+Measured by loading `08ee0897`'s `shu71-production.mjs` — the committed head of
+the twelfth round — into the unchanged `productionFixture`. Verbatim output of
+the disclosed scenario: arm, revoke to a CLEAN completion, then a third party
+advances the remote to `ffffffff…` and the episode is invoked again.
+
+```
+INVOCATION_ONE   {"state":"ARMED"}
+INVOCATION_TWO   {"ok":true,"state":"REVOKED","code":null,"failures":[]}
+REFS_AFTER_TWO   {"remote":"0d3b65a4…","local":"0d3b65a4…","tracking":"0d3b65a4…"}
+JOURNAL_TAIL     TEARDOWN_COMPLETE
+INVOCATION_THREE {"ok":true,"state":"REVOKED","activation_id":"shu71-proof-20260915",
+                  "physical_teardown_observed":true}
+BRANCH_FINAL_MEASURED rows: before 1, after 1
+REMOTE_AFTER_THREE  ffffffffffffffffffffffffffffffffffffffff
+TEARDOWN_COMPLETE rows: 1
+```
+
+`ok:true`, `REVOKED`, `physical_teardown_observed: true` — over a remote ref a
+third party moved, with the refs never read and no `BRANCH_FINAL_MEASURED` row
+taken. At this round's head the same invocation answers
+`{"ok":false,"state":"HALT","code":"ACT_TEARDOWN_BRANCH_MOVED"}` and the remote
+is still `ffffffff…`.
+
+Five of this round's seven controls fail on `08ee0897`, each under its own named
+assertion; the three per-ref third-party controls fail there too. The two that
+pass on both revisions pin behaviour this round does **not** change — the
+successor scope and the `local-reseed` intent gate — and are listed as such.
+
+| Control | On `08ee0897` | Killing assertion there |
+| --- | --- | --- |
+| third-party advance after a COMPLETED teardown | FAILS | `B9_POST_COMPLETION_NOT_A_CLEAN_ANSWER` |
+| unchanged ref, measured again, still clean | FAILS | `B9_POST_COMPLETION_UNCHANGED_MEASURED_ANYWAY` |
+| this run's published head back on the remote | FAILS | `B9_POST_COMPLETION_UNRESTORED` |
+| the measurement read failing | FAILS | `B9_POST_COMPLETION_READ_FAILURE_READ_ATTEMPTED` |
+| a write inside the `expiry-timer` window | FAILS | `B9_EXPIRY_TIMER_WINDOW_NOT_A_CLEAN_RECEIPT` |
+| third party on the remote / local / tracking ref | FAILS ×3 | `B9_POST_COMPLETION_NOT_A_CLEAN_ANSWER` |
+| a live successor's scope reads nothing | passes | pins unchanged behaviour |
+| a retired episode that never published | passes | pins unchanged behaviour |
+
+#### What each path now does
+
+Both call the twelfth round's `observePublishedRefs()` — the same function, the
+same gate, the same judgement, no second implementation. One `ls-remote` and two
+`for-each-ref`; the retained parent is the only value that answers clean; a
+THIRD value HALTS as `ACT_TEARDOWN_BRANCH_MOVED`; this run's own published head
+HALTS as `ACT_TEARDOWN_BRANCH_UNRESTORED`; an absent remote-tracking ref is the
+one tolerated absence; a read that fails is a failure carrying its cause.
+
+On the post-completion path the named refusal is now REPORTED by name rather
+than flattened: `ACT_TEARDOWN_BRANCH_MOVED` and `ACT_TEARDOWN_BRANCH_UNRESTORED`
+join `ACT_TEARDOWN_EXPIRY_SERVICE` as codes that survive to the caller, and
+every other cause keeps `ACT_TEARDOWN_DRIFT` exactly as before — now with
+`observation_error` and `command_failure` attached so an unanswered read says
+what failed.
+
+#### Which durable rows each path writes, and which it does not
+
+Measured, not asserted. `observePublishedRefs()` takes a third argument,
+`settled`, and it withholds exactly one thing: the recording of a reading that
+AGREES with the retained parent, on the one path that writes no receipt at all.
+
+* **In a teardown** — the `observation` step and the `expiry-timer`
+  re-observation — the reading is recorded ALWAYS and BEFORE any conclusion is
+  drawn from it, unchanged from the twelfth round: the receipt about to be
+  written rests on it.
+* **On the post-completion path** a DISAGREEING reading is recorded, because it
+  is the only thing that says which value stopped the answer; an AGREEING one is
+  not. A wake that merely confirms its own receipt must leave the host exactly as
+  it found it — recording there would append another row on every later wake of
+  every retired episode, forever, and would break the existing
+  `B4_EXPIRY_REPEAT_TEARDOWN_INERT` property that a repeat teardown changes
+  nothing on disk.
+
+Between the completing invocation's last row and the refusing invocation's
+answer the journal gains exactly ONE row, and on the clean re-invocation none:
+
+```
+ROWS_APPENDED       [ { "seq":70, "event":"BRANCH_FINAL_MEASURED", "branch":"coordinator/SHU-140",
+                        "remote":"ffffffff…", "local":"0d3b65a4…", "tracking":"0d3b65a4…" } ]
+CLEAN_ROWS_APPENDED []
+```
+
+* **Written on the post-completion path:** `BRANCH_FINAL_MEASURED`, and only on
+  disagreement.
+* **NOT written:** no second `TEARDOWN_COMPLETE` (the count stays at 1), no
+  `TEARDOWN_INCOMPLETE`, no `REVOKE_REQUESTED`/`AUTHORIZATION_EXPIRED`, no
+  `INTENT`/`DONE` teardown rows, no `HALTED` row. The durable
+  `TEARDOWN_COMPLETE` was honest when it was written — every ref was at the
+  retained parent then — and it is left exactly as it stands. The point is not a
+  new receipt; it is that the RETURNED result must not be a clean success over
+  state that disagrees.
+* **No mutation is issued.** This path runs three reads and nothing else. A
+  disagreement is never repaired here: re-running a completed mutation to put a
+  third party's ref back would widen acceptance, which is still forbidden.
+
+#### What did NOT change
+
+* `observePublishedRefs()`'s gate, judgement, refusal names and tolerated
+  absence; and its unconditional recording on every path that writes a receipt.
+* `restorePublishedRefs()` and every `restore-branch` semantic: the lease, the
+  refuse-don't-overwrite rule, at-most-once mutation, the read-only push
+  recovery. A durable `DONE` row still stops the EFFECT from repeating, proved
+  by the re-killed `B8_EFFECT_NOT_REPEATED` assertions.
+* `MINT_LINEAGE`. A branch this teardown refused to restore still stops the next
+  window.
+* The successor-scope answer, deliberately: see the disclosure below.
+* `PERMITTED_SKIPS` (1,093 bytes, sha256 `03cf773e…e11e`) and
+  `host-suite-contract.mjs` (23,885 bytes, sha256 `2a19d72c…58e9`), byte-identical.
+
+#### The mutants, and the named assertion that kills each
+
+Ten mutations, each a single anchored substitution in a disposable copy of the
+committed module, each run first against the real module (must pass) and then
+against the mutant (must fail under a `B9_` assertion that is printed, not
+merely counted).
+
+| Mutant | Killed by |
+| --- | --- |
+| the post-completion measurement is removed entirely | `B9_POST_COMPLETION_NOT_A_CLEAN_ANSWER` |
+| the same removal, seen from the clean re-invocation | `B9_POST_COMPLETION_UNCHANGED_MEASURED_ANYWAY` |
+| the `expiry-timer` re-observation skips the refs | `B9_EXPIRY_TIMER_WINDOW_NOT_A_CLEAN_RECEIPT` |
+| a measured disagreement is answered `ok:true` | `B9_POST_COMPLETION_NOT_A_CLEAN_ANSWER` |
+| the named branch refusal is flattened into drift | `B9_POST_COMPLETION_HALTS_BY_NAME` |
+| the refused reading is never recorded | `B9_POST_COMPLETION_REFUSAL_IS_DURABLE` |
+| the reading is recorded even when it agrees | `B9_POST_COMPLETION_UNCHANGED_STAYS_INERT` |
+| the third remote value is overwritten by a force push before the named refusal | `B9_THIRD_VALUE_UNTOUCHED` |
+| a third local head is overwritten by an unconditional `update-ref` before the named refusal | `B9_THIRD_VALUE_UNTOUCHED` |
+| a post-completion read failure is swallowed | `B9_POST_COMPLETION_READ_FAILURE_NEVER_A_SILENT_PASS` |
+
+The two overwrite mutants still refuse by name and still halt — they put the
+ref back first. The kill therefore comes from the REF, not from the answer,
+which is the property the ruling actually states.
+
+#### What could NOT be closed, and why
+
+* **The closing window is still open, and no read can close it.** The receipt is
+  written after the last read. `observePublishedRefs()` proves the refs were at
+  the retained parent when it read them, never that they stayed there. This
+  round moves the last reading of the refs from the `observation` step to the
+  `expiry-timer` step that immediately precedes
+  `journal.append({ event, failures })`, so the unobservable interval shrinks
+  from the whole tail of the teardown to that one step — and it does not vanish.
+  A third-party write that lands inside it produces a clean receipt over changed
+  state. **This is stated as unexplained, not solved:** closing it would require
+  the ref to be held against writers for the length of the receipt, which this
+  lane has no mechanism for and this round does not invent.
+* **The live-successor scope still measures nothing, on purpose.** When
+  `active.json` names a DIFFERENT activation, a retired episode answers
+  `{ ok: true, receipt_scope: "retired_episode",
+  physical_teardown_observed: false }`. That answer makes NO physical claim, and
+  the lane's refs belong to the live successor, which may legitimately be
+  holding its own published head on them: measuring there would refuse a
+  successor's ordinary arming. It is the one remaining `ok:true` that takes no
+  reading, it is pinned by a control so no later edit can make it claim more
+  without measuring more, and it is named here rather than left implicit.
+* **Two other `ok:true` answers take no reading, and neither claims a
+  teardown.** `{ ok: true, state: "NOT_EXPIRED" }` answers an expiry wake of a
+  window that has not expired and whose teardown has not started, and
+  `{ ok: true, state: "ARMED" }` is the arming result. Both belong to a LIVE
+  episode whose published head is legitimately on the remote — measuring the
+  refs against the retained parent there would refuse the run's own arming.
+  They are enumerated here so the claim "every closing observation measures" is
+  read as what it is: every answer that asserts a teardown was observed.
+* **A clean post-completion wake leaves no trace that it measured.** Preserving
+  inertness means the agreeing reading is not recorded, so the journal alone
+  cannot prove a given wake took it. What proves it is the code and the control
+  that counts the three reads across the invocation
+  (`B9_POST_COMPLETION_UNCHANGED_MEASURED_ANYWAY`), not a durable row. The
+  alternative — recording every wake — was rejected because it makes a repeat
+  wake of a settled episode non-inert and grows the journal without bound.
+* **The intent gate is unchanged**, so an episode with no `local-reseed` INTENT
+  row is never measured on either path. That is what keeps a periodic wake of a
+  retired, never-armed episode from reading a remote or a credential — pinned by
+  a control that counts read commands across the whole re-invocation.
+* **The cost is real and is not hidden.** A retired episode that DID publish now
+  performs one `ls-remote` and two `for-each-ref` on every later invocation, and
+  a completing teardown performs them twice. The twelfth round named that cost
+  as a reason to defer; the owner's ruling on the class settles it against the
+  cost.
+* **The settlement allowance is still consumed before the measurement runs** on
+  the exhausted path, unchanged from the twelfth round. That path's own
+  `observeTeardown()` precondition, taken before `SETTLEMENT_STARTED`, is
+  deliberately NOT given the ref reading: the filtered effect list it then runs
+  is `observation` plus `expiry-timer`, both of which measure.
+* **Only the reseed branch is measured.** `coordinator/SHU-254` is bound at its
+  fixed seed head and no reviewed step writes it.
+* **Proved against `productionFixture`,** which models the three refs
+  independently and git's own push/`update-ref` refusal rules. No live host,
+  remote or credential was touched.
+
+#### The accounting the two new readings moved, and the anchors they moved
+
+Every change below is a count or an anchor that this round's code displaced. No
+property, refusal or guard was weakened; each is listed so none of it is
+discovered later as an unexplained edit.
+
+* `shu71-composition.test.mjs`: `B1_RESUME_EFFECT_COUNT` 94 → 98 and
+  `B1_EXPIRY_EFFECT_COUNT` 98 → 102 (+4 each: the `expiry-timer` reading's three
+  reads and its durable row), and `B1_REVOKE_OBSERVATION_ONLY` 9 → 12 (+3: the
+  post-completion path's three reads — THREE, not four, because the reading
+  agreed and was therefore not recorded).
+* `shu71-r8-state-model.mjs`: +4 uniformly in every state whose teardown reaches
+  the retirement step and whose intent gate lets it read — `armed` intact
+  98 → 102, truncated 99 → 103, recovered 98 → 102; `settlement-ready` intact
+  57 → 61, truncated 91 → 95, recovered 90 → 94; the settled transition 37 → 41.
+  The gate-skipped states (81, 80) and the refused transitions (7, 8) are
+  unchanged.
+* `shu71-final-measurement-checks.mjs`: `B8_FINAL_MEASURED_AGAIN` in the
+  unchanged-ref control now expects `measured + 2` rather than `measured + 1`,
+  because a completing invocation reads the refs in the `observation` step and
+  again in the retirement step. No mutant kill depended on that number — every
+  `B8_FINAL_MEASURED_AGAIN` kill comes from the third-party control, which
+  asserts `>` and is untouched. Its `GATE` anchor is re-pointed at the function's
+  new signature; both mutations on it are unchanged.
+* Four existing mutants are re-anchored onto lines this round moved, with their
+  mutations unchanged: `retired episode expiry drift unobserved` and
+  `live expiry companion reported as generic drift`
+  (`shu71-production-mutations.test.mjs`), `P1 retirement re-observation removed`
+  (`shu71-recovery-mutations.test.mjs`) and `F1 receipt observation omitted`
+  (`shu71-trust-mutations.test.mjs`). All four still kill.
+* The `journal.append` call-site inventory
+  (`SHU71_CONTROL_PROPERTY_JOURNAL_APPEND_INVENTORY`) is unchanged: this round
+  adds no append site and no event class. The single `BRANCH_FINAL_MEASURED`
+  append is the same site, now guarded by a condition.
+
+#### The focused selection
+
+The twelfth round's thirty entries plus
+`.github/coordinator/service/test/shu71-post-completion.test.mjs`, this round's
+own control file — thirty-one entries expanding to 38 test files.
+`suite-runner-spec.test.mjs` is still deliberately NOT in it, for the reason
+recorded under the eleventh round: its `A12 committed inventory requirements
+match real outcomes` guard spawns a complete nested run with a 600 s cap of its
+own. It belongs to the FULL runs, where it ran and passed in both.
+
+#### Validation
+
+All four runs are CI-like — uid 1000, umask 0022, the four target accounts
+(`shu-coordinator`, `shu-supervisor`, `shu-workspace`, `shu71-evidence`) absent
+as both users and groups, `chmod -R go-w .github/coordinator` applied first — on
+the committed revision `7b86dcbf`, tree `aa5c1e95`, with the worktree measured
+clean at the start of each run, one at a time, in the foreground, under
+`taskset -c 0-9 node --test --test-concurrency=4` with both a TAP reporter and
+the unchanged `host-suite-contract.mjs` reporter writing to separate files.
+Plain unsets `NODE_OPTIONS` and `SHU_TEST_CLOCK_OFFSET_MS`; clock sets
+`SHU_TEST_CLOCK_OFFSET_MS=31536000000` and
+`NODE_OPTIONS=--import=$PWD/.github/coordinator/test/fixture/shift-wall-clock.mjs`.
+
+| Run | Tests | Pass | Fail | Skip | TAP plan | `complete` | Exit | Elapsed | Load before → after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Focused plain | 2,211 | 2,210 | 0 | 1 | `1..2211` | 1 / terminal | 0 | 221 s | 11.22 → 3.08 |
+| Focused clock | 2,211 | 2,210 | 0 | 1 | `1..2211` | 1 / terminal | 0 | 221 s | 3.08 → 2.65 |
+| Full plain | 3,602 | 3,594 | 0 | 8 | `1..3597` + one nested `1..5` | 1 / terminal | 0 | 503 s | 2.51 → 3.31 |
+| Full clock | 3,602 | 3,594 | 0 | 8 | `1..3597` + one nested `1..5` | 1 / terminal | 0 | 491 s | 3.31 → 3.52 |
+
+Zero `not ok` lines in all four TAP outputs — counted over the whole file, not
+only the top level, so the nested plan is included — and zero cancelled and zero
+todo outcomes in all four. Each run's structured report has exactly one
+`complete` event and is terminated by it. Both full runs' 3,602 outcome names
+are exactly the committed inventory's 3,602 `names` with identical
+multiplicities — zero missing and zero extra, compared programmatically as
+multisets against `suite-inventory.json` — and `A12 committed inventory
+requirements match real outcomes` passes in both. Every skip in all four runs is
+a `PERMITTED_SKIPS` key whose reason byte-matches that entry's value, compared
+against the exported object rather than by eye: zero mismatches. The single
+focused skip is `SHU-71 restricted capability refusal`; the eight full skips are
+the eight `PERMITTED_SKIPS` entries.
+
+The counts are the twelfth round's plus exactly this round's twenty names:
+focused 2,191 → 2,211, full 3,582 → 3,602, with the skip counts (1 and 8)
+unchanged. All twenty are the new control file's.
+
+`PERMITTED_SKIPS` is byte-identical: 1,093 bytes,
+sha256 `03cf773e89a89a408d84b707895cae5457cb71094bcc3ba1fe18ad9b9eb2e11e`.
+`host-suite-contract.mjs` is byte-identical: 23,885 bytes,
+sha256 `2a19d72c4fc3f9559c9abe7edaaa7f0c29471bd829dd6e59f6ba809eb0ca58e9`.
+All three inventories are strictly additive with zero removals and the existing
+order preserved: measured against `08ee0897`, `git diff --numstat` reports
+101/0, 8/0 and 1/0 insertions and deletions for `suite-inventory.json`,
+`file-requirements.json` and `required-files.json`. `suite-inventory.json` gains
+one file (119 → 120), 20 names (3,582 → 3,602) and the 20 matching requirement
+rows in the same order.
+
+#### The previous rounds' mutants, re-killed in the same run
+
+`shu71-branch-restore.test.mjs`, `shu71-final-measurement.test.mjs` and
+`shu71-post-completion.test.mjs` run together: 66 tests, 66 passing, and 34
+mutants each dying under a printed named assertion — the eleventh round's 15
+`B7_*`, the twelfth's 9 `B8_*` and this round's 10 `B9_*`. `restore-branch`'s
+durable `DONE` row still prevents the EFFECT from repeating: both
+`B8_EFFECT_NOT_REPEATED` controls pass, asserting that a re-invocation takes no
+new `BRANCH_RESTORE_MEASURED` row and issues no push or `update-ref`, while the
+final measurement runs anyway.
+
+**Deviation from the eleventh round's harness, disclosed.** That round's CI-like
+script also gave `/run` and `/etc/sudoers.d` fresh tmpfs mounts; this round could
+not, having no elevation in this session — the same deviation the twelfth round
+recorded. Everything else — uid, umask, absent accounts, `go-w`, CPU mask,
+concurrency, reporters, foreground, one at a time — is the same. The eight full
+skips and their reasons are unchanged, which is the observable those mounts bear
+on.
+
+**Measured on the code revision, not on this record.** The four runs were
+executed with the worktree pristine at `7b86dcbf`. The documentation commit that
+follows changes only this file, which the suite reads under exactly two guards:
+`V8_DOCUMENTATION_LINK_TARGETS`, which resolves `file#Lnnn` links (this round
+repoints three existing links, in the code commits that moved them, and adds
+none), and `SHU71_PATH_NEUTRAL_COMMANDS`. Both were re-checked after that
+commit, together with a re-run of the focused selection.
