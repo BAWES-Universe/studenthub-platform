@@ -250,10 +250,14 @@ export async function successorScopeStillUnmeasuredCheck(create, h) {
   return third;
 }
 
-// THE GATE IS UNCHANGED AND STILL LOAD-BEARING ON THIS PATH TOO. A window that
-// refused before `local-reseed` published nothing, so every later wake of that
-// retired episode contacts no remote and reads no credential - which is what
-// keeps this measurement off the periodic wake of episodes that never armed.
+// THE GATE IS GONE FROM THIS PATH TOO, AND THE ANSWER IS UNCHANGED. A window
+// that refused before `local-reseed` published nothing - but a later wake of
+// that retired episode still ANSWERS `physical_teardown_observed: true`, and
+// SHU-280's fourteenth round ruled that an answer of that shape may not rest on
+// an unread ref whatever the episode's own history says. So the three reads are
+// taken here too. Because they agree, and because this wake writes no receipt,
+// it stays physically inert exactly as the published case does: no journal row,
+// no write, nothing moved.
 export async function retiredNeverPublishedCheck(create, h) {
   const label = 'B9_NEVER_PUBLISHED';
   const inner = h.boundary.fetch;
@@ -265,12 +269,13 @@ export async function retiredNeverPublishedCheck(create, h) {
   assert.equal(first.teardown.ok, true, `${label}_SETUP: ${JSON.stringify(first.teardown)}`);
   assert.equal(h.journal().some(e => e.event === 'INTENT' && e.step === 'local-reseed'), false, `${label}_SETUP`);
   assert.equal(h.journal().at(-1).event, 'TEARDOWN_COMPLETE', `${label}_SETUP_COMPLETION_ROW`);
-  const reads = remoteReads(h) + localReads(h);
+  const reads = remoteReads(h) + localReads(h), measured = finalRows(h).length, rows = h.journal().length;
   const second = await create(h.id, h.boundary).execute('resume');
   assert.equal(second.ok, true, `${label}_STILL_CLEAN: ${JSON.stringify(second)}`);
   assert.equal(second.physical_teardown_observed, true, `${label}_STILL_CLEAN`);
-  assert.deepEqual(finalRows(h), [], `${label}_NO_FINAL_MEASUREMENT`);
-  assert.equal(remoteReads(h) + localReads(h), reads, `${label}_CONTACTS_NO_REMOTE`);
+  assert.equal(remoteReads(h) + localReads(h), reads + 3, `${label}_MEASURED_ANYWAY`);
+  assert.equal(finalRows(h).length, measured, `${label}_STAYS_INERT`);
+  assert.equal(h.journal().length, rows, `${label}_STAYS_INERT`);
   assert.deepEqual(lineage(h), retained(h), `${label}_MOVES_NOTHING`);
   return second;
 }
@@ -282,7 +287,7 @@ export const controls = [
   ['a post-completion measurement that cannot be taken halts carrying its cause', postCompletionReadFailureCheck],
   ['a write landing between the observation and the receipt is caught by the retirement step', expiryTimerWindowCheck],
   ['a live successor\'s scope claims nothing physical and therefore reads nothing', successorScopeStillUnmeasuredCheck],
-  ['a retired episode that never published contacts no remote on any later wake', retiredNeverPublishedCheck],
+  ['a retired episode that never published is measured on every later wake too', retiredNeverPublishedCheck],
 ];
 export const movedRefs = ['remote', 'local', 'tracking'];
 

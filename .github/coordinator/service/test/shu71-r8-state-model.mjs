@@ -120,9 +120,32 @@ export async function stateTransition(createProduction, h, s, transform = () => 
 // +0 wherever the gate skips it (81 and 80 are unchanged), and +0 on every
 // state whose teardown never reaches the retirement step at all - a refused
 // transition stays at 7 or 8.
+// SHU-280's FOURTEENTH round removes the `local-reseed` intent gate from the
+// final measurement - and ONLY from the measurement; `restorePublishedRefs`
+// keeps it byte for byte - because a receipt may not be clean over a ref
+// nobody read. The three journal states that cannot produce that INTENT row
+// (`absent`, `FORGED-ordered`, `FORGED-partial`) are therefore the states this
+// round moves, and it moves them in two different directions:
+// +8 on every `settlement-ready` state (81 -> 89, 80 -> 88): those 32 earlier
+// wakes DID restore the refs, so both readings find the retained parent, agree,
+// and cost exactly what every other measuring state costs - three reads and a
+// durable row, twice, once in `observation` and once in `expiry-timer`.
+// A REFUSAL on every `armed` state (81 -> 73, 80 -> 72): there the branch was
+// published and the skipped restoration never put it back, so the reading finds
+// this episode's own published head and the observation halts
+// ACT_TEARDOWN_BRANCH_UNRESTORED. That is not a new effect count with the same
+// shape - it is a different outcome, and `requiredTransition` states it below:
+// the receipt is INCOMPLETE, `expiry-timer` refuses behind the failed step so
+// no retirement work is done, and the lease is RETAINED for an operator rather
+// than released over a lane the next mint will refuse. The effect count falls
+// because the retirement work is not reached; the two failed observations
+// (the step and teardownActivation's one safety re-attempt) are the reads it
+// still pays for.
+// +0 everywhere else: `intact`, `truncated` and `recovered` all carry or
+// recover the intent row and were already measuring at the thirteenth round.
 const cleanupEffects = {
-  armed: { absent: 81, intact: 102, truncated: 103, recovered: 102, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
-  'settlement-ready': { absent: 81, intact: 61, truncated: 95, recovered: 94, 'FORGED-ordered': 80, 'FORGED-partial': 80 },
+  armed: { absent: 73, intact: 102, truncated: 103, recovered: 102, 'FORGED-ordered': 72, 'FORGED-partial': 72 },
+  'settlement-ready': { absent: 89, intact: 61, truncated: 95, recovered: 94, 'FORGED-ordered': 88, 'FORGED-partial': 88 },
 };
 export function requiredTransition(s) {
   const reason = unreachable(s);
@@ -135,13 +158,22 @@ export function requiredTransition(s) {
   const refused = !settled && (s.counter === 'invalid' || exhausted);
   const newlyOpened = ['absent', 'truncated'].includes(s.journal);
   const recovering = ['truncated', 'recovered'].includes(s.journal);
+  // A journal that cannot carry `local-reseed`'s INTENT row is a journal that
+  // cannot license the restoration - and on an `armed` episode that means this
+  // run's published head is still standing on the lane when the receipt is
+  // written. Since SHU-280's fourteenth round the final measurement reads it
+  // whatever the journal says, so the transition REFUSES by name instead of
+  // reporting a clean teardown over a branch the next mint will refuse.
+  const unrestored = !ready && !refused && !orderedResidual
+    && ['absent', 'FORGED-ordered', 'FORGED-partial'].includes(s.journal);
   return {
     gates: Array(2).fill(`[Service]\nEnvironment=ENABLE_DISPATCH=${orderedResidual && !ready ? 'true' : 'false'}\n`),
     credential: orderedResidual && !ready,
-    lease: refused,
+    lease: refused || unrestored,
     effects: settled ? 41 : settlement || orderedResidual ? 0 : refused ? 7 + Number(newlyOpened) : cleanupEffects[s.physical ?? 'armed'][s.journal],
-    code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED' : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : null,
-    complete: !refused,
+    code: settled ? null : settlement || orderedResidual || exhausted && recovering ? 'ACT_RETRY_BUDGET_EXHAUSTED'
+      : refused ? 'ACT_RETRY_BUDGET_UNAVAILABLE' : unrestored ? 'ACT_CLEANUP_FAILED' : null,
+    complete: !refused && !unrestored,
   };
 }
 export async function stateTransitionCheck(createProduction, h, s) {

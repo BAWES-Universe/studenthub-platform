@@ -39,6 +39,7 @@
     ".github/coordinator/service/test/shu71-phase-readback.test.mjs",
     ".github/coordinator/service/test/shu71-post-completion.test.mjs",
     ".github/coordinator/service/test/shu71-postpush-readback.test.mjs",
+    ".github/coordinator/service/test/shu71-prearm-measurement.test.mjs",
     ".github/coordinator/service/test/shu71-production-mutations.test.mjs",
     ".github/coordinator/service/test/shu71-production.test.mjs",
     ".github/coordinator/service/test/shu71-recovery-mutations.test.mjs",
@@ -3674,7 +3675,7 @@
     "B8 final teardown measurement: this run's published head standing at the end is never closed over",
     "B8 final teardown measurement: an unrestored ref is named, then restored by the invocation that may re-run the step",
     "B8 final teardown measurement: a final measurement that cannot be taken is a named failure with its cause",
-    "B8 final teardown measurement: a window that never published measures nothing and still completes",
+    "B8 final teardown measurement: a window that never published is measured anyway and still completes",
     "B8 final teardown measurement: a third party that advances the remote ref is refused and never overwritten",
     "B8 final teardown measurement: a third party that advances the local ref is refused and never overwritten",
     "B8 final teardown measurement: a third party that advances the tracking ref is refused and never overwritten",
@@ -3693,7 +3694,7 @@
     "B9 post-completion measurement: a post-completion measurement that cannot be taken halts carrying its cause",
     "B9 post-completion measurement: a write landing between the observation and the receipt is caught by the retirement step",
     "B9 post-completion measurement: a live successor's scope claims nothing physical and therefore reads nothing",
-    "B9 post-completion measurement: a retired episode that never published contacts no remote on any later wake",
+    "B9 post-completion measurement: a retired episode that never published is measured on every later wake too",
     "B9 post-completion measurement: a third party that advances the remote ref after the receipt is refused and never overwritten",
     "B9 post-completion measurement: a third party that advances the local ref after the receipt is refused and never overwritten",
     "B9 post-completion measurement: a third party that advances the tracking ref after the receipt is refused and never overwritten",
@@ -3707,6 +3708,21 @@
     "B9 post-completion measurement mutation: the third remote value is overwritten by a force push before the named refusal",
     "B9 post-completion measurement mutation: a third local head is overwritten by an unconditional update-ref before the named refusal",
     "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
+    "B10 pre-arm teardown measurement: a pre-arm halt with the ref at the retained parent measures and still completes",
+    "B10 pre-arm teardown measurement: a pre-arm halt over a third-party value halts by name and leaves it untouched",
+    "B10 pre-arm teardown measurement: a pre-arm halt over the package's published head is never closed over",
+    "B10 pre-arm teardown measurement: a pre-arm teardown that cannot read the credential is not a clean success",
+    "B10 pre-arm teardown measurement: a revoke of a window that never ran measures the refs too",
+    "B10 pre-arm teardown measurement: a third party holding the remote ref is refused and never overwritten",
+    "B10 pre-arm teardown measurement: a third party holding the local ref is refused and never overwritten",
+    "B10 pre-arm teardown measurement: a third party holding the tracking ref is refused and never overwritten",
+    "B10 pre-arm teardown measurement mutation: the intent gate is reinstated over the measurement",
+    "B10 pre-arm teardown measurement mutation: the pre-reseed path skips the measurement in the observation step",
+    "B10 pre-arm teardown measurement mutation: a third value is answered ok:true on a path that never published",
+    "B10 pre-arm teardown measurement mutation: a third local head is answered ok:true on a path that never published",
+    "B10 pre-arm teardown measurement mutation: a measurement failure is swallowed on the pre-arm path",
+    "B10 pre-arm teardown measurement mutation: the pre-arm path puts a third value back before refusing",
+    "B10 pre-arm teardown measurement mutation: the published head is accepted on a path that never published it",
     "PROVIDER remote main tolerates one transient read on either leg",
     "PROVIDER remote main still refuses a persistent read failure and a moved main",
     "PROVIDER a failed provider command names its executable, argv and status",
@@ -28158,7 +28174,7 @@
       "capabilities": []
     },
     {
-      "name": "B8 final teardown measurement: a window that never published measures nothing and still completes",
+      "name": "B8 final teardown measurement: a window that never published is measured anyway and still completes",
       "capabilities": []
     },
     {
@@ -28234,7 +28250,7 @@
       "capabilities": []
     },
     {
-      "name": "B9 post-completion measurement: a retired episode that never published contacts no remote on any later wake",
+      "name": "B9 post-completion measurement: a retired episode that never published is measured on every later wake too",
       "capabilities": []
     },
     {
@@ -28287,6 +28303,66 @@
     },
     {
       "name": "B9 post-completion measurement mutation: a post-completion read failure is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm halt with the ref at the retained parent measures and still completes",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm halt over a third-party value halts by name and leaves it untouched",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm halt over the package's published head is never closed over",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a pre-arm teardown that cannot read the credential is not a clean success",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a revoke of a window that never ran measures the refs too",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a third party holding the remote ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a third party holding the local ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement: a third party holding the tracking ref is refused and never overwritten",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the intent gate is reinstated over the measurement",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the pre-reseed path skips the measurement in the observation step",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: a third value is answered ok:true on a path that never published",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: a third local head is answered ok:true on a path that never published",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: a measurement failure is swallowed on the pre-arm path",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the pre-arm path puts a third value back before refusing",
+      "capabilities": []
+    },
+    {
+      "name": "B10 pre-arm teardown measurement mutation: the published head is accepted on a path that never published it",
       "capabilities": []
     },
     {

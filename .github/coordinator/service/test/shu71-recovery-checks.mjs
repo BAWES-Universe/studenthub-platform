@@ -422,7 +422,18 @@ export async function destroyedJournalCheck(createProduction, h) {
   assert.equal(h.active.get('shu-supervisor.service'), 'active', 'B4_DESTROYED_JOURNAL_UNIT_RUNNING');
   h.boundary.fs.unlinkSync(`/srv/shu/state/shu71-evidence/${h.id}/journal.jsonl`);
   const result = await create().execute('revoke');
-  assert.equal(result.state, 'REVOKED', `B4_DESTROYED_JOURNAL_NOT_PROOF: ${JSON.stringify(result)}`);
+  // SHU-280's fourteenth round. The destroyed log is also what stops the
+  // RESTORATION from claiming the branch - an empty journal carries no
+  // `local-reseed` INTENT row - so this episode's PUBLISHED head is still
+  // standing on the lane when the receipt is written, and the final
+  // measurement, which is no longer gated on that same row, refuses to close
+  // over it. Fail-closed is what this control exists to pin and it is
+  // unchanged: the kill is still issued and the credential is still revoked.
+  // What changed is that the receipt now NAMES what it left behind instead of
+  // reporting `REVOKED` over a branch the next mint will refuse.
+  assert.equal(result.ok, false, `B4_DESTROYED_JOURNAL_NOT_PROOF: ${JSON.stringify(result)}`);
+  assert.ok(result.failures.includes('ACT_TEARDOWN_BRANCH_UNRESTORED'),
+    `B4_DESTROYED_JOURNAL_NOT_PROOF: ${JSON.stringify(result)}`);
   assert.ok(h.events.some(e => e.includes(':kill --kill-whom=all')), 'B4_DESTROYED_JOURNAL_FAIL_CLOSED_KILL');
   assert.equal(h.exists('/srv/shu/state/shu71-activation.json'), false, 'B4_DESTROYED_JOURNAL_CREDENTIAL_REVOKED');
 }

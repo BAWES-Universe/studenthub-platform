@@ -711,8 +711,11 @@ export function createShu71Production(id, b = shu71Boundary) {
         // state, which is the same class the owner ruled blocking for the
         // teardown's own final observation.
         //
-        // The refs are therefore re-read here on EVERY such invocation, under
-        // the restoration's own unchanged gate. A third value HALTS as
+        // The refs are therefore re-read here on EVERY such invocation. SHU-280's
+        // fourteenth round took the restoration's `local-reseed` intent gate off
+        // that reading, so this holds for a retired episode that never published
+        // too: an answer of this shape may not rest on an unread ref whatever
+        // the episode's own history says. A third value HALTS as
         // ACT_TEARDOWN_BRANCH_MOVED and is left exactly as the third party
         // left it; this run's own published head HALTS as
         // ACT_TEARDOWN_BRANCH_UNRESTORED; and the reading a refusal rests on
@@ -727,7 +730,7 @@ export function createShu71Production(id, b = shu71Boundary) {
         // receipt, so nothing here rests on a row having landed first, and a
         // wake that confirms its own receipt must leave the host exactly as it
         // found it - otherwise every later wake of every retired episode
-        // appends another row forever. Same function, same gate, same
+        // appends another row forever. Same function, same three reads, same
         // judgement, same refusal, same durable row on disagreement.
         try { observeTeardown(); observeRetiredExpiry(); observePublishedRefs(spec, journal, true); }
         // The named refusal is REPORTED BY NAME - learning which value stopped
@@ -1266,14 +1269,20 @@ export function createShu71Production(id, b = shu71Boundary) {
   // that reports failure is recovered by a RE-READ that accepts only the one
   // value meaning the mutation already happened - never by pushing again.
   //
-  // WHEN IT MEASURES AT ALL. `local-reseed` is the step that creates the
+  // WHEN IT RESTORES AT ALL. `local-reseed` is the step that creates the
   // published commit and the first step that could move any of these refs, so
   // its durable INTENT row is what proves this episode may have published
   // something. Without it - a pre-arm refusal, a revoke of a window that never
-  // ran - nothing is measured, no remote is contacted and no credential is
-  // read, exactly as the fixture-card restores above are gated on their own
-  // `ready-<id>` intent. A recovered log proves nothing about non-creation and
-  // always measures, fail-closed.
+  // ran - this step measures nothing and MOVES nothing, exactly as the
+  // fixture-card restores above are gated on their own `ready-<id>` intent. A
+  // recovered log proves nothing about non-creation and always measures,
+  // fail-closed.
+  //
+  // THE GATE STOPS AT THE EFFECT. It used to cover the final OBSERVATION too,
+  // and that let a pre-arm teardown emit a clean receipt over a ref it had not
+  // read; `observePublishedRefs` below is therefore ungated and does contact
+  // the remote on this path. Nothing here changes: a pre-arm teardown still
+  // issues no push and no `update-ref`.
   const branchRestoresIssued = new Set();
   const measureLocalRef = (spec, ref) => gitText(spec, ['for-each-ref', '--format=%(objectname)', ref]);
   const measureRemoteRef = (spec, ref) => {
@@ -1360,11 +1369,44 @@ export function createShu71Production(id, b = shu71Boundary) {
   // the restoration: this run never creates that ref, and a checkout that has
   // none is not carrying anything of ours.
   //
-  // WHEN IT MEASURES AT ALL is the restoration's own gate, unchanged and for
-  // the same reason: without `local-reseed`'s durable INTENT row this episode
-  // cannot have published anything, so a pre-arm refusal still contacts no
-  // remote and reads no credential, and a recovered log - which proves nothing
-  // about non-creation - always measures, fail-closed.
+  // IT MEASURES ON EVERY PATH, AND THE INTENT GATE IS GONE FROM HERE. This
+  // asked `did THIS run publish` - the restoration's own gate - and skipped all
+  // three reads when the answer was no. That is a question about this episode's
+  // history; the receipt makes a claim about the HOST. Measured on the modelled
+  // host and ruled blocking by the owner: a window that halts BEFORE
+  // `local-reseed` - a `binding` read that never answers, a package guard that
+  // refuses - returns an embedded teardown of
+  // `{"ok":true,"state":"REVOKED","code":null,"failures":[]}` while the lane
+  // ref stands at a foreign value, because nothing on that path asked. A clean
+  // teardown receipt over externally mutable state this host does not own,
+  // which is the class the owner has now blocked twice:
+  //
+  //   "A completion row may avoid repeating an effect, but it may not avoid
+  //    final measurement of externally mutable state... the result must HALT by
+  //    name and leave the third-party value untouched. It must not emit a clean
+  //    teardown receipt."
+  //
+  // The measured value is compared against WHAT THE PACKAGE REQUIRES - the
+  // retained parent - not against what this run happens to have done, so the
+  // judgement below is the same on every path: the retained parent closes the
+  // receipt, this run's published head is ACT_TEARDOWN_BRANCH_UNRESTORED, any
+  // other value is ACT_TEARDOWN_BRANCH_MOVED, and nothing is written back.
+  //
+  // WHAT THE GATE WAS PROTECTING IS PRESERVED WHERE IT BELONGS: on the EFFECT.
+  // `restorePublishedRefs` keeps its gate byte-for-byte, so a pre-arm teardown
+  // still issues no push, no `update-ref` and no restoration of any kind, and
+  // this function issues no command but the three reads. What the gate also
+  // bought - one spared `ls-remote` and one spared credential read on a run
+  // that published nothing - is what is given up, deliberately: a read the
+  // receipt depends on is not an optional read. A host where that read cannot
+  // be taken - an absent or malformed `/srv/shu/coordinator.env`, a remote that
+  // never answers - does not get a quiet pass: the refusal propagates, the
+  // `observation` step fails as ACT_TEARDOWN_OBSERVATION carrying its own cause
+  // (ACT_CREDENTIAL_UNAVAILABLE, ACT_COMMAND_FAILED), `expiry-timer` refuses
+  // behind it, and the invocation ends TEARDOWN_INCOMPLETE. The one path that
+  // still answers without reading is the LIVE-SUCCESSOR scope above, which
+  // declares `physical_teardown_observed: false` and makes no physical claim at
+  // all; and a pre-custody refusal, which returns no teardown to be clean.
   //
   // A READ THAT FAILS IS A FAILURE. Nothing here is wrapped: a refusal from
   // either read propagates, the observation step fails under its own name and
@@ -1380,9 +1422,9 @@ export function createShu71Production(id, b = shu71Boundary) {
   // append another row on every later wake of every retired episode, forever.
   // A DISAGREEING reading is recorded on every path without exception: it is
   // the only thing that says WHICH value stopped the answer. Nothing else
-  // moves with this flag - not the gate, not the judgement, not the refusal.
+  // moves with this flag - not which refs are read, not the judgement, not the
+  // refusal.
   function observePublishedRefs(spec, journal, settled = false) {
-    if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;
     const { branch, expected_parent: parent, expected_seed_head: published } = spec.pkg.reseed;
     const ref = `refs/heads/${branch}`, tracking = `refs/remotes/origin/${branch}`;
     const measured = { remote: measureRemoteRef(spec, ref), local: measureLocalRef(spec, ref), tracking: measureLocalRef(spec, tracking) };

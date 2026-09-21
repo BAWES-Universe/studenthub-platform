@@ -219,9 +219,15 @@ export async function measurementFailureCheck(create, h) {
   return second;
 }
 
-// THE GATE IS UNCHANGED AND STILL LOAD-BEARING. A window that refused before
-// `local-reseed` published nothing, so the final measurement contacts no
-// remote, reads no credential and claims nothing - and still completes.
+// THE GATE NOW STOPS AT THE EFFECT, AND THIS PATH STILL COMPLETES. A window
+// that refused before `local-reseed` published nothing and RESTORES nothing -
+// `restorePublishedRefs` keeps its `local-reseed` intent gate byte-for-byte, so
+// no push and no `update-ref` is issued here. The receipt it emits is still a
+// claim about three refs this host does not own, so SHU-280's fourteenth round
+// took the gate off the final MEASUREMENT: all three are read, and with them at
+// the retained parent the answer is exactly what it was - clean, no false halt.
+// The pre-arm matrix this control is one corner of lives in
+// shu71-prearm-measurement-checks.mjs.
 export async function neverPublishedStillCleanCheck(create, h) {
   const label = 'B8_NEVER_PUBLISHED';
   const inner = h.boundary.fetch;
@@ -232,7 +238,13 @@ export async function neverPublishedStillCleanCheck(create, h) {
   assert.equal(h.journal().some(e => e.event === 'INTENT' && e.step === 'local-reseed'), false, label);
   assert.equal(result.teardown.ok, true, `${label}: ${JSON.stringify(result.teardown)}`);
   assert.deepEqual(result.teardown.failures, [], label);
-  assert.deepEqual(finalRows(h), [], 'B8_NEVER_PUBLISHED_NO_FINAL_MEASUREMENT');
+  // Measured anyway: the receipt rests on a reading of the host, never on this
+  // episode's own history of what it did or did not publish.
+  assert.ok(finalRows(h).length > 0, 'B8_NEVER_PUBLISHED_MEASURED_ANYWAY');
+  assert.deepEqual(found(finalRows(h).at(-1)), retained(h), 'B8_NEVER_PUBLISHED_MEASURED_ANYWAY');
+  // The EFFECT's gate is untouched: nothing was measured for restoration and
+  // nothing was restored.
+  assert.deepEqual(restoreRows(h), [], 'B8_NEVER_PUBLISHED_RESTORES_NOTHING');
   assert.deepEqual(lineage(h), retained(h), 'B8_NEVER_PUBLISHED_MOVES_NOTHING');
   assert.equal(mutations(h), 0, 'B8_NEVER_PUBLISHED_NO_MUTATION_ISSUED');
   return result;
@@ -244,20 +256,19 @@ export const controls = [
   ['this run\'s published head standing at the end is never closed over', republishedAfterRestoreCheck],
   ['an unrestored ref is named, then restored by the invocation that may re-run the step', unrestoredThenRepairedCheck],
   ['a final measurement that cannot be taken is a named failure with its cause', measurementFailureCheck],
-  ['a window that never published measures nothing and still completes', neverPublishedStillCleanCheck],
+  ['a window that never published is measured anyway and still completes', neverPublishedStillCleanCheck],
 ];
 export const movedRefs = ['remote', 'local', 'tracking'];
 
 // ---------------------------------------------------------------- mutations
 
 const OBSERVATION = "    effects.push(['observation', () => { observeTeardown(); observePublishedRefs(spec, journal); }]);";
-// Re-anchored by SHU-280's thirteenth round, which gave the same function a
-// `settled` caller - the post-completion path, which writes no receipt and so
-// records only a DISAGREEING reading. The gate itself is unchanged, and so are
-// both mutations below: they put a completion row back in charge of the
-// measurement, which is exactly what this round's own controls forbid too.
-const GATE = `  function observePublishedRefs(spec, journal, settled = false) {
-    if (!(journal.recovered || journalHas(journal, 'INTENT', 'local-reseed'))) return;`;
+// Re-anchored by SHU-280's fourteenth round, which removed the `local-reseed`
+// intent gate from this function entirely - a receipt may not be clean over a
+// ref nobody read - leaving the signature as the anchor. Both mutations below
+// are unchanged: they put a completion row back in charge of the measurement,
+// which is exactly what this round's own controls forbid too.
+const GATE = '  function observePublishedRefs(spec, journal, settled = false) {';
 const JUDGE = "      need(false, value === published ? 'ACT_TEARDOWN_BRANCH_UNRESTORED' : 'ACT_TEARDOWN_BRANCH_MOVED');";
 const remoteMoved = (create, h) => thirdPartyMovementCheck(create, h, 'remote');
 const localMoved = (create, h) => thirdPartyMovementCheck(create, h, 'local');
