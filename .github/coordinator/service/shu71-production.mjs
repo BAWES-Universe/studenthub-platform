@@ -854,8 +854,33 @@ export function createShu71Production(id, b = shu71Boundary) {
           }
         }
         await heads(spec, true);
-        const comparison = await githubRead(`compare/${old}...${next}`);
-        need(comparison.status === 'ahead' && comparison.merge_base_commit?.sha === old, 'ACT_REMOTE_ANCESTRY');
+        // THE ANCESTRY READ IS BOUNDED BY THE COMMIT, NEVER BY THE DIFF.
+        // `compare/<old>...<next>` answers 200 WITH THE FILE PATCHES for up to
+        // 300 changed files and offers no way to ask it to leave them out -
+        // `?per_page` bounds the commit list and not the patch array. Measured on
+        // the live repository, the body for this package's reseed merge is
+        // 1,667,573 bytes against this module's 1 MiB read cap, so a push that had
+        // LANDED refused ACT_API_FAILED / response_too_large before the ancestry
+        // could be read at all: the route reports the window's own refresh as a
+        // failure, and it does so more certainly as `main` advances, because the
+        // body grows with the diff this merge brings. The relation is therefore
+        // read from the reseed commit's OWN object - kilobytes, no patch array -
+        // plus the ref that must still carry it, and the claim is unchanged and
+        // now stated term by term: `next` must be the signed reseed sha, its
+        // parents must be exactly the parent this package retained and the
+        // approved execution revision IN THAT ORDER (the same pair in the same
+        // order that verifyReseedCommit() binds locally above), and the branch
+        // must still be AT `next` when it is read a second time. A missing or
+        // malformed object, a foreign sha, parents in any other order, a parent
+        // list of any other length or a ref that has moved refuse under the same
+        // name as before, on the first answer, and are never retried into
+        // acceptance - the two reads are reads, so only their RACES retry.
+        const reseedCommit = await githubRead(`git/commits/${next}`);
+        const reseedRef = await githubRead(`git/ref/heads/${encodeURIComponent(pkg.reseed.branch)}`);
+        const reseedParents = Array.isArray(reseedCommit.parents) ? reseedCommit.parents.map(parent => parent?.sha) : [];
+        need(reseedCommit.sha === next && reseedParents.length === 2
+          && reseedParents[0] === spec.binding.expected_parent && reseedParents[1] === spec.binding.approvedExecutionRevision
+          && reseedRef.object?.sha === next, 'ACT_REMOTE_ANCESTRY');
       });
       await step('evidence-broker', () => {
         atomic('/etc/systemd/system/shu71-evidence.service', renderEvidenceBroker(), 0, 0, 0o644);

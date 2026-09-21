@@ -35,6 +35,7 @@ const PREFIX = 'https://api.github.com/repos/BAWES-Universe/studenthub-platform/
 const REF140 = 'git/ref/heads/coordinator%2FSHU-140';
 const REF254 = 'git/ref/heads/coordinator%2FSHU-254';
 const MAIN = 'git/ref/heads/main';
+const commitRoute = h => `git/commits/${h.spec.pkg.reseed.expected_seed_head}`;
 const compareRoute = h => `compare/${h.spec.pkg.reseed.expected_parent}...${h.spec.pkg.reseed.expected_seed_head}`;
 // Secrets the disposable fixture plants behind every call this module makes.
 const POISON = ['GITHUB_POISON', 'LINEAR_POISON', 's'.repeat(40), 'Authorization', 'Bearer', 'x-access-token'];
@@ -84,11 +85,11 @@ export async function refRaceCheck(create, h) {
   assert.ok(h.exists(ACTIVATION), 'B5_REF_READ_RACE_RETRIED');
 }
 
-// The exact shape the target host produced: the push LANDS, and the comparison
-// that reads it back is not answerable yet. Two transient 404s and the window
-// still arms.
+// The exact shape the target host produced: the push LANDS, and the read that
+// establishes the ancestry is not answerable yet. Two transient 404s and the
+// window still arms.
 export async function compareRaceCheck(create, h) {
-  const route = compareRoute(h);
+  const route = commitRoute(h);
   const reads = interceptReads(h, (r, attempt) => r === route && attempt <= 2 ? failure(404) : undefined);
   const result = await create(h.id, h.boundary).execute('run');
   assert.equal(result.state, 'ARMED', 'B5_COMPARE_RACE_RETRIED');
@@ -97,11 +98,29 @@ export async function compareRaceCheck(create, h) {
   assert.equal(reads.count(route), 3, 'B5_COMPARE_RACE_RETRIED');
 }
 
+// THE READ IS BOUNDED AND STAYS BOUNDED. A window that arms does not ask for the
+// patch-bearing comparison at all - the body that refused a landed push in
+// production cannot be requested again by a successful run - and the relation is
+// read from the commit object instead.
+export async function boundedReadCheck(create, h) {
+  const inner = h.boundary.fetch;
+  const routes = [];
+  h.boundary.readWait = async () => {};
+  h.boundary.fetch = async (url, options) => {
+    if (url.startsWith(PREFIX)) routes.push(url.slice(PREFIX.length));
+    return inner(url, options);
+  };
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.equal(result.state, 'ARMED', 'B5_ANCESTRY_READ_STAYS_BOUNDED');
+  assert.equal(routes.includes(compareRoute(h)), false, 'B5_ANCESTRY_READ_STAYS_BOUNDED');
+  assert.ok(routes.includes(commitRoute(h)), 'B5_ANCESTRY_READ_STAYS_BOUNDED');
+}
+
 // Retry is not tolerance. When EVERY attempt fails the window still refuses
 // under the same name it refuses under today, the budget is spent exactly once,
 // and nothing is armed: no activation file, no fixture card written.
 export async function persistentFailureCheck(create, h) {
-  const route = compareRoute(h);
+  const route = commitRoute(h);
   const reads = interceptReads(h, r => r === route ? failure(503) : undefined);
   const result = await create(h.id, h.boundary).execute('run');
   assert.equal(result.code, 'ACT_API_FAILED', 'B5_PERSISTENT_FAILURE_REFUSED');
@@ -130,18 +149,75 @@ export async function refMismatchCheck(create, h) {
   assert.equal(h.exists(ACTIVATION), false, 'B5_REF_MISMATCH_NOT_RETRIED');
 }
 
-// The same claim at the comparison the post-push step makes: a real ancestry
-// answer that is not `ahead` refuses ACT_REMOTE_ANCESTRY on the first answer and
-// is never retried into acceptance, however correct a later answer would be.
+// The same claim at the ancestry the post-push step reads: a reseed commit whose
+// own object is not the signed one refuses ACT_REMOTE_ANCESTRY on the first
+// answer and is never retried into acceptance, however correct a later answer
+// would be. This control corrupts EVERY answer to the route, so a mutant that
+// retries until the answer agrees cannot walk out of it either.
 export async function ancestryMismatchCheck(create, h) {
-  const route = compareRoute(h);
+  const route = commitRoute(h);
   const reads = interceptReads(h, (r, attempt) =>
-    r === route && attempt === 1 ? { rewrite: body => ({ ...body, status: 'behind' }) } : undefined);
+    r === route ? { rewrite: body => ({ ...body, sha: 'f'.repeat(40) }) } : undefined);
   const result = await create(h.id, h.boundary).execute('run');
   assert.equal(result.code, 'ACT_REMOTE_ANCESTRY', 'B5_ANCESTRY_MISMATCH_NOT_RETRIED');
   assert.equal(reads.count(route), 1, 'B5_ANCESTRY_MISMATCH_NOT_RETRIED');
   assert.deepEqual(reads.delays, [], 'B5_ANCESTRY_MISMATCH_NOT_RETRIED');
   assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_MISMATCH_NOT_RETRIED');
+}
+
+// THE PARENTS ARE THE PAIR, IN ORDER. The merge's first parent is the one this
+// package retained and its second is the approved execution revision; the same
+// two shas the other way round are not that pair, and neither is a list of the
+// wrong length. Both disagreeing shapes refuse under the ancestry name on the
+// first answer.
+export async function parentOrderCheck(create, h) {
+  const route = commitRoute(h);
+  const reads = interceptReads(h, r =>
+    r === route ? { rewrite: body => ({ ...body, parents: [...body.parents].reverse() }) } : undefined);
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.equal(result.code, 'ACT_REMOTE_ANCESTRY', 'B5_ANCESTRY_PARENT_ORDER_REQUIRED');
+  assert.equal(reads.count(route), 1, 'B5_ANCESTRY_PARENT_ORDER_REQUIRED');
+  assert.deepEqual(reads.delays, [], 'B5_ANCESTRY_PARENT_ORDER_REQUIRED');
+  assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_PARENT_ORDER_REQUIRED');
+}
+
+// ...and EXACTLY TWO parents is its own term: a three-parent commit whose first
+// two parents are the bound pair - a merge that also brings a third parent in -
+// has the right pair in the right order and is still not the commit this package
+// bound. This is the case the count term alone can see.
+export async function parentCountCheck(create, h) {
+  const route = commitRoute(h);
+  const reads = interceptReads(h, r =>
+    r === route ? { rewrite: body => ({ ...body, parents: [...body.parents, { sha: 'f'.repeat(40) }] }) } : undefined);
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.equal(result.code, 'ACT_REMOTE_ANCESTRY', 'B5_ANCESTRY_PARENT_COUNT_REQUIRED');
+  assert.equal(reads.count(route), 1, 'B5_ANCESTRY_PARENT_COUNT_REQUIRED');
+  assert.deepEqual(reads.delays, [], 'B5_ANCESTRY_PARENT_COUNT_REQUIRED');
+  assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_PARENT_COUNT_REQUIRED');
+}
+
+// A REF THAT MOVED BETWEEN THE TWO READS IS SOMEONE ELSE'S WRITE. The commit
+// object still agrees with the signed reseed sha and its parents still agree, so
+// only the ref read that follows it can see the third value - and it refuses
+// under the ancestry name on the first answer rather than being retried, which
+// the single observed read proves.
+export async function refMovedAfterPushCheck(create, h) {
+  const inner = h.boundary.fetch;
+  const route = commitRoute(h);
+  let commits = 0, refsAfterCommit = 0;
+  h.boundary.readWait = async () => {};
+  h.boundary.fetch = async (url, options) => {
+    if (url.startsWith(PREFIX)) {
+      const read = url.slice(PREFIX.length);
+      if (read === route) commits++;
+      if (read === REF140 && commits > 0) { refsAfterCommit++; return replied({ object: { sha: 'f'.repeat(40) } }); }
+    }
+    return inner(url, options);
+  };
+  const result = await create(h.id, h.boundary).execute('run');
+  assert.equal(result.code, 'ACT_REMOTE_ANCESTRY', 'B5_ANCESTRY_REF_MOVED_NOT_RETRIED');
+  assert.equal(refsAfterCommit, 1, 'B5_ANCESTRY_REF_MOVED_NOT_RETRIED');
+  assert.equal(h.exists(ACTIVATION), false, 'B5_ANCESTRY_REF_MOVED_NOT_RETRIED');
 }
 
 // THE PUSH IS A MUTATION AND IS NEVER RETRIED. A failing push refuses
@@ -214,7 +290,7 @@ export async function expiryCheck(create, h) {
 // record and in the durable journal - and carries no token, header or body. 403
 // is a definitive refusal rather than a race, so it is also never retried.
 export async function haltNamesCallCheck(create, h) {
-  const route = compareRoute(h);
+  const route = commitRoute(h);
   const reads = interceptReads(h, r => r === route ? failure(403) : undefined);
   const result = await create(h.id, h.boundary).execute('run');
   const expected = { operation: `github:${route}`, reason: 'response_not_ok', status: 403, attempts: 1 };
@@ -302,10 +378,14 @@ export function retryableClosureCheck(retryable) {
 
 export const controls = [
   ['a transient ref read-back is retried and the window arms', refRaceCheck],
-  ['a landed push whose comparison is not answerable yet still arms', compareRaceCheck],
+  ['a landed push whose reseed commit read is not answerable yet still arms', compareRaceCheck],
+  ['arming never asks for the patch-bearing comparison', boundedReadCheck],
   ['a persistently failing read still refuses under the same name', persistentFailureCheck],
   ['a genuinely wrong ref sha refuses instead of being retried', refMismatchCheck],
   ['a genuinely wrong ancestry refuses instead of being retried', ancestryMismatchCheck],
+  ['parents in the other order refuse instead of being retried', parentOrderCheck],
+  ['a third parent refuses instead of being retried', parentCountCheck],
+  ['a ref that moved after the push refuses instead of being retried', refMovedAfterPushCheck],
   ['a failing push is never retried', pushNotRetriedCheck],
   ['a failing Linear issueUpdate is never retried', linearMutationNotRetriedCheck],
   ['the retry sleep budget is bounded across the whole invocation', budgetCheck],
@@ -334,7 +414,18 @@ export async function killedBy(t, run) {
 }
 
 const REF_READ = '      const readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);';
-const COMPARE_READ = '        const comparison = await githubRead(`compare/${old}...${next}`);';
+// The post-push ancestry read this round bounded: one commit object, no patch
+// array, plus the ref that must still carry it.
+const COMMIT_READ = '        const reseedCommit = await githubRead(`git/commits/${next}`);';
+const RESEED_REF_READ = '        const reseedRef = await githubRead(`git/ref/heads/${encodeURIComponent(pkg.reseed.branch)}`);';
+const ANCESTRY_SHA = 'reseedCommit.sha === next && ';
+const ANCESTRY_PARENTS = 'reseedParents[0] === spec.binding.expected_parent && reseedParents[1] === spec.binding.approvedExecutionRevision';
+const ANCESTRY_COUNT = 'reseedParents.length === 2\n          && ';
+const ANCESTRY_REF = '\n          && reseedRef.object?.sha === next';
+// The route that answered 200 with 1,667,573 bytes of file patches and refused a
+// landed push. It is never requested by a successful run - and this round's
+// mutants are the ones that have to prove that stays true.
+const COMPARE_READ = 'const comparison = await githubRead(`compare/${old}...${next}`);';
 const PUSH = "          try { git(spec, ['push', '--porcelain', `--force-with-lease=${ref}:${old}`, REMOTE, `${next}:${ref}`], { remote: true }); }";
 const GIVE_UP = '          throw describeApiFailure(error, { attempts: attempt });';
 const BOUND = '        if (attempt >= READ_RETRY.attempts || delay === undefined || !retryableApiFailure(error)\n'
@@ -347,7 +438,7 @@ export const mutations = [
   ['the retry policy allows a single attempt', 'attempts: 5, delaysMs', 'attempts: 1, delaysMs', refRaceCheck],
   ['the backoff schedule is emptied', 'Object.freeze([1000, 2000, 4000, 8000])', 'Object.freeze([])', compareRaceCheck],
   ['the ref read-back goes back to the unretried door', REF_READ, REF_READ.replace('githubRead(', 'github('), refRaceCheck],
-  ['the post-push comparison goes back to the unretried door', COMPARE_READ, COMPARE_READ.replace('githubRead(', 'github('), compareRaceCheck],
+  ['the post-push ancestry read goes back to the unretried door', COMMIT_READ, COMMIT_READ.replace('githubRead(', 'github('), compareRaceCheck],
   // The retry made accepting: a spent budget must never substitute an answer.
   ['an exhausted retry returns an empty answer instead of refusing', GIVE_UP, '          return {};', persistentFailureCheck],
   // The retry made unbounded, by each of its three bounds.
@@ -362,10 +453,24 @@ export const mutations = [
     '      let readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);\n'
     + '      for (let retry = 1; retry < READ_RETRY.attempts && readback.object?.sha !== expected; retry++)\n'
     + '        readback = await githubRead(`git/ref/heads/${encodeURIComponent(fixture.branch)}`);', refMismatchCheck],
-  ['the ancestry comparison itself is retried until it agrees', COMPARE_READ,
-    '        let comparison = await githubRead(`compare/${old}...${next}`);\n'
-    + "        for (let retry = 1; retry < READ_RETRY.attempts && comparison.status !== 'ahead'; retry++)\n"
-    + '          comparison = await githubRead(`compare/${old}...${next}`);', ancestryMismatchCheck],
+  ['the ancestry read itself is retried until it agrees', COMMIT_READ,
+    '        let reseedCommit = await githubRead(`git/commits/${next}`);\n'
+    + '        for (let retry = 1; retry < READ_RETRY.attempts && reseedCommit.sha !== next; retry++)\n'
+    + '          reseedCommit = await githubRead(`git/commits/${next}`);', ancestryMismatchCheck],
+  // Each term of the ancestry claim removed in turn: the signed reseed sha, the
+  // exact pair of parents IN ORDER, the count, and the ref that must still carry
+  // it. Every one of them is load-bearing, and each is killed by the control that
+  // measures that term alone.
+  ['the signed reseed sha is not compared', ANCESTRY_SHA, '', ancestryMismatchCheck],
+  ['the parent order is not required', ANCESTRY_PARENTS,
+    'reseedParents.includes(spec.binding.expected_parent) && reseedParents.includes(spec.binding.approvedExecutionRevision)', parentOrderCheck],
+  ['the exact parent count is not required', ANCESTRY_COUNT, '', parentCountCheck],
+  ['the ref is not required to still carry the reseed commit', ANCESTRY_REF, '', refMovedAfterPushCheck],
+  // ...and the route whose 1,667,573-byte body refused a landed push cannot come
+  // back without a control failing: this mutant puts the comparison read back in
+  // place of the bounded one.
+  ['the patch-bearing comparison comes back', COMMIT_READ,
+    '        const reseedCommit = await githubRead(`compare/${old}...${next}`);', boundedReadCheck],
   // The retry applied to a MUTATION.
   // Anchor updated in place for the re-read recovery the push now has; the
   // mutant still replaces the single push with a retry LOOP over the mutation.

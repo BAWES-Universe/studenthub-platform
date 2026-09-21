@@ -52,7 +52,12 @@ async function composition(t) {
     'command:/usr/bin/systemctl:show --property=ActiveState --value shu-coordinator.timer',
   ].includes(e));
   assert.equal(measuredReadbacks.length, 5, 'B1_ADDITIVE_MEASURED_READBACKS');
-  assert.equal(effects(p, armStart) - phaseRows.length - readerProbes.length, 116 + 5 + 7 + 4 + 5, 'B1_ARM_EFFECT_COUNT');
+  // Plus exactly ONE effect this correction adds and none other: the post-push
+  // ancestry is now read from the reseed commit's own object AND the ref that
+  // must still carry it - two reads - where the parent revision made a single
+  // `compare/<old>...<next>` call. The comparison call is gone, so the arithmetic
+  // is net +1, and every other effect count in this sum is unchanged.
+  assert.equal(effects(p, armStart) - phaseRows.length - readerProbes.length, 116 + 5 + 7 + 4 + 5 + 1, 'B1_ARM_EFFECT_COUNT');
   assert.deepEqual(p.events.slice(armStart).filter(e => e.startsWith('command:')).slice(0, 5), [
     'command:/usr/bin/systemctl:show --property=User --value shu-supervisor.service',
     'command:/usr/bin/systemctl:show --property=Group --value shu-supervisor.service',

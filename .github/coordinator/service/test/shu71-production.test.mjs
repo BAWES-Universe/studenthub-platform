@@ -12,7 +12,11 @@ test('B1 production composition binds, signs, appends, leases, verifies, transit
   assert.equal(h.signatures(), 2, 'one logical signing operation signs both required payloads');
   assert.equal(h.journal().filter(e => e.event === 'SIGNING_STARTED').length, 1);
   assert.ok(h.events.some(e => e.includes('--force-with-lease=refs/heads/coordinator/SHU-140:')));
-  assert.ok(h.events.some(e => e.includes('/compare/')));
+  // The post-push ancestry is read from the reseed commit's own object plus the
+  // ref that must still carry it, and the patch-bearing comparison whose 1 MiB+
+  // body refused a landed push in production is never requested at all.
+  assert.ok(h.events.some(e => e.includes('/git/commits/')), 'post-push ancestry read from the commit object');
+  assert.ok(!h.events.some(e => e.includes('/compare/')), 'the patch-bearing comparison is never requested');
   const resumed = await createShu71Production(h.id, h.boundary).execute('resume');
   assert.equal(resumed.state, 'REVOKED'); assert.equal(h.signatures(), 2);
   const revoked = await createShu71Production(h.id, h.boundary).execute('revoke');
