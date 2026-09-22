@@ -5607,11 +5607,10 @@ unpinned sealed term the owner refused `shu71-mint-00000024` for.
 `secondFixtureRefBindingCheck` mutates exactly one leg of the second fixture at a time - readback,
 remote, local - and each refusal is asserted by its own name with the other two legs agreeing, in the
 result, in the leg field and in the journal:
-`B6_SECOND_FIXTURE_REF_BINDING readback|remote|local`. Two mutants are killed by it:
-
-- *the fixture loop covers only the first fixture* (`spec.pkg.fixtures` -> `.slice(0, 1)`);
-- *the second fixture skips its own binding legs* (the expected head is recorded and the three legs
-  are skipped for any fixture that is not `SHU-140`).
+`B6_SECOND_FIXTURE_REF_BINDING readback|remote|local`. Five mutants are killed by it, and what each of
+them does and does not prove - two pin the loop's shape, three neuter one leg each while keeping every
+read it already made - is stated with its measurement below, because the first version of this
+paragraph claimed more for the pair than the parent's committed suite bears out.
 
 **RED at the parent, with the scope measured instead of assumed.** Two mutants were added first - the
 fixture loop truncated to the first fixture, and the second fixture skipping its legs. At the parent
@@ -5650,14 +5649,19 @@ it, and nothing arms in either case. The read-back is the enforcing check and is
 per-position controls and their mutants (this round and the previous one). The local acceptance has no
 dedicated control of its own; that is recorded here rather than left implied.
 
-**Record gaps closed with this round.** The package document no longer reuses the label of the finding
-the owner refused: the refused item is named as such - the per-position ancestry clause - with the two
-per-position controls and the mutants that close it cited by name, and the verifier's baseline findings
-are labelled separately. The three sealed digests carry their inputs, timestamps and the revision they
-were derived at in `digest-witnesses.txt`, with a raw file-byte witness for each and an explicit
-statement of what the seal covers; the package narrative is not a sealed artifact and is not what the
-owner's signature binds. And the focused selection is no longer the only measurement at the revision
-that would arm: the full scope is run at it as well.
+**What the next package record must carry - stated as requirements, not as accomplished facts.** Two
+things the cold-approval gate checks before any block reaches the owner, and which are therefore
+requirements on the package that follows this correction rather than claims about a document that
+exists at this head: the item the owner refused must be named as such - the per-position ancestry
+clause, with the two per-position controls and the mutants that close it cited by name - and the
+verifier's own baseline findings must be labelled separately from it, so that the two cannot be
+confused again as they were in the `shu71-mint-00000025` package. Second, each of the block's three
+sealed digests must be shown with the inputs it was derived from, their paths and hashes, the revision
+and instant of derivation, a raw file-byte witness where one exists, and an explicit statement of what
+the seal covers - the machine package and the signed artifacts, not the narrative prose, which is not
+signed and is not what the owner's approval binds. The witnesses for the superseded block are in
+`digest-witnesses.txt`; the same script produces the next block's at mint time, and the gate reads
+them before the owner does.
 
 **Focused selection after this correction.** The committed focused selection is run at this head, and
 the four modes follow in the same lane:
@@ -5673,12 +5677,17 @@ The A12 committed-inventory guard runs inside the full scope and is green in ful
 rows this lane added across its two commits - three control legs and five mutants - move with the tests
 they describe.
 
-**The one red in the four modes, characterised further rather than summarised away.** The full-clock
-observation failed on `SHU251 live worker restart adopts once and recovers durable completion`
-(`residual.test.mjs:116`), at the assertion inside the signed launch path - `residual.test.mjs:65`,
-`assert.equal(response.ok, true)`: the supervisor did not accept the launch request - after 5.4s, not a
-timeout. Its two mutation siblings passed in the same run. Three things are now known that were not
-known when this family was last reported:
+**The reds in the four modes, characterised further rather than summarised away.** Two heads, two reds,
+both full clock, both the same family:
+
+- at `d09b1dd7`, the positive control `SHU251 live worker restart adopts once and recovers durable
+  completion` failed at the assertion inside the signed launch path - `residual.test.mjs:65`,
+  `assert.equal(response.ok, true)`: the supervisor did not accept the launch request - after 5.4s,
+  which is not a timeout. Its two mutation siblings passed in the same run;
+- at `94aa6622`, the `loseReceipt` mutation sibling failed, observed through the A12 guard, whose inner
+  run reported `tests=3637 / pass=3628 / fail=1 / skipped=8`.
+
+Three things are now known that were not known when this family was last reported:
 
 - `residual.test.mjs` is **not in the committed focused selection**, so only the full scope ever
   exercises this family; that is why every sighting has been in a full run.
@@ -5693,10 +5702,10 @@ known when this family was last reported:
   skipped=8`). Different members failing at different heads is the shape of a timing or resource
   interaction, not of a wrong assertion.
 
-The clean re-run the lane's precedent asks for was done for this head too: full clock at `94aa6622`, on
-an idle box with nothing else running, **exit 0, `3633 ok / 0 not ok`**
-(`full-clock-rerun-280h-r18.tap`) - so both the red and the green are recorded, never the green
-alone.
+The clean re-run the lane's precedent asks for was done for both heads, on an idle box with nothing else
+running: at `d09b1dd7` **exit 0, `3630 ok / 0 not ok`** (`full-clock-rerun-280h.tap`) and at `94aa6622`
+**exit 0, `3633 ok / 0 not ok`** (`full-clock-rerun-280h-r18.tap`) - so every red is recorded with the
+green that follows it, never the green alone.
 
 The concrete next step, for a lane of its own, is to record what the refusal carried: `ok:false` from
 `submitToSupervisor` is currently discarded by the assertion, so the reason the supervisor declined is
@@ -5718,5 +5727,6 @@ reproduce the single full-clock red (and confirmed every citation around it, inc
 focused selection), and it disclosed an instability in one of its own four parent-export runs.
 
 **What this round does not do.** It does not touch a production line: `shu71-production.mjs` is
-byte-identical to `a51c8490`, and the change is two controls, two mutants, the committed inventory rows
-that move with them and this record. It does not close that intermittent.
+byte-identical to `a51c8490`, and the whole change is one control with three legs, five mutants, the
+eight committed inventory rows that move with them, and this record. It does not close that
+intermittent.
