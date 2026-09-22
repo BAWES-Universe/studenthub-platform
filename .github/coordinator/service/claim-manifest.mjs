@@ -70,12 +70,19 @@ export async function readRegistry(root, registry) {
   for (const [name, check, variants] of module.variantControls ?? []) add(name, check, variants);
 
   const mutations = [];
-  const collect = (rows, checkIndex) => {
+  const collect = rows => {
     for (const row of rows ?? []) {
-      const problem = validateMutationRow(row, checkIndex, registry.label);
+      // The check is found, not assumed. A fixed index per export name was wrong in both directions: B5's
+      // closureMutations rows are [name, check, reviewed, before, after] - a function at index 1, with a
+      // string at the index the generator read - so all seven paired with the wrong element and their terms
+      // reported "no mutant". Every row shape in this repository carries exactly one function; a row with
+      // none or with several is refused rather than guessed at.
+      const problem = validateMutationRow(row, registry.label);
       if (problem) throw new Error(problem);
       const name = row[0];
-      const check = row[checkIndex];
+      const resolved = controlFunction(row, candidate => fns.has(candidate), registry.label);
+      if (resolved.error) throw new Error(resolved.error);
+      const check = resolved.check;
       let kills = fns.get(check) ?? [];
       let paired_by = kills.length > 0 ? 'identity' : null;
       // Not every mutation row hands the control itself: some wrap it to exercise one variant, as
@@ -93,9 +100,9 @@ export async function readRegistry(root, registry) {
       mutations.push({ name, test_name: `${registry.label} mutation: ${name}`, kills, paired_by });
     }
   };
-  collect(module.mutations, 3);
-  collect(module.siblingMutations, 4);
-  collect(module.closureMutations, 5);
+  collect(module.mutations);
+  collect(module.siblingMutations);
+  collect(module.closureMutations);
   return { registry, controls, mutations };
 }
 
@@ -106,16 +113,36 @@ export async function readRegistry(root, registry) {
 // every mutation in that registry with `undefined` and reports `no mutant` for terms that have one, silently.
 // That registry is not in REGISTRIES, so nothing is mis-paired today; the validator below is there so that
 // adding one cannot pass unnoticed.
-export function validateMutationRow(row, checkIndex, label) {
+export function validateMutationRow(row, label) {
   if (!Array.isArray(row)) return `${label}: a mutation row is not an array`;
   if (typeof row[0] !== 'string' || row[0].length === 0) {
     return `${label}: a mutation row has no name`;
   }
-  if (typeof row[checkIndex] !== 'function') {
-    return `${label}: mutation '${row[0]}' has no check function at index ${checkIndex} `
-      + `(row has ${row.length} elements) - the registry's row shape and the index the generator reads disagree`;
+  if (functionsIn(row).length === 0) {
+    return `${label}: mutation '${row[0]}' carries no function (row has ${row.length} elements)`;
   }
   return null;
+}
+
+const functionsIn = row => row.filter(element => typeof element === 'function');
+
+// Which function in a mutation row is the control. Rows in this repository are shaped differently - the check
+// sits at index 1 in B5's closureMutations, behind a string at the index a fixed reading used, and at index 3
+// or 4 elsewhere, and B5's closure rows carry a second function (the reviewed-detail extractor) that is not a
+// control. The rule that holds across all of them: the control is the row's only registered control function,
+// and where no function is registered, it is the first function, which is how a wrapper is written. Several
+// registered functions in one row is a shape nobody has established a meaning for, so it is refused rather
+// than guessed at.
+export function controlFunction(row, isRegistered, label) {
+  const registered = functionsIn(row).filter(isRegistered);
+  if (registered.length > 1) {
+    return { error: `${label}: mutation '${row[0]}' carries ${registered.length} registered controls, so which `
+      + 'one it kills is ambiguous' };
+  }
+  if (registered.length === 1) return { check: registered[0] };
+  const functions = functionsIn(row);
+  if (functions.length === 0) return { error: `${label}: mutation '${row[0]}' carries no function` };
+  return { check: functions[0] };
 }
 
 // One entry per control: the term it pins, the mutants that die when that control alone is present, and

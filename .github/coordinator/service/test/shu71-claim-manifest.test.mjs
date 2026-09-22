@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkManifest, checkEntries, checkCodeRevision, buildManifest, readJson, sha256, MANIFEST_NAME,
-  coverageOf, nonExecutable, validateMutationRow } from '../claim-manifest.mjs';
+  coverageOf, nonExecutable, validateMutationRow, controlFunction } from '../claim-manifest.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const inventory = () => new Set(readJson(path.join(root, 'suite-inventory.json')).names);
@@ -181,13 +181,26 @@ test('B7 claim manifest: a mutation row whose shape disagrees with the index rea
   // does not hold for every registry in the repository: branch-restore rows are [name, edits, check]. Reading
   // the wrong index pairs every mutation there with undefined and reports "no mutant" for terms that have one.
   // Nothing is mis-paired today; this is the guard against adding a registry that is.
+  // The check is found in the row rather than assumed at an index. A fixed index was wrong in both
+  // directions in this repository: B5's closureMutations rows carry their check at index 1, behind a string
+  // the generator used to read, and branch-restore rows carry it at index 2.
   const five = ['a term', 'from', 'to', (_create, _fixture) => {}];
-  assert.equal(validateMutationRow(five, 3, 'B6 arming robustness'), null);
-  assert.match(validateMutationRow(['a term', 'edits', (_c, _f) => {}], 3, 'branch restore'),
-    /no check function at index 3 \(row has 3 elements\)/);
-  assert.match(validateMutationRow(['a term', 'from', 'to', 'not a function'], 3, 'x'), /no check function/);
-  assert.match(validateMutationRow([], 3, 'x'), /has no name/);
-  assert.match(validateMutationRow('not a row', 3, 'x'), /is not an array/);
+  assert.equal(validateMutationRow(five, 'B6 arming robustness'), null);
+  assert.equal(validateMutationRow(['a term', (_c, _f) => {}], 'branch restore'), null);
+  assert.match(validateMutationRow(['a term', 'from', 'to', 'not a function'], 'x'), /carries no function/);
+  assert.match(validateMutationRow([], 'x'), /has no name/);
+  assert.match(validateMutationRow('not a row', 'x'), /is not an array/);
+
+  // Which function is the control. B5's closure rows carry their check at index 1 and a second function - the
+  // reviewed-detail extractor - that is not a control, and a fixed index read a string there instead.
+  const closure = ['a term', (_c, _f) => {}, (_d) => {}];
+  assert.equal(controlFunction(closure, fn => fn === closure[1], 'B5 closure').check, closure[1],
+    'the registered function is chosen even when a later function sits in the row');
+  const wrapper = ['a term', 'from', 'to', (_c, _f) => {}];
+  assert.equal(controlFunction(wrapper, () => false, 'B6').check, wrapper[3],
+    'with nothing registered, the first function is the wrapper the row was written as');
+  assert.match(controlFunction(['x', (_c) => {}, (_c) => {}], () => true, 'y').error,
+    /carries 2 registered controls/);
 });
 
 test('B7 claim manifest: every suite file list in the tree agrees with the committed tree', () => {
