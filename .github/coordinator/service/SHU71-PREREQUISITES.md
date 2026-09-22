@@ -5679,16 +5679,46 @@ comment only), one mode at a time:
 The A12 committed-inventory guard runs inside the full scope and is green in full plain, so the eight
 rows this lane added across its two commits - three control legs and five mutants - move with the tests
 they describe.
+**At the code head `52a022f3` - the head that carries this round's two corrections - the same four modes
+were re-run** (the commit that adds this paragraph is documentation after them):
 
-**The reds in the four modes, characterised further rather than summarised away.** Two heads, two reds,
-both full clock, both the same family:
+    focused plain   exit 1   2246 ok / 1 not ok   (248s)   - `SHU-250: real tick returns while a
+                                                             long-running supervised child executes`
+    focused clock   exit 0   2247 ok / 0 not ok   (266s)
+    full plain      exit 1   3632 ok / 1 not ok   (527s)   - the A12 guard, whose inner run reports
+                                                             `SHU251 mutation: terminal receipt lost
+                                                             after restart` failing
+    full clock      exit 0   3633 ok / 0 not ok   (539s)
 
+Both plain reds were then re-run alone, on an idle box with nothing else running. Focused plain came back
+green - **exit 0, `2247 ok / 0 not ok`** (`focused-plain-rerun-r19.tap`) - and full plain came back **red
+again**, exit 1, `3632 ok / 1 not ok`, the same member inside the A12 inner run
+(`full-plain-rerun-r19.tap`).
+
+That second observation matters more than the first, because it removes the reading the earlier entries
+in this record allowed: the reds are not explained by another suite sharing the box. Across this lane's
+ten runs at `94aa6622` and `52a022f3` - six full-scope and four focused - three full-scope runs were
+red, all three on the same member, the `loseReceipt` sibling of the live-restart family inside the A12
+guard's inner concurrent run; and one focused run was red on `SHU-250`'s 1000 ms tick assertion. Every
+red is a wall-clock or timing assertion, none is a wrong assertion, and running the offending file alone
+is green `6/6` clock and `3/3` plain, which is where the "does not reproduce in isolation" bullet below
+comes from - isolation, not idleness, is what changes the outcome. A full-scope run on an idle box is
+still a concurrent run and can still go red.
+
+
+**The reds, characterised further rather than summarised away.** Six reds across four heads, every one of
+them a timing or wall-clock assertion, none of them a wrong assertion:
+
+- at `6152c34`, the `loseReceipt` mutation sibling failed in the full scope;
 - at `d09b1dd7`, the positive control `SHU251 live worker restart adopts once and recovers durable
   completion` failed at the assertion inside the signed launch path - `residual.test.mjs:65`,
   `assert.equal(response.ok, true)`: the supervisor did not accept the launch request - after 5.4s,
   which is not a timeout. Its two mutation siblings passed in the same run;
 - at `94aa6622`, the `loseReceipt` mutation sibling failed, observed through the A12 guard, whose inner
-  run reported `tests=3637 / pass=3628 / fail=1 / skipped=8`.
+  run reported `tests=3637 / pass=3628 / fail=1 / skipped=8`;
+- at `52a022f3`, the `loseReceipt` sibling failed twice in full-scope runs (the four-mode run and the
+  re-run alone described above, both through the A12 guard), and `SHU-250`'s 1000 ms tick assertion
+  failed once in the focused plain mode.
 
 Three things are now known that were not known when this family was last reported:
 
@@ -5701,11 +5731,13 @@ Three things are now known that were not known when this family was last reporte
   above records - no live-restart test failed in any of the four). The trigger is therefore the full
   concurrent run - a configuration in which the live-restart family
   shares the box with every other test - not the clock shift, and not CPU load on its own.
-- All three sightings in this lane are this family and differ in member: the `loseReceipt` mutation at
-  `6152c34`, the positive control at `d09b1dd7`, and the `loseReceipt` mutation again at `94aa6622`
-  (inside the A12 guard's concurrent inner run, whose own report was `tests=3637 / pass=3628 / fail=1 /
-  skipped=8`). Different members failing at different heads is the shape of a timing or resource
-  interaction, not of a wrong assertion.
+- The sightings at `6152c34`, `d09b1dd7` and `94aa6622` are all this family and differ in member - the
+  `loseReceipt` mutation, the positive control, and the `loseReceipt` mutation again (inside the A12
+  guard's concurrent inner run, whose own report was `tests=3637 / pass=3628 / fail=1 / skipped=8`) -
+  and at `52a022f3` the `loseReceipt` member failed twice in full-scope runs, once in the four-mode run
+  and once when re-run alone on an idle box. Different members failing at different heads, and the same
+  member failing in one concurrent run and passing in the next, is the shape of a timing interaction,
+  not of a wrong assertion.
 
 The clean re-run the lane's precedent asks for was done for both heads, on an idle box with nothing else
 running: at `d09b1dd7` **exit 0, `3630 ok / 0 not ok`** (`full-clock-rerun-280h.tap`) and at `94aa6622`
