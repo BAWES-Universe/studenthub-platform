@@ -1,5 +1,15 @@
 # SHU-71 / SHU-251 prerequisite provisioning
 
+> **HISTORY, NOT AUTHORITY.** This document is the historical record of how the change was arrived at. It
+> is **not** the approval path and no approval claim is carried by anything written here. The approval path
+> is `claim-manifest.json`, whose entries are generated from the committed test registries — the sealed
+> term, the control that pins it, the mutants that kill that control, and the receipts — and validated by
+> `test/shu71-claim-manifest.test.mjs`, which rejects an entry naming a control or mutant that is not in the
+> committed inventory, a receipt whose bytes or head do not match, a `PASS` without a mutant or a verifying
+> receipt, and a code revision that is not an ancestor of the checkout or that differs from it in anything
+> executable. The suite's flakiness investigation lives in `SHU71-FLAKINESS-INVESTIGATION.md` and is equally
+> non-authoritative. Read those two and the package; read this only for how the work got here.
+
 Repository-only implementation. No target host was contacted. Do not interpret
 fixture reports as host measurements, independent review, permission to mint,
 or an M3/M4 result.
@@ -5847,8 +5857,9 @@ unpins no reseed term. The control is kept and classified **LOW** rather than as
 last gate before an external mutation had no B6-level control, while the genuinely uncovered items are
 narrower and are stated as such — no B6-level control drives a reseed-contract refusal through the arming
 path to a named halt *by itself* (`haltCodeClosureCheck` pins `SHU71_RESEED_DIGEST_MISMATCH` by name, so
-this is partial cover), and no per-term mutant isolates `UNEXPECTED_TREE` or `RESULT_SHA_MISMATCH` at
-that level.
+this is partial cover), and no per-term mutant isolates any of those five — `UNEXPECTED_TREE`,
+`METADATA_DRIFT`, `SEED_BLOB_CHANGED`, `DIGEST_MISMATCH`, `RESULT_SHA_MISMATCH` — at that level. Naming
+two of the five there would have implied the other three were covered.
 
 **The control, and the term it pins.** `reseedAcceptanceBeforePushCheck` corrupts only the local
 acceptance input — the reseed commit with its two `parent` lines swapped — at the read the push step
@@ -5899,9 +5910,11 @@ third instance. Both are recorded rather than quietly repaired.
   and REMOTE only, so that row rests on a single measurement;
 - the mutant × leg matrix in the brief's §4.1 is marked as an ad-hoc measurement of that round — the
   committed runner pairs each mutant with one variant and does not reproduce the 1/3 pattern;
-- the parenthetical about the commits after the code head now states what was measured: every commit
-  after `94aa6622` is documentation or comment only, the sole change to any executable file being the
-  comment block above `secondFixtureRefBindingCheck`.
+- the parenthetical about the commits after the code head now states what was measured, bounded to the
+  range it was measured over: every commit from `94aa6622` through `c62520e9` is documentation or comment
+  only, the sole change to any executable file across that range being the comment block above
+  `secondFixtureRefBindingCheck`. Round eighteen's own executable change is outside that range and is
+  counted in its own section, not carried by this sentence.
 
 **What this round changes in the code.** Nothing: `shu71-production.mjs` is byte-identical to
 `a51c8490`. The change is one control, two mutants, three inventory rows (3,641 names/requirements), the

@@ -1,0 +1,221 @@
+// The approval path for this change.
+//
+// A sealed term is approved only through an entry here, and every entry is built by reading the committed
+// test registries: the control's name, the mutants that kill it, and the file each lives in. Nothing in an
+// entry is written by hand, so an entry cannot claim more than the code carries. `--check` fails when:
+//   * the committed manifest and a fresh build disagree byte for byte (a hand-edited claim);
+//   * a named control or mutant is absent from the committed suite inventory (a missing test);
+//   * a receipt referenced by an entry is missing, or its sha256 or head does not match;
+//   * an entry claims PASS without a control, without a mutant that kills it, or without a receipt at the
+//     entry's code revision;
+//   * the entry's code revision is not an ancestor of the checkout, or the difference between them
+//     includes anything executable (a wrong head).
+//
+// The flakiness investigation and the historical narrative live elsewhere and are not consulted here.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+
+export const REGISTRIES = [
+  { file: 'test/shu71-arming-robustness-checks.mjs', label: 'B6 arming robustness',
+    runner: 'test/shu71-arming-robustness.test.mjs' },
+  { file: 'test/shu71-postpush-readback-checks.mjs', label: 'B5 post-push read-back',
+    runner: 'test/shu71-postpush-readback.test.mjs' },
+];
+
+export const MANIFEST_NAME = 'claim-manifest.json';
+export const RECEIPTS_DIR = 'receipts';
+// What may legitimately differ between an entry's code revision and the revision carrying the manifest.
+const NON_EXECUTABLE = ['.md', '.json', '.txt'];
+
+export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+export const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
+const slug = text => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+function git(root, args) {
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+}
+
+// Every test name a registry emits, paired with the check function that produces it, so a mutation can be
+// attributed to the control whose function it was written to kill.
+export async function readRegistry(root, registry) {
+  const module = await import(path.join(root, registry.file));
+  const controls = [];
+  const fns = new Map();
+  const add = (name, fn, variants) => {
+    const names = variants ? variants.map(variant => `${registry.label}: ${name} (${variant})`)
+      : [`${registry.label}: ${name}`];
+    controls.push({ name, test_names: names });
+    if (!fns.has(fn)) fns.set(fn, []);
+    fns.get(fn).push(name);
+  };
+  for (const [name, check] of module.controls ?? []) add(name, check);
+  for (const [name, check, variants] of module.variantControls ?? []) add(name, check, variants);
+
+  const mutations = [];
+  const collect = (rows, checkIndex) => {
+    for (const row of rows ?? []) {
+      const name = row[0];
+      const check = row[checkIndex];
+      mutations.push({ name, test_name: `${registry.label} mutation: ${name}`,
+        kills: fns.get(check) ?? [] });
+    }
+  };
+  collect(module.mutations, 3);
+  collect(module.siblingMutations, 4);
+  collect(module.closureMutations, 5);
+  return { registry, controls, mutations };
+}
+
+// One entry per control: the term it pins, the mutants that die when that control alone is present, and
+// the receipts that attest it. A control the registries pair with no mutant is emitted as BLOCK with the
+// reason stated by the generator, not by a sentence anyone wrote.
+export async function buildEntries(root, receipts, head) {
+  const entries = [];
+  for (const registry of REGISTRIES) {
+    const read = await readRegistry(root, registry);
+    for (const control of read.controls) {
+      const killers = read.mutations.filter(mutation => mutation.kills.includes(control.name));
+      const id = `${slug(registry.label)}/${slug(control.name)}`;
+      const at = receipts.filter(receipt => receipt.head === head);
+      const attested = at.filter(receipt => receipt.kind === 'verified');
+      const reasons = [];
+      if (killers.length === 0) reasons.push('no mutant is paired with this control in the registry');
+      if (attested.length === 0) reasons.push('no verifying receipt at the code revision');
+      if (attested.length > 0 && !attested.every(receipt => receipt.verdict === 'PASS')) {
+        reasons.push('the verifying receipt at the code revision is not a PASS');
+      }
+      entries.push({
+        id,
+        sealed_term: control.name,
+        artifact: registry.file,
+        control: { test_names: control.test_names.slice().sort() },
+        killing_mutants: killers.map(killer => ({ name: killer.name, test_name: killer.test_name }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        receipts: at.map(receipt => ({ file: `${RECEIPTS_DIR}/${receipt.file}`, kind: receipt.kind,
+          sha256: receipt.sha256, verdict: receipt.verdict ?? null })),
+        disposition: reasons.length === 0 ? 'PASS' : 'BLOCK',
+        reason: reasons.join('; ') || null,
+      });
+    }
+  }
+  // Two registries can define the same control name; the id carries the label so entries never merge.
+  return entries.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function readReceipts(root) {
+  const dir = path.join(root, RECEIPTS_DIR);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter(file => file.endsWith('.json')).sort().map(file => {
+    const bytes = fs.readFileSync(path.join(dir, file));
+    const body = JSON.parse(bytes.toString('utf8'));
+    return { file, sha256: sha256(bytes), ...body };
+  });
+}
+
+export async function buildManifest(root) {
+  const head = git(root, ['rev-parse', 'HEAD']);
+  const tree = git(root, ['rev-parse', 'HEAD^{tree}']);
+  const receipts = readReceipts(root);
+  return { schema: 1, code_revision: { head, tree }, entries: await buildEntries(root, receipts, head) };
+}
+
+export function serialise(manifest) {
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+// Each rejection path is its own function so a test can drive it directly with a tampered manifest: the
+// guard has to be shown failing for the reason it exists, not only passing.
+export function checkEntries(root, entries, inventory) {
+  const failures = [];
+  for (const entry of entries) {
+    if (!entry.control || !Array.isArray(entry.control.test_names)
+      || !Array.isArray(entry.killing_mutants) || !Array.isArray(entry.receipts)) {
+      failures.push(`${entry.id}: entry is missing a control, a mutant list or a receipt list`);
+      continue;
+    }
+    for (const name of entry.control.test_names) {
+      if (!inventory.has(name)) failures.push(`${entry.id}: control test ${name} is not in the committed inventory`);
+    }
+    for (const mutant of entry.killing_mutants) {
+      if (!inventory.has(mutant.test_name)) failures.push(`${entry.id}: mutant test ${mutant.test_name} is not in the committed inventory`);
+    }
+    for (const receipt of entry.receipts) {
+      const file = path.join(root, receipt.file);
+      if (!fs.existsSync(file)) { failures.push(`${entry.id}: receipt ${receipt.file} is absent`); continue; }
+      const digest = sha256(fs.readFileSync(file));
+      if (digest !== receipt.sha256) failures.push(`${entry.id}: receipt ${receipt.file} digest does not match`);
+    }
+    if (entry.disposition === 'PASS') {
+      if (entry.control.test_names.length === 0) failures.push(`${entry.id}: PASS without a control`);
+      if (entry.killing_mutants.length === 0) failures.push(`${entry.id}: PASS without a mutant that kills it`);
+      const verifying = entry.receipts.filter(receipt => receipt.kind === 'verified');
+      if (verifying.length === 0) failures.push(`${entry.id}: PASS without a verifying receipt at the code revision`);
+      if (!verifying.every(receipt => receipt.verdict === 'PASS')) {
+        failures.push(`${entry.id}: PASS with a verifying receipt whose verdict is not PASS`);
+      }
+    } else if (entry.disposition !== 'BLOCK') {
+      failures.push(`${entry.id}: disposition must be PASS or BLOCK`);
+    }
+  }
+  return failures;
+}
+
+export function checkCodeRevision(root, committed) {
+  const failures = [];
+  const head = git(root, ['rev-parse', 'HEAD']);
+  const codeHead = committed.code_revision?.head;
+  if (!codeHead) failures.push('the manifest names no code revision');
+  else {
+    let ancestor = true;
+    try { git(root, ['merge-base', '--is-ancestor', codeHead, head]); }
+    catch {
+      ancestor = false;
+      failures.push(`the manifest's code revision ${codeHead.slice(0, 8)} is not an ancestor of ${head.slice(0, 8)}`);
+    }
+    // A revision this checkout does not contain is rejected, not compared: git would exit non-zero and a
+    // guard that throws instead of recording a failure is a guard an unknown head can walk through.
+    let changed = null;
+    if (ancestor) {
+      try { changed = git(root, ['diff', '--name-only', `${codeHead}..${head}`]).split('\n').filter(Boolean); }
+      catch { failures.push(`the manifest's code revision ${codeHead.slice(0, 8)} cannot be compared with this checkout`); }
+    }
+    for (const file of changed ?? []) {
+      if (!NON_EXECUTABLE.some(suffix => file.endsWith(suffix))) {
+        failures.push(`the manifest's code revision differs from this checkout in an executable file: ${file}`);
+      }
+    }
+  }
+  return failures;
+}
+
+// The check CI runs. Returns a list of failures; empty means the manifest is the artifact it claims to be.
+export async function checkManifest(root) {
+  const manifestPath = path.join(root, MANIFEST_NAME);
+  if (!fs.existsSync(manifestPath)) return [`${MANIFEST_NAME} is absent`];
+  const committed = readJson(manifestPath);
+  const rebuilt = await buildManifest(root);
+  const failures = [];
+  if (serialise(committed) !== serialise(rebuilt)) {
+    failures.push('the committed manifest is not what the registries and receipts build: '
+      + 'a claim was edited rather than generated');
+  }
+  const inventory = new Set(readJson(path.join(root, 'suite-inventory.json')).names);
+  failures.push(...checkEntries(root, committed.entries ?? [], inventory));
+  failures.push(...checkCodeRevision(root, committed));
+  return failures;
+}
+
+if (process.argv[1] && process.argv[1].endsWith('claim-manifest.mjs')) {
+  const root = process.cwd();
+  if (process.argv.includes('--write')) {
+    fs.writeFileSync(path.join(root, MANIFEST_NAME), serialise(await buildManifest(root)));
+    console.log(`wrote ${MANIFEST_NAME}`);
+  } else {
+    const failures = await checkManifest(root);
+    for (const failure of failures) console.error(`CLAIM_MANIFEST: ${failure}`);
+    console.log(failures.length === 0 ? 'CLAIM_MANIFEST_OK' : `CLAIM_MANIFEST_FAILED (${failures.length})`);
+    process.exit(failures.length === 0 ? 0 : 1);
+  }
+}

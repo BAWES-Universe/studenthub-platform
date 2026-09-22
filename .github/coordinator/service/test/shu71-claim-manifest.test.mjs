@@ -1,0 +1,120 @@
+// B7. The approval manifest is a generated artifact, and this file is what says so.
+//
+// One control: the committed manifest is exactly what the registries and the receipts build, so no entry
+// can be hand-edited into claiming more. Then one mutant per rejection path the owner asked CI to
+// enforce - a missing test, a missing mutant, an absent or tampered receipt, a wrong head, a PASS
+// without the evidence for it - each driving the guard with a tampered manifest and asserting the guard
+// fails for that reason and not another.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { checkManifest, checkEntries, checkCodeRevision, readJson, sha256, MANIFEST_NAME } from '../claim-manifest.mjs';
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const inventory = () => new Set(readJson(path.join(root, 'suite-inventory.json')).names);
+const committed = () => readJson(path.join(root, MANIFEST_NAME));
+const clone = value => JSON.parse(JSON.stringify(value));
+const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+
+const firstEntryWith = predicate => {
+  const entry = committed().entries.find(predicate);
+  assert.ok(entry, 'the committed manifest carries no entry of the kind this check needs');
+  return entry;
+};
+
+test('B7 claim manifest: the committed manifest is what the registries and receipts build', async () => {
+  const failures = await checkManifest(root);
+  assert.deepEqual(failures, [], failures.join('; '));
+});
+
+test('B7 claim manifest: an entry that names an uncommitted control is rejected', () => {
+  const tampered = clone(committed());
+  tampered.entries[0].control.test_names = ['B7 claim manifest: a control that is not committed anywhere'];
+  const failures = checkEntries(root, tampered.entries, inventory());
+  assert.ok(failures.some(line => /control test .* is not in the committed inventory/.test(line)),
+    `expected a missing-control rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: an entry that names an uncommitted mutant is rejected', () => {
+  const entry = clone(firstEntryWith(candidate => candidate.killing_mutants.length > 0));
+  entry.killing_mutants[0].test_name = 'B7 claim manifest mutation: a mutant that is not committed anywhere';
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /mutant test .* is not in the committed inventory/.test(line)),
+    `expected a missing-mutant rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: an absent receipt is rejected', () => {
+  const entry = clone(firstEntryWith(() => true));
+  entry.receipts = [{ file: 'receipts/a-receipt-that-does-not-exist.json', kind: 'verified',
+    sha256: '0'.repeat(64), verdict: 'PASS' }];
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /receipt .* is absent/.test(line)),
+    `expected an absent-receipt rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a receipt whose bytes changed is rejected', () => {
+  const entry = clone(firstEntryWith(() => true));
+  entry.receipts = [{ file: 'suite-inventory.json', kind: 'verified', sha256: '0'.repeat(64),
+    verdict: 'PASS' }];
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /digest does not match/.test(line)),
+    `expected a tampered-receipt rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a PASS without a mutant that kills it is rejected', () => {
+  const entry = clone(firstEntryWith(() => true));
+  entry.disposition = 'PASS';
+  entry.killing_mutants = [];
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /PASS without a mutant that kills it/.test(line)),
+    `expected a PASS-without-mutant rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a PASS whose verifying receipt is not a PASS is rejected', () => {
+  const entry = clone(firstEntryWith(() => true));
+  const receipt = path.join(root, 'suite-inventory.json');
+  entry.disposition = 'PASS';
+  entry.receipts = [{ file: 'suite-inventory.json', kind: 'verified',
+    sha256: sha256(fs.readFileSync(receipt)), verdict: 'FAIL' }];
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /verifying receipt whose verdict is not PASS/.test(line)),
+    `expected a non-PASS-receipt rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a disposition that is neither PASS nor BLOCK is rejected', () => {
+  const entry = clone(firstEntryWith(() => true));
+  entry.disposition = 'PROBABLY';
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /disposition must be PASS or BLOCK/.test(line)),
+    `expected a disposition rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a code revision this checkout does not contain is rejected', () => {
+  const failures = checkCodeRevision(root, { code_revision: { head: '0'.repeat(40) } });
+  assert.ok(failures.some(line => /is not an ancestor/.test(line)),
+    `expected a wrong-head rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a code revision that differs from this checkout executably is rejected', () => {
+  const root_commit = git(['rev-list', '--max-parents=0', 'HEAD']).split('\n').pop();
+  const failures = checkCodeRevision(root, { code_revision: { head: root_commit } });
+  assert.ok(failures.some(line => /differs from this checkout in an executable file/.test(line)),
+    `expected an executable-difference rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a manifest whose entries were edited by hand is rejected', () => {
+  const onDisk = path.join(root, MANIFEST_NAME);
+  const original = fs.readFileSync(onDisk, 'utf8');
+  try {
+    const edited = clone(JSON.parse(original));
+    edited.entries[0].sealed_term = `${edited.entries[0].sealed_term} and more than the code carries`;
+    fs.writeFileSync(onDisk, `${JSON.stringify(edited, null, 2)}\n`);
+    return checkManifest(root).then(failures => {
+      assert.ok(failures.some(line => /a claim was edited rather than generated/.test(line)),
+        `expected an edited-claim rejection, got: ${failures.join('; ') || 'none'}`);
+    }).finally(() => fs.writeFileSync(onDisk, original));
+  } catch (error) { fs.writeFileSync(onDisk, original); throw error; }
+});
