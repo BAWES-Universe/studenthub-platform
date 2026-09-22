@@ -1,0 +1,1180 @@
+{
+  "schema": 1,
+  "code_revision": {
+    "head": "5e61f57aed691ec01d24da403ade07a291c39e02",
+    "tree": "ec84d564d662f372af492259369ecc6e6fa7e907"
+  },
+  "entries": [
+    {
+      "id": "b5-post-push-read-back/a-failing-linear-issueupdate-is-never-retried",
+      "sealed_term": "a failing Linear issueUpdate is never retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a failing Linear issueUpdate is never retried"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-failing-push-is-never-retried",
+      "sealed_term": "a failing push is never retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a failing push is never retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the push is retried like a read",
+          "test_name": "B5 post-push read-back mutation: the push is retried like a read"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-genuinely-wrong-ancestry-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely wrong ancestry refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a genuinely wrong ancestry refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ancestry read itself is retried until it agrees",
+          "test_name": "B5 post-push read-back mutation: the ancestry read itself is retried until it agrees"
+        },
+        {
+          "name": "the signed reseed sha is not compared",
+          "test_name": "B5 post-push read-back mutation: the signed reseed sha is not compared"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-genuinely-wrong-ref-sha-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely wrong ref sha refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a genuinely wrong ref sha refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ref comparison itself is retried until it agrees",
+          "test_name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-graphql-refusal-is-named-by-its-codes",
+      "sealed_term": "a GraphQL refusal is named by its codes",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a GraphQL refusal is named by its codes"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the GraphQL error codes are not collected",
+          "test_name": "B5 post-push read-back mutation: the GraphQL error codes are not collected"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-landed-push-whose-reseed-commit-read-is-not-answerable-yet-still-arms",
+      "sealed_term": "a landed push whose reseed commit read is not answerable yet still arms",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a landed push whose reseed commit read is not answerable yet still arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the backoff schedule is emptied",
+          "test_name": "B5 post-push read-back mutation: the backoff schedule is emptied"
+        },
+        {
+          "name": "the post-push ancestry read goes back to the unretried door",
+          "test_name": "B5 post-push read-back mutation: the post-push ancestry read goes back to the unretried door"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-persistently-failing-read-still-refuses-under-the-same-name",
+      "sealed_term": "a persistently failing read still refuses under the same name",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a persistently failing read still refuses under the same name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "an exhausted retry returns an empty answer instead of refusing",
+          "test_name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-ref-that-moved-after-the-push-refuses-instead-of-being-retried",
+      "sealed_term": "a ref that moved after the push refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a ref that moved after the push refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ref is not required to still carry the reseed commit",
+          "test_name": "B5 post-push read-back mutation: the ref is not required to still carry the reseed commit"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-third-parent-refuses-instead-of-being-retried",
+      "sealed_term": "a third parent refuses instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a third parent refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the exact parent count is not required",
+          "test_name": "B5 post-push read-back mutation: the exact parent count is not required"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/a-transient-ref-read-back-is-retried-and-the-window-arms",
+      "sealed_term": "a transient ref read-back is retried and the window arms",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: a transient ref read-back is retried and the window arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the ref read-back goes back to the unretried door",
+          "test_name": "B5 post-push read-back mutation: the ref read-back goes back to the unretried door"
+        },
+        {
+          "name": "the retry policy allows a single attempt",
+          "test_name": "B5 post-push read-back mutation: the retry policy allows a single attempt"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/arming-never-asks-for-the-patch-bearing-comparison",
+      "sealed_term": "arming never asks for the patch-bearing comparison",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: arming never asks for the patch-bearing comparison"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the patch-bearing comparison comes back",
+          "test_name": "B5 post-push read-back mutation: the patch-bearing comparison comes back"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/parents-in-the-other-order-refuse-instead-of-being-retried",
+      "sealed_term": "parents in the other order refuse instead of being retried",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: parents in the other order refuse instead of being retried"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the parent order is not required",
+          "test_name": "B5 post-push read-back mutation: the parent order is not required"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/retrying-stops-at-the-authorization-expiry",
+      "sealed_term": "retrying stops at the authorization expiry",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: retrying stops at the authorization expiry"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the authorization expiry does not stop the retry",
+          "test_name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/the-first-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
+      "sealed_term": "the first parent position alone is wrong and refuses under its own name",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the first parent position alone is wrong and refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the first parent position is not required",
+          "test_name": "B5 post-push read-back mutation: the first parent position is not required"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/the-halt-names-the-failing-route-and-status-and-carries-no-secret",
+      "sealed_term": "the halt names the failing route and status and carries no secret",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the halt names the failing route and status and carries no secret"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "a definitive status is treated as transient",
+          "test_name": "B5 post-push read-back mutation: a definitive status is treated as transient"
+        },
+        {
+          "name": "a failed call is no longer described at all",
+          "test_name": "B5 post-push read-back mutation: a failed call is no longer described at all"
+        },
+        {
+          "name": "the halt record drops the measured API detail",
+          "test_name": "B5 post-push read-back mutation: the halt record drops the measured API detail"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/the-retry-sleep-budget-is-bounded-across-the-whole-invocation",
+      "sealed_term": "the retry sleep budget is bounded across the whole invocation",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the retry sleep budget is bounded across the whole invocation"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the overall sleep budget is not enforced",
+          "test_name": "B5 post-push read-back mutation: the overall sleep budget is not enforced"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b5-post-push-read-back/the-second-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
+      "sealed_term": "the second parent position alone is wrong and refuses under its own name",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the second parent position alone is wrong and refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the second parent position is not required",
+          "test_name": "B5 post-push read-back mutation: the second parent position is not required"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-boundary-that-throws-is-never-retried-and-echoes-no-text",
+      "sealed_term": "a boundary that throws is never retried and echoes no text",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a boundary that throws is never retried and echoes no text"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command retry repeats a boundary fault as well as a command failure",
+          "test_name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-card-read-back-that-never-reaches-the-target-still-refuses",
+      "sealed_term": "a card read-back that never reaches the target still refuses",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a card read-back that never reaches the target still refuses (elsewhere)",
+          "B6 arming robustness: a card read-back that never reaches the target still refuses (never)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-failed-measurement-is-not-a-state-claim-about-the-host",
+      "sealed_term": "a failed measurement is not a state claim about the host",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a failed measurement is not a state claim about the host"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "a failed measurement is reported as the state the caller named",
+          "test_name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-failed-teardown-step-names-its-cause-as-well-as-its-step",
+      "sealed_term": "a failed teardown step names its cause as well as its step",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a failed teardown step names its cause as well as its step"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the teardown records step codes without causes",
+          "test_name": "B6 arming robustness mutation: the teardown records step codes without causes"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-drifted-fixture-card-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely drifted fixture card refuses instead of being retried",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely drifted fixture card refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-live-expiry-companion-still-refuses-by-its-own-name",
+      "sealed_term": "a genuinely live expiry companion still refuses by its own name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely live expiry companion still refuses by its own name"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-wrong-fixture-refuses-instead-of-being-retried",
+      "sealed_term": "a genuinely wrong fixture refuses instead of being retried",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely wrong fixture refuses instead of being retried"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-genuinely-wrong-remote-sha-refuses-and-names-the-leg",
+      "sealed_term": "a genuinely wrong remote sha refuses and names the leg",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a genuinely wrong remote sha refuses and names the leg"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-landed-push-that-reported-failure-is-re-read-not-re-pushed",
+      "sealed_term": "a landed push that reported failure is re-read, not re-pushed",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a landed push that reported failure is re-read, not re-pushed"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-persistently-failing-linear-read-still-refuses-under-the-same-name",
+      "sealed_term": "a persistently failing Linear read still refuses under the same name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a persistently failing Linear read still refuses under the same name"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-persistently-failing-ls-remote-names-the-command-it-ran",
+      "sealed_term": "a persistently failing ls-remote names the command it ran",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a persistently failing ls-remote names the command it ran"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the failing command is no longer described",
+          "test_name": "B6 arming robustness mutation: the failing command is no longer described"
+        },
+        {
+          "name": "the halt record drops the measured command detail",
+          "test_name": "B6 arming robustness mutation: the halt record drops the measured command detail"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-pre-arm-refusal-names-itself-and-orders-no-effect",
+      "sealed_term": "a pre-arm refusal names itself and orders no effect",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a pre-arm refusal names itself and orders no effect (action)",
+          "B6 arming robustness: a pre-arm refusal names itself and orders no effect (approval)",
+          "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-push-that-did-not-land-still-refuses",
+      "sealed_term": "a push that did not land still refuses",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a push that did not land still refuses (old)",
+          "B6 arming robustness: a push that did not land still refuses (third)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-short-supervisor-transport-secret-refuses-under-its-own-name",
+      "sealed_term": "a short supervisor transport secret refuses under its own name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a short supervisor transport secret refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the supervisor secret refusal goes back to a bare string",
+          "test_name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-stale-read-back-of-a-landed-card-transition-is-re-read-not-refused",
+      "sealed_term": "a stale read-back of a landed card transition is re-read, not refused",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a stale read-back of a landed card transition is re-read, not refused"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the card read-back is never re-read",
+          "test_name": "B6 arming robustness mutation: the card read-back is never re-read"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-supervisor-that-did-not-come-up-refuses-instead-of-arming",
+      "sealed_term": "a supervisor that did not come up refuses instead of arming",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a supervisor that did not come up refuses instead of arming (inactive)",
+          "B6 arming robustness: a supervisor that did not come up refuses instead of arming (substate)",
+          "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-systemctl-mutation-is-attempted-exactly-once",
+      "sealed_term": "a systemctl mutation is attempted exactly once",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a systemctl mutation is attempted exactly once (enable)",
+          "B6 arming robustness: a systemctl mutation is attempted exactly once (restart)",
+          "B6 arming robustness: a systemctl mutation is attempted exactly once (start)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-transient-linear-fixture-card-read-is-retried-and-the-window-arms",
+      "sealed_term": "a transient Linear fixture-card read is retried and the window arms",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a transient Linear fixture-card read is retried and the window arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the Linear fixture-card read goes back to the unretried door",
+          "test_name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-transient-ls-remote-failure-is-retried-and-the-window-arms",
+      "sealed_term": "a transient ls-remote failure is retried and the window arms",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a transient ls-remote failure is retried and the window arms"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command backoff schedule is emptied",
+          "test_name": "B6 arming robustness mutation: the host-command backoff schedule is emptied"
+        },
+        {
+          "name": "the host-command read policy allows a single attempt",
+          "test_name": "B6 arming robustness mutation: the host-command read policy allows a single attempt"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/a-transient-unit-read-is-retried-and-the-teardown-completes",
+      "sealed_term": "a transient unit read is retried and the teardown completes",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: a transient unit read is retried and the teardown completes"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command read retry is removed",
+          "test_name": "B6 arming robustness mutation: the host-command read retry is removed"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/an-absent-coordinator-credential-refuses-under-its-own-name",
+      "sealed_term": "an absent coordinator credential refuses under its own name",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: an absent coordinator credential refuses under its own name"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the coordinator credential refusal goes back to a bare string",
+          "test_name": "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string"
+        },
+        {
+          "name": "the halt code goes back to an allow-list",
+          "test_name": "B6 arming robustness mutation: the halt code goes back to an allow-list"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-credential-store-is-opened-at-most-once-per-invocation",
+      "sealed_term": "the credential store is opened at most once per invocation",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the credential store is opened at most once per invocation"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the credential is resolved on every call again",
+          "test_name": "B6 arming robustness mutation: the credential is resolved on every call again"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-disagreeing-binding-leg-is-named",
+      "sealed_term": "the disagreeing binding leg is named",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the disagreeing binding leg is named (clean)",
+          "B6 arming robustness: the disagreeing binding leg is named (local)",
+          "B6 arming robustness: the disagreeing binding leg is named (readback)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-expiry-installation-is-measured-not-assumed",
+      "sealed_term": "the expiry installation is measured, not assumed",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the expiry installation is measured, not assumed (disabled)",
+          "B6 arming robustness: the expiry installation is measured, not assumed (inactive)",
+          "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-failing-binding-leg-is-short-circuited-and-named",
+      "sealed_term": "the failing binding leg is short-circuited and named",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the failing binding leg is short-circuited and named"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the binding legs are evaluated eagerly instead of in order",
+          "test_name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-host-read-sleep-budget-is-bounded-across-the-whole-invocation",
+      "sealed_term": "the host-read sleep budget is bounded across the whole invocation",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the host-read sleep budget is bounded across the whole invocation"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the host-command sleep budget is not enforced",
+          "test_name": "B6 arming robustness mutation: the host-command sleep budget is not enforced"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-package-validator-own-refusal-is-carried-into-the-halt",
+      "sealed_term": "the package validator own refusal is carried into the halt",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the package validator own refusal is carried into the halt"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the package validator code is dropped again",
+          "test_name": "B6 arming robustness mutation: the package validator code is dropped again"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-pre-push-acceptance-refuses-before-any-push-is-issued",
+      "sealed_term": "the pre-push acceptance refuses before any push is issued",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the pre-push acceptance refuses before any push is issued"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the pre-push acceptance read is not made",
+          "test_name": "B6 arming robustness mutation: the pre-push acceptance read is not made"
+        },
+        {
+          "name": "the pre-push acceptance refusal is swallowed",
+          "test_name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed"
+        }
+      ],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no verifying receipt at the code revision"
+    },
+    {
+      "id": "b6-arming-robustness/the-second-fixture-is-bound-too-leg-by-leg",
+      "sealed_term": "the second fixture is bound too, leg by leg",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the second fixture is bound too, leg by leg (local)",
+          "B6 arming robustness: the second fixture is bound too, leg by leg (readback)",
+          "B6 arming robustness: the second fixture is bound too, leg by leg (remote)"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [
+        {
+          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+          "kind": "suite",
+          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
+          "verdict": null
+        }
+      ],
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+    }
+  ]
+}
