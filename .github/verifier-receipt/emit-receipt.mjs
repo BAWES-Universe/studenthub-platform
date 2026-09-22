@@ -1,151 +1,115 @@
-// The verifier's receipt emitter. This file lives on protected main and is checked out from main when the
-// receipt workflow runs, so a candidate commit can neither change it nor select another version: the receipt
-// that measures a candidate is produced by code the candidate does not contain.
+// Emit the canonical receipt for one measurement. Runs in the emit job, on the measurer checked out from the
+// dispatching ref (protected main), with NO candidate code checked out: the candidate reaches this process only
+// as data - the dispatch input, the TAP the runner captured, and the manifest the candidate committed.
 //
-// It reads the candidate's own claim manifest to learn WHICH tests the claim names - a claim is the thing
-// being measured - then reads the TAP the suite produced in the candidate's tree and reports, per named test,
-// whether it passed, failed or never appeared. It reports counts, and it refuses to emit a receipt at all if
-// the checkout is not the commit it was asked to measure.
-//
-// Usage: node emit-receipt.mjs --candidate <sha> --workspace <dir> --tap <file> --out <file>
+// Fails closed. Anything it cannot establish about a named test is `absent`, and absent is not passing. A claim
+// that names no tests establishes nothing, so it cannot produce a passing receipt: a review defeated the earlier
+// version with a manifest of `entries: []` and a crashing suite, because `[].every(...)` is `true`.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 
-const args = new Map();
-for (let index = 2; index < process.argv.length; index += 2) {
-  args.set(process.argv[index].replace(/^--/, ''), process.argv[index + 1]);
-}
-const candidate = args.get('candidate');
-const workspace = path.resolve(args.get('workspace') ?? '.');
-const tapPath = args.get('tap');
-const out = args.get('out');
-if (!candidate || !tapPath || !out) {
-  console.error('usage: emit-receipt.mjs --candidate <sha> --workspace <dir> --tap <file> --out <file>');
-  process.exit(2);
-}
-
-const git = (...argv) => execFileSync('git', ['-C', workspace, ...argv], { encoding: 'utf8' }).trim();
-const digest = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
-
-// The checkout must be the commit this receipt claims to be about. A receipt that measures a different tree
-// than the one it names is worse than no receipt: it is a measurement attributed to the wrong revision.
-const head = git('rev-parse', 'HEAD');
-if (head !== candidate) {
-  console.error(`REFUSING: the workspace is at ${head}, not the requested ${candidate}`);
+const env = process.env;
+const fail = message => {
+  console.error(`REFUSING: ${message}`);
   process.exit(3);
+};
+
+const candidateSha = env.CANDIDATE_SHA ?? fail('no CANDIDATE_SHA: the measured commit must be supplied');
+if (!/^[0-9a-f]{40}$/.test(candidateSha)) fail(`CANDIDATE_SHA is not a full commit sha: ${candidateSha}`);
+const candidateTree = env.CANDIDATE_TREE ?? fail('no CANDIDATE_TREE');
+const tapPath = env.TAP_PATH ?? fail('no TAP_PATH');
+const manifestPath = env.MANIFEST_PATH ?? fail('no MANIFEST_PATH');
+const outPath = env.OUT_PATH ?? path.join(process.cwd(), 'receipt.json');
+
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+if (manifest.code_revision?.head !== candidateSha) {
+  fail(`the claim names ${String(manifest.code_revision?.head).slice(0, 12)} as its code revision, but this run `
+    + `was asked to measure ${candidateSha.slice(0, 12)}`);
 }
-const tree = git('rev-parse', 'HEAD^{tree}');
+if (manifest.code_revision?.tree !== candidateTree) {
+  fail('the claim\'s code revision tree is not the tree that was checked out');
+}
 
-const manifestPath = path.join(workspace, '.github/coordinator/service/claim-manifest.json');
-const manifestBytes = fs.readFileSync(manifestPath);
-const manifest = JSON.parse(manifestBytes.toString('utf8'));
-
-// Every test the claim names, grouped by the term it belongs to. Both halves matter: the control asserts the
-// behaviour, and the mutant is what proves the control would notice the behaviour going away.
-const named = [];
+// What the claim says must exist. A control is a test the claim names; a mutant is a test that must die when its
+// term is removed. Both are read from the candidate's manifest - as data, never as code.
+const named = new Map();
 for (const entry of manifest.entries ?? []) {
-  for (const name of entry.control?.test_names ?? []) {
-    named.push({ term: entry.id, kind: 'control', name });
+  for (const test of entry.control?.test_names ?? []) {
+    named.set(test, { term: entry.id, kind: 'control', name: test });
   }
   for (const mutant of entry.killing_mutants ?? []) {
-    named.push({ term: entry.id, kind: 'mutant', name: mutant.test_name });
+    if (mutant.test_name) named.set(mutant.test_name, { term: entry.id, kind: 'mutant', name: mutant.test_name });
   }
 }
 
+// The TAP the runner captured. Its own summary lines are authoritative for what the suite did: a run whose
+// counts do not add up, or which reported no tests at all, is not a measurement of anything.
 const tap = fs.readFileSync(tapPath, 'utf8');
+const counts = { tests: 0, ok: 0, not_ok: 0, skipped: 0, todo: 0 };
 const observed = new Map();
+let tapLooksReal = false;
 for (const line of tap.split('\n')) {
-  const match = /^(not ok|ok) \d+ - (.*?)(?:\s+#\s*(.*))?$/.exec(line.trimEnd());
-  if (!match) continue;
-  const [, verdict, rawName, comment] = match;
-  const name = rawName.trim();
-  const status = verdict === 'not ok' ? 'fail' : /SKIP/i.test(comment ?? '') ? 'skipped' : 'pass';
-  // A name can appear more than once (a re-run inside one file); a failure anywhere is the status.
-  if (observed.get(name) !== 'fail') observed.set(name, status);
+  const summary = /^# (tests|pass|fail|skipped|todo|cancelled) (\d+)$/.exec(line.trim());
+  if (summary) {
+    tapLooksReal = true;
+    if (summary[1] === 'tests') counts.tests = Number(summary[2]);
+    if (summary[1] === 'pass') counts.ok = Number(summary[2]);
+    if (summary[1] === 'fail') counts.not_ok = Number(summary[2]);
+    if (summary[1] === 'skipped') counts.skipped = Number(summary[2]);
+    if (summary[1] === 'todo') counts.todo = Number(summary[2]);
+    continue;
+  }
+  const point = /^(ok|not ok) \d+ - (.*?)\s*$/.exec(line.trim());
+  if (point) {
+    tapLooksReal = true;
+    observed.set(point[2], point[1] === 'ok' ? 'pass' : 'fail');
+  }
 }
-const tests = named.map(({ term, kind, name }) => ({
-  term, kind, name, status: observed.get(name) ?? 'absent',
-}));
+if (!tapLooksReal) fail('the captured output is not TAP: no test points and no summary lines');
 
-const totals = { tests: 0, ok: 0, not_ok: 0, skipped: 0 };
-for (const line of tap.split('\n')) {
-  const summary = /^# (tests|pass|fail|skipped|cancelled) (\d+)$/.exec(line.trim());
-  if (!summary) continue;
-  if (summary[1] === 'tests') totals.tests = Number(summary[2]);
-  if (summary[1] === 'pass') totals.ok = Number(summary[2]);
-  if (summary[1] === 'fail') totals.not_ok = Number(summary[2]);
-  if (summary[1] === 'skipped') totals.skipped = Number(summary[2]);
-}
-const runFailures = [...observed].filter(([, status]) => status === 'fail').map(([name]) => name);
-const missing = tests.filter(test => test.status === 'absent').map(test => `${test.kind}: ${test.name}`);
+const perTest = [...named.values()].map(test => ({ ...test, status: observed.get(test.name) ?? 'absent' }));
+const summary = {
+  named: perTest.length,
+  pass: perTest.filter(test => test.status === 'pass').length,
+  fail: perTest.filter(test => test.status === 'fail').length,
+  absent: perTest.filter(test => test.status === 'absent').length,
+};
+
+// Success means: the claim names tests, every one of them was observed, and every one passed. The suite's own
+// exit code and counts travel with the receipt so an unrelated failure is visible rather than smoothed over.
+const suiteExit = env.MEASURED_SUITE_EXIT ?? 'unknown';
+const established = summary.named > 0 && summary.fail === 0 && summary.absent === 0;
+const reasons = [];
+if (summary.named === 0) reasons.push('the claim names no tests, so this run establishes nothing about any term');
+if (summary.fail > 0) reasons.push(`${summary.fail} named test(s) failed in the measured run`);
+if (summary.absent > 0) reasons.push(`${summary.absent} named test(s) did not appear in the measured run`);
 
 const receipt = {
   schema: 1,
-  repository: process.env.GITHUB_REPOSITORY ?? null,
+  repository: env.GITHUB_REPOSITORY ?? null,
   workflow: {
-    path: (process.env.GITHUB_WORKFLOW_REF ?? '').split('@')[0] || null,
-    ref: process.env.GITHUB_REF ?? null,
-    head_sha: process.env.GITHUB_SHA ?? null,
-    event: process.env.GITHUB_EVENT_NAME ?? null,
+    path: '.github/workflows/verifier-receipt.yml',
+    ref: env.GITHUB_WORKFLOW_REF ?? null,
+    head_sha: env.GITHUB_SHA ?? null,
+    workflow_ref: env.GITHUB_WORKFLOW_REF ?? null,
+    event: env.GITHUB_EVENT_NAME ?? null,
   },
-  run: {
-    id: process.env.GITHUB_RUN_ID ?? null,
-    attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
-    workflow: process.env.GITHUB_WORKFLOW ?? null,
-    actor: process.env.GITHUB_ACTOR ?? null,
-  },
-  candidate: { sha: head, tree },
-  manifest: {
-    sha256: digest(manifestBytes),
-    code_revision: manifest.code_revision ?? null,
-  },
-  suite: {
-    command: process.env.VERIFIER_SUITE_COMMAND ?? null,
-    exit: Number(process.env.VERIFIER_SUITE_EXIT ?? '1'),
-    ...totals,
-    run_failures: runFailures,
-  },
-  named_tests: tests,
-  named_tests_summary: {
-    named: tests.length,
-    pass: tests.filter(test => test.status === 'pass').length,
-    fail: tests.filter(test => test.status === 'fail').length,
-    absent: tests.filter(test => test.status === 'absent').length,
-    absent_names: missing,
-  },
-  // The conclusion of the measurement this receipt makes, and nothing wider. The claim under measurement is
-  // a set of named terms: a control that asserts a behaviour and the mutant that proves the control would
-  // notice the behaviour going away. That measurement succeeds when every named test passes and none is
-  // absent - if a named test never ran, the claim was not measured at all and no receipt can say it was.
-  //
-  // It is deliberately NOT a verdict on the whole suite. This suite carries a known intermittent test
-  // unrelated to these terms, and folding it in here would make the receipt a coin toss that lanes learn to
-  // re-run until it lands green - the failure mode this whole exercise exists to remove. The suite's own
-  // exit code, its counts and the names of every failing test are reported verbatim alongside, so nothing is
-  // hidden and the reader judges the rest for themselves.
+  run: { id: env.GITHUB_RUN_ID ?? null, attempt: env.GITHUB_RUN_ATTEMPT ?? null },
+  candidate: { sha: candidateSha, tree: candidateTree },
+  manifest: { sha256: null, code_revision: { head: manifest.code_revision?.head ?? null, tree: manifest.code_revision?.tree ?? null } },
+  suite: { tests: counts.tests, ok: counts.ok, not_ok: counts.not_ok, skipped: counts.skipped, todo: counts.todo, exit: String(suiteExit) },
+  named_tests: perTest,
+  named_tests_summary: summary,
   conclusion: {
-    verdict: missing.length === 0 && tests.every(test => test.status === 'pass') ? 'success' : 'failure',
-    scope: 'the named tests of the claim this receipt measured, not the whole suite',
-    suite_exit: Number(process.env.VERIFIER_SUITE_EXIT ?? '1'),
-    suite_run_failures: runFailures,
+    verdict: established ? 'success' : 'failure',
+    scope: 'the named tests of the claim this measured',
+    reasons,
   },
 };
-
-// Canonical: sorted keys, two-space indent, one trailing newline. The manifest pins this file's digest, so its
-// bytes are part of the claim.
-const canonical = value => {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]));
-  }
-  return value;
-};
-fs.writeFileSync(out, `${JSON.stringify(canonical(receipt), null, 2)}\n`);
-console.log(`receipt: ${out}`);
-console.log(`candidate ${head.slice(0, 12)} tree ${tree.slice(0, 12)} `
-  + `conclusion ${receipt.conclusion.verdict} (${receipt.conclusion.scope})`);
-console.log(`named tests ${tests.length}: pass ${receipt.named_tests_summary.pass}, `
-  + `fail ${receipt.named_tests_summary.fail}, absent ${receipt.named_tests_summary.absent}`);
-console.log(`suite: tests ${totals.tests}, ok ${totals.ok}, not_ok ${totals.not_ok}, exit ${receipt.suite.exit}`);
+receipt.manifest.sha256 = crypto.createHash('sha256').update(fs.readFileSync(manifestPath)).digest('hex');
+fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
+console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice(0, 8)}: verdict `
+  + `${receipt.conclusion.verdict}; named ${summary.named} pass ${summary.pass} fail ${summary.fail} `
+  + `absent ${summary.absent}; suite exit ${suiteExit}, tests ${counts.tests}`);
+process.exit(0);
