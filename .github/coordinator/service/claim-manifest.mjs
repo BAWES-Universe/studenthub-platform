@@ -27,7 +27,14 @@ export const REGISTRIES = [
 export const MANIFEST_NAME = 'claim-manifest.json';
 export const RECEIPTS_DIR = 'receipts';
 // What may legitimately differ between an entry's code revision and the revision carrying the manifest.
-const NON_EXECUTABLE = ['.md', '.json', '.txt'];
+// What may change between the code revision and the manifest commit. Documentation, the manifest itself and
+// receipts - nothing else. Tolerating every .json was too broad and hid a real inconsistency: an inventory
+// fix committed after the code revision left the manifest naming a revision whose own suite inventory no
+// longer matched the suite it describes, and the guard said nothing because the file ended in .json.
+const NON_EXECUTABLE = ['.md', '.txt'];
+export const nonExecutable = file => NON_EXECUTABLE.some(suffix => file.endsWith(suffix))
+  || path.basename(file) === MANIFEST_NAME
+  || file.startsWith(`${RECEIPTS_DIR}/`);
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -43,12 +50,17 @@ export async function readRegistry(root, registry) {
   const module = await import(path.join(root, registry.file));
   const controls = [];
   const fns = new Map();
+  const byName = new Map();
   const add = (name, fn, variants) => {
     const names = variants ? variants.map(variant => `${registry.label}: ${name} (${variant})`)
       : [`${registry.label}: ${name}`];
     controls.push({ name, test_names: names });
     if (!fns.has(fn)) fns.set(fn, []);
     fns.get(fn).push(name);
+    if (typeof fn?.name === 'string' && fn.name) {
+      if (!byName.has(fn.name)) byName.set(fn.name, []);
+      byName.get(fn.name).push(name);
+    }
   };
   for (const [name, check] of module.controls ?? []) add(name, check);
   for (const [name, check, variants] of module.variantControls ?? []) add(name, check, variants);
@@ -58,8 +70,21 @@ export async function readRegistry(root, registry) {
     for (const row of rows ?? []) {
       const name = row[0];
       const check = row[checkIndex];
-      mutations.push({ name, test_name: `${registry.label} mutation: ${name}`,
-        kills: fns.get(check) ?? [] });
+      let kills = fns.get(check) ?? [];
+      let paired_by = kills.length > 0 ? 'identity' : null;
+      // Not every mutation row hands the control itself: some wrap it to exercise one variant, as
+      // `(create, h) => someControl(create, h, 'variant')`. Pairing only by function identity silently
+      // attributed those to nothing, so the manifest reported no mutant for terms that have one. The
+      // wrapper's body is read for calls to registered controls, and the pairing is used only when the
+      // body names exactly one of them: several would be a guess, and a guess is not a pairing.
+      if (kills.length === 0 && typeof check === 'function') {
+        const called = new Set();
+        for (const match of check.toString().matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
+          for (const name of byName.get(match[1]) ?? []) called.add(name);
+        }
+        if (called.size === 1) { kills = [...called]; paired_by = 'wrapper-body'; }
+      }
+      mutations.push({ name, test_name: `${registry.label} mutation: ${name}`, kills, paired_by });
     }
   };
   collect(module.mutations, 3);
@@ -91,7 +116,8 @@ export async function buildEntries(root, receipts, head) {
         sealed_term: control.name,
         artifact: registry.file,
         control: { test_names: control.test_names.slice().sort() },
-        killing_mutants: killers.map(killer => ({ name: killer.name, test_name: killer.test_name }))
+        killing_mutants: killers.map(killer => ({ name: killer.name, test_name: killer.test_name,
+          paired_by: killer.paired_by ?? null }))
           .sort((a, b) => a.name.localeCompare(b.name)),
         receipts: at.map(receipt => ({ file: `${RECEIPTS_DIR}/${receipt.file}`, kind: receipt.kind,
           sha256: receipt.sha256, verdict: receipt.verdict ?? null })),
@@ -123,7 +149,28 @@ export async function buildManifest(root, head) {
   const revision = head ?? git(root, ['rev-parse', 'HEAD']);
   const tree = git(root, ['rev-parse', `${revision}^{tree}`]);
   const receipts = readReceipts(root);
-  return { schema: 1, code_revision: { head: revision, tree }, entries: await buildEntries(root, receipts, revision) };
+  const entries = await buildEntries(root, receipts, revision);
+  return { schema: 1, code_revision: { head: revision, tree }, coverage: coverageOf(root, entries), entries };
+}
+
+// What the entries enumerate, set against what the suite carries. The manifest covers the controls the
+// registries declare; a control registered directly in a runner file is outside that scope, and a reader is
+// entitled to the size of that gap as a generated number rather than as a silence.
+export function coverageOf(root, entries) {
+  const inventory = readJson(path.join(root, 'suite-inventory.json'));
+  const referenced = new Set();
+  for (const entry of entries) {
+    for (const name of entry.control.test_names) referenced.add(name);
+    for (const mutant of entry.killing_mutants) referenced.add(mutant.test_name);
+  }
+  const notReferenced = inventory.names.filter(name => !referenced.has(name));
+  return {
+    inventory_names: inventory.names.length,
+    referenced_in_inventory: inventory.names.length - notReferenced.length,
+    not_referenced: notReferenced.length,
+    not_referenced_sample: notReferenced.slice(0, 12),
+    referenced_not_in_inventory: [...referenced].filter(name => !inventory.names.includes(name)).length,
+  };
 }
 
 export function serialise(manifest) {
@@ -145,6 +192,14 @@ export function checkEntries(root, entries, inventory) {
     }
     for (const mutant of entry.killing_mutants) {
       if (!inventory.has(mutant.test_name)) failures.push(`${entry.id}: mutant test ${mutant.test_name} is not in the committed inventory`);
+      // How a mutant was attributed to a control is part of the claim. `identity` is the registry handing
+      // over the control itself; `wrapper-body` is the generator reading a wrapper's body and finding one
+      // registered control in it. Anything else is a basis nobody established, and a claim no reader can
+      // re-derive is a claim this artifact must not carry.
+      if (!['identity', 'wrapper-body'].includes(mutant.paired_by)) {
+        failures.push(`${entry.id}: mutant ${mutant.name} carries no established pairing basis `
+          + `(${JSON.stringify(mutant.paired_by)})`);
+      }
     }
     for (const receipt of entry.receipts) {
       const file = path.join(root, receipt.file);
@@ -199,8 +254,9 @@ export function checkCodeRevision(root, committed) {
       catch { failures.push(`the manifest's code revision ${codeHead.slice(0, 8)} cannot be compared with this checkout`); }
     }
     for (const file of changed ?? []) {
-      if (!NON_EXECUTABLE.some(suffix => file.endsWith(suffix))) {
-        failures.push(`the manifest's code revision differs from this checkout in an executable file: ${file}`);
+      if (!nonExecutable(file)) {
+        failures.push(`the manifest's code revision differs from this checkout in ${file}, which is neither `
+          + 'documentation nor the manifest nor a receipt - the manifest must be regenerated at this revision');
       }
     }
   }
@@ -222,12 +278,33 @@ export async function checkManifest(root) {
   if (headFailures.length > 0) return headFailures;
   const rebuilt = await buildManifest(root, committed.code_revision.head);
   const failures = [];
+  // A receipt that claims verification at a revision this history does not cover verifies nothing here.
+  // Filtering it out of the entries is what protects the dispositions; it is not what protects the tree, so
+  // the guard rejects it rather than passing over it in silence.
+  const stray = [];
+  for (const receipt of readReceipts(root)) {
+    if (receipt.kind !== 'verified' || receipt.head === committed.code_revision.head) continue;
+    let covered = false;
+    try {
+      git(root, ['cat-file', '-e', `${receipt.head}^{commit}`]);
+      git(root, ['merge-base', '--is-ancestor', receipt.head, committed.code_revision.head]);
+      covered = true;
+    } catch { covered = false; }
+    if (!covered) stray.push(`${receipt.file} (head ${String(receipt.head).slice(0, 8)})`);
+  }
+  if (stray.length > 0) {
+    failures.push(`verified receipts at a revision this manifest does not cover: ${stray.join(', ')}`);
+  }
   const revisionMatches = serialise(committed.code_revision) === serialise(rebuilt.code_revision);
   const entriesMatch = serialise(committed.entries) === serialise(rebuilt.entries);
   if (!revisionMatches) {
     failures.push('the rebuild names a different code revision than the committed manifest: '
       + `manifest ${committed.code_revision.head.slice(0, 8)}/${committed.code_revision.tree.slice(0, 8)}`
       + ` vs rebuild ${rebuilt.code_revision.head.slice(0, 8)}/${rebuilt.code_revision.tree.slice(0, 8)}`);
+  }
+  if (serialise(committed.coverage) !== serialise(rebuilt.coverage)) {
+    failures.push('the rebuild counts a different coverage than the committed manifest: '
+      + `manifest ${JSON.stringify(committed.coverage)} vs rebuild ${JSON.stringify(rebuilt.coverage)}`);
   }
   if (!entriesMatch) {
     const ids = new Set([...committed.entries, ...rebuilt.entries].map(entry => entry.id));

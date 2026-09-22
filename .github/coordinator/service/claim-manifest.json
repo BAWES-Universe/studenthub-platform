@@ -1,8 +1,28 @@
 {
   "schema": 1,
   "code_revision": {
-    "head": "3b83a1bf2cd44c2600e5c481f0d20f59f6e0af54",
-    "tree": "ed5dddf7eeab98334b79f265a825890b4ac16854"
+    "head": "7b30000d29e0282c34802abce74186d66b2fe237",
+    "tree": "d9fe425024d3b8e77f0a32b4833c32839b5fd8e4"
+  },
+  "coverage": {
+    "inventory_names": 3658,
+    "referenced_in_inventory": 117,
+    "not_referenced": 3541,
+    "not_referenced_sample": [
+      "RECON_ENV_POSITIVE: distinct credential roles render and pass policy",
+      "RECON_ENV_MUTATION: crossed file paths",
+      "RECON_ENV_MUTATION: identical file paths and hardlinked contents",
+      "RECON_ENV_MUTATION: supervisorEnvironmentFile missing",
+      "RECON_ENV_MUTATION: supervisorEnvironmentFile pointed at other contents",
+      "RECON_ENV_MUTATION: supervisorEnvironmentFile unsafe absolute path",
+      "RECON_ENV_MUTATION: coordinatorEnvironmentFile missing",
+      "RECON_ENV_MUTATION: coordinatorEnvironmentFile pointed at other contents",
+      "RECON_ENV_MUTATION: coordinatorEnvironmentFile unsafe absolute path",
+      "RECON_ENV_MUTATION: coordinator GITHUB_TOKEN missing or empty",
+      "RECON_ENV_MUTATION: coordinator LINEAR_API_TOKEN missing or empty",
+      "RECON_DOC_POSITIVE: closed owner decision and actual error contract"
+    ],
+    "referenced_not_in_inventory": 0
   },
   "entries": [
     {
@@ -31,7 +51,8 @@
       "killing_mutants": [
         {
           "name": "the push is retried like a read",
-          "test_name": "B5 post-push read-back mutation: the push is retried like a read"
+          "test_name": "B5 post-push read-back mutation: the push is retried like a read",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -50,11 +71,13 @@
       "killing_mutants": [
         {
           "name": "the ancestry read itself is retried until it agrees",
-          "test_name": "B5 post-push read-back mutation: the ancestry read itself is retried until it agrees"
+          "test_name": "B5 post-push read-back mutation: the ancestry read itself is retried until it agrees",
+          "paired_by": "identity"
         },
         {
           "name": "the signed reseed sha is not compared",
-          "test_name": "B5 post-push read-back mutation: the signed reseed sha is not compared"
+          "test_name": "B5 post-push read-back mutation: the signed reseed sha is not compared",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -73,7 +96,8 @@
       "killing_mutants": [
         {
           "name": "the ref comparison itself is retried until it agrees",
-          "test_name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees"
+          "test_name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -92,7 +116,8 @@
       "killing_mutants": [
         {
           "name": "the GraphQL error codes are not collected",
-          "test_name": "B5 post-push read-back mutation: the GraphQL error codes are not collected"
+          "test_name": "B5 post-push read-back mutation: the GraphQL error codes are not collected",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -111,11 +136,13 @@
       "killing_mutants": [
         {
           "name": "the backoff schedule is emptied",
-          "test_name": "B5 post-push read-back mutation: the backoff schedule is emptied"
+          "test_name": "B5 post-push read-back mutation: the backoff schedule is emptied",
+          "paired_by": "identity"
         },
         {
           "name": "the post-push ancestry read goes back to the unretried door",
-          "test_name": "B5 post-push read-back mutation: the post-push ancestry read goes back to the unretried door"
+          "test_name": "B5 post-push read-back mutation: the post-push ancestry read goes back to the unretried door",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -134,7 +161,8 @@
       "killing_mutants": [
         {
           "name": "an exhausted retry returns an empty answer instead of refusing",
-          "test_name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing"
+          "test_name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -153,7 +181,8 @@
       "killing_mutants": [
         {
           "name": "the ref is not required to still carry the reseed commit",
-          "test_name": "B5 post-push read-back mutation: the ref is not required to still carry the reseed commit"
+          "test_name": "B5 post-push read-back mutation: the ref is not required to still carry the reseed commit",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -172,7 +201,8 @@
       "killing_mutants": [
         {
           "name": "the exact parent count is not required",
-          "test_name": "B5 post-push read-back mutation: the exact parent count is not required"
+          "test_name": "B5 post-push read-back mutation: the exact parent count is not required",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -191,11 +221,13 @@
       "killing_mutants": [
         {
           "name": "the ref read-back goes back to the unretried door",
-          "test_name": "B5 post-push read-back mutation: the ref read-back goes back to the unretried door"
+          "test_name": "B5 post-push read-back mutation: the ref read-back goes back to the unretried door",
+          "paired_by": "identity"
         },
         {
           "name": "the retry policy allows a single attempt",
-          "test_name": "B5 post-push read-back mutation: the retry policy allows a single attempt"
+          "test_name": "B5 post-push read-back mutation: the retry policy allows a single attempt",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -214,7 +246,8 @@
       "killing_mutants": [
         {
           "name": "the patch-bearing comparison comes back",
-          "test_name": "B5 post-push read-back mutation: the patch-bearing comparison comes back"
+          "test_name": "B5 post-push read-back mutation: the patch-bearing comparison comes back",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -233,7 +266,8 @@
       "killing_mutants": [
         {
           "name": "the parent order is not required",
-          "test_name": "B5 post-push read-back mutation: the parent order is not required"
+          "test_name": "B5 post-push read-back mutation: the parent order is not required",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -252,7 +286,8 @@
       "killing_mutants": [
         {
           "name": "the authorization expiry does not stop the retry",
-          "test_name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry"
+          "test_name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -271,7 +306,8 @@
       "killing_mutants": [
         {
           "name": "the first parent position is not required",
-          "test_name": "B5 post-push read-back mutation: the first parent position is not required"
+          "test_name": "B5 post-push read-back mutation: the first parent position is not required",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -290,15 +326,18 @@
       "killing_mutants": [
         {
           "name": "a definitive status is treated as transient",
-          "test_name": "B5 post-push read-back mutation: a definitive status is treated as transient"
+          "test_name": "B5 post-push read-back mutation: a definitive status is treated as transient",
+          "paired_by": "identity"
         },
         {
           "name": "a failed call is no longer described at all",
-          "test_name": "B5 post-push read-back mutation: a failed call is no longer described at all"
+          "test_name": "B5 post-push read-back mutation: a failed call is no longer described at all",
+          "paired_by": "identity"
         },
         {
           "name": "the halt record drops the measured API detail",
-          "test_name": "B5 post-push read-back mutation: the halt record drops the measured API detail"
+          "test_name": "B5 post-push read-back mutation: the halt record drops the measured API detail",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -317,7 +356,8 @@
       "killing_mutants": [
         {
           "name": "the overall sleep budget is not enforced",
-          "test_name": "B5 post-push read-back mutation: the overall sleep budget is not enforced"
+          "test_name": "B5 post-push read-back mutation: the overall sleep budget is not enforced",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -336,7 +376,8 @@
       "killing_mutants": [
         {
           "name": "the second parent position is not required",
-          "test_name": "B5 post-push read-back mutation: the second parent position is not required"
+          "test_name": "B5 post-push read-back mutation: the second parent position is not required",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -355,7 +396,8 @@
       "killing_mutants": [
         {
           "name": "the host-command retry repeats a boundary fault as well as a command failure",
-          "test_name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure"
+          "test_name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -372,10 +414,21 @@
           "B6 arming robustness: a card read-back that never reaches the target still refuses (never)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "the card read-back accepts a card that is not the target",
+          "test_name": "B6 arming robustness mutation: the card read-back accepts a card that is not the target",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the card read-back re-issues the write it is reading back",
+          "test_name": "B6 arming robustness mutation: the card read-back re-issues the write it is reading back",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     },
     {
       "id": "b6-arming-robustness/a-failed-measurement-is-not-a-state-claim-about-the-host",
@@ -389,7 +442,8 @@
       "killing_mutants": [
         {
           "name": "a failed measurement is reported as the state the caller named",
-          "test_name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named"
+          "test_name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -408,7 +462,8 @@
       "killing_mutants": [
         {
           "name": "the teardown records step codes without causes",
-          "test_name": "B6 arming robustness mutation: the teardown records step codes without causes"
+          "test_name": "B6 arming robustness mutation: the teardown records step codes without causes",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -511,11 +566,13 @@
       "killing_mutants": [
         {
           "name": "the failing command is no longer described",
-          "test_name": "B6 arming robustness mutation: the failing command is no longer described"
+          "test_name": "B6 arming robustness mutation: the failing command is no longer described",
+          "paired_by": "identity"
         },
         {
           "name": "the halt record drops the measured command detail",
-          "test_name": "B6 arming robustness mutation: the halt record drops the measured command detail"
+          "test_name": "B6 arming robustness mutation: the halt record drops the measured command detail",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -533,10 +590,16 @@
           "B6 arming robustness: a pre-arm refusal names itself and orders no effect (custody)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "the pre-arm region loses its handler again",
+          "test_name": "B6 arming robustness mutation: the pre-arm region loses its handler again",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     },
     {
       "id": "b6-arming-robustness/a-push-that-did-not-land-still-refuses",
@@ -548,10 +611,21 @@
           "B6 arming robustness: a push that did not land still refuses (third)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "the push recovery accepts a third sha",
+          "test_name": "B6 arming robustness mutation: the push recovery accepts a third sha",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the push recovery accepts any remote answer",
+          "test_name": "B6 arming robustness mutation: the push recovery accepts any remote answer",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     },
     {
       "id": "b6-arming-robustness/a-short-supervisor-transport-secret-refuses-under-its-own-name",
@@ -565,7 +639,8 @@
       "killing_mutants": [
         {
           "name": "the supervisor secret refusal goes back to a bare string",
-          "test_name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string"
+          "test_name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -584,7 +659,8 @@
       "killing_mutants": [
         {
           "name": "the card read-back is never re-read",
-          "test_name": "B6 arming robustness mutation: the card read-back is never re-read"
+          "test_name": "B6 arming robustness mutation: the card read-back is never re-read",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -602,10 +678,26 @@
           "B6 arming robustness: a supervisor that did not come up refuses instead of arming (timer)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "the dispatch timer liveness read-back is removed",
+          "test_name": "B6 arming robustness mutation: the dispatch timer liveness read-back is removed",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the supervisor liveness read-back is removed",
+          "test_name": "B6 arming robustness mutation: the supervisor liveness read-back is removed",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the supervisor SubState term is dropped",
+          "test_name": "B6 arming robustness mutation: the supervisor SubState term is dropped",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     },
     {
       "id": "b6-arming-robustness/a-systemctl-mutation-is-attempted-exactly-once",
@@ -635,7 +727,8 @@
       "killing_mutants": [
         {
           "name": "the Linear fixture-card read goes back to the unretried door",
-          "test_name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door"
+          "test_name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -654,11 +747,13 @@
       "killing_mutants": [
         {
           "name": "the host-command backoff schedule is emptied",
-          "test_name": "B6 arming robustness mutation: the host-command backoff schedule is emptied"
+          "test_name": "B6 arming robustness mutation: the host-command backoff schedule is emptied",
+          "paired_by": "identity"
         },
         {
           "name": "the host-command read policy allows a single attempt",
-          "test_name": "B6 arming robustness mutation: the host-command read policy allows a single attempt"
+          "test_name": "B6 arming robustness mutation: the host-command read policy allows a single attempt",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -677,7 +772,8 @@
       "killing_mutants": [
         {
           "name": "the host-command read retry is removed",
-          "test_name": "B6 arming robustness mutation: the host-command read retry is removed"
+          "test_name": "B6 arming robustness mutation: the host-command read retry is removed",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -696,11 +792,13 @@
       "killing_mutants": [
         {
           "name": "the coordinator credential refusal goes back to a bare string",
-          "test_name": "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string"
+          "test_name": "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
+          "paired_by": "identity"
         },
         {
           "name": "the halt code goes back to an allow-list",
-          "test_name": "B6 arming robustness mutation: the halt code goes back to an allow-list"
+          "test_name": "B6 arming robustness mutation: the halt code goes back to an allow-list",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -719,7 +817,8 @@
       "killing_mutants": [
         {
           "name": "the credential is resolved on every call again",
-          "test_name": "B6 arming robustness mutation: the credential is resolved on every call again"
+          "test_name": "B6 arming robustness mutation: the credential is resolved on every call again",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -737,10 +836,16 @@
           "B6 arming robustness: the disagreeing binding leg is named (readback)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "the binding leg is no longer named",
+          "test_name": "B6 arming robustness mutation: the binding leg is no longer named",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     },
     {
       "id": "b6-arming-robustness/the-expiry-installation-is-measured-not-assumed",
@@ -753,10 +858,26 @@
           "B6 arming robustness: the expiry installation is measured, not assumed (unitfile)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "the expiry durable-file term is dropped",
+          "test_name": "B6 arming robustness mutation: the expiry durable-file term is dropped",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the expiry enablement term is dropped",
+          "test_name": "B6 arming robustness mutation: the expiry enablement term is dropped",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the expiry installation read-back is removed",
+          "test_name": "B6 arming robustness mutation: the expiry installation read-back is removed",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     },
     {
       "id": "b6-arming-robustness/the-failing-binding-leg-is-short-circuited-and-named",
@@ -770,7 +891,8 @@
       "killing_mutants": [
         {
           "name": "the binding legs are evaluated eagerly instead of in order",
-          "test_name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order"
+          "test_name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -789,7 +911,8 @@
       "killing_mutants": [
         {
           "name": "the host-command sleep budget is not enforced",
-          "test_name": "B6 arming robustness mutation: the host-command sleep budget is not enforced"
+          "test_name": "B6 arming robustness mutation: the host-command sleep budget is not enforced",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -808,7 +931,8 @@
       "killing_mutants": [
         {
           "name": "the package validator code is dropped again",
-          "test_name": "B6 arming robustness mutation: the package validator code is dropped again"
+          "test_name": "B6 arming robustness mutation: the package validator code is dropped again",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -827,11 +951,13 @@
       "killing_mutants": [
         {
           "name": "the pre-push acceptance read is not made",
-          "test_name": "B6 arming robustness mutation: the pre-push acceptance read is not made"
+          "test_name": "B6 arming robustness mutation: the pre-push acceptance read is not made",
+          "paired_by": "identity"
         },
         {
           "name": "the pre-push acceptance refusal is swallowed",
-          "test_name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed"
+          "test_name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed",
+          "paired_by": "identity"
         }
       ],
       "receipts": [],
@@ -849,10 +975,36 @@
           "B6 arming robustness: the second fixture is bound too, leg by leg (remote)"
         ]
       },
-      "killing_mutants": [],
+      "killing_mutants": [
+        {
+          "name": "fixture_2 keeps every read but loses its LOCAL leg check",
+          "test_name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its LOCAL leg check",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "fixture_2 keeps every read but loses its READBACK leg check",
+          "test_name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its READBACK leg check",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "fixture_2 keeps every read but loses its REMOTE leg check",
+          "test_name": "B6 arming robustness mutation: fixture_2 keeps every read but loses its REMOTE leg check",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the fixture loop covers only the first fixture",
+          "test_name": "B6 arming robustness mutation: the fixture loop covers only the first fixture",
+          "paired_by": "wrapper-body"
+        },
+        {
+          "name": "the second fixture skips its own binding legs",
+          "test_name": "B6 arming robustness mutation: the second fixture skips its own binding legs",
+          "paired_by": "wrapper-body"
+        }
+      ],
       "receipts": [],
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no verifying receipt at the code revision"
     }
   ]
 }

@@ -11,8 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkManifest, checkEntries, checkCodeRevision, buildManifest, readJson, sha256, MANIFEST_NAME }
-  from '../claim-manifest.mjs';
+import { checkManifest, checkEntries, checkCodeRevision, buildManifest, readJson, sha256, MANIFEST_NAME,
+  coverageOf, nonExecutable } from '../claim-manifest.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const inventory = () => new Set(readJson(path.join(root, 'suite-inventory.json')).names);
@@ -116,8 +116,58 @@ test('B7 claim manifest: a wrong head is rejected, whether it differs executably
   const root_commit = git(['rev-list', '--max-parents=0', 'HEAD']).split('\n').pop();
   const failures = checkCodeRevision(root, { code_revision: { head: root_commit } });
   assert.ok(failures.length > 0, 'a head this checkout does not contain must be rejected');
-  assert.ok(failures.some(line => /differs from this checkout in an executable file|is not an ancestor|cannot be compared|does not contain the manifest's code revision/.test(line)),
+  assert.ok(failures.some(line => /differs from this checkout in|is not an ancestor|cannot be compared|does not contain the manifest's code revision/.test(line)),
     `expected a wrong-head rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: only documentation, the manifest and receipts may follow the code revision', () => {
+  // The tolerance is what a manifest names as its code revision, so it is checked as a rule rather than
+  // described in prose. A fixed revision of any kind must fail the guard: an inventory fix committed after
+  // the code revision left this manifest naming a revision whose own suite inventory no longer matched the
+  // suite it described, and a suffix test for .json said nothing about it.
+  assert.equal(nonExecutable('.github/coordinator/service/SHU71-PREREQUISITES.md'), true);
+  assert.equal(nonExecutable('.github/coordinator/service/claim-manifest.json'), true);
+  assert.equal(nonExecutable('receipts/verifier-left.json'), true);
+  assert.equal(nonExecutable('.github/coordinator/service/suite-inventory.json'), false);
+  assert.equal(nonExecutable('.github/coordinator/service/a12-evidence/file-requirements.json'), false);
+  assert.equal(nonExecutable('.github/workflows/ci.yml'), false);
+  assert.equal(nonExecutable('.github/coordinator/service/claim-manifest.mjs'), false);
+});
+
+test('B7 claim manifest: the coverage block counts what the entries enumerate and what they do not', async () => {
+  const built = await buildManifest(root, committed().code_revision.head);
+  const coverage = coverageOf(root, built.entries);
+  const inventory = readJson(path.join(root, 'suite-inventory.json'));
+  assert.equal(coverage.inventory_names, inventory.names.length);
+  assert.equal(coverage.referenced_in_inventory + coverage.not_referenced, coverage.inventory_names,
+    'every inventory name is either referenced by an entry or counted as unreferenced');
+  assert.equal(coverage.referenced_not_in_inventory, 0,
+    'an entry must not reference a test name the inventory does not carry');
+  assert.deepEqual(coverage, built.coverage, 'the rebuild and the generator count the same coverage');
+});
+
+test('B7 claim manifest: a mutant attributed on an unestablished basis is rejected', () => {
+  const entry = clone(firstEntryWith(candidate => candidate.killing_mutants.length > 0));
+  entry.killing_mutants[0].paired_by = 'looks-about-right';
+  const failures = checkEntries(root, [entry], inventory());
+  assert.ok(failures.some(line => /no established pairing basis/.test(line)),
+    `expected a pairing-basis rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a verified receipt at a revision the manifest does not cover is rejected', async () => {
+  // Ignoring such a receipt is what protects the dispositions; it is not what protects the tree. This asserts
+  // the guard says so out loud rather than passing over a receipt that verifies nothing here.
+  const file = path.join(root, 'receipts', 'zz-test-stray-verified.json');
+  const body = JSON.stringify({ head: 'd'.repeat(40), tree: 'd'.repeat(40), kind: 'verified',
+    verdict: 'PASS', verifier: 'test', scope: 'test' });
+  fs.writeFileSync(file, body);
+  try {
+    const failures = await checkManifest(root);
+    assert.ok(failures.some(line => /verified receipts at a revision this manifest does not cover/.test(line)),
+      `expected a stray-receipt rejection, got: ${failures.join('; ') || 'none'}`);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });
 
 test('B7 claim manifest: a manifest committed after the code revision it names is accepted', async () => {
