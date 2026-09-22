@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "code_revision": {
-    "head": "8b3dee72cee7e6d1a03b3282794ff4b6c2ed483a",
-    "tree": "5b36f1a8026836fe0e2a726b6eb3dcd236510ef6"
+    "head": "55e72ca7d29d5b4fdfe9d103aad07cfdd795037a",
+    "tree": "9ac5a0cd85f43515212c5644145fe7a649d9a9bf"
   },
   "coverage": {
-    "inventory_names": 3658,
+    "inventory_names": 3659,
     "referenced_in_inventory": 117,
-    "not_referenced": 3541,
+    "not_referenced": 3542,
     "not_referenced_sample": [
       "RECON_ENV_POSITIVE: distinct credential roles render and pass policy",
       "RECON_ENV_MUTATION: crossed file paths",
