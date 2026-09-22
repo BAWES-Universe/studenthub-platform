@@ -5597,7 +5597,9 @@ by file rather than asserted:
   ("post-push readback omitted") serves a foreign sha on the SHU-254 ref **after** the push and asserts
   `state === 'HALT'` (`B1_REMOTE_READBACK_REFUSED`): post-push only, no refusal code, and no leg named;
 - its **local** and **remote** legs had none: a mutant that neuters either one for fixture_2 alone
-  leaves the parent's **whole** committed suite green (measured below).
+  fires no ref-binding assertion anywhere in the parent's committed suite (measured below, by name diff -
+  the row's exit code is not the discriminator, and this round's verifier saw both the LOCAL and the
+  REMOTE rows come back exit 1 on unrelated rows).
 
 So the gap was narrower than the first draft's "no committed assertion would have noticed", which was
 false. What remains true, and is what makes this blocking: the **local** and **remote** legs of a
@@ -5637,14 +5639,19 @@ of the same export:
                                                                committed cover) plus the A12 guard,
                                                                which red-fails whenever any row fails
                                                                inside its own run
-    (`parent-suite-survival.txt`, `parent-suite-survival-run.log`; the parent worktree is restored from
-    git after every run and ended clean.)
+    (`parent-suite-survival.txt`, `parent-suite-survival-run.log`. What the log carries per run is the
+    mutated `prod_sha` while the mutation was applied, and one `restored: 0 dirty file(s)` at the end; it
+    has no per-run restore line, so the restore between runs is evidenced indirectly - the READBACK row's
+    failure is deterministic and does not appear in the later REMOTE row, which it would if the mutations
+    had accumulated.)
 
     The discriminator these rows turn on is the **name diff against the unmutated baseline**, not the exit
-    code. In this configuration an unrelated row can redden a whole run - this round's verifier re-ran the
-    REMOTE row twice and got exit 1 with one failure each time (the SHU251 `loseReceipt` sibling once, the
-    live-restart positive control once) while **zero ref-binding assertions fired in either run**, which
-    is the conclusion the row carries. Host posture for these runs, as in the Validation sections above:
+    code, and not the failure count in the cells above. In this configuration an unrelated row can redden a
+    whole run: this round's verifier re-ran the REMOTE row twice and got exit 1 with one failure each time
+    (the SHU251 `loseReceipt` sibling once, the live-restart positive control once), and the LOCAL row twice
+    with exit 1 both times, while **zero ref-binding assertions fired in each of those four runs** - which
+    is the conclusion the rows carry. What reproduced exactly is the ref-binding count per row (0 / 0 / 1)
+    and the READBACK row's exit code; what did not is the exit code of the two rows whose cell reads 0. Host posture for these runs, as in the Validation sections above:
     uid 1000, umask 0022, the four target accounts absent, `chmod -R go-w .github/coordinator` applied
     first, pinned to CPUs 0-9 with `--test-concurrency=4`, one run at a time.
 
@@ -5659,8 +5666,8 @@ dedicated control of its own; that is recorded here rather than left implied.
 
 **What the next package record must carry - stated as requirements, not as accomplished facts.** Two
 things the cold-approval gate checks before any block reaches the owner, and which are therefore
-requirements on the package that follows this correction rather than claims about a document that
-exists at this head: the item the owner refused must be named as such - the per-position ancestry
+requirements on the package that follows this correction rather than claims about a document that does
+not exist yet: the item the owner refused must be named as such - the per-position ancestry
 clause, with the two per-position controls and the mutants that close it cited by name - and the
 verifier's own baseline findings must be labelled separately from it, so that the two cannot be
 confused again as they were in the `shu71-mint-00000025` package. Second, each of the block's three
@@ -5674,8 +5681,9 @@ them before the owner does.
 **Focused selection after this correction.** The selection used here is the committed enumeration plus
 one file that no committed document describing the focused selection had named,
 `shu71-prearm-measurement.test.mjs` - thirty-two entries in `round/scratch/focused-files.txt`, three of
-them globs, expanding to thirty-nine test files. It is run at this head, and the four modes follow in the
-same lane:
+them globs, expanding to thirty-nine test files. The runs listed below were made at `94aa6622` and
+`52a022f3`, the heads named with each; this round's verifier re-ran the selection at `980fa313` and got
+exit 0, `2247 ok / 0 not ok`. The four modes follow in the same lane:
 
 Four modes at the code head `94aa6622` (tree `d2d3ece6`; the two commits after it are documentation and
 comment only), one mode at a time:
@@ -5715,8 +5723,12 @@ comes from - isolation, not idleness, is what changes the outcome. A full-scope 
 still a concurrent run and can still go red.
 
 
-**The reds, characterised further rather than summarised away.** Six reds across four heads, every one of
-them a timing or wall-clock assertion, none of them a wrong assertion:
+**The reds, characterised further rather than summarised away.** Six reds across four heads. What is
+measured about them is not the same for all six, and the difference is stated here rather than averaged
+away: for two of them the failing assertion is captured, and for the other four - every `loseReceipt` red
+- the failure was seen only through the A12 guard, whose record carries the test's name and status but
+**not** the failing assertion, so what exactly failed is captured in no artifact at any head. None of the
+six is known to be a wrong assertion, and nothing here justifies tuning timeouts:
 
 - at `6152c34`, the `loseReceipt` mutation sibling failed in the full scope;
 - at `d09b1dd7`, the positive control `SHU251 live worker restart adopts once and recovers durable
