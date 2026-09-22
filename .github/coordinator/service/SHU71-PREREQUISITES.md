@@ -5663,10 +5663,13 @@ signed and is not what the owner's approval binds. The witnesses for the superse
 `digest-witnesses.txt`; the same script produces the next block's at mint time, and the gate reads
 them before the owner does.
 
-**Focused selection after this correction.** The committed focused selection is run at this head, and
-the four modes follow in the same lane:
+**Focused selection after this correction.** The selection used here is the committed enumeration plus
+one file that no committed document had named, `shu71-prearm-measurement.test.mjs` - thirty-two files,
+listed in `round/scratch/focused-files.txt`. It is run at this head, and the four modes follow in the
+same lane:
 
-Four modes at this head (`94aa6622`, tree `d2d3ece6`), one mode at a time:
+Four modes at the code head `94aa6622` (tree `d2d3ece6`; the two commits after it are documentation and
+comment only), one mode at a time:
 
     focused plain   exit 0   2247 ok / 0 not ok   (244s)
     focused clock   exit 0   2247 ok / 0 not ok   (253s)
@@ -5693,8 +5696,10 @@ Three things are now known that were not known when this family was last reporte
   exercises this family; that is why every sighting has been in a full run.
 - It does not reproduce in isolation or under plain load: 6/6 green with the shifted clock and 3/3
   green plain, each run alone; 10/10 green plain earlier, four idle and six under 8-way CPU load; and a
-  per-leg mutant sweep of the parent's whole committed suite ran four times without a single failure.
-  The trigger is therefore the full concurrent run - a configuration in which the live-restart family
+  per-leg mutant sweep of the parent's whole committed suite ran four times without one failure in this
+  family (one of those four runs did fail two committed assertions, on the readback mutant, as the table
+  above records - no live-restart test failed in any of the four). The trigger is therefore the full
+  concurrent run - a configuration in which the live-restart family
   shares the box with every other test - not the clock shift, and not CPU load on its own.
 - All three sightings in this lane are this family and differ in member: the `loseReceipt` mutation at
   `6152c34`, the positive control at `d09b1dd7`, and the `loseReceipt` mutation again at `94aa6622`
@@ -5714,7 +5719,7 @@ red-fails on any non-pass, so it can refuse or delay a run and can never let an 
 silently, and the affected family is unrelated to the ancestry claim this window arms - it is a
 pre-existing test in a file neither this round nor the previous one touches.
 
-**The first verification of this head returned FAIL, and this is what changed.** An independent
+**The first verification of this branch returned FAIL, and this is what changed.** An independent
 verifier (a different model family, no lane history) confirmed the control itself as sound,
 non-vacuous and leg-discriminating, and failed the round on its own record: two load-bearing RED
 statements were false against the machine - both corrected above, with the sentences that were wrong
@@ -5724,7 +5729,11 @@ third finding, that neither mutant separated one leg from another, is addressed 
 measured here as one variant each. Its remaining two findings were not blocking: it could not
 reproduce the single full-clock red (and confirmed every citation around it, including that
 `residual.test.mjs:65` is the discarded `response.ok` assertion and that the file is absent from the
-focused selection), and it disclosed an instability in one of its own four parent-export runs.
+focused selection). The instability it disclosed in one of its own four parent-export runs is not an
+instability, and this round's verifier measured the cause: `V8_DOCUMENTATION_LINK_TARGETS` pins
+documentation links to exact line numbers in `shu71-production.mjs`, and exactly one of the five mutants
+- the one that skips the second fixture's legs - inserts a line, shifting them. That test failed in the
+skip-legs run and in none of the other four, deterministically.
 
 **What this round does not do.** It does not touch a production line: `shu71-production.mjs` is
 byte-identical to `a51c8490`, and the whole change is one control with three legs, five mutants, the

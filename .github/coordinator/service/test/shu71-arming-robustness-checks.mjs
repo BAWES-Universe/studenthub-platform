@@ -662,10 +662,16 @@ export async function bindingLegNamedCheck(create, h, leg = 'readback') {
 // WHICH FIXTURE - AND THEREFORE WHETHER THE SECOND ONE IS BOUND AT ALL.
 // `heads()` walks every fixture the package pins, and fixture_2's head is a term
 // of the sealed block (the window arms two slots). The controls above mutate
-// fixture_1's legs only, so a loop that silently stopped covering the second
-// fixture - or that skipped its legs - would refuse nothing on a moved
-// coordinator/SHU-254 and no committed assertion would notice. Each leg of the
-// second fixture now fails alone, under its own name, while the other two agree.
+// fixture_1's legs only, and the committed baseline pinned just one leg of the
+// second fixture - its readback, after the push, by a test that asserts HALT with
+// no refusal code and no leg named. Its local and remote legs had no committed
+// assertion at all: measured at the parent a51c8490, a mutant that neuters either
+// one alone leaves the parent's whole committed suite green.
+// The two mutant shapes that truncate the loop or skip its legs are a different
+// matter, and are not claimed here as holes: five committed tests outside this
+// file kill each of them at the parent, so they pin the loop's shape.
+// Each leg of the second fixture now fails alone, under its own name, while the
+// other two agree.
 export async function secondFixtureRefBindingCheck(create, h, leg = 'readback') {
   clean(h);
   const foreign = `${'e'.repeat(40)}`;
