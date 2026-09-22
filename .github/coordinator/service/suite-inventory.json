@@ -3766,6 +3766,7 @@
     "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is reported as a moved inventory",
     "SHU251_REMOTE_INVENTORY mutation: a 2xx that carried no branch head is never re-read",
     "SHU251_REMOTE_INVENTORY mutation: any 2xx is treated as a held measurement",
+    "B7 claim manifest: the guard runs only where git can read this checkout",
     "B7 claim manifest: the committed manifest is what the registries and receipts build",
     "B7 claim manifest: an entry that names an uncommitted control is rejected",
     "B7 claim manifest: an entry that names an uncommitted mutant is rejected",
@@ -3777,8 +3778,7 @@
     "B7 claim manifest: a code revision this checkout does not contain is rejected",
     "B7 claim manifest: a wrong head is rejected, whether it differs executably or is not here at all",
     "B7 claim manifest: a manifest committed after the code revision it names is accepted",
-    "B7 claim manifest: a manifest whose entries were edited by hand is rejected",
-    "B7 claim manifest: the guard runs only where git can read this checkout"
+    "B7 claim manifest: a manifest whose entries were edited by hand is rejected"
   ],
   "requirements": [
     {
