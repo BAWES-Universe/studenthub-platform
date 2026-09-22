@@ -837,6 +837,11 @@ export function readOnlyCommandClosureCheck(classify) {
 // CONTRACT's own name for what is wrong with the object, not the read-back's
 // `ACT_REMOTE_ANCESTRY`: this gate is local, and no push has happened for an ancestry
 // read to judge.
+// 3 on the appendReseed path: it verifies after hash-object and again after the CAS update-ref, so the
+// push step's read is the third. On the observeReseed path (one verification) it would be the second -
+// this is a measured index for the path the fixture takes, not a free parameter. If a fixture change
+// routed the run through observeReseed, `served` would stay null and the control would fail loudly
+// rather than pass vacuously.
 const PREPUSH_ACCEPTANCE_READ = 3;
 const PREPUSH_ANCESTRY_READS = 1;   // the local-reseed append's own, not the push path's
 const swapParentLines = text => {
