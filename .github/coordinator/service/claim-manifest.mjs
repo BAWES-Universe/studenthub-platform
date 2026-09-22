@@ -114,11 +114,16 @@ export function readReceipts(root) {
   });
 }
 
-export async function buildManifest(root) {
-  const head = git(root, ['rev-parse', 'HEAD']);
-  const tree = git(root, ['rev-parse', 'HEAD^{tree}']);
+// `head` is the CODE revision the manifest describes. It defaults to the checkout's HEAD, but the guard
+// rebuilds against the revision the committed manifest names: a manifest is normally committed one or more
+// documentation commits after the code it describes, so rebuilding against HEAD would report every manifest
+// as tampered with. HEAD is then used only to prove that code revision is an ancestor of the checkout with
+// no executable difference.
+export async function buildManifest(root, head) {
+  const revision = head ?? git(root, ['rev-parse', 'HEAD']);
+  const tree = git(root, ['rev-parse', `${revision}^{tree}`]);
   const receipts = readReceipts(root);
-  return { schema: 1, code_revision: { head, tree }, entries: await buildEntries(root, receipts, head) };
+  return { schema: 1, code_revision: { head: revision, tree }, entries: await buildEntries(root, receipts, revision) };
 }
 
 export function serialise(manifest) {
@@ -191,19 +196,37 @@ export function checkCodeRevision(root, committed) {
 }
 
 // The check CI runs. Returns a list of failures; empty means the manifest is the artifact it claims to be.
+//
+// Order matters for what a failure means. A wrong head is checked first, because everything else is
+// meaningless if the manifest names a revision this checkout does not carry: rebuilding against it would
+// report every entry as tampered with, which is exactly the message that hides a head mismatch behind an
+// accusation of editing. And the rebuild is reported by which part of the manifest it disagrees with -
+// the revision it names, or the entries it carries - so a reader can tell those two apart.
 export async function checkManifest(root) {
   const manifestPath = path.join(root, MANIFEST_NAME);
   if (!fs.existsSync(manifestPath)) return [`${MANIFEST_NAME} is absent`];
   const committed = readJson(manifestPath);
-  const rebuilt = await buildManifest(root);
+  const headFailures = checkCodeRevision(root, committed);
+  if (headFailures.length > 0) return headFailures;
+  const rebuilt = await buildManifest(root, committed.code_revision.head);
   const failures = [];
-  if (serialise(committed) !== serialise(rebuilt)) {
-    failures.push('the committed manifest is not what the registries and receipts build: '
-      + 'a claim was edited rather than generated');
+  const revisionMatches = serialise(committed.code_revision) === serialise(rebuilt.code_revision);
+  const entriesMatch = serialise(committed.entries) === serialise(rebuilt.entries);
+  if (!revisionMatches) {
+    failures.push('the rebuild names a different code revision than the committed manifest: '
+      + `manifest ${committed.code_revision.head.slice(0, 8)}/${committed.code_revision.tree.slice(0, 8)}`
+      + ` vs rebuild ${rebuilt.code_revision.head.slice(0, 8)}/${rebuilt.code_revision.tree.slice(0, 8)}`);
+  }
+  if (!entriesMatch) {
+    const ids = new Set([...committed.entries, ...rebuilt.entries].map(entry => entry.id));
+    const differing = [...ids].filter(id => serialise(committed.entries.find(entry => entry.id === id) ?? null)
+      !== serialise(rebuilt.entries.find(entry => entry.id === id) ?? null));
+    failures.push(`the rebuild differs from the committed manifest in ${differing.length} of ${ids.size} `
+      + `entries: ${differing.slice(0, 4).join(', ')}${differing.length > 4 ? ', ...' : ''} - a claim was `
+      + 'edited rather than generated');
   }
   const inventory = new Set(readJson(path.join(root, 'suite-inventory.json')).names);
   failures.push(...checkEntries(root, committed.entries ?? [], inventory));
-  failures.push(...checkCodeRevision(root, committed));
   return failures;
 }
 

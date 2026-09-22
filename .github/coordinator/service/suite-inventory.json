@@ -3774,7 +3774,8 @@
     "B7 claim manifest: a PASS whose verifying receipt is not a PASS is rejected",
     "B7 claim manifest: a disposition that is neither PASS nor BLOCK is rejected",
     "B7 claim manifest: a code revision this checkout does not contain is rejected",
-    "B7 claim manifest: a code revision that differs from this checkout executably is rejected",
+    "B7 claim manifest: a wrong head is rejected, whether it differs executably or is not here at all",
+    "B7 claim manifest: a manifest committed after the code revision it names is accepted",
     "B7 claim manifest: a manifest whose entries were edited by hand is rejected"
   ],
   "requirements": [
@@ -28645,7 +28646,11 @@
       "capabilities": []
     },
     {
-      "name": "B7 claim manifest: a code revision that differs from this checkout executably is rejected",
+      "name": "B7 claim manifest: a wrong head is rejected, whether it differs executably or is not here at all",
+      "capabilities": []
+    },
+    {
+      "name": "B7 claim manifest: a manifest committed after the code revision it names is accepted",
       "capabilities": []
     },
     {

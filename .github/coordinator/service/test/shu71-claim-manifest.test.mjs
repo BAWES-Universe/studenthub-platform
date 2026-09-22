@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkManifest, checkEntries, checkCodeRevision, readJson, sha256, MANIFEST_NAME } from '../claim-manifest.mjs';
+import { checkManifest, checkEntries, checkCodeRevision, buildManifest, readJson, sha256, MANIFEST_NAME }
+  from '../claim-manifest.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const inventory = () => new Set(readJson(path.join(root, 'suite-inventory.json')).names);
@@ -98,11 +99,29 @@ test('B7 claim manifest: a code revision this checkout does not contain is rejec
     `expected a wrong-head rejection, got: ${failures.join('; ') || 'none'}`);
 });
 
-test('B7 claim manifest: a code revision that differs from this checkout executably is rejected', () => {
+test('B7 claim manifest: a wrong head is rejected, whether it differs executably or is not here at all', () => {
+  // Which of the two rejections fires depends on the checkout: a shallow CI clone does not carry the
+  // repository's early commits, so a head that is not present is rejected as such rather than compared.
+  // Both are rejections of a wrong head, and this test asserts the rejection rather than the wording.
   const root_commit = git(['rev-list', '--max-parents=0', 'HEAD']).split('\n').pop();
   const failures = checkCodeRevision(root, { code_revision: { head: root_commit } });
-  assert.ok(failures.some(line => /differs from this checkout in an executable file/.test(line)),
-    `expected an executable-difference rejection, got: ${failures.join('; ') || 'none'}`);
+  assert.ok(failures.length > 0, 'a head this checkout does not contain must be rejected');
+  assert.ok(failures.some(line => /differs from this checkout in an executable file|is not an ancestor|cannot be compared/.test(line)),
+    `expected a wrong-head rejection, got: ${failures.join('; ') || 'none'}`);
+});
+
+test('B7 claim manifest: a manifest committed after the code revision it names is accepted', async () => {
+  // The shape every real manifest has: the code revision is committed, then the manifest on top of it. The
+  // guard must rebuild against the code revision, not against HEAD, or every manifest reports as tampered
+  // with - and a guard that cannot pass at the commit carrying the manifest is a guard that was never run
+  // there. This asserts the shape, so the test cannot pass vacuously if those two revisions are ever equal.
+  const manifest = committed();
+  const head = git(['rev-parse', 'HEAD']);
+  assert.notEqual(manifest.code_revision.head, head,
+    'this repository state no longer has the shape under test: the manifest names HEAD itself');
+  assert.deepEqual(await checkManifest(root), []);
+  const rebuilt = await buildManifest(root, manifest.code_revision.head);
+  assert.equal(rebuilt.code_revision.head, manifest.code_revision.head);
 });
 
 test('B7 claim manifest: a manifest whose entries were edited by hand is rejected', () => {
