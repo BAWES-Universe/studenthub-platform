@@ -1,14 +1,16 @@
 {
   "schema": 1,
   "code_revision": {
-    "head": "55e72ca7d29d5b4fdfe9d103aad07cfdd795037a",
-    "tree": "9ac5a0cd85f43515212c5644145fe7a649d9a9bf"
+    "head": "9614cdcacb6702184edfd195508d9ee15697d557",
+    "tree": "6cf84b79ef400568ed2936f8273a523929650ff0"
   },
   "coverage": {
-    "inventory_names": 3659,
-    "referenced_in_inventory": 117,
-    "not_referenced": 3542,
-    "not_referenced_sample": [
+    "scope": "the sealed arming terms the registries declare; not a coverage report on the whole suite",
+    "sealed_terms": 46,
+    "inventory_names": 3660,
+    "control_names_referenced_in_inventory": 117,
+    "suite_names_outside_scope": 3543,
+    "outside_scope_sample": [
       "RECON_ENV_POSITIVE: distinct credential roles render and pass policy",
       "RECON_ENV_MUTATION: crossed file paths",
       "RECON_ENV_MUTATION: identical file paths and hardlinked contents",
