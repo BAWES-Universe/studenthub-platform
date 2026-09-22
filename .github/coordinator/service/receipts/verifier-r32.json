@@ -1,0 +1,11 @@
+{
+  "name": "verifier-r32",
+  "head": "e2ba8e12bbe03c11e094e7c9be280b5b59a8df34",
+  "tree": "aac1eea21fefbf51786573adc7640ba91ab4ba80",
+  "kind": "verified",
+  "verdict": "PASS",
+  "established": [
+    "b5-post-push-read-back/the-reported-detail-is-closed-to-the-reviewed-fields",
+    "b5-post-push-read-back/only-a-measured-transient-outcome-is-retryable"
+  ]
+}

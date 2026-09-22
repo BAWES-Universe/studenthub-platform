@@ -1,15 +1,18 @@
 {
   "schema": 1,
   "code_revision": {
-    "head": "9614cdcacb6702184edfd195508d9ee15697d557",
-    "tree": "6cf84b79ef400568ed2936f8273a523929650ff0"
+    "head": "5298cce383c88cc361992f810afd50adee16fe61",
+    "tree": "1667833da7eb2ac0384f4ba10126edea43a25426"
   },
   "coverage": {
     "scope": "the sealed arming terms the registries declare; not a coverage report on the whole suite",
-    "sealed_terms": 46,
-    "inventory_names": 3660,
-    "control_names_referenced_in_inventory": 117,
-    "suite_names_outside_scope": 3543,
+    "controls": 53,
+    "sealed_terms": 41,
+    "controls_never_approvable_through_this_path": 12,
+    "inventory_names": 3667,
+    "duplicate_inventory_names": 2,
+    "control_names_referenced_in_inventory": 132,
+    "suite_names_outside_scope": 3535,
     "outside_scope_sample": [
       "RECON_ENV_POSITIVE: distinct credential roles render and pass policy",
       "RECON_ENV_MUTATION: crossed file paths",
@@ -24,8 +27,38 @@
       "RECON_ENV_MUTATION: coordinator LINEAR_API_TOKEN missing or empty",
       "RECON_DOC_POSITIVE: closed owner decision and actual error contract"
     ],
-    "referenced_not_in_inventory": 0
+    "referenced_not_in_inventory": 0,
+    "mutation_rows": 66,
+    "mutation_rows_paired": 65,
+    "mutation_rows_unpaired": [
+      {
+        "test_name": "B6 arming robustness mutation: the gate step stops repeating on a resume",
+        "reason": "no registered control is named by this row, so no control is measured to die"
+      }
+    ]
   },
+  "receipt_files_present": [
+    {
+      "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
+      "kind": "suite",
+      "verdict": null,
+      "head": "5e61f57aed691ec01d24da403ade07a291c39e02",
+      "tree": "ec84d564d662f372af492259369ecc6e6fa7e907",
+      "exit": 1,
+      "records_failing_run": true
+    },
+    {
+      "file": "receipts/verifier-r32.json",
+      "kind": "verified",
+      "verdict": "PASS",
+      "head": "e2ba8e12bbe03c11e094e7c9be280b5b59a8df34",
+      "tree": "aac1eea21fefbf51786573adc7640ba91ab4ba80",
+      "exit": null,
+      "records_failing_run": false
+    }
+  ],
+  "receipt_files_are_not_evidence": true,
+  "pins_present": [],
   "entries": [
     {
       "id": "b5-post-push-read-back/a-failing-linear-issueupdate-is-never-retried",
@@ -38,8 +71,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b5-post-push-read-back/a-failing-push-is-never-retried",
@@ -58,8 +94,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-genuinely-wrong-ancestry-refuses-instead-of-being-retried",
@@ -83,8 +122,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-genuinely-wrong-ref-sha-refuses-instead-of-being-retried",
@@ -103,8 +145,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-graphql-refusal-is-named-by-its-codes",
@@ -123,8 +168,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-landed-push-whose-reseed-commit-read-is-not-answerable-yet-still-arms",
@@ -148,8 +196,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-persistently-failing-read-still-refuses-under-the-same-name",
@@ -168,8 +219,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-ref-that-moved-after-the-push-refuses-instead-of-being-retried",
@@ -188,8 +242,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-third-parent-refuses-instead-of-being-retried",
@@ -208,8 +265,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/a-transient-ref-read-back-is-retried-and-the-window-arms",
@@ -233,8 +293,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/arming-never-asks-for-the-patch-bearing-comparison",
@@ -253,8 +316,39 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/only-a-measured-transient-outcome-is-retryable",
+      "sealed_term": "only a measured transient outcome is retryable",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: only a measured transient outcome is retryable"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "a refusal with no measured detail is retryable",
+          "test_name": "B5 post-push read-back mutation: a refusal with no measured detail is retryable",
+          "paired_by": "identity"
+        },
+        {
+          "name": "every reason is retryable once a status matches",
+          "test_name": "B5 post-push read-back mutation: every reason is retryable once a status matches",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/parents-in-the-other-order-refuse-instead-of-being-retried",
@@ -273,8 +367,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/retrying-stops-at-the-authorization-expiry",
@@ -293,8 +390,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/the-first-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
@@ -313,8 +413,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/the-halt-names-the-failing-route-and-status-and-carries-no-secret",
@@ -343,8 +446,54 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b5-post-push-read-back/the-reported-detail-is-closed-to-the-reviewed-fields",
+      "sealed_term": "the reported detail is closed to the reviewed fields",
+      "artifact": "test/shu71-postpush-readback-checks.mjs",
+      "control": {
+        "test_names": [
+          "B5 post-push read-back: the reported detail is closed to the reviewed fields"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the GraphQL codes are echoed unfiltered",
+          "test_name": "B5 post-push read-back mutation: the GraphQL codes are echoed unfiltered",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the operation label is echoed unsanitized",
+          "test_name": "B5 post-push read-back mutation: the operation label is echoed unsanitized",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the reason vocabulary is opened",
+          "test_name": "B5 post-push read-back mutation: the reason vocabulary is opened",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the status is echoed unchecked",
+          "test_name": "B5 post-push read-back mutation: the status is echoed unchecked",
+          "paired_by": "identity"
+        },
+        {
+          "name": "the transport fault is echoed unfiltered",
+          "test_name": "B5 post-push read-back mutation: the transport fault is echoed unfiltered",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/the-retry-sleep-budget-is-bounded-across-the-whole-invocation",
@@ -363,8 +512,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b5-post-push-read-back/the-second-parent-position-alone-is-wrong-and-refuses-under-its-own-name",
@@ -383,8 +535,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-boundary-that-throws-is-never-retried-and-echoes-no-text",
@@ -403,8 +558,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-card-read-back-that-never-reaches-the-target-still-refuses",
@@ -429,8 +587,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-failed-measurement-is-not-a-state-claim-about-the-host",
@@ -449,8 +610,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-failed-teardown-step-names-its-cause-as-well-as-its-step",
@@ -469,8 +633,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-genuinely-drifted-fixture-card-refuses-instead-of-being-retried",
@@ -483,8 +650,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-genuinely-live-expiry-companion-still-refuses-by-its-own-name",
@@ -497,8 +667,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-genuinely-wrong-fixture-refuses-instead-of-being-retried",
@@ -511,8 +684,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-genuinely-wrong-remote-sha-refuses-and-names-the-leg",
@@ -525,8 +701,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-landed-push-that-reported-failure-is-re-read-not-re-pushed",
@@ -539,8 +718,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-persistently-failing-linear-read-still-refuses-under-the-same-name",
@@ -553,8 +735,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-persistently-failing-ls-remote-names-the-command-it-ran",
@@ -578,8 +763,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-pre-arm-refusal-names-itself-and-orders-no-effect",
@@ -600,8 +788,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-push-that-did-not-land-still-refuses",
@@ -626,8 +817,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-short-supervisor-transport-secret-refuses-under-its-own-name",
@@ -646,8 +840,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-stale-read-back-of-a-landed-card-transition-is-re-read-not-refused",
@@ -666,8 +863,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-supervisor-that-did-not-come-up-refuses-instead-of-arming",
@@ -698,8 +898,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-systemctl-mutation-is-attempted-exactly-once",
@@ -714,8 +917,11 @@
       },
       "killing_mutants": [],
       "receipts": [],
+      "approvable": false,
       "disposition": "BLOCK",
-      "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/a-transient-linear-fixture-card-read-is-retried-and-the-window-arms",
@@ -734,8 +940,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-transient-ls-remote-failure-is-retried-and-the-window-arms",
@@ -759,8 +968,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/a-transient-unit-read-is-retried-and-the-teardown-completes",
@@ -779,8 +991,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/an-absent-coordinator-credential-refuses-under-its-own-name",
@@ -804,8 +1019,62 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/only-a-reviewed-refusal-name-reaches-a-halt-record",
+      "sealed_term": "only a reviewed refusal name reaches a halt record",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: only a reviewed refusal name reaches a halt record"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/only-an-enumerated-host-read-may-be-repeated",
+      "sealed_term": "only an enumerated host read may be repeated",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: only an enumerated host read may be repeated"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
+    },
+    {
+      "id": "b6-arming-robustness/the-cli-names-the-refusal-it-caught",
+      "sealed_term": "the CLI names the refusal it caught",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the CLI names the refusal it caught"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/the-credential-store-is-opened-at-most-once-per-invocation",
@@ -824,8 +1093,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/the-disagreeing-binding-leg-is-named",
@@ -846,8 +1118,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/the-expiry-installation-is-measured-not-assumed",
@@ -878,8 +1153,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/the-failing-binding-leg-is-short-circuited-and-named",
@@ -898,8 +1176,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/the-host-read-sleep-budget-is-bounded-across-the-whole-invocation",
@@ -918,8 +1199,34 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-linear-issueupdate-mutation-is-still-final-on-its-first-error",
+      "sealed_term": "the Linear issueUpdate mutation is still final on its first error",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the Linear issueUpdate mutation is still final on its first error"
+        ]
+      },
+      "killing_mutants": [
+        {
+          "name": "the Linear issueUpdate is routed through the retried read door",
+          "test_name": "B6 arming robustness mutation: the Linear issueUpdate is routed through the retried read door",
+          "paired_by": "identity"
+        }
+      ],
+      "receipts": [],
+      "approvable": true,
+      "disposition": "BLOCK",
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/the-package-validator-own-refusal-is-carried-into-the-halt",
@@ -938,8 +1245,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     },
     {
       "id": "b6-arming-robustness/the-pre-push-acceptance-refuses-before-any-push-is-issued",
@@ -963,8 +1273,28 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
+    },
+    {
+      "id": "b6-arming-robustness/the-reported-command-detail-is-closed-to-the-reviewed-fields",
+      "sealed_term": "the reported command detail is closed to the reviewed fields",
+      "artifact": "test/shu71-arming-robustness-checks.mjs",
+      "control": {
+        "test_names": [
+          "B6 arming robustness: the reported command detail is closed to the reviewed fields"
+        ]
+      },
+      "killing_mutants": [],
+      "receipts": [],
+      "approvable": false,
+      "disposition": "BLOCK",
+      "reason": "no mutant is paired with this control in the registry; no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": "no mutant in the registry kills this control, so no run can establish it",
+      "requires_owner_decision": "either pair a mutant that dies when this term alone is removed, or state what else seals it"
     },
     {
       "id": "b6-arming-robustness/the-second-fixture-is-bound-too-leg-by-leg",
@@ -1005,8 +1335,11 @@
         }
       ],
       "receipts": [],
+      "approvable": true,
       "disposition": "BLOCK",
-      "reason": "no verifying receipt at the code revision"
+      "reason": "no verified receipt covers this control and its mutants at the code revision",
+      "sealed_by": null,
+      "requires_owner_decision": null
     }
   ]
 }
