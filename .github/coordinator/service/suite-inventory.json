@@ -3663,6 +3663,9 @@
     "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string",
     "B6 arming robustness mutation: the coordinator credential refusal goes back to a bare string",
     "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+    "B6 arming robustness: the pre-push acceptance refuses before any push is issued",
+    "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed",
+    "B6 arming robustness mutation: the pre-push acceptance read is not made",
     "B7 published-branch restore: a halt after the remote push restores the branch it published",
     "B7 published-branch restore: a completed run restores the branch on the ordinary revoke path",
     "B7 published-branch restore: a fetched remote-tracking ref is restored too",
@@ -28144,6 +28147,18 @@
     },
     {
       "name": "B6 arming robustness mutation: the reviewed refusal shape admits arbitrary text",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness: the pre-push acceptance refuses before any push is issued",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed",
+      "capabilities": []
+    },
+    {
+      "name": "B6 arming robustness mutation: the pre-push acceptance read is not made",
       "capabilities": []
     },
     {
