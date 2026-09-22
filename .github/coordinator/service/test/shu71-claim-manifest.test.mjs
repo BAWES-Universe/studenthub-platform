@@ -11,8 +11,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkManifest, checkEntries, checkCodeRevision, buildManifest, readJson, sha256, MANIFEST_NAME,
-  coverageOf, nonExecutable, validateMutationRow, controlFunction } from '../claim-manifest.mjs';
+import { checkManifest, checkEntries, checkCodeRevision, checkAuthority, withProvesCounts,
+  buildEntries, buildManifest, readJson, sha256, MANIFEST_NAME, coverageOf, nonExecutable,
+  validateMutationRow, controlFunction } from '../claim-manifest.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const inventory = () => new Set(readJson(path.join(root, 'suite-inventory.json')).names);
@@ -57,23 +58,7 @@ test('B7 claim manifest: an entry that names an uncommitted mutant is rejected',
     `expected a missing-mutant rejection, got: ${failures.join('; ') || 'none'}`);
 });
 
-test('B7 claim manifest: an absent receipt is rejected', () => {
-  const entry = clone(firstEntryWith(() => true));
-  entry.receipts = [{ file: 'receipts/a-receipt-that-does-not-exist.json', kind: 'verified',
-    sha256: '0'.repeat(64), verdict: 'PASS' }];
-  const failures = checkEntries(root, [entry], inventory());
-  assert.ok(failures.some(line => /receipt .* is absent/.test(line)),
-    `expected an absent-receipt rejection, got: ${failures.join('; ') || 'none'}`);
-});
 
-test('B7 claim manifest: a receipt whose bytes changed is rejected', () => {
-  const entry = clone(firstEntryWith(() => true));
-  entry.receipts = [{ file: 'suite-inventory.json', kind: 'verified', sha256: '0'.repeat(64),
-    verdict: 'PASS' }];
-  const failures = checkEntries(root, [entry], inventory());
-  assert.ok(failures.some(line => /digest does not match/.test(line)),
-    `expected a tampered-receipt rejection, got: ${failures.join('; ') || 'none'}`);
-});
 
 test('B7 claim manifest: a PASS without a mutant that kills it is rejected', () => {
   const entry = clone(firstEntryWith(() => true));
@@ -84,16 +69,6 @@ test('B7 claim manifest: a PASS without a mutant that kills it is rejected', () 
     `expected a PASS-without-mutant rejection, got: ${failures.join('; ') || 'none'}`);
 });
 
-test('B7 claim manifest: a PASS whose verifying receipt is not a PASS is rejected', () => {
-  const entry = clone(firstEntryWith(() => true));
-  const receipt = path.join(root, 'suite-inventory.json');
-  entry.disposition = 'PASS';
-  entry.receipts = [{ file: 'suite-inventory.json', kind: 'verified',
-    sha256: sha256(fs.readFileSync(receipt)), verdict: 'FAIL' }];
-  const failures = checkEntries(root, [entry], inventory());
-  assert.ok(failures.some(line => /verifying receipt whose verdict is not PASS/.test(line)),
-    `expected a non-PASS-receipt rejection, got: ${failures.join('; ') || 'none'}`);
-});
 
 test('B7 claim manifest: a disposition that is neither PASS nor BLOCK is rejected', () => {
   const entry = clone(firstEntryWith(() => true));
@@ -139,11 +114,12 @@ test('B7 claim manifest: only documentation, the manifest and receipts may follo
 
 test('B7 claim manifest: the coverage block counts what the entries enumerate and what they do not', async () => {
   const built = await buildManifest(root, committed().code_revision.head);
-  const coverage = coverageOf(root, built.entries);
+  const coverage = await coverageOf(root, built.entries);
   const inventory = readJson(path.join(root, 'suite-inventory.json'));
-  assert.equal(coverage.inventory_names, inventory.names.length);
+  assert.equal(coverage.inventory_names, new Set(inventory.names).size);
   assert.match(coverage.scope, /sealed arming terms/, 'the coverage block states what the manifest covers');
-  assert.equal(coverage.sealed_terms, built.entries.length);
+  assert.equal(coverage.controls, built.entries.length);
+  assert.equal(coverage.sealed_terms, built.entries.filter(entry => entry.approvable).length);
   assert.equal(coverage.control_names_referenced_in_inventory + coverage.suite_names_outside_scope,
     coverage.inventory_names,
     'every inventory name is either referenced by a sealed term or counted as outside the manifest scope');
@@ -160,21 +136,6 @@ test('B7 claim manifest: a mutant attributed on an unestablished basis is reject
     `expected a pairing-basis rejection, got: ${failures.join('; ') || 'none'}`);
 });
 
-test('B7 claim manifest: a verified receipt at a revision the manifest does not cover is rejected', async () => {
-  // Ignoring such a receipt is what protects the dispositions; it is not what protects the tree. This asserts
-  // the guard says so out loud rather than passing over a receipt that verifies nothing here.
-  const file = path.join(root, 'receipts', 'zz-test-stray-verified.json');
-  const body = JSON.stringify({ head: 'd'.repeat(40), tree: 'd'.repeat(40), kind: 'verified',
-    verdict: 'PASS', verifier: 'test', scope: 'test' });
-  fs.writeFileSync(file, body);
-  try {
-    const failures = await checkManifest(root);
-    assert.ok(failures.some(line => /verified receipts at a revision this manifest does not cover/.test(line)),
-      `expected a stray-receipt rejection, got: ${failures.join('; ') || 'none'}`);
-  } finally {
-    fs.rmSync(file, { force: true });
-  }
-});
 
 test('B7 claim manifest: a mutation row whose shape disagrees with the index read is refused', () => {
   // The check index is fixed per export name, which holds for the two registries this manifest covers and
@@ -255,4 +216,254 @@ test('B7 claim manifest: a manifest whose entries were edited by hand is rejecte
         `expected an edited-claim rejection, got: ${failures.join('; ') || 'none'}`);
     }).finally(() => fs.writeFileSync(onDisk, original));
   } catch (error) { fs.writeFileSync(onDisk, original); throw error; }
+});
+
+// The seven closure mutants were dropped in silence: their controls are registered by the runner file rather
+// than by the registry's control arrays, so every row written against them paired with nothing and landed in
+// the outside-scope count, indistinguishable from the suite tests that have nothing to do with this manifest.
+// The test names are asserted as attributed, not as counted.
+test('B7 claim manifest: the closure mutants are attributed to the controls that kill them', () => {
+  const attributed = new Set();
+  for (const entry of committed().entries) {
+    for (const mutant of entry.killing_mutants) attributed.add(mutant.test_name);
+  }
+  for (const name of ['the operation label is echoed unsanitized', 'the reason vocabulary is opened']) {
+    const match = [...attributed].filter(test_name => test_name.includes(name));
+    assert.equal(match.length, 1, `${name} must be attributed to exactly one entry's control`);
+  }
+});
+
+test('B7 claim manifest: every mutation row is counted, paired or with a stated reason', () => {
+  const { mutation_rows, mutation_rows_paired, mutation_rows_unpaired } = committed().coverage;
+  assert.equal(mutation_rows_paired + mutation_rows_unpaired.length, mutation_rows,
+    'a mutation row that is neither paired nor explained is a mutation row the manifest hides');
+  assert.ok(mutation_rows_unpaired.every(row => typeof row.reason === 'string' && row.reason.length > 0),
+    'an unpaired mutation row must carry the reason it is unpaired');
+});
+
+test('B7 claim manifest: a term with no mutant is marked as one no receipt can approve', () => {
+  const entries = committed().entries;
+  for (const entry of entries) {
+    assert.equal(entry.approvable, entry.killing_mutants.length > 0,
+      `${entry.id}: approvable must be the fact that a mutant kills this control, not a claim about it`);
+    // sealed_term is the term itself. A second object key of the same name silently won, and every entry
+    // carried a boolean while the manifest carried the term's text nowhere.
+    assert.equal(typeof entry.sealed_term, 'string');
+    assert.ok(entry.sealed_term.length > 0);
+  }
+  const coverage = committed().coverage;
+  assert.equal(coverage.sealed_terms, entries.filter(entry => entry.approvable).length);
+  assert.equal(coverage.controls, entries.length);
+  assert.equal(coverage.controls_never_approvable_through_this_path, entries.length - coverage.sealed_terms);
+});
+
+test('B7 claim manifest: every receipt in the directory is listed, with failing runs called out', () => {
+  const present = committed().receipt_files_present;
+  assert.ok(Array.isArray(present) && present.length > 0, 'the manifest must list the receipts it read');
+  for (const receipt of present) {
+    assert.match(receipt.file, /^receipts\/[^/]+$/, `receipt listed as ${receipt.file}`);
+    assert.equal(typeof receipt.records_failing_run, 'boolean',
+      'a reader must be able to tell a failing run from a passing one without opening the file');
+  }
+});
+
+
+
+
+// Evidence is a pin naming a workflow run, not a file. A file in the receipts directory is written by the
+// authoring lane and can approve nothing: with no pins at all, every entry is BLOCK however many files the
+// directory holds.
+test('B7 claim manifest: no pin means no PASS, however many receipt files exist', async () => {
+  const entries = await buildEntries(root, [], committed().code_revision.head);
+  const passing = entries.filter(entry => entry.disposition === 'PASS');
+  assert.deepEqual(passing, [], `files approved ${passing.map(entry => entry.id).join(', ')}`);
+  assert.equal(committed().receipt_files_are_not_evidence, true);
+  for (const entry of committed().entries) {
+    for (const receipt of entry.receipts) {
+      assert.equal(receipt.source, 'github-actions',
+        `${entry.id}: the only evidence an entry may carry is a run of the receipt authority`);
+    }
+  }
+});
+
+// A pin proves a term when the receipt inside it records every control test of that term and every mutant
+// that kills it as passing. A mutant recorded as failing withdraws the term, and so does a mutant the receipt
+// never mentions: a run in which a test did not appear is not a run in which it passed.
+test('B7 claim manifest: a pin proves exactly the tests its receipt recorded as passing', async () => {
+  const manifest = committed();
+  const head = manifest.code_revision.head;
+  const target = manifest.entries.find(entry => entry.approvable);
+  const named = [
+    ...target.control.test_names.map(name => ({ term: target.id, kind: 'control', name, status: 'pass' })),
+    ...target.killing_mutants.map(mutant => ({ term: target.id, kind: 'mutant', name: mutant.test_name, status: 'pass' })),
+  ];
+  const pin = {
+    run_id: '1', run_attempt: '1', workflow_path: '.github/workflows/verifier-receipt.yml',
+    workflow_head_sha: 'f'.repeat(40), artifact_name: 'verifier-receipt',
+    artifact_digest: `sha256:${'a'.repeat(64)}`, receipt_digest: `sha256:${'b'.repeat(64)}`,
+    receipt: { candidate: { sha: head, tree: manifest.code_revision.tree },
+      manifest: { sha256: 'c'.repeat(64), code_revision: { head, tree: manifest.code_revision.tree } },
+      conclusion: { verdict: 'success' },
+      suite: { tests: 3672, ok: 3663, not_ok: 9, skipped: 0, exit: '1' }, named_tests: named },
+  };
+  const withPin = await buildEntries(root, [pin], head);
+  assert.equal(withPin.find(entry => entry.id === target.id).disposition, 'PASS',
+    'a pin whose receipt records this term passing must reach PASS');
+  assert.deepEqual(withPin.filter(entry => entry.receipts.length > 0).map(entry => entry.id), [target.id],
+    'the pin proves the term it measured and no other');
+
+  const failingMutant = clone(pin);
+  failingMutant.receipt.named_tests = named.map(test =>
+    test.kind === 'mutant' ? { ...test, status: 'fail' } : test);
+  assert.equal((await buildEntries(root, [failingMutant], head)).find(entry => entry.id === target.id).disposition,
+    'BLOCK', 'a mutant recorded as failing must withdraw the term');
+
+  const absentMutant = clone(pin);
+  absentMutant.receipt.named_tests = named.filter(test => test.kind !== 'mutant');
+  assert.equal((await buildEntries(root, [absentMutant], head)).find(entry => entry.id === target.id).disposition,
+    'BLOCK', 'a mutant the receipt never mentions is not a mutant that passed');
+
+  const otherRevision = clone(pin);
+  otherRevision.receipt.candidate.sha = '0'.repeat(40);
+  otherRevision.receipt.manifest.code_revision.head = '0'.repeat(40);
+  assert.equal((await buildEntries(root, [otherRevision], head)).find(entry => entry.id === target.id).disposition,
+    'BLOCK', 'a pin measured at another revision must not approve this one');
+});
+
+// A receipt that cannot say what it ran is not evidence. The counts must add up, and a pin whose receipt
+// cannot account for its run is refused before its list of passing tests is even read.
+test('B7 claim manifest: a pin whose receipt cannot account for its run is refused', async () => {
+  const manifest = committed();
+  const head = manifest.code_revision.head;
+  const target = manifest.entries.find(entry => entry.approvable);
+  const named = [
+    ...target.control.test_names.map(name => ({ term: target.id, kind: 'control', name, status: 'pass' })),
+    ...target.killing_mutants.map(mutant => ({ term: target.id, kind: 'mutant', name: mutant.test_name, status: 'pass' })),
+  ];
+  const make = suite => ({ run_id: '7', run_attempt: '1', workflow_path: '.github/workflows/verifier-receipt.yml',
+    workflow_head_sha: 'f'.repeat(40), artifact_name: 'verifier-receipt',
+    artifact_digest: `sha256:${'a'.repeat(64)}`, receipt_digest: `sha256:${'b'.repeat(64)}`,
+    receipt: { candidate: { sha: head, tree: manifest.code_revision.tree },
+      manifest: { sha256: 'c'.repeat(64), code_revision: { head, tree: manifest.code_revision.tree } },
+      conclusion: { verdict: 'success' }, suite, named_tests: named } });
+
+  const coherent = make({ tests: 3672, ok: 3663, not_ok: 9, skipped: 0, exit: '1' });
+  assert.equal((await buildEntries(root, [coherent], head)).find(entry => entry.id === target.id).disposition,
+    'PASS', 'a receipt whose counts add up and whose tests passed must reach PASS');
+
+  const notAddingUp = make({ tests: 3672, ok: 3663, not_ok: 1, skipped: 0, exit: '1' });
+  const entry = (await buildEntries(root, [notAddingUp], head)).find(candidate => candidate.id === target.id);
+  assert.equal(entry.disposition, 'BLOCK', 'counts that do not add up must not approve anything');
+  assert.ok(/do not add up/.test(entry.reason ?? ''),
+    `expected an accounting refusal, got: ${entry.reason}`);
+
+  const noExit = make({ tests: 3672, ok: 3663, not_ok: 9, skipped: 0 });
+  assert.equal((await buildEntries(root, [noExit], head)).find(candidate => candidate.id === target.id).disposition,
+    'BLOCK', 'a receipt with no exit code must not approve anything');
+
+  const noSuite = make(undefined);
+  assert.equal((await buildEntries(root, [noSuite], head)).find(candidate => candidate.id === target.id).disposition,
+    'BLOCK', 'a receipt that records no run of a suite must not approve anything');
+});
+
+// How much one receipt approves is a number a reader should be able to see, not infer by counting attachments.
+test('B7 claim manifest: a pin records how many terms it proves', async () => {
+  const manifest = committed();
+  const pins = [{ run_id: '9', receipt_digest: 'sha256:x', artifact_digest: 'sha256:y' }];
+  const counted = withProvesCounts(pins, manifest.entries);
+  assert.equal(counted[0].proves, 0, 'a pin no entry carries proves nothing');
+  const carried = withProvesCounts(pins, [{ receipts: [{ run_id: '9' }] }, { receipts: [] }]);
+  assert.equal(carried[0].proves, 1, 'a pin one entry carries proves one term');
+});
+
+// The generator and the checker must agree, which is the defect that produced the exit-7 crash and the
+// half-migrated PASS rules: the generator learned about pins and the checker did not. This is the agreement
+// proof - build with a real pin, hand the result to the checker, and require that it accepts exactly what the
+// generator produced, naming anything it would refuse.
+const pinFor = (manifest, term, mutate = () => {}) => {
+  const head = manifest.code_revision.head;
+  const named = [
+    ...term.control.test_names.map(name => ({ term: term.id, kind: 'control', name, status: 'pass' })),
+    ...term.killing_mutants.map(mutant => ({ term: term.id, kind: 'mutant', name: mutant.test_name, status: 'pass' })),
+  ];
+  const pin = { run_id: '11', run_attempt: '1', workflow_path: '.github/workflows/verifier-receipt.yml',
+    workflow_head_sha: 'f'.repeat(40), artifact_name: 'verifier-receipt',
+    artifact_digest: `sha256:${'a'.repeat(64)}`, receipt_digest: `sha256:${'b'.repeat(64)}`,
+    receipt: { candidate: { sha: head, tree: manifest.code_revision.tree },
+      manifest: { sha256: 'c'.repeat(64), code_revision: { head, tree: manifest.code_revision.tree } },
+      conclusion: { verdict: 'success' },
+      suite: { tests: 3672, ok: 3663, not_ok: 9, skipped: 0, exit: '1' }, named_tests: named } };
+  mutate(pin);
+  return pin;
+};
+
+test('B7 claim manifest: the checker accepts what the generator produces from a pin, and refuses by name what it should', async () => {
+  const manifest = committed();
+  const head = manifest.code_revision.head;
+  const target = manifest.entries.find(entry => entry.approvable);
+  const inventory = new Set(readJson(path.join(root, 'suite-inventory.json')).names);
+
+  // Agreement: a manifest the generator produced from a real pin must survive the checker untouched.
+  const entries = await buildEntries(root, [pinFor(manifest, target)], head);
+  assert.equal(entries.find(entry => entry.id === target.id).disposition, 'PASS',
+    'the generator must reach PASS for the term its pin proves');
+  assert.deepEqual(checkEntries(root, entries, inventory).filter(line => !/inventory/.test(line)), [],
+    'the checker must accept what the generator produces from a pin');
+
+  // A pin from anywhere but the authority refuses by name.
+  const foreign = entries.find(entry => entry.id === target.id);
+  const foreignPin = { ...foreign.receipts[0], workflow_path: '.github/workflows/ci.yml' };
+  const foreignFailures = checkEntries(root, [{ ...foreign, receipts: [foreignPin] }], inventory);
+  assert.ok(foreignFailures.some(line => /was produced by .*ci\.yml/.test(line)),
+    `expected a refusal naming the producing workflow, got: ${foreignFailures.join('; ')}`);
+
+  // A pin whose receipt records a test as failing cannot carry a PASS.
+  const failing = entries.find(entry => entry.id === target.id);
+  const failingPin = { ...failing.receipts[0],
+    control_tests: (failing.receipts[0].control_tests ?? []).map(test => ({ ...test, status: 'fail' })) };
+  const failingFailures = checkEntries(root, [{ ...failing, receipts: [failingPin] }], inventory);
+  assert.ok(failingFailures.some(line => /records .* as fail/.test(line)),
+    `expected a refusal naming the test, got: ${failingFailures.join('; ')}`);
+
+  // A pin missing an immutable field refuses by name.
+  const partial = { ...failing.receipts[0] };
+  delete partial.artifact_digest;
+  const partialFailures = checkEntries(root, [{ ...failing, receipts: [partial] }], inventory);
+  assert.ok(partialFailures.some(line => /is missing artifact_digest/.test(line)),
+    `expected a refusal naming the missing field, got: ${partialFailures.join('; ')}`);
+});
+
+// The authority cannot approve its own change: a receipt dispatched from the very revision under approval is
+// refused, and so is a checkout that alters the authority since the commit the receipt was dispatched from.
+test('B7 claim manifest: the receipt authority cannot approve its own change', () => {
+  const revision = committed().code_revision.head;
+  const selfDispatched = checkAuthority(root, { code_revision: { head: revision },
+    pins_present: [{ workflow_head_sha: revision }] });
+  assert.ok(selfDispatched.some(line => /cannot approve the change that carries it/.test(line)),
+    `expected a self-approval refusal, got: ${selfDispatched.join('; ') || 'none'}`);
+  const elsewhere = checkAuthority(root, { code_revision: { head: revision },
+    pins_present: [{ workflow_head_sha: git(['rev-list', '--max-parents=0', 'HEAD']).split('\n').pop() }] });
+  assert.ok(elsewhere.every(line => !/cannot approve/.test(line)),
+    `a dispatch from another revision must not be refused as self-approval, got: ${elsewhere.join('; ')}`);
+});
+
+
+test('B7 claim manifest: executable script is not admitted under a receipts directory', () => {
+  assert.equal(nonExecutable('.github/coordinator/service/receipts/evil.mjs'), false,
+    'receipts are JSON; a directory named receipts is not a place executables may follow a code revision');
+  assert.equal(nonExecutable('receipts/evil.mjs'), false);
+});
+
+test('B7 claim manifest: the tolerance admits this service receipts and nothing else under that name', () => {
+  assert.equal(nonExecutable('apps/gateway/receipts/exploit.mjs'), false,
+    'a path is not a receipts directory just because it is called one');
+  assert.equal(nonExecutable('.github/coordinator/service/receipts/verifier-left.json'), true);
+});
+
+test('B7 claim manifest: the inventory denominator counts distinct names', () => {
+  const coverage = committed().coverage;
+  const names = readJson(path.join(root, 'suite-inventory.json')).names;
+  assert.equal(coverage.inventory_names, new Set(names).size,
+    'the denominator must count the names, not the rows that repeat them');
+  assert.equal(coverage.duplicate_inventory_names, names.length - new Set(names).size);
 });

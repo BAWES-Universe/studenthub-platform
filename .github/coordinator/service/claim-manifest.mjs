@@ -32,13 +32,27 @@ export const RECEIPTS_DIR = 'receipts';
 // fix committed after the code revision left the manifest naming a revision whose own suite inventory no
 // longer matched the suite it describes, and the guard said nothing because the file ended in .json.
 const NON_EXECUTABLE = ['.md', '.txt'];
+// The two files this artifact owns. The pins file is where evidence lives, so it must be committable on top of
+// the code revision it attests; admitting it by name rather than by suffix keeps the tolerance to exactly what
+// the flow needs and no other JSON file.
+export const PINS_NAME = 'verifier-receipts.json';
+export const AUTHORITY_WORKFLOW = '.github/workflows/verifier-receipt.yml';
 // Paths arrive repo-root-relative from `git diff --name-only`, so the receipts test has to match that shape:
 // a prefix of `receipts/` matches nothing git emits here, and the guard then rejects a receipt the lane
 // commits after its code revision - the exact flow the tolerance exists for. The test asserts the shape git
 // emits for this reason; asserting a bare relative path is what let the defect through.
 export const nonExecutable = file => NON_EXECUTABLE.some(suffix => file.endsWith(suffix))
+  || path.basename(file) === PINS_NAME
   || path.basename(file) === MANIFEST_NAME
-  || file.startsWith(`${RECEIPTS_DIR}/`) || file.includes(`/${RECEIPTS_DIR}/`);
+  || (isReceiptPath(file) && file.endsWith('.json'));
+// The receipts that may follow a code revision are this service's own. Matching any path containing
+// `/receipts/` admitted executable JavaScript anywhere in the repository, which is a wider tolerance than
+// the rule it exists to express.
+export const SERVICE_RECEIPTS = '.github/coordinator/service/receipts';
+// Receipts are JSON. Admitting any file under a receipts directory admitted executable JavaScript placed
+// there, which is the opposite of what this rule exists to say.
+export const isReceiptPath = file => file.startsWith(`${RECEIPTS_DIR}/`)
+  || file === RECEIPTS_DIR || file.startsWith(`${SERVICE_RECEIPTS}/`);
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -68,6 +82,22 @@ export async function readRegistry(root, registry) {
   };
   for (const [name, check] of module.controls ?? []) add(name, check);
   for (const [name, check, variants] of module.variantControls ?? []) add(name, check, variants);
+
+  // Controls the runner file registers directly, outside the registry's control arrays. They are real
+  // controls - the runner tests them and the suite inventory carries their names - and leaving them
+  // unregistered made every mutation written against one of them pair with nothing: B5's two closure
+  // controls are registered this way, so all seven of its closure mutations were dropped in silence.
+  // The runner is read as source because importing it would register its tests as a side effect. A name is
+  // registered only when the function it calls is exported by the checks module, so a closed-over helper
+  // cannot enter the manifest as a control.
+  const runnerSource = fs.readFileSync(path.join(root, registry.runner), 'utf8');
+  for (const match of runnerSource.matchAll(/test\(\s*'([^']+)'\s*,[\s\S]{0,200}?\b([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const [, testName, fnName] = match;
+    const fn = module[fnName];
+    if (typeof fn !== 'function' || !testName.startsWith(`${registry.label}: `)) continue;
+    if (controls.some(control => control.test_names.includes(testName))) continue;
+    add(testName.slice(registry.label.length + 2), fn);
+  }
 
   const mutations = [];
   const collect = rows => {
@@ -148,20 +178,36 @@ export function controlFunction(row, isRegistered, label) {
 // One entry per control: the term it pins, the mutants that die when that control alone is present, and
 // the receipts that attest it. A control the registries pair with no mutant is emitted as BLOCK with the
 // reason stated by the generator, not by a sentence anyone wrote.
-export async function buildEntries(root, receipts, head) {
+export async function buildEntries(root, pins, head) {
   const entries = [];
   for (const registry of REGISTRIES) {
     const read = await readRegistry(root, registry);
     for (const control of read.controls) {
       const killers = read.mutations.filter(mutation => mutation.kills.includes(control.name));
       const id = `${slug(registry.label)}/${slug(control.name)}`;
-      const at = receipts.filter(receipt => receipt.head === head);
-      const attested = at.filter(receipt => receipt.kind === 'verified');
+      // A receipt attaches to the terms it names, not to every term that happens to sit at the same
+      // revision. Filtering on head alone meant one receipt flipped every eligible entry at once - a verifier
+      // who verified one term approved thirty-eight - and, once the checker began requiring that a receipt
+      // name its term, the same filter made the rule unsatisfiable and no entry could reach PASS at all.
+      const names = [id, control.name];
+      // Evidence is a pin, not a file. A pin names a workflow run of the receipt authority, the artifact it
+      // uploaded and the digest of the receipt inside it, and the guard checks those against GitHub's API. A
+      // JSON file in this directory is not evidence and cannot become evidence: the authoring lane can write
+      // it, and a receipt only an author can produce approves nothing.
+      const accounting = [];
+      const at = pins.filter(pin => {
+        if (!pinDescribes(pin, head)) return false;
+        const proof = pinProves(pin, control.test_names, killers.map(killer => killer.test_name));
+        if (proof.accounting) accounting.push(`${pin.run_id}: ${proof.accounting}`);
+        return proof.ok;
+      });
+      const attested = at.filter(pin => pin.receipt?.conclusion?.verdict === 'success');
       const reasons = [];
       if (killers.length === 0) reasons.push('no mutant is paired with this control in the registry');
-      if (attested.length === 0) reasons.push('no verifying receipt at the code revision');
-      if (attested.length > 0 && !attested.every(receipt => receipt.verdict === 'PASS')) {
-        reasons.push('the verifying receipt at the code revision is not a PASS');
+      if (attested.length === 0) {
+        reasons.push(accounting.length > 0
+          ? `no pin accounts for its run: ${accounting[0]}`
+          : 'no verified receipt covers this control and its mutants at the code revision');
       }
       entries.push({
         id,
@@ -171,15 +217,130 @@ export async function buildEntries(root, receipts, head) {
         killing_mutants: killers.map(killer => ({ name: killer.name, test_name: killer.test_name,
           paired_by: killer.paired_by ?? null }))
           .sort((a, b) => a.name.localeCompare(b.name)),
-        receipts: at.map(receipt => ({ file: `${RECEIPTS_DIR}/${receipt.file}`, kind: receipt.kind,
-          sha256: receipt.sha256, verdict: receipt.verdict ?? null })),
+        // What a reader needs to find and check the evidence themselves: the run, the artifact, its digest
+        // as GitHub computes it, and the tests the receipt recorded for this term.
+        receipts: at.map(pin => ({
+          source: 'github-actions',
+          run_id: pin.run_id, run_attempt: pin.run_attempt,
+          workflow_path: pin.workflow_path, workflow_head_sha: pin.workflow_head_sha,
+          artifact_name: pin.artifact_name, artifact_digest: pin.artifact_digest,
+          receipt_digest: pin.receipt_digest,
+          verdict: pin.receipt?.conclusion?.verdict ?? null,
+          control_tests: control.test_names.map(name => ({ name, status: pinStatus(pin, name) })),
+          mutant_tests: killers.map(killer => ({ name: killer.test_name, status: pinStatus(pin, killer.test_name) })),
+        })),
+        // A term with no mutant can never reach PASS, and the manifest says so as a field rather than leaving
+        // a reader to infer it from the disposition and the reason string. It is NOT called sealed_term: that
+        // name belongs to the term itself, and two object keys with one name silently kept only the second,
+        // so every entry carried a boolean and the manifest carried the term's text nowhere at all.
+        approvable: killers.length > 0,
         disposition: reasons.length === 0 ? 'PASS' : 'BLOCK',
         reason: reasons.join('; ') || null,
+        // A term with no killing mutant cannot reach PASS and no receipt can change that, so the manifest says
+        // what seals it instead of leaving a reader to infer it from a BLOCK. Twelve terms are in this state:
+        // they are arming controls whose safety is argued by inspection. Whether they should carry a per-term
+        // mutant or leave the sealed set is the owner's call, and it is recorded here rather than assumed.
+        sealed_by: killers.length === 0
+          ? 'no mutant in the registry kills this control, so no run can establish it'
+          : null,
+        requires_owner_decision: killers.length === 0
+          ? 'either pair a mutant that dies when this term alone is removed, or state what else seals it'
+          : null,
       });
     }
   }
   // Two registries can define the same control name; the id carries the label so entries never merge.
   return entries.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// The authority cannot approve its own change. Two ways that could happen, both refused here: a receipt whose
+// run was dispatched from the revision under approval, and a checkout that alters the authority relative to
+// the commit the receipt was dispatched from - because then the thing being approved is not the thing that
+// measured it.
+export function checkAuthority(root, committed) {
+  const failures = [];
+  const authorityPaths = ['.github/workflows/verifier-receipt.yml', '.github/verifier-receipt'];
+  const dispatchShas = [...new Set((committed.pins_present ?? [])
+    .map(pin => pin.workflow_head_sha).filter(Boolean))];
+  if (dispatchShas.includes(committed.code_revision.head)) {
+    failures.push(`a receipt was produced by the receipt authority at `
+      + `${committed.code_revision.head.slice(0, 8)}, the revision under approval: the authority cannot `
+      + `approve the change that carries it`);
+  }
+  for (const sha of dispatchShas) {
+    let diff = '';
+    try {
+      diff = git(root, ['diff', '--name-only', `${sha}..HEAD`, '--', ...authorityPaths]);
+    } catch (error) {
+      failures.push(`cannot compare the receipt authority at ${String(sha).slice(0, 8)} with this `
+        + `checkout: ${String(error.message).split('\n')[0]}`);
+      continue;
+    }
+    if (diff.trim()) {
+      failures.push(`this checkout changes the receipt authority since ${String(sha).slice(0, 8)}: `
+        + `${diff.trim().split('\n').join(', ')}`);
+    }
+  }
+  return failures;
+}
+
+export function namesReceiptNames(receipt, names) {
+  return Array.isArray(receipt.established) && receipt.established.some(name => names.includes(name));
+}
+
+// A pin proves a term when the receipt inside it records every control test of that term and every mutant
+// that kills it as passing. A test the receipt never mentions is not covered: the receipt measured a run in
+// which that test did not appear, which is not the same as it having passed.
+// A receipt must account for the run it measured. An exit code and counts that do not add up to the number of
+// tests are not an accounting: a pin whose receipt cannot say what it ran is refused before its tests are read.
+export function receiptAccountsForItsRun(pin) {
+  const suite = pin.receipt?.suite;
+  if (!suite) return 'the receipt records no suite';
+  const { tests, ok, not_ok: notOk, skipped, exit } = suite;
+  if (!Number.isInteger(tests) || tests < 1) return 'the receipt records no test count';
+  if (!Number.isInteger(ok) || !Number.isInteger(notOk) || !Number.isInteger(skipped)) {
+    return 'the receipt does not record how many tests passed, failed and were skipped';
+  }
+  if (tests !== ok + notOk + skipped) {
+    return `the receipt's counts do not add up: ${tests} tests but ${ok} + ${notOk} + ${skipped}`;
+  }
+  if (exit === undefined || exit === null || exit === '') return 'the receipt records no exit code';
+  return null;
+}
+
+export function pinProves(pin, controlTests, mutantTests) {
+  const accounting = receiptAccountsForItsRun(pin);
+  const named = new Map((pin.receipt?.named_tests ?? []).map(test => [test.name, test.status]));
+  const evidence = [...controlTests, ...mutantTests].map(name => ({ name, status: named.get(name) ?? 'absent' }));
+  return {
+    ok: !accounting && evidence.length > 0 && evidence.every(test => test.status === 'pass'),
+    accounting,
+    evidence,
+  };
+}
+// A pin describes a revision when the receipt inside it names that revision, either as the commit the run
+// measured or as the code revision its manifest names. Both are checkable facts about the receipt, not
+// assertions by whoever wrote the pin.
+export const pinDescribes = (pin, head) => pin.receipt?.manifest?.code_revision?.head === head
+  || pin.receipt?.candidate?.sha === head;
+export const pinStatus = (pin, name) =>
+  (pin.receipt?.named_tests ?? []).find(test => test.name === name)?.status ?? 'absent';
+
+// What a reader most needs to know about a receipt is how much it approves. A receipt that proves one term is
+// evidence about that term; one that proves forty-one is a fact worth seeing in the manifest rather than
+// discovering by counting attachments.
+export function withProvesCounts(pins, entries) {
+  return pins.map(pin => ({ ...pin,
+    proves: entries.filter(entry => (entry.receipts ?? [])
+      .some(receipt => receipt.run_id === pin.run_id)).length }));
+}
+
+export function readPins(root) {
+  const file = path.join(root, 'verifier-receipts.json');
+  if (!fs.existsSync(file)) return [];
+  const parsed = readJson(file);
+  const pins = Array.isArray(parsed) ? parsed : parsed.pins ?? [];
+  return pins;
 }
 
 export function readReceipts(root) {
@@ -197,37 +358,86 @@ export function readReceipts(root) {
 // documentation commits after the code it describes, so rebuilding against HEAD would report every manifest
 // as tampered with. HEAD is then used only to prove that code revision is an ancestor of the checkout with
 // no executable difference.
-export async function buildManifest(root, head) {
-  const revision = head ?? git(root, ['rev-parse', 'HEAD']);
-  const tree = git(root, ['rev-parse', `${revision}^{tree}`]);
-  const receipts = readReceipts(root);
-  const entries = await buildEntries(root, receipts, revision);
-  return { schema: 1, code_revision: { head: revision, tree }, coverage: coverageOf(root, entries), entries };
+export async function buildManifest(root, revision) {
+  const pins = readPins(root);
+  const resolved = revision ?? git(root, ['rev-parse', 'HEAD']);
+  const tree = git(root, ['rev-parse', `${resolved}^{tree}`]);
+  const entries = await buildEntries(root, pins, resolved);
+  return { schema: 1, code_revision: { head: resolved, tree },
+    coverage: await coverageOf(root, entries),
+    // Files here are reported so a reader can see them, and they are named for what they are: a receipt file
+    // is not evidence for anything. The evidence is the pins, which name runs that GitHub can be asked about.
+    receipt_files_present: receiptsPresent(readReceipts(root)),
+    receipt_files_are_not_evidence: true,
+    pins_present: withProvesCounts(pins, entries).map(pin => ({
+      run_id: pin.run_id, proves: pin.proves, artifact_digest: pin.artifact_digest,
+      receipt_digest: pin.receipt_digest, workflow_head_sha: pin.workflow_head_sha,
+      verdict: pin.receipt?.conclusion?.verdict ?? null,
+      measured: pin.receipt?.candidate?.sha ?? null })),
+    entries };
+}
+
+// Every receipt in the directory, whether or not it attaches to an entry. A receipt that records a failing
+// run, or that names a revision no entry covers, is not allowed to be invisible to a reader of the manifest:
+// one such receipt sat in the approvals directory recording exit 1 while no entry mentioned it.
+export function receiptsPresent(receipts) {
+  return receipts.map(receipt => ({
+    file: `${RECEIPTS_DIR}/${receipt.file}`,
+    kind: receipt.kind ?? null,
+    verdict: receipt.verdict ?? null,
+    head: receipt.head ? String(receipt.head).slice(0, 40) : null,
+    tree: receipt.tree ? String(receipt.tree).slice(0, 40) : null,
+    exit: receipt.exit ?? null,
+    records_failing_run: receipt.exit !== undefined && receipt.exit !== 0
+      || (receipt.not_ok ?? 0) > 0,
+  }));
 }
 
 // What the entries enumerate, set against what the suite carries. The manifest covers the controls the
 // registries declare; a control registered directly in a runner file is outside that scope, and a reader is
 // entitled to the size of that gap as a generated number rather than as a silence.
-export function coverageOf(root, entries) {
+export async function coverageOf(root, entries) {
   const inventory = readJson(path.join(root, 'suite-inventory.json'));
   const referenced = new Set();
   for (const entry of entries) {
     for (const name of entry.control.test_names) referenced.add(name);
     for (const mutant of entry.killing_mutants) referenced.add(mutant.test_name);
   }
-  const outsideScope = inventory.names.filter(name => !referenced.has(name));
+  const distinct = [...new Set(inventory.names)];
+  const outsideScope = distinct.filter(name => !referenced.has(name));
+  // Every mutation row in the registries, and the control it kills or the reason it kills none. A control
+  // with no mutant is emitted as a BLOCK entry with a generated reason; a mutant with no control had no path
+  // at all, so nine live mutants - seven of them B5's closure rows - fell through into the outside-scope
+  // count indistinguishable from the suite tests that genuinely have nothing to do with this manifest.
+  const mutations = [];
+  for (const registry of REGISTRIES) {
+    const read = await readRegistry(root, registry);
+    for (const mutation of read.mutations) {
+      mutations.push({ test_name: mutation.test_name, kills: mutation.kills.slice(),
+        reason: mutation.kills.length > 0 ? null
+          : 'no registered control is named by this row, so no control is measured to die' });
+    }
+  }
+  const sealed = entries.filter(entry => entry.approvable === true).length;
   // Scope, stated: this manifest covers the sealed arming terms the registries declare. It is not a
   // coverage report on the whole coordinator suite, and the count below is the size of what is outside the
   // manifest's scope by design, not a gap in it. Reading it as missing coverage is the misreading it exists
   // to prevent.
   return {
     scope: 'the sealed arming terms the registries declare; not a coverage report on the whole suite',
-    sealed_terms: entries.length,
-    inventory_names: inventory.names.length,
-    control_names_referenced_in_inventory: inventory.names.length - outsideScope.length,
+    controls: entries.length,
+    sealed_terms: sealed,
+    controls_never_approvable_through_this_path: entries.length - sealed,
+    inventory_names: distinct.length,
+    duplicate_inventory_names: inventory.names.length - distinct.length,
+    control_names_referenced_in_inventory: distinct.length - outsideScope.length,
     suite_names_outside_scope: outsideScope.length,
     outside_scope_sample: outsideScope.slice(0, 12),
     referenced_not_in_inventory: [...referenced].filter(name => !inventory.names.includes(name)).length,
+    mutation_rows: mutations.length,
+    mutation_rows_paired: mutations.filter(mutation => mutation.kills.length > 0).length,
+    mutation_rows_unpaired: mutations.filter(mutation => mutation.kills.length === 0)
+      .map(mutation => ({ test_name: mutation.test_name, reason: mutation.reason })),
   };
 }
 
@@ -237,6 +447,58 @@ export function serialise(manifest) {
 
 // Each rejection path is its own function so a test can drive it directly with a tampered manifest: the
 // guard has to be shown failing for the reason it exists, not only passing.
+// A receipt's own tree claim was never read, so a receipt could name the right head and any tree at all, and
+// a receipt that records a failing run could sit in the approvals directory unmentioned by any entry.
+export function checkReceiptTrees(committed, receipts) {
+  const failures = [];
+  const wrongTree = [];
+  const failing = [];
+  for (const receipt of receipts) {
+    if (receipt.kind === 'verified' && receipt.tree !== committed.code_revision.tree) {
+      wrongTree.push(`${receipt.file} (tree ${String(receipt.tree).slice(0, 8)})`);
+    }
+    const recordsFailure = receipt.exit !== undefined && receipt.exit !== 0 || (receipt.not_ok ?? 0) > 0;
+    if (recordsFailure && receipt.kind === 'verified') failing.push(receipt.file);
+  }
+  if (wrongTree.length > 0) {
+    failures.push(`verified receipts whose tree is not the code revision's tree `
+      + `(${committed.code_revision.tree.slice(0, 8)}): ${wrongTree.join(', ')}`);
+  }
+  if (failing.length > 0) {
+    failures.push(`verified receipts that record a failing run: ${failing.join(', ')}`);
+  }
+  return failures;
+}
+
+// A verifying receipt cites the run it read. Those citations were read by nothing at all: a receipt could
+// name a log outside the repository, or a digest that matched no file, and still be accepted as the evidence
+// for a term. A citation is now either checkable inside this checkout or a refusal.
+export function checkReceiptEvidence(root, receipts) {
+  const failures = [];
+  for (const receipt of receipts) {
+    if (receipt.kind !== 'verified') continue;
+    for (const [pathField, hashField] of [['log_path', 'log_sha256'], ['tap_path', 'tap_sha256']]) {
+      const named = receipt[pathField];
+      if (named === undefined || named === null) continue;
+      const absolute = path.resolve(root, String(named));
+      if (!absolute.startsWith(`${root}${path.sep}`)) {
+        failures.push(`${receipt.file}: ${pathField} names ${named}, which is outside this checkout, `
+          + `so nothing it cites can be checked`);
+        continue;
+      }
+      if (!fs.existsSync(absolute)) {
+        failures.push(`${receipt.file}: ${pathField} names ${named}, which is not in this checkout`);
+        continue;
+      }
+      const digest = sha256(fs.readFileSync(absolute));
+      if (receipt[hashField] !== digest) {
+        failures.push(`${receipt.file}: ${hashField} does not match ${named}`);
+      }
+    }
+  }
+  return failures;
+}
+
 export function checkEntries(root, entries, inventory) {
   const failures = [];
   for (const entry of entries) {
@@ -259,19 +521,61 @@ export function checkEntries(root, entries, inventory) {
           + `(${JSON.stringify(mutant.paired_by)})`);
       }
     }
-    for (const receipt of entry.receipts) {
-      const file = path.join(root, receipt.file);
-      if (!fs.existsSync(file)) { failures.push(`${entry.id}: receipt ${receipt.file} is absent`); continue; }
-      const digest = sha256(fs.readFileSync(file));
-      if (digest !== receipt.sha256) failures.push(`${entry.id}: receipt ${receipt.file} digest does not match`);
+    // An entry's evidence is pins. A pin-shaped receipt has no `file`, and asking for one is exactly what made
+    // this checker throw on the first real pin - the generator had learned about pins and the checker had not.
+    // What is checked here is the shape and the accounting; the immutable facts behind a pin (that the run
+    // exists, that its artifact digest is the one GitHub computed, that the receipt hashes to that digest, that
+    // its attestation names this workflow) are established against the API by the protected workflow. A shape
+    // check that pretended to be that verification would be the same defect one level up.
+    for (const pin of entry.receipts) {
+      if (pin.source !== 'github-actions') {
+        failures.push(`${entry.id}: receipt is not a pinned workflow run (source ${JSON.stringify(pin.source)}, `
+          + `run ${pin.run_id ?? 'unidentified'})`);
+        continue;
+      }
+      const missing = ['run_id', 'workflow_path', 'workflow_head_sha', 'artifact_name', 'artifact_digest',
+        'receipt_digest'].filter(field => !pin[field]);
+      if (missing.length > 0) {
+        failures.push(`${entry.id}: pin run ${pin.run_id ?? 'unidentified'} is missing ${missing.join(', ')}`);
+      }
+      if (pin.workflow_path !== AUTHORITY_WORKFLOW) {
+        failures.push(`${entry.id}: pin run ${pin.run_id} was produced by ${pin.workflow_path}, not `
+          + `${AUTHORITY_WORKFLOW} - the authority is the only thing whose receipts certify a term`);
+      }
+      if (String(pin.workflow_head_sha ?? '').length !== 40) {
+        failures.push(`${entry.id}: pin run ${pin.run_id} names a dispatching commit that is not a full sha`);
+      }
+      for (const test of [...(pin.control_tests ?? []), ...(pin.mutant_tests ?? [])]) {
+        if (test.status !== 'pass') {
+          failures.push(`${entry.id}: pin run ${pin.run_id} records ${test.name} as ${test.status}`);
+        }
+      }
     }
     if (entry.disposition === 'PASS') {
       if (entry.control.test_names.length === 0) failures.push(`${entry.id}: PASS without a control`);
       if (entry.killing_mutants.length === 0) failures.push(`${entry.id}: PASS without a mutant that kills it`);
-      const verifying = entry.receipts.filter(receipt => receipt.kind === 'verified');
-      if (verifying.length === 0) failures.push(`${entry.id}: PASS without a verifying receipt at the code revision`);
-      if (!verifying.every(receipt => receipt.verdict === 'PASS')) {
-        failures.push(`${entry.id}: PASS with a verifying receipt whose verdict is not PASS`);
+      if (entry.approvable !== true) {
+        failures.push(`${entry.id}: PASS for a term that carries no mutant, which no receipt can make true`);
+      }
+      if (entry.receipts.length === 0) {
+        failures.push(`${entry.id}: PASS without a pinned receipt at the code revision`);
+      }
+      if (entry.receipts.some(pin => pin.verdict !== 'success')) {
+        failures.push(`${entry.id}: PASS with a pin whose receipt records a run that did not succeed`);
+      }
+      // Every control test and every mutant of this term must be recorded as passing, by a pin that names it.
+      // A pin covering part of a term is not a pin covering the term, and a test the run never observed is not
+      // a test that passed - so the requirement is over the names, not over the count of pins.
+      const covered = new Set();
+      for (const pin of entry.receipts) {
+        for (const test of [...(pin.control_tests ?? []), ...(pin.mutant_tests ?? [])]) {
+          if (test.status === 'pass') covered.add(test.name);
+        }
+      }
+      const uncovered = [...entry.control.test_names, ...entry.killing_mutants.map(mutant => mutant.test_name)]
+        .filter(name => !covered.has(name));
+      if (uncovered.length > 0) {
+        failures.push(`${entry.id}: PASS while no pin records these tests as passing: ${uncovered.join(', ')}`);
       }
     } else if (entry.disposition !== 'BLOCK') {
       failures.push(`${entry.id}: disposition must be PASS or BLOCK`);
@@ -336,23 +640,7 @@ export async function checkManifest(root) {
   if (headFailures.length > 0) return headFailures;
   const rebuilt = await buildManifest(root, committed.code_revision.head);
   const failures = [];
-  // A receipt that claims verification at a revision this history does not cover verifies nothing here.
-  // Filtering it out of the entries is what protects the dispositions; it is not what protects the tree, so
-  // the guard rejects it rather than passing over it in silence.
-  const stray = [];
-  for (const receipt of readReceipts(root)) {
-    if (receipt.kind !== 'verified' || receipt.head === committed.code_revision.head) continue;
-    let covered = false;
-    try {
-      git(root, ['cat-file', '-e', `${receipt.head}^{commit}`]);
-      git(root, ['merge-base', '--is-ancestor', receipt.head, committed.code_revision.head]);
-      covered = true;
-    } catch { covered = false; }
-    if (!covered) stray.push(`${receipt.file} (head ${String(receipt.head).slice(0, 8)})`);
-  }
-  if (stray.length > 0) {
-    failures.push(`verified receipts at a revision this manifest does not cover: ${stray.join(', ')}`);
-  }
+  failures.push(...checkAuthority(root, committed));
   const revisionMatches = serialise(committed.code_revision) === serialise(rebuilt.code_revision);
   const entriesMatch = serialise(committed.entries) === serialise(rebuilt.entries);
   if (!revisionMatches) {
@@ -372,6 +660,40 @@ export async function checkManifest(root) {
       + `entries: ${differing.slice(0, 4).join(', ')}${differing.length > 4 ? ', ...' : ''} - a claim was `
       + 'edited rather than generated');
   }
+  // Every authority-relevant field is rebuilt and compared, pins included. The pins are the evidence, so a
+  // manifest that disagrees with the pins in this checkout is a claim nobody can re-derive - and a pin present
+  // in the file but absent from the manifest (or the reverse) must refuse by name, not be silently ignored.
+  const pinsMatch = serialise(committed.pins_present ?? null) === serialise(rebuilt.pins_present ?? null);
+  if (committed.receipt_files_are_not_evidence !== rebuilt.receipt_files_are_not_evidence) {
+    failures.push('the rebuild disagrees about whether receipt files are evidence: '
+      + `manifest ${committed.receipt_files_are_not_evidence} vs rebuild ${rebuilt.receipt_files_are_not_evidence}`);
+  }
+  const claimedPins = new Map((committed.pins_present ?? []).map(pin => [String(pin.run_id), pin]));
+  const rebuiltPins = new Map((rebuilt.pins_present ?? []).map(pin => [String(pin.run_id), pin]));
+  for (const [runId, pin] of rebuiltPins) {
+    const claimed = claimedPins.get(runId);
+    if (!claimed) {
+      failures.push(`pin run ${runId} proves terms in this checkout but the committed manifest does not carry `
+        + `it: a missing or uncommitted pin must refuse by name`);
+      continue;
+    }
+    for (const field of ['proves', 'artifact_digest', 'receipt_digest', 'workflow_head_sha', 'verdict', 'measured']) {
+      if (String(claimed[field] ?? '') !== String(pin[field] ?? '')) {
+        failures.push(`pin run ${runId}: the committed manifest says ${field}=`
+          + `${JSON.stringify(claimed[field] ?? null)}, the pins in ${PINS_NAME} say `
+          + `${JSON.stringify(pin[field] ?? null)}`);
+      }
+    }
+  }
+  for (const [runId] of claimedPins) {
+    if (!rebuiltPins.has(runId)) {
+      failures.push(`pin run ${runId} is in the committed manifest but not among the pins in ${PINS_NAME}: `
+        + `an altered or removed pin must refuse by name`);
+    }
+  }
+  if (!pinsMatch && failures.filter(line => line.startsWith('pin run ')).length === 0) {
+    failures.push(`the manifest's pins are not what the pins in ${PINS_NAME} produce - regenerate at this revision`);
+  }
   const inventory = new Set(readJson(path.join(root, 'suite-inventory.json')).names);
   failures.push(...checkEntries(root, committed.entries ?? [], inventory));
   return failures;
@@ -380,10 +702,19 @@ export async function checkManifest(root) {
 if (process.argv[1] && process.argv[1].endsWith('claim-manifest.mjs')) {
   const root = process.cwd();
   if (process.argv.includes('--write')) {
-    fs.writeFileSync(path.join(root, MANIFEST_NAME), serialise(await buildManifest(root)));
+    // An optional revision argument, so the documented command can reproduce a manifest at the commit that
+    // carries it. Building against HEAD names the manifest's own commit as the code revision, which is a
+    // revision whose tree differs from the one the receipts attest.
+    const revision = process.argv.slice(2).find(argument => !argument.startsWith('--')) ?? null;
+    fs.writeFileSync(path.join(root, MANIFEST_NAME), serialise(await buildManifest(root, revision)));
     console.log(`wrote ${MANIFEST_NAME}`);
   } else {
-    const failures = await checkManifest(root);
+    // The claim is about a revision, so the evidence for it is a run of that revision. Whether this checkout is
+  // clean is a fact about the reader's directory, not about the claim, so it is reported and not scored.
+  console.log(`WORKING_TREE: ${git(root, ['status', '--porcelain']).trim()
+    ? 'dirty (this is not part of the claim; the evidence is a receipt from a clean checkout of the revision)'
+    : 'clean'}`);
+  const failures = await checkManifest(root);
     for (const failure of failures) console.error(`CLAIM_MANIFEST: ${failure}`);
     console.log(failures.length === 0 ? 'CLAIM_MANIFEST_OK' : `CLAIM_MANIFEST_FAILED (${failures.length})`);
     process.exit(failures.length === 0 ? 0 : 1);
