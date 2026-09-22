@@ -32,7 +32,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Test the receipt tooling
-        run: node --test --test-reporter=tap .github/verifier-receipt/test/
+        run: node --test --test-reporter=tap .github/verifier-receipt/test/*.test.mjs
 
   verify:
     needs: selftest
@@ -63,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           changed=$(gh api "/repos/$REPO/compare/main...${{ inputs.candidate_sha }}" --jq '.files[].filename')
-          touched=$(printf '%s\n' "$changed" | grep -E '^(\\.github/workflows/verifier-receipt\\.yml|\\.github/verifier-receipt/)' || true)
+          touched=$(printf '%s\n' "$changed" | grep -E '^(\.github/workflows/verifier-receipt\.yml|\.github/verifier-receipt/)' || true)
           if [ -n "$touched" ]; then
             echo "::error::this candidate changes the receipt authority, so no receipt it or this workflow produces may approve it"
             printf '%s\n' "$touched"
