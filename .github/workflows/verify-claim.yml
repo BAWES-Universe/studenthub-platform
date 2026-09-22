@@ -21,7 +21,21 @@ permissions:
   attestations: read
 
 jobs:
+  # The tool that turns a pin into evidence is itself checked, from the protected checkout, before any pin is
+  # judged. Its tests stub `gh`, so they need no token and no network, and they assert the refusals: a run that
+  # is not a dispatch of this workflow on main, an artifact GitHub never digested, a receipt with no
+  # attestation, a receipt belonging to another run, and an attestation naming another workflow.
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Test the receipt tooling
+        run: node --test --test-reporter=tap .github/verifier-receipt/test/
+
   verify:
+    needs: selftest
     runs-on: ubuntu-latest
     steps:
       # The verifier comes from the dispatching ref - protected main - and never from the candidate.
