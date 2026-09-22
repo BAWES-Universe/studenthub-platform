@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "The closed enum of suite commands the trusted measure job may invoke. This file is authority: it lives",
+    "beside the workflow, on protected main, and is checked out by SHA. The candidate never contributes a",
+    "command - not through a dispatch input, not through its package.json, not through a file in its own tree.",
+    "A dispatch may only pick a KEY from this table; the command text is whatever this file says it is."
+  ],
+  "runners": {
+    "coordinator": {
+      "description": "the coordinator suite and the coordinator service suite, reported as TAP",
+      "command": "node --test --test-reporter=tap .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs"
+    },
+    "coordinator-core": {
+      "description": "the coordinator suite alone, reported as TAP",
+      "command": "node --test --test-reporter=tap .github/coordinator/test/*.test.mjs"
+    },
+    "coordinator-service": {
+      "description": "the coordinator service suite alone, reported as TAP",
+      "command": "node --test --test-reporter=tap .github/coordinator/service/test/*.test.mjs"
+    }
+  }
+}

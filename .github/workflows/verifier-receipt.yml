@@ -3,95 +3,293 @@ name: Verifier receipt
 # The receipt producer: it answers one question about one commit - what did that commit's own suite report, and
 # what does its claim name?
 #
-# The two-job split IS the security property, and it exists because a review defeated the single-job version:
-# run the candidate's suite and emit the receipt in one job, and the code being measured is the code deciding
-# what the receipt says. So the untrusted half is quarantined.
+# PROVENANCE IS THE SECURITY PROPERTY, and it is what the three-job split exists to produce. A review defeated
+# the single-job version: run the candidate's suite and emit the receipt in one job, and the code being measured
+# is the code deciding what the receipt says. A later review defeated the two-job version too: the emitter was
+# handed a file by path and asked only whether it looked like TAP, so a hand-written stream was accepted as a
+# measurement. Looking harder at the stream cannot fix that - a candidate's own test file prints well-formed TAP.
+# What fixes it is that the emitter accepts no bytes it did not fetch itself, from this run's own artifact.
 #
-#   measure - checks out the candidate, runs its suite, uploads nothing but the TAP the runner captured plus
-#             the claim as data. No id-token, no attestation permission.
-#   emit    - checks out the measurer from the dispatching ref (protected main) and runs it. It never checks
-#             out the candidate, so no candidate code executes in the job that emits and attests. The candidate
-#             reaches it only as data: the TAP artifact, the manifest, the pins.
+#   trust   - resolves the authority commit (the workflow, the emitter, the runner enum), the candidate, and the
+#             runner key. Nothing it resolves comes from the candidate's tree.
+#   measure - checks out the candidate, invokes the command the PROTECTED runner enum names for the chosen key -
+#             never the candidate's package.json, never a shell string anyone supplied - captures stdout and
+#             stderr into files it owns, and uploads those files as its own artifact. No id-token, no attestation
+#             permission.
+#   emit    - checks out the authority by SHA and runs the emitter. It never checks out the candidate and never
+#             downloads any artifact into its workspace: it locates the measure job's artifact through the API by
+#             run id and name, checks the digest GitHub computed, and reads the capture out of the archive GitHub
+#             serves. The claim is fetched from the candidate commit through the contents API.
 on:
   workflow_dispatch:
     inputs:
       candidate_sha:
         description: Commit to measure
         required: true
-      suite_command:
-        description: Override the suite command (defaults to the candidate's test:coordinator script)
+      runner_key:
+        description: Which suite of the protected runner enum to invoke
         required: false
+        default: coordinator
+        # A CLOSED ENUM, and the only runner control a caller has. The command text lives in
+        # .github/verifier-receipt/runners.json on the protected ref; a key does not carry one.
+        type: choice
+        options:
+          - coordinator
+          - coordinator-core
+          - coordinator-service
+  # workflow_dispatch registers only for workflows on the default branch, so a change to this authority cannot
+  # be exercised by dispatch until it merges. A pull_request run rehearses the whole chain for real - real job,
+  # real artifact, real API - against the candidate fixed in the authority's own rehearsal file. It can never
+  # mint anything: the emitter marks it admissible_as_pin=false and verify-claim.yml refuses non-dispatch runs.
+  pull_request:
+    paths:
+      - .github/workflows/verifier-receipt.yml
+      - .github/verifier-receipt/**
 
 permissions:
   contents: read
   actions: read
 
 jobs:
+  trust:
+    name: Resolve the authority commit, the candidate and the runner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      trusted_sha: ${{ steps.resolve.outputs.trusted_sha }}
+      trusted_origin: ${{ steps.resolve.outputs.trusted_origin }}
+      candidate_sha: ${{ steps.resolve.outputs.candidate_sha }}
+      runner_key: ${{ steps.resolve.outputs.runner_key }}
+    steps:
+      - name: Resolve what this run is allowed to trust
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_CANDIDATE: ${{ inputs.candidate_sha }}
+          DISPATCH_RUNNER: ${{ inputs.runner_key }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            trusted_sha="$DISPATCH_SHA"
+            if [ "$DISPATCH_REF" = "refs/heads/main" ]; then
+              trusted_origin="protected-main"
+            else
+              trusted_origin="dispatch-ref:$DISPATCH_REF"
+            fi
+            candidate_sha="$DISPATCH_CANDIDATE"
+            runner_key="${DISPATCH_RUNNER:-coordinator}"
+          else
+            # Prefer the base branch by SHA: on a pull request the workflow file itself comes from the head, but
+            # the emitter, the runner enum and the rehearsal pin do not have to. They can only come from the base
+            # once this authority exists there, so check, and say plainly which was used.
+            if gh api "/repos/$REPO/contents/.github/verifier-receipt/runners.json?ref=$PR_BASE_SHA" >/dev/null 2>&1 \
+               && [ "$PR_BASE_REF" = "${DEFAULT_BRANCH:-main}" ]; then
+              trusted_sha="$PR_BASE_SHA"
+              trusted_origin="protected-main"
+            else
+              trusted_sha="$PR_HEAD_SHA"
+              trusted_origin="pull-request-head"
+              echo "::warning::the receipt authority is not present on $PR_BASE_REF at $PR_BASE_SHA, so this rehearsal runs the authority from the pull request head; its receipt is not admissible as a pin"
+            fi
+            rehearsal=$(gh api "/repos/$REPO/contents/.github/verifier-receipt/pull-request-rehearsal.json?ref=$trusted_sha" --jq '.content' | base64 -d)
+            candidate_sha=$(printf '%s' "$rehearsal" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).candidate_sha))")
+            runner_key=$(printf '%s' "$rehearsal" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).runner_key))")
+          fi
+
+          case "$candidate_sha" in
+            *[!0-9a-f]* | "") echo "::error::candidate sha is not a hex commit id: $candidate_sha"; exit 1 ;;
+          esac
+          if [ "${#candidate_sha}" -ne 40 ]; then
+            candidate_sha=$(gh api "/repos/$REPO/commits/$candidate_sha" --jq '.sha')
+          fi
+          case "$runner_key" in
+            coordinator|coordinator-core|coordinator-service) ;;
+            *) echo "::error::runner key \"$runner_key\" is not in this workflow's closed enum"; exit 1 ;;
+          esac
+
+          {
+            echo "trusted_sha=$trusted_sha"
+            echo "trusted_origin=$trusted_origin"
+            echo "candidate_sha=$candidate_sha"
+            echo "runner_key=$runner_key"
+          } >> "$GITHUB_OUTPUT"
+          echo "authority $trusted_sha ($trusted_origin); candidate $candidate_sha; runner $runner_key"
+
+      # An early, cheap refusal. The emitter re-checks this from the API itself and refuses independently, so a
+      # drift in this pattern loosens nothing - it only wastes a suite run before the refusal lands.
+      - name: Refuse a candidate that alters the receipt authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          changed=$(gh api "/repos/$REPO/compare/main...$CANDIDATE_SHA" --jq '.files[].filename')
+          touched=$(printf '%s\n' "$changed" | grep -E '^\.github/(workflows/verifier-receipt\.yml$|verifier-receipt/)' || true)
+          if [ -n "$touched" ]; then
+            echo "::error::this candidate modifies the receipt authority, so its receipt may not approve it"
+            printf '%s\n' "$touched"
+            exit 1
+          fi
+          echo "the candidate does not alter the receipt authority"
+
   measure:
-    name: Run the candidate's suite and capture the TAP
+    name: measure
+    needs: trust
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Check out the authority at the trusted commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.trust.outputs.trusted_sha }}
+          path: authority
+          persist-credentials: false
+
       - name: Check out the candidate at exactly the requested commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ needs.trust.outputs.candidate_sha }}
           path: candidate
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Record which commit was checked out
         id: candidate
         working-directory: candidate
+        env:
+          CANDIDATE_SHA: ${{ needs.trust.outputs.candidate_sha }}
         run: |
           set -euo pipefail
           head=$(git rev-parse HEAD)
-          if [ "$head" != "${{ inputs.candidate_sha }}" ]; then
-            echo "::error::asked to measure ${{ inputs.candidate_sha }} but checked out $head"
+          if [ "$head" != "$CANDIDATE_SHA" ]; then
+            echo "::error::asked to measure $CANDIDATE_SHA but checked out $head"
             exit 1
           fi
           echo "head=$head" >> "$GITHUB_OUTPUT"
           echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
 
-      # The suite command is the candidate's own, so it is passed through the environment rather than spliced
-      # into a shell body, where a quoting mistake turns a command into data.
-      - name: Run the suite the candidate declares, capturing its TAP
+      # THE TRUSTED JOB CHOOSES THE RUNNER. The command is read out of the authority checkout, by key, as JSON -
+      # not from the candidate's package.json, not from a dispatch input, not from any file in the candidate's
+      # tree. The candidate contributes the code under test and nothing about how it is run.
+      - name: Resolve the runner command from the protected enum
+        id: runner
+        env:
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+        run: |
+          set -euo pipefail
+          command=$(node -e '
+            const fs = require("node:fs");
+            const spec = JSON.parse(fs.readFileSync("authority/.github/verifier-receipt/runners.json", "utf8"));
+            const runner = spec.runners?.[process.env.RUNNER_KEY];
+            if (!runner?.command) { console.error("no such runner key: " + process.env.RUNNER_KEY); process.exit(1); }
+            process.stdout.write(runner.command);
+          ')
+          echo "command<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$command" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "runner \"$RUNNER_KEY\": $command"
+
+      # The trusted job captures stdout and stderr itself, into a directory it owns outside the candidate
+      # checkout. Nothing the candidate writes is collected, and the candidate is never asked where its output is.
+      - name: Run the protected runner against the candidate, capturing its output
         id: suite
         env:
-          SUITE_COMMAND: ${{ inputs.suite_command }}
-        working-directory: candidate
+          RUNNER_COMMAND: ${{ steps.runner.outputs.command }}
         run: |
           set -uo pipefail
-          if [ -z "${SUITE_COMMAND}" ]; then
-            SUITE_COMMAND=$(node -e "const p=require('./package.json');const c=p.scripts['test:coordinator'];if(!c){console.error('no test:coordinator script');process.exit(1)};process.stdout.write(c)")
-          fi
-          echo "suite command: ${SUITE_COMMAND}"
+          mkdir -p "$RUNNER_TEMP/capture"
           set +e
-          bash -euo pipefail -c "${SUITE_COMMAND}" > "$RUNNER_TEMP/suite.tap" 2>&1
+          ( cd candidate && bash -euo pipefail -c "$RUNNER_COMMAND" ) > "$RUNNER_TEMP/capture/suite.out" 2>&1
           exit_code=$?
           set -e
           echo "exit=$exit_code" >> "$GITHUB_OUTPUT"
-          echo "captured $(wc -l < "$RUNNER_TEMP/suite.tap") lines, suite exit $exit_code"
+          echo "captured $(wc -c < "$RUNNER_TEMP/capture/suite.out") bytes, suite exit $exit_code"
 
-      - name: Upload the measurement and the claim, and nothing else
+      # The measure job's own statement about its own capture. The emitter checks every field of it against the
+      # API and against the capture's bytes, so this is a binding, not an assertion to be taken on trust.
+      - name: Write the capture's meta
+        env:
+          RUNNER_COMMAND: ${{ steps.runner.outputs.command }}
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head }}
+          CANDIDATE_TREE: ${{ steps.candidate.outputs.tree }}
+          TRUSTED_SOURCE_SHA: ${{ needs.trust.outputs.trusted_sha }}
+          SUITE_EXIT: ${{ steps.suite.outputs.exit }}
+          JOB_NAME: measure
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const crypto = require("node:crypto");
+            const dir = process.env.RUNNER_TEMP + "/capture";
+            const bytes = fs.readFileSync(dir + "/suite.out");
+            const meta = {
+              schema: 1,
+              job_name: process.env.JOB_NAME,
+              run_id: process.env.GITHUB_RUN_ID,
+              run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+              workflow_path: ".github/workflows/verifier-receipt.yml",
+              trusted_source_sha: process.env.TRUSTED_SOURCE_SHA,
+              candidate_sha: process.env.CANDIDATE_SHA,
+              candidate_tree: process.env.CANDIDATE_TREE,
+              runner_key: process.env.RUNNER_KEY,
+              runner_command: process.env.RUNNER_COMMAND,
+              capture_file: "suite.out",
+              capture_bytes: bytes.length,
+              capture_sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+              suite_exit: process.env.SUITE_EXIT,
+            };
+            fs.writeFileSync(dir + "/capture-meta.json", JSON.stringify(meta, null, 2) + "\n");
+            console.log("capture sha256:" + meta.capture_sha256 + " (" + meta.capture_bytes + " bytes)");
+          '
+
+      # The trusted job's OWN artifact, holding only files this job wrote. No candidate file is uploaded, and the
+      # emitting job downloads no candidate file at all.
+      - name: Upload the trusted job's capture, and nothing else
+        id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: candidate-measurement
-          path: |
-            ${{ runner.temp }}/suite.tap
-            candidate/.github/coordinator/service/claim-manifest.json
-            candidate/.github/coordinator/service/verifier-receipts.json
-          if-no-files-found: warn
+          name: measure-capture
+          path: ${{ runner.temp }}/capture
+          if-no-files-found: error
           retention-days: 30
+
+      - name: Normalise the digest GitHub computed for the artifact
+        id: artifact
+        env:
+          DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          case "$DIGEST" in
+            sha256:*) normalised="$DIGEST" ;;
+            "") echo "::error::upload-artifact reported no digest for the capture"; exit 1 ;;
+            *) normalised="sha256:$DIGEST" ;;
+          esac
+          echo "digest=$normalised" >> "$GITHUB_OUTPUT"
+          echo "id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact $ARTIFACT_ID digest $normalised"
 
     outputs:
       head: ${{ steps.candidate.outputs.head }}
       tree: ${{ steps.candidate.outputs.tree }}
       exit: ${{ steps.suite.outputs.exit }}
+      artifact_id: ${{ steps.artifact.outputs.id }}
+      artifact_digest: ${{ steps.artifact.outputs.digest }}
 
   emit:
-    name: Emit and attest the receipt from the measurement
-    needs: measure
+    name: Emit and attest the receipt from this run's own capture
+    needs: [trust, measure]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,41 +297,38 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Check out the measurer from the dispatching ref
+      - name: Check out the authority at the trusted commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
-          path: measurer
+          ref: ${{ needs.trust.outputs.trusted_sha }}
+          path: authority
+          persist-credentials: false
 
-      - name: Refuse to run if the candidate's diff touches the authority
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-        run: |
-          set -euo pipefail
-          changed=$(gh api "/repos/${{ github.repository }}/compare/main...$CANDIDATE_SHA" --jq '.files[].filename')
-          touched=$(printf '%s\n' "$changed" | grep -E '(^|/)\.github/(workflows/verifier-receipt\.yml|verifier-receipt/)' || true)
-          if [ -n "$touched" ]; then
-            echo "::error::this candidate modifies the receipt authority, so its receipt may not approve it"
-            printf '%s\n' "$touched"
-            exit 1
-          fi
+      # The emitter's own tests, run from the trusted checkout before it judges anything. They stub `gh`, so they
+      # need no token and no network, and they assert the refusals by name.
+      - name: Test the emitter
+        run: node --test --test-reporter=tap authority/.github/verifier-receipt/test/*.test.mjs
 
-      - name: Download the measurement
-        uses: actions/download-artifact@v4
-        with:
-          name: candidate-measurement
-          path: measurement
-
+      # No download-artifact step: the emitter locates this run's artifact through the API itself, so no file
+      # arrives in this workspace that the emitter did not fetch and digest.
       - name: Emit the canonical receipt
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TRUSTED_SOURCE_SHA: ${{ needs.trust.outputs.trusted_sha }}
+          TRUSTED_SOURCE_ORIGIN: ${{ needs.trust.outputs.trusted_origin }}
+          MEASURE_JOB_NAME: measure
+          MEASURE_ARTIFACT_NAME: measure-capture
+          MEASURE_ARTIFACT_ID: ${{ needs.measure.outputs.artifact_id }}
+          MEASURE_ARTIFACT_DIGEST: ${{ needs.measure.outputs.artifact_digest }}
           CANDIDATE_SHA: ${{ needs.measure.outputs.head }}
           CANDIDATE_TREE: ${{ needs.measure.outputs.tree }}
-          MEASURED_SUITE_EXIT: ${{ needs.measure.outputs.exit }}
-          TAP_PATH: ${{ github.workspace }}/measurement/suite.tap
-          MANIFEST_PATH: ${{ github.workspace }}/measurement/claim-manifest.json
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+          RUNNER_SPEC_PATH: ${{ github.workspace }}/authority/.github/verifier-receipt/runners.json
           OUT_PATH: ${{ github.workspace }}/receipt.json
-        run: node measurer/.github/verifier-receipt/emit-receipt.mjs
+        run: node authority/.github/verifier-receipt/emit-receipt.mjs
 
       - name: Refuse to emit a receipt that establishes nothing
         run: |
@@ -143,6 +338,7 @@ jobs:
             const summary = receipt.named_tests_summary ?? {};
             const verdict = receipt.conclusion?.verdict ?? null;
             console.log('verdict', verdict, 'named', summary.named, 'pass', summary.pass, 'fail', summary.fail, 'absent', summary.absent);
+            console.log('admissible as pin:', receipt.provenance?.admissible_as_pin, receipt.provenance?.inadmissibility_reasons ?? []);
             if (verdict !== 'success') { console.error('::error::the receipt does not record a successful measurement of the named tests'); process.exit(1); }
             if (!(summary.named > 0)) { console.error('::error::the receipt names no tests, so it establishes nothing about any term'); process.exit(1); }
           "
@@ -170,11 +366,13 @@ jobs:
             echo "| field | value |"
             echo "| --- | --- |"
             echo "| workflow | ${{ github.workflow_ref }} |"
-            echo "| dispatching commit | ${{ github.sha }} |"
+            echo "| authority commit | ${{ needs.trust.outputs.trusted_sha }} (${{ needs.trust.outputs.trusted_origin }}) |"
             echo "| run id | ${{ github.run_id }} |"
             echo "| run attempt | ${{ github.run_attempt }} |"
             echo "| candidate | ${{ needs.measure.outputs.head }} |"
             echo "| candidate tree | ${{ needs.measure.outputs.tree }} |"
-            echo "| artifact | verifier-receipt (id ${{ steps.upload.outputs.artifact-id }}) |"
+            echo "| runner key | ${{ needs.trust.outputs.runner_key }} |"
+            echo "| capture artifact | measure-capture (id ${{ needs.measure.outputs.artifact_id }}, ${{ needs.measure.outputs.artifact_digest }}) |"
+            echo "| receipt artifact | verifier-receipt (id ${{ steps.upload.outputs.artifact-id }}) |"
             echo "| receipt sha256 | sha256:${digest} |"
           } >> "$GITHUB_STEP_SUMMARY"

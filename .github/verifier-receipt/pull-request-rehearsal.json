@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "What a pull_request run of this workflow measures. `workflow_dispatch` only registers for workflows that",
+    "exist on the default branch, so a change to this authority cannot be exercised by dispatch before it",
+    "merges; a pull_request run can. The candidate and the runner key are fixed HERE, in the authority, and are",
+    "read from the trusted checkout - never from the pull request's own inputs - so a rehearsal cannot be",
+    "pointed at a candidate of the author's choosing at dispatch time.",
+    "",
+    "A pull_request run is a rehearsal and nothing more: the emitter records admissible_as_pin=false for it,",
+    "and verify-claim.yml independently refuses any pin whose run is not a workflow_dispatch on main.",
+    "",
+    "The candidate below is chosen because it is a real commit that carries a real claim manifest, does not",
+    "touch the receipt authority, and is not an ancestor of anything this lane changes."
+  ],
+  "candidate_sha": "6feac016e3a0796d0c7b21d86426af0f1491a9c1",
+  "runner_key": "coordinator"
+}
