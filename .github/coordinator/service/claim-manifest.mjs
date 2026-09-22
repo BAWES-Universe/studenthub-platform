@@ -32,9 +32,13 @@ export const RECEIPTS_DIR = 'receipts';
 // fix committed after the code revision left the manifest naming a revision whose own suite inventory no
 // longer matched the suite it describes, and the guard said nothing because the file ended in .json.
 const NON_EXECUTABLE = ['.md', '.txt'];
+// Paths arrive repo-root-relative from `git diff --name-only`, so the receipts test has to match that shape:
+// a prefix of `receipts/` matches nothing git emits here, and the guard then rejects a receipt the lane
+// commits after its code revision - the exact flow the tolerance exists for. The test asserts the shape git
+// emits for this reason; asserting a bare relative path is what let the defect through.
 export const nonExecutable = file => NON_EXECUTABLE.some(suffix => file.endsWith(suffix))
   || path.basename(file) === MANIFEST_NAME
-  || file.startsWith(`${RECEIPTS_DIR}/`);
+  || file.startsWith(`${RECEIPTS_DIR}/`) || file.includes(`/${RECEIPTS_DIR}/`);
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));

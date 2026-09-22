@@ -127,6 +127,9 @@ test('B7 claim manifest: only documentation, the manifest and receipts may follo
   // suite it described, and a suffix test for .json said nothing about it.
   assert.equal(nonExecutable('.github/coordinator/service/SHU71-PREREQUISITES.md'), true);
   assert.equal(nonExecutable('.github/coordinator/service/claim-manifest.json'), true);
+  // The shape git emits, not a shape the repository never produces: the receipts leg of this rule was
+  // unreachable for a round because this assertion used a bare relative path.
+  assert.equal(nonExecutable('.github/coordinator/service/receipts/verifier-left.json'), true);
   assert.equal(nonExecutable('receipts/verifier-left.json'), true);
   assert.equal(nonExecutable('.github/coordinator/service/suite-inventory.json'), false);
   assert.equal(nonExecutable('.github/coordinator/service/a12-evidence/file-requirements.json'), false);
@@ -167,6 +170,32 @@ test('B7 claim manifest: a verified receipt at a revision the manifest does not 
       `expected a stray-receipt rejection, got: ${failures.join('; ') || 'none'}`);
   } finally {
     fs.rmSync(file, { force: true });
+  }
+});
+
+test('B7 claim manifest: every suite file list in the tree agrees with the committed tree', () => {
+  // Three lists carry the suite's test files and two of them were updated by hand in one round while the
+  // third was missed, and a fourth kind of drift was found later still. The lists are compared to the
+  // derivation git performs, so a future list cannot be forgotten in silence.
+  // --full-tree because this runs from the service directory, where ls-tree would otherwise report only
+  // what is under it: a check that silently compares an empty list to an empty list is not a check.
+  const tracked = git(['ls-tree', '-r', '--name-only', '--full-tree', 'HEAD']).split('\n');
+  const roots = ['.github/coordinator/test/', '.github/coordinator/service/test/'];
+  const expected = tracked.filter(file => roots.some(root => file.startsWith(root)
+    && !file.slice(root.length).includes('/') && file.endsWith('.test.mjs'))).sort();
+  // The lists that describe the suite as it is now: what the deriver writes, and the audit beside it. The
+  // other JSON in a12-evidence that mentions test files is a historical comparison carrying its own
+  // baseline revision and before/after counts; it records what a past round compared, so it is not a
+  // current list and is deliberately not compared here.
+  const lists = [
+    { file: 'suite-inventory.json', value: readJson(path.join(root, 'suite-inventory.json')).files },
+    { file: 'a12-evidence/required-files.json', value: readJson(path.join(root, 'a12-evidence/required-files.json')) },
+    { file: 'a12-evidence/file-requirements.json',
+      value: readJson(path.join(root, 'a12-evidence/file-requirements.json')).map(row => row.file) },
+  ];
+  assert.equal(lists.length, 3, 'the three current lists are the ones compared');
+  for (const list of lists) {
+    assert.deepEqual(list.value, expected, `${list.file} does not match the committed tree`);
   }
 });
 
