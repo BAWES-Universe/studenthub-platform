@@ -666,7 +666,9 @@ export async function bindingLegNamedCheck(create, h, leg = 'readback') {
 // second fixture - its readback, after the push, by a test that asserts HALT with
 // no refusal code and no leg named. Its local and remote legs had no committed
 // assertion at all: measured at the parent a51c8490, a mutant that neuters either
-// one alone leaves the parent's whole committed suite green.
+// one alone fires no ref-binding assertion anywhere in the parent's committed
+// suite. The discriminator is that name diff against an unmutated baseline, not an
+// exit code - an unrelated SHU251 row can redden a run in that configuration.
 // The two mutant shapes that truncate the loop or skip its legs are a different
 // matter, and are not claimed here as holes: five committed tests outside this
 // file kill each of them at the parent, so they pin the loop's shape.

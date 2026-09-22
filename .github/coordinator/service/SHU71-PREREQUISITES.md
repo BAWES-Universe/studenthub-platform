@@ -5640,6 +5640,14 @@ of the same export:
     (`parent-suite-survival.txt`, `parent-suite-survival-run.log`; the parent worktree is restored from
     git after every run and ended clean.)
 
+    The discriminator these rows turn on is the **name diff against the unmutated baseline**, not the exit
+    code. In this configuration an unrelated row can redden a whole run - this round's verifier re-ran the
+    REMOTE row twice and got exit 1 with one failure each time (the SHU251 `loseReceipt` sibling once, the
+    live-restart positive control once) while **zero ref-binding assertions fired in either run**, which
+    is the conclusion the row carries. Host posture for these runs, as in the Validation sections above:
+    uid 1000, umask 0022, the four target accounts absent, `chmod -R go-w .github/coordinator` applied
+    first, pinned to CPUs 0-9 with `--test-concurrency=4`, one run at a time.
+
 **The reseed terms are enforced twice, and that is now stated precisely.** The local acceptance
 `verifyReseedCommit` runs inside the `remote-push` step **before** the push; the post-push read-back
 then re-measures the same terms against the remote under `ACT_REMOTE_ANCESTRY` - the commit's parents
@@ -5664,8 +5672,9 @@ signed and is not what the owner's approval binds. The witnesses for the superse
 them before the owner does.
 
 **Focused selection after this correction.** The selection used here is the committed enumeration plus
-one file that no committed document had named, `shu71-prearm-measurement.test.mjs` - thirty-two files,
-listed in `round/scratch/focused-files.txt`. It is run at this head, and the four modes follow in the
+one file that no committed document describing the focused selection had named,
+`shu71-prearm-measurement.test.mjs` - thirty-two entries in `round/scratch/focused-files.txt`, three of
+them globs, expanding to thirty-nine test files. It is run at this head, and the four modes follow in the
 same lane:
 
 Four modes at the code head `94aa6622` (tree `d2d3ece6`; the two commits after it are documentation and
@@ -5697,7 +5706,7 @@ again**, exit 1, `3632 ok / 1 not ok`, the same member inside the A12 inner run
 
 That second observation matters more than the first, because it removes the reading the earlier entries
 in this record allowed: the reds are not explained by another suite sharing the box. Across this lane's
-ten runs at `94aa6622` and `52a022f3` - six full-scope and four focused - three full-scope runs were
+eleven runs at `94aa6622` and `52a022f3` - six full-scope and five focused - three full-scope runs were
 red, all three on the same member, the `loseReceipt` sibling of the live-restart family inside the A12
 guard's inner concurrent run; and one focused run was red on `SHU-250`'s 1000 ms tick assertion. Every
 red is a wall-clock or timing assertion, none is a wrong assertion, and running the offending file alone
@@ -5722,8 +5731,11 @@ them a timing or wall-clock assertion, none of them a wrong assertion:
 
 Three things are now known that were not known when this family was last reported:
 
-- `residual.test.mjs` is **not in the committed focused selection**, so only the full scope ever
-  exercises this family; that is why every sighting has been in a full run.
+- The live-restart family lives in `residual.test.mjs` and in `supervisor-service.test.mjs`; neither file
+  is in the focused selection, so only the full scope ever exercises the family - which is why every
+  sighting of it has been in a full run. (This round's verifier saw a `supervisor-service.test.mjs`
+  member, "SHU251 recovery precedes readiness and authenticated status is available", fail in a parent
+  run; none of the six reds listed above is misattributed.)
 - It does not reproduce in isolation or under plain load: 6/6 green with the shifted clock and 3/3
   green plain, each run alone; 10/10 green plain earlier, four idle and six under 8-way CPU load; and a
   per-leg mutant sweep of the parent's whole committed suite ran four times without one failure in this
