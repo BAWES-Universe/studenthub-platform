@@ -28,8 +28,32 @@ export const ARTIFACT_NAME = 'measure-capture';
 export const RUNNER_KEY = 'coordinator';
 export const RUNNER_COMMAND = JSON.parse(fs.readFileSync(RUNNERS, 'utf8')).runners[RUNNER_KEY].command;
 export const CLAIM_PATH = '.github/coordinator/service/claim-manifest.json';
+// The object ids the contents API reports for the authority paths. The emitter compares these between main and
+// the candidate, so a world in which they agree is a world whose candidate leaves the authority alone.
+export const AUTHORITY_WORKFLOW_SHA = '1a'.repeat(20);
+export const AUTHORITY_DIR_SHA = '2b'.repeat(20);
 
 const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
+
+// A genuine capture: `node --test --test-reporter=tap` run over a fixture file, so what the parser is fed is
+// the reporter's own bytes rather than a hand-shaped imitation of them. Used where the point of the test is
+// what a REAL runner reports - duplicate point names, nesting - and not what a world asserts.
+export const genuineTap = fixture => {
+  const file = path.join(HERE, 'fixtures', fixture);
+  // NODE_TEST_CONTEXT is set in the environment of a process the test runner started, and a nested
+  // `node --test` that sees it reports to its parent in v8-serialised frames instead of writing TAP. This run
+  // is a capture, not a subtest, so the variable is removed for it.
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  try {
+    return execFileSync(process.execPath, ['--test', '--test-reporter=tap', file],
+      { encoding: 'utf8', env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    // A fixture with a failing test exits non-zero; its stdout is still the capture the measure job would
+    // have taken, and the suite exit code travels separately.
+    return String(error.stdout ?? '');
+  }
+};
 
 // A capture shaped exactly as `node --test --test-reporter=tap` writes one, naming the tests the claim names.
 export const tapFor = (names, { failing = [] } = {}) => {
@@ -118,10 +142,20 @@ export const build = (patch = {}) => {
     [`/repos/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs`]: { json: { jobs: [{ id: 99000000, name: 'trust', status: 'completed', conclusion: 'success' }, job] } },
     [`/repos/${REPO}/actions/runs/${RUN_ID}/artifacts`]: { json: { artifacts: [artifact] } },
     [`/repos/${REPO}/actions/artifacts/${artifact.id}/zip`]: { binary_file: zipPath },
-    [`/repos/${REPO}/commits/${CANDIDATE_SHA}`]: { json: { sha: CANDIDATE_SHA, commit: { tree: { sha: CANDIDATE_TREE } } } },
+    [`/repos/${REPO}/commits/${CANDIDATE_SHA}`]: { json: { sha: CANDIDATE_SHA, commit: { tree: { sha: CANDIDATE_TREE } },
+      parents: patch.candidateParents ?? [{ sha: CLAIM_HEAD }] } },
     [`/repos/${REPO}/commits/${CLAIM_HEAD}`]: { json: { sha: CLAIM_HEAD, commit: { tree: { sha: CLAIM_TREE } } } },
-    [`/repos/${REPO}/compare/main...${CANDIDATE_SHA}`]: { json: { status: 'diverged', files: [{ filename: 'apps/gateway/src/index.ts' }] } },
-    [`/repos/${REPO}/compare/${CLAIM_HEAD}...${CANDIDATE_SHA}`]: { json: { status: 'ahead', files: [{ filename: CLAIM_PATH }] } },
+    // The authority as the contents API reports it: the same object ids on main and at the candidate.
+    [`/repos/${REPO}/contents/.github/workflows?ref=main`]: { json: [{ name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) },
+      { name: 'verifier-receipt.yml', type: 'file', sha: AUTHORITY_WORKFLOW_SHA }] },
+    [`/repos/${REPO}/contents/.github/workflows?ref=${CANDIDATE_SHA}`]: { json: [{ name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) },
+      { name: 'verifier-receipt.yml', type: 'file', sha: AUTHORITY_WORKFLOW_SHA }] },
+    [`/repos/${REPO}/contents/.github?ref=main`]: { json: [{ name: 'coordinator', type: 'dir', sha: '4d'.repeat(20) },
+      { name: 'verifier-receipt', type: 'dir', sha: AUTHORITY_DIR_SHA }, { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+    [`/repos/${REPO}/contents/.github?ref=${CANDIDATE_SHA}`]: { json: [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
+      { name: 'verifier-receipt', type: 'dir', sha: AUTHORITY_DIR_SHA }, { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+    [`/repos/${REPO}/compare/${CLAIM_HEAD}...${CANDIDATE_SHA}`]: { json: { status: 'ahead', ahead_by: 1, behind_by: 0,
+      total_commits: 1, files: [{ filename: CLAIM_PATH, status: 'modified' }] } },
     [`/repos/${REPO}/contents/${CLAIM_PATH}?ref=${CANDIDATE_SHA}`]: { json: { sha: 'f'.repeat(40), content: claimBytes.toString('base64') } },
     [`/repos/${REPO}/compare/${TRUSTED_SHA}...main`]: { json: { status: 'identical' } },
     ...(patch.routes ?? {}),

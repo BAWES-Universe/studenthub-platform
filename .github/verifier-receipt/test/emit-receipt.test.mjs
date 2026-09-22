@@ -179,10 +179,73 @@ test('a fabrication handed over as an artifact of another run is refused before 
 
 test('a candidate that modifies the receipt authority is refused, naming the authority', () => {
   const built = world.build({ routes: {
-    [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`]: { json: { status: 'diverged',
-      files: [{ filename: '.github/verifier-receipt/emit-receipt.mjs' }] } },
+    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
+      { name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
+      { name: 'verifier-receipt', type: 'dir', sha: '9999'.repeat(10) },
+      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /\.github\/verifier-receipt/);
+});
+
+// The hole this replaced: the check read `files[].filename` from a comparison GitHub caps at 300 entries and
+// truncates, in ascending filename order, with nothing in the response saying so. 300 paths under `.github/a...`
+// sort before `.github/verifier-receipt/`, so an authority edit fell off the end of the list and the candidate
+// was approved as `touches_authority: false`. The identity check never reads that list, so the filler does not
+// reach it.
+test('a candidate hiding its authority edit behind a full 300-file comparison page is still refused', () => {
+  const filler = Array.from({ length: 300 }, (unused, index) => ({
+    filename: `.github/aaa/${String(index).padStart(4, '0')}.json`, status: 'added' }));
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead', ahead_by: 137,
+      total_commits: 137, files: filler } },
+    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
+      { name: 'verifier-receipt', type: 'dir', sha: '9999'.repeat(10) },
+      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
   } });
   refusedOn(world.emit(built), 'candidate.authority');
+});
+
+// A rename is reported under its NEW name, with the old path only in `previous_filename`. Moving the emitter to
+// `.github/parked/` DELETES the authority, and the pattern-over-`filename` check called that untouched.
+test('a candidate that renames the authority away is refused, naming the absent path', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
+      { name: 'parked', type: 'dir', sha: '2b'.repeat(20) },
+      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /absent at the candidate/);
+});
+
+test('a candidate that renames the workflow to another extension is refused', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/contents/.github/workflows?ref=${world.CANDIDATE_SHA}`]: { json: [
+      { name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) },
+      { name: 'verifier-receipt.yaml', type: 'file', sha: world.AUTHORITY_WORKFLOW_SHA }] },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /verifier-receipt\.yml is absent at the candidate/);
+});
+
+test('an authority listing the API will not serve is refused, not skipped', () => {
+  const built = world.build({ dropRoutes: [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`] });
+  refusedOn(world.emit(built), 'candidate.authority');
+});
+
+test('the receipt carries the object ids the authority decision was made from', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.candidate.touches_authority, false);
+  assert.deepEqual(receipt.candidate.authority_identity.map(entry => entry.path),
+    ['.github/workflows/verifier-receipt.yml', '.github/verifier-receipt']);
+  for (const entry of receipt.candidate.authority_identity) {
+    assert.equal(entry.protected_sha, entry.candidate_sha);
+  }
 });
 
 test('a candidate carrying no claim is refused, naming the claim path', () => {
@@ -200,9 +263,89 @@ test('a claim whose code revision the candidate is not a descendant of is refuse
 test('a claim measured against a commit that changed code beyond the claim is refused, naming the revision', () => {
   const built = world.build({ routes: {
     [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+      ahead_by: 1, total_commits: 1,
       files: [{ filename: world.CLAIM_PATH }, { filename: '.github/coordinator/push-broker.mjs' }] } },
   } });
   refusedOn(world.emit(built), 'claim.code_revision.head');
+});
+
+// ---- the widening is one commit wide, and the claim's own files wide ----------------------------------------
+
+test('a claim whose code revision is 137 commits behind the measured commit is refused, naming the revision', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+      ahead_by: 137, total_commits: 137, files: [{ filename: world.CLAIM_PATH }] } },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.code_revision.head');
+  assert.match(result.stderr, /137 commit\(s\)/);
+});
+
+test('a claim whose code revision is not a parent of the measured commit is refused, even one step ahead', () => {
+  const built = world.build({ candidateParents: [{ sha: '3'.repeat(40) }] });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.code_revision.head');
+  assert.match(result.stderr, /nor one of its parents/);
+});
+
+// `.github/coordinator/service/receipts/` used to be allowlisted by prefix, which is an unbounded number of
+// paths that all sort ahead of `apps/`, `packages/` and `tools/`. Only the claim's own files are tolerated now,
+// so the filler is itself beyond the claim's bookkeeping and the code change is named in the refusal.
+test('a step that changes apps/, packages/ or tools/ is refused however much bookkeeping surrounds it', () => {
+  for (const codePath of ['apps/gateway/src/index.ts', 'packages/contracts/src/authz.ts', 'tools/seed/run.mjs']) {
+    const built = world.build({ routes: {
+      [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+        ahead_by: 1, total_commits: 1, files: [
+          ...Array.from({ length: 5 }, (unused, index) => ({
+            filename: `.github/coordinator/service/receipts/${String(index).padStart(4, '0')}.json` })),
+          { filename: codePath, status: 'modified' },
+        ] } },
+    } });
+    const result = world.emit(built);
+    refusedOn(result, 'claim.code_revision.head');
+    assert.match(result.stderr, new RegExp(codePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('a comparison at GitHub\'s 300-file cap is refused as truncated, not read as a boundary', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+      ahead_by: 1, total_commits: 1,
+      files: Array.from({ length: 300 }, (unused, index) => ({
+        filename: `.github/coordinator/service/receipts/${String(index).padStart(4, '0')}.json` })) } },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.code_revision.delta');
+  assert.match(result.stderr, /truncated/);
+});
+
+test('a comparison that carries no file list is refused, not read as "nothing changed"', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+      ahead_by: 1, total_commits: 1 } },
+  } });
+  refusedOn(world.emit(built), 'claim.code_revision.delta');
+});
+
+test('a step that renames code ONTO a bookkeeping path is refused, naming the path it came from', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+      ahead_by: 1, total_commits: 1, files: [{ filename: world.CLAIM_PATH, status: 'renamed',
+        previous_filename: 'apps/gateway/src/index.ts' }] } },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.code_revision.head');
+  assert.match(result.stderr, /apps\/gateway\/src\/index\.ts/);
+});
+
+test('the legitimate one-commit widening still succeeds, and the receipt records the step\'s files', () => {
+  const built = world.build();
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.equal(receipt.provenance.claim.code_revision.head, world.CLAIM_HEAD);
+  assert.deepEqual(receipt.provenance.claim.delta_from_code_revision, [world.CLAIM_PATH]);
 });
 
 test('a claim whose named tree is not that revision\'s tree is refused, naming the tree', () => {
@@ -283,9 +426,122 @@ test('an authority commit that main does not contain makes the receipt inadmissi
 test('every identifying input is required: the emitter defaults nothing that names the evidence', () => {
   for (const name of ['REPO', 'RUN_ID', 'RUN_ATTEMPT', 'TRUSTED_SOURCE_SHA', 'TRUSTED_SOURCE_ORIGIN',
     'MEASURE_JOB_NAME', 'MEASURE_ARTIFACT_NAME', 'MEASURE_ARTIFACT_ID', 'MEASURE_ARTIFACT_DIGEST',
-    'CANDIDATE_SHA', 'RUNNER_KEY', 'RUNNER_SPEC_PATH']) {
+    'CANDIDATE_SHA', 'CANDIDATE_TREE', 'RUNNER_KEY', 'RUNNER_SPEC_PATH']) {
     refusedOn(world.emit(world.build(), { [name]: undefined }), `env.${name}`);
     // A workflow expression that resolves to nothing arrives as the empty string, which is the same failure.
     refusedOn(world.emit(world.build(), { [name]: '' }), `env.${name}`);
   }
+});
+
+// ---- a repeated point name is not a measurement of that name ------------------------------------------------
+
+// The capture here is genuine: `node --test --test-reporter=tap` over a fixture that reports one name twice,
+// failing first and passing second. Keying the observed status by name and overwriting it meant the later `ok`
+// erased the earlier `not ok`, so a test the PROTECTED runner watched fail was carried into the receipt as
+// `pass` - a failure the summary counts still showed, discarded from the verdict for that test.
+test('a name the genuine capture reports as fail then pass is recorded fail, not pass', () => {
+  const capture = world.genuineTap('duplicate-name.mjs');
+  assert.match(capture, /^not ok 3 - a duplicated name$/m, 'the fixture must really fail first');
+  assert.match(capture, /^ok 4 - a duplicated name$/m, 'the fixture must really pass second');
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-DUP', control: { test_names: ['a duplicated name'] }, killing_mutants: [] }],
+  };
+  const built = world.build({ capture, claim, meta: { suite_exit: '1' } });
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual(receipt.named_tests.map(test => [test.name, test.status]), [['a duplicated name', 'fail']]);
+  assert.equal(receipt.named_tests_summary.fail, 1);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  // The repeat itself is recorded, not just its worst outcome.
+  assert.deepEqual(receipt.duplicate_points, [{ name: 'a duplicated name', points: 2,
+    statuses: ['fail', 'pass'], collapsed_to: 'fail' }]);
+  assert.match(receipt.conclusion.reasons.join(' | '), /reported 2 times, as fail and pass/);
+  // And the suite counts the receipt carries still agree with the reporter's own.
+  assert.equal(receipt.suite.not_ok, 1);
+  assert.equal(receipt.suite.tests, 4);
+});
+
+test('a name reported twice, both passing, is still pass - and the repeat is recorded', () => {
+  const capture = [
+    'TAP version 13',
+    'ok 1 - a repeated name', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
+    'ok 2 - a repeated name', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
+    '1..2', '# tests 2', '# suites 0', '# pass 2', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
+    '# duration_ms 3', '',
+  ].join('\n');
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-REPEAT', control: { test_names: ['a repeated name'] }, killing_mutants: [] }],
+  };
+  const built = world.build({ capture, claim });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.equal(receipt.named_tests[0].points, 2);
+  assert.deepEqual(receipt.duplicate_points, [{ name: 'a repeated name', points: 2, statuses: ['pass'],
+    collapsed_to: 'pass' }]);
+});
+
+// ---- every term is named, whether or not it names a test ------------------------------------------------------
+
+// The claim-wide `named > 0` rule let a term that names no test ride to `success` on a sibling term's coverage,
+// with no entry, no reason and no marker anywhere in the receipt.
+test('terms that name no tests cannot ride to success on a sibling term\'s coverage', () => {
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [
+      { id: 'TERM-covered', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
+      { id: 'TERM-empty-a', control: { test_names: [] }, killing_mutants: [] },
+      { id: 'TERM-empty-b', control: {} },
+      { id: 'TERM-no-control' },
+    ],
+  };
+  const built = world.build({ claim, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.notDeepEqual(receipt.conclusion.reasons, []);
+  assert.match(receipt.conclusion.reasons.join(' | '),
+    /3 term\(s\) name no tests, so this run establishes nothing about them: TERM-empty-a, TERM-empty-b, TERM-no-control/);
+  // Every term the manifest lists appears, with what this run establishes about it.
+  assert.deepEqual(receipt.terms.map(term => [term.id, term.named, term.establishes]), [
+    ['TERM-covered', 1, true], ['TERM-empty-a', 0, false], ['TERM-empty-b', 0, false], ['TERM-no-control', 0, false]]);
+  assert.deepEqual(receipt.terms_summary, { total: 4, establishing: 1, naming_no_tests: 3,
+    without_evidence: ['TERM-empty-a', 'TERM-empty-b', 'TERM-no-control'] });
+  // And the run still establishes what it did establish, term by term.
+  assert.equal(receipt.named_tests_summary.pass, 1);
+});
+
+test('a term whose only named test failed is marked as establishing nothing, by name', () => {
+  const built = world.build({ capture: world.tapFor(world.NAMED_TESTS, { failing: ['the push broker retries only reads'] }) });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual(receipt.terms.map(term => [term.id, term.establishes]), [['TERM-1', true], ['TERM-2', false]]);
+  assert.deepEqual(receipt.terms_summary.without_evidence, ['TERM-2']);
+});
+
+test('two terms naming one test are two entries, each attributed to its own term', () => {
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [
+      { id: 'TERM-A', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
+      { id: 'TERM-B', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
+    ],
+  };
+  const built = world.build({ claim, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual(receipt.named_tests.map(test => test.term), ['TERM-A', 'TERM-B']);
+  assert.deepEqual(receipt.terms.map(term => [term.id, term.named]), [['TERM-A', 1], ['TERM-B', 1]]);
+  assert.equal(receipt.conclusion.verdict, 'success');
+});
+
+// ---- the candidate tree is required, like every other identity field ------------------------------------------
+
+test('a capture that records no candidate tree is refused, naming the capture\'s tree', () => {
+  const built = world.build({ meta: { candidate_tree: '' } });
+  refusedOn(world.emit(built), 'capture.candidate_tree');
 });

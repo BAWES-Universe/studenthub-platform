@@ -19,6 +19,19 @@
 // Nothing here is a path, a field, a command or an artifact the candidate chose. The candidate contributes the
 // code under test and the claim it commits, and nothing else reaches this process.
 //
+// WHICH CODE WAS MEASURED, AND WHAT THAT ESTABLISHES. Two more questions decide whether a verdict means
+// anything, and a review found both answered by a list GitHub truncates:
+//
+//   * does the candidate leave this authority alone? Settled in section 8 by the OBJECT ID of each authority
+//     path on main and at the candidate - not by filtering a compare listing, which is capped at 300 entries,
+//     sorted by filename, truncated with no flag, and which reports a rename under its new name only;
+//   * is the claim about the code that ran? Settled in section 9: the claim names the measured commit or its
+//     IMMEDIATE PARENT, that step is one commit wide, and the only paths it may touch are the claim's own
+//     bookkeeping files, named exactly.
+//
+// And the verdict is per-term: every term the manifest lists is enumerated in the receipt with what this run
+// established about it, so a term that names no test cannot ride to `success` on a sibling term's coverage.
+//
 // DEFENCE IN DEPTH, AND NOT MORE THAN THAT. The TAP structure and count reconciliation further down is a check
 // that the capture is WELL FORMED. It is not, and must never be described as, a check that it is GENUINE: a
 // candidate's suite can emit any well-formed stream it likes. It is kept because it catches truncation, a
@@ -38,24 +51,46 @@ const PY = env.PY_BIN ?? 'python3';
 
 // Constants of the authority. None of them is an input, because an input is something a caller chooses.
 const WORKFLOW_PATH = '.github/workflows/verifier-receipt.yml';
-const AUTHORITY_RE = /^\.github\/(?:workflows\/verifier-receipt\.yml$|verifier-receipt\/)/;
+// The authority, named as OBJECTS rather than as a pattern to test a diff listing against. Section 8 explains
+// why: a listing can be truncated and a rename can be reported under a name this set does not contain, but the
+// object id GitHub reports for a path at a ref is neither truncated nor renameable.
+const AUTHORITY_PATHS = [
+  { dir: '.github/workflows', name: 'verifier-receipt.yml', kind: 'file' },
+  { dir: '.github', name: 'verifier-receipt', kind: 'directory' },
+];
+const PROTECTED_REF = 'main';
 const CLAIM_PATH = '.github/coordinator/service/claim-manifest.json';
 const CAPTURE_FILE = 'suite.out';
 const META_FILE = 'capture-meta.json';
 // A claim is normally committed on top of the code revision it names - the manifest cannot name the commit that
-// contains it, because that commit's sha depends on the manifest's bytes. So the claim may sit one step ahead of
-// the revision it describes, provided GitHub's own comparison says the step changed nothing but bookkeeping.
+// contains it, because that commit's sha depends on the manifest's bytes. So the claim may name the measured
+// commit itself, or that commit's IMMEDIATE PARENT, and nothing further: the justification reaches exactly one
+// commit, so the rule may not reach further than one commit either. An earlier version of this file required
+// only `status === 'ahead'`, which a review defeated by presenting a claim 137 commits behind the code that was
+// measured. The widening is also narrow in FILES: the only paths tolerated across that one commit are the
+// claim's own bookkeeping files, named exactly. An earlier version allowlisted the whole prefix
+// `.github/coordinator/service/receipts/`, which is an unbounded number of paths that all sort ahead of
+// `apps/`, `packages/` and `tools/` - the exact filler for pushing real code changes off a truncated listing.
 const CLAIM_ONLY = [
   '.github/coordinator/service/claim-manifest.json',
   '.github/coordinator/service/verifier-receipts.json',
 ];
-const CLAIM_ONLY_PREFIX = '.github/coordinator/service/receipts/';
+// GitHub's compare endpoint returns at most this many entries in `files`, sorted by filename, and says nothing
+// in the response about having truncated the list. Measured on this repository: 300 returned for a comparison
+// that changed 429 files. A listing at or beyond the cap therefore bounds nothing, and is refused rather than
+// read.
+const COMPARE_FILE_CAP = 300;
 
 const refuse = (field, message) => {
   console.error(`REFUSING: ${field}: ${message}`);
   process.exit(3);
 };
 const fail = message => refuse('capture.structure', message);
+// A refusal has to be readable to be acted on, and a list of hundreds of paths is not. The count is always
+// exact; only the enumeration is cut.
+const listing = (names, limit = 10) => (names.length <= limit
+  ? names.join(', ')
+  : `${names.slice(0, limit).join(', ')}, and ${names.length - limit} more`);
 const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
 const need = name => {
   // An unset expression in a workflow arrives as the empty string, not as an absent variable, so both are the
@@ -94,6 +129,10 @@ const artifactName = need('MEASURE_ARTIFACT_NAME');
 const expectedArtifactId = String(need('MEASURE_ARTIFACT_ID'));
 const expectedArtifactDigest = need('MEASURE_ARTIFACT_DIGEST');
 const candidateSha = need('CANDIDATE_SHA');
+// Required, like every other field that identifies the evidence. It used to be the one optional input, and an
+// unset workflow expression arrives as the empty string - exactly the case `need()` exists to catch - so the
+// single cross-check that the measure job checked out the tree the API reports defaulted to being skipped.
+const candidateTreeInput = need('CANDIDATE_TREE');
 const runnerKey = need('RUNNER_KEY');
 const runnerSpecPath = need('RUNNER_SPEC_PATH');
 const outPath = env.OUT_PATH ?? path.join(process.cwd(), 'receipt.json');
@@ -239,23 +278,61 @@ const candidateCommit = apiJson(`/repos/${repo}/commits/${candidateSha}`);
 if (!candidateCommit) refuse('candidate.sha', `the API reports no commit ${candidateSha} in ${repo}`);
 const candidateTree = candidateCommit.commit?.tree?.sha ?? null;
 if (!candidateTree) refuse('candidate.tree', `the API reports no tree for commit ${candidateSha}`);
-if (env.CANDIDATE_TREE && env.CANDIDATE_TREE !== candidateTree) {
-  refuse('candidate.tree', `the measure job checked out tree ${env.CANDIDATE_TREE}, but the API reports `
+if (candidateTreeInput !== candidateTree) {
+  refuse('candidate.tree', `the measure job checked out tree ${candidateTreeInput}, but the API reports `
     + `${candidateTree} for ${candidateSha}`);
 }
-if (meta.candidate_tree && meta.candidate_tree !== candidateTree) {
+if (!meta.candidate_tree) {
+  refuse('capture.candidate_tree', 'the capture records no candidate tree, so it does not say which tree was measured');
+}
+if (meta.candidate_tree !== candidateTree) {
   refuse('capture.candidate_tree', `the capture records tree ${meta.candidate_tree}, but the API reports `
     + `${candidateTree} for ${candidateSha}`);
 }
 
-// 8. A candidate that alters the receipt authority cannot be approved by a receipt this authority produces. The
-//    file list comes from GitHub's own comparison, which the candidate cannot influence.
-const authorityCompare = apiJson(`/repos/${repo}/compare/main...${candidateSha}`);
-if (!authorityCompare) refuse('candidate.authority', `the API could not compare main...${candidateSha}`);
-const touched = (authorityCompare.files ?? []).map(file => file.filename).filter(name => AUTHORITY_RE.test(name));
-if (touched.length > 0) {
-  refuse('candidate.authority', `this candidate modifies the receipt authority (${touched.join(', ')}), so no `
-    + 'receipt this authority produces may approve it');
+// 8. A candidate that alters the receipt authority cannot be approved by a receipt this authority produces.
+//
+//    This is settled by OBJECT IDENTITY, not by reading a diff listing. Two reviews of the listing form found
+//    the same two holes in it. (a) GitHub's compare endpoint caps `files` at 300, sorts it by filename and
+//    truncates it with no flag anywhere in the response - measured on this repository, 300 entries returned for
+//    a comparison that changed 429 files - so a candidate that adds 300 files sorting before `.github/v...`
+//    pushes its own authority edit off the end of the list, and the check reports `touches_authority: false`.
+//    (b) A rename is reported under its NEW name, with the old path only in `previous_filename`, so moving
+//    `.github/verifier-receipt/emit-receipt.mjs` to `.github/parked/` - which deletes the authority - matched
+//    no pattern at all.
+//
+//    Asking GitHub for the object id of each authority path, at main and at the candidate, closes both: a
+//    directory's sha covers every byte under it however many other files the candidate touched, an absent path
+//    answers with no sha at all, and neither answer is a page of a list. Unreadable is refused, not skipped.
+const objectAt = (dir, name, ref) => {
+  const listing = apiJson(`/repos/${repo}/contents/${encodeURI(dir)}?ref=${ref}`);
+  if (!Array.isArray(listing)) return { listed: false, sha: null, type: null };
+  const found = listing.find(item => item.name === name);
+  return { listed: true, sha: found?.sha ?? null, type: found?.type ?? null };
+};
+const authorityIdentity = AUTHORITY_PATHS.map(entry => {
+  const full = `${entry.dir}/${entry.name}`;
+  const onProtected = objectAt(entry.dir, entry.name, PROTECTED_REF);
+  if (!onProtected.listed) {
+    refuse('candidate.authority', `the API cannot list ${entry.dir} on ${PROTECTED_REF}, so this run cannot `
+      + `establish what ${full} is on the protected branch`);
+  }
+  const onCandidate = objectAt(entry.dir, entry.name, candidateSha);
+  if (!onCandidate.listed) {
+    refuse('candidate.authority', `the API cannot list ${entry.dir} at ${candidateSha.slice(0, 12)}, so this run `
+      + `cannot establish that the candidate leaves ${full} alone`);
+  }
+  return { path: full, kind: entry.kind, protected_sha: onProtected.sha, candidate_sha: onCandidate.sha };
+});
+const altered = authorityIdentity.filter(entry => entry.protected_sha !== entry.candidate_sha);
+if (altered.length > 0) {
+  const how = altered.map(entry => {
+    if (entry.candidate_sha === null) return `${entry.path} is absent at the candidate (deleted or renamed away)`;
+    if (entry.protected_sha === null) return `${entry.path} is absent on ${PROTECTED_REF} but present at the candidate`;
+    return `${entry.path} is ${entry.candidate_sha.slice(0, 12)} at the candidate, not ${entry.protected_sha.slice(0, 12)}`;
+  });
+  refuse('candidate.authority', `this candidate alters the receipt authority (${how.join('; ')}), so no receipt `
+    + 'this authority produces may approve it');
 }
 
 // 9. The claim, fetched from the candidate commit through the contents API. Not from the artifact, not from a
@@ -271,23 +348,69 @@ try { manifest = JSON.parse(claimBytes.toString('utf8')); }
 catch { refuse('claim.json', `${CLAIM_PATH} at ${candidateSha.slice(0, 12)} is not readable JSON`); }
 
 const claimedHead = manifest.code_revision?.head ?? null;
+const short = String(claimedHead).slice(0, 12);
 let claimDelta = [];
 if (claimedHead !== candidateSha) {
+  // ONE COMMIT, AND ONE COMMIT ONLY. The reason a claim may name a revision other than the commit measured is
+  // that the manifest's own bytes are part of the commit that carries it, so it names the commit it was written
+  // on top of - its parent. That reason reaches exactly one commit, so this rule does too, and it is expressed
+  // twice over: the named revision must BE one of the measured commit's parents (GitHub's answer for the
+  // commit, not a distance), and the comparison must be one commit wide.
+  if (!/^[0-9a-f]{40}$/.test(String(claimedHead ?? ''))) {
+    refuse('claim.code_revision.head', `the claim names ${JSON.stringify(claimedHead)} as its code revision, `
+      + 'which is not a full commit sha');
+  }
+  const parents = (candidateCommit.parents ?? []).map(parent => parent.sha);
+  if (!parents.includes(claimedHead)) {
+    refuse('claim.code_revision.head', `the claim names ${short} as its code revision, but that is neither the `
+      + `measured commit ${candidateSha.slice(0, 12)} nor one of its parents `
+      + `(${parents.map(sha => sha.slice(0, 12)).join(', ') || 'none'}); a claim may only be committed directly `
+      + 'on top of the revision it names');
+  }
   const step = apiJson(`/repos/${repo}/compare/${claimedHead}...${candidateSha}`);
   if (!step) {
-    refuse('claim.code_revision.head', `the claim names ${String(claimedHead).slice(0, 12)} as its code revision, `
-      + `and GitHub cannot compare that to the measured commit ${candidateSha.slice(0, 12)}`);
+    refuse('claim.code_revision.head', `the claim names ${short} as its code revision, and GitHub cannot compare `
+      + `that to the measured commit ${candidateSha.slice(0, 12)}`);
   }
   if (step.status !== 'ahead') {
-    refuse('claim.code_revision.head', `the claim names ${String(claimedHead).slice(0, 12)} as its code revision, `
-      + `but the measured commit ${candidateSha.slice(0, 12)} is ${step.status} of it, not a descendant`);
+    refuse('claim.code_revision.head', `the claim names ${short} as its code revision, but the measured commit `
+      + `${candidateSha.slice(0, 12)} is ${step.status} of it, not a descendant`);
   }
-  claimDelta = (step.files ?? []).map(file => file.filename);
-  const beyond = claimDelta.filter(name => !CLAIM_ONLY.includes(name) && !name.startsWith(CLAIM_ONLY_PREFIX));
+  const aheadBy = Number(step.ahead_by);
+  const totalCommits = Number(step.total_commits);
+  if (!Number.isInteger(aheadBy) || !Number.isInteger(totalCommits)) {
+    refuse('claim.code_revision.head', `the claim names ${short} as its code revision, and GitHub's comparison `
+      + `to ${candidateSha.slice(0, 12)} reports no commit count, so the width of the step is unknown`);
+  }
+  if (aheadBy !== 1 || totalCommits !== 1) {
+    refuse('claim.code_revision.head', `the claim names ${short} as its code revision, but the measured commit `
+      + `${candidateSha.slice(0, 12)} is ${aheadBy} commit(s) and ${totalCommits} total commit(s) ahead of it; `
+      + 'the only widening this authority allows is the one commit that carries the claim itself');
+  }
+  // The delta is read from a list GitHub caps and silently truncates, so the cap is a refusal, not a boundary
+  // to read up to. An absent list is a refusal too: `(step.files ?? [])` read as "nothing changed", which is
+  // the fail-open reading of "GitHub did not say".
+  if (!Array.isArray(step.files)) {
+    refuse('claim.code_revision.delta', `GitHub's comparison of ${short} to ${candidateSha.slice(0, 12)} carries `
+      + 'no file list, so what that commit changed cannot be bounded');
+  }
+  if (step.files.length >= COMPARE_FILE_CAP) {
+    refuse('claim.code_revision.delta', `GitHub's comparison of ${short} to ${candidateSha.slice(0, 12)} lists `
+      + `${step.files.length} files, at or beyond the ${COMPARE_FILE_CAP}-file cap where that list is truncated `
+      + 'with no flag; a truncated list bounds nothing, and one commit of the claim\'s own bookkeeping is never '
+      + 'this wide');
+  }
+  // A rename is reported under its new name, so a commit that renames `apps/x.ts` ONTO a bookkeeping path
+  // would pass a check that reads `filename` alone. Both ends of every entry are tested.
+  claimDelta = step.files.map(file => file.filename);
+  const beyond = [...new Set(step.files
+    .flatMap(file => [file.filename, file.previous_filename].filter(Boolean))
+    .filter(name => !CLAIM_ONLY.includes(name)))];
   if (beyond.length > 0) {
-    refuse('claim.code_revision.head', `the claim names ${String(claimedHead).slice(0, 12)} as its code revision, `
-      + `but the measured commit ${candidateSha.slice(0, 12)} changes code beyond the claim's own bookkeeping `
-      + `(${beyond.join(', ')}), so the suite that ran is not the suite the claim describes`);
+    refuse('claim.code_revision.head', `the claim names ${short} as its code revision, but the measured commit `
+      + `${candidateSha.slice(0, 12)} changes code beyond the claim's own bookkeeping `
+      + `(${beyond.length} path(s): ${listing(beyond)}), so the suite that ran is not the suite `
+      + 'the claim describes');
   }
 }
 const claimedCommit = claimedHead === candidateSha ? candidateCommit : apiJson(`/repos/${repo}/commits/${claimedHead}`);
@@ -299,14 +422,23 @@ if (manifest.code_revision?.tree !== claimedCommit.commit?.tree?.sha) {
 
 // What the claim says must exist. A control is a test the claim names; a mutant is a test that must die when its
 // term is removed. Both are read from the candidate's claim - as data, never as code.
+//
+// Keyed by (term, kind, name), not by name. Keying by name alone meant two terms naming the same test collapsed
+// to one entry attributed to whichever term the manifest happened to list last, so the other term vanished from
+// the receipt entirely while still riding on that test's result.
 const named = new Map();
+const claimTerms = [];
 for (const entry of manifest.entries ?? []) {
-  for (const test of entry.control?.test_names ?? []) {
-    named.set(test, { term: entry.id, kind: 'control', name: test });
+  const term = entry.id ?? null;
+  const tests = [
+    ...(entry.control?.test_names ?? []).map(name => ({ kind: 'control', name })),
+    ...(entry.killing_mutants ?? []).filter(mutant => mutant.test_name)
+      .map(mutant => ({ kind: 'mutant', name: mutant.test_name })),
+  ];
+  for (const test of tests) {
+    named.set(`${term}\u0000${test.kind}\u0000${test.name}`, { term, kind: test.kind, name: test.name });
   }
-  for (const mutant of entry.killing_mutants ?? []) {
-    if (mutant.test_name) named.set(mutant.test_name, { term: entry.id, kind: 'mutant', name: mutant.test_name });
-  }
+  claimTerms.push({ id: term, names: tests.length });
 }
 // DEFENCE IN DEPTH: is the capture WELL FORMED? This is not, and may not be reported as, a check that it is
 // GENUINE - genuineness is settled above, by provenance, and by nothing in this section. The candidate's own
@@ -402,7 +534,17 @@ for (const raw of tap.split('\n')) {
       problems.push(`line ${lineNo}: point numbered ${point[2]} where the runner would have numbered it ${seen}`);
     }
     open = { indent, name: point[3], type: null };
-    observed.set(point[3], point[1] === 'ok' ? 'pass' : 'fail');
+    // A name reported twice is not last-writer-wins. It used to be, so a named test the protected runner
+    // watched FAIL was reported `pass` whenever any later point shared its name - the failure stayed in the
+    // summary counts the receipt carries, but was discarded from the verdict for that test. Duplicate names
+    // across two files of one glob are ordinary, so this collapses pessimistically rather than refusing: the
+    // worst status any point under that name reported wins, and the repeat itself is recorded.
+    const status = point[1] === 'ok' ? 'pass' : 'fail';
+    const prior = observed.get(point[3]);
+    observed.set(point[3], prior
+      ? { status: prior.status === 'fail' || status === 'fail' ? 'fail' : status, points: prior.points + 1,
+        statuses: prior.statuses.includes(status) ? prior.statuses : [...prior.statuses, status] }
+      : { status, points: 1, statuses: [status] });
     continue;
   }
 
@@ -449,7 +591,13 @@ if (problems.length > 0) {
   fail(`the captured output is not a measurement a runner produced:\n  - ${problems.join('\n  - ')}`);
 }
 
-const perTest = [...named.values()].map(test => ({ ...test, status: observed.get(test.name) ?? 'absent' }));
+const perTest = [...named.values()].map(test => {
+  const seen = observed.get(test.name);
+  return { ...test, status: seen?.status ?? 'absent', points: seen?.points ?? 0 };
+});
+const duplicatePoints = [...observed.entries()]
+  .filter(([, seen]) => seen.points > 1)
+  .map(([name, seen]) => ({ name, points: seen.points, statuses: seen.statuses, collapsed_to: seen.status }));
 const summary = {
   named: perTest.length,
   pass: perTest.filter(test => test.status === 'pass').length,
@@ -457,20 +605,61 @@ const summary = {
   absent: perTest.filter(test => test.status === 'absent').length,
 };
 
-// Success means: the claim names tests, every one of them was observed in this run's capture, and every one
-// passed. The suite's own exit code and counts travel with the receipt so an unrelated failure is visible
-// rather than smoothed over.
-const established = summary.named > 0 && summary.fail === 0 && summary.absent === 0;
+// EVERY TERM, NAMED. The claim-wide `named > 0` rule let a term that names no test at all ride to `success` on
+// a sibling term's coverage, with no entry, no reason and no marker anywhere in the receipt - the per-term form
+// of the hole that was closed claim-wide. So the receipt enumerates every term the manifest lists, with what
+// this run establishes about it, and a term this run establishes nothing about is a reason the claim as a whole
+// is not established.
+const termReport = claimTerms.map(term => {
+  const tests = perTest.filter(test => test.term === term.id);
+  const fail = tests.filter(test => test.status === 'fail').length;
+  const absent = tests.filter(test => test.status === 'absent').length;
+  return {
+    id: term.id,
+    named: tests.length,
+    pass: tests.filter(test => test.status === 'pass').length,
+    fail,
+    absent,
+    establishes: tests.length > 0 && fail === 0 && absent === 0,
+  };
+});
+const uncoveredTerms = termReport.filter(term => term.named === 0).map(term => String(term.id));
+
+// Success means: the claim lists terms, every term names at least one test, every named test was observed in
+// this run's capture, and every one passed. The suite's own exit code and counts travel with the receipt so an
+// unrelated failure is visible rather than smoothed over.
+const established = termReport.length > 0 && termReport.every(term => term.establishes)
+  && summary.named > 0 && summary.fail === 0 && summary.absent === 0;
 const reasons = [];
-if (summary.named === 0) reasons.push('the claim names no tests, so this run establishes nothing about any term');
+if (termReport.length === 0) reasons.push('the claim lists no terms, so this run establishes nothing');
+if (summary.named === 0 && termReport.length > 0) {
+  reasons.push('the claim names no tests, so this run establishes nothing about any term');
+}
+if (uncoveredTerms.length > 0) {
+  reasons.push(`${uncoveredTerms.length} term(s) name no tests, so this run establishes nothing about them: `
+    + uncoveredTerms.join(', '));
+}
 if (summary.fail > 0) reasons.push(`${summary.fail} named test(s) failed in the measured run`);
 if (summary.absent > 0) reasons.push(`${summary.absent} named test(s) did not appear in the measured run`);
+for (const duplicate of duplicatePoints) {
+  // Every repeat is recorded in `duplicate_points`; only a repeat whose points DISAGREE is a reason, because a
+  // disagreement means the run contains a failure of a named test that a naive reading would have lost.
+  if (duplicate.statuses.length < 2 || !perTest.some(test => test.name === duplicate.name)) continue;
+  reasons.push(`the named test "${duplicate.name}" was reported ${duplicate.points} times, as `
+    + `${duplicate.statuses.join(' and ')}; it is recorded as ${duplicate.collapsed_to}`);
+}
 
 // Admissibility is separate from the verdict, and deliberately so. A receipt produced by a run that is not a
 // dispatch of this workflow on the protected default branch is a rehearsal: every provenance check above still
 // had to pass, but the authority the run executed was not necessarily the authority main holds. Such a receipt
-// may never be pinned, and `verify-claim.yml` refuses it independently - this field explains why, it does not
-// grant anything.
+// may never be pinned.
+//
+// WHAT ENFORCES THAT, HONESTLY. On this branch the enforcement is here and in this workflow's own emit job,
+// which refuses to attest a receipt this block marks inadmissible. There is no second, independent enforcer in
+// this repository yet: `verify-claim.yml` does not exist on this branch, and an earlier version of this comment
+// stated that it refuses such a receipt independently, as present fact. It does not, because it is not here. A
+// consumer of this receipt must therefore read `admissible_as_pin` itself and refuse a false; nothing else in
+// this repository will do it for them.
 const trustedOnMain = (() => {
   const compare = apiJson(`/repos/${repo}/compare/${trustedSha}...main`);
   return compare ? ['identical', 'ahead'].includes(compare.status) : false;
@@ -504,7 +693,15 @@ const receipt = {
     trusted_source_on_main: trustedOnMain,
   },
   run: { id: String(run.id), attempt: runAttempt },
-  candidate: { sha: candidateSha, tree: candidateTree, touches_authority: false },
+  candidate: {
+    sha: candidateSha,
+    tree: candidateTree,
+    touches_authority: false,
+    // The evidence for the line above: the object id of each authority path on the protected branch and at the
+    // candidate, which is what was compared. Not a filtered diff listing, which GitHub truncates at
+    // COMPARE_FILE_CAP and which reports a rename under its new name only.
+    authority_identity: authorityIdentity,
+  },
   // Everything a third party needs to re-fetch and re-check this receipt through the API, without trusting any
   // part of it. Each field below is something GitHub reports, not something a job asserted.
   provenance: {
@@ -550,7 +747,8 @@ const receipt = {
     admissible_as_pin: inadmissible.length === 0,
     inadmissibility_reasons: inadmissible,
   },
-  // Kept for the pin format `verify-claim.yml` already reads.
+  // Kept for the pin format a claim verifier reads. No such verifier exists in this repository yet; this block
+  // is the shape one would read, not evidence that one does.
   manifest: {
     path: CLAIM_PATH,
     sha256: sha256(claimBytes),
@@ -570,6 +768,19 @@ const receipt = {
   },
   named_tests: perTest,
   named_tests_summary: summary,
+  // Every term the manifest lists, whether or not it names a test. A term with `named: 0` is a term this run
+  // establishes nothing about, and it is enumerated here so that no consumer can read a claim-wide `success`
+  // as covering it.
+  terms: termReport,
+  terms_summary: {
+    total: termReport.length,
+    establishing: termReport.filter(term => term.establishes).length,
+    naming_no_tests: uncoveredTerms.length,
+    without_evidence: termReport.filter(term => !term.establishes).map(term => String(term.id)),
+  },
+  // Names the capture reported more than once. Recorded because a repeated name is not a measurement of that
+  // name: the status carried above is the WORST of them, never the last.
+  duplicate_points: duplicatePoints,
   conclusion: {
     verdict: established ? 'success' : 'failure',
     scope: 'the named tests of the claim this measured, as observed in this run\'s own capture',
@@ -582,6 +793,9 @@ fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
 console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice(0, 8)}: verdict `
   + `${receipt.conclusion.verdict}; named ${summary.named} pass ${summary.pass} fail ${summary.fail} `
   + `absent ${summary.absent}; suite exit ${suiteExit}, tests ${counts.tests}`);
+console.log(`terms: ${termReport.length} listed, ${receipt.terms_summary.establishing} established`
+  + (uncoveredTerms.length > 0 ? `; naming no tests: ${uncoveredTerms.join(', ')}` : '')
+  + (duplicatePoints.length > 0 ? `; repeated point names: ${duplicatePoints.map(d => `"${d.name}" x${d.points}`).join(', ')}` : ''));
 console.log(`provenance: run ${runId} attempt ${runAttempt}, measure job ${measureJob.id} ${measureJob.conclusion}, `
   + `artifact ${artifact.name}#${artifact.id} ${artifact.digest}, capture sha256:${captureDigest}, `
   + `runner "${runnerKey}"; admissible as pin: ${receipt.provenance.admissible_as_pin}`

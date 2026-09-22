@@ -7,11 +7,19 @@
     "pointed at a candidate of the author's choosing at dispatch time.",
     "",
     "A pull_request run is a rehearsal and nothing more: the emitter records admissible_as_pin=false for it,",
-    "and verify-claim.yml independently refuses any pin whose run is not a workflow_dispatch on main.",
+    "and the emit job refuses to attest a receipt carrying that mark, so a rehearsal produces an unsigned",
+    "artifact and nothing else. An earlier version of this note said verify-claim.yml independently refuses",
+    "any pin whose run is not a workflow_dispatch on main. That workflow does not exist in this repository;",
+    "until one does, a consumer must read provenance.admissible_as_pin itself.",
     "",
     "The candidate below is chosen because it is a real commit that carries a real claim manifest, does not",
-    "touch the receipt authority, and is not an ancestor of anything this lane changes."
+    "touch the receipt authority, and is not an ancestor of anything this lane changes. It also satisfies the",
+    "narrowed bookkeeping rule: its manifest names its own parent as the code revision, and the one commit",
+    "between them changes claim-manifest.json and nothing else. The previous candidate,",
+    "6feac016e3a0796d0c7b21d86426af0f1491a9c1, no longer qualifies - its commit also wrote",
+    ".github/coordinator/service/receipts/verifier-r32.json, which was tolerated only by the prefix allowlist",
+    "that a review showed to be the lever for hiding code changes behind a truncated compare page."
   ],
-  "candidate_sha": "6feac016e3a0796d0c7b21d86426af0f1491a9c1",
+  "candidate_sha": "7e7ac70e37f2a99b4d3dc65c2a3ae3325d7681ab",
   "runner_key": "coordinator"
 }

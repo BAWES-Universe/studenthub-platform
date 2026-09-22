@@ -39,8 +39,14 @@ on:
           - coordinator-service
   # workflow_dispatch registers only for workflows on the default branch, so a change to this authority cannot
   # be exercised by dispatch until it merges. A pull_request run rehearses the whole chain for real - real job,
-  # real artifact, real API - against the candidate fixed in the authority's own rehearsal file. It can never
-  # mint anything: the emitter marks it admissible_as_pin=false and verify-claim.yml refuses non-dispatch runs.
+  # real artifact, real API - against the candidate fixed in the authority's own rehearsal file.
+  #
+  # It can never mint anything, and here is exactly what enforces that, because an earlier version of this
+  # comment claimed an enforcer this repository does not have. The emitter marks such a receipt
+  # admissible_as_pin=false, and the emit job below refuses to attest a receipt carrying that mark - so a
+  # rehearsal produces an unsigned artifact and nothing else. There is NO second, independent enforcer in this
+  # repository: `verify-claim.yml` does not exist on this branch, and nothing here reads a pin. Any consumer of
+  # these receipts must read `provenance.admissible_as_pin` itself.
   pull_request:
     paths:
       - .github/workflows/verifier-receipt.yml
@@ -125,7 +131,13 @@ jobs:
           echo "authority $trusted_sha ($trusted_origin); candidate $candidate_sha; runner $runner_key"
 
       # An early, cheap refusal. The emitter re-checks this from the API itself and refuses independently, so a
-      # drift in this pattern loosens nothing - it only wastes a suite run before the refusal lands.
+      # drift here loosens nothing - it only wastes a suite run before the refusal lands.
+      #
+      # It asks the same question the emitter asks, the same way: the OBJECT ID of each authority path on main
+      # and at the candidate. This step used to read `.files[].filename` from `compare/main...<candidate>`,
+      # which has two holes the emitter's comment records in full - GitHub caps that list at 300 entries and
+      # truncates it silently in filename order, and it reports a rename under its new name only. An id is
+      # neither a page of a list nor a name.
       - name: Refuse a candidate that alters the receipt authority
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,14 +145,36 @@ jobs:
           CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          changed=$(gh api "/repos/$REPO/compare/main...$CANDIDATE_SHA" --jq '.files[].filename')
-          touched=$(printf '%s\n' "$changed" | grep -E '^\.github/(workflows/verifier-receipt\.yml$|verifier-receipt/)' || true)
-          if [ -n "$touched" ]; then
-            echo "::error::this candidate modifies the receipt authority, so its receipt may not approve it"
-            printf '%s\n' "$touched"
+          object_id() {  # directory, entry name, ref -> the entry's sha, or empty if the entry is not there
+            local listing
+            if ! listing=$(gh api "/repos/$REPO/contents/$1?ref=$3" 2>/dev/null); then
+              # This function is called in a command substitution, so its diagnostics go to stderr or they are
+              # captured as its result and lost. `set -e` in the caller turns the non-zero exit into a refusal.
+              echo "::error::cannot list $1 at $3, so this run cannot establish what $1/$2 is there" >&2
+              exit 1
+            fi
+            printf '%s' "$listing" | node -e '
+              let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+                const found = JSON.parse(s).find(item => item.name === process.argv[1]);
+                process.stdout.write(found?.sha ?? "");
+              });
+            ' "$2"
+          }
+          altered=""
+          for pair in ".github/workflows:verifier-receipt.yml" ".github:verifier-receipt"; do
+            dir="${pair%%:*}"; name="${pair##*:}"
+            on_main=$(object_id "$dir" "$name" main)
+            on_candidate=$(object_id "$dir" "$name" "$CANDIDATE_SHA")
+            echo "$dir/$name: main=${on_main:-<absent>} candidate=${on_candidate:-<absent>}"
+            if [ "$on_main" != "$on_candidate" ]; then
+              altered="$altered $dir/$name"
+            fi
+          done
+          if [ -n "$altered" ]; then
+            echo "::error::this candidate alters the receipt authority ($altered), so its receipt may not approve it"
             exit 1
           fi
-          echo "the candidate does not alter the receipt authority"
+          echo "the candidate leaves every authority object exactly as main holds it"
 
   measure:
     name: measure
@@ -331,22 +365,53 @@ jobs:
         run: node authority/.github/verifier-receipt/emit-receipt.mjs
 
       - name: Refuse to emit a receipt that establishes nothing
+        id: gate
         run: |
           set -euo pipefail
           node -e "
             const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
             const summary = receipt.named_tests_summary ?? {};
+            const terms = receipt.terms ?? null;
             const verdict = receipt.conclusion?.verdict ?? null;
             console.log('verdict', verdict, 'named', summary.named, 'pass', summary.pass, 'fail', summary.fail, 'absent', summary.absent);
+            console.log('terms', JSON.stringify(receipt.terms_summary ?? {}));
+            console.log('reasons', JSON.stringify(receipt.conclusion?.reasons ?? []));
             console.log('admissible as pin:', receipt.provenance?.admissible_as_pin, receipt.provenance?.inadmissibility_reasons ?? []);
             if (verdict !== 'success') { console.error('::error::the receipt does not record a successful measurement of the named tests'); process.exit(1); }
             if (!(summary.named > 0)) { console.error('::error::the receipt names no tests, so it establishes nothing about any term'); process.exit(1); }
+            if (!Array.isArray(terms) || terms.length === 0) { console.error('::error::the receipt enumerates no terms'); process.exit(1); }
+            // The per-term form of the rule above. A claim-wide \`named > 0\` is satisfied by ONE covered term,
+            // so a term naming no test rode to success on a sibling's coverage; the emitter now refuses that in
+            // the verdict, and this step refuses it again by name.
+            const uncovered = terms.filter(term => !(term.named > 0)).map(term => term.id);
+            if (uncovered.length > 0) { console.error('::error::these terms name no tests, so this run establishes nothing about them: ' + uncovered.join(', ')); process.exit(1); }
+            const admissible = receipt.provenance?.admissible_as_pin === true;
+            require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + admissible + '\n');
           "
 
+      # ATTESTATION IS NOT FOR REHEARSALS. A GitHub-signed provenance statement over a receipt reads as stronger
+      # than any field buried inside it, and a consumer that checks for the attestation rather than for
+      # `admissible_as_pin` would be misled by one. On a pull_request run the authority itself can come from the
+      # pull request head - the trust job says so, loudly, when it falls back - which means the emitter, the
+      # runner enum and the rehearsal pin are all the PR author's. Signing that is minting a credential for
+      # content the candidate's author controlled, so it is not signed at all.
+      #
+      # The job's permissions cannot be narrowed per step, so the refusal is the step condition.
       - name: Attest the receipt
+        if: steps.gate.outputs.admissible == 'true'
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: receipt.json
+
+      - name: Say, in the log, why this receipt was not attested
+        if: steps.gate.outputs.admissible != 'true'
+        run: |
+          set -euo pipefail
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const why = receipt.provenance?.inadmissibility_reasons ?? ['admissible_as_pin is not true'];
+            console.log('::warning::this receipt is not admissible as a pin and was NOT attested: ' + why.join('; '));
+          "
 
       - name: Upload the receipt as an artifact
         id: upload
@@ -375,4 +440,5 @@ jobs:
             echo "| capture artifact | measure-capture (id ${{ needs.measure.outputs.artifact_id }}, ${{ needs.measure.outputs.artifact_digest }}) |"
             echo "| receipt artifact | verifier-receipt (id ${{ steps.upload.outputs.artifact-id }}) |"
             echo "| receipt sha256 | sha256:${digest} |"
+            echo "| admissible as pin | ${{ steps.gate.outputs.admissible }} (attested only when true) |"
           } >> "$GITHUB_STEP_SUMMARY"
