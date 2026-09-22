@@ -72,6 +72,8 @@ export async function readRegistry(root, registry) {
   const mutations = [];
   const collect = (rows, checkIndex) => {
     for (const row of rows ?? []) {
+      const problem = validateMutationRow(row, checkIndex, registry.label);
+      if (problem) throw new Error(problem);
       const name = row[0];
       const check = row[checkIndex];
       let kills = fns.get(check) ?? [];
@@ -95,6 +97,25 @@ export async function readRegistry(root, registry) {
   collect(module.siblingMutations, 4);
   collect(module.closureMutations, 5);
   return { registry, controls, mutations };
+}
+
+// A mutation row's shape is the registry's business, and the generator has to state which shape it read.
+// The check index is fixed per export name (mutations, siblingMutations, closureMutations), which holds for
+// the two registries this manifest covers - both five-element rows - and does not hold for every registry in
+// the repository: shu71-branch-restore-checks.mjs carries three-element rows. Reading the wrong index pairs
+// every mutation in that registry with `undefined` and reports `no mutant` for terms that have one, silently.
+// That registry is not in REGISTRIES, so nothing is mis-paired today; the validator below is there so that
+// adding one cannot pass unnoticed.
+export function validateMutationRow(row, checkIndex, label) {
+  if (!Array.isArray(row)) return `${label}: a mutation row is not an array`;
+  if (typeof row[0] !== 'string' || row[0].length === 0) {
+    return `${label}: a mutation row has no name`;
+  }
+  if (typeof row[checkIndex] !== 'function') {
+    return `${label}: mutation '${row[0]}' has no check function at index ${checkIndex} `
+      + `(row has ${row.length} elements) - the registry's row shape and the index the generator reads disagree`;
+  }
+  return null;
 }
 
 // One entry per control: the term it pins, the mutants that die when that control alone is present, and
@@ -167,12 +188,18 @@ export function coverageOf(root, entries) {
     for (const name of entry.control.test_names) referenced.add(name);
     for (const mutant of entry.killing_mutants) referenced.add(mutant.test_name);
   }
-  const notReferenced = inventory.names.filter(name => !referenced.has(name));
+  const outsideScope = inventory.names.filter(name => !referenced.has(name));
+  // Scope, stated: this manifest covers the sealed arming terms the registries declare. It is not a
+  // coverage report on the whole coordinator suite, and the count below is the size of what is outside the
+  // manifest's scope by design, not a gap in it. Reading it as missing coverage is the misreading it exists
+  // to prevent.
   return {
+    scope: 'the sealed arming terms the registries declare; not a coverage report on the whole suite',
+    sealed_terms: entries.length,
     inventory_names: inventory.names.length,
-    referenced_in_inventory: inventory.names.length - notReferenced.length,
-    not_referenced: notReferenced.length,
-    not_referenced_sample: notReferenced.slice(0, 12),
+    control_names_referenced_in_inventory: inventory.names.length - outsideScope.length,
+    suite_names_outside_scope: outsideScope.length,
+    outside_scope_sample: outsideScope.slice(0, 12),
     referenced_not_in_inventory: [...referenced].filter(name => !inventory.names.includes(name)).length,
   };
 }

@@ -3781,6 +3781,7 @@
     "B7 claim manifest: the coverage block counts what the entries enumerate and what they do not",
     "B7 claim manifest: a mutant attributed on an unestablished basis is rejected",
     "B7 claim manifest: a verified receipt at a revision the manifest does not cover is rejected",
+    "B7 claim manifest: a mutation row whose shape disagrees with the index read is refused",
     "B7 claim manifest: every suite file list in the tree agrees with the committed tree",
     "B7 claim manifest: a manifest committed after the code revision it names is accepted",
     "B7 claim manifest: a manifest whose entries were edited by hand is rejected"
@@ -28730,6 +28731,14 @@
     },
     {
       "name": "B7 claim manifest: a verified receipt at a revision the manifest does not cover is rejected",
+      "capabilities": [
+        {
+          "name": "git"
+        }
+      ]
+    },
+    {
+      "name": "B7 claim manifest: a mutation row whose shape disagrees with the index read is refused",
       "capabilities": [
         {
           "name": "git"

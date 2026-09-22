@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkManifest, checkEntries, checkCodeRevision, buildManifest, readJson, sha256, MANIFEST_NAME,
-  coverageOf, nonExecutable } from '../claim-manifest.mjs';
+  coverageOf, nonExecutable, validateMutationRow } from '../claim-manifest.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const inventory = () => new Set(readJson(path.join(root, 'suite-inventory.json')).names);
@@ -142,8 +142,11 @@ test('B7 claim manifest: the coverage block counts what the entries enumerate an
   const coverage = coverageOf(root, built.entries);
   const inventory = readJson(path.join(root, 'suite-inventory.json'));
   assert.equal(coverage.inventory_names, inventory.names.length);
-  assert.equal(coverage.referenced_in_inventory + coverage.not_referenced, coverage.inventory_names,
-    'every inventory name is either referenced by an entry or counted as unreferenced');
+  assert.match(coverage.scope, /sealed arming terms/, 'the coverage block states what the manifest covers');
+  assert.equal(coverage.sealed_terms, built.entries.length);
+  assert.equal(coverage.control_names_referenced_in_inventory + coverage.suite_names_outside_scope,
+    coverage.inventory_names,
+    'every inventory name is either referenced by a sealed term or counted as outside the manifest scope');
   assert.equal(coverage.referenced_not_in_inventory, 0,
     'an entry must not reference a test name the inventory does not carry');
   assert.deepEqual(coverage, built.coverage, 'the rebuild and the generator count the same coverage');
@@ -171,6 +174,20 @@ test('B7 claim manifest: a verified receipt at a revision the manifest does not 
   } finally {
     fs.rmSync(file, { force: true });
   }
+});
+
+test('B7 claim manifest: a mutation row whose shape disagrees with the index read is refused', () => {
+  // The check index is fixed per export name, which holds for the two registries this manifest covers and
+  // does not hold for every registry in the repository: branch-restore rows are [name, edits, check]. Reading
+  // the wrong index pairs every mutation there with undefined and reports "no mutant" for terms that have one.
+  // Nothing is mis-paired today; this is the guard against adding a registry that is.
+  const five = ['a term', 'from', 'to', (_create, _fixture) => {}];
+  assert.equal(validateMutationRow(five, 3, 'B6 arming robustness'), null);
+  assert.match(validateMutationRow(['a term', 'edits', (_c, _f) => {}], 3, 'branch restore'),
+    /no check function at index 3 \(row has 3 elements\)/);
+  assert.match(validateMutationRow(['a term', 'from', 'to', 'not a function'], 3, 'x'), /no check function/);
+  assert.match(validateMutationRow([], 3, 'x'), /has no name/);
+  assert.match(validateMutationRow('not a row', 3, 'x'), /is not an array/);
 });
 
 test('B7 claim manifest: every suite file list in the tree agrees with the committed tree', () => {
