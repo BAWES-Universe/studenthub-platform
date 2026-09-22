@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "code_revision": {
-    "head": "5e61f57aed691ec01d24da403ade07a291c39e02",
-    "tree": "ec84d564d662f372af492259369ecc6e6fa7e907"
+    "head": "746eef3f6986c8547975fb4bc3921ff7a292f520",
+    "tree": "2be533ff7d3c4898339eec3d7c1be7740fde5430"
   },
   "entries": [
     {
@@ -15,14 +15,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -41,14 +34,7 @@
           "test_name": "B5 post-push read-back mutation: the push is retried like a read"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -71,14 +57,7 @@
           "test_name": "B5 post-push read-back mutation: the signed reseed sha is not compared"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -97,14 +76,7 @@
           "test_name": "B5 post-push read-back mutation: the ref comparison itself is retried until it agrees"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -123,14 +95,7 @@
           "test_name": "B5 post-push read-back mutation: the GraphQL error codes are not collected"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -153,14 +118,7 @@
           "test_name": "B5 post-push read-back mutation: the post-push ancestry read goes back to the unretried door"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -179,14 +137,7 @@
           "test_name": "B5 post-push read-back mutation: an exhausted retry returns an empty answer instead of refusing"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -205,14 +156,7 @@
           "test_name": "B5 post-push read-back mutation: the ref is not required to still carry the reseed commit"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -231,14 +175,7 @@
           "test_name": "B5 post-push read-back mutation: the exact parent count is not required"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -261,14 +198,7 @@
           "test_name": "B5 post-push read-back mutation: the retry policy allows a single attempt"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -287,14 +217,7 @@
           "test_name": "B5 post-push read-back mutation: the patch-bearing comparison comes back"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -313,14 +236,7 @@
           "test_name": "B5 post-push read-back mutation: the parent order is not required"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -339,14 +255,7 @@
           "test_name": "B5 post-push read-back mutation: the authorization expiry does not stop the retry"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -365,14 +274,7 @@
           "test_name": "B5 post-push read-back mutation: the first parent position is not required"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -399,14 +301,7 @@
           "test_name": "B5 post-push read-back mutation: the halt record drops the measured API detail"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -425,14 +320,7 @@
           "test_name": "B5 post-push read-back mutation: the overall sleep budget is not enforced"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -451,14 +339,7 @@
           "test_name": "B5 post-push read-back mutation: the second parent position is not required"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -477,14 +358,7 @@
           "test_name": "B6 arming robustness mutation: the host-command retry repeats a boundary fault as well as a command failure"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -499,14 +373,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -525,14 +392,7 @@
           "test_name": "B6 arming robustness mutation: a failed measurement is reported as the state the caller named"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -551,14 +411,7 @@
           "test_name": "B6 arming robustness mutation: the teardown records step codes without causes"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -572,14 +425,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -593,14 +439,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -614,14 +453,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -635,14 +467,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -656,14 +481,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -677,14 +495,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -707,14 +518,7 @@
           "test_name": "B6 arming robustness mutation: the halt record drops the measured command detail"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -730,14 +534,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -752,14 +549,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -778,14 +568,7 @@
           "test_name": "B6 arming robustness mutation: the supervisor secret refusal goes back to a bare string"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -804,14 +587,7 @@
           "test_name": "B6 arming robustness mutation: the card read-back is never re-read"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -827,14 +603,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -850,14 +619,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -876,14 +638,7 @@
           "test_name": "B6 arming robustness mutation: the Linear fixture-card read goes back to the unretried door"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -906,14 +661,7 @@
           "test_name": "B6 arming robustness mutation: the host-command read policy allows a single attempt"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -932,14 +680,7 @@
           "test_name": "B6 arming robustness mutation: the host-command read retry is removed"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -962,14 +703,7 @@
           "test_name": "B6 arming robustness mutation: the halt code goes back to an allow-list"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -988,14 +722,7 @@
           "test_name": "B6 arming robustness mutation: the credential is resolved on every call again"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -1011,14 +738,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -1034,14 +754,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     },
@@ -1060,14 +773,7 @@
           "test_name": "B6 arming robustness mutation: the binding legs are evaluated eagerly instead of in order"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -1086,14 +792,7 @@
           "test_name": "B6 arming robustness mutation: the host-command sleep budget is not enforced"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -1112,14 +811,7 @@
           "test_name": "B6 arming robustness mutation: the package validator code is dropped again"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -1142,14 +834,7 @@
           "test_name": "B6 arming robustness mutation: the pre-push acceptance refusal is swallowed"
         }
       ],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no verifying receipt at the code revision"
     },
@@ -1165,14 +850,7 @@
         ]
       },
       "killing_mutants": [],
-      "receipts": [
-        {
-          "file": "receipts/b6-arming-robustness-and-manifest-guard.json",
-          "kind": "suite",
-          "sha256": "bde42efef2ab67fda38e8eb38cbebc9a726de8d8517915765d26a317ee83ca31",
-          "verdict": null
-        }
-      ],
+      "receipts": [],
       "disposition": "BLOCK",
       "reason": "no mutant is paired with this control in the registry; no verifying receipt at the code revision"
     }
