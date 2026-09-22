@@ -5662,7 +5662,16 @@ that would arm: the full scope is run at it as well.
 **Focused selection after this correction.** The committed focused selection is run at this head, and
 the four modes follow in the same lane:
 
-FOURMODE_PLACEHOLDER
+Four modes at this head (`94aa6622`, tree `d2d3ece6`), one mode at a time:
+
+    focused plain   exit 0   2247 ok / 0 not ok   (244s)
+    focused clock   exit 0   2247 ok / 0 not ok   (253s)
+    full plain      exit 0   3633 ok / 0 not ok   (541s)
+    full clock      exit 1   3632 ok / 1 not ok   (513s)   - the recorded family again, below
+
+The A12 committed-inventory guard runs inside the full scope and is green in full plain, so the eight
+rows this lane added across its two commits - three control legs and five mutants - move with the tests
+they describe.
 
 **The one red in the four modes, characterised further rather than summarised away.** The full-clock
 observation failed on `SHU251 live worker restart adopts once and recovers durable completion`
@@ -5673,17 +5682,21 @@ known when this family was last reported:
 
 - `residual.test.mjs` is **not in the committed focused selection**, so only the full scope ever
   exercises this family; that is why every sighting has been in a full run.
-- It does not reproduce in isolation in either mode: 6/6 green with the shifted clock and 3/3 green
-  plain, each run alone; and 10/10 green plain earlier, four idle and six under 8-way CPU load. The
-  trigger is therefore the full concurrent run, not the clock shift and not plain CPU load.
-- Both sightings in this lane are this family and differ in member - the positive control here, the
-  `loseReceipt` mutation at `6152c34` - which is the shape of a timing or resource interaction, not of
-  a wrong assertion.
+- It does not reproduce in isolation or under plain load: 6/6 green with the shifted clock and 3/3
+  green plain, each run alone; 10/10 green plain earlier, four idle and six under 8-way CPU load; and a
+  per-leg mutant sweep of the parent's whole committed suite ran four times without a single failure.
+  The trigger is therefore the full concurrent run - a configuration in which the live-restart family
+  shares the box with every other test - not the clock shift, and not CPU load on its own.
+- All three sightings in this lane are this family and differ in member: the `loseReceipt` mutation at
+  `6152c34`, the positive control at `d09b1dd7`, and the `loseReceipt` mutation again at `94aa6622`
+  (inside the A12 guard's concurrent inner run, whose own report was `tests=3637 / pass=3628 / fail=1 /
+  skipped=8`). Different members failing at different heads is the shape of a timing or resource
+  interaction, not of a wrong assertion.
 
-The re-run the earlier round's precedent asks for was done for this head: full clock on an idle box
-with nothing else running returned **exit 0, `3630 ok / 0 not ok`** (`full-clock-rerun-280h.tap`), so the
-family is flaky in the full concurrent run rather than broken at this revision - recorded with both the
-red and the green, not the green alone.
+The clean re-run the lane's precedent asks for was done for this head too: full clock at `94aa6622`, on
+an idle box with nothing else running, **exit 0, `3633 ok / 0 not ok`**
+(`full-clock-rerun-280h-r18.tap`) - so both the red and the green are recorded, never the green
+alone.
 
 The concrete next step, for a lane of its own, is to record what the refusal carried: `ok:false` from
 `submitToSupervisor` is currently discarded by the assertion, so the reason the supervisor declined is
