@@ -1,0 +1,151 @@
+name: Verifier receipt
+
+# The receipt authority. This workflow is the only source of a receipt the manifest accepts, and it is
+# dispatched from main so that GitHub runs THIS file, not a version carried by the commit under review. Both
+# the workflow and the tool it runs are checked out from the dispatching ref, which is why a candidate cannot
+# alter the thing that measures it and cannot select another version of it.
+#
+# It is deliberately not triggered by pull_request or push: a receipt is a measurement someone asks for about
+# a named commit, and the manifest pins the dispatching ref, the dispatching commit, the run and the artifact
+# digest. Changing this file is its own reviewed change to main, and because a run of this workflow measures
+# the dispatching ref, a commit that changes this file cannot be the commit whose run approves it.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: The exact commit to measure. The receipt names it and the manifest binds to it.
+        required: true
+        type: string
+      suite_command:
+        description: The suite command to run in the candidate tree.
+        required: false
+        default: npm run test:coordinator
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+jobs:
+  receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # The tool that emits the receipt comes from the dispatching ref, never from the candidate. Two
+      # checkouts, two roles: this one is the measurer, the next one is the thing measured.
+      - name: Check out the receipt tooling from the dispatching ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: verifier
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check out the candidate commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          persist-credentials: false
+          # The manifest guard proves the manifest's code revision is an ancestor of the checkout with no
+          # executable difference between them; a depth-1 clone does not contain that revision at all.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Assert the checkout is the requested commit
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha }}"
+          echo "candidate  ${{ inputs.candidate_sha }}"
+          echo "tree       $(git rev-parse 'HEAD^{tree}')"
+
+      - name: Refuse a candidate that carries the measurer
+        run: |
+          set -euo pipefail
+          # A commit that changes the receipt workflow or its tooling cannot be measured by it: the receipt
+          # would approve the change that introduced the version approving it. This is refused here, before
+          # any measurement, and the manifest refuses it again on the receipt's own diff.
+          base="${{ github.sha }}"
+          touched="$(git diff --name-only "$base" "${{ inputs.candidate_sha }}" -- \
+            .github/workflows/verifier-receipt.yml .github/verifier-receipt || true)"
+          if [ -n "$touched" ]; then
+            echo "REFUSING: the candidate changes the receipt authority itself:"
+            echo "$touched"
+            exit 1
+          fi
+
+      - name: Host prerequisites for the coordinator suite
+        run: |
+          set -euo pipefail
+          # Host artifacts in this suite require /usr/bin/node; setup-node supplies a tool-cache binary.
+          runner_node="$(command -v node)"
+          test -x "$runner_node"
+          if [ "$(readlink -f /usr/bin/node)" != "$(readlink -f "$runner_node")" ]; then
+            sudo ln -sfn "$runner_node" /usr/bin/node
+          fi
+          test -x /usr/bin/node
+
+      - name: Run the suite in the candidate tree and capture its TAP
+        id: suite
+        env:
+          TMPDIR: /tmp
+        run: |
+          set -uo pipefail
+          command='${{ inputs.suite_command }}'
+          set +e
+          TAP=1 bash -c "$command" > tap.txt 2>&1
+          status=$?
+          set -e
+          echo "exit=$status" >> "$GITHUB_OUTPUT"
+          echo "suite exit: $status"
+          tail -5 tap.txt || true
+
+      - name: Emit the canonical receipt
+        env:
+          VERIFIER_SUITE_COMMAND: ${{ inputs.suite_command }}
+          VERIFIER_SUITE_EXIT: ${{ steps.suite.outputs.exit }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/verifier/.github/verifier-receipt/emit-receipt.mjs" \
+            --candidate "${{ inputs.candidate_sha }}" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --tap tap.txt \
+            --out receipt.json
+          sha256sum receipt.json
+
+      - name: Attest the receipt's provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: receipt.json
+
+      - name: Upload the receipt as an artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-receipt
+          path: receipt.json
+          if-no-files-found: error
+
+      - name: Publish what the manifest must pin
+        run: |
+          set -euo pipefail
+          echo "workflow_ref  ${GITHUB_WORKFLOW_REF}"
+          echo "run_id        ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}"
+          echo "run head_sha  ${GITHUB_SHA}"
+          echo "artifact_id   ${{ steps.upload.outputs.artifact-id }}"
+          echo "artifact_digest ${{ steps.upload.outputs.artifact-digest }}"
+          echo "receipt_digest  $(sha256sum receipt.json | cut -d' ' -f1)"
+
+      # The run's conclusion must agree with the receipt's, so a reader never has to reconcile the two. The
+      # comparison is on the measurement's own verdict - the named tests of the claim - and the suite's exit
+      # code and failing test names were printed above and are in the receipt either way.
+      - name: Fail the run when the measurement is not a success
+        run: |
+          set -euo pipefail
+          verdict="$(node -p "JSON.parse(require('fs').readFileSync('receipt.json','utf8')).conclusion.verdict")"
+          echo "receipt verdict: $verdict"
+          test "$verdict" = "success"
