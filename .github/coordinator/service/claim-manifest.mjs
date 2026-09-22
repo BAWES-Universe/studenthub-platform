@@ -173,11 +173,23 @@ export function checkCodeRevision(root, committed) {
   const codeHead = committed.code_revision?.head;
   if (!codeHead) failures.push('the manifest names no code revision');
   else {
-    let ancestor = true;
-    try { git(root, ['merge-base', '--is-ancestor', codeHead, head]); }
+    // Absence and non-ancestry are different facts and the failure message has to say which one it is.
+    // A depth-limited CI checkout cannot see the code revision at all; reporting that as "not an ancestor"
+    // sends the reader looking for a wrong head when the checkout is the problem.
+    let present = true;
+    try { git(root, ['cat-file', '-e', `${codeHead}^{commit}`]); }
     catch {
-      ancestor = false;
-      failures.push(`the manifest's code revision ${codeHead.slice(0, 8)} is not an ancestor of ${head.slice(0, 8)}`);
+      present = false;
+      failures.push(`this checkout does not contain the manifest's code revision ${codeHead.slice(0, 8)}, `
+        + 'so its ancestry cannot be checked here - a shallow clone cannot validate a manifest');
+    }
+    let ancestor = present;
+    if (present) {
+      try { git(root, ['merge-base', '--is-ancestor', codeHead, head]); }
+      catch {
+        ancestor = false;
+        failures.push(`the manifest's code revision ${codeHead.slice(0, 8)} is not an ancestor of ${head.slice(0, 8)}`);
+      }
     }
     // A revision this checkout does not contain is rejected, not compared: git would exit non-zero and a
     // guard that throws instead of recording a failure is a guard an unknown head can walk through.

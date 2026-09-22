@@ -26,6 +26,16 @@ const firstEntryWith = predicate => {
   return entry;
 };
 
+// This guard reads the repository's history: it proves the manifest's code revision is an ancestor of this
+// checkout with no executable difference between them. Where git cannot read the checkout it cannot do
+// that, and a guard that degrades quietly can report a match it never compared - the environment is
+// asserted rather than assumed. This is also what makes the file's registered capability `git` a measured
+// fact rather than a claim: remove git and these tests fail rather than passing on empty values.
+test('B7 claim manifest: the guard runs only where git can read this checkout', () => {
+  assert.match(git(['rev-parse', 'HEAD']), /^[0-9a-f]{40}$/, 'git must be able to read this checkout');
+  assert.match(git(['rev-parse', 'HEAD^{tree}']), /^[0-9a-f]{40}$/, 'git must be able to read this tree');
+});
+
 test('B7 claim manifest: the committed manifest is what the registries and receipts build', async () => {
   const failures = await checkManifest(root);
   assert.deepEqual(failures, [], failures.join('; '));
@@ -95,7 +105,7 @@ test('B7 claim manifest: a disposition that is neither PASS nor BLOCK is rejecte
 
 test('B7 claim manifest: a code revision this checkout does not contain is rejected', () => {
   const failures = checkCodeRevision(root, { code_revision: { head: '0'.repeat(40) } });
-  assert.ok(failures.some(line => /is not an ancestor/.test(line)),
+  assert.ok(failures.some(line => /does not contain the manifest's code revision|is not an ancestor/.test(line)),
     `expected a wrong-head rejection, got: ${failures.join('; ') || 'none'}`);
 });
 
@@ -106,7 +116,7 @@ test('B7 claim manifest: a wrong head is rejected, whether it differs executably
   const root_commit = git(['rev-list', '--max-parents=0', 'HEAD']).split('\n').pop();
   const failures = checkCodeRevision(root, { code_revision: { head: root_commit } });
   assert.ok(failures.length > 0, 'a head this checkout does not contain must be rejected');
-  assert.ok(failures.some(line => /differs from this checkout in an executable file|is not an ancestor|cannot be compared/.test(line)),
+  assert.ok(failures.some(line => /differs from this checkout in an executable file|is not an ancestor|cannot be compared|does not contain the manifest's code revision/.test(line)),
     `expected a wrong-head rejection, got: ${failures.join('; ') || 'none'}`);
 });
 
