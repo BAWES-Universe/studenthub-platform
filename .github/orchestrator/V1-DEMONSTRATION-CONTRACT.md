@@ -1,22 +1,21 @@
 # Orchestrator v1 Demonstration Contract
 
-**Version 1.0 — proposed, revised 2026-09-23 after a non-author review at `e9a4b04` returned DO-NOT-APPROVE.**
-This file is frozen only by Khalid's approval. After freezing, any change is a v1.1 or a follow-up card.
+**Version 1.0 — proposed. Revised 2026-09-23 twice: after the first non-author review at `e9a4b04`
+(DO-NOT-APPROVE), and after the second at `729a894`, which falsified two lines by measurement.** This file is frozen
+only by Khalid's approval. After freezing, any change is a v1.1 or a follow-up card.
 
-**What the review found, and what this revision does about it** (so a reader can see the argument change, not just
-the prose):
+**What each review changed, so a reader can see the argument move rather than just the prose:**
 
-1. §2 said "dispatch stays off" while §3's evidence requires worker launches. **Fixed** — §2 states the real gate
-   state, and §4 row 11 marks the one switch that is Khalid's decision rather than this contract's.
-2. Nothing required the seeded defect to **be there**. **Fixed** — §4 row 4 measures it, and it is **currently
-   failing**: the trap is absent from the fixture branch today, so v1 as previously written would have produced an
-   honest step-2 PASS and proved nothing.
-3. The seeder was unnamed. **Fixed** — §7 names it (Hermes orchestration lane, third party, per the fixture card).
-4. The schedule was blamed for a failure it had nothing to do with. **Fixed** — §6: the journal shows the schedule
-   working and the run prevented by eligibility and the activation check.
-5. Several host claims were unverifiable or unmeasured as written. **Fixed** — §4 rows 4–10 now carry a command and
-   a reading, including the host clone HEAD the review could not read.
-6. The actor v1 is judged by — the verifier — had no brief. **Fixed** — §3.1.
+*First review.* §2 required dispatch off while §3's evidence requires worker launches → the real gate state, with
+the launching and merging switches separated. Nothing required the seeded defect to **be there** → §4 row 4
+measures it, and it is failing. The seeder was unnamed → §7. The schedule was blamed for a failure it had nothing to
+do with → §6. Several host claims were unmeasurable as written → §4. The verifier had no brief → §3.1.
+
+*Second review.* **"One fixture" is not the path `config.json` selects** — `dispatch_scope.issue_ids` has length 2,
+which forces the two-fixture branch and its ed25519-signed activation, while §5 excluded minting any activation record
+and any second lane, so v1 could not run under its own §5 → **§1.1 chooses a path and states its full cost.** The
+**revision binding was missing entirely** → §2 and §4 rows 13–15. The host is named, not addressed → §3, §4. Row 10
+now states the **assignee** requirement, not only the state.
 
 ## What v1 demonstrates, in one sentence
 
@@ -58,20 +57,49 @@ seeded_defect_path:   tools/fixture-conformance/scan-vacuous.expectations.mjs
 
 **The fixture card is the authority for its own design.** Linear SHU-140 (read 2026-09-23) states the builder lane
 `requested_worker=codex-builder` (the coordinator's documented default), the reviewer lane `claude-verifier`, the
-label `repo:platform`, the seeder, and a run contract that is the sequence in §2 verbatim: *"build → exact-head
-BLOCK → automatic return to writer → same-branch revision → CI → automatic re-review → PASS → stop before merge."*
+label `repo:platform`, the seeder, and a run contract that is §2 verbatim: *"build → exact-head BLOCK → automatic
+return to writer → same-branch revision → CI → automatic re-review → PASS → stop before merge."*
 
-**Two corrections the review caught.** The fixture files exist **only on `origin/coordinator/SHU-140`**, not on
+**Two corrections the reviews caught.** The fixture files exist **only on `origin/coordinator/SHU-140`**, not on
 `main`. And this section previously called `SHU-254` "not in v1" while `config.json` sets
-`dispatch_scope.issue_ids: ["SHU-140","SHU-254"]` — **length 2 selects the two-fixture code path that SHU-140's own
-run takes** (`reconcile.mjs:484`). So: SHU-254's *lane* and `tools/fixture-2/` are out of v1, but its *presence in
-`dispatch_scope`* is load-bearing and stays. Removing it is a `config.json` edit, and therefore an escalation
-(§7), not a tidy-up.
+`dispatch_scope.issue_ids: ["SHU-140","SHU-254"]`, whose **length 2 is exactly what forces the two-fixture code
+path** (`reconcile.mjs:484`) — so SHU-254 was load-bearing for a run this contract claimed not to include it in.
+§1.1 resolves that.
 
 **Naming, recorded rather than resolved:** `config.json` calls it the SHU-63 seeded-defect fixture and records
 SHU-140 as the Linear-minted identifier for lane `SHU-FIXTURE-001`; the fixture README says "SHU-140 fixture"
 while the oracle file's header says "SHU-63 fixture". v1 pins the **config's identifier (SHU-140)** and the paths
 above. The mismatch is load-bearing in `reconcile.mjs:494-496` and is noted so nobody re-litigates it mid-run.
+
+### 1.1 The path — chosen, with its full cost
+
+**Chosen: (b), the single-run activation, with the dispatch scope narrowed to SHU-140 alone.**
+
+**What (b) requires, exactly.** A committed `config.json` change — `dispatch_scope.issue_ids` → `["SHU-140"]` and
+`max_dispatch` → `2 → 1` — and then one operator-authored activation record with the **six-key exact set**
+`{activation_id, target_issue_id, authorization_ref, coordinator_revision, slots, expires_at}`, optionally plus the
+reviewed keys `{reviewer_lane, initial_target_sha, supersedes_attempt_ids}`. A **missing key and an extra key are
+both refused**, so widening what the record may say stays a reviewed schema change. `slots` must **equal** the
+committed `max_dispatch` — a record can never raise capacity — which is why `max_dispatch` must fall to `1` for a
+one-slot run. **No signature, no key custody, no second card.**
+
+**What (b) costs.** One reviewed `config.json` change (§4 row 15, Khalid's decision) that **narrows what the
+coordinator may ever dispatch** from two fixture cards to one, until it is deliberately restored. The two-fixture
+path is not demonstrated: SHU-254's card, seed head and lane stay untouched and unproven. And the run binds to the
+**deployed clone** rather than to main's HEAD, which puts an advance of the host clone on the critical path instead
+(§4 row 13).
+
+**Why not (a).** The two-fixture path needs an **ed25519-signed** `two-fixture-v1` record verified against the SHU-71
+public key, exactly two fixtures each with a seed head, `slots === 2 === max_dispatch`, and **both** Linear cards
+resolvable — so **key custody** lands on the critical path (Khalid's escalation) and a second fixture must be seeded
+and proven. That is more machinery than this demonstration needs, and (b) is the SHU-63 path that has already closed
+the loop once.
+
+**Measured before recommending it** (§4 row 12): the single-run path on current main still validates, arms and
+dispatches — its own suites (`activation`, `dispatch-durability`, `eligibility`, `episode-successor-dispatch`,
+`shu224-dispatch-scope`, `shu71-activation-package`) pass **204/204** at `01409cc`. One test in that set is
+`TMPDIR`-sensitive and fails on a host whose `TMPDIR` is not `/tmp`; with `TMPDIR=/tmp` the set is 204/204. That is a
+portability note about the host, not a defect in the path.
 
 ## 2. The sequence, and the exact gate state it runs under
 
@@ -86,13 +114,21 @@ The property that makes this "unattended": steps 2 → 3 and 3 → 4 are trigger
 No step waits for a person to read a message and start the next one.
 
 **The gate state, stated accurately.** Committed `enable_dispatch: false` **stays false**. What allows worker
-launches is the runtime environment switch `ENABLE_DISPATCH`, and the two-fixture branch additionally requires an
-**armed `two-fixture-v1` activation** whose `coordinator_revision` matches the deployed clone (`reconcile.mjs:484`).
-Merging is a **separate** lever: `routine_merge_authority.enabled: false` (authority_ref `SHU-259`). So
-"stop before merge" is enforced by a different switch from the one that lets the sequence run: **v1 needs the
-launching switch on and the merging switch off.** Turning the launching switch on is §4 row 11 and is **Khalid's
-decision, not this contract's** — the fixture card says the same in its own words: *"Dispatch stays disabled... this
-card cannot be selected at all until Khalid approves activation and it is moved deliberately."*
+launches is the runtime environment switch `ENABLE_DISPATCH`, and under (b) the dispatch decision is
+`envGate && activation.state === "armed"` (`reconcile.mjs:487`). Merging is a **separate** lever:
+`routine_merge_authority.enabled: false` (authority_ref `SHU-259`). So "stop before merge" is enforced by a
+different switch from the one that lets the sequence run: **v1 needs the launching switch on and the merging switch
+off.** Turning the launching switch on is §4 row 11 and is **Khalid's decision, not this contract's** — the fixture
+card says the same in its own words: *"Dispatch stays disabled... cannot be selected at all until Khalid approves
+activation and it is moved deliberately."*
+
+**The revision binding.** The activation's `coordinator_revision` must equal the **deployed clone** — the tree the
+unit runs in, `/srv/shu/studenthub-platform`. Under (b) that is the whole requirement. The additional requirement
+that it equal **main's HEAD** belongs to the two-fixture path
+(`executionBindingError(record, revision, mainRevision)`, `execution-authorization.mjs:4`, reached via
+`shu71-activation-package.mjs:72`). The `ACT_EXECUTION_REVISION_WRONG` in §4 row 1's journal is precisely this
+mismatch: clone `a51c8490`, main `01409cc`. `.github/coordinator` has **zero diff** between those two commits, so the
+remedy is advancing the clone to the commit that carries v1's config — **host privilege** (§4 row 13).
 
 **A false PASS at step 2 is a FAILURE by name, and §8 no longer reads it as a success arriving early.** The
 detector is mechanical: a genuine sequence leaves **two** `push-<attempt_id>.json` receipts on `coordinator/SHU-140`
@@ -108,7 +144,7 @@ required; flipping one cannot arm or disarm it). **No merge. No push to `main`. 
 
 ## 3. Evidence, and who checks it
 
-Shapes measured on `178.105.227.11` on 2026-09-23.
+Shapes measured on the orchestrator host on 2026-09-23.
 
 | step | exact evidence | produced by |
 |------|----------------|-------------|
@@ -135,51 +171,60 @@ and the output it got:
    PASS), and that the second head descends from the first.
 3. **Step 2 returned BLOCK at the exact step-1 head**, and step 4 returned `stage: PASS` at the exact revised head
    — each read from its own evidence, never from a summary.
-4. **The merge switches**: `routine_merge_authority.enabled: false`, no merge commit on the branch, nothing pushed
-   to `main`.
-5. **Ordering**: the receipts' timestamps are strictly ordered, and the branch's commits between the step-1 head and
+4. **The revision binding held**: the activation's `coordinator_revision` equals the clone the unit ran in, and that
+   clone equals the main commit carrying v1's config (§4 rows 13–14).
+5. **The merge switches**: `routine_merge_authority.enabled: false`, no merge commit on the branch, main's HEAD
+   unchanged across the window, nothing pushed to `main`.
+6. **Ordering**: the receipts' timestamps are strictly ordered, and the branch's commits between the step-1 head and
    the step-4 verdict are exactly the lanes' own — **no human-authored commit or edit in between**.
-6. **The limit, stated rather than hidden:** the host records *machine* events, so it proves **no human commit and
+7. **The limit, stated rather than hidden:** the host records *machine* events, so it proves **no human commit and
    no human-started step**. It cannot prove nobody typed a sentence into a chat beside the run. The verifier states
    which of the two it established and does not claim the second.
 
 ## 4. Preconditions, each with how it is measured, and today's reading
 
-Measured on `178.105.227.11` unless stated. Readings are 2026-09-23 and are re-taken at precondition time.
+Measured on the orchestrator host unless stated. Readings are 2026-09-23 and are re-taken at precondition time.
 
 | # | precondition | how it is measured | reading at 2026-09-23 |
 |---|--------------|--------------------|------------------------|
-| 1 | the schedule wakes runs (**not** a chat turn) | a **positive demonstration**: `journalctl -u shu-coordinator.service` shows a tick reaching a launch decision | **WORKS.** `Sep 16 05:47:35 dispatch_scope=SHU-140,SHU-254` → `HOLD=NO_ELIGIBLE_WORK; no launch — SHU-140: dispatch_scope target is unavailable or ineligible` → `dispatch: PREVENTED — single-run activation REFUSED (ACT_MALFORMED: ACT_EXECUTION_REVISION_WRONG); no fallback, no writes` |
+| 1 | the schedule wakes runs (**not** a chat turn) | a **positive demonstration**: `journalctl -u shu-coordinator.service` shows a tick reaching a launch decision | **WORKS.** `dispatch_scope=SHU-140,SHU-254` → `HOLD=NO_ELIGIBLE_WORK; no launch — SHU-140: dispatch_scope target is unavailable or ineligible` → `dispatch: PREVENTED — single-run activation REFUSED (ACT_MALFORMED: ACT_EXECUTION_REVISION_WRONG); no fallback, no writes` |
 | 2 | the units are installed | `ls /etc/systemd/system/ /usr/lib/systemd/system/ \| grep shu` | installed: `shu-coordinator.service`, `shu-coordinator.timer`, `shu-supervisor.service`, `shu71-evidence.service` (+ `.d/` overrides) |
 | 3 | state and receipts persist | `ls /srv/shu/state` | present: `coordinator-runs/`, `reviewer-evidence/`, `shu71-evidence/`, `auth.json`, `shu251-window-0002/`, `shu251-window-0003/`, plus 7 `single-run-activation.candidate-*` files |
 | 4 | **the seeded defect is present at the step-1 head** | `node /srv/shu/shu63-oracle-check.mjs <laneTree>` → **exit 1 = seeded, exit 0 = clean** | **FAILING — exit 0, `VERDICT: PASS — every declared row and the helper agree`.** The trap was corrected by the Sep 13 revision, so the branch is clean today. **Re-seeding is a precondition of the run, not an accident to discover mid-run** |
 | 5 | coordinator credentials are present without a chat turn | `ls -l /srv/shu/coordinator.env` — **metadata only, no value read** | not measured in this pass; must be `0600 shu-coordinator:shu-coordinator` per `.github/coordinator/service/SHU-251-HOST-BINDINGS.md` |
 | 6 | the reviewer works in a worktree separate from the builder's | the run's own receipts: distinct `worktree` values under `/srv/shu/worktrees/` for the build and the review attempt | to be confirmed from the run's receipts |
-| 7 | **the toolchain** | `claude --version` on the host — true; and **the model id recorded in each step's receipt — FALSE for the builder**: the builder receipts carry no model field | toolchain: to be measured; model-in-receipt: the review's finding stands and this contract does not fix it |
+| 7 | **the toolchain** | `claude --version` on the host — true; and **the model id recorded in each step's receipt — FALSE for the builder**: the builder receipts carry no model field | toolchain: to be measured; model-in-receipt: the finding stands and this contract does not fix it |
 | 8 | the activation state | `/srv/shu/state/shu71-activation.json` present and **armed**; the 7 `single-run-activation.candidate-*.json` files **spent** (byte-identical to their `used-` counterparts) | **no armed activation** (file absent); 7 candidates present and spent |
 | 9 | the deployed revision an activation must match | `git -c safe.directory=/srv/shu/studenthub-platform -C /srv/shu/studenthub-platform rev-parse HEAD` (read-only; plain `git` refuses on `dubious ownership`) | **`a51c8490dfb8572917049b3ab73dcf94409365c4`**, detached |
-| 10 | Linear eligibility | SHU-140 is `Todo` and meets `ELIGIBILITY.md`: exactly one `repo:` ownership label, no delegate/assignee conflict, `blockedBy` all `Done`, `needs:decision` absent | **FAILING — state is `Backlog`, assignee Khalid.** The card says Backlog **by design**; it moves only on his deliberate approval |
+| 10 | Linear eligibility | `ELIGIBILITY.md`: SHU-140 is `Todo`, **and no delegate, assignee, active receipt or claiming open pull request exists**; exactly one `repo:` ownership label; `blockedBy` all `Done`; `needs:decision` absent | **FAILING on two counts — state is `Backlog`, and the assignee is Khalid.** The card is Backlog **by design** and moves only on his deliberate approval; the **assignee must be cleared** |
 | 11 | **the launching switch is on for the bounded run** | `systemctl show -p Environment shu-coordinator.service` (today: `ENABLE_DISPATCH=false`) | **KHALID'S DECISION** — §2, §7 |
-| 12 | dispatch off and nothing armed at rest | config `enable_dispatch: false`, `ENABLE_DISPATCH` unset, no `/srv/shu/state/shu71-activation.json` | **TRUE** — `enable_dispatch: false`, `routine_merge_authority.enabled: false`, activation absent |
+| 12 | **the single-run path still arms and dispatches** | its own suites at the contract's main commit: `node --test .github/coordinator/test/*activation*.test.mjs .github/coordinator/test/*dispatch*.test.mjs` | **204/204 pass** at `01409cc` (one test is `TMPDIR`-sensitive; with `TMPDIR=/tmp` the set is 204/204) |
+| 13 | **the host clone equals the main commit that carries v1's config** | clone HEAD (row 9) vs `git ls-remote origin refs/heads/main`, **after** row 15's change lands | **FAILING — clone `a51c8490`, main `01409cc`.** Remedy: advance the clone = **host privilege** (§7) |
+| 14 | **nothing merges to `main` during the run window** | main's HEAD before and after the window are identical, and the window's branch carries no merge commit | holds today under the freeze on #161/#162/#167, and is a **precondition**, not a hope |
+| 15 | **the config change (b) rests on** | `config.json`: `dispatch_scope.issue_ids` and `max_dispatch` — because `slots` must **equal** the committed `max_dispatch` and can never raise capacity | today `["SHU-140","SHU-254"]` / `2`; **must become `["SHU-140"]` / `1`** — **KHALID'S DECISION** |
+| 16 | dispatch off and nothing armed at rest | config `enable_dispatch: false`, `ENABLE_DISPATCH` unset, no `/srv/shu/state/shu71-activation.json` | **TRUE** — `enable_dispatch: false`, `routine_merge_authority.enabled: false`, activation absent |
 
-**Rows 4, 10 and 11 are what stop the run today**, and each has a different owner: row 4 the seeder (§7,
-autonomous), rows 10 and 11 Khalid.
+**What stops the run today, and whose call each one is:** row 4 the seeder (§7, autonomous); rows 10, 11, 13 and 15
+Khalid, **in this order — 15 before 13, because the clone must carry the config.**
 
 ## 5. What is NOT in v1
 
 **Upstream programme items, out:** the CI receipt authority, the claim manifest, cold gates, suite portability,
 general activation, any second fixture lane.
 
-**Operational items, also out:** minting any activation record, editing any systemd unit, editing `config.json`
-(including `dispatch_scope`), re-running a failed sequence beyond what the failure names, moving any Linear card
-other than as §4 row 10 requires, and any merge. A reader can now tell scope creep from the text.
+**Operational items, also out:** the **two-fixture path in full** — minting or ed25519-signing a `two-fixture-v1`
+record, SHU-71 key custody, seeding or building SHU-254, and any record that names it; every `config.json` edit
+**except row 15's named one**; editing any systemd unit; re-running a failed sequence beyond what the failure names;
+moving any Linear card other than as row 10 requires; and any merge. **The single-run operator record (§1.1) is the
+one activation v1 includes, and authoring and arming it is live dispatch — Khalid's escalation, not autonomy.** A
+reader can tell scope creep from the text.
 
-**Does v1's evidence need #167?** **No, and the review confirmed it by inspection:** every receipt v1 rests on
+**Does v1's evidence need #167?** **No, and the first review confirmed it by inspection:** every receipt v1 rests on
 (`push-*`, `workspace-result-*`, `*.workspace.json`, `*.review-test.1.json`, `*.claude-envelope.1.stdout`) carries
-no manifest reference, no pin and no authority field, and no line of §2 or §3 reads one. **But the review also
+no manifest reference, no pin and no authority field, and no line of §2 or §3 reads one. **But the reviews also
 corrected the surrounding claim:** two *other* dependencies are load-bearing and are **not** #167 — the
-**activation-record pin** (§4 rows 8–9, §2) and the **toolchain evidentiary pin** (§4 row 7, false for the
-builder). Both are in this contract now instead of being silent.
+**execution-authorization binding** (§2, §4 rows 13–15) and the **toolchain evidentiary pin** (§4 row 7, false for
+the builder). Both are in this contract now instead of being silent.
 
 **The author's position, for the record:** none of #161, #162 or #167 needs to move for v1. They stay frozen.
 
@@ -204,9 +249,15 @@ paths, **including re-seeding the trap** — the fixture card names the seeder a
 third party to the run, recorded on the seed commit**, and `seeded_defect_path` is a declared path. The gate on
 seeding is objective: `/srv/shu/shu63-oracle-check.mjs` must exit **1** before the run starts.
 
-**Escalate to Khalid:** host privilege (enabling/starting units, changing `Environment=`), secret or key custody,
-**live dispatch** (§4 row 11 — turning the launching switch on and arming the two-fixture-v1 activation),
-**moving SHU-140 out of `Backlog`** (§4 row 10), merge authority, and any change to this committed contract.
+**Escalate to Khalid, in this order:**
+
+1. **§4 row 15** — the `config.json` change (b) rests on.
+2. **§4 row 13** — advancing the host clone to the commit carrying that config: **host privilege**.
+3. **§4 row 10** — moving SHU-140 to `Todo` **and clearing its assignee**.
+4. **§4 row 11** — turning the launching switch on and authoring/arming the single-run record: **live dispatch**,
+   including any `ENABLE_DISPATCH` change to the unit's `Environment=`.
+
+Also escalated: secret or key custody, merge authority, and any change to this committed contract.
 
 ## 8. After this package
 
@@ -214,5 +265,5 @@ A new finding may block v1 **only if it directly falsifies a line of this contra
 follow-up card and stays off the critical path. **A step-2 PASS is such a falsification, by name** (§2): it is a
 failure of v1, not a success arriving early. If the v1 run fails, **fix only what the failure names**.
 
-This file gets **one non-author review (Opus)** — done at `e9a4b04`, whose findings are folded in above — and
-**Khalid's approval**, and is then frozen.
+This file has had its two **non-author reviews (Opus)** — `e9a4b04`, and the second falsifying the path and the
+revision binding, both folded in above — and now awaits **Khalid's approval**, after which it is frozen.
