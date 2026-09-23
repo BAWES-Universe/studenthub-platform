@@ -446,26 +446,91 @@ if (manifest.code_revision?.tree !== claimedCommit.commit?.tree?.sha) {
     + `but the API reports ${claimedCommit.commit?.tree?.sha} for ${String(claimedHead).slice(0, 12)}`);
 }
 
+// THE CLAIM'S SHAPE IS SETTLED BEFORE ANY COVERAGE IS COMPUTED, AND AN INVALID SHAPE IS A REFUSAL.
+//
+// The manifest is read from the CANDIDATE, so its shape is the candidate's to choose, and two shapes it could
+// choose used to defeat the per-term rule outright - because a term's coverage was looked up by term ID over a
+// flat list of named tests, so entries that shared an id pooled their tests:
+//
+//   * two entries SHARING one id - `TERM-X` twice, the first naming a test that passes and the second naming
+//     nothing at all - reported `named: 1, pass: 1, establishes: true` on BOTH rows. Ten such entries
+//     established ten terms off one test.
+//   * two entries with NO id at all - `entry.id ?? null` read both as `null`, which pooled them identically.
+//
+// Either produced verdict success with no reason recorded anywhere, and the workflow's gate step could not
+// catch it: its per-term check is `!(term.named > 0)` and the pooled row reports `named: 1`, so the second
+// reader re-read the very field the first one had inflated.
+//
+// A term id is therefore required to be present, a non-empty string, and unique across the manifest. None of
+// those is a thing to guess at: a claim whose terms cannot be told apart is not a claim this run can measure
+// term by term, and the honest answer is to refuse it by name rather than to measure something else and report
+// the result under the claim's name. An absent `entries` is NOT this refusal - it is a claim that lists no
+// terms, which the verdict below already records as establishing nothing.
+const claimEntries = manifest.entries ?? [];
+if (!Array.isArray(claimEntries)) {
+  refuse('claim.entries', `${CLAIM_PATH} at ${candidateSha.slice(0, 12)} carries \`entries\` as `
+    + `a ${typeof claimEntries}, not a list of terms, so this run has no terms it could measure`);
+}
+const notObjects = claimEntries.flatMap((entry, index) => (entry !== null && typeof entry === 'object'
+  && !Array.isArray(entry)
+  ? []
+  : [`${index} (${entry === null ? 'null' : Array.isArray(entry) ? 'a list' : typeof entry})`]));
+if (notObjects.length > 0) {
+  refuse('claim.entries', `${notObjects.length} entry/entries of ${CLAIM_PATH} at `
+    + `${candidateSha.slice(0, 12)} are not objects, so they name no term: entry ${listing(notObjects)}`);
+}
+// An id that is absent, null, not a string, or blank names nothing. It is refused rather than defaulted,
+// because the default - `null` - is itself a colliding id, and every such entry would share one bucket.
+const unnamed = claimEntries.flatMap((entry, index) => (typeof entry.id === 'string' && entry.id.trim() !== ''
+  ? []
+  : [`${index} (${entry.id === undefined ? 'absent' : JSON.stringify(entry.id)})`]));
+if (unnamed.length > 0) {
+  refuse('claim.entries.id', `${unnamed.length} entry/entries of ${CLAIM_PATH} at `
+    + `${candidateSha.slice(0, 12)} carry no term id, so the claim does not say which term they are about, and `
+    + `a term this run cannot name is a term it cannot measure: entry ${listing(unnamed)}`);
+}
+const idIndices = new Map();
+claimEntries.forEach((entry, index) => { idIndices.set(entry.id, [...(idIndices.get(entry.id) ?? []), index]); });
+const collisions = [...idIndices.entries()].filter(([, at]) => at.length > 1)
+  .map(([id, at]) => `${id} (entries ${at.join(', ')})`);
+if (collisions.length > 0) {
+  refuse('claim.entries.id', `${collisions.length} term id(s) in ${CLAIM_PATH} at `
+    + `${candidateSha.slice(0, 12)} are claimed by more than one entry, so what this run measures about one of `
+    + `them cannot be told from what it measures about another: ${listing(collisions)}`);
+}
+
 // What the claim says must exist. A control is a test the claim names; a mutant is a test that must die when its
 // term is removed. Both are read from the candidate's claim - as data, never as code.
 //
-// Keyed by (term, kind, name), not by name. Keying by name alone meant two terms naming the same test collapsed
-// to one entry attributed to whichever term the manifest happened to list last, so the other term vanished from
-// the receipt entirely while still riding on that test's result.
+// KEYED BY THE ENTRY'S INDEX, not by its id and not by name. Each of the two earlier keyings lost something a
+// receipt has to keep:
+//
+//   * by NAME alone, two terms naming the same test collapsed to one entry attributed to whichever term the
+//     manifest happened to list last, so the other term vanished from the receipt while still riding on that
+//     test's result.
+//   * by TERM ID, two entries sharing an id pooled their tests, so an entry naming nothing inherited a
+//     sibling's coverage.
+//
+// The index is unique by construction, so no manifest - well formed or not - can make two rows share a bucket.
+// This and the shape check above are deliberately redundant: the shape check is what refuses a colliding
+// manifest by name, and this keying is what makes pooling structurally impossible if that check is ever
+// relaxed. The index travels into the receipt as `entry`, on the term row and on every test attributed to it,
+// so a reader can see for themselves which entry each measurement was counted under.
 const named = new Map();
 const claimTerms = [];
-for (const entry of manifest.entries ?? []) {
-  const term = entry.id ?? null;
+claimEntries.forEach((entry, index) => {
+  const term = entry.id;
   const tests = [
     ...(entry.control?.test_names ?? []).map(name => ({ kind: 'control', name })),
     ...(entry.killing_mutants ?? []).filter(mutant => mutant.test_name)
       .map(mutant => ({ kind: 'mutant', name: mutant.test_name })),
   ];
   for (const test of tests) {
-    named.set(`${term}\u0000${test.kind}\u0000${test.name}`, { term, kind: test.kind, name: test.name });
+    named.set(`${index}\u0000${test.kind}\u0000${test.name}`,
+      { entry: index, term, kind: test.kind, name: test.name });
   }
-  claimTerms.push({ id: term, names: tests.length });
-}
+  claimTerms.push({ entry: index, id: term, names: tests.length });
+});
 // DEFENCE IN DEPTH: is the capture WELL FORMED? This is not, and may not be reported as, a check that it is
 // GENUINE - genuineness is settled above, by provenance, and by nothing in this section. The candidate's own
 // test files print into this stream, so any rule here can be satisfied by a candidate that decides to satisfy
@@ -680,9 +745,14 @@ const summary = {
 // this run establishes about it, and a term this run establishes nothing about is a reason the claim as a whole
 // is not established.
 const termReport = claimTerms.map(term => {
-  const tests = perTest.filter(test => test.term === term.id);
+  // BY ENTRY INDEX, never by `term.id`. `test.term === term.id` is what pooled two entries that shared an id
+  // into one bucket that both then reported as their own coverage; the index cannot be shared, so it cannot
+  // pool. The ids are unique by the refusal above, so on any manifest this emitter accepts the two readings
+  // agree - this one just cannot be made to disagree.
+  const tests = perTest.filter(test => test.entry === term.entry);
   const counted = status => tests.filter(test => test.status === status).length;
   return {
+    entry: term.entry,
     id: term.id,
     named: tests.length,
     pass: counted('pass'),

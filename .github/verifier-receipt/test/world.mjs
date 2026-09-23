@@ -168,7 +168,11 @@ export const build = (patch = {}) => {
     receiptPath: path.join(root, 'receipt.json') };
 };
 
-export const emit = (world, envPatch = {}) => {
+// `emitter` names which emitter to run, defaulting to the shipped one. Only the tests that show the per-entry
+// keying holds ON ITS OWN override it, by running a copy of the emitter with the manifest shape refusals
+// neutered. Two defences that are each load-bearing have to be tested apart, or the pair proves only that at
+// least one of them works.
+export const emit = (world, envPatch = {}, emitter = EMITTER) => {
   const env = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
@@ -193,7 +197,7 @@ export const emit = (world, envPatch = {}) => {
   };
   for (const [key, value] of Object.entries(env)) if (value === undefined) delete env[key];
   try {
-    const stdout = execFileSync(process.execPath, [EMITTER], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync(process.execPath, [emitter], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return { code: 0, stdout, stderr: '' };
   } catch (error) {
     return { code: error.status, stdout: String(error.stdout ?? ''), stderr: String(error.stderr ?? '') };

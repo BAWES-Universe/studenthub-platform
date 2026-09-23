@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import * as world from './world.mjs';
 
@@ -834,4 +835,176 @@ test('the gate step refuses a named test the runner only skipped, even when the 
   // Nothing is written on a refusal, so `if: steps.gate.outputs.admissible == \'true\'` cannot select the
   // attest step even if the step\'s own failure were somehow tolerated.
   assert.equal(gate.output, '');
+});
+
+// ---- the manifest's shape is refused, and coverage is keyed so that pooling cannot happen ---------------------
+
+// D1/D2. `termReport` was one row per manifest ENTRY, but each row's coverage was `perTest.filter(t => t.term
+// === term.id)`. Entries that shared an id - or that both omitted one, collapsing to `null` - pooled their
+// tests, so an entry naming no test inherited a sibling's coverage and reported `named: 1, pass: 1,
+// establishes: true`. The workflow's gate step could not catch it: its check is `!(term.named > 0)`, and the
+// pooled row reports `named: 1`, so the second reader re-read the field the first one had inflated. The
+// manifest comes from the CANDIDATE and nothing validated its shape, so the candidate controlled this.
+//
+// Two changes close it, and each is tested on its own below, because either alone leaves a path open:
+// the shape REFUSAL, and the per-entry KEYING.
+
+const claimWith = entries => ({ code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE }, entries });
+const ONE_REAL_TEST = 'the coordinator refuses a stale head';
+const namesTest = id => ({ id, control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [] });
+const namesNothing = id => ({ id, control: { test_names: [] }, killing_mutants: [] });
+
+test('D2: two entries with no id at all are refused, naming the entries that carry none', () => {
+  const built = world.build({
+    claim: claimWith([{ control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [] },
+      { control: { test_names: [] }, killing_mutants: [] }]),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries.id');
+  assert.match(result.stderr, /2 entry\/entries of .* carry no term id/);
+  assert.match(result.stderr, /entry 0 \(absent\), 1 \(absent\)/);
+  // A refusal is a refusal: no receipt is written at all, so there is nothing for the gate to read.
+  assert.equal(fs.existsSync(built.receiptPath), false);
+});
+
+test('D1b: ten entries sharing one term id are refused, naming the id and every entry that claims it', () => {
+  const built = world.build({
+    claim: claimWith([namesTest('TERM-X'), ...Array.from({ length: 9 }, () => namesNothing('TERM-X'))]),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries.id');
+  assert.match(result.stderr, /1 term id\(s\) in .* are claimed by more than one entry/);
+  assert.match(result.stderr, /TERM-X \(entries 0, 1, 2, 3, 4, 5, 6, 7, 8, 9\)/);
+  assert.equal(fs.existsSync(built.receiptPath), false);
+});
+
+test('D1: two entries sharing one term id are refused before any coverage is computed', () => {
+  const built = world.build({
+    claim: claimWith([namesTest('TERM-X'), namesNothing('TERM-X')]),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries.id');
+  assert.match(result.stderr, /TERM-X \(entries 0, 1\)/);
+  // The refusal happens before the capture is read as coverage, so nothing about the run is reported under a
+  // claim the emitter could not read term by term.
+  assert.equal(result.stdout, '');
+});
+
+test('an id that is blank, or not a string, names no term and is refused like an absent one', () => {
+  for (const [id, shown] of [['', '""'], ['   ', '"   "'], [null, 'null'], [17, '17'], [['TERM-X'], '["TERM-X"]']]) {
+    const built = world.build({
+      claim: claimWith([namesTest('TERM-OK'), { id, control: { test_names: [] }, killing_mutants: [] }]),
+      capture: world.tapFor([ONE_REAL_TEST]),
+    });
+    const result = world.emit(built);
+    refusedOn(result, 'claim.entries.id');
+    assert.match(result.stderr, new RegExp(`entry 1 \\(${shown.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`),
+      `id ${JSON.stringify(id)} was not named in the refusal:\n${result.stderr}`);
+  }
+});
+
+test('an entry that is not an object at all is refused, naming what it is', () => {
+  const built = world.build({
+    claim: claimWith([namesTest('TERM-OK'), 'TERM-X', null, ['TERM-Y']]),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries');
+  assert.match(result.stderr, /3 entry\/entries of .* are not objects/);
+  assert.match(result.stderr, /entry 1 \(string\), 2 \(null\), 3 \(a list\)/);
+});
+
+test('an `entries` that is not a list is refused, not read as one term or as none', () => {
+  const built = world.build({
+    claim: claimWith({ 'TERM-X': { control: { test_names: [ONE_REAL_TEST] } } }),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  refusedOn(world.emit(built), 'claim.entries');
+});
+
+// An ABSENT `entries` is not a shape refusal. It is a claim that lists no terms, which the verdict already
+// records as establishing nothing - and that distinction is deliberate, so this pins it.
+test('a claim with no `entries` at all is a verdict of failure, not a refusal', () => {
+  const built = world.build({
+    claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE } },
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '), /the claim lists no terms, so this run establishes nothing/);
+});
+
+// THE SECOND CHANGE, TESTED ON ITS OWN. The refusal above is what a real candidate meets, so a test that only
+// exercises it proves nothing about the keying underneath - the two would be indistinguishable. This runs a
+// copy of the emitter with the manifest-shape refusals neutered, and feeds it the D1b manifest: ten
+// entries sharing TERM-X, one of which names a test. If coverage were still looked up by term id, all ten rows
+// would report `named: 1, pass: 1, establishes: true` and the verdict would be success. Keyed by entry index,
+// the nine that name nothing report exactly that.
+let neuteredEmitter = null;
+const emitterWithoutShapeChecks = () => {
+  if (neuteredEmitter) return neuteredEmitter;
+  const source = fs.readFileSync(world.EMITTER, 'utf8');
+  const calls = source.match(/refuse\('claim\.entries/g) ?? [];
+  // An exact count, deliberately: a shape refusal added or removed later must be looked at here rather than
+  // silently left un-neutered, which would let this test pass on the refusal it was written to do without.
+  assert.equal(calls.length, 4,
+    `expected the four manifest-shape refusals to neuter, found ${calls.length}; this test is stale`);
+  neuteredEmitter = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'keying-')), 'emit.mjs');
+  fs.writeFileSync(neuteredEmitter, source.replace(/refuse\('claim\.entries/g, '(() => {})(\'claim.entries'));
+  return neuteredEmitter;
+};
+
+test('coverage is keyed per entry, so ten entries sharing an id still pool nothing with the shape check off', () => {
+  const built = world.build({
+    claim: claimWith([namesTest('TERM-X'), ...Array.from({ length: 9 }, () => namesNothing('TERM-X'))]),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  const result = world.emit(built, {}, emitterWithoutShapeChecks());
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  // ONE test was named and ONE term is established by it. The other nine named nothing and inherit nothing.
+  assert.deepEqual(receipt.named_tests.map(t => [t.entry, t.term, t.status]), [[0, 'TERM-X', 'pass']]);
+  assert.deepEqual(receipt.terms.map(t => [t.entry, t.id, t.named, t.pass, t.establishes]),
+    [[0, 'TERM-X', 1, 1, true], ...Array.from({ length: 9 }, (_, i) => [i + 1, 'TERM-X', 0, 0, false])]);
+  assert.equal(receipt.terms_summary.total, 10);
+  assert.equal(receipt.terms_summary.establishing, 1);
+  assert.equal(receipt.terms_summary.naming_no_tests, 9);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '), /9 term\(s\) name no tests/);
+  // And the gate, reading that receipt, refuses it and writes no `admissible` output for the attest step.
+  // It refuses on the verdict, which is the first of its checks to fire; its own per-term rule is the second
+  // reader, and the point of the keying is that the first reader is no longer handing it an inflated field.
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /the receipt does not record a successful measurement/);
+  assert.match(gate.stdout, /"naming_no_tests":9/);
+  assert.equal(gate.output, '');
+});
+
+test('the same for two entries with no id at all: null is not a bucket two terms can share', () => {
+  const built = world.build({
+    claim: claimWith([{ control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [] },
+      { control: { test_names: [] }, killing_mutants: [] }]),
+    capture: world.tapFor([ONE_REAL_TEST]),
+  });
+  assert.equal(world.emit(built, {}, emitterWithoutShapeChecks()).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual(receipt.terms.map(t => [t.entry, t.named, t.establishes]), [[0, 1, true], [1, 0, false]]);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.equal(runGate(built).code, 1);
+});
+
+// The entry index is in the receipt, on both sides, so a reader can check the attribution rather than trust it.
+test('a well-formed manifest carries its entry index into every term row and every named test', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.deepEqual(receipt.terms.map(term => [term.entry, term.id]), [[0, 'TERM-1'], [1, 'TERM-2']]);
+  assert.deepEqual(receipt.named_tests.map(test => [test.entry, test.term, test.kind]),
+    [[0, 'TERM-1', 'control'], [0, 'TERM-1', 'mutant'], [1, 'TERM-2', 'control']]);
+  assert.equal(receipt.conclusion.verdict, 'success');
 });
