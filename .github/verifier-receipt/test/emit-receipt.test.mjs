@@ -23,7 +23,8 @@ test('provenance held: the trusted job\'s own capture for this run yields succes
   assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.conclusion.verdict, 'success');
-  assert.deepEqual(receipt.named_tests_summary, { named: 3, pass: 3, fail: 0, absent: 0 });
+  assert.deepEqual(receipt.named_tests_summary,
+    { named: 3, pass: 3, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0 });
   assert.equal(receipt.provenance.artifact.digest, built.archiveDigest);
   assert.equal(receipt.provenance.artifact.archive_sha256, built.archiveDigest);
   assert.equal(receipt.provenance.capture.sha256, built.meta.capture_sha256);
@@ -288,9 +289,10 @@ test('a claim whose code revision is not a parent of the measured commit is refu
   assert.match(result.stderr, /nor one of its parents/);
 });
 
-// `.github/coordinator/service/receipts/` used to be allowlisted by prefix, which is an unbounded number of
-// paths that all sort ahead of `apps/`, `packages/` and `tools/`. Only the claim's own files are tolerated now,
-// so the filler is itself beyond the claim's bookkeeping and the code change is named in the refusal.
+// The hard bound: NO code path may change between the claim's code revision and the candidate, however much
+// bookkeeping surrounds it. `.github/coordinator/service/receipts/` is tolerated as a bounded shape (plain
+// `.json` directly in that one directory), so the filler below is genuinely tolerated here - and the code
+// change is still named in the refusal, because tolerating the filler was never what admitted it.
 test('a step that changes apps/, packages/ or tools/ is refused however much bookkeeping surrounds it', () => {
   for (const codePath of ['apps/gateway/src/index.ts', 'packages/contracts/src/authz.ts', 'tools/seed/run.mjs']) {
     const built = world.build({ routes: {
@@ -336,6 +338,74 @@ test('a step that renames code ONTO a bookkeeping path is refused, naming the pa
   const result = world.emit(built);
   refusedOn(result, 'claim.code_revision.head');
   assert.match(result.stderr, /apps\/gateway\/src\/index\.ts/);
+});
+
+// WHAT THE REPOSITORY ACTUALLY WRITES BESIDE A MANIFEST. Measured over every commit that ever touched
+// claim-manifest.json: the manifest itself (11), `receipts/<name>.json` (4) and `suite-inventory.json` (2). An
+// earlier version of this list refused the receipts file - the commonest of the three - while tolerating
+// `.github/coordinator/service/verifier-receipts.json`, a name that has never existed in this repository. The
+// tolerance is for the paths that are really written, and for no others.
+const stepChanging = filenames => ({ routes: {
+  [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+    ahead_by: 1, total_commits: 1, files: filenames.map(filename => ({ filename, status: 'modified' })) } },
+} });
+
+test('the bookkeeping this repository really writes beside a manifest is tolerated', () => {
+  const built = world.build(stepChanging([
+    world.CLAIM_PATH,
+    '.github/coordinator/service/receipts/verifier-r32.json',
+    '.github/coordinator/service/receipts/b6-arming-robustness-and-manifest-guard.json',
+    '.github/coordinator/service/suite-inventory.json',
+  ]));
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.deepEqual(receipt.provenance.claim.delta_from_code_revision, [
+    world.CLAIM_PATH,
+    '.github/coordinator/service/receipts/verifier-r32.json',
+    '.github/coordinator/service/receipts/b6-arming-robustness-and-manifest-guard.json',
+    '.github/coordinator/service/suite-inventory.json',
+  ]);
+});
+
+// The receipts directory is a bounded shape, not a prefix: one level deep, plain `.json` only. Anything else
+// under it is code or a path traversal wearing a tolerated prefix.
+test('the receipts directory is tolerated as a shape, not as a prefix', () => {
+  for (const beyond of [
+    '.github/coordinator/service/receipts/regenerate.mjs',
+    '.github/coordinator/service/receipts/nested/run.json',
+    '.github/coordinator/service/receipts/../../../../apps/gateway/src/index.ts',
+    '.github/coordinator/service/receipts/.hidden.json',
+    '.github/coordinator/service/receipts-sneaky.json',
+    '.github/coordinator/service/receipts/',
+  ]) {
+    const result = world.emit(world.build(stepChanging([world.CLAIM_PATH, beyond])));
+    refusedOn(result, 'claim.code_revision.head');
+    assert.match(result.stderr, new RegExp(beyond.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `the refusal must name ${beyond}`);
+  }
+});
+
+test('the name that has never existed in this repository is not tolerated', () => {
+  const result = world.emit(world.build(stepChanging([
+    world.CLAIM_PATH, '.github/coordinator/service/verifier-receipts.json'])));
+  refusedOn(result, 'claim.code_revision.head');
+  assert.match(result.stderr, /verifier-receipts\.json/);
+});
+
+// The tolerance widened; the bound did not. A rename out of a code path onto a NOW-tolerated bookkeeping path
+// is still refused under the name it came from.
+test('a rename of code onto the receipts directory is still refused, naming where it came from', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/${world.CLAIM_HEAD}...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead',
+      ahead_by: 1, total_commits: 1, files: [
+        { filename: '.github/coordinator/service/receipts/r33.json', status: 'renamed',
+          previous_filename: 'packages/contracts/src/authz.ts' }] } },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.code_revision.head');
+  assert.match(result.stderr, /packages\/contracts\/src\/authz\.ts/);
 });
 
 test('the legitimate one-commit widening still succeeds, and the receipt records the step\'s files', () => {
@@ -482,6 +552,109 @@ test('a name reported twice, both passing, is still pass - and the repeat is rec
   assert.equal(receipt.named_tests[0].points, 2);
   assert.deepEqual(receipt.duplicate_points, [{ name: 'a repeated name', points: 2, statuses: ['pass'],
     collapsed_to: 'pass' }]);
+});
+
+// ---- `ok` is not `pass`: a skipped test and an empty describe() are not measurements ----------------------
+
+// The capture here is genuine: `node --test --test-reporter=tap` over a fixture that really skips one test,
+// really marks one todo, and really declares one empty `describe()`. A review defeated the emitter with the
+// first and the third of those - both put `ok` on the wire, and both were recorded `pass` for a term.
+const SKIP_SUITE_CLAIM = {
+  code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+  entries: [
+    { id: 'TERM-SKIP', control: { test_names: ['the stale-head guard holds'] }, killing_mutants: [] },
+    { id: 'TERM-SUITE', control: { test_names: [] },
+      killing_mutants: [{ test_name: 'the mutant that removes the stale-head guard dies' }] },
+    { id: 'TERM-TODO', control: { test_names: ['the broker retry budget is respected'] }, killing_mutants: [] },
+    { id: 'TERM-REAL', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
+  ],
+};
+
+test('a test the runner reported `# SKIP` is not pass, and the marker is not part of its name', () => {
+  const capture = world.genuineTap('skipped-and-suite.mjs');
+  assert.match(capture, /^ok 1 - the stale-head guard holds # SKIP$/m, 'the fixture must really skip');
+  assert.match(capture, /^ok 3 - the mutant that removes the stale-head guard dies$/m);
+  assert.match(capture, /^# tests 3$/m, 'the runner must really report 3 tests for 4 points');
+  const built = world.build({ capture, claim: SKIP_SUITE_CLAIM });
+  const result = world.emit(built);
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  // The name is the test's own name - the directive was stripped, not captured into it - so the entry is
+  // matched and recorded `skip`, rather than silently going `absent` under a name nothing reported.
+  assert.deepEqual(receipt.named_tests.map(named => [named.name, named.status]), [
+    ['the stale-head guard holds', 'skip'],
+    ['the mutant that removes the stale-head guard dies', 'suite'],
+    ['the broker retry budget is respected', 'todo'],
+    ['the coordinator refuses a stale head', 'pass'],
+  ]);
+  assert.deepEqual(receipt.named_tests_summary,
+    { named: 4, pass: 1, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1 });
+  // Each of the three is a term this run establishes nothing about, and each is named as such.
+  assert.deepEqual(receipt.terms.map(term => [term.id, term.establishes]),
+    [['TERM-SKIP', false], ['TERM-SUITE', false], ['TERM-TODO', false], ['TERM-REAL', true]]);
+  assert.deepEqual(receipt.terms_summary.without_evidence, ['TERM-SKIP', 'TERM-SUITE', 'TERM-TODO']);
+  const reasons = receipt.conclusion.reasons.join(' | ');
+  assert.match(reasons, /1 named test\(s\) were reported with a `# SKIP` directive.*the stale-head guard holds/);
+  assert.match(reasons, /1 named test\(s\) were reported with a `# TODO` directive.*the broker retry budget is respected/);
+  assert.match(reasons, /matched only by a `type: 'suite'` point.*the mutant that removes the stale-head guard dies/);
+});
+
+test('naming a skipped test verbatim WITH its `# SKIP` marker does not match it either', () => {
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-MARKER',
+      control: { test_names: ['the stale-head guard holds # SKIP'] }, killing_mutants: [] }],
+  };
+  const built = world.build({ capture: world.genuineTap('skipped-and-suite.mjs'), claim });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.deepEqual(receipt.named_tests.map(named => named.status), ['absent']);
+});
+
+// A suite point and a test point can share a name - `describe('x')` beside `test('x')`. The collapse is
+// pessimistic there as it is for two test points: the suite point is not evidence that the test ran.
+test('a name reported by both a suite point and a passing test point collapses to the suite point', () => {
+  const capture = [
+    'TAP version 13',
+    'ok 1 - a shared name', '  ---', '  duration_ms: 1', "  type: 'suite'", '  ...',
+    'ok 2 - a shared name', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
+    '1..2', '# tests 1', '# suites 1', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
+    '# duration_ms 3', '',
+  ].join('\n');
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-SHARED', control: { test_names: ['a shared name'] }, killing_mutants: [] }],
+  };
+  const built = world.build({ capture, claim });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.deepEqual(receipt.named_tests.map(named => named.status), ['suite']);
+  assert.deepEqual(receipt.duplicate_points, [{ name: 'a shared name', points: 2,
+    statuses: ['suite', 'pass'], collapsed_to: 'suite' }]);
+});
+
+// A `#` a test author put in a NAME is escaped by the reporter as `\#`, so it is never read as a directive and
+// the name still matches. Guards the directive rule against eating part of a real name.
+test('a `#` inside a test name is not read as a directive', () => {
+  const capture = [
+    'TAP version 13',
+    'ok 1 - a name with a \\# hash inside', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
+    '1..1', '# tests 1', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
+    '# duration_ms 3', '',
+  ].join('\n');
+  const claim = {
+    code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+    entries: [{ id: 'TERM-HASH',
+      control: { test_names: ['a name with a \\# hash inside'] }, killing_mutants: [] }],
+  };
+  const built = world.build({ capture, claim });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  assert.deepEqual(receipt.named_tests.map(named => named.status), ['pass']);
 });
 
 // ---- every term is named, whether or not it names a test ------------------------------------------------------

@@ -180,6 +180,20 @@ jobs:
     name: measure
     needs: trust
     runs-on: ubuntu-latest
+    # WHY A BOUND, AND WHY THIS ONE. The runner invokes the candidate's suite, and a candidate's suite can
+    # hang: a review reproduced exactly that on this repository's own coordinator suite under an unusual
+    # TMPDIR, killing it at 300s with the stream still open. With no bound here the measure step blocks until
+    # GitHub's 360-minute job default cancels it - six hours of a hosted runner, on a workflow that triggers on
+    # every pull request touching .github/verifier-receipt/**, and a cancellation carries no diagnostic saying
+    # what hung. Nothing is minted either way (emit needs: measure), so this is about cost and legibility, not
+    # about safety.
+    #
+    # The bound: the pinned `coordinator` runner completes in 289s measured end to end (3667 tests), so the
+    # suite itself needs ~5 minutes. 20 gives it four times that, plus the two checkouts and the upload, plus
+    # room for a hosted runner slower than the machine that was measured - while turning a hang into a red job
+    # in a third of an hour instead of six. Raise it if a runner key is ever added whose suite is genuinely
+    # longer; do not raise it to accommodate a suite that hangs.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -385,6 +399,12 @@ jobs:
             // the verdict, and this step refuses it again by name.
             const uncovered = terms.filter(term => !(term.named > 0)).map(term => term.id);
             if (uncovered.length > 0) { console.error('::error::these terms name no tests, so this run establishes nothing about them: ' + uncovered.join(', ')); process.exit(1); }
+            // And the same rule at the level of a single test. 'pass' is the only status that is a
+            // measurement: 'skip' is a body the runner never executed, 'suite' is a describe() block matched
+            // where a test was named, and both used to read as a pass. The emitter refuses each of them in the
+            // verdict; this step refuses them again, by test name and by the status it was given.
+            const unmeasured = (receipt.named_tests ?? []).filter(named => named.status !== 'pass');
+            if (unmeasured.length > 0) { console.error('::error::these named tests were not measured as passing in this run: ' + unmeasured.map(named => named.name + ' [' + named.status + ']').join(', ')); process.exit(1); }
             const admissible = receipt.provenance?.admissible_as_pin === true;
             require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + admissible + '\n');
           "

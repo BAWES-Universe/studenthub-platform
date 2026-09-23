@@ -14,11 +14,18 @@
     "",
     "The candidate below is chosen because it is a real commit that carries a real claim manifest, does not",
     "touch the receipt authority, and is not an ancestor of anything this lane changes. It also satisfies the",
-    "narrowed bookkeeping rule: its manifest names its own parent as the code revision, and the one commit",
-    "between them changes claim-manifest.json and nothing else. The previous candidate,",
-    "6feac016e3a0796d0c7b21d86426af0f1491a9c1, no longer qualifies - its commit also wrote",
-    ".github/coordinator/service/receipts/verifier-r32.json, which was tolerated only by the prefix allowlist",
-    "that a review showed to be the lever for hiding code changes behind a truncated compare page."
+    "bookkeeping rule: its manifest names its own parent as the code revision, and the one commit between them",
+    "changes claim-manifest.json and nothing else.",
+    "",
+    "CORRECTION. An earlier version of this note said the previous candidate,",
+    "6feac016e3a0796d0c7b21d86426af0f1491a9c1, no longer qualifies, because its commit also wrote",
+    ".github/coordinator/service/receipts/verifier-r32.json. It qualifies again: a review established that the",
+    "list refusing it was on the wrong side - receipts/<name>.json is what this repository's manifest routine",
+    "really writes, 4 of the 11 manifest commits in its history, while the name the list did tolerate has never",
+    "existed - and that the truncation lever the prefix once was is now closed independently by the",
+    "300-file cap refusal. The pin is left at 7e7ac70e because that is the candidate whose suite has actually",
+    "been measured end to end (3667 tests, 289s, all 132 names the manifest requires passing), not because",
+    "6feac01 is ineligible."
   ],
   "candidate_sha": "7e7ac70e37f2a99b4d3dc65c2a3ae3325d7681ab",
   "runner_key": "coordinator"

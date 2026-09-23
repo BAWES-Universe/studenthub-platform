@@ -31,6 +31,9 @@
 //
 // And the verdict is per-term: every term the manifest lists is enumerated in the receipt with what this run
 // established about it, so a term that names no test cannot ride to `success` on a sibling term's coverage.
+// Per term and per test, `pass` means the runner reported a `type: 'test'` point ok with no TAP directive on
+// it. A `# SKIP` marker and an empty `describe()` both put `ok` on the wire without executing anything, and
+// neither is read as a measurement.
 //
 // DEFENCE IN DEPTH, AND NOT MORE THAN THAT. The TAP structure and count reconciliation further down is a check
 // that the capture is WELL FORMED. It is not, and must never be described as, a check that it is GENUINE: a
@@ -67,14 +70,37 @@ const META_FILE = 'capture-meta.json';
 // commit itself, or that commit's IMMEDIATE PARENT, and nothing further: the justification reaches exactly one
 // commit, so the rule may not reach further than one commit either. An earlier version of this file required
 // only `status === 'ahead'`, which a review defeated by presenting a claim 137 commits behind the code that was
-// measured. The widening is also narrow in FILES: the only paths tolerated across that one commit are the
-// claim's own bookkeeping files, named exactly. An earlier version allowlisted the whole prefix
-// `.github/coordinator/service/receipts/`, which is an unbounded number of paths that all sort ahead of
-// `apps/`, `packages/` and `tools/` - the exact filler for pushing real code changes off a truncated listing.
+// measured.
+//
+// The widening is also narrow in FILES. The hard bound is the one that matters and it does not move: NO CODE
+// PATH may change between the claim's code revision and the candidate, because the suite that ran would then
+// not be the suite the claim describes. What may change is the claim's own bookkeeping, and the set below is
+// exactly what this repository actually writes beside a manifest - measured over every commit that ever touched
+// the manifest:
+//
+//   claim-manifest.json      11 commits     the claim itself
+//   receipts/<name>.json      4 commits     the suite receipt the manifest pins; data, never read as evidence
+//   suite-inventory.json      2 commits     the inventory the generator regenerates alongside
+//
+// A review found the previous list on the wrong side of this: it refused `receipts/*.json`, the file the
+// routine really writes - 4 of 11 manifest commits, and it repinned the rehearsal candidate to dodge one - while
+// tolerating `verifier-receipts.json`, a name that has never existed in 614 commits. Both are corrected here.
+//
+// The receipts directory is tolerated as a BOUNDED shape, not as a prefix. An earlier version allowlisted the
+// whole prefix `.github/coordinator/service/receipts/`, an unbounded number of paths all sorting ahead of
+// `apps/`, `packages/` and `tools/` - the exact filler for pushing real code changes off a truncated compare
+// listing. That lever is now closed twice over: the listing itself is refused at COMPARE_FILE_CAP (so the
+// filler can never be dense enough to truncate anything), and what the prefix admits is restricted to plain
+// `.json` files sitting directly in that one directory. `receipts/x/y.ts`, `receipts/run.mjs` and
+// `receipts/../../apps/x.ts` are all beyond the bookkeeping and all named in the refusal.
 const CLAIM_ONLY = [
   '.github/coordinator/service/claim-manifest.json',
-  '.github/coordinator/service/verifier-receipts.json',
+  '.github/coordinator/service/suite-inventory.json',
 ];
+const CLAIM_ONLY_DIR = '.github/coordinator/service/receipts/';
+const CLAIM_ONLY_DIR_ENTRY = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
+const isBookkeeping = name => CLAIM_ONLY.includes(name)
+  || (name.startsWith(CLAIM_ONLY_DIR) && CLAIM_ONLY_DIR_ENTRY.test(name.slice(CLAIM_ONLY_DIR.length)));
 // GitHub's compare endpoint returns at most this many entries in `files`, sorted by filename, and says nothing
 // in the response about having truncated the list. Measured on this repository: 300 returned for a comparison
 // that changed 429 files. A listing at or beyond the cap therefore bounds nothing, and is refused rather than
@@ -405,7 +431,7 @@ if (claimedHead !== candidateSha) {
   claimDelta = step.files.map(file => file.filename);
   const beyond = [...new Set(step.files
     .flatMap(file => [file.filename, file.previous_filename].filter(Boolean))
-    .filter(name => !CLAIM_ONLY.includes(name)))];
+    .filter(name => !isBookkeeping(name)))];
   if (beyond.length > 0) {
     refuse('claim.code_revision.head', `the claim names ${short} as its code revision, but the measured commit `
       + `${candidateSha.slice(0, 12)} changes code beyond the claim's own bookkeeping `
@@ -468,8 +494,49 @@ let yamlIndent = null;             // indent of the `---` of the YAML block curr
 let open = null;                   // the point whose YAML block is expected next, until its type is read
 let lineNo = 0;
 
+// A SKIPPED TEST IS NOT A MEASUREMENT, AND A DESCRIBE BLOCK IS NOT A TEST. A point line says `ok`, and two
+// different things that are not a passing test say it too:
+//
+//   * `ok 1 - the stale-head guard holds # SKIP` - a `{ skip: true }` test. Its body never ran. TAP marks such
+//     a point with a trailing directive, and `node --test --test-reporter=tap` escapes a `#` inside a
+//     description as `\#`, so an unescaped `#` after whitespace at the end of the line is the directive and
+//     never part of the name. An earlier version of this file captured ` # SKIP` INTO the name, so a claim
+//     naming the test verbatim-with-marker matched, and a body that never ran was recorded `pass`.
+//   * `ok 6 - an empty describe` with `type: 'suite'` - an empty `describe()`. The runner reports it `ok`
+//     while reporting `# tests 0` under it. An earlier version recorded suite points and test points
+//     indistinguishably, so a claim naming an empty suite after a test it requires was recorded `pass`.
+//
+// The runner's own summary accounts for all of this separately - `# tests` excludes suites, and `# pass` and
+// `# fail` exclude both skipped and todo - so reading a point this way is reading it as the runner meant it.
+// Each of these is recorded under its own status, never as `pass`, and named in the receipt's reasons.
+const TAP_DIRECTIVE = /\s+#\s*(SKIP|TODO)\b.*$/i;
+// Worst status wins where one name is reported more than once. `fail` outranks everything; a suite point
+// outranks a directive, because it means the name was never a test at all; a directive outranks `pass`.
+const STATUS_RANK = { fail: 4, suite: 3, skip: 2, todo: 2, pass: 1 };
+const statusOf = point => {
+  if (point.type !== 'test') return 'suite';
+  if (point.directive) return point.directive;
+  return point.ok ? 'pass' : 'fail';
+};
+
 const close = () => {
-  if (open && !open.type) problems.push(`point "${open.name}" carries no \`type:\` diagnostic, which the runner writes on every point`);
+  if (!open) return;
+  if (!open.type) problems.push(`point "${open.name}" carries no \`type:\` diagnostic, which the runner writes on every point`);
+  // Recorded here, not at the point line, because the point's `type:` arrives in the YAML block that follows
+  // it: what a point MEANS is not known until its block closes.
+  //
+  // A name reported twice is not last-writer-wins. It used to be, so a named test the protected runner watched
+  // FAIL was reported `pass` whenever any later point shared its name - the failure stayed in the summary
+  // counts the receipt carries, but was discarded from the verdict for that test. Duplicate names across two
+  // files of one glob are ordinary, so this collapses pessimistically rather than refusing: the worst status
+  // any point under that name reported wins, and the repeat itself is recorded.
+  const status = statusOf(open);
+  const prior = observed.get(open.name);
+  observed.set(open.name, prior
+    ? { status: STATUS_RANK[status] > STATUS_RANK[prior.status] ? status : prior.status,
+      points: prior.points + 1,
+      statuses: prior.statuses.includes(status) ? prior.statuses : [...prior.statuses, status] }
+    : { status, points: 1, statuses: [status] });
   open = null;
 };
 
@@ -533,18 +600,14 @@ for (const raw of tap.split('\n')) {
     if (Number(point[2]) !== seen) {
       problems.push(`line ${lineNo}: point numbered ${point[2]} where the runner would have numbered it ${seen}`);
     }
-    open = { indent, name: point[3], type: null };
-    // A name reported twice is not last-writer-wins. It used to be, so a named test the protected runner
-    // watched FAIL was reported `pass` whenever any later point shared its name - the failure stayed in the
-    // summary counts the receipt carries, but was discarded from the verdict for that test. Duplicate names
-    // across two files of one glob are ordinary, so this collapses pessimistically rather than refusing: the
-    // worst status any point under that name reported wins, and the repeat itself is recorded.
-    const status = point[1] === 'ok' ? 'pass' : 'fail';
-    const prior = observed.get(point[3]);
-    observed.set(point[3], prior
-      ? { status: prior.status === 'fail' || status === 'fail' ? 'fail' : status, points: prior.points + 1,
-        statuses: prior.statuses.includes(status) ? prior.statuses : [...prior.statuses, status] }
-      : { status, points: 1, statuses: [status] });
+    const directive = TAP_DIRECTIVE.exec(point[3]);
+    open = {
+      indent,
+      name: directive ? point[3].slice(0, directive.index) : point[3],
+      ok: point[1] === 'ok',
+      directive: directive ? directive[1].toLowerCase() : null,
+      type: null,
+    };
     continue;
   }
 
@@ -598,11 +661,17 @@ const perTest = [...named.values()].map(test => {
 const duplicatePoints = [...observed.entries()]
   .filter(([, seen]) => seen.points > 1)
   .map(([name, seen]) => ({ name, points: seen.points, statuses: seen.statuses, collapsed_to: seen.status }));
+// `pass` is the only status that is a measurement. The other five each record a distinct way this run did NOT
+// measure a named test, and each is carried separately so a consumer can see which.
+const withStatus = status => perTest.filter(test => test.status === status);
 const summary = {
   named: perTest.length,
-  pass: perTest.filter(test => test.status === 'pass').length,
-  fail: perTest.filter(test => test.status === 'fail').length,
-  absent: perTest.filter(test => test.status === 'absent').length,
+  pass: withStatus('pass').length,
+  fail: withStatus('fail').length,
+  absent: withStatus('absent').length,
+  skipped: withStatus('skip').length,
+  todo: withStatus('todo').length,
+  suite_points: withStatus('suite').length,
 };
 
 // EVERY TERM, NAMED. The claim-wide `named > 0` rule let a term that names no test at all ride to `success` on
@@ -612,15 +681,19 @@ const summary = {
 // is not established.
 const termReport = claimTerms.map(term => {
   const tests = perTest.filter(test => test.term === term.id);
-  const fail = tests.filter(test => test.status === 'fail').length;
-  const absent = tests.filter(test => test.status === 'absent').length;
+  const counted = status => tests.filter(test => test.status === status).length;
   return {
     id: term.id,
     named: tests.length,
-    pass: tests.filter(test => test.status === 'pass').length,
-    fail,
-    absent,
-    establishes: tests.length > 0 && fail === 0 && absent === 0,
+    pass: counted('pass'),
+    fail: counted('fail'),
+    absent: counted('absent'),
+    skipped: counted('skip'),
+    todo: counted('todo'),
+    suite_points: counted('suite'),
+    // A term is established only by tests that RAN and PASSED. Failed, absent, skipped, marked todo, or
+    // matched by a suite point rather than a test point: none of those is a measurement of the term.
+    establishes: tests.length > 0 && tests.every(test => test.status === 'pass'),
   };
 });
 const uncoveredTerms = termReport.filter(term => term.named === 0).map(term => String(term.id));
@@ -629,7 +702,7 @@ const uncoveredTerms = termReport.filter(term => term.named === 0).map(term => S
 // this run's capture, and every one passed. The suite's own exit code and counts travel with the receipt so an
 // unrelated failure is visible rather than smoothed over.
 const established = termReport.length > 0 && termReport.every(term => term.establishes)
-  && summary.named > 0 && summary.fail === 0 && summary.absent === 0;
+  && summary.named > 0 && perTest.every(test => test.status === 'pass');
 const reasons = [];
 if (termReport.length === 0) reasons.push('the claim lists no terms, so this run establishes nothing');
 if (summary.named === 0 && termReport.length > 0) {
@@ -641,6 +714,19 @@ if (uncoveredTerms.length > 0) {
 }
 if (summary.fail > 0) reasons.push(`${summary.fail} named test(s) failed in the measured run`);
 if (summary.absent > 0) reasons.push(`${summary.absent} named test(s) did not appear in the measured run`);
+if (summary.skipped > 0) {
+  reasons.push(`${summary.skipped} named test(s) were reported with a \`# SKIP\` directive, so the runner `
+    + `never executed them and this run measured nothing about them: ${listing(withStatus('skip').map(t => t.name))}`);
+}
+if (summary.todo > 0) {
+  reasons.push(`${summary.todo} named test(s) were reported with a \`# TODO\` directive, which the runner `
+    + `counts as neither pass nor fail: ${listing(withStatus('todo').map(t => t.name))}`);
+}
+if (summary.suite_points > 0) {
+  reasons.push(`${summary.suite_points} named test(s) were matched only by a \`type: 'suite'\` point - a `
+    + `describe() block, which reports \`ok\` whether or not it contains a test: `
+    + `${listing(withStatus('suite').map(t => t.name))}`);
+}
 for (const duplicate of duplicatePoints) {
   // Every repeat is recorded in `duplicate_points`; only a repeat whose points DISAGREE is a reason, because a
   // disagreement means the run contains a failure of a named test that a naive reading would have lost.
@@ -766,6 +852,9 @@ const receipt = {
       + 'FORMED. It does not say it is GENUINE - that is what the provenance block above establishes, and '
       + 'nothing in this check would notice a candidate suite printing a well-formed stream of its own.',
   },
+  // Each named test with the status this run's capture gives it: `pass` (a `type: 'test'` point the runner
+  // reported ok, with no directive) or one of `fail`, `absent`, `skip`, `todo`, `suite`. Only `pass` is a
+  // measurement; the other five say, distinctly, how this run failed to make one.
   named_tests: perTest,
   named_tests_summary: summary,
   // Every term the manifest lists, whether or not it names a test. A term with `named: 0` is a term this run
@@ -792,7 +881,8 @@ fs.rmSync(work, { recursive: true, force: true });
 fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
 console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice(0, 8)}: verdict `
   + `${receipt.conclusion.verdict}; named ${summary.named} pass ${summary.pass} fail ${summary.fail} `
-  + `absent ${summary.absent}; suite exit ${suiteExit}, tests ${counts.tests}`);
+  + `absent ${summary.absent} skipped ${summary.skipped} todo ${summary.todo} `
+  + `suite-points ${summary.suite_points}; suite exit ${suiteExit}, tests ${counts.tests}`);
 console.log(`terms: ${termReport.length} listed, ${receipt.terms_summary.establishing} established`
   + (uncoveredTerms.length > 0 ? `; naming no tests: ${uncoveredTerms.join(', ')}` : '')
   + (duplicatePoints.length > 0 ? `; repeated point names: ${duplicatePoints.map(d => `"${d.name}" x${d.points}`).join(', ')}` : ''));
