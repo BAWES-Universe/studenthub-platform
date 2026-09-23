@@ -13,6 +13,9 @@ export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const EMITTER = path.join(HERE, '..', 'emit-receipt.mjs');
 export const RUNNERS = path.join(HERE, '..', 'runners.json');
 export const GH_STUB = path.join(HERE, 'gh-stub.mjs');
+// The emitter imports its authority-scope decision from beside itself, so anything that runs a COPY of the
+// emitter has to put this module beside that copy too.
+export const AUTHORITY_SCOPE = path.join(HERE, '..', 'authority-scope.mjs');
 
 export const REPO = 'BAWES-Universe/studenthub-platform';
 export const RUN_ID = '34900000001';
@@ -32,6 +35,10 @@ export const CLAIM_PATH = '.github/coordinator/service/claim-manifest.json';
 // the candidate, so a world in which they agree is a world whose candidate leaves the authority alone.
 export const AUTHORITY_WORKFLOW_SHA = '1a'.repeat(20);
 export const AUTHORITY_DIR_SHA = '2b'.repeat(20);
+// The fork point of main and the candidate, which is the revision the authority comparison is made AT. In the
+// default world the candidate was cut from main as it stands, so the listings here are main's listings - see
+// the mirroring in `build` below, and the tests that override it to describe a main that has moved on.
+export const MERGE_BASE_SHA = '9'.repeat(40);
 
 const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
 // What `node --test` would have exited with for a capture: non-zero if and only if it reported a failing or a
@@ -413,9 +420,23 @@ export const build = (patch = {}) => {
       total_commits: 1, files: [{ filename: CLAIM_PATH, status: 'modified' }] } },
     [`/repos/${REPO}/contents/${CLAIM_PATH}?ref=${CANDIDATE_SHA}`]: { json: { sha: 'f'.repeat(40), content: claimBytes.toString('base64') } },
     [`/repos/${REPO}/compare/${TRUSTED_SHA}...main`]: { json: { status: 'identical' } },
+    // The fork point, which is all the emitter reads from this comparison. `files` is deliberately absent
+    // here: a world that never supplies it is a world in which a check that went back to reading the
+    // 300-capped listing could not pass.
+    [`/repos/${REPO}/compare/main...${CANDIDATE_SHA}`]: { json: { status: 'diverged', ahead_by: 1, behind_by: 0,
+      merge_base_commit: { sha: MERGE_BASE_SHA } } },
     ...(patch.routes ?? {}),
   };
   for (const key of patch.dropRoutes ?? []) delete routes[key];
+  // THE MERGE BASE MIRRORS MAIN UNLESS A TEST SAYS OTHERWISE. The default world's candidate was cut from main
+  // as it stands, so the authority listings at the fork point are main's listings - including when a test has
+  // replaced main's, which is what makes "the authority was never on main" describable without also saying
+  // "and the candidate deleted it". A test that wants a main that moved after the fork sets these itself.
+  for (const dir of ['.github/workflows', '.github']) {
+    const base = `/repos/${REPO}/contents/${dir}?ref=${MERGE_BASE_SHA}`;
+    const onMain = `/repos/${REPO}/contents/${dir}?ref=main`;
+    if (!(base in routes) && routes[onMain]) routes[base] = routes[onMain];
+  }
   const routesPath = path.join(root, 'routes.json');
   fs.writeFileSync(routesPath, JSON.stringify(routes, null, 2));
 

@@ -92,6 +92,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+// The authority-scope decision lives in its own module because the trust job's early refusal has to make the
+// same one. It was written out twice, and when the question both copies asked turned out to be the wrong one
+// the same defect had to be corrected in both or the refusal would only have moved. See section 8.
+import { decideAuthorityScope, observeAuthorityScope } from './authority-scope.mjs';
 
 const env = process.env;
 const GH = env.GH_BIN ?? 'gh';
@@ -99,13 +103,11 @@ const PY = env.PY_BIN ?? 'python3';
 
 // Constants of the authority. None of them is an input, because an input is something a caller chooses.
 const WORKFLOW_PATH = '.github/workflows/verifier-receipt.yml';
-// The authority, named as OBJECTS rather than as a pattern to test a diff listing against. Section 8 explains
-// why: a listing can be truncated and a rename can be reported under a name this set does not contain, but the
-// object id GitHub reports for a path at a ref is neither truncated nor renameable.
-const AUTHORITY_PATHS = [
-  { dir: '.github/workflows', name: 'verifier-receipt.yml', kind: 'file' },
-  { dir: '.github', name: 'verifier-receipt', kind: 'directory' },
-];
+// The authority is named as OBJECTS rather than as a pattern to test a diff listing against, in
+// ./authority-scope.mjs, whose header explains why: a listing can be truncated and a rename can be reported
+// under a name that set does not contain, but the object id GitHub reports for a path at a ref is neither
+// truncated nor renameable. Imported rather than repeated here so the trust job's early refusal and this
+// emitter cannot come to hold two different lists.
 const PROTECTED_REF = 'main';
 const CLAIM_PATH = '.github/coordinator/service/claim-manifest.json';
 // Paths inside a manifest entry's `artifact` field are relative to the manifest's own directory: the real
@@ -792,38 +794,28 @@ if (trailer.fields.tree !== candidateTree) {
 //    `.github/verifier-receipt/emit-receipt.mjs` to `.github/parked/` - which deletes the authority - matched
 //    no pattern at all.
 //
-//    Asking GitHub for the object id of each authority path, at main and at the candidate, closes both: a
-//    directory's sha covers every byte under it however many other files the candidate touched, an absent path
-//    answers with no sha at all, and neither answer is a page of a list. Unreadable is refused, not skipped.
-const objectAt = (dir, name, ref) => {
-  const listing = apiJson(`/repos/${repo}/contents/${encodeURI(dir)}?ref=${ref}`);
-  if (!Array.isArray(listing)) return { listed: false, sha: null, type: null };
-  const found = listing.find(item => item.name === name);
-  return { listed: true, sha: found?.sha ?? null, type: found?.type ?? null };
-};
-const authorityIdentity = AUTHORITY_PATHS.map(entry => {
-  const full = `${entry.dir}/${entry.name}`;
-  const onProtected = objectAt(entry.dir, entry.name, PROTECTED_REF);
-  if (!onProtected.listed) {
-    refuse('candidate.authority', `the API cannot list ${entry.dir} on ${PROTECTED_REF}, so this run cannot `
-      + `establish what ${full} is on the protected branch`);
-  }
-  const onCandidate = objectAt(entry.dir, entry.name, candidateSha);
-  if (!onCandidate.listed) {
-    refuse('candidate.authority', `the API cannot list ${entry.dir} at ${candidateSha.slice(0, 12)}, so this run `
-      + `cannot establish that the candidate leaves ${full} alone`);
-  }
-  return { path: full, kind: entry.kind, protected_sha: onProtected.sha, candidate_sha: onCandidate.sha };
-});
-const altered = authorityIdentity.filter(entry => entry.protected_sha !== entry.candidate_sha);
-if (altered.length > 0) {
-  const how = altered.map(entry => {
-    if (entry.candidate_sha === null) return `${entry.path} is absent at the candidate (deleted or renamed away)`;
-    if (entry.protected_sha === null) return `${entry.path} is absent on ${PROTECTED_REF} but present at the candidate`;
-    return `${entry.path} is ${entry.candidate_sha.slice(0, 12)} at the candidate, not ${entry.protected_sha.slice(0, 12)}`;
-  });
-  refuse('candidate.authority', `this candidate alters the receipt authority (${how.join('; ')}), so no receipt `
-    + 'this authority produces may approve it');
+//    Asking GitHub for the object id of each authority path closes both: a directory's sha covers every byte
+//    under it however many other files the candidate touched, an absent path answers with no sha at all, and
+//    neither answer is a page of a list. Unreadable is refused, not skipped.
+//
+//    THE BASELINE IS THE MERGE BASE, NOT MAIN, AND THAT CORRECTION WAS MEASURED. Comparing the candidate's
+//    object ids with MAIN's answers a different question from the one asked. The first workflow_dispatch of
+//    this authority on main (run 35852850002, candidate 6feac016) refused a candidate that had altered
+//    nothing: it was cut from an older main, so it carries no `.github/verifier-receipt/` and no
+//    `verifier-receipt.yml` at all, and equality-against-main reads ABSENT as ALTERED. Every candidate cut
+//    before the authority landed fails that way. The fork point is the only revision at which "the
+//    candidate's copy" and "what the candidate started from" are the same object, so the comparison is made
+//    there; a candidate holding an OLDER copy while main has moved on has touched nothing, and the merge
+//    resolves that in main's favour anyway. ./authority-scope.mjs holds the decision, because the trust job's
+//    early refusal has to make the same one.
+const authorityScope = decideAuthorityScope(await observeAuthorityScope({
+  repo, protectedRef: PROTECTED_REF, candidateSha, api: apiJson,
+}));
+const authorityIdentity = authorityScope.entries;
+if (!authorityScope.ok) {
+  refuse('candidate.authority', 'this candidate changes the receipt authority relative to its merge base '
+    + `(${authorityScope.refuses.map(entry => entry.message).join('; ')}), so no receipt this authority `
+    + 'produces may approve it');
 }
 
 // 9. The claim, fetched from the candidate commit through the contents API. Not from the artifact, not from a
@@ -2106,9 +2098,11 @@ if (!established) {
 }
 // SECTION 8 CANNOT DISTINGUISH "THE AUTHORITY IS INTACT" FROM "THE AUTHORITY IS NOWHERE", and a review found
 // this repository in exactly the second state: `.github/verifier-receipt` does not exist on the protected
-// branch, so `objectAt` answers null there, answers null at any candidate that does not carry it, and the
-// comparison of two nulls reports `touches_authority: false`. That is the state the FIRST receipts would be
-// produced in, so it is named here instead of passing quietly.
+// branch, so the listing answers null there, answers null at any candidate that does not carry it, and a
+// comparison of two nulls is `change: 'none'`. That is the state the FIRST receipts would be produced in, so
+// it is named here instead of passing quietly. Section 8's merge-base baseline does not answer this: the
+// candidate really does leave the authority alone in that state, and the reason this receipt cannot be pinned
+// is that there was no authority on the protected branch for it to be judged against.
 const authorityAbsent = authorityIdentity.filter(entry => entry.protected_sha === null).map(entry => entry.path);
 if (authorityAbsent.length > 0) {
   inadmissible.push(`the receipt authority is absent on ${PROTECTED_REF} (${listing(authorityAbsent)}), so this `
@@ -2145,10 +2139,23 @@ const receipt = {
   candidate: {
     sha: candidateSha,
     tree: candidateTree,
+    // "CHANGES THE AUTHORITY RELATIVE TO ITS MERGE BASE" - which is the question section 8 settles, and the
+    // only reachable value is false, because a true one is a refusal rather than a receipt. A candidate that
+    // simply predates the authority is NOT one that touches it; measuring this against main said otherwise
+    // and refused a candidate that had altered nothing.
     touches_authority: false,
-    // The evidence for the line above: the object id of each authority path on the protected branch and at the
-    // candidate, which is what was compared. Not a filtered diff listing, which GitHub truncates at
-    // COMPARE_FILE_CAP and which reports a rename under its new name only.
+    // The fork point the line above was decided at, so a reader can re-fetch the same object ids.
+    authority_merge_base: authorityScope.merge_base,
+    // Whether an authority path is absent at the candidate AND at its merge base while the protected branch
+    // holds it - which is what a candidate cut before the authority landed looks like - and whether the
+    // candidate's copy is not what the protected branch holds today. Neither is a refusal; both are facts an
+    // admissible receipt should state rather than leave a reader to infer them from the ids below.
+    predates_authority: authorityScope.predates_authority,
+    authority_stale_relative_to_protected: authorityScope.stale_relative_to_protected,
+    // The evidence for the lines above: the object id of each authority path at the merge base, at the
+    // candidate and on the protected branch, and which of none/added/modified/deleted the first two make.
+    // Not a filtered diff listing, which GitHub truncates at COMPARE_FILE_CAP and which reports a rename
+    // under its new name only.
     authority_identity: authorityIdentity,
   },
   // Everything a third party needs to re-fetch and re-check this receipt through the API, without trusting any

@@ -196,7 +196,7 @@ test('a candidate that modifies the receipt authority is refused, naming the aut
   } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
-  assert.match(result.stderr, /\.github\/verifier-receipt/);
+  assert.match(result.stderr, /\.github\/verifier-receipt is modified relative to the merge base/);
 });
 
 // The hole this replaced: the check read `files[].filename` from a comparison GitHub caps at 300 entries and
@@ -208,13 +208,18 @@ test('a candidate hiding its authority edit behind a full 300-file comparison pa
   const filler = Array.from({ length: 300 }, (unused, index) => ({
     filename: `.github/aaa/${String(index).padStart(4, '0')}.json`, status: 'added' }));
   const built = world.build({ routes: {
+    // A full page of `files`, and the merge base beside it. The comparison has to carry the fork point or the
+    // refusal below would be the fail-closed one for an unestablishable merge base, which would prove nothing
+    // about the listing.
     [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`]: { json: { status: 'ahead', ahead_by: 137,
-      total_commits: 137, files: filler } },
+      total_commits: 137, merge_base_commit: { sha: world.MERGE_BASE_SHA }, files: filler } },
     [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [
       { name: 'verifier-receipt', type: 'dir', sha: '9999'.repeat(10) },
       { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
   } });
-  refusedOn(world.emit(built), 'candidate.authority');
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /\.github\/verifier-receipt is modified relative to the merge base/);
 });
 
 // A rename is reported under its NEW name, with the old path only in `previous_filename`. Moving the emitter to
@@ -227,6 +232,7 @@ test('a candidate that renames the authority away is refused, naming the absent 
   } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /\.github\/verifier-receipt is deleted relative to the merge base/);
   assert.match(result.stderr, /absent at the candidate/);
 });
 
@@ -238,7 +244,11 @@ test('a candidate that renames the workflow to another extension is refused', ()
   } });
   const result = world.emit(built);
   refusedOn(result, 'candidate.authority');
-  assert.match(result.stderr, /verifier-receipt\.yml is absent at the candidate/);
+  // This assertion changed with the baseline. It used to read `verifier-receipt.yml is absent at the
+  // candidate`, which was how the old check named EVERY absence - including the absence of a candidate that
+  // simply predates the authority, which absent-is-not-altered measured false. The refusal now names the
+  // change relative to the merge base, and carries the two ids it was decided from.
+  assert.match(result.stderr, /verifier-receipt\.yml is deleted relative to the merge base: 1a1a1a1a1a1a at 999999999999, absent at the candidate/);
 });
 
 test('an authority listing the API will not serve is refused, not skipped', () => {
@@ -251,11 +261,60 @@ test('the receipt carries the object ids the authority decision was made from', 
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.candidate.touches_authority, false);
+  // The fork point the comparison was made at, in the receipt, so a reader can re-fetch the same two ids.
+  assert.equal(receipt.candidate.authority_merge_base, world.MERGE_BASE_SHA);
   assert.deepEqual(receipt.candidate.authority_identity.map(entry => entry.path),
     ['.github/workflows/verifier-receipt.yml', '.github/verifier-receipt']);
   for (const entry of receipt.candidate.authority_identity) {
+    assert.equal(entry.base_sha, entry.candidate_sha);
     assert.equal(entry.protected_sha, entry.candidate_sha);
+    assert.equal(entry.change, 'none');
   }
+  assert.equal(receipt.candidate.predates_authority, false);
+  assert.equal(receipt.candidate.authority_stale_relative_to_protected, false);
+});
+
+// THE REFUSAL THIS CHANGE REPLACES, END TO END THROUGH THE EMITTER. Run 35852850002 dispatched the authority
+// on main against candidate 6feac016 and refused it as an authority edit, reporting `main=3615f658
+// candidate=<absent>` for the workflow file and `main=03fe40ba candidate=<absent>` for the directory. That
+// candidate was cut from an older main and carries no authority at all, so it altered nothing; the check
+// compared object ids for EQUALITY WITH MAIN and therefore read absent as altered. Measured against the fork
+// point, where the candidate's copy and what it started from are the same object, there is no change.
+test('a candidate that predates the authority is admitted, and the receipt says that is what it is', () => {
+  const absentAuthority = dir => ({ json: dir === '.github'
+    ? [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) }, { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }]
+    : [{ name: 'ci.yml', type: 'file', sha: '3c'.repeat(20) }] });
+  const built = world.build({ routes: {
+    // Absent at the candidate AND at the revision it was cut from; present on main, which moved on after it.
+    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: absentAuthority('.github'),
+    [`/repos/${world.REPO}/contents/.github?ref=${world.MERGE_BASE_SHA}`]: absentAuthority('.github'),
+    [`/repos/${world.REPO}/contents/.github/workflows?ref=${world.CANDIDATE_SHA}`]: absentAuthority('.github/workflows'),
+    [`/repos/${world.REPO}/contents/.github/workflows?ref=${world.MERGE_BASE_SHA}`]: absentAuthority('.github/workflows'),
+  } });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.candidate.touches_authority, false);
+  assert.equal(receipt.candidate.predates_authority, true);
+  assert.deepEqual(receipt.candidate.authority_identity.map(entry => [entry.change, entry.base_sha, entry.candidate_sha]),
+    [['none', null, null], ['none', null, null]]);
+  // And the authority IS on the protected branch, so this receipt is not the "compared against nothing" case.
+  assert.deepEqual(receipt.candidate.authority_identity.map(entry => entry.protected_sha),
+    [world.AUTHORITY_WORKFLOW_SHA, world.AUTHORITY_DIR_SHA]);
+  assert.equal(receipt.provenance.admissible_as_pin, true);
+});
+
+test('a comparison that names no merge base is refused, not read as unchanged', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`]: { json: { status: 'diverged', files: [] } },
+  } });
+  const result = world.emit(built);
+  refusedOn(result, 'candidate.authority');
+  assert.match(result.stderr, /cannot establish the merge base of main and/);
+});
+
+test('a comparison the API will not serve at all is refused, so the baseline is never assumed', () => {
+  const built = world.build({ dropRoutes: [`/repos/${world.REPO}/compare/main...${world.CANDIDATE_SHA}`] });
+  refusedOn(world.emit(built), 'candidate.authority');
 });
 
 test('a candidate carrying no claim is refused, naming the claim path', () => {
@@ -1420,6 +1479,9 @@ const emitterWithoutShapeChecks = () => {
   // process is told could be told wrong, and a neutered copy in a temp directory is exactly a case where it
   // would have been.
   fs.copyFileSync(world.MATRIX_PATH, path.join(dir, 'matrix.json'));
+  // The same for the authority-scope module, which the emitter imports from beside itself for the same
+  // reason: a module path this process is told could be told wrong.
+  fs.copyFileSync(world.AUTHORITY_SCOPE, path.join(dir, 'authority-scope.mjs'));
   return neuteredEmitter;
 };
 

@@ -164,48 +164,41 @@ jobs:
       # An early, cheap refusal. The emitter re-checks this from the API itself and refuses independently, so a
       # drift here loosens nothing - it only wastes a suite run before the refusal lands.
       #
-      # It asks the same question the emitter asks, the same way: the OBJECT ID of each authority path on main
-      # and at the candidate. This step used to read `.files[].filename` from `compare/main...<candidate>`,
-      # which has two holes the emitter's comment records in full - GitHub caps that list at 300 entries and
-      # truncates it silently in filename order, and it reports a rename under its new name only. An id is
-      # neither a page of a list nor a name.
+      # It asks the same question the emitter asks, BY RUNNING THE SAME CODE: .github/verifier-receipt/
+      # authority-scope.mjs, fetched here from the trusted commit because this job checks out nothing on
+      # purpose. It used to be a second spelling of that question written out inline, and when the question
+      # itself turned out to be the wrong one (see below) the same defect had to be corrected in two places or
+      # the refusal would only have moved from here to the emitter.
+      #
+      # THE OBJECT ID, NOT A DIFF LISTING. An earlier form read `.files[].filename` from
+      # `compare/main...<candidate>`, which has two holes the emitter's section 8 comment records in full:
+      # GitHub caps that list at 300 entries and truncates it silently in filename order, and it reports a
+      # rename under its new name only. An id is neither a page of a list nor a name. The comparison is still
+      # fetched, but only for its `merge_base_commit.sha`.
+      #
+      # AND THE BASELINE IS THE MERGE BASE, NOT MAIN. Comparing ids with main answers a different question.
+      # The first workflow_dispatch of this authority on main (run 35852850002, candidate 6feac016) refused a
+      # candidate that had altered nothing: cut from an older main, it carries no authority at all, and
+      # equality-against-main reads ABSENT as ALTERED. Measured at the fork point - the one revision where the
+      # candidate's copy and what it started from are the same object - it changes nothing and is admitted.
       - name: Refuse a candidate that alters the receipt authority
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          TRUSTED_SHA: ${{ steps.resolve.outputs.trusted_sha }}
           CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          object_id() {  # directory, entry name, ref -> the entry's sha, or empty if the entry is not there
-            local listing
-            if ! listing=$(gh api "/repos/$REPO/contents/$1?ref=$3" 2>/dev/null); then
-              # This function is called in a command substitution, so its diagnostics go to stderr or they are
-              # captured as its result and lost. `set -e` in the caller turns the non-zero exit into a refusal.
-              echo "::error::cannot list $1 at $3, so this run cannot establish what $1/$2 is there" >&2
-              exit 1
-            fi
-            printf '%s' "$listing" | node -e '
-              let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
-                const found = JSON.parse(s).find(item => item.name === process.argv[1]);
-                process.stdout.write(found?.sha ?? "");
-              });
-            ' "$2"
-          }
-          altered=""
-          for pair in ".github/workflows:verifier-receipt.yml" ".github:verifier-receipt"; do
-            dir="${pair%%:*}"; name="${pair##*:}"
-            on_main=$(object_id "$dir" "$name" main)
-            on_candidate=$(object_id "$dir" "$name" "$CANDIDATE_SHA")
-            echo "$dir/$name: main=${on_main:-<absent>} candidate=${on_candidate:-<absent>}"
-            if [ "$on_main" != "$on_candidate" ]; then
-              altered="$altered $dir/$name"
-            fi
-          done
-          if [ -n "$altered" ]; then
-            echo "::error::this candidate alters the receipt authority ($altered), so its receipt may not approve it"
+          scope="$RUNNER_TEMP/authority-scope.mjs"
+          # FROM THE TRUSTED COMMIT AND NOWHERE ELSE. There is no fallback to another ref: a candidate that
+          # supplied this file would be deciding whether it is allowed to edit the authority. A trusted commit
+          # that predates the module therefore refuses here, which is the closed direction.
+          if ! gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
+               --jq '.content' | base64 -d > "$scope"; then
+            echo "::error::the trusted commit $TRUSTED_SHA carries no .github/verifier-receipt/authority-scope.mjs, so this run cannot decide whether the candidate changes the receipt authority"
             exit 1
           fi
-          echo "the candidate leaves every authority object exactly as main holds it"
+          node "$scope" "$REPO" main "$CANDIDATE_SHA"
 
   measure:
     name: measure
