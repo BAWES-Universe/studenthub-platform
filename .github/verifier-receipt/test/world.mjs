@@ -96,7 +96,13 @@ export const tapFor = (names, { failing = [], locations, at = {} } = {}) => {
   return lines.join('\n');
 };
 
+export const MEASUREMENT_IMAGE_REF = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'image.json'), 'utf8')).reference;
 export const CAPTURE_PROGRAM = path.join(HERE, '..', 'capture-stream.mjs');
+// The stand-in for `docker`. The capture program now invokes every measurement through a container; this is
+// what lets the emitter's own suite keep running where there is no daemon. It asserts the REAL argv with
+// `assertNoEscape` and then runs the command on this host - see its header for exactly what that establishes
+// and what only a real dispatch can.
+export const DOCKER_STUB = path.join(HERE, 'docker-stub.mjs');
 
 // RUN THE TRUSTED CAPTURE PROGRAM FOR REAL, the way the measure job runs it: a fresh RUNNER_TEMP, the capture
 // directory it is expected to create itself, a candidate directory to run in, and the runner command the
@@ -106,6 +112,9 @@ export const CAPTURE_PROGRAM = path.join(HERE, '..', 'capture-stream.mjs');
 export const runCapture = ({ fixture, runnerCommand, preCreateDir = false, env: envPatch = {} } = {}) => {
   const runnerTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-temp-'));
   const captureDir = path.join(runnerTemp, 'capture');
+  const measurementScratch = path.join(runnerTemp, 'measurement');
+  fs.mkdirSync(path.join(measurementScratch, 'tmp'), { recursive: true });
+  fs.mkdirSync(path.join(measurementScratch, 'home'), { recursive: true });
   if (preCreateDir) fs.mkdirSync(captureDir);
   // The measure job's $GITHUB_OUTPUT, so the tests can read the channel that travels through GitHub rather
   // than through the artifact - and so a fixture that forges the artifact can be shown NOT to have reached it.
@@ -126,6 +135,9 @@ export const runCapture = ({ fixture, runnerCommand, preCreateDir = false, env: 
     JOB_NAME: MEASURE_JOB_NAME,
     GITHUB_RUN_ID: RUN_ID,
     GITHUB_RUN_ATTEMPT: RUN_ATTEMPT,
+    MEASUREMENT_IMAGE: MEASUREMENT_IMAGE_REF,
+    MEASUREMENT_SCRATCH: measurementScratch,
+    DOCKER_BIN: DOCKER_STUB,
     ...envPatch,
   };
   // NODE_TEST_CONTEXT is deliberately absent: a nested `node --test` that sees it reports to its parent in
@@ -218,17 +230,76 @@ export const RUNNER_IMAGE_VERSION = '20260901.1.0';
 const field = value => encodeURIComponent(String(value));
 export const trailerFor = ({ body, exit, signal = null, run = RUN_ID, attempt = RUN_ATTEMPT,
   job = MEASURE_JOB_NAME, candidate = CANDIDATE_SHA, tree = CANDIDATE_TREE, runner = RUNNER_KEY,
-  node = RUNNER_NODE, arch = RUNNER_ARCH, image = RUNNER_IMAGE, imageVersion = RUNNER_IMAGE_VERSION } = {}) => {
+  node = RUNNER_NODE, arch = RUNNER_ARCH, image = RUNNER_IMAGE, imageVersion = RUNNER_IMAGE_VERSION,
+  measurementImage = MEASUREMENT_IMAGE_REF } = {}) => {
   const bytes = Buffer.from(body);
   return `# verifier-capture v1 exit=${field(exit)} signal=${field(signal ?? '-')} `
     + `body_bytes=${bytes.length} body_sha256=${sha256(bytes)} run=${field(run)} attempt=${field(attempt)} `
     + `job=${field(job)} candidate=${field(candidate)} tree=${field(tree)} runner=${field(runner)} `
-    + `node=${field(node)} arch=${field(arch)} image=${field(image)} image_version=${field(imageVersion)}`;
+    + `node=${field(node)} arch=${field(arch)} image=${field(image)} image_version=${field(imageVersion)} `
+    + `sandboxed=1 measurement_image=${field(measurementImage)} measurement_uid=10001`;
 };
 export const withTrailer = (body, trailer) => {
   const bytes = Buffer.from(body);
   const separator = bytes.length > 0 && bytes[bytes.length - 1] === 0x0a ? '' : '\n';
   return Buffer.concat([bytes, Buffer.from(`${separator}${trailer}\n`, 'utf8')]).toString('utf8');
+};
+
+// THE CONTROLLER'S OBSERVATION, BUILT THE WAY A CONSISTENT WORLD WOULD CARRY IT.
+//
+// The emitter no longer establishes a term from anything in the capture: a term is established when the
+// CONTROLLER observed its required controls pass unmutated and every required mutant die, each from an exit
+// status it took from waitpid on a container. So a world that HOLDS TOGETHER carries an observation saying
+// exactly that, and the tests that want each part of it broken - a control run that did not pass, a mutant
+// that survived, a matrix digest from some other authority, a term the controller never ran - set that one
+// fact and assert the refusal by name.
+//
+// The matrix digest is the REAL .github/verifier-receipt/matrix.json, because the emitter compares it to the
+// matrix on the ref it is running from. A world that made one up would be refused at `controller.matrix`
+// before reaching the fact any test is about.
+export const MATRIX_PATH = path.join(HERE, '..', 'matrix.json');
+export const MATRIX_SHA256 = sha256(fs.readFileSync(MATRIX_PATH));
+export const MEASUREMENT_IMAGE = MEASUREMENT_IMAGE_REF;
+
+export const observationFor = (claim, patch = {}) => {
+  let seq = 0;
+  const run = (label, exit, extra = {}) => ({ run_id: `run-${String(++seq).padStart(4, '0')}`, label,
+    observed_by: 'controller', exit, signal: null, sandbox_fault: null, duration_ms: 12,
+    argv: ['run', '--user', '10001:10001', '--read-only'],
+    diagnostic_stream: { sha256: sha256(Buffer.from(label)), bytes: 64, truncated: false,
+      authority: 'none: candidate output, kept for a human' }, ...extra });
+  // A world may deliberately carry a malformed claim - a null entry, an `entries` that is not a list, a
+  // `killing_mutants` that is a string - because the emitter's refusals for each of those are what several
+  // tests are about. The controller would never observe such a term, so neither does this: the observation
+  // carries the well-formed entries and nothing else, and the emitter's own refusal is what the test reads.
+  const entries = (Array.isArray(claim?.entries) ? claim.entries : [])
+    .map((entry, at) => [entry, at])
+    .filter(([entry]) => entry !== null && typeof entry === 'object' && !Array.isArray(entry));
+  const terms = entries.map(([entry, claimEntry]) => {
+    const control = run(`control:${entry.id}`, patch.controlExit ?? 0, { term: entry.id });
+    const mutants = (Array.isArray(entry.killing_mutants) ? entry.killing_mutants : [])
+      .filter(mutant => mutant !== null && typeof mutant === 'object').map(mutant => {
+      const killing = run(`mutant:${entry.id}:${mutant.name ?? mutant.test_name}`, patch.mutantExit ?? 1, { term: entry.id });
+      return { name: mutant.name ?? mutant.test_name, observed_by: 'controller',
+        patch: { file: '.github/coordinator/service/shu71-production.mjs', applied: true, occurrences: 1,
+          before_sha256: sha256(Buffer.from('before')), after_sha256: sha256(Buffer.from('after')) },
+        killing_run: killing.run_id, killing_run_exit: killing.exit, died: killing.exit !== 0, why: null, run: killing };
+    });
+    const established = control.exit === 0 && mutants.length > 0 && mutants.every(mutant => mutant.died);
+    return { id: entry.id, claim_entry: claimEntry, sealed_term: entry.sealed_term ?? String(entry.id), observed_by: 'controller',
+      establishable: true, matrix_refusals: [],
+      control: { file: ARTIFACT_PATH, test_names: entry.control?.test_names ?? [], run: control.run_id,
+        exit: control.exit, passed: control.exit === 0 },
+      mutants, established, why_not: [], runs: [control, ...mutants.map(mutant => mutant.run)] };
+  });
+  return {
+    schema: 'verifier-controller-observation/v1', observed_by: 'controller', scope: 'coordinator',
+    runner_key: RUNNER_KEY, candidate_sha: CANDIDATE_SHA, image: MEASUREMENT_IMAGE,
+    matrix: { path: '.github/verifier-receipt/matrix.json', sha256: MATRIX_SHA256, terms: terms.length },
+    normal_run: run('normal-run', 0, { runner_key: RUNNER_KEY, runner_command: RUNNER_COMMAND }),
+    matrix_fidelity: { refused: false, refusals: [] },
+    terms, established: terms.filter(term => term.established).map(term => term.id),
+  };
 };
 
 export const build = (patch = {}) => {
@@ -282,6 +353,13 @@ export const build = (patch = {}) => {
     ...(patch.meta ?? {}),
   };
   fs.writeFileSync(path.join(captureDir, 'capture-meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
+  // The controller's observation travels in the same artifact as the capture, because it is the same job's
+  // evidence: the emitter fetches the archive itself, checks GitHub's digest over it, and reads all three
+  // files out of what GitHub served.
+  const claimForObservation = patch.rawClaim ?? withDisposition(patch.claim ?? CLAIM);
+  const observation = patch.rawObservation
+    ?? { ...observationFor(claimForObservation, patch.observationRuns ?? {}), ...(patch.observation ?? {}) };
+  fs.writeFileSync(path.join(captureDir, 'controller-observed.json'), `${JSON.stringify(observation, null, 2)}\n`);
   for (const [name, body] of Object.entries(patch.extraArtifactFiles ?? {})) {
     fs.writeFileSync(path.join(captureDir, name), body);
   }

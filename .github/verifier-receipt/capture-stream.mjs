@@ -10,7 +10,9 @@
 //
 // So the bytes are never left on disk for a later step to hash. This process:
 //
-//   * spawns the runner itself, with the command the PROTECTED enum names, in the candidate's checkout;
+//   * invokes the runner itself, INSIDE THE MEASUREMENT SANDBOX, with the command the PROTECTED enum names -
+//     argv split and globs expanded by this process, never handed to a shell - against the candidate's
+//     checkout mounted read-only;
 //   * hashes every byte of the runner's output incrementally as it arrives here, in this process's memory,
 //     where no candidate process can reach it;
 //   * learns the runner's exit status from waitpid, not from a file or a step output the measured code can
@@ -45,14 +47,33 @@
 //   test printed on the same fd. That boundary is stated in the receipt, in the emitter's header, and in the
 //   record of this change, and it is not closed by anything here.
 //
-//   NOT CLOSED, AND BLOCKING RATHER THAN RESIDUAL: a candidate that detaches a background process which outlives
-//   its own suite - closing the inherited stdout so this program sees EOF - races the writes below and
-//   overwrites BOTH files afterwards. A cold review ran exactly that, three times out of three, and reached
-//   verdict success for a tree whose every named test had really FAILED. Everything in this step runs as one
-//   uid, so nothing this program can do makes that race impossible: only a different uid for the measured suite
-//   (a `container:` with a USER it cannot escape, or `sudo -u nobody` with this capture directory owned by the
-//   runner user) closes it. That is an infrastructure change, and it is named as the open item in the record of
-//   this change rather than described here as though it were done.
+//   CLOSED NOW, AND IT WAS THE BLOCKING ONE. A candidate that detaches a background process outliving its own
+//   suite - closing the inherited stdout so this program sees EOF - used to race the writes below and overwrite
+//   BOTH files afterwards. A cold review ran exactly that, three times out of three, and reached verdict
+//   success for a tree whose every named test had really FAILED. The same review then defeated the fix that
+//   moved the digests out of band, and named the reason precisely: EVERYTHING IN THIS STEP RAN AS ONE UID, so
+//   the detached process could append `exit=0` and forged digests to $GITHUB_OUTPUT beside the files it had
+//   rewritten, and every check moved together.
+//
+//   The measured code no longer runs as this uid. It runs in a container as 10001:10001, with the candidate
+//   source mounted READ-ONLY, every capability dropped, no new privileges, no network and NO DOCKER SOCKET,
+//   with HOME and TMPDIR inside a scratch directory the controller created for it and nothing else writable.
+//   `suite.out`, `capture-meta.json`, $GITHUB_OUTPUT, $GITHUB_ENV, the workspace, the receipt and this
+//   process's memory all belong to the runner user, and that uid is not it. The environment the measurement
+//   gets is not the runner's minus a denylist either: the container is entered through `env -i` with four
+//   names this authority chose, so there is no GITHUB_*, no ACTIONS_*, no RUNNER_*, no CI and no token inside
+//   it to read a path out of in the first place. The detached process can still outlive the suite - inside the
+//   container, where it is torn down with it by --rm and can reach nothing it could rewrite.
+//
+//   WHAT REMAINS OPEN, so this paragraph does not become the next overclaim. The container establishes
+//   PROVENANCE - who could have written these bytes - and NOT SEMANTIC TRUTH. Everything under "IT DOES NOT
+//   ESTABLISH" above still holds exactly as written: the measured tests share this stream and a test body
+//   printing well-formed TAP is hashed as faithfully as the reporter's. That is why nothing downstream is
+//   allowed to read a point out of this capture as authority any more. What establishes a term is
+//   controller.mjs: an exit status the controller observed for a run IT chose, and a required mutation it
+//   applied to a private overlay and observed to kill the tests the protected matrix names. This capture is
+//   DIAGNOSTIC evidence - the receipt says so in a field - and its value is that a human can read what
+//   happened, with a digest saying which bytes they are reading.
 //
 //   WHAT IS CLOSED HERE, and it is the half the same review said must stop being assertable on its own: the
 //   SUITE'S EXIT STATUS. It used to reach the emitter only through capture-meta.json, so a forger that rewrote
@@ -77,6 +98,8 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { sandboxArgv, assertNoEscape, measurementEnv } from './sandbox.mjs';
+import { runnerArgv, expandGlobs } from './controller.mjs';
 
 const env = process.env;
 // Fails closed and names the thing that was missing, like every other refusal in this authority.
@@ -105,6 +128,17 @@ const candidateSha = need('CANDIDATE_SHA');
 const candidateTree = need('CANDIDATE_TREE');
 const trustedSourceSha = need('TRUSTED_SOURCE_SHA');
 const jobName = need('JOB_NAME');
+// THE SANDBOX THE RUNNER IS INVOKED IN. Required, not optional: a capture taken outside the container is the
+// capture every previous review defeated, and an argument this program defaults away is an argument a future
+// edit drops. See the header for what the container changes and what it does not.
+const image = need('MEASUREMENT_IMAGE');
+const measurementScratch = need('MEASUREMENT_SCRATCH');
+const dockerBin = env.DOCKER_BIN || 'docker';
+if (!/^[^@]+@sha256:[0-9a-f]{64}$/.test(image)) {
+  refuse('capture.image', `the measurement image is ${JSON.stringify(image)}, which is not a digest; a tag is a `
+    + 'pointer somebody outside this repository can move, and the image is the filesystem the interpreter, the '
+    + 'libc and the git this measurement uses all come out of');
+}
 const runId = need('GITHUB_RUN_ID');
 const runAttempt = need('GITHUB_RUN_ATTEMPT');
 
@@ -139,15 +173,28 @@ const absorb = chunk => {
   chunks.push(chunk);
 };
 
-// THE RUNNER IS SPAWNED BY THIS PROCESS, not by a shell whose exit status has to be reported through a file.
-// The command text is the protected enum's, passed as one argument to bash exactly as the workflow used to
-// pass it, and wrapped in a group whose stderr is redirected onto its stdout so the capture is the same
-// interleaved stream the redirect produced.
-const script = `{\n${runnerCommand}\n} 2>&1\n`;
-const child = spawn('bash', ['-euo', 'pipefail', '-c', script], {
-  cwd: candidateDir,
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+// THE RUNNER IS INVOKED INSIDE THE MEASUREMENT SANDBOX, BY THIS PROCESS, AND THERE IS NO SHELL LEFT.
+//
+// Two things change here and both were findings. The first: the command no longer passes through bash at all.
+// It was handed to `bash -c` as one string so the capture would be the same interleaved stream a `2>&1`
+// redirect produced; the argv is now split from the protected enum and its globs are expanded by THIS process
+// against its own checkout, so a runner key whose text grew a `;` cannot become two commands and a shell's
+// expansion cannot choose which files run. Both of the container's streams are absorbed here in arrival order,
+// which is the interleaving the redirect used to produce.
+//
+// The second, and it is the one this whole file existed to reach: the measured code runs as uid 10001 in a
+// container with a read-only source mount, no capability, no network and no docker socket. The runner user's
+// environment, workspace, $GITHUB_OUTPUT, capture directory and receipt are not things that uid can reach -
+// not by policy, but because they belong to another user and the kernel says so. `assertNoEscape` reads the
+// argv that is about to run and refuses it if any of that has been weakened.
+const sandboxed = assertNoEscape(sandboxArgv({
+  image,
+  sourceDir: candidateDir,
+  scratchDir: measurementScratch,
+  argv: expandGlobs(runnerArgv(runnerCommand), candidateDir),
+  env: measurementEnv(),
+}));
+const child = spawn(dockerBin, sandboxed, { stdio: ['ignore', 'pipe', 'pipe'] });
 child.stdout.on('data', absorb);
 child.stderr.on('data', absorb);
 
@@ -195,7 +242,8 @@ child.on('close', (code, signal) => {
     + `body_bytes=${bodyBytes.length} body_sha256=${bodyDigest} run=${field(runId)} attempt=${field(runAttempt)} `
     + `job=${field(jobName)} candidate=${field(candidateSha)} tree=${field(candidateTree)} `
     + `runner=${field(runnerKey)} node=${field(process.version)} arch=${field(process.arch)} `
-    + `image=${field(env.ImageOS ?? '-')} image_version=${field(env.ImageVersion ?? '-')}`;
+    + `image=${field(env.ImageOS ?? '-')} image_version=${field(env.ImageVersion ?? '-')} `
+    + `sandboxed=1 measurement_image=${field(image)} measurement_uid=10001`;
   // The separator exists only when the runner's last byte is not a newline, so the body is never altered - the
   // emitter reconstructs this region exactly and refuses if the capture is not `body` followed by it.
   const separator = bodyBytes.length > 0 && bodyBytes[bodyBytes.length - 1] === 0x0a ? '' : '\n';
@@ -246,6 +294,17 @@ child.on('close', (code, signal) => {
     // step would be refused rather than silently trusted.
     capture_hash_source: 'stream',
     capture_hashed_by: '.github/verifier-receipt/capture-stream.mjs',
+    // WHERE THE MEASURED CODE RAN. A capture taken outside the sandbox is a capture the $GITHUB_OUTPUT race
+    // still beats, so the sandbox is recorded as a field of the measurement rather than as a property of the
+    // workflow that a later edit could drop in silence.
+    measurement_sandbox: {
+      image,
+      user: '10001:10001',
+      argv: sandboxed,
+      source_mount: 'readonly',
+      network: 'none',
+      docker_socket: false,
+    },
   };
   fs.writeFileSync(path.join(captureDir, 'capture-meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
 

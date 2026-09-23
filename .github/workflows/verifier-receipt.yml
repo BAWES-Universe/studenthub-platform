@@ -321,6 +321,69 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "runner \"$RUNNER_KEY\": $command"
 
+      # THE JOB THAT RUNS CANDIDATE CODE HOLDS `contents: read` AND NOTHING ELSE, CHECKED BEFORE IT RUNS ANY.
+      #
+      # The sandbox below is what stops a candidate reaching this job. This step is what makes reaching it
+      # worth nothing: it reads this job's own `permissions:` block out of the AUTHORITY checkout - not out of
+      # the file GitHub happens to be running, which on a pull_request event is the candidate's - and refuses
+      # if any scope is above `read`. It then checks the runtime rather than the text: GitHub hands a job the
+      # ability to mint an OIDC token by putting ACTIONS_ID_TOKEN_REQUEST_URL in its environment, so that
+      # variable being present means `id-token: write` whatever any file says, and the run stops.
+      #
+      # Both readings are cheap and neither is the sandbox. Between them, a full container escape from the
+      # step below lands in a process that cannot sign, cannot write to this repository, and cannot mint a
+      # token to do either with.
+      - name: Refuse to run candidate code in a job that can write anything
+        env:
+          WORKFLOW_PATH: ${{ github.workspace }}/authority/.github/workflows/verifier-receipt.yml
+          MEASURE_JOB_ID: measure
+        run: node authority/.github/verifier-receipt/job-scope.mjs
+
+      # THE IMAGE, PULLED BY DIGEST, WHICH IS THE VERIFICATION. `docker pull` of a `name@sha256:...` reference
+      # fails unless the registry serves bytes that hash to exactly that digest, so there is no separate check
+      # to write and none to forget. The pin lives in .github/verifier-receipt/image.json on the protected ref;
+      # a tag would be a pointer somebody outside this repository can move, and the image is where the
+      # interpreter, the libc and the git this measurement uses all come from.
+      - name: Pull the pinned measurement image
+        id: image
+        run: |
+          set -euo pipefail
+          reference=$(node -e 'process.stdout.write(require("./authority/.github/verifier-receipt/image.json").reference)')
+          case "$reference" in
+            *@sha256:*) ;;
+            *) echo "::error::the measurement image is pinned as $reference, which is not a digest"; exit 1 ;;
+          esac
+          docker pull --quiet "$reference"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          echo "measurement image $reference"
+          docker image inspect --format 'id {{.Id}} created {{.Created}} os {{.Os}}/{{.Architecture}}' "$reference"
+
+      # TWO SCRATCH DIRECTORIES, AND THE DIFFERENCE BETWEEN THEM IS THE POINT.
+      #
+      #   $CONTROLLER_SCRATCH      0700, owned by the RUNNER user, and NEVER MOUNTED into any container. The
+      #                            capture, its meta, the controller's observation and the receipt live under
+      #                            here. Nothing inside a container can name this path, because nothing inside
+      #                            a container has it mounted; and if one somehow could, 0700 under another
+      #                            uid is a permission error rather than a write.
+      #   .../measurement          the ONE directory the measurement may write, chowned to 10001:10001 and
+      #                            mounted at /scratch. HOME and TMPDIR both point inside it, because node and
+      #                            this repository's own fixtures need somewhere to write and a read-only
+      #                            filesystem everywhere turns tests red for a reason that is not about them.
+      #
+      # The chown is what makes the uid boundary real in both directions: the measurement can write its own
+      # scratch, and it cannot write the controller's.
+      - name: Create the controller's scratch, and the one directory the measurement may write
+        id: scratch
+        run: |
+          set -euo pipefail
+          controller="${{ runner.temp }}/controller"
+          mkdir -p "$controller/measurement/tmp" "$controller/measurement/home"
+          chmod 700 "$controller"
+          sudo chown -R 10001:10001 "$controller/measurement"
+          echo "controller=$controller" >> "$GITHUB_OUTPUT"
+          echo "measurement=$controller/measurement" >> "$GITHUB_OUTPUT"
+          ls -ldn "$controller" "$controller/measurement" "$controller/measurement/tmp"
+
       # THE CAPTURE IS HASHED AS IT PASSES THROUGH A TRUSTED PROCESS, NOT READ BACK FROM A FILE.
       #
       # A review defeated the previous form of this step. It redirected the runner's output into
@@ -362,9 +425,43 @@ jobs:
           CANDIDATE_TREE: ${{ steps.candidate.outputs.tree }}
           TRUSTED_SOURCE_SHA: ${{ needs.trust.outputs.trusted_sha }}
           CANDIDATE_DIR: ${{ github.workspace }}/candidate
-          CAPTURE_DIR: ${{ runner.temp }}/capture
+          # UNDER THE CONTROLLER'S 0700 SCRATCH, which is not mounted into any container. It used to be
+          # $RUNNER_TEMP/capture - a path the measured suite had in its own environment and could write.
+          CAPTURE_DIR: ${{ steps.scratch.outputs.controller }}/capture
           JOB_NAME: measure
+          MEASUREMENT_IMAGE: ${{ steps.image.outputs.reference }}
+          MEASUREMENT_SCRATCH: ${{ steps.scratch.outputs.measurement }}
         run: node authority/.github/verifier-receipt/capture-stream.mjs
+
+      # THE CONTROLLER'S OWN MEASUREMENT, AND THE ONLY THING IN THIS RUN THAT MAY ESTABLISH A TERM.
+      #
+      # The step above produced a capture: authenticated to the byte, and still the candidate's own output.
+      # This step is the correction. For every term the protected matrix requires, the controller runs the
+      # term's controls UNMUTATED in the sandbox and takes the exit status from waitpid on the container; then
+      # it applies each required mutation to a PRIVATE OVERLAY of its own candidate checkout - copy, patch,
+      # run, never the checkout the normal run was measured from - and observes each killing run fail. A term
+      # is established only when the controls passed and every required mutant died.
+      #
+      # It also refuses, BY NAME and in both directions, a claim that does not match the protected matrix: a
+      # term, test or mutant the matrix does not require is a candidate writing its own requirement, and one
+      # the claim omits is a candidate quietly narrowing what it has to survive.
+      #
+      # The normal run is NOT re-run here. capture-stream.mjs invoked it in this same sandbox in this same job
+      # and took its exit from waitpid; that record is handed in, because observing the same number twice
+      # costs a second suite run and establishes nothing.
+      - name: Measure every required term and mutant, and observe every outcome
+        id: controller
+        env:
+          AUTHORITY_DIR: ${{ github.workspace }}/authority
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head }}
+          SCRATCH_DIR: ${{ steps.scratch.outputs.controller }}
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+          MATRIX_SCOPE: coordinator
+          MEASURE_JOB_ID: measure
+          NORMAL_RUN_META: ${{ steps.scratch.outputs.controller }}/capture/capture-meta.json
+          OUT_PATH: ${{ steps.scratch.outputs.controller }}/capture/controller-observed.json
+        run: node authority/.github/verifier-receipt/measure-terms.mjs
 
       # The trusted job's OWN artifact, holding only files this job wrote. No candidate file is uploaded, and the
       # emitting job downloads no candidate file at all.
@@ -373,7 +470,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: measure-capture
-          path: ${{ runner.temp }}/capture
+          path: ${{ steps.scratch.outputs.controller }}/capture
           if-no-files-found: error
           retention-days: 30
 
@@ -486,6 +583,10 @@ jobs:
           # emitter defaults this beside OUT_PATH; it is named here so that a change to either path is a change
           # to both, in one place.
           CAPTURE_OUT_PATH: ${{ github.workspace }}/capture.out
+          # AND THE CONTROLLER'S OBSERVATION, WRITTEN OUT BESIDE THE RECEIPT for exactly the reason the capture
+          # is: the gate below is the receipt's second reader and it must DERIVE what was established from the
+          # controller's own bytes rather than read this emitter's account of them.
+          OBSERVATION_OUT_PATH: ${{ github.workspace }}/controller-observed.json
         run: node authority/.github/verifier-receipt/emit-receipt.mjs
 
       - name: Refuse to emit a receipt that establishes nothing
@@ -757,6 +858,44 @@ jobs:
             if (wrong.length > 0) { console.error('::error::these terms do not agree with what this receipt s own evidence says about them: ' + wrong.join('; ')); process.exit(1); }
             console.log('dispositions', JSON.stringify(receipt.terms_summary?.dispositions ?? {}), 'measured', receipt.terms_summary?.measured, 'established', terms.filter(term => term.establishes).length);
 
+            // WHAT ESTABLISHED THESE TERMS, DERIVED FROM THE CONTROLLER'S OWN BYTES.
+            //
+            // Every rule below this line is about the CAPTURE, and the capture is the candidate's own output
+            // stream. No rule over it can establish a term, because a test body printing well-formed TAP puts
+            // points into the very bytes being hashed. What establishes a term is the controller's
+            // observation, and this step does not take the receipt's word for a single one of them: it reads
+            // controller-observed.json - the file the emitter wrote out verbatim from the artifact it fetched
+            // and digested itself - derives the established set from it, and refuses any disagreement.
+            if (!require('node:fs').existsSync('controller-observed.json')) { console.error('::error::the emit job wrote no controller observation beside its receipt, so this step has nothing to derive an established term from and will not take the receipt s word for one'); process.exit(1); }
+            const observationBytes = require('node:fs').readFileSync('controller-observed.json');
+            const observation = JSON.parse(observationBytes.toString('utf8'));
+            const observationDigest = digestOf(observationBytes);
+            if (observationDigest !== receipt.controller_observation?.sha256) { console.error('::error::the controller observation beside this receipt hashes to ' + observationDigest + ', but the receipt records ' + JSON.stringify(receipt.controller_observation?.sha256 ?? null)); process.exit(1); }
+            if (observation.observed_by !== 'controller') { console.error('::error::the observation beside this receipt records observed_by=' + JSON.stringify(observation.observed_by) + '; only outcomes the controller observed itself may establish a term'); process.exit(1); }
+            // A TERM IS ESTABLISHED BY TWO EXIT STATUSES, RECOMPUTED HERE FROM THE OBSERVATION'S OWN RUNS
+            // rather than read off its `established` list - the list and the runs come out of one computation
+            // in the controller, and a second reader that reads the conclusion is not a second reading.
+            const derivedEstablished = new Set();
+            for (const observed of observation.terms ?? []) {
+              const controlPassed = observed.control?.exit === 0 && observed.control?.run;
+              const mutants = observed.mutants ?? [];
+              const allDied = mutants.length > 0 && mutants.every(mutant => mutant.patch?.applied === true && Number.isInteger(mutant.killing_run_exit) && mutant.killing_run_exit !== 0);
+              const clean = (observed.matrix_refusals ?? []).length === 0 && observed.establishable === true;
+              // BY CLAIM ENTRY INDEX, never by id: a shared id is a shared bucket, which is how a term with
+              // no coverage of its own reported a sibling's.
+              if (controlPassed && allDied && clean && Number.isInteger(observed.claim_entry)) derivedEstablished.add(observed.claim_entry);
+            }
+            const receiptEstablished = terms.filter(term => term.establishes);
+            const unobserved = receiptEstablished.filter(term => !derivedEstablished.has(term.entry)).map(term => String(term.id));
+            if (unobserved.length > 0) { console.error('::error::these terms are reported established while the controller s own observation does not support it - its control run did not pass, a required mutant was not observed to die, or the protected matrix does not make the term establishable: ' + unobserved.join(', ')); process.exit(1); }
+            const disagreeing = terms.filter(term => (term.controller_established === true) !== derivedEstablished.has(term.entry)).map(term => String(term.id));
+            if (disagreeing.length > 0) { console.error('::error::these terms record a controller_established that the observation s own runs do not support: ' + disagreeing.join(', ')); process.exit(1); }
+            // AND THE CLAIM MAY NOT HAVE ADDED, NAMED OR WIDENED A REQUIREMENT. Re-read from the observation,
+            // by name, in both directions.
+            const fidelity = observation.matrix_fidelity?.refusals ?? [];
+            if (fidelity.length > 0 && verdict === 'success') { console.error('::error::this claim does not match the protected matrix and this receipt still reports success: ' + fidelity.slice(0, 8).map(r => r.detail).join('; ')); process.exit(1); }
+            console.log('derived from the controller s observation (' + observationBytes.length + ' bytes): ' + derivedEstablished.size + ' term(s) established by a passing control run and ' + (observation.terms ?? []).reduce((n, t) => n + (t.mutants ?? []).length, 0) + ' required mutant(s), ' + fidelity.length + ' matrix refusal(s)');
+
             // AND ADMISSIBILITY IS RE-DERIVED FROM THE FACTS, NOT READ OFF THE FLAG. A review flipped
             // provenance.admissible_as_pin to true on a receipt whose body still recorded the authority as
             // ABSENT on main, and the gate, the guard and the attest job's subject re-read all passed it -
@@ -858,13 +997,18 @@ jobs:
             console.log('::warning::this receipt is not admissible as a pin and was NOT attested: ' + why.join('; '));
           "
 
+      # THE RECEIPT AND THE OBSERVATION THAT ESTABLISHED IT, TOGETHER. The attest job re-derives admissibility
+      # from the subject it is about to sign; it can only re-derive what ESTABLISHED a term if the controller's
+      # observation travels with the receipt, so it does.
       - name: Upload the receipt as an artifact
         id: upload
         if: always() && hashFiles('receipt.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verifier-receipt
-          path: receipt.json
+          path: |
+            receipt.json
+            controller-observed.json
           retention-days: 90
 
       - name: Print what a manifest must pin
@@ -1001,9 +1145,37 @@ jobs:
             const rows = Array.isArray(receipt.named_tests) ? receipt.named_tests : [];
             const unbound = rows.filter(row => row.status === 'pass' && row.location_bound !== 'matched');
             if (unbound.length > 0) refuse('these named tests are reported passing while nothing in the capture says which file they were measured in: ' + unbound.map(row => row.name + ' (' + String(row.location_bound) + ')').join(', '));
+            // AND WHAT ESTABLISHED EACH TERM, RE-DERIVED AT THE POINT OF SIGNATURE FROM THE CONTROLLER'S OWN
+            // BYTES. This is the third reading of the rule and, like the other two, it recomputes rather than
+            // re-reads: the observation travels with the receipt in this run's own artifact, its digest must
+            // be the one the receipt records, and a term reported established whose control run did not pass
+            // or whose required mutant was not observed to die refuses the signature. Nothing signed here
+            // rests on a point parsed out of the candidate's output - that capture is diagnostic, and this
+            // authority does not vouch for a term on the strength of a line the candidate printed.
+            const crypto = require('node:crypto');
+            let observationBytes;
+            try { observationBytes = require('node:fs').readFileSync('controller-observed.json'); }
+            catch { refuse('this run s artifact carries no controller observation, so this job cannot say what established any term of the receipt it is about to sign'); }
+            const observationDigest = crypto.createHash('sha256').update(observationBytes).digest('hex');
+            if (observationDigest !== receipt.controller_observation?.sha256) refuse('the controller observation in this artifact hashes to ' + observationDigest + ', but the subject records ' + JSON.stringify(receipt.controller_observation?.sha256 ?? null));
+            const observation = JSON.parse(observationBytes.toString('utf8'));
+            if (observation.observed_by !== 'controller') refuse('the observation records observed_by=' + JSON.stringify(observation.observed_by) + ', and only outcomes the controller observed itself may establish a term');
+            if (String(observation.candidate_sha) !== String(receipt.candidate?.sha)) refuse('the controller observed ' + JSON.stringify(observation.candidate_sha) + ', but this subject is about ' + JSON.stringify(receipt.candidate?.sha));
+            if (!/^[^@]+@sha256:[0-9a-f]{64}$/.test(String(observation.image ?? ''))) refuse('the measurement ran in ' + JSON.stringify(observation.image ?? null) + ', which is not a digest-pinned image');
+            const derived = new Set();
+            for (const observed of observation.terms ?? []) {
+              const mutants = observed.mutants ?? [];
+              if (observed.control?.exit === 0 && observed.establishable === true
+                && (observed.matrix_refusals ?? []).length === 0
+                && Number.isInteger(observed.claim_entry)
+                && mutants.length > 0 && mutants.every(m => m.patch?.applied === true && Number.isInteger(m.killing_run_exit) && m.killing_run_exit !== 0)) derived.add(observed.claim_entry);
+            }
+            const unsupported = terms.filter(term => term.establishes === true && !derived.has(term.entry)).map(term => String(term.id));
+            if (unsupported.length > 0) refuse('these terms are reported established while the controller s own runs do not support it: ' + unsupported.join(', '));
+            if ((observation.matrix_fidelity?.refusals ?? []).length > 0) refuse('this claim does not match the protected matrix, so this authority will not sign a receipt over it: ' + (observation.matrix_fidelity.refusals.slice(0, 6).map(r => r.detail).join('; ')));
             if (String(receipt.run?.id) !== String(process.env.RUN_ID)) refuse('this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.RUN_ID);
             if (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main') refuse('this job is running on ' + process.env.EVENT + ' at ' + process.env.REF + ', which may not sign a receipt');
-            console.log('re-derived from the subject: every admissibility ground is satisfied, verdict success, ' + terms.length + ' term(s) all permitted by their own manifest entries, run ' + receipt.run?.id + ' dispatched on main');
+            console.log('re-derived from the subject and from the controller s own observation: every admissibility ground is satisfied, verdict success, ' + terms.length + ' term(s) all permitted by their own manifest entries and all established by a controller-observed control run and ' + (observation.terms ?? []).reduce((n, t) => n + (t.mutants ?? []).length, 0) + ' required mutant(s), run ' + receipt.run?.id + ' dispatched on main');
           "
 
       # WHY EVERY THIRD-PARTY ACTION IN THIS WORKFLOW IS PINNED TO A COMMIT, AND WHY THAT MATTERS MOST HERE.

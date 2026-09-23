@@ -90,6 +90,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const env = process.env;
@@ -164,6 +165,33 @@ const CLAIM_DIR = CLAIM_PATH.slice(0, CLAIM_PATH.lastIndexOf('/'));
 const ESTABLISHING_DISPOSITIONS = ['PASS'];
 const CAPTURE_FILE = 'suite.out';
 const META_FILE = 'capture-meta.json';
+// THE CONTROLLER'S OWN OBSERVATION, AND THE CORRECTION IT CARRIES.
+//
+// Everything this file did before it read this artifact entry was a defence of one idea: that a capture can be
+// authenticated hard enough for the points inside it to be believed. Provenance was established to the byte -
+// the stream hashed in a trusted process's memory, the digest bound to GitHub's own artifact digest, the exit
+// status cross-checked through three channels - and then the bytes were PARSED INTO AUTHORITATIVE PER-TERM
+// PASS POINTS. A candidate's own test body prints well-formed TAP into the very stream being hashed, so all
+// that provenance authenticated the ORIGIN of text the candidate wrote, never its truthfulness. No parser
+// closes that, because the bytes are genuinely the measured run's; they are just not true.
+//
+// So the authority for whether a term is established is no longer in this file and no longer in the capture.
+// It is in controller-observed.json, which .github/verifier-receipt/controller.mjs writes in the measure job:
+// for each term, the exit status the CONTROLLER observed for the term's required controls run unmutated in the
+// sandbox, and the exit status it observed for each required mutation applied to a PRIVATE OVERLAY of its own
+// candidate checkout. A term is established only when the controls passed and every required mutant was
+// observed to die - both taken from waitpid on a container, neither readable or writable from inside it.
+//
+// The capture stays, and stays authenticated, as DIAGNOSTIC evidence: it is what a human reads to find out
+// what happened. Nothing derived from it may create, name or widen an approved point, and `named_tests` below
+// is recorded with that word on it.
+//
+// WHAT THIS FILE STILL REQUIRES BESIDES, said plainly so nobody reads the change as a relaxation: every rule
+// this emitter already enforced still has to hold. The controller's establishment is a NECESSARY condition
+// added on top of them, never a substitute - so a term is established here only when the controller observed
+// it established AND the manifest permits it AND every pre-existing per-test rule passes. The direction of
+// the change is strictly more refusals, never fewer.
+const OBSERVATION_FILE = 'controller-observed.json';
 // A claim is normally committed on top of the code revision it names - the manifest cannot name the commit that
 // contains it, because that commit's sha depends on the manifest's bytes. So the claim may name the measured
 // commit itself, or that commit's IMMEDIATE PARENT, and nothing further: the justification reaches exactly one
@@ -289,6 +317,10 @@ const outPath = env.OUT_PATH ?? path.join(process.cwd(), 'receipt.json');
 // hashes it and requires the digest to be the one THE MEASURE JOB published as its own output, through
 // GitHub, outside both the artifact and the receipt.
 const captureOutPath = env.CAPTURE_OUT_PATH ?? path.join(path.dirname(outPath), 'capture.out');
+// The controller's observation, written out beside the receipt for the gate to derive from. Same reasoning as
+// the capture above, and one step stronger: this is the file the gate reads to find out what was ESTABLISHED,
+// so the gate never has to take the emitter's word for a single established term.
+const observationOutPath = env.OBSERVATION_OUT_PATH ?? path.join(path.dirname(outPath), 'controller-observed.json');
 if (!/^[0-9a-f]{40}$/.test(candidateSha)) {
   refuse('candidate.sha', `not a full commit sha: ${candidateSha}`);
 }
@@ -383,14 +415,14 @@ try {
     'with zipfile.ZipFile(sys.argv[1]) as archive:',
     '    names = sorted(archive.namelist())',
     '    for name in names:',
-    '        if name in (sys.argv[3], sys.argv[4]):',
+    '        if name in (sys.argv[3], sys.argv[4], sys.argv[5]):',
     '            open(sys.argv[2] + "/" + name, "wb").write(archive.read(name))',
     '    print(json.dumps(names))',
-  ].join('\n'), archivePath, work, CAPTURE_FILE, META_FILE], { encoding: 'utf8' }));
+  ].join('\n'), archivePath, work, CAPTURE_FILE, META_FILE, OBSERVATION_FILE], { encoding: 'utf8' }));
 } catch {
   refuse('artifact.archive', `the artifact archive for ${artifact.id} is not readable as a zip`);
 }
-const expectedEntries = [CAPTURE_FILE, META_FILE].sort();
+const expectedEntries = [CAPTURE_FILE, META_FILE, OBSERVATION_FILE].sort();
 if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
   refuse('artifact.contents', `the "${artifactName}" artifact holds ${JSON.stringify(entries)}, but the measure `
     + `job uploads exactly ${JSON.stringify(expectedEntries)}`);
@@ -426,6 +458,77 @@ if (Number(meta.capture_bytes) !== captureBytes.length) {
     + `artifact holds ${captureBytes.length}`);
 }
 
+// 5a. THE CONTROLLER'S OBSERVATION: THE ONLY THING IN THIS ARTIFACT THAT MAY ESTABLISH A TERM.
+//
+// It is bound to this run's evidence the same way everything else is - it arrives inside the artifact this
+// process fetched itself, whose digest is GitHub's own - and then bound to THIS AUTHORITY, which the capture
+// never was: the matrix it measured against must be the matrix on the protected ref this emitter is running
+// from, by digest. A candidate cannot supply a matrix (it may not alter any object under
+// .github/verifier-receipt), and now it cannot be measured against a different one either.
+//
+// THE IMAGE IS CHECKED HERE TOO, because a measurement taken in an image named by a TAG is a measurement
+// taken in whatever somebody else published under that name at the moment the run started.
+const observationBytes = fs.readFileSync(path.join(work, OBSERVATION_FILE));
+let observation;
+try { observation = JSON.parse(observationBytes.toString('utf8')); }
+catch { refuse('controller.observation', `${OBSERVATION_FILE} in the artifact is not readable JSON`); }
+const observationDigest = sha256(observationBytes);
+if (observation.schema !== 'verifier-controller-observation/v1') {
+  refuse('controller.schema', `the controller's observation declares schema ${JSON.stringify(observation.schema ?? null)}, `
+    + 'and this emitter reads verifier-controller-observation/v1');
+}
+if (observation.observed_by !== 'controller') {
+  refuse('controller.observed_by', `the observation records observed_by=${JSON.stringify(observation.observed_by ?? null)}; `
+    + 'only outcomes the controller observed itself may establish a term');
+}
+if (String(observation.candidate_sha) !== candidateSha) {
+  refuse('controller.candidate', `the controller observed ${JSON.stringify(observation.candidate_sha ?? null)}, `
+    + `but this receipt is about ${candidateSha}`);
+}
+if (!/^[^@]+@sha256:[0-9a-f]{64}$/.test(String(observation.image ?? ''))) {
+  refuse('controller.image', `the measurement ran in ${JSON.stringify(observation.image ?? null)}, which is not a `
+    + 'digest-pinned image; a tag is a pointer somebody outside this repository can move');
+}
+// THE MATRIX, BY DIGEST, AGAINST THE ONE THIS PROCESS IS ITSELF RUNNING FROM. Not from RUNNER_SPEC_PATH's
+// directory and not from any other input: the matrix is read from BESIDE THIS FILE, so the matrix a receipt is
+// checked against is necessarily the one in the same checkout as the emitter that wrote it. The emitter is
+// checked out by SHA from the trusted ref, so this is what makes "the required matrix comes from protected
+// main" a checked fact rather than a sentence in a comment - and a path this process was TOLD could be told
+// wrong.
+const matrixPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'matrix.json');
+let authorityMatrixDigest = null;
+try { authorityMatrixDigest = sha256(fs.readFileSync(matrixPath)); }
+catch { refuse('controller.matrix', `the protected matrix is not readable at ${matrixPath}, so this process cannot `
+  + 'say the controller measured against the matrix this authority carries'); }
+if (observation.matrix?.sha256 !== authorityMatrixDigest) {
+  refuse('controller.matrix', `the controller measured against a matrix hashing to `
+    + `${JSON.stringify(observation.matrix?.sha256 ?? null)}, but the authority this receipt is emitted from `
+    + `carries ${authorityMatrixDigest}`);
+}
+// NOT `length === 0`. A claim that lists no terms is a claim that establishes nothing, and this emitter
+// already says so in its verdict; turning it into a hard refusal would swap a legible receipt for an exit
+// code. What is refused here is an observation that carries no terms LIST at all, which is an observation
+// this process cannot read.
+if (!Array.isArray(observation.terms)) {
+  refuse('controller.terms', `the controller's observation carries ${JSON.stringify(observation.terms ?? null)} `
+    + 'where its list of observed terms should be, so nothing in it says what this run established');
+}
+// Every per-term field of this receipt has to be traceable to a specific controller-observed run, so a term
+// row that names no control run, or whose runs are not the controller's own, is refused rather than read.
+const untraceable = observation.terms.filter(term => term.observed_by !== 'controller'
+  || !Array.isArray(term.runs) || term.runs.length === 0
+  || term.runs.some(run => run.observed_by !== 'controller' || typeof run.run_id !== 'string' || !Number.isInteger(run.exit)));
+if (untraceable.length > 0) {
+  refuse('controller.traceability', `these observed terms do not trace to a controller-observed run with an `
+    + `exit status: ${listing(untraceable.map(term => String(term.id)))}`);
+}
+// KEYED BY THE CLAIM ENTRY INDEX, not by the term id, for the reason recorded at `termReport` below: a
+// shared id is a shared bucket, and ten entries carrying one id is exactly how a term with no coverage of
+// its own reported a sibling's. An index cannot be shared.
+const observedTerms = new Map(observation.terms
+  .filter(term => Number.isInteger(term.claim_entry) && term.claim_entry >= 0)
+  .map(term => [term.claim_entry, term]));
+
 // 5b. THE TRAILER: THE ONE LINE OF THE CAPTURE THE MEASURED CODE DID NOT WRITE.
 //
 // A review put the previous arrangement precisely: the emitter's two strongest well-formedness invariants - a
@@ -456,8 +559,13 @@ const TRAILER_PREFIX = '# verifier-capture v1 ';
 // wrote. `node`, `arch`, `image` and `image_version` are the last four because they were added last, and
 // because they are the answer to the one input this authority did not name by content - the interpreter that
 // did the measuring. They are inside the hashed stream for the same reason `exit` is.
+// THE TRAILER'S FIELDS, IN ORDER, EXACTLY. An exact list rather than a minimum: a trailer with a field this
+// process does not know is a trailer written by a program this process does not know, and the trailer is the
+// one line of the capture the measured code did not write. The last three say WHERE the measurement ran -
+// inside the sandbox, in a digest-pinned image, as a uid that is not the runner's - which is the fact a
+// capture taken outside the container could not carry.
 const TRAILER_FIELDS = ['exit', 'signal', 'body_bytes', 'body_sha256', 'run', 'attempt', 'job', 'candidate',
-  'tree', 'runner', 'node', 'arch', 'image', 'image_version'];
+  'tree', 'runner', 'node', 'arch', 'image', 'image_version', 'sandboxed', 'measurement_image', 'measurement_uid'];
 const trailer = (() => {
   const whole = captureBytes.toString('utf8');
   if (!whole.endsWith('\n')) {
@@ -529,9 +637,36 @@ const trailer = (() => {
     refuse('capture.trailer.body_sha256', `the capture's trailer records ${fields.body_sha256} for the runner's `
       + `own output, but those ${bodyLength} bytes hash to ${bodyDigest}`);
   }
+  // WHERE THE MEASUREMENT RAN, INSIDE THE HASHED BYTES. Everything else in this trailer says WHICH
+  // measurement this is; these three say the measured code did not run as the runner user. A capture taken
+  // outside the container - which is every capture this authority took before the boundary existed, and every
+  // capture a drifted workflow would take again - cannot carry them, and is refused here by name rather than
+  // being read as though the uid boundary had held.
+  if (fields.sandboxed !== '1') {
+    refuse('capture.sandbox', `the capture's trailer records sandboxed=${JSON.stringify(fields.sandboxed)}: this `
+      + 'authority reads only a measurement taken inside the container, because a measurement that shares a uid '
+      + 'with the process capturing it can rewrite the capture, its meta and the job output together');
+  }
+  if (fields.measurement_uid !== '10001') {
+    refuse('capture.sandbox', `the capture's trailer records measurement_uid=${JSON.stringify(fields.measurement_uid)}, `
+      + 'and this authority measures as 10001, which is not the runner user');
+  }
+  if (!/^[^@]+@sha256:[0-9a-f]{64}$/.test(String(fields.measurement_image ?? ''))) {
+    refuse('capture.sandbox', `the capture's trailer records measurement_image=${JSON.stringify(fields.measurement_image)}, `
+      + 'which is not a digest; a tag is a pointer somebody outside this repository can move, and the image is '
+      + 'where the interpreter, the libc and the git of this measurement all come from');
+  }
   return { line, fields, body, bodyDigest };
 })();
 const captureBody = trailer.body;
+
+// The image the CONTROLLER measured in must be the image the capture was taken in. They are two accounts of
+// one fact, from two programs, and a run in which they disagree is a run whose two halves measured different
+// filesystems.
+if (String(observation.image) !== String(trailer.fields.measurement_image)) {
+  refuse('controller.image', `the controller measured in ${JSON.stringify(observation.image)}, but the capture's `
+    + `own trailer records ${JSON.stringify(trailer.fields.measurement_image)}`);
+}
 
 // 6. The meta must describe this run, this candidate, this authority and this runner. Each of these is a field
 //    the emitter also knows from somewhere else, so a capture lifted from another run fails one of them by name.
@@ -1589,6 +1724,7 @@ const termReport = claimTerms.map(term => {
   // pool. The ids are unique by the refusal above, so on any manifest this emitter accepts the two readings
   // agree - this one just cannot be made to disagree.
   const tests = perTest.filter(test => test.entry === term.entry);
+  const observedTerm = observedTerms.get(term.entry) ?? null;
   const counted = status => tests.filter(test => test.status === status).length;
   // WHAT THIS RUN MEASURED about the term: every test it names ran and passed, in the file its claim names.
   // Failed, absent, skipped, marked todo, matched by a suite point rather than a test point, reported in
@@ -1620,10 +1756,41 @@ const termReport = claimTerms.map(term => {
     unbound: counted('unbound'),
     unclaimed_location: counted('unclaimed'),
     measured,
-    // AND ESTABLISHED IS MEASURED **AND** PERMITTED. A term whose own manifest entry says `disposition: BLOCK`
-    // or `approvable: false` is not in a state where this authority may call it established, however green its
-    // named tests are - the measurement is still recorded, above, under its own name.
-    establishes: measured && term.permits,
+    // THE CONTROLLER'S OWN OUTCOME FOR THIS TERM, AND THE RUNS IT CAME FROM.
+    //
+    // Everything above this line is derived from the capture, and the capture is the candidate's own output.
+    // It is kept because a human reading this receipt wants to know what the suite said - but it establishes
+    // nothing. What establishes this term is `controller.established`: the controller ran the term's required
+    // controls, unmutated, in the sandbox and took the exit status from waitpid; then it applied each required
+    // mutation to a private overlay of its own candidate checkout and observed each killing run fail. Both
+    // outcomes are named here by RUN ID, so every field of this row traces to a specific controller-observed
+    // run rather than to a line somebody printed.
+    observed_by: 'controller',
+    controller: observedTerm ? {
+      observed_by: 'controller',
+      establishable: observedTerm.establishable === true,
+      established: observedTerm.established === true,
+      control: observedTerm.control,
+      mutants_required: (observedTerm.mutants ?? []).length,
+      mutants_died: (observedTerm.mutants ?? []).filter(mutant => mutant.died).length,
+      mutants: (observedTerm.mutants ?? []).map(mutant => ({ name: mutant.name, run: mutant.killing_run,
+        exit: mutant.killing_run_exit, died: mutant.died === true, patched: mutant.patch?.file ?? null,
+        patch_applied: mutant.patch?.applied === true, why: mutant.why ?? null })),
+      matrix_refusals: observedTerm.matrix_refusals ?? [],
+      why_not: observedTerm.why_not ?? [],
+      runs: (observedTerm.runs ?? []).map(run => ({ run_id: run.run_id, label: run.label, exit: run.exit,
+        duration_ms: run.duration_ms, diagnostic_stream: run.diagnostic_stream })),
+    } : null,
+    controller_established: observedTerm?.established === true,
+    // AND ESTABLISHED IS CONTROLLER-OBSERVED **AND** MEASURED **AND** PERMITTED.
+    //
+    // The middle term is the old rule and it stays: a term whose named tests did not all pass in the capture
+    // is not one this receipt calls established, and a term whose own manifest entry says `disposition: BLOCK`
+    // or `approvable: false` is not one this authority may establish however green anything is. The NEW and
+    // decisive term is the first: the controller has to have established it independently, from runs it
+    // invoked and exit statuses it observed. A capture full of fabricated passing points moves `measured` and
+    // moves nothing else, so it establishes nothing - which is the whole correction.
+    establishes: observedTerm?.established === true && measured && term.permits,
   };
 });
 const uncoveredTerms = termReport.filter(term => term.named === 0).map(term => String(term.id));
@@ -1694,11 +1861,32 @@ if (suiteRed) {
 // the `--test-timeout` VALUE stop being load-bearing: whatever the number is, a run it truncates is a failure
 // with the count in the reason, not a green receipt that is quietly short.
 const cancelled = counts.cancelled ?? 0;
+// EVERY CLAIMED TERM MUST HAVE BEEN OBSERVED BY THE CONTROLLER, and a term the controller never ran is not a
+// term this receipt may pass over in silence. This is the coverage direction of matrix fidelity, checked here
+// as well as in the controller: the controller refuses a claim that names a term the matrix does not require,
+// and this refuses a receipt whose claim carries a term no controller-observed run covers - so a claim and an
+// observation that disagree about what was measured cannot produce a receipt either way round.
+const unobservedTerms = termReport.filter(term => term.controller === null).map(term => String(term.id));
+// AND THE MATRIX FIDELITY REFUSALS THE CONTROLLER RAISED, re-read here from its own observation rather than
+// from any summary of it.
+const fidelityRefusals = observation.matrix_fidelity?.refusals ?? [];
 const established = termReport.length > 0 && termReport.every(term => term.establishes)
   && summary.named > 0 && perTest.every(test => test.status === 'pass')
   && cancelled === 0
+  && unobservedTerms.length === 0 && fidelityRefusals.length === 0
   && (!suiteRed || redInsideTheClaim.length === 0);
 const reasons = [];
+if (unobservedTerms.length > 0) {
+  reasons.push(`${unobservedTerms.length} term(s) of this claim were never run by the controller, so nothing `
+    + `this run observed says anything about them: ${listing(unobservedTerms)}`);
+}
+if (fidelityRefusals.length > 0) {
+  // BY NAME, in both directions. A claim may not ADD a term, a test or a mutant the protected matrix does not
+  // require - that is a candidate writing its own requirement - and it may not OMIT one the matrix does
+  // require, which is a candidate quietly narrowing what it has to survive.
+  reasons.push(`${fidelityRefusals.length} part(s) of this claim do not match the protected matrix: `
+    + listing(fidelityRefusals.map(refusal => refusal.detail), 6));
+}
 if (cancelled > 0) {
   reasons.push(`the measured run did not finish: the runner reported ${cancelled} cancelled point(s) out of `
     + `${counts.tests} test(s). A cancelled point is a test - or a whole FILE, which this runner bounds with `
@@ -2051,9 +2239,39 @@ const receipt = {
       + 'FORMED. It does not say it is GENUINE - that is what the provenance block above establishes, and '
       + 'nothing in this check would notice a candidate suite printing a well-formed stream of its own.',
   },
+  // THE CONTROLLER'S OBSERVATION, AS A BLOCK OF THIS RECEIPT rather than only as per-term rows, because a
+  // consumer deciding whether to believe this receipt has to be able to find - in one place - what actually
+  // established anything in it.
+  controller_observation: {
+    observed_by: 'controller',
+    statement: 'every term this receipt establishes was established by an exit status the CONTROLLER observed: '
+      + 'the term\'s required controls run unmutated in the sandbox, and each required mutation applied to a '
+      + 'private overlay of the controller\'s own candidate checkout and observed to kill the tests the '
+      + 'protected matrix names. Nothing parsed out of the candidate\'s output establishes a term.',
+    sha256: observationDigest,
+    image: observation.image,
+    matrix: observation.matrix,
+    scope: observation.scope,
+    runner_key: observation.runner_key,
+    sandbox: { flags: observation.sandbox_preflight ? 'probed' : 'unprobed', preflight: observation.sandbox_preflight ?? null },
+    normal_run: observation.normal_run ?? null,
+    // MATRIX FIDELITY, IN THE RECEIPT. A claim that names a term, test or mutant the protected matrix does not
+    // require, or omits one it does, is refused BY NAME - and the names are carried here so the refusal is
+    // legible without re-running anything.
+    matrix_fidelity: observation.matrix_fidelity ?? null,
+    terms_observed: observation.terms.length,
+    terms_established: (observation.established ?? []).length,
+  },
   // Each named test with the status this run's capture gives it: `pass` (a `type: 'test'` point the runner
-  // reported ok, with no directive) or one of `fail`, `absent`, `skip`, `todo`, `suite`. Only `pass` is a
-  // measurement; the other five say, distinctly, how this run failed to make one.
+  // reported ok, with no directive) or one of `fail`, `absent`, `skip`, `todo`, `suite`.
+  //
+  // DIAGNOSTIC, AND THAT WORD IS A FIELD OF THIS RECEIPT RATHER THAN A COMMENT IN ITS EMITTER. These rows are
+  // parsed out of the capture, and the capture is the candidate's own output stream: a test body printing
+  // well-formed TAP produces rows here that are indistinguishable from the reporter's. They are kept because
+  // they are what a human reads to find out what happened, and because every pre-existing rule of this
+  // emitter still runs over them. They may not create, name or widen an approved point, and they do not:
+  // `terms[].establishes` requires `terms[].controller.established`, which no byte of this stream can move.
+  named_tests_authority: 'diagnostic: parsed from the candidate\'s own output; may not establish a term',
   named_tests: perTest,
   named_tests_summary: summary,
   // Every term the manifest lists, whether or not it names a test. A term with `named: 0` is a term this run
@@ -2063,6 +2281,10 @@ const receipt = {
   terms_summary: {
     total: termReport.length,
     establishing: termReport.filter(term => term.establishes).length,
+    // What the CONTROLLER established, apart from what this receipt does. They differ whenever a manifest
+    // entry bars a term the controller measured green, and a reader wants to see both numbers.
+    controller_established: termReport.filter(term => term.controller_established).length,
+    controller_unobserved: termReport.filter(term => term.controller === null).map(term => String(term.id)),
     // WHAT THIS RUN MEASURED, kept apart from what it ESTABLISHES. The two are equal only on a manifest whose
     // every entry is in a state that permits establishment; on this repository's own pinned manifest, measured
     // is 53 and establishing is 0, and a receipt that reported one number for both is what this separates.
@@ -2096,6 +2318,11 @@ fs.rmSync(work, { recursive: true, force: true });
 // run would be worse than a receipt beside none. Written verbatim - every byte the artifact held, trailer and
 // all - so the digest the gate computes over it is the digest the measure job published.
 fs.writeFileSync(captureOutPath, captureBytes);
+// AND THE CONTROLLER'S OBSERVATION, VERBATIM, for the same reason the capture is written out: the gate is the
+// receipt's second reader and it must DERIVE what the controller established from the controller's own bytes
+// rather than read this emitter's account of them. Written byte for byte as the artifact held it, so the
+// digest the gate computes is the one recorded in the receipt above.
+fs.writeFileSync(observationOutPath, observationBytes);
 fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
 console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice(0, 8)}: verdict `
   + `${receipt.conclusion.verdict}; named ${summary.named} pass ${summary.pass} fail ${summary.fail} `

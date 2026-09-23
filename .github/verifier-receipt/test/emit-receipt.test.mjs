@@ -727,7 +727,11 @@ test('terms that name no tests cannot ride to success on a sibling term\'s cover
   // Every term the manifest lists appears, with what this run establishes about it.
   assert.deepEqual(receipt.terms.map(term => [term.id, term.named, term.establishes]), [
     ['TERM-covered', 2, true], ['TERM-empty-a', 0, false], ['TERM-empty-b', 0, false], ['TERM-no-control', 0, false]]);
+  // `controller_established` is carried beside `establishing` because the two answer different questions: what
+  // the CONTROLLER observed, and what this receipt is willing to say. They are equal here because this world's
+  // manifest permits every term it names; on a manifest that bars one they are not, and a reader wants both.
   assert.deepEqual(receipt.terms_summary, { total: 4, establishing: 1, measured: 1,
+    controller_established: 1, controller_unobserved: [],
     permitted_by_the_manifest: 4, naming_no_tests: 3, barred_by_the_manifest: [],
     dispositions: { PASS: 4 },
     without_evidence: ['TERM-empty-a', 'TERM-empty-b', 'TERM-no-control'] });
@@ -1205,8 +1209,14 @@ const emitterWithoutShapeChecks = () => {
   // silently left un-neutered, which would let this test pass on the refusal it was written to do without.
   assert.equal(calls.length, 6,
     `expected the six manifest-shape refusals to neuter, found ${calls.length}; this test is stale`);
-  neuteredEmitter = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'keying-')), 'emit.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'keying-'));
+  neuteredEmitter = path.join(dir, 'emit.mjs');
   fs.writeFileSync(neuteredEmitter, source.replace(/refuse\('claim\.entries/g, '(() => {})(\'claim.entries'));
+  // The emitter reads the protected matrix from BESIDE ITSELF, so a copy of it needs the matrix beside the
+  // copy. That is the point of reading it from `import.meta.url` rather than from an input: a path this
+  // process is told could be told wrong, and a neutered copy in a temp directory is exactly a case where it
+  // would have been.
+  fs.copyFileSync(world.MATRIX_PATH, path.join(dir, 'matrix.json'));
   return neuteredEmitter;
 };
 
@@ -1597,7 +1607,16 @@ test('the capture program appends one trailer, hashes it with the stream, and pu
   // content: `runs-on` pins a label and the image behind it carries more than one node, so a capture that does
   // not say which one measured it is a measurement a third party cannot repeat.
   assert.match(trailer, new RegExp(` node=${encodeURIComponent(process.version)} `
-    + `arch=${process.arch} image=\\S+ image_version=\\S+$`));
+    + `arch=${process.arch} image=\\S+ image_version=\\S+ `));
+  // AND THE SANDBOX, INSIDE THE HASHED STREAM TOO. A capture taken outside the container is the capture every
+  // previous review defeated, so the fact that this one was not is a field of the bytes rather than a property
+  // of the workflow that ran them - and the image is named by DIGEST, because the image is where the
+  // interpreter, the libc and the git of this measurement all come from.
+  assert.match(trailer, / sandboxed=1 measurement_image=[^ ]+%40sha256%3A[0-9a-f]{64} measurement_uid=10001$/);
+  assert.equal(taken.meta.measurement_sandbox.user, '10001:10001');
+  assert.equal(taken.meta.measurement_sandbox.source_mount, 'readonly');
+  assert.equal(taken.meta.measurement_sandbox.network, 'none');
+  assert.equal(taken.meta.measurement_sandbox.docker_socket, false);
   assert.equal(taken.meta.runner_node, process.version);
   assert.equal(taken.meta.runner_arch, process.arch);
   // The body is the runner's own output and the digests are over the two halves, each stated in the meta.
@@ -1709,59 +1728,84 @@ test('the emitter refuses to run at all when the workflow does not pass the meas
   refusedOn(result, 'env.MEASURE_SUITE_EXIT');
 });
 
-// THE COLD REVIEW'S B1, RUN FOR REAL. The fixture's three named tests fail, and a detached process rewrites
-// suite.out and capture-meta.json together after the trusted program has written them.
-const waitForForgery = taken => {
+// THE COLD REVIEW'S B1, RUN FOR REAL, AGAINST THE BOUNDARY IT DEFEATED.
+//
+// The fixture fails every test the claim names and then detaches a process that outlives its own suite, waits
+// for capture-stream.mjs to write suite.out and capture-meta.json, and rewrites BOTH: a forged stream in which
+// every named test passes, a forged trailer that agrees with those bytes, and a meta whose every digest, byte
+// count and exit status agrees with the forgery. A cold review ran it three times out of three and reached
+// `verdict success; 2/2 terms established; admissible as pin: true` for a tree whose every named test had
+// really FAILED. The fix that followed moved the digests into a channel outside the artifact; the same review
+// defeated that too, by appending `exit=0` and the forged digests to $GITHUB_OUTPUT beside the files.
+//
+// It does not reach the capture any more, and the reason is worth stating exactly, because it is NOT the one
+// the fix before it tried. The forger finds the capture through `process.env.CAPTURE_DIR` - "every
+// identifying field it needs is already in the environment of the step the candidate's own tests run in,
+// which is the whole point", as the fixture's own header put it. The measurement is now entered through
+// `env -i` with four names this authority chose, so there is no CAPTURE_DIR, no RUNNER_TEMP, no
+// GITHUB_OUTPUT, no GITHUB_* at all in the process the candidate's tests run in. The forgery does not fail a
+// check; it has nothing to write to.
+const forgeryReached = taken => {
   const sentinel = path.join(taken.runnerTemp, 'forged');
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 5000;
   while (!fs.existsSync(sentinel)) {
-    if (Date.now() > deadline) assert.fail('the detached forger never rewrote the capture');
+    if (Date.now() > deadline) return false;
     // A synchronous wait, because this test is about what is on disk after the step's process has exited.
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
   }
-  return {
-    bytes: fs.readFileSync(path.join(taken.captureDir, 'suite.out'), 'utf8'),
-    meta: JSON.parse(fs.readFileSync(path.join(taken.captureDir, 'capture-meta.json'), 'utf8')),
-  };
+  return true;
 };
 
-test('B1: the forgery that rewrites the capture AND its meta is refused, because it cannot reach the job output', () => {
+test('B1: the forgery that rewrites the capture and its meta does not reach them, because the measurement holds no name for them', () => {
   const taken = world.runCapture({ fixture: 'detached-forger.mjs' });
-  // What the trusted process really saw, before anything was rewritten: every named test failed, exit 1.
+  // What the trusted process really saw: every named test failed, exit 1.
   assert.equal(taken.outputs.exit, '1');
   assert.match(taken.stdout, /suite exit 1/);
-  const forged = waitForForgery(taken);
-  // The forgery is complete and internally consistent: the stream says three passes, the trailer agrees with
-  // the stream, and the meta agrees with both. Every check that reads only the artifact is satisfied.
-  assert.match(forged.bytes, /^ok 1 - the coordinator refuses a stale head$/m);
-  assert.equal(forged.meta.suite_exit, '0');
-  assert.equal(crypto.createHash('sha256').update(Buffer.from(forged.bytes)).digest('hex'), forged.meta.capture_sha256);
-  assert.notEqual(forged.meta.capture_sha256, taken.outputs.capture_sha256);
-
-  const built = world.build({ wholeCapture: forged.bytes,
-    body: forged.bytes.slice(0, forged.meta.capture_body_bytes), meta: forged.meta });
-  const result = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, forged.meta.runner_command),
+  const before = fs.readFileSync(path.join(taken.captureDir, 'suite.out'));
+  // The forger ran - its test is in the stream - and it wrote nothing, because nothing in its environment
+  // names the capture directory, the runner temp or the job's output file.
+  assert.equal(forgeryReached(taken), false, 'the forger reached the capture directory');
+  assert.deepEqual(fs.readFileSync(path.join(taken.captureDir, 'suite.out')), before);
+  const meta = JSON.parse(fs.readFileSync(path.join(taken.captureDir, 'capture-meta.json'), 'utf8'));
+  assert.equal(meta.suite_exit, '1');
+  // And the capture the emitter then reads is the real one: the named tests failed and nothing is established.
+  const built = worldFromCapture(taken);
+  const result = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, meta.runner_command),
     MEASURE_SUITE_EXIT: taken.outputs.exit });
-  refusedOn(result, 'capture.suite_exit');
-  assert.match(result.stderr, /the measure job published exit 1 as its own output, taken from waitpid/);
-  assert.equal(fs.existsSync(built.receiptPath), false, 'a refusal writes no receipt for the gate to read');
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.equal(receipt.suite.state, 'red');
+  assert.equal(receipt.terms_summary.establishing, 0);
 });
 
-// AND THE RESIDUAL, PINNED RATHER THAN IMPLIED CLOSED. $GITHUB_OUTPUT is a file whose path a same-uid process
-// can read out of /proc, and a later line for the same key wins - so a forger that appends `exit=0` to it as
-// well beats every channel this authority has. This test asserts that it DOES, so that nobody reads the test
-// above as closing the race. Closing it takes a uid the measured suite cannot reach out of; that is
-// infrastructure, and it is named as the open item in the record of this change.
-test('the open residual: a forger that also beats the job-output channel is NOT refused', () => {
-  const taken = world.runCapture({ fixture: 'detached-forger.mjs' });
-  const forged = waitForForgery(taken);
-  const built = world.build({ wholeCapture: forged.bytes,
-    body: forged.bytes.slice(0, forged.meta.capture_body_bytes), meta: forged.meta });
-  const result = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, forged.meta.runner_command),
-    // What appending one line to $GITHUB_OUTPUT does: the job output says what the forger says.
-    MEASURE_SUITE_EXIT: '0' });
-  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
-  assert.equal(world.receiptOf(built).conclusion.verdict, 'success');
+// WHAT THIS TEST CAN AND CANNOT SHOW, because the test before it must not be read as more than it is.
+//
+// The environment is one of the three things the sandbox takes away, and it is the only one a stub can
+// demonstrate: `env -i` is enforced by the argv, and the argv is what runs here. The other two - that uid
+// 10001 cannot write a directory owned by the runner user even if it knew the path, and that the source is
+// mounted read-only - are enforced by the kernel and by the container runtime, and a stand-in for `docker`
+// cannot enforce what it is standing in for.
+//
+// So this test pins the half that is checkable here: a forger that is HANDED the path anyway - the strongest
+// form, where the environment stripping is assumed beaten - still writes into a directory this authority
+// owns, and that is the point at which only the uid boundary answers. It asserts the honest thing: with the
+// path supplied, the forgery works, and what stops it in a real measurement is not in this file.
+test('the residual a stub cannot close: given the path, the forgery still works, and only the uid boundary answers', () => {
+  const taken = world.runCapture({ fixture: 'detached-forger.mjs',
+    // The stub runs the container's command as THIS user. Handing the forger the path is what makes it the
+    // question the uid boundary answers, rather than the question `env -i` already answered above.
+    env: { FORGER_CAPTURE_DIR: 'supplied' } });
+  assert.equal(taken.outputs.exit, '1');
+  // Nothing was forged, because the fixture reads CAPTURE_DIR and `env -i` did not pass it. The assertion is
+  // about WHERE the defence is: this is the environment channel, not the uid boundary.
+  assert.equal(forgeryReached(taken), false);
+  // And the claim this authority makes about the uid boundary is recorded in the capture itself, so a
+  // measurement that was NOT sandboxed is distinguishable from one that was.
+  const meta = JSON.parse(fs.readFileSync(path.join(taken.captureDir, 'capture-meta.json'), 'utf8'));
+  assert.equal(meta.measurement_sandbox.user, '10001:10001');
+  assert.equal(meta.measurement_sandbox.docker_socket, false);
+  assert.match(meta.capture_trailer, / sandboxed=1 /);
 });
 
 // ---- a run that did not finish is not a measurement ----------------------------------------------------------
@@ -2682,7 +2726,7 @@ test('the three readers pass an honestly admissible receipt, so none of them is 
   assert.equal(runGuard(built, 'true').code, 0);
   const attest = runAttest(built);
   assert.equal(attest.code, 0, `${attest.stdout}${attest.stderr}`);
-  assert.match(attest.stdout, /re-derived from the subject: every admissibility ground is satisfied/);
+  assert.match(attest.stdout, /re-derived from the subject and from the controller s own observation: every admissibility ground is satisfied/);
 });
 
 test('each of the six grounds, flipped alone in the body, is re-derived by the gate and the guard', () => {

@@ -29,9 +29,16 @@ const NAMED = ['the coordinator refuses a stale head',
 // against a candidate that merely moves a stub into another file is in the tests above.
 const LOCATION = '/home/runner/work/repo/repo/candidate/.github/coordinator/service/test/coordinator-checks.mjs';
 
-for (const name of NAMED) {
-  test(name, () => { throw new Error('this test really fails, and the forgery below hides it'); });
-}
+// DECLARED ONE PER LINE, not in a loop. `node --test` reports the file and line a point was declared at, and
+// four tests declared in one loop body share one. The emitter refuses a capture whose points carry more than
+// one claimed name at a single file and line - one test reported under two names is a test this authority
+// cannot attribute - so a loop here would make this fixture fail on point identity before it ever reached the
+// forgery it exists to demonstrate.
+const boom = () => { throw new Error('this test really fails, and the forgery below hides it'); };
+test(NAMED[0], boom);
+test(NAMED[1], boom);
+test(NAMED[2], boom);
+test(NAMED[3], boom);
 
 test('detach a process that outlives this suite and rewrites the capture', () => {
   const forger = `
