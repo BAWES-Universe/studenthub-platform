@@ -180,11 +180,22 @@ child.on('close', (code, signal) => {
   // or a runner key contains. The emitter requires EXACTLY ONE such line, requires it to be the last line, and
   // requires the body to contain none - so a test body that prints its own copy is a refusal rather than a
   // substitution.
+  //
+  // AND THE INTERPRETER AND THE IMAGE TRAVEL IN IT. A review put the gap plainly: four actions are pinned to
+  // commits and the command comes from a protected enum, and then the measurement is handed to whatever `node`
+  // the runner image resolves - an image that carries more than one. Which points carry a `location:`, what
+  // `--test-timeout` bounds and the exact TAP shapes this chain reconciles are all facts about a node VERSION,
+  // so a capture that does not name its interpreter is a measurement a third party cannot repeat. `node` is
+  // this program's own `process.version`: the same `node` on the same PATH is what the runner command below
+  // invokes, which is why it is taken from here rather than asserted by the workflow. `image` and
+  // `image_version` are what the hosted runner says it is (`ImageOS`/`ImageVersion`), because `runs-on` pins a
+  // LABEL and GitHub rebuilds what sits behind it.
   const field = value => encodeURIComponent(String(value));
   const trailer = `# verifier-capture v1 exit=${field(suiteExit)} signal=${field(signal ?? '-')} `
     + `body_bytes=${bodyBytes.length} body_sha256=${bodyDigest} run=${field(runId)} attempt=${field(runAttempt)} `
     + `job=${field(jobName)} candidate=${field(candidateSha)} tree=${field(candidateTree)} `
-    + `runner=${field(runnerKey)}`;
+    + `runner=${field(runnerKey)} node=${field(process.version)} arch=${field(process.arch)} `
+    + `image=${field(env.ImageOS ?? '-')} image_version=${field(env.ImageVersion ?? '-')}`;
   // The separator exists only when the runner's last byte is not a newline, so the body is never altered - the
   // emitter reconstructs this region exactly and refuses if the capture is not `body` followed by it.
   const separator = bodyBytes.length > 0 && bodyBytes[bodyBytes.length - 1] === 0x0a ? '' : '\n';
@@ -208,6 +219,13 @@ child.on('close', (code, signal) => {
     candidate_tree: candidateTree,
     runner_key: runnerKey,
     runner_command: runnerCommand,
+    // THE INTERPRETER THAT DID THE MEASURING, AND THE IMAGE IT RAN ON. Repeated from the trailer, where they
+    // are inside the hashed stream; the emitter requires the two accounts to agree and carries them into
+    // `provenance.runner`, so a receipt names the node that produced it.
+    runner_node: process.version,
+    runner_arch: process.arch,
+    runner_image: env.ImageOS ?? null,
+    runner_image_version: env.ImageVersion ?? null,
     capture_file: 'suite.out',
     capture_bytes: captureBytes.length,
     capture_sha256: digest,

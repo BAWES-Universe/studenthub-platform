@@ -78,7 +78,7 @@ permissions:
 jobs:
   trust:
     name: Resolve the authority commit, the candidate and the runner
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two checkouts and a handful of API reads; nothing here invokes candidate code and nothing here can loop.
     # Bounded anyway, so that NO job of this workflow can hold a hosted runner for GitHub's 360-minute default
     # on the way to a cancellation that says nothing. 10 minutes is far above anything this job has taken.
@@ -91,6 +91,14 @@ jobs:
       candidate_sha: ${{ steps.resolve.outputs.candidate_sha }}
       runner_key: ${{ steps.resolve.outputs.runner_key }}
     steps:
+      # The interpreter, pinned. The reasoning is written out once, in the measure job, which is the job whose
+      # output is a receipt; it applies to every job of this authority, because every one of them reads or
+      # re-derives that receipt with the same node.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
       - name: Resolve what this run is allowed to trust
         id: resolve
         env:
@@ -202,7 +210,7 @@ jobs:
   measure:
     name: measure
     needs: trust
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # WHY A BOUND, AND WHY THIS ONE. The runner invokes the candidate's suite, and a candidate's suite can
     # hang: a review reproduced exactly that on this repository's own coordinator suite under an unusual
     # TMPDIR, killing it at 300s with the stream still open. With no bound here the measure step blocks until
@@ -211,15 +219,58 @@ jobs:
     # what hung. Nothing is minted either way (emit needs: measure), so this is about cost and legibility, not
     # about safety.
     #
-    # The bound: the pinned `coordinator` runner completes in 289s measured end to end (3667 tests), so the
-    # suite itself needs ~5 minutes. 20 gives it four times that, plus the two checkouts and the upload, plus
-    # room for a hosted runner slower than the machine that was measured - while turning a hang into a red job
-    # in a third of an hour instead of six. Raise it if a runner key is ever added whose suite is genuinely
-    # longer; do not raise it to accommodate a suite that hangs.
-    timeout-minutes: 20
+    # THE BOUND, AND IT IS NOW SET BY THE INNER ONE RATHER THAN BY THE SUITE'S IDLE WALL CLOCK. The pinned
+    # `coordinator` runner completes in 289s measured end to end on an idle machine (3667 tests), and the
+    # previous bound of 20 minutes was four times that. Measuring the same suite under real contention showed
+    # why that is the wrong quantity to take it from: the slowest FILE of this suite runs in 273s idle and
+    # 1446.8s contended, the same bytes on the same machine, and the whole run took 1451s. The enum's
+    # `--test-timeout` is a per-FILE bound of 1800s (see .github/verifier-receipt/runners.json for the
+    # measurement it comes from), and an inner bound above the outer one bounds nothing - the outer one fires
+    # first and the run ends as a cancellation with no capture and no diagnostic, which is the exact outcome
+    # the inner bound exists to prevent.
+    #
+    # 45 minutes: above the 1800s per-file bound, above the 1451s worst whole-suite wall clock measured, and
+    # still an eighth of GitHub's 360-minute default. Raise it only together with the per-file bound, and
+    # never to accommodate a suite that hangs.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
+      # WHY THE INTERPRETER IS PINNED, AND WHY IT IS PINNED HERE OF ALL PLACES.
+      #
+      # Every other input to this authority is named by content. The authority is checked out BY SHA. The
+      # candidate is checked out BY SHA and re-read with `git rev-parse` to prove it. The runner command comes
+      # from a protected enum and never from any tree. All four third-party actions are pinned to commits. The
+      # capture is bound to a digest GitHub computed and to a trailer inside the hashed stream.
+      #
+      # The interpreter was the one input left floating, and it is the one that does the measuring. `runs-on:
+      # ubuntu-latest` resolves to whatever GitHub currently means by that label, and the image behind it
+      # carries more than one node - a review found 22.x and 24.x on the same image, with `node` on PATH
+      # resolving to whichever the image maintainers last made default. So the sentence "the protected runner
+      # reported these tests passing" was, until this pin, a sentence about an interpreter no field of the
+      # receipt named and no line of this repository chose.
+      #
+      # THAT IS NOT A HYPOTHETICAL FOR THIS WORKFLOW. Three of the properties this receipt's readers rely on
+      # are version-dependent facts about `node --test --test-reporter=tap`: which points carry a `location:`
+      # (the whole of the name-to-file binding), what `--test-timeout` bounds (a test, and a file, and what a
+      # cancelled file looks like in the stream), and the exact TAP shapes the emitter reconciles - the `# SKIP`
+      # escaping, the `type:` diagnostic, the summary block. A receipt is a claim about a measurement; a
+      # measurement taken by an interpreter the receipt cannot name is not one a third party can repeat. The
+      # same candidate measures differently under two interpreters and nothing in the artifact tells the two
+      # apart, which is exactly the property an authority exists to deny.
+      #
+      # HOW FAR THE PIN GOES, stated so nobody reads it as more than it is. `ubuntu-24.04` pins the image
+      # LABEL, not the image: GitHub rebuilds it and the contents move underneath. That is why the measure job
+      # RECORDS `ImageOS`, `ImageVersion`, the node version and the architecture into capture-meta.json, into
+      # the trailer inside the hashed stream, and into `provenance.runner` - a pin decides what runs, a record
+      # is what lets a reader check what did. And the exact `node-version` below can fail to resolve if that
+      # release is ever withdrawn; the failure mode of an exact pin is a red run, which is the safe direction,
+      # and the failure mode of a floating one is a receipt that means something different from the last.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
       - name: Check out the authority at the trusted commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -367,7 +418,7 @@ jobs:
   emit:
     name: Emit the receipt from this run's own capture, and judge it
     needs: [trust, measure]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # This job runs no candidate code - it fetches this run's own evidence through the API and judges it - so
     # its bound is set by the emitter's own test suite, the API reads and the artifact download rather than by
     # a candidate's suite. 15 minutes is well above anything observed and still refuses a wedged download
@@ -386,6 +437,14 @@ jobs:
       admissible: ${{ steps.gate.outputs.admissible }}
       receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
     steps:
+      # The interpreter, pinned. The reasoning is written out once, in the measure job, which is the job whose
+      # output is a receipt; it applies to every job of this authority, because every one of them reads or
+      # re-derives that receipt with the same node.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
       - name: Check out the authority at the trusted commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -621,6 +680,16 @@ jobs:
             if (omitted.length > 0 || invented.length > 0) { console.error('::error::this receipt s suite.failing_tests does not describe the capture it was computed from: ' + (omitted.length > 0 ? omitted.length + ' test(s) the capture reports failing are not in it (' + omitted.join(', ') + ')' : '') + (omitted.length > 0 && invented.length > 0 ? '; ' : '') + (invented.length > 0 ? invented.length + ' name(s) in it failed no point of that capture (' + invented.join(', ') + ')' : '')); process.exit(1); }
             if (String(suite.exit) !== String(trailerFields.exit)) { console.error('::error::this receipt records suite exit ' + JSON.stringify(suite.exit) + ', but the capture s own trailer records ' + JSON.stringify(trailerFields.exit)); process.exit(1); }
             console.log('derived from the capture (' + captureBytes.length + ' bytes, ' + bodyBytes + ' of runner output): exit ' + trailerFields.exit + ', ' + derivedFailing.size + ' failing name(s)');
+            // A RUN THAT DID NOT FINISH IS NOT A MEASUREMENT, AND IT DOES NOT LOOK RED. `--test-timeout`
+            // bounds every test AND every FILE, and a cancelled file takes its tests out of the stream
+            // entirely: the plan agrees with what was reported, the summary adds up, and a claim that does not
+            // name those tests could still reach a qualified success over a run that silently lost a hundred
+            // and fifty of them. A review measured exactly that. The count is read out of the capture's own
+            // summary here, not out of the receipt.
+            const cancelledLine = /^# cancelled (\d+)$/m.exec(captureBytes.subarray(0, bodyBytes).toString('utf8'));
+            const cancelled = cancelledLine ? Number(cancelledLine[1]) : 0;
+            if (cancelled !== Number(suite.cancelled ?? -1)) { console.error('::error::this receipt records ' + JSON.stringify(suite.cancelled) + ' cancelled point(s) where the capture it was computed from reports ' + cancelled); process.exit(1); }
+            if (cancelled > 0) { console.error('::error::the measured run did not finish: the capture reports ' + cancelled + ' cancelled point(s), so an unknown number of tests never ran and nothing in this receipt may be read as a measurement of them'); process.exit(1); }
             // AND WHETHER THE SUITE WAS RED IS DERIVED TOO, from the exit status inside the hashed bytes and
             // from the points just counted, rather than from the three receipt fields that used to decide it.
             const red = String(trailerFields.exit) !== '0' || derivedFailing.size > 0;
@@ -643,6 +712,12 @@ jobs:
             if (misbound.length > 0) { console.error('::error::these named tests were reported by the runner in a file other than the one their claim names: ' + misbound.map(row => row.name + ' claimed in ' + JSON.stringify(row.artifact) + ', reported in ' + JSON.stringify(row.locations)).join('; ')); process.exit(1); }
             const unmarked = rows.filter(row => row.location_bound === 'mismatched' && row.status !== 'misplaced');
             if (unmarked.length > 0) { console.error('::error::these named tests are bound to the wrong file and are not recorded as misplaced: ' + unmarked.map(row => row.name).join(', ')); process.exit(1); }
+            // AND `unreported` IS NOT A RESIDUAL. A review established both terms of a claim from three empty
+            // bodies in a file outside this repository, because no passing point carries a location and the
+            // emitter counted that silence instead of refusing it. A row may be `pass` only if the runner said
+            // which file it was in AND that file is the one the row's own entry names.
+            const unbound = rows.filter(row => row.status === 'pass' && row.location_bound !== 'matched');
+            if (unbound.length > 0) { console.error('::error::these named tests are reported passing while nothing in the capture says which file they were measured in, so this receipt cannot say the test that ran is the test the claim describes: ' + unbound.map(row => row.name + ' (' + String(row.location_bound) + ')').join(', ')); process.exit(1); }
             const bound = rows.reduce((at, row) => ({ ...at, [String(row.location_bound)]: (at[String(row.location_bound)] ?? 0) + 1 }), {});
             console.log('names bound to the file their claim names:', JSON.stringify(bound));
 
@@ -655,8 +730,19 @@ jobs:
             const silent = terms.filter(term => term.disposition === undefined || term.approvable === undefined || term.permits_establishment === undefined || term.measured === undefined);
             if (silent.length > 0) { console.error('::error::these terms do not carry the disposition their own manifest entry states, so this step cannot tell an established term from a blocked one: ' + silent.map(term => String(term.id)).join(', ')); process.exit(1); }
             const ESTABLISHING = ['PASS'];
-            const barred = terms.filter(term => term.establishes === true && (term.approvable === false || !ESTABLISHING.includes(term.disposition)));
+            // `approvable === true`, NOT `approvable !== false`. A review deleted the key from the twelve
+            // entries of the real manifest that may never be approved and every one of them established,
+            // because the emitter, this step and the attest job all read an ABSENT governance field as
+            // consent. An approval that was never written is not an approval.
+            const barred = terms.filter(term => term.establishes === true && (term.approvable !== true || !ESTABLISHING.includes(term.disposition)));
             if (barred.length > 0) { console.error('::error::these terms are reported established while their own manifest entry says they may not be: ' + barred.map(term => String(term.id) + ' (disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable) + ')').join('; ')); process.exit(1); }
+            // AND THE MANIFEST'S OWN EVIDENCE, RE-READ HERE. Flipping BLOCK to PASS on the real manifest and
+            // changing nothing else left `receipts: []` on all 53 entries and `killing_mutants: []` on twelve,
+            // with every entry's own reason still saying why - none of it read, 53 of 53 established. A term
+            // this receipt says its manifest permits must carry the two counts the manifest's reason names.
+            const unevidenced = terms.filter(term => term.permits_establishment === true
+              && (!term.evidence || !(term.evidence.receipts > 0) || !(term.evidence.killing_mutants > 0)));
+            if (unevidenced.length > 0) { console.error('::error::these terms are reported as permitted by their own manifest entry while that entry names no receipt or no killing mutant: ' + unevidenced.map(term => String(term.id) + ' (' + JSON.stringify(term.evidence ?? null) + ')').join('; ')); process.exit(1); }
             // And the rule recomputed rather than believed: permits is the two manifest fields, measured is the
             // rows, and establishes is both. A receipt whose term row disagrees with either is refused.
             const wrong = [];
@@ -836,7 +922,7 @@ jobs:
     name: Attest a receipt this authority may vouch for
     needs: [trust, measure, emit]
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.emit.outputs.admissible == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # One download, one digest, one signature. Bounded like every other job of this workflow.
     timeout-minutes: 10
     permissions:
@@ -845,6 +931,14 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # The interpreter, pinned. The reasoning is written out once, in the measure job, which is the job whose
+      # output is a receipt; it applies to every job of this authority, because every one of them reads or
+      # re-derives that receipt with the same node.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
       - name: Fetch the receipt this run's emit job produced
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -897,8 +991,16 @@ jobs:
             const terms = receipt.terms;
             if (!Array.isArray(terms) || terms.length === 0) refuse('this subject enumerates no terms');
             const ESTABLISHING = ['PASS'];
-            const barred = terms.filter(term => term.establishes === true && (term.approvable === false || !ESTABLISHING.includes(term.disposition)));
+            const barred = terms.filter(term => term.establishes === true && (term.approvable !== true || !ESTABLISHING.includes(term.disposition)));
             if (barred.length > 0) refuse('these terms are reported established while their own manifest entry says they may not be: ' + barred.map(term => String(term.id) + ' (disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable) + ')').join('; '));
+            // The two evidence counts and the binding, re-read at the point of signature for the same reason
+            // the disposition is: an absent approval, an entry naming no receipt and a name the runner located
+            // nowhere each turned a blocked claim into an established one in a review that ran them.
+            const unevidenced = terms.filter(term => term.permits_establishment === true && (!term.evidence || !(term.evidence.receipts > 0) || !(term.evidence.killing_mutants > 0)));
+            if (unevidenced.length > 0) refuse('these terms are reported as permitted while their own manifest entry names no receipt or no killing mutant: ' + unevidenced.map(term => String(term.id) + ' (' + JSON.stringify(term.evidence ?? null) + ')').join('; '));
+            const rows = Array.isArray(receipt.named_tests) ? receipt.named_tests : [];
+            const unbound = rows.filter(row => row.status === 'pass' && row.location_bound !== 'matched');
+            if (unbound.length > 0) refuse('these named tests are reported passing while nothing in the capture says which file they were measured in: ' + unbound.map(row => row.name + ' (' + String(row.location_bound) + ')').join(', '));
             if (String(receipt.run?.id) !== String(process.env.RUN_ID)) refuse('this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.RUN_ID);
             if (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main') refuse('this job is running on ' + process.env.EVENT + ' at ' + process.env.REF + ', which may not sign a receipt');
             console.log('re-derived from the subject: every admissibility ground is satisfied, verdict success, ' + terms.length + ' term(s) all permitted by their own manifest entries, run ' + receipt.run?.id + ' dispatched on main');

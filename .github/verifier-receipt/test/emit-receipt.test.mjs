@@ -26,12 +26,13 @@ test('provenance held: the trusted job\'s own capture for this run yields succes
   const receipt = world.receiptOf(built);
   assert.equal(receipt.conclusion.verdict, 'success');
   assert.deepEqual(receipt.named_tests_summary,
-    { named: 3, distinct_names: 3, pass: 3, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0,
-      misplaced: 0,
-      // The default world's capture is what the real reporter writes: no `location:` on a passing point, so
-      // every name is `unreported`. That is not a refusal - it is the measured size of the gap, and it is
-      // carried here rather than inferred.
-      location_bound: { matched: 0, mismatched: 0, unreported: 3, unclaimed: 0 } });
+    { named: 4, distinct_names: 4, pass: 4, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0,
+      misplaced: 0, unbound: 0, unclaimed: 0,
+      // The default world's capture carries a `location:` on every point, because the emitter no longer
+      // establishes a term from a point the runner named no file for. What that models is a REPORTER this
+      // authority owns; the stock one writes a location on failing points only, and the test below builds a
+      // world with `locations: null` to show what such a stream now produces.
+      location_bound: { matched: 4, mismatched: 0, unreported: 0, unclaimed: 0 } });
   assert.equal(receipt.provenance.artifact.digest, built.archiveDigest);
   assert.equal(receipt.provenance.artifact.archive_sha256, built.archiveDigest);
   assert.equal(receipt.provenance.capture.sha256, built.meta.capture_sha256);
@@ -58,8 +59,8 @@ test('the receipt carries every field a third party needs to re-fetch and re-che
   assert.equal(receipt.provenance.claim.ref, world.CANDIDATE_SHA);
   assert.match(receipt.provenance.claim.sha256, /^[0-9a-f]{64}$/);
   assert.equal(receipt.suite.exit, '0');
-  assert.equal(receipt.suite.tests, 3);
-  assert.equal(receipt.named_tests.length, 3);
+  assert.equal(receipt.suite.tests, 4);
+  assert.equal(receipt.named_tests.length, 4);
   // The well-formedness check travels labelled as what it is, and never as evidence of genuineness.
   assert.equal(receipt.structure_check.kind, 'well-formedness');
   assert.match(receipt.structure_check.note, /does not say it is GENUINE/);
@@ -163,7 +164,7 @@ test('a candidate-supplied TAP path is not evidence: the emitter reads only its 
   const receipt = world.receiptOf(built);
   // The receipt describes the trusted capture, not the file that was offered.
   assert.equal(receipt.provenance.capture.sha256, built.meta.capture_sha256);
-  assert.equal(receipt.named_tests_summary.named, 3);
+  assert.equal(receipt.named_tests_summary.named, 4);
   assert.ok(!receipt.named_tests.some(test => test.name === 'a test that never ran'));
 });
 
@@ -454,7 +455,7 @@ test('a named test absent from the trusted capture makes the verdict failure', (
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.conclusion.verdict, 'failure');
-  assert.equal(receipt.named_tests_summary.absent, 1);
+  assert.equal(receipt.named_tests_summary.absent, 2);
 });
 
 test('a claim that names no test cannot produce success', () => {
@@ -467,7 +468,7 @@ test('a claim that names no test cannot produce success', () => {
 
 test('a truncated capture is still refused by the well-formedness check, naming the structure', () => {
   const full = world.tapFor(world.NAMED_TESTS);
-  const built = world.build({ capture: full.slice(0, full.indexOf('1..3')) });
+  const built = world.build({ capture: full.slice(0, full.indexOf(`1..${world.NAMED_TESTS.length}`)) });
   refusedOn(world.emit(built), 'capture.structure');
 });
 
@@ -527,7 +528,12 @@ test('a name the genuine capture reports as fail then pass is recorded fail, not
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
     entries: [{ id: 'TERM-DUP', artifact: '../../../verifier-receipt/test/fixtures/duplicate-name.mjs',
-      control: { test_names: ['a duplicated name'] }, killing_mutants: [] }],
+      control: { test_names: ['a duplicated name'] },
+      // The entry states PASS (the world defaults it), so it must name a mutant that must die for it - and the
+      // name is a test the fixture really contains. The mutant PASSES, and the stock reporter writes no
+      // `location:` on a passing point, so its row comes back `unbound`: that is the new rule showing through
+      // on a genuine capture, and it is asserted below rather than hidden.
+      killing_mutants: [{ test_name: 'the push broker retries only reads' }] }],
   };
   const built = world.build({ capture, claim, meta: { suite_exit: '1' } });
   const result = world.emit(built);
@@ -536,7 +542,8 @@ test('a name the genuine capture reports as fail then pass is recorded fail, not
   assert.equal(receipt.named_tests[0].location_bound, 'matched');
   assert.deepEqual(receipt.named_tests[0].locations,
     [path.join(world.HERE, 'fixtures', 'duplicate-name.mjs')]);
-  assert.deepEqual(receipt.named_tests.map(test => [test.name, test.status]), [['a duplicated name', 'fail']]);
+  assert.deepEqual(receipt.named_tests.map(test => [test.name, test.status]),
+    [['a duplicated name', 'fail'], ['the push broker retries only reads', 'unbound']]);
   assert.equal(receipt.named_tests_summary.fail, 1);
   assert.equal(receipt.conclusion.verdict, 'failure');
   // The repeat itself is recorded, not just its worst outcome.
@@ -549,16 +556,19 @@ test('a name the genuine capture reports as fail then pass is recorded fail, not
 });
 
 test('a name reported twice, both passing, is still pass - and the repeat is recorded', () => {
+  const at = name => `  location: '${world.ARTIFACT_LOCATION}:${name}:1'`;
   const capture = [
     'TAP version 13',
-    'ok 1 - a repeated name', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
-    'ok 2 - a repeated name', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
-    '1..2', '# tests 2', '# suites 0', '# pass 2', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
+    'ok 1 - a repeated name', '  ---', '  duration_ms: 1', "  type: 'test'", at(12), '  ...',
+    'ok 2 - a repeated name', '  ---', '  duration_ms: 1', "  type: 'test'", at(12), '  ...',
+    'ok 3 - the mutant of the repeated name dies', '  ---', '  duration_ms: 1', "  type: 'test'", at(20), '  ...',
+    '1..3', '# tests 3', '# suites 0', '# pass 3', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
     '# duration_ms 3', '',
   ].join('\n');
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-    entries: [{ id: 'TERM-REPEAT', control: { test_names: ['a repeated name'] }, killing_mutants: [] }],
+    entries: [{ id: 'TERM-REPEAT', control: { test_names: ['a repeated name'] },
+      killing_mutants: [{ test_name: 'the mutant of the repeated name dies' }] }],
   };
   const built = world.build({ capture, claim });
   assert.equal(world.emit(built).code, 0);
@@ -574,14 +584,20 @@ test('a name reported twice, both passing, is still pass - and the repeat is rec
 // The capture here is genuine: `node --test --test-reporter=tap` over a fixture that really skips one test,
 // really marks one todo, and really declares one empty `describe()`. A review defeated the emitter with the
 // first and the third of those - both put `ok` on the wire, and both were recorded `pass` for a term.
+//
+// THE DISPOSITIONS ARE `BLOCK` AND THAT IS WHAT A MANIFEST OVER THIS CAPTURE WOULD SAY. Three of these four
+// terms rest on a test that was skipped, marked todo, or is a describe() block, and the fourth's control
+// passes with no `location:` - so none of them is in a state a manifest would call PASS, and an entry that
+// says PASS must name a receipt that verified it and a mutant that must die for it. What this world is about
+// is the STATUS each point is recorded under, which the disposition does not touch.
 const SKIP_SUITE_CLAIM = {
   code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
   entries: [
-    { id: 'TERM-SKIP', control: { test_names: ['the stale-head guard holds'] }, killing_mutants: [] },
-    { id: 'TERM-SUITE', control: { test_names: [] },
+    { id: 'TERM-SKIP', disposition: 'BLOCK', control: { test_names: ['the stale-head guard holds'] }, killing_mutants: [] },
+    { id: 'TERM-SUITE', disposition: 'BLOCK', control: { test_names: [] },
       killing_mutants: [{ test_name: 'the mutant that removes the stale-head guard dies' }] },
-    { id: 'TERM-TODO', control: { test_names: ['the broker retry budget is respected'] }, killing_mutants: [] },
-    { id: 'TERM-REAL', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
+    { id: 'TERM-TODO', disposition: 'BLOCK', control: { test_names: ['the broker retry budget is respected'] }, killing_mutants: [] },
+    { id: 'TERM-REAL', disposition: 'BLOCK', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
   ],
 };
 
@@ -601,15 +617,21 @@ test('a test the runner reported `# SKIP` is not pass, and the marker is not par
     ['the stale-head guard holds', 'skip'],
     ['the mutant that removes the stale-head guard dies', 'suite'],
     ['the broker retry budget is respected', 'todo'],
-    ['the coordinator refuses a stale head', 'pass'],
+    // THE STOCK REPORTER SHOWING THROUGH. This point really passed, and this capture is the reporter's own
+    // bytes - which carry no `location:` on a passing point, so nothing here says which file it was measured
+    // in. It is `unbound`, not `pass`, and its term establishes nothing: this is the whole of the reach the
+    // location binding has against the stock reporter, asserted on real bytes.
+    ['the coordinator refuses a stale head', 'unbound'],
   ]);
   assert.deepEqual(receipt.named_tests_summary,
-    { named: 4, distinct_names: 4, pass: 1, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1,
-      misplaced: 0, location_bound: { matched: 0, mismatched: 0, unreported: 4, unclaimed: 0 } });
-  // Each of the three is a term this run establishes nothing about, and each is named as such.
+    { named: 4, distinct_names: 4, pass: 0, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1,
+      misplaced: 0, unbound: 1, unclaimed: 0,
+      location_bound: { matched: 0, mismatched: 0, unreported: 4, unclaimed: 0 } });
+  // Each of the four is a term this run establishes nothing about, and each is named as such.
   assert.deepEqual(receipt.terms.map(term => [term.id, term.establishes]),
-    [['TERM-SKIP', false], ['TERM-SUITE', false], ['TERM-TODO', false], ['TERM-REAL', true]]);
-  assert.deepEqual(receipt.terms_summary.without_evidence, ['TERM-SKIP', 'TERM-SUITE', 'TERM-TODO']);
+    [['TERM-SKIP', false], ['TERM-SUITE', false], ['TERM-TODO', false], ['TERM-REAL', false]]);
+  assert.deepEqual(receipt.terms_summary.without_evidence,
+    ['TERM-SKIP', 'TERM-SUITE', 'TERM-TODO', 'TERM-REAL']);
   const reasons = receipt.conclusion.reasons.join(' | ');
   assert.match(reasons, /1 named test\(s\) were reported with a `# SKIP` directive.*the stale-head guard holds/);
   assert.match(reasons, /1 named test\(s\) were reported with a `# TODO` directive.*the broker retry budget is respected/);
@@ -619,7 +641,7 @@ test('a test the runner reported `# SKIP` is not pass, and the marker is not par
 test('naming a skipped test verbatim WITH its `# SKIP` marker does not match it either', () => {
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-    entries: [{ id: 'TERM-MARKER',
+    entries: [{ id: 'TERM-MARKER', disposition: 'BLOCK',
       control: { test_names: ['the stale-head guard holds # SKIP'] }, killing_mutants: [] }],
   };
   const built = world.build({ capture: world.genuineTap('skipped-and-suite.mjs'), claim });
@@ -641,7 +663,8 @@ test('a name reported by both a suite point and a passing test point collapses t
   ].join('\n');
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-    entries: [{ id: 'TERM-SHARED', control: { test_names: ['a shared name'] }, killing_mutants: [] }],
+    entries: [{ id: 'TERM-SHARED', disposition: 'BLOCK', control: { test_names: ['a shared name'] },
+      killing_mutants: [] }],
   };
   const built = world.build({ capture, claim });
   assert.equal(world.emit(built).code, 0);
@@ -655,22 +678,25 @@ test('a name reported by both a suite point and a passing test point collapses t
 // A `#` a test author put in a NAME is escaped by the reporter as `\#`, so it is never read as a directive and
 // the name still matches. Guards the directive rule against eating part of a real name.
 test('a `#` inside a test name is not read as a directive', () => {
+  const at = line => `  location: '${world.ARTIFACT_LOCATION}:${line}:1'`;
   const capture = [
     'TAP version 13',
-    'ok 1 - a name with a \\# hash inside', '  ---', '  duration_ms: 1', "  type: 'test'", '  ...',
-    '1..1', '# tests 1', '# suites 0', '# pass 1', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
+    'ok 1 - a name with a \\# hash inside', '  ---', '  duration_ms: 1', "  type: 'test'", at(12), '  ...',
+    'ok 2 - the mutant of the hashed name dies', '  ---', '  duration_ms: 1', "  type: 'test'", at(20), '  ...',
+    '1..2', '# tests 2', '# suites 0', '# pass 2', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0',
     '# duration_ms 3', '',
   ].join('\n');
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
     entries: [{ id: 'TERM-HASH',
-      control: { test_names: ['a name with a \\# hash inside'] }, killing_mutants: [] }],
+      control: { test_names: ['a name with a \\# hash inside'] },
+      killing_mutants: [{ test_name: 'the mutant of the hashed name dies' }] }],
   };
   const built = world.build({ capture, claim });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.conclusion.verdict, 'success');
-  assert.deepEqual(receipt.named_tests.map(named => named.status), ['pass']);
+  assert.deepEqual(receipt.named_tests.map(named => named.status), ['pass', 'pass']);
 });
 
 // ---- every term is named, whether or not it names a test ------------------------------------------------------
@@ -681,13 +707,16 @@ test('terms that name no tests cannot ride to success on a sibling term\'s cover
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
     entries: [
-      { id: 'TERM-covered', control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] },
+      { id: 'TERM-covered', control: { test_names: ['the coordinator refuses a stale head'] },
+        killing_mutants: [{ test_name: 'the mutant that removes the stale-head guard dies' }] },
       { id: 'TERM-empty-a', control: { test_names: [] }, killing_mutants: [] },
       { id: 'TERM-empty-b', control: {} },
       { id: 'TERM-no-control' },
     ],
   };
-  const built = world.build({ claim, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  const built = world.build({ claim,
+    capture: world.tapFor(['the coordinator refuses a stale head',
+      'the mutant that removes the stale-head guard dies']) });
   const result = world.emit(built);
   assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
   const receipt = world.receiptOf(built);
@@ -697,13 +726,13 @@ test('terms that name no tests cannot ride to success on a sibling term\'s cover
     /3 term\(s\) name no tests, so this run establishes nothing about them: TERM-empty-a, TERM-empty-b, TERM-no-control/);
   // Every term the manifest lists appears, with what this run establishes about it.
   assert.deepEqual(receipt.terms.map(term => [term.id, term.named, term.establishes]), [
-    ['TERM-covered', 1, true], ['TERM-empty-a', 0, false], ['TERM-empty-b', 0, false], ['TERM-no-control', 0, false]]);
+    ['TERM-covered', 2, true], ['TERM-empty-a', 0, false], ['TERM-empty-b', 0, false], ['TERM-no-control', 0, false]]);
   assert.deepEqual(receipt.terms_summary, { total: 4, establishing: 1, measured: 1,
     permitted_by_the_manifest: 4, naming_no_tests: 3, barred_by_the_manifest: [],
     dispositions: { PASS: 4 },
     without_evidence: ['TERM-empty-a', 'TERM-empty-b', 'TERM-no-control'] });
   // And the run still establishes what it did establish, term by term.
-  assert.equal(receipt.named_tests_summary.pass, 1);
+  assert.equal(receipt.named_tests_summary.pass, 2);
 });
 
 test('a term whose only named test failed is marked as establishing nothing, by name', () => {
@@ -875,6 +904,21 @@ test('every job of this workflow bounds how long it may hold a runner', () => {
   const measure = jobs.find(job => job.name === 'measure');
   assert.ok(Number(/^ {4}timeout-minutes: (\d+)$/m.exec(measure.body)[1]) >= 10,
     'the measure job must leave real room above the 4m49s the pinned runner takes');
+
+  // AND THE RUNNER IMAGE AND THE INTERPRETER ARE PINNED IN EVERY JOB. A review named the interpreter as the one
+  // input this authority did not fix by content: four actions pinned to commits, the runner command from a
+  // protected enum, the candidate and the authority checked out by sha - and then `runs-on: ubuntu-latest`
+  // handing the measurement to whatever node that image currently resolves, on an image carrying more than
+  // one. Which points carry a `location:`, what `--test-timeout` bounds and the TAP shapes the emitter
+  // reconciles are all facts about a node version.
+  for (const job of jobs) {
+    assert.match(job.body, /^ {4}runs-on: ubuntu-\d\d\.\d\d$/m,
+      `job \`${job.name}\` does not pin its runner image to a versioned label`);
+    assert.match(job.body, /^ {10}node-version: \d+\.\d+\.\d+$/m,
+      `job \`${job.name}\` does not pin the interpreter it runs this authority with`);
+  }
+  const versions = new Set([...WORKFLOW.matchAll(/^ {10}node-version: (\S+)$/gm)].map(match => match[1]));
+  assert.equal(versions.size, 1, `this workflow pins more than one interpreter: ${[...versions].join(', ')}`);
 });
 
 // A JOB BOUND STOPS A HUNG SUITE FROM HOLDING A RUNNER FOR SIX HOURS. It does not stop ONE hung test from
@@ -893,10 +937,18 @@ test('every runner the protected enum names bounds a single test, not only the j
     // value chosen here was 120000 - 3.7x the slowest single test point (32.4s) of the pinned candidate's real
     // capture - and it killed two whole files at 120s: 3538 tests measured instead of 3667, 2 cancelled, 129
     // never run. The slowest FILE of that suite is 273s standalone, which is what this floor is taken from.
-    assert.ok(ms >= 300000, `runner "${key}" bounds a test at ${ms}ms, under the 273s the slowest measured test FILE really takes`);
-    // And the inner bound must stay inside the outer one, or it bounds nothing: the measure job is capped at
-    // 20 minutes.
-    assert.ok(ms < 1200000, `runner "${key}" bounds a test at ${ms}ms, which is not inside the measure job's own bound`);
+    // THE VALUE IS TAKEN FROM THE SLOWEST FILE UNDER CONTENTION, not from the slowest file on an idle machine
+    // and not from the slowest test. 120000 (3.7x the slowest single test point) killed two files. 600000
+    // (2.2x the slowest file measured idle) killed three files on a contended run of the same command. The
+    // same file measured 273s idle and 1446.8s contended - 5.3x, on one machine - so the floor here is the
+    // contended number, not the idle one.
+    assert.ok(ms >= 1500000, `runner "${key}" bounds a test at ${ms}ms, under the 1446.8s the slowest file of this suite really took under contention`);
+    // And the inner bound must stay inside the outer one, or it bounds nothing: whatever the measure job's
+    // own timeout-minutes says, read from the workflow rather than repeated here.
+    const jobBound = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(
+      WORKFLOW.slice(WORKFLOW.indexOf('\n  measure:\n'), WORKFLOW.indexOf('\n  emit:\n')))[1]) * 60000;
+    assert.ok(ms < jobBound,
+      `runner "${key}" bounds a test at ${ms}ms, which is not inside the measure job's own ${jobBound}ms bound`);
   }
 });
 
@@ -989,7 +1041,7 @@ test('the gate step, lifted from the workflow, passes a receipt this emitter rea
   // The positive control of the gate: it writes the output the attest step's `if:` reads, and writes it false
   // or true from the receipt rather than from the fact that the gate passed.
   assert.equal(gate.output, 'admissible=true\n');
-  assert.match(gate.stdout, /^verdict success named 3 pass 3 fail 0 absent 0$/m);
+  assert.match(gate.stdout, /^verdict success named 4 pass 4 fail 0 absent 0$/m);
 });
 
 test('the gate step refuses a named test the runner only skipped, even when the verdict says success', () => {
@@ -1002,7 +1054,8 @@ test('the gate step refuses a named test the runner only skipped, even when the 
     capture: world.genuineTap('skipped-and-suite.mjs'),
     claim: {
       code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-      entries: [{ id: 'TERM-SKIP', control: { test_names: ['the stale-head guard holds'] }, killing_mutants: [] }],
+      entries: [{ id: 'TERM-SKIP', disposition: 'BLOCK',
+        control: { test_names: ['the stale-head guard holds'] }, killing_mutants: [] }],
     },
   });
   const emitted = world.emit(built);
@@ -1044,14 +1097,20 @@ test('the gate step refuses a named test the runner only skipped, even when the 
 
 const claimWith = entries => ({ code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE }, entries });
 const ONE_REAL_TEST = 'the coordinator refuses a stale head';
-const namesTest = id => ({ id, control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [] });
+// The mutant that entry must name, because an entry stating an establishing disposition and naming a control
+// must also name a mutant that must die for it. It is a second point in the captures below, not a second name
+// on the first: two names at one `<file>:<line>` is refused as one test reported twice.
+const ITS_MUTANT = 'the mutant that removes the stale-head guard dies';
+const REAL_PAIR = [ONE_REAL_TEST, ITS_MUTANT];
+const namesTest = id => ({ id, control: { test_names: [ONE_REAL_TEST] },
+  killing_mutants: [{ test_name: ITS_MUTANT }] });
 const namesNothing = id => ({ id, control: { test_names: [] }, killing_mutants: [] });
 
 test('D2: two entries with no id at all are refused, naming the entries that carry none', () => {
   const built = world.build({
     claim: claimWith([{ control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [] },
       { control: { test_names: [] }, killing_mutants: [] }]),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   const result = world.emit(built);
   refusedOn(result, 'claim.entries.id');
@@ -1064,7 +1123,7 @@ test('D2: two entries with no id at all are refused, naming the entries that car
 test('D1b: ten entries sharing one term id are refused, naming the id and every entry that claims it', () => {
   const built = world.build({
     claim: claimWith([namesTest('TERM-X'), ...Array.from({ length: 9 }, () => namesNothing('TERM-X'))]),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   const result = world.emit(built);
   refusedOn(result, 'claim.entries.id');
@@ -1076,7 +1135,7 @@ test('D1b: ten entries sharing one term id are refused, naming the id and every 
 test('D1: two entries sharing one term id are refused before any coverage is computed', () => {
   const built = world.build({
     claim: claimWith([namesTest('TERM-X'), namesNothing('TERM-X')]),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   const result = world.emit(built);
   refusedOn(result, 'claim.entries.id');
@@ -1090,7 +1149,7 @@ test('an id that is blank, or not a string, names no term and is refused like an
   for (const [id, shown] of [['', '""'], ['   ', '"   "'], [null, 'null'], [17, '17'], [['TERM-X'], '["TERM-X"]']]) {
     const built = world.build({
       claim: claimWith([namesTest('TERM-OK'), { id, control: { test_names: [] }, killing_mutants: [] }]),
-      capture: world.tapFor([ONE_REAL_TEST]),
+      capture: world.tapFor(REAL_PAIR),
     });
     const result = world.emit(built);
     refusedOn(result, 'claim.entries.id');
@@ -1102,7 +1161,7 @@ test('an id that is blank, or not a string, names no term and is refused like an
 test('an entry that is not an object at all is refused, naming what it is', () => {
   const built = world.build({
     claim: claimWith([namesTest('TERM-OK'), 'TERM-X', null, ['TERM-Y']]),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   const result = world.emit(built);
   refusedOn(result, 'claim.entries');
@@ -1113,7 +1172,7 @@ test('an entry that is not an object at all is refused, naming what it is', () =
 test('an `entries` that is not a list is refused, not read as one term or as none', () => {
   const built = world.build({
     claim: claimWith({ 'TERM-X': { control: { test_names: [ONE_REAL_TEST] } } }),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   refusedOn(world.emit(built), 'claim.entries');
 });
@@ -1123,7 +1182,7 @@ test('an `entries` that is not a list is refused, not read as one term or as non
 test('a claim with no `entries` at all is a verdict of failure, not a refusal', () => {
   const built = world.build({
     claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE } },
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
@@ -1154,15 +1213,16 @@ const emitterWithoutShapeChecks = () => {
 test('coverage is keyed per entry, so ten entries sharing an id still pool nothing with the shape check off', () => {
   const built = world.build({
     claim: claimWith([namesTest('TERM-X'), ...Array.from({ length: 9 }, () => namesNothing('TERM-X'))]),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   const result = world.emit(built, {}, emitterWithoutShapeChecks());
   assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
   const receipt = world.receiptOf(built);
   // ONE test was named and ONE term is established by it. The other nine named nothing and inherit nothing.
-  assert.deepEqual(receipt.named_tests.map(t => [t.entry, t.term, t.status]), [[0, 'TERM-X', 'pass']]);
+  assert.deepEqual(receipt.named_tests.map(t => [t.entry, t.term, t.status]),
+    [[0, 'TERM-X', 'pass'], [0, 'TERM-X', 'pass']]);
   assert.deepEqual(receipt.terms.map(t => [t.entry, t.id, t.named, t.pass, t.establishes]),
-    [[0, 'TERM-X', 1, 1, true], ...Array.from({ length: 9 }, (_, i) => [i + 1, 'TERM-X', 0, 0, false])]);
+    [[0, 'TERM-X', 2, 2, true], ...Array.from({ length: 9 }, (_, i) => [i + 1, 'TERM-X', 0, 0, false])]);
   assert.equal(receipt.terms_summary.total, 10);
   assert.equal(receipt.terms_summary.establishing, 1);
   assert.equal(receipt.terms_summary.naming_no_tests, 9);
@@ -1180,13 +1240,13 @@ test('coverage is keyed per entry, so ten entries sharing an id still pool nothi
 
 test('the same for two entries with no id at all: null is not a bucket two terms can share', () => {
   const built = world.build({
-    claim: claimWith([{ control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [] },
+    claim: claimWith([{ control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [{ test_name: ITS_MUTANT }] },
       { control: { test_names: [] }, killing_mutants: [] }]),
-    capture: world.tapFor([ONE_REAL_TEST]),
+    capture: world.tapFor(REAL_PAIR),
   });
   assert.equal(world.emit(built, {}, emitterWithoutShapeChecks()).code, 0);
   const receipt = world.receiptOf(built);
-  assert.deepEqual(receipt.terms.map(t => [t.entry, t.named, t.establishes]), [[0, 1, true], [1, 0, false]]);
+  assert.deepEqual(receipt.terms.map(t => [t.entry, t.named, t.establishes]), [[0, 2, true], [1, 0, false]]);
   assert.equal(receipt.conclusion.verdict, 'failure');
   assert.equal(runGate(built).code, 1);
 });
@@ -1198,7 +1258,7 @@ test('a well-formed manifest carries its entry index into every term row and eve
   const receipt = world.receiptOf(built);
   assert.deepEqual(receipt.terms.map(term => [term.entry, term.id]), [[0, 'TERM-1'], [1, 'TERM-2']]);
   assert.deepEqual(receipt.named_tests.map(test => [test.entry, test.term, test.kind]),
-    [[0, 'TERM-1', 'control'], [0, 'TERM-1', 'mutant'], [1, 'TERM-2', 'control']]);
+    [[0, 'TERM-1', 'control'], [0, 'TERM-1', 'mutant'], [1, 'TERM-2', 'control'], [1, 'TERM-2', 'mutant']]);
   assert.equal(receipt.conclusion.verdict, 'success');
 });
 
@@ -1276,10 +1336,25 @@ test('a capture the trusted program really took is what the emitter accepts', ()
   const emitted = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, taken.meta.runner_command) });
   assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
   const receipt = world.receiptOf(built);
-  assert.equal(receipt.conclusion.verdict, 'success');
-  assert.equal(receipt.named_tests_summary.pass, 3);
+  // ACCEPTED, READ AND RECONCILED - and establishing nothing, which is the honest reading of these bytes.
+  // Every provenance check passes over a capture the trusted program really produced: the digest is the one it
+  // took as the stream went through it, the trailer it appended is the trailer in the hashed bytes, and the
+  // interpreter and image it recorded are the ones the receipt now names. What the stream does NOT carry is a
+  // `location:` on a passing point - the stock reporter writes one only on a point it reports failing - so all
+  // four names are `unbound` and no term is established. That is the whole of the reach the location binding
+  // has against this reporter, measured here on its own bytes rather than asserted.
+  assert.equal(receipt.named_tests_summary.pass, 0);
+  assert.equal(receipt.named_tests_summary.unbound, 4);
+  assert.deepEqual(receipt.named_tests_summary.location_bound,
+    { matched: 0, mismatched: 0, unreported: 4, unclaimed: 0 });
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '),
+    /4 named test\(s\) were reported by the runner with no `location:` at all/);
   assert.equal(receipt.provenance.capture.sha256, taken.meta.capture_sha256);
   assert.equal(receipt.provenance.capture.hashed, 'in the trusted job, as the stream passed through it');
+  // AND THE INTERPRETER THE MEASUREMENT WAS TAKEN WITH, out of the capture's own trailer.
+  assert.equal(receipt.provenance.runner.node, process.version);
+  assert.equal(receipt.provenance.runner.arch, process.arch);
 });
 
 test('a capture replaced after the trusted process hashed it is refused, naming the capture digest', () => {
@@ -1337,7 +1412,7 @@ test('a summary whose per-status counts do not match the points it enumerated is
   // them to `# fail`. Everything the well-formedness check reconciled before this agrees; the point statuses do
   // not, and the names are what a term is established by.
   const lines = world.tapFor(world.NAMED_TESTS).split('\n')
-    .map(line => (line === '# pass 3' ? '# pass 2' : line === '# fail 0' ? '# fail 1' : line));
+    .map(line => (line === '# pass 4' ? '# pass 3' : line === '# fail 0' ? '# fail 1' : line));
   const built = world.build({ capture: lines.join('\n'), meta: { suite_exit: '1' } });
   const emitted = world.emit(built);
   assert.equal(emitted.code, 3);
@@ -1351,14 +1426,19 @@ test('the genuine capture of a skipped test, a todo and an empty describe reconc
   const built = world.build({
     capture: world.genuineTap('skipped-and-suite.mjs'),
     claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-      entries: [{ id: 'TERM-1', control: { test_names: ['the coordinator refuses a stale head'] } }] },
+      entries: [{ id: 'TERM-1', disposition: 'BLOCK',
+        control: { test_names: ['the coordinator refuses a stale head'] } }] },
   });
   const emitted = world.emit(built);
   assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
   const receipt = world.receiptOf(built);
   assert.deepEqual([receipt.suite.tests, receipt.suite.suites, receipt.suite.ok, receipt.suite.skipped,
     receipt.suite.todo, receipt.suite.exit], [3, 1, 1, 1, 1, '0']);
-  assert.equal(receipt.conclusion.verdict, 'success');
+  // The reconciliation is what this test is about, and it passed: the capture was read, not refused. The
+  // verdict is failure because a stock-reporter capture carries no `location:` on a passing point, so the one
+  // name this claim rests on is `unbound` - and because the entry's own disposition says BLOCK.
+  assert.equal(receipt.named_tests[0].status, 'unbound');
+  assert.equal(receipt.conclusion.verdict, 'failure');
 });
 
 // ---- a container of the wrong type is a named refusal, not an unhandled TypeError ----------------------------
@@ -1426,11 +1506,12 @@ const forgeReceipt = (built, edit) => {
 };
 const ONE_TERM = {
   code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
-  entries: [{ id: 'TERM-A', control: { test_names: ['the coordinator refuses a stale head'] } }],
+  entries: [{ id: 'TERM-A', control: { test_names: [ONE_REAL_TEST] },
+    killing_mutants: [{ test_name: ITS_MUTANT }] }],
 };
 
 test('the gate refuses a terms row claiming coverage no named test row supports', () => {
-  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(REAL_PAIR) });
   assert.equal(world.emit(built).code, 0);
   forgeReceipt(built, receipt => {
     receipt.terms.push({ entry: 1, id: 'TERM-B', named: 1, pass: 1, fail: 0, absent: 0, skipped: 0, todo: 0,
@@ -1446,18 +1527,18 @@ test('the gate refuses a terms row claiming coverage no named test row supports'
 });
 
 test('the gate refuses a terms row whose counts are not counts', () => {
-  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(REAL_PAIR) });
   assert.equal(world.emit(built).code, 0);
   // `!(term.named > 0)` is satisfied by the string '1', which is why reading that field was never a check.
   forgeReceipt(built, receipt => { receipt.terms[0].named = '1'; });
   const gate = runGate(built);
   assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
-  assert.match(gate.stderr, /TERM-A reports named="1" pass=1, which are not counts/);
+  assert.match(gate.stderr, /TERM-A reports named="1" pass=2, which are not counts/);
   assert.equal(gate.output, '');
 });
 
 test('the gate refuses a receipt whose named_tests were emptied under an unchanged summary', () => {
-  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  const built = world.build({ claim: ONE_TERM, capture: world.tapFor(REAL_PAIR) });
   assert.equal(world.emit(built).code, 0);
   forgeReceipt(built, receipt => { receipt.named_tests = []; });
   const gate = runGate(built);
@@ -1478,10 +1559,10 @@ test('the gate refuses a named test row attributed to no term at all', () => {
 test('the gate refuses a summary that disagrees with the rows the receipt lists', () => {
   const built = world.build();
   assert.equal(world.emit(built).code, 0);
-  forgeReceipt(built, receipt => { receipt.named_tests_summary.named = 4; });
+  forgeReceipt(built, receipt => { receipt.named_tests_summary.named = 5; });
   const gate = runGate(built);
   assert.equal(gate.code, 1, `${gate.stdout}${gate.stderr}`);
-  assert.match(gate.stderr, /::error::named_tests_summary says named=4/);
+  assert.match(gate.stderr, /::error::named_tests_summary says named=5/);
   assert.equal(gate.output, '');
 });
 
@@ -1511,7 +1592,14 @@ test('the capture program appends one trailer, hashes it with the stream, and pu
   assert.equal(lines.filter(line => line.startsWith('# verifier-capture v1 ')).length, 1);
   assert.match(trailer, /^# verifier-capture v1 exit=0 signal=- body_bytes=\d+ body_sha256=[0-9a-f]{64} /);
   assert.match(trailer, new RegExp(`run=${world.RUN_ID} attempt=1 job=measure candidate=${world.CANDIDATE_SHA} `
-    + `tree=${world.CANDIDATE_TREE} runner=${world.RUNNER_KEY}$`));
+    + `tree=${world.CANDIDATE_TREE} runner=${world.RUNNER_KEY} `));
+  // AND THE INTERPRETER AND THE IMAGE, INSIDE THE HASHED STREAM. The one input this authority did not name by
+  // content: `runs-on` pins a label and the image behind it carries more than one node, so a capture that does
+  // not say which one measured it is a measurement a third party cannot repeat.
+  assert.match(trailer, new RegExp(` node=${encodeURIComponent(process.version)} `
+    + `arch=${process.arch} image=\\S+ image_version=\\S+$`));
+  assert.equal(taken.meta.runner_node, process.version);
+  assert.equal(taken.meta.runner_arch, process.arch);
   // The body is the runner's own output and the digests are over the two halves, each stated in the meta.
   const body = Buffer.from(taken.bytes).subarray(0, taken.meta.capture_body_bytes);
   assert.equal(crypto.createHash('sha256').update(body).digest('hex'), taken.meta.capture_body_sha256);
@@ -1676,6 +1764,51 @@ test('the open residual: a forger that also beats the job-output channel is NOT 
   assert.equal(world.receiptOf(built).conclusion.verdict, 'success');
 });
 
+// ---- a run that did not finish is not a measurement ----------------------------------------------------------
+
+// A cancelled FILE is not a red suite, it is a SHORTER one. `--test-timeout` bounds every test and a test file
+// is itself a test, so when a file exceeds it the runner reports `not ok N - <file>`, counts it in
+// `# cancelled`, and every test inside it that never ran is simply absent from the stream - the plan agrees
+// with what was reported and the summary adds up. A cold review ran the shipped command and lost three whole
+// files and about 150 tests that way, at a value chosen from a measured run, and the receipt over it was still
+// reachable as a qualified success because the claim did not name the lost tests.
+test('a capture reporting a cancelled point cannot produce success, however green the named tests are', () => {
+  // Everything the claim names really passed, in the file it names. One OTHER file of the same run was
+  // cancelled - which is the shape the reviewer measured, and the one the verdict used to read as green.
+  const body = world.tapFor(world.NAMED_TESTS).split('\n');
+  const plan = body.indexOf(`1..${world.NAMED_TESTS.length}`);
+  const capture = [...body.slice(0, plan),
+    "not ok 5 - production-lifecycle.test.mjs", '  ---', '  duration_ms: 1800000.1', "  type: 'test'",
+    "  location: '/home/runner/work/repo/repo/candidate/.github/coordinator/service/test/production-lifecycle.test.mjs:1:1'",
+    "  failureType: 'testTimeoutFailure'", "  error: 'test timed out after 1800000ms'", '  ...',
+    `1..${world.NAMED_TESTS.length + 1}`, `# tests ${world.NAMED_TESTS.length + 1}`, '# suites 0',
+    `# pass ${world.NAMED_TESTS.length}`, '# fail 0', '# cancelled 1', '# skipped 0', '# todo 0',
+    '# duration_ms 1800012.5', ''].join('\n');
+  const built = world.build({ capture, meta: { suite_exit: '1' } });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
+  const receipt = world.receiptOf(built);
+  // The named tests really were measured green, and the receipt still says so.
+  assert.equal(receipt.named_tests_summary.pass, 4);
+  assert.equal(receipt.terms.every(term => term.measured), true);
+  assert.equal(receipt.suite.cancelled, 1);
+  // And the verdict is failure anyway, with the count in the reason.
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '),
+    /the measured run did not finish: the runner reported 1 cancelled point\(s\) out of 5 test\(s\)/);
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  // And the gate refuses it - and refuses it again from the capture's own summary when the verdict is forged.
+  assert.equal(runGate(built).code, 1);
+  const receiptOnDisk = world.receiptOf(built);
+  receiptOnDisk.conclusion.verdict = 'success';
+  receiptOnDisk.conclusion.reasons = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receiptOnDisk, null, 2)}\n`);
+  const forged = runGate(built);
+  assert.equal(forged.code, 1, forged.stdout);
+  assert.match(forged.stderr, /the measured run did not finish: the capture reports 1 cancelled point\(s\)/);
+  assert.equal(forged.output, '');
+});
+
 // ---- a success may not be unqualified beside a suite the runner reported red ---------------------------------
 
 // A review produced `verdict: success` with `reasons: []` for a run the runner exited 1 on, with two failing
@@ -1704,11 +1837,11 @@ test('a red suite whose failures are outside the claim is a QUALIFIED success, a
   assert.match(receipt.conclusion.qualifications[0], /the measured suite is RED: the runner exited 1/);
   assert.match(receipt.conclusion.qualifications[1],
     /every failing test of that run is OUTSIDE the set of names this claim rests on/);
-  assert.match(emitted.stdout, /suite red \(exit 1, tests 5\)/);
+  assert.match(emitted.stdout, /suite red \(exit 1, tests 6\)/);
   // And the gate admits it - the exclusion is stated and it holds.
   const gate = runGate(built);
   assert.equal(gate.code, 0, `${gate.stdout}${gate.stderr}`);
-  assert.match(gate.stdout, /qualified success: the suite is red and all 2 failing test\(s\) are outside the 3 name\(s\)/);
+  assert.match(gate.stdout, /qualified success: the suite is red and all 2 failing test\(s\) are outside the 4 name\(s\)/);
   assert.equal(gate.output, 'admissible=true\n');
 });
 
@@ -1863,7 +1996,7 @@ test('the gate refuses a distinct-name count that does not match the rows', () =
   fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
   const gate = runGate(built);
   assert.equal(gate.code, 1, gate.stdout);
-  assert.match(gate.stderr, /distinct_names=17, but the receipt lists 3 distinct measured name/);
+  assert.match(gate.stderr, /distinct_names=17, but the receipt lists 4 distinct measured name/);
 });
 
 // ---- admissible_as_pin is enforced, and the bypass that defeated it is refused --------------------------------
@@ -2043,7 +2176,7 @@ test('a term whose manifest entry says BLOCK is measured green and establishes n
   assert.equal(receipt.terms_summary.measured, 1);
   assert.equal(receipt.terms_summary.establishing, 0);
   assert.match(receipt.conclusion.reasons.join(' | '),
-    /1 term\(s\) were measured green and are not in a state this claim permits establishment from.*1 carry a disposition other than PASS \(BLOCK\)/);
+    /1 term\(s\) are not in a state their own manifest entry permits establishment from.*\(1 of them were measured green by this run\).*1 carry a disposition other than PASS \(BLOCK\)/);
   // And such a receipt is not a pin.
   assert.equal(receipt.provenance.admissible_as_pin, false);
   // The gate refuses it, and writes no admissible output for the attest job to select on.
@@ -2054,10 +2187,13 @@ test('a term whose manifest entry says BLOCK is measured green and establishes n
 
 test('a term whose manifest entry says approvable: false establishes nothing even beside disposition PASS', () => {
   const built = world.build({
+    // The entry carries the evidence a PASS entry must carry - a named receipt and a named mutant - so that
+    // what bars it here is `approvable: false` and nothing else.
     rawClaim: dispositionClaim([{ id: 'TERM-UNAPPROVABLE', artifact: world.ARTIFACT, approvable: false,
       disposition: 'PASS', reason: 'no mutant is paired with this control in the registry',
-      control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
-    capture: world.tapFor(['the coordinator refuses a stale head']),
+      receipts: [{ path: 'receipts/coordinator.json' }],
+      control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [{ test_name: ITS_MUTANT }] }]),
+    capture: world.tapFor(REAL_PAIR),
   });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
@@ -2106,18 +2242,81 @@ test('a manifest whose disposition, approvable or artifact is of the wrong shape
 
 test('a manifest whose entries really are PASS establishes, so the rule is not refusing every manifest', () => {
   // The positive control of the rule: the same shape with the disposition the repository's generator writes
-  // when a term has a paired mutant and a verifying receipt at the code revision.
+  // when a term has a paired mutant and a verifying receipt at the code revision - and, because that is what
+  // the words mean, with the paired mutant and the verifying receipt actually named.
   const built = world.build({
     rawClaim: dispositionClaim([{ id: 'TERM-PASS', artifact: world.ARTIFACT, approvable: true, disposition: 'PASS',
-      reason: null, control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] }]),
-    capture: world.tapFor(['the coordinator refuses a stale head']),
+      reason: null, control: { test_names: [ONE_REAL_TEST] },
+      receipts: [{ path: 'receipts/coordinator.json' }],
+      killing_mutants: [{ test_name: ITS_MUTANT }] }]),
+    capture: world.tapFor(REAL_PAIR),
   });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.terms[0].establishes, true);
+  assert.deepEqual(receipt.terms[0].evidence, { receipts: 1, killing_mutants: 1, reason: null });
   assert.equal(receipt.conclusion.verdict, 'success');
   assert.deepEqual(receipt.terms_summary.dispositions, { PASS: 1 });
   assert.equal(runGate(built).output, 'admissible=true\n');
+});
+
+// THE SILENCE. A cold review deleted `approvable` from the twelve entries of the real manifest whose own reason
+// says no mutant is paired with them - the twelve this authority's own comment calls permanent - and all twelve
+// established, because the rule was `approvable !== false` and an absent field is not `false`. Both halves of
+// the fix are asserted here: an entry that states PASS and states no approval is REFUSED BY NAME, and an entry
+// that reaches the term rows with no approval permits nothing.
+test('SILENCE IS NOT PERMISSION: an entry that says PASS and states no `approvable` is refused by name', () => {
+  const built = world.build({
+    rawClaim: dispositionClaim([{ id: 'TERM-SILENT-APPROVAL', artifact: world.ARTIFACT, disposition: 'PASS',
+      reason: 'no mutant is paired with this control in the registry',
+      receipts: [{ path: 'receipts/coordinator.json' }],
+      control: { test_names: [ONE_REAL_TEST] }, killing_mutants: [{ test_name: ITS_MUTANT }] }]),
+    capture: world.tapFor(REAL_PAIR),
+  });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries.approvable');
+  assert.match(result.stderr, /states `disposition: "PASS"` and states no `approvable` at all/);
+  assert.match(result.stderr, /an absent approval is not an approval/);
+  assert.equal(fs.existsSync(built.receiptPath), false);
+});
+
+// THE MANIFEST'S OWN EVIDENCE. The other half of the same review: flip `disposition` from BLOCK to PASS on all
+// 53 entries of the real manifest and change nothing else. Every one of them still carries `receipts: []` and a
+// `reason` saying why, and twelve still carry `killing_mutants: []` - and the emitter read none of it.
+test('an entry that says PASS while naming no receipt and no killing mutant is refused, by each field', () => {
+  const base = { id: 'TERM-UNEVIDENCED', artifact: world.ARTIFACT, approvable: true, disposition: 'PASS',
+    reason: 'no mutant is paired with this control in the registry; no verifying receipt names this control',
+    control: { test_names: [ONE_REAL_TEST] } };
+  const cases = [
+    [{ receipts: [], killing_mutants: [{ test_name: ITS_MUTANT }] }, 'claim.entries.receipts',
+      /names no receipt that verified it \(`receipts`: \[\]\)/],
+    [{ receipts: [{ path: 'receipts/coordinator.json' }], killing_mutants: [] }, 'claim.entries.killing_mutants',
+      /names no mutant that must die for it \(`killing_mutants`: \[\]\)/],
+    [{ killing_mutants: [{ test_name: ITS_MUTANT }] }, 'claim.entries.receipts',
+      /names no receipt that verified it \(`receipts`: null\)/],
+  ];
+  for (const [patch, field, expected] of cases) {
+    const built = world.build({ rawClaim: dispositionClaim([{ ...base, ...patch }]),
+      capture: world.tapFor(REAL_PAIR) });
+    const result = world.emit(built);
+    refusedOn(result, field);
+    assert.match(result.stderr, expected);
+    assert.equal(fs.existsSync(built.receiptPath), false);
+  }
+});
+
+// And the same rule read again by the two steps that sign. A receipt whose term row says its manifest permits
+// establishment while carrying no receipt count and no mutant count is refused by the gate and at signature.
+test('the gate refuses a term reported as permitted whose manifest entry names no evidence', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  receipt.terms[0].evidence = { receipts: 0, killing_mutants: 0, reason: null };
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /reported as permitted by their own manifest entry while that entry names no receipt or no killing mutant: TERM-1/);
+  assert.equal(gate.output, '');
 });
 
 test('the gate refuses a receipt that reports a BLOCKed term established, and says which term', () => {
@@ -2184,13 +2383,19 @@ test('the gate refuses a receipt whose terms carry no disposition at all', () =>
 // not is measured in the test after these, not asserted.
 
 const MOVED = 'the coordinator refuses a stale head';
+// The entry states PASS, so it names a receipt and a mutant. The mutant is a SECOND point of every capture
+// below, declared at its own line in the file the entry names, so it is bound and passing and the only thing
+// that ever moves in these worlds is the control.
+const MOVED_MUTANT = 'the mutant that removes the stale-head guard dies';
+const MOVED_PAIR = [MOVED, MOVED_MUTANT];
 const movedClaim = dispositionClaim([{ id: 'TERM-BOUND', artifact: world.ARTIFACT, approvable: true,
-  disposition: 'PASS', control: { test_names: [MOVED] }, killing_mutants: [] }]);
+  disposition: 'PASS', receipts: [{ path: 'receipts/coordinator.json' }],
+  control: { test_names: [MOVED] }, killing_mutants: [{ test_name: MOVED_MUTANT }] }]);
 
 test('a named test the runner reported in the file its claim names is bound to it, and establishes the term', () => {
   const built = world.build({
     rawClaim: movedClaim,
-    capture: world.tapFor([MOVED], { locations: { [MOVED]: world.ARTIFACT_LOCATION } }),
+    capture: world.tapFor(MOVED_PAIR, { locations: { [MOVED]: world.ARTIFACT_LOCATION } }),
   });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
@@ -2201,7 +2406,7 @@ test('a named test the runner reported in the file its claim names is bound to i
   assert.equal(receipt.terms[0].establishes, true);
   assert.equal(receipt.conclusion.verdict, 'success');
   assert.deepEqual(receipt.named_tests_summary.location_bound,
-    { matched: 1, mismatched: 0, unreported: 0, unclaimed: 0 });
+    { matched: 2, mismatched: 0, unreported: 0, unclaimed: 0 });
 });
 
 // EACH NAMED TEST IS BOUND TO ITS OWN ENTRY'S ARTIFACT, NOT TO ANY ARTIFACT THE MANIFEST HAPPENS TO NAME. Two
@@ -2214,21 +2419,29 @@ test('a named test is bound to the artifact of its own entry, not to any artifac
   const OTHER_PATH = `.github/coordinator/service/${OTHER}`;
   const OTHER_LOCATION = `/home/runner/work/repo/repo/candidate/${OTHER_PATH}`;
   const [first, second] = [MOVED, 'the push broker retries only reads'];
+  // Each entry also names the mutant it says must die, placed where its own entry says its tests live, so the
+  // only thing that moves between the two worlds below is the pair of CONTROLS.
+  const [firstMutant, secondMutant] = [`${first} mutant`, `${second} mutant`];
+  const names = [first, firstMutant, second, secondMutant];
+  const mutantsHome = { [firstMutant]: world.ARTIFACT_LOCATION, [secondMutant]: OTHER_LOCATION };
   const swapped = world.build({
     rawClaim: dispositionClaim([
       { id: 'TERM-A', artifact: world.ARTIFACT, approvable: true, disposition: 'PASS',
-        control: { test_names: [first] }, killing_mutants: [] },
+        receipts: [{ path: 'receipts/coordinator.json' }],
+        control: { test_names: [first] }, killing_mutants: [{ test_name: `${first} mutant` }] },
       { id: 'TERM-B', artifact: OTHER, approvable: true, disposition: 'PASS',
-        control: { test_names: [second] }, killing_mutants: [] },
+        receipts: [{ path: 'receipts/broker.json' }],
+        control: { test_names: [second] }, killing_mutants: [{ test_name: `${second} mutant` }] },
     ]),
-    // Each point in the OTHER entry's file.
-    capture: world.tapFor([first, second],
-      { locations: { [first]: OTHER_LOCATION, [second]: world.ARTIFACT_LOCATION } }),
+    // Each CONTROL point in the OTHER entry's file.
+    capture: world.tapFor(names,
+      { locations: { ...mutantsHome, [first]: OTHER_LOCATION, [second]: world.ARTIFACT_LOCATION } }),
   });
   assert.equal(world.emit(swapped).code, 0);
   const crossed = world.receiptOf(swapped);
   assert.deepEqual(crossed.named_tests.map(test => [test.entry, test.artifact, test.location_bound, test.status]),
-    [[0, world.ARTIFACT_PATH, 'mismatched', 'misplaced'], [1, OTHER_PATH, 'mismatched', 'misplaced']]);
+    [[0, world.ARTIFACT_PATH, 'mismatched', 'misplaced'], [0, world.ARTIFACT_PATH, 'matched', 'pass'],
+      [1, OTHER_PATH, 'mismatched', 'misplaced'], [1, OTHER_PATH, 'matched', 'pass']]);
   assert.deepEqual(crossed.terms.map(term => term.establishes), [false, false]);
   assert.equal(crossed.conclusion.verdict, 'failure');
 
@@ -2236,19 +2449,22 @@ test('a named test is bound to the artifact of its own entry, not to any artifac
   const placed = world.build({
     rawClaim: dispositionClaim([
       { id: 'TERM-A', artifact: world.ARTIFACT, approvable: true, disposition: 'PASS',
-        control: { test_names: [first] }, killing_mutants: [] },
+        receipts: [{ path: 'receipts/coordinator.json' }],
+        control: { test_names: [first] }, killing_mutants: [{ test_name: `${first} mutant` }] },
       { id: 'TERM-B', artifact: OTHER, approvable: true, disposition: 'PASS',
-        control: { test_names: [second] }, killing_mutants: [] },
+        receipts: [{ path: 'receipts/broker.json' }],
+        control: { test_names: [second] }, killing_mutants: [{ test_name: `${second} mutant` }] },
     ]),
-    capture: world.tapFor([first, second],
-      { locations: { [first]: world.ARTIFACT_LOCATION, [second]: OTHER_LOCATION } }),
+    capture: world.tapFor(names,
+      { locations: { ...mutantsHome, [first]: world.ARTIFACT_LOCATION, [second]: OTHER_LOCATION } }),
   });
   assert.equal(world.emit(placed).code, 0);
   const receipt = world.receiptOf(placed);
   assert.deepEqual(receipt.named_tests.map(test => [test.entry, test.location_bound, test.status]),
-    [[0, 'matched', 'pass'], [1, 'matched', 'pass']]);
+    [[0, 'matched', 'pass'], [0, 'matched', 'pass'], [1, 'matched', 'pass'], [1, 'matched', 'pass']]);
   assert.deepEqual(receipt.named_tests.map(test => test.points_at),
-    [[`${world.ARTIFACT_LOCATION}:12`], [`${OTHER_LOCATION}:13`]]);
+    [[`${world.ARTIFACT_LOCATION}:12`], [`${world.ARTIFACT_LOCATION}:13`],
+      [`${OTHER_LOCATION}:14`], [`${OTHER_LOCATION}:15`]]);
   assert.deepEqual(receipt.terms.map(term => term.establishes), [true, true]);
   assert.equal(receipt.conclusion.verdict, 'success');
   assert.equal(runGate(placed).output, 'admissible=true\n');
@@ -2260,7 +2476,7 @@ test('THE MOVED NAME: a test of that name in another file is misplaced, not pass
   const stub = '/home/runner/work/repo/repo/candidate/packages/somewhere/empty-stub.test.mjs';
   const built = world.build({
     rawClaim: movedClaim,
-    capture: world.tapFor([MOVED], { locations: { [MOVED]: stub } }),
+    capture: world.tapFor(MOVED_PAIR, { locations: { [MOVED]: stub } }),
   });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
@@ -2293,9 +2509,9 @@ test('THE MOVED NAME: a test of that name in another file is misplaced, not pass
   assert.equal(forged.output, '');
   // And with the per-test status ALSO forged back to pass, the binding itself is what refuses it.
   receipt.named_tests[0].status = 'pass';
-  receipt.named_tests_summary.pass = 1;
+  receipt.named_tests_summary.pass = 2;
   receipt.named_tests_summary.misplaced = 0;
-  receipt.terms[0].pass = 1;
+  receipt.terms[0].pass = 2;
   receipt.terms[0].misplaced = 0;
   receipt.terms[0].measured = true;
   receipt.terms[0].establishes = true;
@@ -2313,13 +2529,13 @@ test('the binding is component-aligned, so a stub nested under a similar name do
   const nearly = '/home/runner/work/repo/repo/candidate/vendor/.github/coordinator/service/x/test/coordinator-checks.mjs';
   const built = world.build({
     rawClaim: movedClaim,
-    capture: world.tapFor([MOVED], { locations: { [MOVED]: nearly } }),
+    capture: world.tapFor(MOVED_PAIR, { locations: { [MOVED]: nearly } }),
   });
   assert.equal(world.emit(built).code, 0);
   assert.equal(world.receiptOf(built).named_tests[0].location_bound, 'mismatched');
   // And the suffix that really does line up, component for component, is accepted.
   const nested = '/somewhere/else/entirely/.github/coordinator/service/test/coordinator-checks.mjs';
-  const ok = world.build({ rawClaim: movedClaim, capture: world.tapFor([MOVED], { locations: { [MOVED]: nested } }) });
+  const ok = world.build({ rawClaim: movedClaim, capture: world.tapFor(MOVED_PAIR, { locations: { [MOVED]: nested } }) });
   assert.equal(world.emit(ok).code, 0);
   assert.equal(world.receiptOf(ok).named_tests[0].location_bound, 'matched');
 });
@@ -2344,15 +2560,25 @@ test('one name reported from two files is not bound to either claim, however gre
 test('a term whose entry names no artifact is unclaimed, and the receipt says so rather than passing it quietly', () => {
   const built = world.build({
     rawClaim: dispositionClaim([{ id: 'TERM-NO-ARTIFACT', approvable: true, disposition: 'PASS',
-      control: { test_names: [MOVED] }, killing_mutants: [] }]),
-    capture: world.tapFor([MOVED], { locations: { [MOVED]: '/anywhere/at/all.mjs' } }),
+      receipts: [{ path: 'receipts/coordinator.json' }],
+      control: { test_names: [MOVED] }, killing_mutants: [{ test_name: MOVED_MUTANT }] }]),
+    capture: world.tapFor(MOVED_PAIR, { locations: { [MOVED]: '/anywhere/at/all.mjs' } }),
   });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
   assert.equal(receipt.named_tests[0].artifact, null);
   assert.equal(receipt.named_tests[0].location_bound, 'unclaimed');
   assert.deepEqual(receipt.named_tests_summary.location_bound,
-    { matched: 0, mismatched: 0, unreported: 0, unclaimed: 1 });
+    { matched: 0, mismatched: 0, unreported: 0, unclaimed: 2 });
+  // AND `unclaimed` IS NOT A PASS. An entry that names no file asked for nothing to be checked, so a point
+  // reported anywhere at all satisfies it - which is why the row is not a measurement and the term is not
+  // established.
+  assert.equal(receipt.named_tests[0].reported_status, 'pass');
+  assert.equal(receipt.named_tests[0].status, 'unclaimed');
+  assert.equal(receipt.terms[0].establishes, false);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.match(receipt.conclusion.reasons.join(' | '),
+    /2 named test\(s\) belong to an entry that names no `artifact`/);
 });
 
 // HOW FAR THE BINDING REACHES, MEASURED ON THE RUNNER ITSELF. The review that asked for this said `node --test`

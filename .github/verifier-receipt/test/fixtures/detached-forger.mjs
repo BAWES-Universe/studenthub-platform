@@ -16,8 +16,18 @@
 import { test } from 'node:test';
 import { spawn } from 'node:child_process';
 
+// Every name the world's default claim rests on. The forger has to produce all of them, because a name the
+// stream does not carry is `absent` and the verdict would be failure for a reason that has nothing to do with
+// the forgery.
 const NAMED = ['the coordinator refuses a stale head',
-  'the mutant that removes the stale-head guard dies', 'the push broker retries only reads'];
+  'the mutant that removes the stale-head guard dies', 'the push broker retries only reads',
+  'the mutant that removes the read-only retry guard dies'];
+// AND THE FILE THE CLAIM SAYS THEY LIVE IN. The emitter no longer establishes a term from a point the runner
+// reported no `location:` for, so the forgery now writes one - which costs it a single line per point, because
+// the location is a line of the stream the forger already owns. That is the honest measure of what the
+// name-to-file binding is worth against a forger INSIDE the measured process: nothing. What it is worth
+// against a candidate that merely moves a stub into another file is in the tests above.
+const LOCATION = '/home/runner/work/repo/repo/candidate/.github/coordinator/service/test/coordinator-checks.mjs';
 
 for (const name of NAMED) {
   test(name, () => { throw new Error('this test really fails, and the forgery below hides it'); });
@@ -38,10 +48,11 @@ test('detach a process that outlives this suite and rewrites the capture', () =>
       }
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
       const names = ${JSON.stringify(NAMED)};
+      const where = ${JSON.stringify(LOCATION)};
       const lines = ['TAP version 13'];
       names.forEach((name, index) => {
         lines.push('# Subtest: ' + name, 'ok ' + (index + 1) + ' - ' + name, '  ---', '  duration_ms: 1.5',
-          "  type: 'test'", '  ...');
+          "  type: 'test'", "  location: '" + where + ':' + (12 + index) + ":1'", '  ...');
       });
       lines.push('1..' + names.length, '# tests ' + names.length, '# suites 0', '# pass ' + names.length,
         '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 12.5', '');
@@ -51,7 +62,10 @@ test('detach a process that outlives this suite and rewrites the capture', () =>
       const trailer = '# verifier-capture v1 exit=0 signal=- body_bytes=' + body.length
         + ' body_sha256=' + bodyDigest + ' run=' + field(meta.run_id) + ' attempt=' + field(meta.run_attempt)
         + ' job=' + field(meta.job_name) + ' candidate=' + field(meta.candidate_sha)
-        + ' tree=' + field(meta.candidate_tree) + ' runner=' + field(meta.runner_key);
+        + ' tree=' + field(meta.candidate_tree) + ' runner=' + field(meta.runner_key)
+        + ' node=' + field(meta.runner_node) + ' arch=' + field(meta.runner_arch)
+        + ' image=' + field(meta.runner_image === null ? '-' : meta.runner_image)
+        + ' image_version=' + field(meta.runner_image_version === null ? '-' : meta.runner_image_version);
       const capture = Buffer.concat([body, Buffer.from(trailer + '\\n', 'utf8')]);
       fs.writeFileSync(path.join(dir, 'suite.out'), capture);
       meta.capture_bytes = capture.length;

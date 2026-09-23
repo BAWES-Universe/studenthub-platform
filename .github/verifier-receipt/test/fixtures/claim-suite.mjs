@@ -7,3 +7,4 @@ import assert from 'node:assert/strict';
 test('the coordinator refuses a stale head', () => { assert.ok(true); });
 test('the mutant that removes the stale-head guard dies', () => { assert.ok(true); });
 test('the push broker retries only reads', () => { assert.ok(true); });
+test('the mutant that removes the read-only retry guard dies', () => { assert.ok(true); });

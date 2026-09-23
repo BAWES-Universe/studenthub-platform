@@ -63,20 +63,32 @@ export const genuineTap = fixture => {
 };
 
 // A capture shaped exactly as `node --test --test-reporter=tap` writes one, naming the tests the claim names.
-// `locations` maps a test name to the file the runner would have reported the point in. It is opt-in and empty
-// by default, because that is what the real reporter does: at node v22.22.3 a `location:` key is written on a
-// FAILING point and on no other, so a world whose every point carried one would not be a world this runner
-// produces. The tests that exercise the artifact binding supply it deliberately.
+//
+// `locations` maps a test name to the file the runner would have reported the point in, and it DEFAULTS to
+// `ARTIFACT_LOCATION` for every name - the file the default claim's entries name. That default is a change,
+// and the reason for it is the rule it exercises: the emitter no longer establishes a term from a point the
+// runner reported no file for, so a world whose points carry no `location:` establishes nothing and could not
+// be a positive control for anything else. What such a world models is the REPORTER, not the runner: the stock
+// `node --test --test-reporter=tap` at v22.22.3 writes `location:` on a FAILING point and on no other, which
+// is why no capture from it can establish a term and why the repository-level fix is written out in
+// .github/verifier-receipt/LOCATION-REPORTER.md. A test that wants the stock shape passes `locations: null`
+// and asserts exactly that - there is one below that does.
+//
+// A partial map is MERGED over the default, so a test that moves one name to another file keeps the others
+// bound where their claim says they are and the assertion stays about the one name it moved.
+//
 // `at` overrides the LINE a point is declared at, which is otherwise distinct per point - because a real
 // runner declares two different tests on two different lines, and two points sharing one `<file>:<line>` is
 // the shape the emitter refuses as one test reported under two names. A test that wants that shape asks for
 // it here.
-export const tapFor = (names, { failing = [], locations = {}, at = {} } = {}) => {
+export const tapFor = (names, { failing = [], locations, at = {} } = {}) => {
+  const where = locations === null ? {}
+    : { ...Object.fromEntries(names.map(name => [name, ARTIFACT_LOCATION])), ...(locations ?? {}) };
   const lines = ['TAP version 13'];
   names.forEach((name, index) => {
     const ok = failing.includes(name) ? 'not ok' : 'ok';
     lines.push(`# Subtest: ${name}`, `${ok} ${index + 1} - ${name}`, '  ---', '  duration_ms: 1.5', "  type: 'test'");
-    if (locations[name]) lines.push(`  location: '${locations[name]}:${at[name] ?? 12 + index}:1'`);
+    if (where[name]) lines.push(`  location: '${where[name]}:${at[name] ?? 12 + index}:1'`);
     lines.push('  ...');
   });
   lines.push(`1..${names.length}`, `# tests ${names.length}`, '# suites 0', `# pass ${names.length - failing.length}`,
@@ -156,24 +168,39 @@ export const ARTIFACT_LOCATION = `/home/runner/work/repo/repo/candidate/${ARTIFA
 // bars it independently. The worlds below are worlds that HOLD TOGETHER, so their entries say PASS - a claim
 // stating no disposition establishes nothing, which is a refusal several tests provoke deliberately by setting
 // the field themselves. `'disposition' in entry` is the test, so an entry that says `null` keeps saying null.
-const PERMITTED = { approvable: true, disposition: 'PASS' };
+// AND THE TWO EVIDENCE FIELDS AN ENTRY THAT SAYS `PASS` MUST NOW CARRY. The emitter refuses an entry that
+// claims an establishing disposition while naming no receipt that verified it and no mutant that must die for
+// it - the defeat it closes is flipping the real manifest's 53 `BLOCK`s to `PASS` and changing nothing else,
+// leaving `receipts: []` on every one of them. So a world that HOLDS TOGETHER carries both, and a test that
+// wants the empty shape sets it and asserts the refusal.
+//
+// `receipts` is defaulted here because nothing in these tests is about its contents - the emitter reads its
+// LENGTH and carries the count. `killing_mutants` is NOT defaulted, because a mutant is a test NAME and a name
+// this world's capture does not report would make every term `absent`; each claim below names its own.
+const PERMITTED = { approvable: true, disposition: 'PASS',
+  receipts: [{ path: 'receipts/coordinator.json', sha256: `${'9'.repeat(64)}` }] };
 const withDisposition = claim => (claim === null || typeof claim !== 'object' || !Array.isArray(claim.entries)
   ? claim
   : { ...claim, entries: claim.entries.map(entry => (entry === null || typeof entry !== 'object' || Array.isArray(entry)
     ? entry
     : { ...PERMITTED, artifact: ARTIFACT, ...entry })) });
 
+// AND A KILLING MUTANT ON EVERY ESTABLISHING ENTRY. The emitter refuses an entry that states an establishing
+// disposition while naming no mutant that must die for it, so each entry below names one - and each name is a
+// point this world's capture reports, because a mutant is a test and a test the runner never reported is
+// `absent`. That is why NAMED_TESTS is four names for two terms: a control and a mutant each.
 export const CLAIM = {
   code_revision: { head: CLAIM_HEAD, tree: CLAIM_TREE },
   entries: [
     { id: 'TERM-1', artifact: ARTIFACT, control: { test_names: ['the coordinator refuses a stale head'] },
       killing_mutants: [{ test_name: 'the mutant that removes the stale-head guard dies' }], ...PERMITTED },
     { id: 'TERM-2', artifact: ARTIFACT, control: { test_names: ['the push broker retries only reads'] },
-      killing_mutants: [], ...PERMITTED },
+      killing_mutants: [{ test_name: 'the mutant that removes the read-only retry guard dies' }], ...PERMITTED },
   ],
 };
 export const NAMED_TESTS = ['the coordinator refuses a stale head',
-  'the mutant that removes the stale-head guard dies', 'the push broker retries only reads'];
+  'the mutant that removes the stale-head guard dies', 'the push broker retries only reads',
+  'the mutant that removes the read-only retry guard dies'];
 
 // Build a world on disk. `patch` may replace any part of it before the artifact is zipped and the routes are
 // written, which is how each refusal below is provoked with one wrong fact and everything else intact.
@@ -181,13 +208,22 @@ export const NAMED_TESTS = ['the coordinator refuses a stale head',
 // world builds the BODY - the bytes a runner produced - and this adds the one line the measured code did not
 // write, so every world below is the shape the emitter now requires and a test that wants a capture with no
 // trailer, two trailers or a forged one asks for that deliberately.
+// The interpreter and the image the trusted capture program now records - in the trailer, inside the hashed
+// stream, and in the meta beside it. `process.version` is used rather than a fixed string so that a world
+// built here says what the node running these tests really is, exactly as the capture program does.
+export const RUNNER_NODE = process.version;
+export const RUNNER_ARCH = process.arch;
+export const RUNNER_IMAGE = 'ubuntu24';
+export const RUNNER_IMAGE_VERSION = '20260901.1.0';
 const field = value => encodeURIComponent(String(value));
 export const trailerFor = ({ body, exit, signal = null, run = RUN_ID, attempt = RUN_ATTEMPT,
-  job = MEASURE_JOB_NAME, candidate = CANDIDATE_SHA, tree = CANDIDATE_TREE, runner = RUNNER_KEY } = {}) => {
+  job = MEASURE_JOB_NAME, candidate = CANDIDATE_SHA, tree = CANDIDATE_TREE, runner = RUNNER_KEY,
+  node = RUNNER_NODE, arch = RUNNER_ARCH, image = RUNNER_IMAGE, imageVersion = RUNNER_IMAGE_VERSION } = {}) => {
   const bytes = Buffer.from(body);
   return `# verifier-capture v1 exit=${field(exit)} signal=${field(signal ?? '-')} `
     + `body_bytes=${bytes.length} body_sha256=${sha256(bytes)} run=${field(run)} attempt=${field(attempt)} `
-    + `job=${field(job)} candidate=${field(candidate)} tree=${field(tree)} runner=${field(runner)}`;
+    + `job=${field(job)} candidate=${field(candidate)} tree=${field(tree)} runner=${field(runner)} `
+    + `node=${field(node)} arch=${field(arch)} image=${field(image)} image_version=${field(imageVersion)}`;
 };
 export const withTrailer = (body, trailer) => {
   const bytes = Buffer.from(body);
@@ -220,6 +256,10 @@ export const build = (patch = {}) => {
     candidate_tree: CANDIDATE_TREE,
     runner_key: RUNNER_KEY,
     runner_command: RUNNER_COMMAND,
+    runner_node: RUNNER_NODE,
+    runner_arch: RUNNER_ARCH,
+    runner_image: RUNNER_IMAGE,
+    runner_image_version: RUNNER_IMAGE_VERSION,
     capture_file: 'suite.out',
     capture_bytes: Buffer.byteLength(capture),
     capture_sha256: sha256(Buffer.from(capture)),
