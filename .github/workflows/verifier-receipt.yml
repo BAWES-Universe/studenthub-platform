@@ -469,12 +469,17 @@ jobs:
       # EVEN WHEN THE CONTROLLER REFUSED. A run that measured a candidate and correctly concluded "no" is the
       # product of this authority just as much as one that says yes - the emit job already carries that rule
       # step by step, and the measure job did not: a controller step that refused left no artifact at all, so
-      # from outside it was indistinguishable from a job that broke, with no capture anyone could read to find
-      # out why. The upload is bounded by `hashFiles` so a refusal before the capture exists still uploads
-      # nothing rather than failing on an empty directory.
+      # from outside it was indistinguishable from a job that broke, with no capture anyone could read.
+      #
+      # THE CONDITION IS THE CAPTURE PROGRAM'S OWN OUTPUT, NOT `hashFiles`. A first attempt used
+      # `hashFiles('<runner.temp>/controller/capture/suite.out')` and skipped the upload on a run where that
+      # file existed and was 571,998 bytes: `hashFiles` resolves its pattern against GITHUB_WORKSPACE and
+      # silently answers '' for anything outside it, and the controller's scratch is deliberately outside it.
+      # `capture_bytes` is written by capture-stream.mjs after the stream closed, so it is set exactly when
+      # there is a capture to upload.
       - name: Upload the trusted job's capture, and nothing else
         id: upload
-        if: always() && hashFiles(format('{0}/capture/suite.out', steps.scratch.outputs.controller)) != ''
+        if: always() && steps.suite.outputs.capture_bytes != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: measure-capture

@@ -184,6 +184,22 @@ async function main() {
   console.log(`controller-observed: ${observation.terms.length} term(s), ${established} established, `
     + `${observation.matrix_fidelity.refusals.length} matrix refusal(s), normal run exit ${observation.normal_run.exit}`);
   for (const refusal of observation.matrix_fidelity.refusals.slice(0, 40)) console.log(`::warning::matrix fidelity: ${refusal.detail}`);
+  // WHY EACH TERM WAS REFUSED, IN THE LOG, GROUPED. A run that establishes nothing is a legitimate answer,
+  // and the first question anyone asks of it is "why" - which was previously answerable only by downloading
+  // the artifact. The first reason per term is the one that decided it.
+  const grouped = new Map();
+  for (const term of observation.terms.filter(term => !term.established)) {
+    const why = term.why_not[0] ?? 'no reason recorded';
+    grouped.set(why, [...(grouped.get(why) ?? []), term.id]);
+  }
+  for (const [why, ids] of [...grouped].sort((a, b) => b[1].length - a[1].length)) {
+    console.log(`refused (${ids.length}): ${why}`);
+    console.log(`  ${ids.slice(0, 6).join(', ')}${ids.length > 6 ? `, and ${ids.length - 6} more` : ''}`);
+  }
+  // AND THE NORMAL RUN AS THE CONTROLLER OBSERVED IT, with the candidate's own counts beside it labelled as
+  // what they are, so a reader can tell a suite that went red from a suite that could not run.
+  console.log(`normal run: controller-observed exit ${observation.normal_run.exit}; the candidate's own output `
+    + `reports ${JSON.stringify(observation.normal_run.diagnostic_counts ?? null)} (diagnostic, establishes nothing)`);
   fs.rmSync(scratchDir, { recursive: true, force: true });
 }
 
