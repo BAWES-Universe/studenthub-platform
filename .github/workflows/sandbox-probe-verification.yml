@@ -1,0 +1,89 @@
+name: sandbox-probe-verification
+
+# A DISPOSABLE VERIFICATION RUN OF THE MEASUREMENT SANDBOX, ON PROTECTED MAIN.
+#
+# WHY THIS WORKFLOW EXISTS. The independent review of the receipt authority (PR #163, merged as 9f0131a5)
+# could not execute the container half of its brief: this repository's own .claude/settings.json denies
+# `Bash(docker:*)`, so every container measurement the reviewer wanted was refused at the permission layer
+# before reaching docker. The review said so in its verdict and declined to treat the author's recorded output
+# as its own evidence. This workflow is how that question gets answered honestly: a run taken by GitHub,
+# against the flags the landed authority actually ships, whose raw log and artifact a reader can check.
+#
+# WHAT IT PROVES, in the sandbox the authority builds from .github/verifier-receipt/sandbox.mjs AT THIS
+# REVISION, with the image pinned by digest in .github/verifier-receipt/image.json:
+#
+#   P1  ordinary /tmp writes work, and the KERNEL's own mount line for /tmp carries rw,noexec,nosuid,nodev
+#       and the configured size - read from /proc/mounts inside the container, not from the flag.
+#   P2  /src, the controller's scratch, a receipt-shaped path, the CI workspace and a $GITHUB_OUTPUT-shaped
+#       path all FAIL BY NAME from inside, and the environment holds no GITHUB_/ACTIONS_/RUNNER_/token name.
+#   P3  filling /tmp refuses at exactly the configured bound with ENOSPC, frees nothing early, and gives the
+#       bytes back when the fill file is removed.
+#   P4  noexec refuses both a script and a copied binary whose exec bits are demonstrably set.
+#   P5  the tmpfs is fresh per container: a file written by one container is absent in the next.
+#
+# WHAT IT IS NOT, and this matters more than what it is:
+#   * It holds NO receipt authority. It produces no receipt, it is not a required check, it is not referenced
+#     by verifier-receipt.yml, and nothing downstream reads its output to decide anything.
+#   * It takes NO candidate and NO input. It measures nothing but the sandbox itself.
+#   * It expects the flags to be the ones this probe was written for and FAILS LOUDLY if they are not, so a
+#     deliberate change to the bound or to an option cannot slip past by the probe silently following it.
+#   * It is disposable. Once this question is answered and the evidence is kept, the workflow can be deleted,
+#     and deleting it changes nothing about the authority.
+#
+# It is dispatch-only. `workflow_dispatch` registers only for workflows on the default branch, which is why
+# this had to merge before it could run at all.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe the sandbox the authority runs in
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
+      # The two directories the authority creates, so the probe can try to reach them from inside and be
+      # refused by name. The controller-shaped directory is 0700 and is never mounted; the measurement-shaped
+      # one is the only host directory the probe mounts, at /scratch.
+      - name: Create the controller-shaped scratch the probe must not reach
+        id: scratch
+        run: |
+          set -euo pipefail
+          controller="${{ runner.temp }}/probe-controller"
+          mkdir -p "$controller/measurement/tmp" "$controller/measurement/home"
+          chmod 700 "$controller"
+          sudo chown -R 10001:10001 "$controller/measurement"
+          echo "controller=$controller" >> "$GITHUB_OUTPUT"
+          echo "measurement=$controller/measurement" >> "$GITHUB_OUTPUT"
+          ls -ldn "$controller" "$controller/measurement"
+
+      - name: Run the sandbox probe
+        env:
+          PROBE_SOURCE: ${{ github.workspace }}
+          PROBE_CONTROLLER: ${{ steps.scratch.outputs.controller }}
+          PROBE_SCRATCH: ${{ steps.scratch.outputs.measurement }}
+          PROBE_OUT: ${{ runner.temp }}/probe-evidence/sandbox-probe.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$PROBE_OUT")"
+          node .github/sandbox-probe/probe.mjs 2>&1 | tee "${{ runner.temp }}/probe-evidence/probe.log"
+
+      # Always, so a failing probe still hands over the evidence that explains it.
+      - name: Upload the probe's evidence and its raw log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-probe-evidence
+          path: ${{ runner.temp }}/probe-evidence/
+          if-no-files-found: error
