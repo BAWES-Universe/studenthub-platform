@@ -1,0 +1,83 @@
+{
+  "_comment": [
+    "The closed enum of suite commands the trusted measure job may invoke. This file is authority: it lives",
+    "beside the workflow, on protected main, and is checked out by SHA. The candidate never contributes a",
+    "command - not through a dispatch input, not through its package.json, not through a file in its own tree.",
+    "A dispatch may only pick a KEY from this table; the command text is whatever this file says it is."
+  ],
+  "_timeout_comment": [
+    "WHY EVERY COMMAND CARRIES --test-timeout, WHAT IT CAN AND CANNOT BOUND, AND WHERE 1800000 COMES FROM.",
+    "",
+    "WHAT IT BUYS. Without it a single hung test consumes the whole job: the job ends as a CANCELLATION, which",
+    "carries no diagnostic naming what hung, which leaves no capture to look at, and which the emitter can only",
+    "refuse downstream as `measure_job.conclusion` without ever being able to say why. A review reproduced",
+    "exactly that hang on this repository's own coordinator suite under an unusual TMPDIR. The job bound is the",
+    "outer limit and it stays; this is the inner one, and what it buys is that a hang becomes a NAMED cancelled",
+    "point inside a complete capture, with every other file of the suite still measured.",
+    "",
+    "AND IT IS A PER-FILE BOUND, NOT A PER-TEST ONE. `--test-timeout` in node 22 bounds EVERY test, and a test",
+    "FILE is itself a test whose duration is the whole file's run, so one number does both jobs. Measured",
+    "directly rather than reasoned about: `node --test --test-reporter=tap --test-timeout=1000 slow.mjs",
+    "fast.mjs`, where slow.mjs declares three 600ms tests, reports `not ok 2 - slow.mjs` with",
+    "`failureType: 'testTimeoutFailure'`, `# cancelled 1`, and two of the three tests inside it never reported.",
+    "The file-level point is the only one the flag can usefully bound, because the file is always the longest",
+    "test in the file.",
+    "",
+    "NO SINGLE PER-TEST VALUE IS SAFE, AND THAT IS A MEASUREMENT, NOT AN OPINION. Two previous values were",
+    "chosen from a run and both were wrong in the same way. 120000 came from the slowest single test point",
+    "(32.4s) and killed two whole files at 120s: 3538 tests reported instead of 3667, 2 cancelled, 129 never",
+    "run. 600000 came from the slowest FILE measured standalone on an idle 12-core workstation (273s) and a",
+    "cold review then ran the shipped command on a CONTENDED one and lost three whole files - production-",
+    "lifecycle, suite-runner-spec and two-fixture-progression - about 150 tests, at the same 600000.",
+    "",
+    "So the per-file wall clock was measured directly, file by file, at the concurrency `node --test` itself",
+    "uses (12 workers on this machine) and under real contention:",
+    "",
+    "    production-lifecycle.test.mjs    1446.8s   (273s standalone, idle)",
+    "    two-fixture-progression.test.mjs 1165.5s",
+    "    shu71-trust.test.mjs              346.5s",
+    "    shu241-mutations.test.mjs         314.5s",
+    "    ... 118 more files, all under 306s; whole run 1451s wall, 122 files",
+    "",
+    "The same file, the same bytes, on the same machine: 273s idle and 1447s contended, a spread of 5.3x that",
+    "nothing in this repository controls. A value that survives that is 1800000; a value that is a useful bound",
+    "on a HUNG TEST is seconds. One number cannot be both, so this one is not pretending to be: it is the",
+    "per-FILE bound and nothing else, and what bounds a hung test is the job's own timeout-minutes.",
+    "",
+    "1800000 ms = 30 minutes: 1.24x the worst per-file wall clock measured (1446.8s) and 6.6x the same file",
+    "measured idle. The measure job is bounded at 45 minutes so that this bound is the one that fires - an",
+    "inner bound above the outer one bounds nothing, and the outer one firing is the cancellation-with-no-",
+    "capture this flag exists to prevent.",
+    "",
+    "AND THE VALUE IS NO LONGER WHAT MAKES THE RECEIPT SAFE. That is the part the two wrong values exposed: a",
+    "cancelled FILE is not a red suite, it is a SHORTER suite - the tests inside it are simply absent from the",
+    "stream, the plan agrees with what was reported, the summary adds up, and a claim that does not name those",
+    "tests could still reach a qualified success over a run that lost 150 of them. The emitter now refuses",
+    "success outright for any capture reporting a cancelled point, and says how many, and the gate re-reads it.",
+    "So if this number is ever wrong again the run is a failure that names the cancellation, not a green",
+    "receipt that is quietly short.",
+    "",
+    "THE DIRECTION THE ERROR RUNS, stated because this flag can turn a green suite red: a test - or a file -",
+    "that legitimately needs more than 1800s now fails, and a failing point that a term names means that term",
+    "establishes nothing. That is the safe direction for an authority whose only job is to refuse what it",
+    "cannot vouch for. Re-derive the number from a measured run if a runner key is ever added, or if this suite",
+    "grows a slower file - and never raise it to accommodate a hang.",
+    "",
+    "WHAT IT DOES NOT BUY: node offers no bound on a test that is not also a bound on the file containing it,",
+    "so tightening this further means splitting the suite across runner keys, not lowering this number."
+  ],
+  "runners": {
+    "coordinator": {
+      "description": "the coordinator suite and the coordinator service suite, reported as TAP",
+      "command": "node --test --test-reporter=tap --test-timeout=1800000 .github/coordinator/test/*.test.mjs .github/coordinator/service/test/*.test.mjs"
+    },
+    "coordinator-core": {
+      "description": "the coordinator suite alone, reported as TAP",
+      "command": "node --test --test-reporter=tap --test-timeout=1800000 .github/coordinator/test/*.test.mjs"
+    },
+    "coordinator-service": {
+      "description": "the coordinator service suite alone, reported as TAP",
+      "command": "node --test --test-reporter=tap --test-timeout=1800000 .github/coordinator/service/test/*.test.mjs"
+    }
+  }
+}

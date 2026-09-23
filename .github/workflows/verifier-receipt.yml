@@ -1,151 +1,1277 @@
 name: Verifier receipt
 
-# The receipt authority. This workflow is the only source of a receipt the manifest accepts, and it is
-# dispatched from main so that GitHub runs THIS file, not a version carried by the commit under review. Both
-# the workflow and the tool it runs are checked out from the dispatching ref, which is why a candidate cannot
-# alter the thing that measures it and cannot select another version of it.
+# The receipt producer: it answers one question about one commit - what did that commit's own suite report, and
+# what does its claim name?
 #
-# It is deliberately not triggered by pull_request or push: a receipt is a measurement someone asks for about
-# a named commit, and the manifest pins the dispatching ref, the dispatching commit, the run and the artifact
-# digest. Changing this file is its own reviewed change to main, and because a run of this workflow measures
-# the dispatching ref, a commit that changes this file cannot be the commit whose run approves it.
+# PROVENANCE IS THE SECURITY PROPERTY, and it is what the three-job split exists to produce. A review defeated
+# the single-job version: run the candidate's suite and emit the receipt in one job, and the code being measured
+# is the code deciding what the receipt says. A later review defeated the two-job version too: the emitter was
+# handed a file by path and asked only whether it looked like TAP, so a hand-written stream was accepted as a
+# measurement. Looking harder at the stream cannot fix that - a candidate's own test file prints well-formed TAP.
+# What fixes it is that the emitter accepts no bytes it did not fetch itself, from this run's own artifact.
+#
+#   trust   - resolves the authority commit (the workflow, the emitter, the runner enum), the candidate, and the
+#             runner key. Nothing it resolves comes from the candidate's tree.
+#   measure - checks out the candidate, invokes the command the PROTECTED runner enum names for the chosen key -
+#             never the candidate's package.json, never a shell string anyone supplied - and HASHES THE OUTPUT
+#             STREAM AS IT PASSES THROUGH a trusted process, which then writes the capture and its meta after the
+#             runner is gone and uploads them as this job's own artifact. No id-token, no attestation permission.
+#             A review defeated the earlier form, which hashed a file in a later step: the measured suite could
+#             rename a forged stream over that file. What that fix establishes and what it cannot is stated in
+#             full at the capture step and in capture-stream.mjs - the measured tests print into the very stream
+#             being hashed, so this authenticates the bytes' origin, never their truthfulness.
+#   emit    - checks out the authority by SHA and runs the emitter. It never checks out the candidate and never
+#             downloads any artifact into its workspace: it locates the measure job's artifact through the API by
+#             run id and name, checks the digest GitHub computed, and reads the capture out of the archive GitHub
+#             serves. The claim is fetched from the candidate commit through the contents API. It holds NO
+#             signing permission: a review found the rehearsal posture running head-supplied code in a job that
+#             held `attestations: write`, so minting moved out of it. Its gate step is the receipt's second
+#             reader, and it DERIVES rather than re-reads: the emitter writes out the capture it authenticated,
+#             the gate hashes it against the digests the measure job published through GitHub, and it parses
+#             the measured run's failing tests out of those bytes instead of reading the list the receipt
+#             carries.
+#   attest  - the only job holding `id-token: write` and `attestations: write`, and it runs only on a
+#             workflow_dispatch of the default branch. It re-reads admissibility out of the receipt it is about
+#             to sign. What that does and does not bind is written out in full at the job itself.
 on:
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: The exact commit to measure. The receipt names it and the manifest binds to it.
+        description: Commit to measure
         required: true
-        type: string
-      suite_command:
-        description: The suite command to run in the candidate tree.
+      runner_key:
+        description: Which suite of the protected runner enum to invoke
         required: false
-        default: npm run test:coordinator
-        type: string
+        default: coordinator
+        # A CLOSED ENUM, and the only runner control a caller has. The command text lives in
+        # .github/verifier-receipt/runners.json on the protected ref; a key does not carry one.
+        type: choice
+        options:
+          - coordinator
+          - coordinator-core
+          - coordinator-service
+  # workflow_dispatch registers only for workflows on the default branch, so a change to this authority cannot
+  # be exercised by dispatch until it merges. A pull_request run rehearses the whole chain for real - real job,
+  # real artifact, real API - against the candidate fixed in the authority's own rehearsal file.
+  #
+  # WHAT STOPS A REHEARSAL FROM MINTING, and where that stops binding - because two versions of this comment
+  # have now claimed more than the files deliver. In this workflow AS WRITTEN: the emitter marks such a receipt
+  # admissible_as_pin=false; the gate refuses to publish an admissible output that disagrees with the receipt's
+  # own body; the emit job holds no signing permission at all; and the `attest` job, which holds the only one,
+  # runs only on a workflow_dispatch of the default branch and re-reads the field out of the subject.
+  #
+  # AND THE PART THAT IS NOT ENFORCED BY ANY OF THAT: on a pull_request event GitHub runs the workflow
+  # DEFINITION from the pull request head, so for such a run every line above is the candidate author's to
+  # rewrite. Nothing in this repository prevents that; what does is the repository's Actions settings and a
+  # consumer that requires provenance.admissible_as_pin, conclusion.verdict === 'success' and an attestation
+  # whose workflow REF is the protected branch. `verify-claim.yml` does not exist on this branch and nothing
+  # here reads a pin, so any consumer of these receipts must do all three itself.
+  pull_request:
+    paths:
+      - .github/workflows/verifier-receipt.yml
+      - .github/verifier-receipt/**
 
 permissions:
   contents: read
   actions: read
-  id-token: write
-  attestations: write
 
 jobs:
-  receipt:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  trust:
+    name: Resolve the authority commit, the candidate and the runner
+    runs-on: ubuntu-24.04
+    # Two checkouts and a handful of API reads; nothing here invokes candidate code and nothing here can loop.
+    # Bounded anyway, so that NO job of this workflow can hold a hosted runner for GitHub's 360-minute default
+    # on the way to a cancellation that says nothing. 10 minutes is far above anything this job has taken.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      trusted_sha: ${{ steps.resolve.outputs.trusted_sha }}
+      trusted_origin: ${{ steps.resolve.outputs.trusted_origin }}
+      candidate_sha: ${{ steps.resolve.outputs.candidate_sha }}
+      runner_key: ${{ steps.resolve.outputs.runner_key }}
     steps:
-      # The tool that emits the receipt comes from the dispatching ref, never from the candidate. Two
-      # checkouts, two roles: this one is the measurer, the next one is the thing measured.
-      - name: Check out the receipt tooling from the dispatching ref
-        uses: actions/checkout@v4
+      # The interpreter, pinned. The reasoning is written out once, in the measure job, which is the job whose
+      # output is a receipt; it applies to every job of this authority, because every one of them reads or
+      # re-derives that receipt with the same node.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          ref: ${{ github.sha }}
-          path: verifier
-          persist-credentials: false
-          fetch-depth: 0
+          node-version: 22.22.3
 
-      - name: Check out the candidate commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.candidate_sha }}
-          persist-credentials: false
-          # The manifest guard proves the manifest's code revision is an ancestor of the checkout with no
-          # executable difference between them; a depth-1 clone does not contain that revision at all.
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Assert the checkout is the requested commit
+      - name: Resolve what this run is allowed to trust
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_CANDIDATE: ${{ inputs.candidate_sha }}
+          DISPATCH_RUNNER: ${{ inputs.runner_key }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha }}"
-          echo "candidate  ${{ inputs.candidate_sha }}"
-          echo "tree       $(git rev-parse 'HEAD^{tree}')"
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            trusted_sha="$DISPATCH_SHA"
+            if [ "$DISPATCH_REF" = "refs/heads/main" ]; then
+              trusted_origin="protected-main"
+            else
+              trusted_origin="dispatch-ref:$DISPATCH_REF"
+            fi
+            candidate_sha="$DISPATCH_CANDIDATE"
+            runner_key="${DISPATCH_RUNNER:-coordinator}"
+          else
+            # Prefer the base branch by SHA: on a pull request the workflow file itself comes from the head, but
+            # the emitter, the runner enum and the rehearsal pin do not have to. They can only come from the base
+            # once this authority exists there, so check, and say plainly which was used.
+            if gh api "/repos/$REPO/contents/.github/verifier-receipt/runners.json?ref=$PR_BASE_SHA" >/dev/null 2>&1 \
+               && [ "$PR_BASE_REF" = "${DEFAULT_BRANCH:-main}" ]; then
+              trusted_sha="$PR_BASE_SHA"
+              trusted_origin="protected-main"
+            else
+              trusted_sha="$PR_HEAD_SHA"
+              trusted_origin="pull-request-head"
+              # TWO TRIGGERS, AND THE WARNING NAMES BOTH. The condition above is a conjunction: this run trusts
+              # the base only when the authority is readable there AND the base is the default branch. A pull
+              # request based on any non-default branch therefore lands here with runners.json fully present, so
+              # "the authority is not present" was true of only one of the two ways in.
+              echo "::warning::this run will not trust the authority from this pull request's base ($PR_BASE_REF at $PR_BASE_SHA): either it carries no .github/verifier-receipt/runners.json or it is not the default branch (${DEFAULT_BRANCH:-main}). This rehearsal runs the authority from the pull request head instead; its receipt is not admissible as a pin"
+            fi
+            rehearsal=$(gh api "/repos/$REPO/contents/.github/verifier-receipt/pull-request-rehearsal.json?ref=$trusted_sha" --jq '.content' | base64 -d)
+            candidate_sha=$(printf '%s' "$rehearsal" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).candidate_sha))")
+            runner_key=$(printf '%s' "$rehearsal" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).runner_key))")
+          fi
 
-      - name: Refuse a candidate that carries the measurer
+          case "$candidate_sha" in
+            *[!0-9a-f]* | "") echo "::error::candidate sha is not a hex commit id: $candidate_sha"; exit 1 ;;
+          esac
+          if [ "${#candidate_sha}" -ne 40 ]; then
+            candidate_sha=$(gh api "/repos/$REPO/commits/$candidate_sha" --jq '.sha')
+          fi
+          case "$runner_key" in
+            coordinator|coordinator-core|coordinator-service) ;;
+            *) echo "::error::runner key \"$runner_key\" is not in this workflow's closed enum"; exit 1 ;;
+          esac
+
+          {
+            echo "trusted_sha=$trusted_sha"
+            echo "trusted_origin=$trusted_origin"
+            echo "candidate_sha=$candidate_sha"
+            echo "runner_key=$runner_key"
+          } >> "$GITHUB_OUTPUT"
+          echo "authority $trusted_sha ($trusted_origin); candidate $candidate_sha; runner $runner_key"
+
+      # An early, cheap refusal. The emitter re-checks this from the API itself and refuses independently, so a
+      # drift here loosens nothing - it only wastes a suite run before the refusal lands.
+      #
+      # It asks the same question the emitter asks, BY RUNNING THE SAME CODE: .github/verifier-receipt/
+      # authority-scope.mjs, fetched here from the trusted commit because this job checks out nothing on
+      # purpose. It used to be a second spelling of that question written out inline, and when the question
+      # itself turned out to be the wrong one (see below) the same defect had to be corrected in two places or
+      # the refusal would only have moved from here to the emitter.
+      #
+      # THE OBJECT ID, NOT A DIFF LISTING. An earlier form read `.files[].filename` from
+      # `compare/main...<candidate>`, which has two holes the emitter's section 8 comment records in full:
+      # GitHub caps that list at 300 entries and truncates it silently in filename order, and it reports a
+      # rename under its new name only. An id is neither a page of a list nor a name. The comparison is still
+      # fetched, but only for its `merge_base_commit.sha`.
+      #
+      # AND THE BASELINE IS THE MERGE BASE, NOT MAIN. Comparing ids with main answers a different question.
+      # The first workflow_dispatch of this authority on main (run 35852850002, candidate 6feac016) refused a
+      # candidate that had altered nothing: cut from an older main, it carries no authority at all, and
+      # equality-against-main reads ABSENT as ALTERED. Measured at the fork point - the one revision where the
+      # candidate's copy and what it started from are the same object - it changes nothing and is admitted.
+      - name: Refuse a candidate that alters the receipt authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TRUSTED_SHA: ${{ steps.resolve.outputs.trusted_sha }}
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          # A commit that changes the receipt workflow or its tooling cannot be measured by it: the receipt
-          # would approve the change that introduced the version approving it. This is refused here, before
-          # any measurement, and the manifest refuses it again on the receipt's own diff.
-          base="${{ github.sha }}"
-          touched="$(git diff --name-only "$base" "${{ inputs.candidate_sha }}" -- \
-            .github/workflows/verifier-receipt.yml .github/verifier-receipt || true)"
-          if [ -n "$touched" ]; then
-            echo "REFUSING: the candidate changes the receipt authority itself:"
-            echo "$touched"
+          scope="$RUNNER_TEMP/authority-scope.mjs"
+          # FROM THE TRUSTED COMMIT, WITH NO FALLBACK TO ANOTHER REF - and precisely what that does and does not
+          # guarantee, because an earlier version of this comment stated it as an absolute and it is not one. The
+          # resolve step sets trusted_sha to the PULL REQUEST HEAD on EITHER of two conditions, and this comment
+          # named only the first until a review pointed out that it therefore still was not true in every clause:
+          # when the contents API will not serve runners.json at the pull request's base sha, OR when the pull
+          # request's base ref is not the default branch - a pull request based on any other branch takes the
+          # head-trusted path with runners.json fully present. In that state the candidate's own copy of this
+          # module is what judges it, resolve emits a warning saying so, and the receipt is marked inadmissible
+          # as a pin. Neither condition is met by a pull request against main today, and both are named here
+          # instead of being implied away.
+          #
+          # A TRUSTED COMMIT THAT PREDATES THE MODULE REFUSES HERE. That is the closed direction, and it is the
+          # bootstrap itself: this authority cannot rehearse an amendment to itself until the amendment lands.
+          #
+          # AN EMPTY FETCH IS A REFUSAL, NOT A PASS. GitHub's contents API answers `"content": ""` with
+          # `"encoding": "none"` for a file it will not inline (over 1 MB). Piping that through `base64 -d` writes
+          # a zero-byte file, node runs it happily, the step exits 0 - and nothing was compared. Latent rather
+          # than live (this module is ~15 KB), but a check that can pass by fetching nothing is not a check, so
+          # the shape is refused rather than trusted: the encoding must be base64, the decoded module must be
+          # non-empty, and it must be exactly the size the API declared.
+          meta="$RUNNER_TEMP/authority-scope.meta"
+          if ! gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
+               --jq '"\(.encoding) \(.size)"' > "$meta"; then
+            echo "::error::the trusted commit $TRUSTED_SHA carries no .github/verifier-receipt/authority-scope.mjs, so this run cannot decide whether the candidate changes the receipt authority"
+            exit 1
+          fi
+          read -r encoding declared < "$meta"
+          if [ "$encoding" != "base64" ]; then
+            echo "::error::the contents API would not inline .github/verifier-receipt/authority-scope.mjs at $TRUSTED_SHA (encoding=$encoding), so this run cannot decide anything from it"
+            exit 1
+          fi
+          gh api "/repos/$REPO/contents/.github/verifier-receipt/authority-scope.mjs?ref=$TRUSTED_SHA" \
+            --jq '.content' | base64 -d > "$scope"
+          got=$(wc -c < "$scope")
+          if [ "$got" -eq 0 ]; then
+            echo "::error::the module fetched from $TRUSTED_SHA decoded to nothing, so this run would have compared nothing"
+            exit 1
+          fi
+          if [ "$got" != "$declared" ]; then
+            echo "::error::the module fetched from $TRUSTED_SHA is $got bytes and the API declared $declared bytes"
+            exit 1
+          fi
+          # AND THE STEP ASSERTS THE MODULE REPORTED ON BOTH AUTHORITY PATHS. It used to assert that the output
+          # contained "merge base of", which renderAuthorityScope emits unconditionally as its first line: a
+          # review built a module identical to the real one except `AUTHORITY_PATHS = []`, ran it through this
+          # step body, and the step exited 0 having compared nothing. So what is counted here is the per-path
+          # line - `<path>: base=... candidate=... main=... -> <change>` - and the count is the length of
+          # AUTHORITY_PATHS in the module, which is 2. A module that reports on fewer paths than the authority
+          # has fails here; a third authority path means this number changes with it. Nothing about the VERDICT
+          # is asserted here - an admissible candidate and a refused one both print two of these lines, and the
+          # refusal itself is the module's own non-zero exit, caught above.
+          verdict=$(node "$scope" "$REPO" main "$CANDIDATE_SHA") || { printf '%s\n' "$verdict"; exit 1; }
+          printf '%s\n' "$verdict"
+          reported=$(printf '%s\n' "$verdict" | grep -c ' -> ' || true)
+          if [ "$reported" -ne 2 ]; then
+            echo "::error::the module reported on $reported authority paths and this authority has 2, so this run cannot say it compared the authority"
             exit 1
           fi
 
-      - name: Host prerequisites for the coordinator suite
+  measure:
+    name: measure
+    needs: trust
+    runs-on: ubuntu-24.04
+    # WHY A BOUND, AND WHY THIS ONE. The runner invokes the candidate's suite, and a candidate's suite can
+    # hang: a review reproduced exactly that on this repository's own coordinator suite under an unusual
+    # TMPDIR, killing it at 300s with the stream still open. With no bound here the measure step blocks until
+    # GitHub's 360-minute job default cancels it - six hours of a hosted runner, on a workflow that triggers on
+    # every pull request touching .github/verifier-receipt/**, and a cancellation carries no diagnostic saying
+    # what hung. Nothing is minted either way (emit needs: measure), so this is about cost and legibility, not
+    # about safety.
+    #
+    # THE BOUND, AND IT IS NOW SET BY THE INNER ONE RATHER THAN BY THE SUITE'S IDLE WALL CLOCK. The pinned
+    # `coordinator` runner completes in 289s measured end to end on an idle machine (3667 tests), and the
+    # previous bound of 20 minutes was four times that. Measuring the same suite under real contention showed
+    # why that is the wrong quantity to take it from: the slowest FILE of this suite runs in 273s idle and
+    # 1446.8s contended, the same bytes on the same machine, and the whole run took 1451s. The enum's
+    # `--test-timeout` is a per-FILE bound of 1800s (see .github/verifier-receipt/runners.json for the
+    # measurement it comes from), and an inner bound above the outer one bounds nothing - the outer one fires
+    # first and the run ends as a cancellation with no capture and no diagnostic, which is the exact outcome
+    # the inner bound exists to prevent.
+    #
+    # 45 minutes: above the 1800s per-file bound, above the 1451s worst whole-suite wall clock measured, and
+    # still an eighth of GitHub's 360-minute default. Raise it only together with the per-file bound, and
+    # never to accommodate a suite that hangs.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      # WHY THE INTERPRETER IS PINNED, AND WHY IT IS PINNED HERE OF ALL PLACES.
+      #
+      # Every other input to this authority is named by content. The authority is checked out BY SHA. The
+      # candidate is checked out BY SHA and re-read with `git rev-parse` to prove it. The runner command comes
+      # from a protected enum and never from any tree. All four third-party actions are pinned to commits. The
+      # capture is bound to a digest GitHub computed and to a trailer inside the hashed stream.
+      #
+      # The interpreter was the one input left floating, and it is the one that does the measuring. `runs-on:
+      # ubuntu-latest` resolves to whatever GitHub currently means by that label, and the image behind it
+      # carries more than one node - a review found 22.x and 24.x on the same image, with `node` on PATH
+      # resolving to whichever the image maintainers last made default. So the sentence "the protected runner
+      # reported these tests passing" was, until this pin, a sentence about an interpreter no field of the
+      # receipt named and no line of this repository chose.
+      #
+      # THAT IS NOT A HYPOTHETICAL FOR THIS WORKFLOW. Three of the properties this receipt's readers rely on
+      # are version-dependent facts about `node --test --test-reporter=tap`: which points carry a `location:`
+      # (the whole of the name-to-file binding), what `--test-timeout` bounds (a test, and a file, and what a
+      # cancelled file looks like in the stream), and the exact TAP shapes the emitter reconciles - the `# SKIP`
+      # escaping, the `type:` diagnostic, the summary block. A receipt is a claim about a measurement; a
+      # measurement taken by an interpreter the receipt cannot name is not one a third party can repeat. The
+      # same candidate measures differently under two interpreters and nothing in the artifact tells the two
+      # apart, which is exactly the property an authority exists to deny.
+      #
+      # HOW FAR THE PIN GOES, stated so nobody reads it as more than it is. `ubuntu-24.04` pins the image
+      # LABEL, not the image: GitHub rebuilds it and the contents move underneath. That is why the measure job
+      # RECORDS `ImageOS`, `ImageVersion`, the node version and the architecture into capture-meta.json, into
+      # the trailer inside the hashed stream, and into `provenance.runner` - a pin decides what runs, a record
+      # is what lets a reader check what did. And the exact `node-version` below can fail to resolve if that
+      # release is ever withdrawn; the failure mode of an exact pin is a red run, which is the safe direction,
+      # and the failure mode of a floating one is a receipt that means something different from the last.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
+      - name: Check out the authority at the trusted commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.trust.outputs.trusted_sha }}
+          path: authority
+          persist-credentials: false
+
+      - name: Check out the candidate at exactly the requested commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.trust.outputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Record which commit was checked out
+        id: candidate
+        working-directory: candidate
+        env:
+          CANDIDATE_SHA: ${{ needs.trust.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          # Host artifacts in this suite require /usr/bin/node; setup-node supplies a tool-cache binary.
-          runner_node="$(command -v node)"
-          test -x "$runner_node"
-          if [ "$(readlink -f /usr/bin/node)" != "$(readlink -f "$runner_node")" ]; then
-            sudo ln -sfn "$runner_node" /usr/bin/node
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$CANDIDATE_SHA" ]; then
+            echo "::error::asked to measure $CANDIDATE_SHA but checked out $head"
+            exit 1
           fi
-          test -x /usr/bin/node
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
 
-      - name: Run the suite in the candidate tree and capture its TAP
+      # THE TRUSTED JOB CHOOSES THE RUNNER. The command is read out of the authority checkout, by key, as JSON -
+      # not from the candidate's package.json, not from a dispatch input, not from any file in the candidate's
+      # tree. The candidate contributes the code under test and nothing about how it is run.
+      - name: Resolve the runner command from the protected enum
+        id: runner
+        env:
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+        run: |
+          set -euo pipefail
+          command=$(node -e '
+            const fs = require("node:fs");
+            const spec = JSON.parse(fs.readFileSync("authority/.github/verifier-receipt/runners.json", "utf8"));
+            const runner = spec.runners?.[process.env.RUNNER_KEY];
+            if (!runner?.command) { console.error("no such runner key: " + process.env.RUNNER_KEY); process.exit(1); }
+            process.stdout.write(runner.command);
+          ')
+          echo "command<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$command" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "runner \"$RUNNER_KEY\": $command"
+
+      # THE JOB THAT RUNS CANDIDATE CODE HOLDS `contents: read` AND NOTHING ELSE, CHECKED BEFORE IT RUNS ANY.
+      #
+      # The sandbox below is what stops a candidate reaching this job. This step is what makes reaching it
+      # worth nothing: it reads this job's own `permissions:` block out of the AUTHORITY checkout - not out of
+      # the file GitHub happens to be running, which on a pull_request event is the candidate's - and refuses
+      # if any scope is above `read`. It then checks the runtime rather than the text: GitHub hands a job the
+      # ability to mint an OIDC token by putting ACTIONS_ID_TOKEN_REQUEST_URL in its environment, so that
+      # variable being present means `id-token: write` whatever any file says, and the run stops.
+      #
+      # Both readings are cheap and neither is the sandbox. Between them, a full container escape from the
+      # step below lands in a process that cannot sign, cannot write to this repository, and cannot mint a
+      # token to do either with.
+      - name: Refuse to run candidate code in a job that can write anything
+        env:
+          WORKFLOW_PATH: ${{ github.workspace }}/authority/.github/workflows/verifier-receipt.yml
+          MEASURE_JOB_ID: measure
+        run: node authority/.github/verifier-receipt/job-scope.mjs
+
+      # THE IMAGE, PULLED BY DIGEST, WHICH IS THE VERIFICATION. `docker pull` of a `name@sha256:...` reference
+      # fails unless the registry serves bytes that hash to exactly that digest, so there is no separate check
+      # to write and none to forget. The pin lives in .github/verifier-receipt/image.json on the protected ref;
+      # a tag would be a pointer somebody outside this repository can move, and the image is where the
+      # interpreter, the libc and the git this measurement uses all come from.
+      - name: Pull the pinned measurement image
+        id: image
+        run: |
+          set -euo pipefail
+          reference=$(node -e 'process.stdout.write(require("./authority/.github/verifier-receipt/image.json").reference)')
+          case "$reference" in
+            *@sha256:*) ;;
+            *) echo "::error::the measurement image is pinned as $reference, which is not a digest"; exit 1 ;;
+          esac
+          docker pull --quiet "$reference"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          echo "measurement image $reference"
+          docker image inspect --format 'id {{.Id}} created {{.Created}} os {{.Os}}/{{.Architecture}}' "$reference"
+
+      # TWO SCRATCH DIRECTORIES ON THE RUNNER, AND THE DIFFERENCE BETWEEN THEM IS THE POINT.
+      #
+      #   $CONTROLLER_SCRATCH      0700, owned by the RUNNER user, and NEVER MOUNTED into any container. The
+      #                            capture, its meta, the controller's observation and the receipt live under
+      #                            here. Nothing inside a container can name this path, because nothing inside
+      #                            a container has it mounted; and if one somehow could, 0700 under another
+      #                            uid is a permission error rather than a write.
+      #   .../measurement          the only directory ON THE RUNNER that the measurement may write, chowned to
+      #                            10001:10001 and mounted at /scratch. HOME and TMPDIR both point inside it,
+      #                            because node and this repository's own fixtures need somewhere to write and
+      #                            a read-only filesystem everywhere turns tests red for a reason that is not
+      #                            about them.
+      #
+      # The chown is what makes the uid boundary real in both directions: the measurement can write its own
+      # scratch, and it cannot write the controller's.
+      #
+      # AND ONE MORE WRITABLE DIRECTORY THAT IS NOT ON THE RUNNER AT ALL: /tmp, a tmpfs the sandbox grants per
+      # container (see SANDBOX_FLAGS in .github/verifier-receipt/sandbox.mjs, where it is argued for in full).
+      # It exists because this repository's suite has call sites that name /tmp literally instead of asking
+      # where TMPDIR points, and without it 27 of 122 test files die EROFS before declaring a plan. It is
+      # listed here so that "the one directory the measurement may write" is not read as a complete sentence:
+      # the complete one is that the measurement may write its own scratch on the runner, and a fresh tmpfs
+      # that is backed by nothing on the runner's filesystem, is noexec/nosuid/nodev, is bounded by size=, and
+      # is discarded with --rm. The preflight proves all four of those properties every run.
+      - name: Create the controller's scratch, and the one directory the measurement may write
+        id: scratch
+        run: |
+          set -euo pipefail
+          controller="${{ runner.temp }}/controller"
+          mkdir -p "$controller/measurement/tmp" "$controller/measurement/home"
+          chmod 700 "$controller"
+          sudo chown -R 10001:10001 "$controller/measurement"
+          echo "controller=$controller" >> "$GITHUB_OUTPUT"
+          echo "measurement=$controller/measurement" >> "$GITHUB_OUTPUT"
+          ls -ldn "$controller" "$controller/measurement" "$controller/measurement/tmp"
+
+      # THE CAPTURE IS HASHED AS IT PASSES THROUGH A TRUSTED PROCESS, NOT READ BACK FROM A FILE.
+      #
+      # A review defeated the previous form of this step. It redirected the runner's output into
+      # $RUNNER_TEMP/capture/suite.out and the NEXT step hashed that file - but the candidate's own test bodies
+      # run inside THIS step, as this step's user, with RUNNER_TEMP in their environment, so a test could write
+      # a forged TAP stream beside the capture and rename(2) it over the top. The reporter's still-open fd was
+      # detached onto the unlinked inode, the forged bytes were whole, and the trusted step then hashed THEM:
+      # the artifact digest, the meta and the attestation were all computed over bytes the candidate wrote.
+      # Every provenance check downstream authenticated which JOB uploaded the artifact; none authenticated who
+      # wrote the bytes inside it.
+      #
+      # So the capture program below spawns the runner itself, hashes every byte in its own memory as it
+      # arrives, takes the suite's exit status from waitpid rather than from a step output the measured code can
+      # append to, and creates the capture directory and writes both files only after the stream has closed -
+      # when the runner and its children are gone. While the candidate's code is running there is no capture
+      # file to rename over, and the digest never touches the disk the candidate can write.
+      #
+      # WHAT THAT DOES NOT DO, said plainly here because the header of this file used to overclaim it: the
+      # measured tests SHARE this output stream. A candidate whose test bodies print their own well-formed TAP
+      # into stdout are hashed exactly as faithfully as the reporter's own lines. This step establishes that the
+      # artifact holds the bytes the runner produced; it does not establish that those bytes are truthful, and
+      # nothing in this workflow can, because the measurement and the measured code write to one fd.
+      #
+      # AND WHAT IS STILL OPEN, which a review ruled blocking rather than residual: everything in this step runs
+      # as ONE UID, so a candidate that detaches a process outliving its own suite rewrites suite.out and
+      # capture-meta.json together in the gap between this step and the upload below. What the capture program
+      # now does about it is bind the suite's exit status to the bytes - a trailer inside the hashed stream, and
+      # the same number published as this job's `exit` output for the emit job to cross-check - so that forgery
+      # is refused by name at `capture.suite_exit`. A forger that also appends to $GITHUB_OUTPUT beats that.
+      # Closing it takes a different uid for the measured suite (a `container:` with a USER it cannot escape, or
+      # `sudo -u nobody` with the capture directory owned by the runner user), which is an infrastructure change
+      # this branch does not make. See capture-stream.mjs for the full statement.
+      - name: Run the protected runner against the candidate, hashing its output as it passes through
         id: suite
         env:
-          TMPDIR: /tmp
-        run: |
-          set -uo pipefail
-          command='${{ inputs.suite_command }}'
-          set +e
-          TAP=1 bash -c "$command" > tap.txt 2>&1
-          status=$?
-          set -e
-          echo "exit=$status" >> "$GITHUB_OUTPUT"
-          echo "suite exit: $status"
-          tail -5 tap.txt || true
+          RUNNER_COMMAND: ${{ steps.runner.outputs.command }}
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head }}
+          CANDIDATE_TREE: ${{ steps.candidate.outputs.tree }}
+          TRUSTED_SOURCE_SHA: ${{ needs.trust.outputs.trusted_sha }}
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          # UNDER THE CONTROLLER'S 0700 SCRATCH, which is not mounted into any container. It used to be
+          # $RUNNER_TEMP/capture - a path the measured suite had in its own environment and could write.
+          CAPTURE_DIR: ${{ steps.scratch.outputs.controller }}/capture
+          JOB_NAME: measure
+          MEASUREMENT_IMAGE: ${{ steps.image.outputs.reference }}
+          MEASUREMENT_SCRATCH: ${{ steps.scratch.outputs.measurement }}
+        run: node authority/.github/verifier-receipt/capture-stream.mjs
 
+      # THE CONTROLLER'S OWN MEASUREMENT, AND THE ONLY THING IN THIS RUN THAT MAY ESTABLISH A TERM.
+      #
+      # The step above produced a capture: authenticated to the byte, and still the candidate's own output.
+      # This step is the correction. For every term the protected matrix requires, the controller runs the
+      # term's controls UNMUTATED in the sandbox and takes the exit status from waitpid on the container; then
+      # it applies each required mutation to a PRIVATE OVERLAY of its own candidate checkout - copy, patch,
+      # run, never the checkout the normal run was measured from - and observes each killing run fail. A term
+      # is established only when the controls passed and every required mutant died.
+      #
+      # It also refuses, BY NAME and in both directions, a claim that does not match the protected matrix: a
+      # term, test or mutant the matrix does not require is a candidate writing its own requirement, and one
+      # the claim omits is a candidate quietly narrowing what it has to survive.
+      #
+      # The normal run is NOT re-run here. capture-stream.mjs invoked it in this same sandbox in this same job
+      # and took its exit from waitpid; that record is handed in, because observing the same number twice
+      # costs a second suite run and establishes nothing.
+      - name: Measure every required term and mutant, and observe every outcome
+        id: controller
+        env:
+          AUTHORITY_DIR: ${{ github.workspace }}/authority
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head }}
+          SCRATCH_DIR: ${{ steps.scratch.outputs.controller }}
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+          MATRIX_SCOPE: coordinator
+          MEASURE_JOB_ID: measure
+          MEASUREMENT_SCRATCH: ${{ steps.scratch.outputs.measurement }}
+          NORMAL_RUN_META: ${{ steps.scratch.outputs.controller }}/capture/capture-meta.json
+          OUT_PATH: ${{ steps.scratch.outputs.controller }}/capture/controller-observed.json
+        run: node authority/.github/verifier-receipt/measure-terms.mjs
+
+      # The trusted job's OWN artifact, holding only files this job wrote. No candidate file is uploaded, and the
+      # emitting job downloads no candidate file at all.
+      # EVEN WHEN THE CONTROLLER REFUSED. A run that measured a candidate and correctly concluded "no" is the
+      # product of this authority just as much as one that says yes - the emit job already carries that rule
+      # step by step, and the measure job did not: a controller step that refused left no artifact at all, so
+      # from outside it was indistinguishable from a job that broke, with no capture anyone could read.
+      #
+      # THE CONDITION IS THE CAPTURE PROGRAM'S OWN OUTPUT, NOT `hashFiles`. A first attempt used
+      # `hashFiles('<runner.temp>/controller/capture/suite.out')` and skipped the upload on a run where that
+      # file existed and was 571,998 bytes: `hashFiles` resolves its pattern against GITHUB_WORKSPACE and
+      # silently answers '' for anything outside it, and the controller's scratch is deliberately outside it.
+      # `capture_bytes` is written by capture-stream.mjs after the stream closed, so it is set exactly when
+      # there is a capture to upload.
+      - name: Upload the trusted job's capture, and nothing else
+        id: upload
+        if: always() && steps.suite.outputs.capture_bytes != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: measure-capture
+          path: ${{ steps.scratch.outputs.controller }}/capture
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Normalise the digest GitHub computed for the artifact
+        id: artifact
+        if: always() && steps.upload.outputs.artifact-id != ''
+        env:
+          DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          case "$DIGEST" in
+            sha256:*) normalised="$DIGEST" ;;
+            "") echo "::error::upload-artifact reported no digest for the capture"; exit 1 ;;
+            *) normalised="sha256:$DIGEST" ;;
+          esac
+          echo "digest=$normalised" >> "$GITHUB_OUTPUT"
+          echo "id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact $ARTIFACT_ID digest $normalised"
+
+    outputs:
+      head: ${{ steps.candidate.outputs.head }}
+      tree: ${{ steps.candidate.outputs.tree }}
+      # THE ONE FACT ABOUT THIS MEASUREMENT THAT DOES NOT TRAVEL INSIDE THE ARTIFACT, and the emit job below
+      # now reads it. A review found this output declared here with no consumer anywhere in the repository,
+      # which meant the suite's exit status reached the emitter only through capture-meta.json - a file the
+      # forgery that rewrites the capture rewrites beside it. The capture program takes it from waitpid, writes
+      # it into the hashed stream as the capture's trailer, and publishes it here; the emitter refuses any
+      # disagreement between the three by name.
+      exit: ${{ steps.suite.outputs.exit }}
+      # AND THE TWO DIGESTS, WHICH ARE NOW READ. A review found both of these declared here and consumed
+      # nowhere in the repository - work that looks load-bearing and is not, which is worse than absent
+      # because a reader counts it as a check. The emit job's gate step reads them: it hashes the capture the
+      # emitter authenticated and derives the measured run's failing tests from those bytes rather than from
+      # the list the receipt carries, and these are what say the bytes it parsed are the bytes this job took.
+      # Like `exit`, they travel through GitHub rather than through the artifact - and, like `exit`, a forger
+      # that can append to this job's $GITHUB_OUTPUT moves them with everything else.
+      capture_sha256: ${{ steps.suite.outputs.capture_sha256 }}
+      body_sha256: ${{ steps.suite.outputs.body_sha256 }}
+      artifact_id: ${{ steps.artifact.outputs.id }}
+      artifact_digest: ${{ steps.artifact.outputs.digest }}
+
+  emit:
+    name: Emit the receipt from this run's own capture, and judge it
+    needs: [trust, measure]
+    runs-on: ubuntu-24.04
+    # This job runs no candidate code - it fetches this run's own evidence through the API and judges it - so
+    # its bound is set by the emitter's own test suite, the API reads and the artifact download rather than by
+    # a candidate's suite. 15 minutes is well above anything observed and still refuses a wedged download
+    # rather than holding a runner for six hours.
+    timeout-minutes: 15
+    # NO SIGNING PERMISSION IN THE JOB THAT RUNS PULL-REQUEST-SUPPLIED CODE. A review put it exactly: until this
+    # authority exists on the default branch, the trust job's fallback runs the emitter, the capture program,
+    # the runner enum, the rehearsal pin AND the emitter's own test suite from the pull request head - and this
+    # job used to hold `id-token: write` and `attestations: write` while doing it. Minting is now a separate
+    # job below, which is the only job of this workflow that can sign anything and which cannot run on a
+    # pull_request event at all.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      admissible: ${{ steps.gate.outputs.admissible }}
+      receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
+    steps:
+      # The interpreter, pinned. The reasoning is written out once, in the measure job, which is the job whose
+      # output is a receipt; it applies to every job of this authority, because every one of them reads or
+      # re-derives that receipt with the same node.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
+      - name: Check out the authority at the trusted commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.trust.outputs.trusted_sha }}
+          path: authority
+          persist-credentials: false
+
+      # The emitter's own tests, run from the trusted checkout before it judges anything. They stub `gh`, so they
+      # need no token and no network, and they assert the refusals by name.
+      - name: Test the emitter
+        run: node --test --test-reporter=tap authority/.github/verifier-receipt/test/*.test.mjs
+
+      # No download-artifact step: the emitter locates this run's artifact through the API itself, so no file
+      # arrives in this workspace that the emitter did not fetch and digest.
       - name: Emit the canonical receipt
         env:
-          VERIFIER_SUITE_COMMAND: ${{ inputs.suite_command }}
-          VERIFIER_SUITE_EXIT: ${{ steps.suite.outputs.exit }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TRUSTED_SOURCE_SHA: ${{ needs.trust.outputs.trusted_sha }}
+          TRUSTED_SOURCE_ORIGIN: ${{ needs.trust.outputs.trusted_origin }}
+          MEASURE_JOB_NAME: measure
+          MEASURE_ARTIFACT_NAME: measure-capture
+          MEASURE_ARTIFACT_ID: ${{ needs.measure.outputs.artifact_id }}
+          MEASURE_ARTIFACT_DIGEST: ${{ needs.measure.outputs.artifact_digest }}
+          # The measure job's own output, taken from waitpid in its trusted capture process. The emitter
+          # requires the capture's trailer and its meta to agree with this number, so a capture rewritten after
+          # the trusted job wrote it is refused at `capture.suite_exit` instead of being read as a measurement.
+          MEASURE_SUITE_EXIT: ${{ needs.measure.outputs.exit }}
+          CANDIDATE_SHA: ${{ needs.measure.outputs.head }}
+          CANDIDATE_TREE: ${{ needs.measure.outputs.tree }}
+          RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
+          RUNNER_SPEC_PATH: ${{ github.workspace }}/authority/.github/verifier-receipt/runners.json
+          OUT_PATH: ${{ github.workspace }}/receipt.json
+          # THE BYTES THE EMITTER AUTHENTICATED, WRITTEN OUT FOR THE STEP THAT JUDGES THE RECEIPT. The gate
+          # below derives the measured run's failing tests from this file rather than reading the list the
+          # receipt carries, and binds it to the digests the measure job published as its own outputs. The
+          # emitter defaults this beside OUT_PATH; it is named here so that a change to either path is a change
+          # to both, in one place.
+          CAPTURE_OUT_PATH: ${{ github.workspace }}/capture.out
+          # AND THE CONTROLLER'S OBSERVATION, WRITTEN OUT BESIDE THE RECEIPT for exactly the reason the capture
+          # is: the gate below is the receipt's second reader and it must DERIVE what was established from the
+          # controller's own bytes rather than read this emitter's account of them.
+          OBSERVATION_OUT_PATH: ${{ github.workspace }}/controller-observed.json
+        run: node authority/.github/verifier-receipt/emit-receipt.mjs
+
+      - name: Refuse to emit a receipt that establishes nothing
+        id: gate
+        # THE FACTS THIS STEP RE-DERIVES ADMISSIBILITY AGAINST, taken from GitHub and from the trust job rather
+        # than from the receipt. A review found `admissible_as_pin` computed in one place and merely re-read in
+        # the other two; these are what make this reading a second one.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          THIS_RUN_ID: ${{ github.run_id }}
+          TRUSTED_ORIGIN: ${{ needs.trust.outputs.trusted_origin }}
+          # THE MEASURE JOB'S OWN DIGESTS, through GitHub rather than through the artifact or the receipt. A
+          # review found both of these declared as outputs of the measure job and read by nothing at all - work
+          # that looks load-bearing and is not. They are what lets this step derive the measurement from bytes
+          # instead of reading the emitter's account of it: the capture the emit job wrote beside its receipt
+          # must hash to `capture_sha256`, and the runner's own output inside it to `body_sha256`.
+          MEASURE_CAPTURE_SHA256: ${{ needs.measure.outputs.capture_sha256 }}
+          MEASURE_BODY_SHA256: ${{ needs.measure.outputs.body_sha256 }}
         run: |
           set -euo pipefail
-          node "$GITHUB_WORKSPACE/verifier/.github/verifier-receipt/emit-receipt.mjs" \
-            --candidate "${{ inputs.candidate_sha }}" \
-            --workspace "$GITHUB_WORKSPACE" \
-            --tap tap.txt \
-            --out receipt.json
-          sha256sum receipt.json
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const summary = receipt.named_tests_summary ?? {};
+            const terms = receipt.terms ?? null;
+            const verdict = receipt.conclusion?.verdict ?? null;
+            console.log('verdict', verdict, 'named', summary.named, 'pass', summary.pass, 'fail', summary.fail, 'absent', summary.absent);
+            console.log('terms', JSON.stringify(receipt.terms_summary ?? {}));
+            console.log('reasons', JSON.stringify(receipt.conclusion?.reasons ?? []));
+            console.log('admissible as pin:', receipt.provenance?.admissible_as_pin, receipt.provenance?.inadmissibility_reasons ?? []);
+            if (verdict !== 'success') { console.error('::error::the receipt does not record a successful measurement of the named tests'); process.exit(1); }
+            if (!(summary.named > 0)) { console.error('::error::the receipt names no tests, so it establishes nothing about any term'); process.exit(1); }
+            if (!Array.isArray(terms) || terms.length === 0) { console.error('::error::the receipt enumerates no terms'); process.exit(1); }
+            // The per-term form of the rule above. A claim-wide \`named > 0\` is satisfied by ONE covered term,
+            // so a term naming no test rode to success on a sibling's coverage; the emitter now refuses that in
+            // the verdict, and this step refuses it again by name.
+            const uncovered = terms.filter(term => !(term.named > 0)).map(term => term.id);
+            if (uncovered.length > 0) { console.error('::error::these terms name no tests, so this run establishes nothing about them: ' + uncovered.join(', ')); process.exit(1); }
+            // And the same rule at the level of a single test. 'pass' is the only status that is a
+            // measurement: 'skip' is a body the runner never executed, 'suite' is a describe() block matched
+            // where a test was named, and both used to read as a pass. The emitter refuses each of them in the
+            // verdict; this step refuses them again, by test name and by the status it was given.
+            const unmeasured = (receipt.named_tests ?? []).filter(named => named.status !== 'pass');
+            if (unmeasured.length > 0) { console.error('::error::these named tests were not measured as passing in this run: ' + unmeasured.map(named => named.name + ' [' + named.status + ']').join(', ')); process.exit(1); }
+            // TERMS RECONCILED AGAINST THE ROWS THEY CLAIM TO COUNT. A review found this line missing and it
+            // is the one line that made the rest of this step a re-read rather than a second reading: every
+            // check above takes terms[].named on trust, so a receipt whose terms[] row claims coverage that no
+            // named_tests row supports passed with admissible=true. Three forgeries did exactly that - a second
+            // terms[] row for an entry with no test of its own, terms[].named as the string '1' (which
+            // satisfies !(term.named > 0) without being a count), and named_tests emptied while the summary and
+            // the terms still said one pass. None of them is reachable by a candidate, which is why the review
+            // ruled it MEDIUM; all three are reachable by an emitter bug, which is the whole reason a second
+            // reader exists.
+            //
+            // So the counts are recomputed here from named_tests, which is the receipt's own per-test evidence
+            // and one step closer to the capture, and a term whose row does not agree with the rows attributed
+            // to its entry is refused by name. The totals are reconciled too, so a row attributed to no term at
+            // all - or counted under two - cannot hide inside agreeing per-term numbers.
+            const rows = Array.isArray(receipt.named_tests) ? receipt.named_tests : null;
+            if (rows === null) { console.error('::error::the receipt carries no named_tests list, so nothing supports what its terms claim'); process.exit(1); }
+            const tallied = new Map();
+            for (const row of rows) {
+              const bucket = tallied.get(row.entry) ?? { named: 0, pass: 0 };
+              bucket.named += 1;
+              if (row.status === 'pass') bucket.pass += 1;
+              tallied.set(row.entry, bucket);
+            }
+            const unsupported = [];
+            let claimedNamed = 0;
+            let claimedPass = 0;
+            for (const term of terms) {
+              if (!Number.isInteger(term.named) || !Number.isInteger(term.pass)) {
+                unsupported.push(String(term.id) + ' reports named=' + JSON.stringify(term.named) + ' pass=' + JSON.stringify(term.pass) + ', which are not counts');
+                continue;
+              }
+              claimedNamed += term.named;
+              claimedPass += term.pass;
+              const bucket = tallied.get(term.entry) ?? { named: 0, pass: 0 };
+              if (term.named !== bucket.named || term.pass !== bucket.pass) {
+                unsupported.push(String(term.id) + ' (entry ' + JSON.stringify(term.entry) + ') claims named=' + term.named + ' pass=' + term.pass + ', but named_tests holds ' + bucket.named + ' test(s) for that entry, ' + bucket.pass + ' of them passing');
+              }
+            }
+            if (unsupported.length > 0) { console.error('::error::these terms claim coverage that no named test row of this receipt supports: ' + unsupported.join('; ')); process.exit(1); }
+            const passingRows = rows.filter(row => row.status === 'pass').length;
+            if (claimedNamed !== rows.length || claimedPass !== passingRows) {
+              console.error('::error::the terms account for ' + claimedNamed + ' named test(s) and ' + claimedPass + ' passing, but the receipt lists ' + rows.length + ' and ' + passingRows);
+              process.exit(1);
+            }
+            if (summary.named !== rows.length || summary.pass !== passingRows) {
+              console.error('::error::named_tests_summary says named=' + JSON.stringify(summary.named) + ' pass=' + JSON.stringify(summary.pass) + ', but the receipt lists ' + rows.length + ' named test(s), ' + passingRows + ' passing');
+              process.exit(1);
+            }
+            // ONE MEASUREMENT MAY NOT BE THE EVIDENCE FOR TWO TERMS. Ten entries with distinct, well-formed ids
+            // all naming the SAME passing test reported ten terms established off one point - the pooling the
+            // commit before this one claimed to have closed, which it had closed only for reused IDS. The
+            // emitter refuses such a manifest by name; this is the second reader of the same rule, and it reads
+            // the rows rather than the count, so an emitter that ever stopped refusing is caught here.
+            const claimants = new Map();
+            for (const row of rows) claimants.set(row.name, new Set([...(claimants.get(row.name) ?? []), row.entry]));
+            const shared = [...claimants.entries()].filter(([, at]) => at.size > 1).map(([name, at]) => name + ' (entries ' + [...at].join(', ') + ')');
+            if (shared.length > 0) { console.error('::error::these named tests are the sole evidence for more than one term, so this receipt does not say which term each measurement establishes: ' + shared.join('; ')); process.exit(1); }
+            if (summary.distinct_names !== claimants.size) { console.error('::error::named_tests_summary says distinct_names=' + JSON.stringify(summary.distinct_names) + ', but the receipt lists ' + claimants.size + ' distinct measured name(s)'); process.exit(1); }
+            // A SUCCESS BESIDE A RED SUITE MUST SAY SO, AND EVERY RED TEST MUST BE OUTSIDE WHAT THE CLAIM RESTS
+            // ON. A review produced verdict success with reasons [] for a run the runner exited 1 on, with two
+            // failing tests in the same tree and nothing in the receipt a reader could act on. The verdict is
+            // still about the named tests - that is what a term is established by - but this step refuses to
+            // publish an admissible output for a red run unless the receipt enumerates its failing tests, says
+            // in its conclusion that the suite was red, and none of those failing tests is one the claim names.
+            // WHICH TESTS FAILED, DERIVED FROM THE MEASURED BYTES RATHER THAN READ OFF THE RECEIPT.
+            //
+            // A review put the limit of the block below it precisely: every rule here about the red suite -
+            // that its failing tests are enumerated, and that none of them is a name the claim rests on - was
+            // computed over \`receipt.suite.failing_tests\`, A LIST THE RECEIPT ITSELF CARRIES. The emitter
+            // wrote that list and this step read it back, so an emitter that omitted a failing name from it
+            // passed its own second reader: the check and the thing checked came out of one computation, which
+            // is the defect this step exists not to have.
+            //
+            // So the set is derived here from the capture the emit job authenticated and wrote beside the
+            // receipt - and the capture is not taken on trust either. It is hashed, and the digest must be the
+            // one THE MEASURE JOB published as its own output: \`capture_sha256\` over the whole capture and
+            // \`body_sha256\` over the runner's own output inside it. Both travel through GitHub's job outputs,
+            // outside the artifact and outside the receipt, and both were declared by the measure job with no
+            // consumer anywhere until this step - work that looked load-bearing and was not.
+            //
+            // WHAT THIS IS WORTH, EXACTLY. It closes the emitter's word about the failing set: a receipt whose
+            // \`suite.failing_tests\` disagrees with the bytes it was computed from is refused here by name.
+            // It does NOT close the \$GITHUB_OUTPUT defeat: a candidate that rewrites the capture after the
+            // trusted write and appends its own \`capture_sha256\` and \`body_sha256\` lines to the measure
+            // job's output file moves both sides of this comparison together, exactly as it moves \`exit\`.
+            // Only a uid boundary for the measured suite closes that, and nothing in this file is it.
+            const crypto = require('node:crypto');
+            const digestOf = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+            if (!require('node:fs').existsSync('capture.out')) { console.error('::error::the emit job wrote no capture beside its receipt, so this step has nothing to derive the measurement from and will not take the receipt s word for it'); process.exit(1); }
+            const captureBytes = require('node:fs').readFileSync('capture.out');
+            const publishedCapture = process.env.MEASURE_CAPTURE_SHA256;
+            const publishedBody = process.env.MEASURE_BODY_SHA256;
+            if (!publishedCapture || !publishedBody) { console.error('::error::this step was not told the digests the measure job published for its own capture, so it cannot tell that capture from any other bytes'); process.exit(1); }
+            const wholeDigest = digestOf(captureBytes);
+            if (wholeDigest !== publishedCapture) { console.error('::error::the capture beside this receipt hashes to ' + wholeDigest + ', but the measure job published ' + publishedCapture + ' for the bytes it took'); process.exit(1); }
+            const whole = captureBytes.toString('utf8');
+            const TRAILER = '# verifier-capture v1 ';
+            const trailerLine = whole.endsWith('\n') ? whole.slice(0, -1).split('\n').pop() : '';
+            if (!trailerLine.startsWith(TRAILER)) { console.error('::error::the capture beside this receipt does not end in the trusted capture process s trailer, so this step cannot say where its bytes end'); process.exit(1); }
+            const trailerFields = {};
+            for (const part of trailerLine.slice(TRAILER.length).split(' ')) { const at = part.indexOf('='); if (at > 0) trailerFields[part.slice(0, at)] = part.slice(at + 1); }
+            const bodyBytes = Number(trailerFields.body_bytes);
+            if (!Number.isInteger(bodyBytes) || bodyBytes < 0 || bodyBytes > captureBytes.length) { console.error('::error::the capture s trailer states body_bytes=' + JSON.stringify(trailerFields.body_bytes) + ', which is not where a ' + captureBytes.length + '-byte capture s runner output ends'); process.exit(1); }
+            const bodyDigest = digestOf(captureBytes.subarray(0, bodyBytes));
+            if (bodyDigest !== publishedBody) { console.error('::error::the runner output inside this capture hashes to ' + bodyDigest + ', but the measure job published ' + publishedBody + ' for the bytes its runner wrote'); process.exit(1); }
+            // The runner's own output, parsed the way the emitter parses it: a point is failing when it is a
+            // 'not ok' line carrying no TAP directive whose YAML block says type: 'test'. A cancelled test is
+            // reported as an undirected 'not ok' exactly like a failing one, so it lands in this set too -
+            // which is what the emitter does with it as well. The directive is matched unanchored because the
+            // reporter escapes a '#' inside a description, so the only unescaped one on a point line is the
+            // directive at its end.
+            const derivedFailing = new Set();
+            let openPoint = null;
+            let yamlAt = null;
+            for (const raw of captureBytes.subarray(0, bodyBytes).toString('utf8').split('\n')) {
+              const line = raw.trimEnd();
+              const indent = line.length - line.trimStart().length;
+              const text = line.trimStart();
+              if (yamlAt !== null) {
+                if (text === '...' && indent === yamlAt) {
+                  if (openPoint && openPoint.type === 'test' && openPoint.failed) derivedFailing.add(openPoint.name);
+                  yamlAt = null; openPoint = null;
+                } else if (openPoint && indent === yamlAt && !openPoint.type) {
+                  const typed = /^type: '(test|suite)'/.exec(text);
+                  if (typed) openPoint.type = typed[1];
+                }
+                continue;
+              }
+              if (text === '---' && openPoint && indent === openPoint.indent + 2) { yamlAt = indent; continue; }
+              const point = /^(ok|not ok) (\d+) - (.*)/.exec(text);
+              if (point) {
+                const directive = /\s+#\s*(SKIP|TODO)\b/i.exec(point[3]);
+                openPoint = { indent, type: null, failed: point[1] === 'not ok' && !directive, name: directive ? point[3].slice(0, directive.index) : point[3] };
+                continue;
+              }
+              openPoint = null;
+            }
+            const suite = receipt.suite ?? {};
+            const conclusion = receipt.conclusion ?? {};
+            // The receipt's own enumeration, against the one just derived. Order and repetition are not the
+            // question; membership is, in both directions - a name the capture failed and the receipt omits is
+            // the forgery this closes, and a name the receipt invents is an emitter that does not know what it
+            // measured.
+            const declared = Array.isArray(suite.failing_tests) ? suite.failing_tests : null;
+            if (declared === null) { console.error('::error::this receipt carries no suite.failing_tests list, so nothing in it says which tests the measured run failed'); process.exit(1); }
+            const omitted = [...derivedFailing].filter(name => !declared.includes(name));
+            const invented = declared.filter(name => !derivedFailing.has(name));
+            if (omitted.length > 0 || invented.length > 0) { console.error('::error::this receipt s suite.failing_tests does not describe the capture it was computed from: ' + (omitted.length > 0 ? omitted.length + ' test(s) the capture reports failing are not in it (' + omitted.join(', ') + ')' : '') + (omitted.length > 0 && invented.length > 0 ? '; ' : '') + (invented.length > 0 ? invented.length + ' name(s) in it failed no point of that capture (' + invented.join(', ') + ')' : '')); process.exit(1); }
+            if (String(suite.exit) !== String(trailerFields.exit)) { console.error('::error::this receipt records suite exit ' + JSON.stringify(suite.exit) + ', but the capture s own trailer records ' + JSON.stringify(trailerFields.exit)); process.exit(1); }
+            console.log('derived from the capture (' + captureBytes.length + ' bytes, ' + bodyBytes + ' of runner output): exit ' + trailerFields.exit + ', ' + derivedFailing.size + ' failing name(s)');
+            // A RUN THAT DID NOT FINISH IS NOT A MEASUREMENT, AND IT DOES NOT LOOK RED. `--test-timeout`
+            // bounds every test AND every FILE, and a cancelled file takes its tests out of the stream
+            // entirely: the plan agrees with what was reported, the summary adds up, and a claim that does not
+            // name those tests could still reach a qualified success over a run that silently lost a hundred
+            // and fifty of them. A review measured exactly that. The count is read out of the capture's own
+            // summary here, not out of the receipt.
+            const cancelledLine = /^# cancelled (\d+)$/m.exec(captureBytes.subarray(0, bodyBytes).toString('utf8'));
+            const cancelled = cancelledLine ? Number(cancelledLine[1]) : 0;
+            if (cancelled !== Number(suite.cancelled ?? -1)) { console.error('::error::this receipt records ' + JSON.stringify(suite.cancelled) + ' cancelled point(s) where the capture it was computed from reports ' + cancelled); process.exit(1); }
+            if (cancelled > 0) { console.error('::error::the measured run did not finish: the capture reports ' + cancelled + ' cancelled point(s), so an unknown number of tests never ran and nothing in this receipt may be read as a measurement of them'); process.exit(1); }
+            // AND WHETHER THE SUITE WAS RED IS DERIVED TOO, from the exit status inside the hashed bytes and
+            // from the points just counted, rather than from the three receipt fields that used to decide it.
+            const red = String(trailerFields.exit) !== '0' || derivedFailing.size > 0;
+            if (red) {
+              if (suite.state !== 'red' || conclusion.suite_state !== 'red') { console.error('::error::the measured suite is red, but this receipt does not say so: suite.state=' + JSON.stringify(suite.state) + ' conclusion.suite_state=' + JSON.stringify(conclusion.suite_state)); process.exit(1); }
+              if (!Array.isArray(conclusion.qualifications) || conclusion.qualifications.length === 0) { console.error('::error::this receipt records an UNQUALIFIED success beside a suite the runner reported red; a success beside a red run must state what it does and does not cover'); process.exit(1); }
+              if ((suite.not_ok ?? 0) > 0 && derivedFailing.size === 0) { console.error('::error::this receipt reports ' + suite.not_ok + ' failing point(s) and the capture it was computed from names none of them'); process.exit(1); }
+              const measured = new Set(rows.map(row => row.name));
+              const inside = [...derivedFailing].filter(name => measured.has(name));
+              if (inside.length > 0) { console.error('::error::these failing tests of the measured run ARE named by this claim, so this run establishes nothing about the terms that name them: ' + inside.join(', ')); process.exit(1); }
+              console.log('qualified success: the suite is red and all ' + derivedFailing.size + ' failing test(s) are outside the ' + measured.size + ' name(s) this claim rests on');
+            } else if (suite.state !== 'green' || conclusion.suite_state !== 'green') { console.error('::error::the capture this receipt was computed from reports exit ' + trailerFields.exit + ' and no failing point, but the receipt calls the suite ' + JSON.stringify(suite.state)); process.exit(1); }
+            // A NAMED TEST THE RUNNER REPORTED IN ANOTHER FILE IS NOT EVIDENCE FOR THIS TERM. Every manifest
+            // entry names the file its term's test lives in, and the runner writes the file it reported a point
+            // in; the emitter binds the two and records the result per test. This re-reads that binding from the
+            // rows: a row whose location does not match its entry's artifact must carry the status that says so,
+            // and any such row is refused by name. (Where the runner reported no location the binding is
+            // 'unreported' - at node v22.22.3 that is every passing point - and it is counted, not refused.)
+            const misbound = rows.filter(row => row.location_bound === 'mismatched' || row.status === 'misplaced');
+            if (misbound.length > 0) { console.error('::error::these named tests were reported by the runner in a file other than the one their claim names: ' + misbound.map(row => row.name + ' claimed in ' + JSON.stringify(row.artifact) + ', reported in ' + JSON.stringify(row.locations)).join('; ')); process.exit(1); }
+            const unmarked = rows.filter(row => row.location_bound === 'mismatched' && row.status !== 'misplaced');
+            if (unmarked.length > 0) { console.error('::error::these named tests are bound to the wrong file and are not recorded as misplaced: ' + unmarked.map(row => row.name).join(', ')); process.exit(1); }
+            // AND `unreported` IS NOT A RESIDUAL. A review established both terms of a claim from three empty
+            // bodies in a file outside this repository, because no passing point carries a location and the
+            // emitter counted that silence instead of refusing it. A row may be `pass` only if the runner said
+            // which file it was in AND that file is the one the row's own entry names.
+            const unbound = rows.filter(row => row.status === 'pass' && row.location_bound !== 'matched');
+            if (unbound.length > 0) { console.error('::error::these named tests are reported passing while nothing in the capture says which file they were measured in, so this receipt cannot say the test that ran is the test the claim describes: ' + unbound.map(row => row.name + ' (' + String(row.location_bound) + ')').join(', ')); process.exit(1); }
+            const bound = rows.reduce((at, row) => ({ ...at, [String(row.location_bound)]: (at[String(row.location_bound)] ?? 0) + 1 }), {});
+            console.log('names bound to the file their claim names:', JSON.stringify(bound));
 
-      - name: Attest the receipt's provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: receipt.json
+            // THE CLAIM'S OWN VERDICT ON EACH TERM, RE-READ HERE, AND IT OUTRANKS THIS RECEIPT'S WORD FOR IT.
+            // A review measured this on the repository's own pinned candidate: all 53 entries of the manifest
+            // said disposition BLOCK, 12 said approvable false, and the receipt reported 53 of 53 established
+            // while carrying neither field. The emitter now refuses to call such a term established; this step
+            // refuses to publish an admissible output for a receipt that does, and refuses a receipt that omits
+            // the fields altogether, because a term row this step cannot check is a term it may not pass.
+            const silent = terms.filter(term => term.disposition === undefined || term.approvable === undefined || term.permits_establishment === undefined || term.measured === undefined);
+            if (silent.length > 0) { console.error('::error::these terms do not carry the disposition their own manifest entry states, so this step cannot tell an established term from a blocked one: ' + silent.map(term => String(term.id)).join(', ')); process.exit(1); }
+            const ESTABLISHING = ['PASS'];
+            // `approvable === true`, NOT `approvable !== false`. A review deleted the key from the twelve
+            // entries of the real manifest that may never be approved and every one of them established,
+            // because the emitter, this step and the attest job all read an ABSENT governance field as
+            // consent. An approval that was never written is not an approval.
+            const barred = terms.filter(term => term.establishes === true && (term.approvable !== true || !ESTABLISHING.includes(term.disposition)));
+            if (barred.length > 0) { console.error('::error::these terms are reported established while their own manifest entry says they may not be: ' + barred.map(term => String(term.id) + ' (disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable) + ')').join('; ')); process.exit(1); }
+            // AND THE MANIFEST'S OWN EVIDENCE, RE-READ HERE. Flipping BLOCK to PASS on the real manifest and
+            // changing nothing else left `receipts: []` on all 53 entries and `killing_mutants: []` on twelve,
+            // with every entry's own reason still saying why - none of it read, 53 of 53 established. A term
+            // this receipt says its manifest permits must carry the two counts the manifest's reason names.
+            const unevidenced = terms.filter(term => term.permits_establishment === true
+              && (!term.evidence || !(term.evidence.receipts > 0) || !(term.evidence.killing_mutants > 0)));
+            if (unevidenced.length > 0) { console.error('::error::these terms are reported as permitted by their own manifest entry while that entry names no receipt or no killing mutant: ' + unevidenced.map(term => String(term.id) + ' (' + JSON.stringify(term.evidence ?? null) + ')').join('; ')); process.exit(1); }
+            // And the rule recomputed rather than believed: permits is the two manifest fields, measured is the
+            // rows, and establishes is both. A receipt whose term row disagrees with either is refused.
+            const wrong = [];
+            for (const term of terms) {
+              const permits = term.approvable !== false && ESTABLISHING.includes(term.disposition);
+              const attributed = rows.filter(row => row.entry === term.entry);
+              const measured = attributed.length > 0 && attributed.every(row => row.status === 'pass');
+              if (term.permits_establishment !== permits) wrong.push(String(term.id) + ' says permits_establishment=' + JSON.stringify(term.permits_establishment) + ' for disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable));
+              else if (term.measured !== measured) wrong.push(String(term.id) + ' says measured=' + JSON.stringify(term.measured) + ' where its ' + attributed.length + ' row(s) say ' + measured);
+              else if (term.establishes !== (measured && permits)) wrong.push(String(term.id) + ' says establishes=' + JSON.stringify(term.establishes) + ' where measured=' + measured + ' and permits=' + permits);
+            }
+            if (wrong.length > 0) { console.error('::error::these terms do not agree with what this receipt s own evidence says about them: ' + wrong.join('; ')); process.exit(1); }
+            console.log('dispositions', JSON.stringify(receipt.terms_summary?.dispositions ?? {}), 'measured', receipt.terms_summary?.measured, 'established', terms.filter(term => term.establishes).length);
 
+            // WHAT ESTABLISHED THESE TERMS, DERIVED FROM THE CONTROLLER'S OWN BYTES.
+            //
+            // Every rule below this line is about the CAPTURE, and the capture is the candidate's own output
+            // stream. No rule over it can establish a term, because a test body printing well-formed TAP puts
+            // points into the very bytes being hashed. What establishes a term is the controller's
+            // observation, and this step does not take the receipt's word for a single one of them: it reads
+            // controller-observed.json - the file the emitter wrote out verbatim from the artifact it fetched
+            // and digested itself - derives the established set from it, and refuses any disagreement.
+            if (!require('node:fs').existsSync('controller-observed.json')) { console.error('::error::the emit job wrote no controller observation beside its receipt, so this step has nothing to derive an established term from and will not take the receipt s word for one'); process.exit(1); }
+            const observationBytes = require('node:fs').readFileSync('controller-observed.json');
+            const observation = JSON.parse(observationBytes.toString('utf8'));
+            const observationDigest = digestOf(observationBytes);
+            if (observationDigest !== receipt.controller_observation?.sha256) { console.error('::error::the controller observation beside this receipt hashes to ' + observationDigest + ', but the receipt records ' + JSON.stringify(receipt.controller_observation?.sha256 ?? null)); process.exit(1); }
+            if (observation.observed_by !== 'controller') { console.error('::error::the observation beside this receipt records observed_by=' + JSON.stringify(observation.observed_by) + '; only outcomes the controller observed itself may establish a term'); process.exit(1); }
+            // A TERM IS ESTABLISHED BY TWO EXIT STATUSES, RECOMPUTED HERE FROM THE OBSERVATION'S OWN RUNS
+            // rather than read off its `established` list - the list and the runs come out of one computation
+            // in the controller, and a second reader that reads the conclusion is not a second reading.
+            const derivedEstablished = new Set();
+            for (const observed of observation.terms ?? []) {
+              const controlPassed = observed.control?.exit === 0 && observed.control?.run;
+              const mutants = observed.mutants ?? [];
+              const allDied = mutants.length > 0 && mutants.every(mutant => mutant.patch?.applied === true && Number.isInteger(mutant.killing_run_exit) && mutant.killing_run_exit !== 0);
+              const clean = (observed.matrix_refusals ?? []).length === 0 && observed.establishable === true;
+              // BY CLAIM ENTRY INDEX, never by id: a shared id is a shared bucket, which is how a term with
+              // no coverage of its own reported a sibling's.
+              if (controlPassed && allDied && clean && Number.isInteger(observed.claim_entry)) derivedEstablished.add(observed.claim_entry);
+            }
+            const receiptEstablished = terms.filter(term => term.establishes);
+            const unobserved = receiptEstablished.filter(term => !derivedEstablished.has(term.entry)).map(term => String(term.id));
+            if (unobserved.length > 0) { console.error('::error::these terms are reported established while the controller s own observation does not support it - its control run did not pass, a required mutant was not observed to die, or the protected matrix does not make the term establishable: ' + unobserved.join(', ')); process.exit(1); }
+            const disagreeing = terms.filter(term => (term.controller_established === true) !== derivedEstablished.has(term.entry)).map(term => String(term.id));
+            if (disagreeing.length > 0) { console.error('::error::these terms record a controller_established that the observation s own runs do not support: ' + disagreeing.join(', ')); process.exit(1); }
+            // AND THE CLAIM MAY NOT HAVE ADDED, NAMED OR WIDENED A REQUIREMENT. Re-read from the observation,
+            // by name, in both directions.
+            const fidelity = observation.matrix_fidelity?.refusals ?? [];
+            if (fidelity.length > 0 && verdict === 'success') { console.error('::error::this claim does not match the protected matrix and this receipt still reports success: ' + fidelity.slice(0, 8).map(r => r.detail).join('; ')); process.exit(1); }
+            console.log('derived from the controller s observation (' + observationBytes.length + ' bytes): ' + derivedEstablished.size + ' term(s) established by a passing control run and ' + (observation.terms ?? []).reduce((n, t) => n + (t.mutants ?? []).length, 0) + ' required mutant(s), ' + fidelity.length + ' matrix refusal(s)');
+
+            // AND ADMISSIBILITY IS RE-DERIVED FROM THE FACTS, NOT READ OFF THE FLAG. A review flipped
+            // provenance.admissible_as_pin to true on a receipt whose body still recorded the authority as
+            // ABSENT on main, and the gate, the guard and the attest job's subject re-read all passed it -
+            // because all three compared the computed boolean to itself. The six grounds the emitter computes
+            // that field from are each recorded in this receipt's own body, so they are recomputed here, and the
+            // flag is refused when it disagrees with them. Two of the six are checked against GitHub's own
+            // report of this run as well, which no field of the receipt can move.
+            const authority = receipt.candidate?.authority_identity;
+            if (!Array.isArray(authority) || authority.length === 0) { console.error('::error::the receipt carries no authority_identity, so nothing in it says whether this candidate left the authority alone'); process.exit(1); }
+            const absent = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            const workflow = receipt.workflow ?? {};
+            const grounds = [
+              [verdict === 'success', 'this receipt s verdict is ' + JSON.stringify(verdict) + ', so there is nothing in it for a manifest to pin'],
+              [absent.length === 0, 'the receipt authority is absent on the protected branch (' + absent.join(', ') + '), so this run compared the candidate against nothing'],
+              [workflow.event === 'workflow_dispatch', 'this run s event is ' + JSON.stringify(workflow.event) + ', not a workflow_dispatch'],
+              [workflow.head_branch === 'main', 'this run was made on ' + JSON.stringify(workflow.head_branch) + ', not the protected default branch'],
+              [workflow.trusted_source_origin === 'protected-main', 'the authority files came from ' + JSON.stringify(workflow.trusted_source_origin) + ', not from protected main'],
+              [workflow.trusted_source_on_main === true, 'the authority commit this run used is not contained in main'],
+            ];
+            const failed = grounds.filter(ground => !ground[0]).map(ground => ground[1]);
+            const derived = failed.length === 0;
+            const claimed = receipt.provenance?.admissible_as_pin === true;
+            if (derived !== claimed) { console.error('::error::this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ', but its own body says ' + derived + ': ' + (failed.length === 0 ? 'every ground is satisfied' : failed.join('; ')) + '. Nothing this run produced may be signed.'); process.exit(1); }
+            // AND AGAINST WHAT GITHUB SAYS ABOUT THIS RUN, which is the one input to this step that the receipt
+            // does not supply. A receipt that records a dispatch of main while this job is running on something
+            // else is refused whatever its own fields agree with.
+            const live = [['event', process.env.EVENT, workflow.event], ['ref', process.env.REF, workflow.head_branch === 'main' && workflow.event === 'workflow_dispatch' ? 'refs/heads/main' : null], ['run id', process.env.THIS_RUN_ID, String(receipt.run?.id)], ['trusted origin', process.env.TRUSTED_ORIGIN, workflow.trusted_source_origin]];
+            for (const fact of live) { if (!fact[1]) { console.error('::error::this step was not told the ' + fact[0] + ' of the run it is judging, so it cannot check the receipt against it'); process.exit(1); } }
+            if (String(process.env.THIS_RUN_ID) !== String(receipt.run?.id)) { console.error('::error::this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.THIS_RUN_ID); process.exit(1); }
+            if (process.env.TRUSTED_ORIGIN !== workflow.trusted_source_origin) { console.error('::error::the trust job resolved the authority from ' + process.env.TRUSTED_ORIGIN + ', but this receipt records ' + JSON.stringify(workflow.trusted_source_origin)); process.exit(1); }
+            if (derived && (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main')) { console.error('::error::this receipt calls itself admissible as a pin while this job is running on ' + process.env.EVENT + ' at ' + process.env.REF); process.exit(1); }
+            if (!derived) console.log('not admissible as a pin:', failed.join('; '));
+            require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + derived + '\n');
+          "
+
+      # THE BYPASS, CAUGHT BY A STEP THAT DERIVES THE ANSWER ITSELF. A review wrote `admissible=true` into the
+      # gate's own output beside a receipt whose body said `admissible_as_pin: false`, and the attest step's
+      # `if:` selected on it. A later review defeated the first fix: this step used to compare the gate output
+      # to `receipt.provenance.admissible_as_pin`, which is the same computed boolean the gate had just read, so
+      # a receipt with ONLY that flag flipped - its body still recording the authority as absent on main - passed
+      # here, at the gate, and at the attest job's subject re-read. One computation and two echoes.
+      #
+      # So this step does not read the flag to decide. It derives admissibility from the SIX GROUNDS recorded in
+      # the receipt's body, in its own code, and then requires three things to agree: what it derived, what the
+      # receipt claims, and what the gate published. The ground that is live in this repository right now - the
+      # authority is absent on main - is one of the six, so the flipped-flag receipt is refused here by name.
+      - name: Refuse an admissibility that the receipt's own body does not support
+        id: guard
+        env:
+          GATE_SAYS: ${{ steps.gate.outputs.admissible }}
+        run: |
+          set -euo pipefail
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const refuse = message => { console.error('::error::' + message); process.exit(1); };
+            const workflow = receipt.workflow || {};
+            const authority = receipt.candidate?.authority_identity;
+            if (!Array.isArray(authority) || authority.length === 0) refuse('this receipt carries no authority_identity, so nothing in it supports an admissibility either way');
+            const missing = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            const why = [];
+            if (receipt.conclusion?.verdict !== 'success') why.push('its verdict is ' + JSON.stringify(receipt.conclusion?.verdict));
+            if (missing.length > 0) why.push('the authority is absent on the protected branch (' + missing.join(', ') + ')');
+            if (workflow.event !== 'workflow_dispatch') why.push('its event is ' + JSON.stringify(workflow.event));
+            if (workflow.head_branch !== 'main') why.push('it was made on ' + JSON.stringify(workflow.head_branch));
+            if (workflow.trusted_source_origin !== 'protected-main') why.push('its authority came from ' + JSON.stringify(workflow.trusted_source_origin));
+            if (workflow.trusted_source_on_main !== true) why.push('its authority commit is not contained in main');
+            const derived = why.length === 0;
+            const claimed = receipt.provenance?.admissible_as_pin === true;
+            const gate = String(process.env.GATE_SAYS || '');
+            if (claimed !== derived) refuse('this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ' while its own body says ' + derived + ': ' + (derived ? 'every ground is satisfied' : why.join('; ')) + '; nothing this run produced may be signed');
+            if (gate !== String(derived)) refuse('the gate published admissible=' + JSON.stringify(gate) + ' where this receipt s own body supports ' + derived + '; nothing this run produced may be signed');
+            console.log('re-derived from the receipt s own body: admissible_as_pin=' + derived + (derived ? '' : ' (' + why.join('; ') + ')') + ', and the gate agrees');
+          "
+
+      # EVERY STEP BELOW RUNS EVEN WHEN THE GATE REFUSED, because a receipt that says NO is the product of this
+      # authority just as much as one that says yes. A review found that the gate exits 1 on any verdict other
+      # than success and that nothing after it carried `if:`, so a step with no condition is implicitly
+      # `if: success()` and was skipped: a run that correctly measured a candidate and correctly concluded
+      # failure left no receipt artifact at all, and from outside was indistinguishable from a run that broke.
+      # That became load-bearing the moment the receipt started honouring the manifest's own disposition - the
+      # honest result over this repository's own pinned candidate is now verdict `failure`, and it is exactly
+      # the receipt a reader most wants to see. The job still goes RED and nothing downstream can select on it:
+      # `steps.gate.outputs.admissible` is unwritten, and the attest job needs both that output and a green
+      # `emit`. `hashFiles` guards the case where the emitter refused before writing anything.
+      - name: Record the receipt's digest for the job that may sign it
+        id: receipt
+        if: always() && hashFiles('receipt.json') != ''
+        run: |
+          set -euo pipefail
+          echo "sha256=$(sha256sum receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Say, in the log, why this receipt was not attested
+        if: always() && steps.gate.outputs.admissible != 'true' && hashFiles('receipt.json') != ''
+        run: |
+          set -euo pipefail
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const why = receipt.provenance?.inadmissibility_reasons ?? ['admissible_as_pin is not true'];
+            console.log('::warning::this receipt is not admissible as a pin and was NOT attested: ' + why.join('; '));
+          "
+
+      # THE RECEIPT AND THE OBSERVATION THAT ESTABLISHED IT, TOGETHER. The attest job re-derives admissibility
+      # from the subject it is about to sign; it can only re-derive what ESTABLISHED a term if the controller's
+      # observation travels with the receipt, so it does.
       - name: Upload the receipt as an artifact
         id: upload
-        uses: actions/upload-artifact@v4
+        if: always() && hashFiles('receipt.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verifier-receipt
-          path: receipt.json
-          if-no-files-found: error
+          path: |
+            receipt.json
+            controller-observed.json
+          retention-days: 90
 
-      - name: Publish what the manifest must pin
+      - name: Print what a manifest must pin
+        if: always() && hashFiles('receipt.json') != ''
         run: |
           set -euo pipefail
-          echo "workflow_ref  ${GITHUB_WORKFLOW_REF}"
-          echo "run_id        ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}"
-          echo "run head_sha  ${GITHUB_SHA}"
-          echo "artifact_id   ${{ steps.upload.outputs.artifact-id }}"
-          echo "artifact_digest ${{ steps.upload.outputs.artifact-digest }}"
-          echo "receipt_digest  $(sha256sum receipt.json | cut -d' ' -f1)"
+          digest=$(sha256sum receipt.json | cut -d' ' -f1)
+          {
+            echo "### Receipt for \`${{ needs.measure.outputs.head }}\`"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| workflow | ${{ github.workflow_ref }} |"
+            echo "| authority commit | ${{ needs.trust.outputs.trusted_sha }} (${{ needs.trust.outputs.trusted_origin }}) |"
+            echo "| run id | ${{ github.run_id }} |"
+            echo "| run attempt | ${{ github.run_attempt }} |"
+            echo "| candidate | ${{ needs.measure.outputs.head }} |"
+            echo "| candidate tree | ${{ needs.measure.outputs.tree }} |"
+            echo "| runner key | ${{ needs.trust.outputs.runner_key }} |"
+            echo "| capture artifact | measure-capture (id ${{ needs.measure.outputs.artifact_id }}, ${{ needs.measure.outputs.artifact_digest }}) |"
+            echo "| receipt artifact | verifier-receipt (id ${{ steps.upload.outputs.artifact-id }}) |"
+            echo "| receipt sha256 | sha256:${digest} |"
+            echo "| admissible as pin | ${{ steps.gate.outputs.admissible }} (attested only when true) |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # The run's conclusion must agree with the receipt's, so a reader never has to reconcile the two. The
-      # comparison is on the measurement's own verdict - the named tests of the claim - and the suite's exit
-      # code and failing test names were printed above and are in the receipt either way.
-      - name: Fail the run when the measurement is not a success
+  # THE ONLY JOB OF THIS AUTHORITY THAT CAN SIGN ANYTHING.
+  #
+  # It used to be a step of `emit`, selected by `if: steps.gate.outputs.admissible == 'true'`, in a job holding
+  # `id-token: write` and `attestations: write` for every run - including the pull-request rehearsals in which
+  # the emitter, the capture program, the runner enum, the rehearsal pin and the emitter's own test suite all
+  # come from the pull request head, because this authority is not yet on the default branch. A review wrote
+  # `admissible=true` into that step output beside a receipt whose body said `admissible_as_pin: false` and the
+  # attest step selected. Three things change here, and each is stated with what it is worth:
+  #
+  #   1. SIGNING IS ITS OWN JOB, and it is the only place in this workflow holding an attestation permission.
+  #      `emit` - the job that runs pull-request-supplied code - now holds none at all, so a rehearsal cannot
+  #      sign even by accident.
+  #   2. IT CANNOT RUN ON A REHEARSAL. Its condition is `workflow_dispatch` on `refs/heads/main`: facts about
+  #      the run, reported by GitHub, which no step of any job computes and no output can carry.
+  #   3. IT RE-READS THE SUBJECT IT IS ABOUT TO SIGN. The receipt is fetched as this run's own artifact, its
+  #      digest is checked against the one the emit job recorded, and `provenance.admissible_as_pin`,
+  #      `conclusion.verdict` and the run identity are read out of the file itself - not out of a job output.
+  #      The bypass therefore has to beat the receipt rather than the variable beside it.
+  #
+  # WHERE THIS STOPS, because the comment this replaces overstated exactly that. On a `pull_request` event
+  # GitHub runs the workflow DEFINITION from the pull request head, so for such a run this job's condition, its
+  # checks and its permissions block are all the candidate author's, and nothing written in this file binds
+  # them. What binds them is outside these files: whether this repository's Actions settings grant a pull
+  # request run `attestations: write` at all, whether such runs require approval - and, decisively for anyone
+  # consuming these receipts, that a consumer requires `provenance.admissible_as_pin === true`,
+  # `conclusion.verdict === 'success'` AND an attestation whose workflow ref is `refs/heads/main`, rather than
+  # treating the existence of an attestation as the trust anchor. That consumer change is specified in
+  # /home/bawes/work/consumer-required-changes.md and belongs to the branch that holds the consumer.
+  attest:
+    name: Attest a receipt this authority may vouch for
+    needs: [trust, measure, emit]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.emit.outputs.admissible == 'true'
+    runs-on: ubuntu-24.04
+    # One download, one digest, one signature. Bounded like every other job of this workflow.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      # The interpreter, pinned. The reasoning is written out once, in the measure job, which is the job whose
+      # output is a receipt; it applies to every job of this authority, because every one of them reads or
+      # re-derives that receipt with the same node.
+      - name: Pin the interpreter this authority measures and reasons with
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
+      - name: Fetch the receipt this run's emit job produced
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verifier-receipt
+
+      - name: Refuse a subject that is not the receipt the emit job recorded
+        env:
+          EXPECTED: ${{ needs.emit.outputs.receipt_sha256 }}
         run: |
           set -euo pipefail
-          verdict="$(node -p "JSON.parse(require('fs').readFileSync('receipt.json','utf8')).conclusion.verdict")"
-          echo "receipt verdict: $verdict"
-          test "$verdict" = "success"
+          actual=$(sha256sum receipt.json | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED" ]; then
+            echo "::error::the emit job recorded sha256:$EXPECTED for its receipt, but the artifact this job fetched hashes to sha256:$actual"
+            exit 1
+          fi
+          echo "subject receipt.json sha256:$actual, as the emit job recorded it"
+
+      # THE THIRD READING, AND IT RE-DERIVES RATHER THAN RE-READS. A review flipped only
+      # `provenance.admissible_as_pin` on a receipt whose body still recorded the authority as absent on main and
+      # this check passed it, because it read the flag. It now recomputes the field from the six grounds in the
+      # subject's own body - and refuses a subject any of whose terms is reported established while the term's
+      # own manifest entry says BLOCK or `approvable: false`, which is what a receipt over this repository's real
+      # manifest would be. Nothing signed here rests on a boolean another step computed.
+      - name: Re-derive admissibility from the subject itself, not from a job output
+        env:
+          RUN_ID: ${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const refuse = message => { console.error('::error::' + message); process.exit(1); };
+            const workflow = receipt.workflow || {};
+            const authority = receipt.candidate?.authority_identity;
+            if (!Array.isArray(authority) || authority.length === 0) refuse('this subject carries no authority_identity, so nothing in it says whether the candidate left the authority alone');
+            const missing = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            const why = [];
+            if (receipt.conclusion?.verdict !== 'success') why.push('its verdict is ' + JSON.stringify(receipt.conclusion?.verdict));
+            if (missing.length > 0) why.push('the authority is absent on the protected branch (' + missing.join(', ') + ')');
+            if (workflow.event !== 'workflow_dispatch') why.push('its event is ' + JSON.stringify(workflow.event));
+            if (workflow.head_branch !== 'main') why.push('it was made on ' + JSON.stringify(workflow.head_branch));
+            if (workflow.trusted_source_origin !== 'protected-main') why.push('its authority came from ' + JSON.stringify(workflow.trusted_source_origin));
+            if (workflow.trusted_source_on_main !== true) why.push('its authority commit is not contained in main');
+            if (why.length > 0) refuse('this authority will not sign this receipt: ' + why.join('; ') + '. The receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ' and lists ' + JSON.stringify(receipt.provenance?.inadmissibility_reasons ?? []));
+            if (receipt.provenance?.admissible_as_pin !== true) refuse('this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ', so this authority will not sign it: ' + JSON.stringify(receipt.provenance?.inadmissibility_reasons ?? []));
+            if (receipt.conclusion?.verdict !== 'success') refuse('this receipt records verdict ' + JSON.stringify(receipt.conclusion?.verdict) + ', so there is nothing in it to vouch for');
+            // THE CLAIM'S OWN VERDICT, RE-READ AT THE POINT OF SIGNATURE. A term reported established while its
+            // manifest entry says BLOCK or approvable false is the receipt contradicting the claim it validates.
+            const terms = receipt.terms;
+            if (!Array.isArray(terms) || terms.length === 0) refuse('this subject enumerates no terms');
+            const ESTABLISHING = ['PASS'];
+            const barred = terms.filter(term => term.establishes === true && (term.approvable !== true || !ESTABLISHING.includes(term.disposition)));
+            if (barred.length > 0) refuse('these terms are reported established while their own manifest entry says they may not be: ' + barred.map(term => String(term.id) + ' (disposition=' + JSON.stringify(term.disposition) + ' approvable=' + JSON.stringify(term.approvable) + ')').join('; '));
+            // The two evidence counts and the binding, re-read at the point of signature for the same reason
+            // the disposition is: an absent approval, an entry naming no receipt and a name the runner located
+            // nowhere each turned a blocked claim into an established one in a review that ran them.
+            const unevidenced = terms.filter(term => term.permits_establishment === true && (!term.evidence || !(term.evidence.receipts > 0) || !(term.evidence.killing_mutants > 0)));
+            if (unevidenced.length > 0) refuse('these terms are reported as permitted while their own manifest entry names no receipt or no killing mutant: ' + unevidenced.map(term => String(term.id) + ' (' + JSON.stringify(term.evidence ?? null) + ')').join('; '));
+            const rows = Array.isArray(receipt.named_tests) ? receipt.named_tests : [];
+            const unbound = rows.filter(row => row.status === 'pass' && row.location_bound !== 'matched');
+            if (unbound.length > 0) refuse('these named tests are reported passing while nothing in the capture says which file they were measured in: ' + unbound.map(row => row.name + ' (' + String(row.location_bound) + ')').join(', '));
+            // AND WHAT ESTABLISHED EACH TERM, RE-DERIVED AT THE POINT OF SIGNATURE FROM THE CONTROLLER'S OWN
+            // BYTES. This is the third reading of the rule and, like the other two, it recomputes rather than
+            // re-reads: the observation travels with the receipt in this run's own artifact, its digest must
+            // be the one the receipt records, and a term reported established whose control run did not pass
+            // or whose required mutant was not observed to die refuses the signature. Nothing signed here
+            // rests on a point parsed out of the candidate's output - that capture is diagnostic, and this
+            // authority does not vouch for a term on the strength of a line the candidate printed.
+            const crypto = require('node:crypto');
+            let observationBytes;
+            try { observationBytes = require('node:fs').readFileSync('controller-observed.json'); }
+            catch { refuse('this run s artifact carries no controller observation, so this job cannot say what established any term of the receipt it is about to sign'); }
+            const observationDigest = crypto.createHash('sha256').update(observationBytes).digest('hex');
+            if (observationDigest !== receipt.controller_observation?.sha256) refuse('the controller observation in this artifact hashes to ' + observationDigest + ', but the subject records ' + JSON.stringify(receipt.controller_observation?.sha256 ?? null));
+            const observation = JSON.parse(observationBytes.toString('utf8'));
+            if (observation.observed_by !== 'controller') refuse('the observation records observed_by=' + JSON.stringify(observation.observed_by) + ', and only outcomes the controller observed itself may establish a term');
+            if (String(observation.candidate_sha) !== String(receipt.candidate?.sha)) refuse('the controller observed ' + JSON.stringify(observation.candidate_sha) + ', but this subject is about ' + JSON.stringify(receipt.candidate?.sha));
+            if (!/^[^@]+@sha256:[0-9a-f]{64}$/.test(String(observation.image ?? ''))) refuse('the measurement ran in ' + JSON.stringify(observation.image ?? null) + ', which is not a digest-pinned image');
+            const derived = new Set();
+            for (const observed of observation.terms ?? []) {
+              const mutants = observed.mutants ?? [];
+              if (observed.control?.exit === 0 && observed.establishable === true
+                && (observed.matrix_refusals ?? []).length === 0
+                && Number.isInteger(observed.claim_entry)
+                && mutants.length > 0 && mutants.every(m => m.patch?.applied === true && Number.isInteger(m.killing_run_exit) && m.killing_run_exit !== 0)) derived.add(observed.claim_entry);
+            }
+            const unsupported = terms.filter(term => term.establishes === true && !derived.has(term.entry)).map(term => String(term.id));
+            if (unsupported.length > 0) refuse('these terms are reported established while the controller s own runs do not support it: ' + unsupported.join(', '));
+            if ((observation.matrix_fidelity?.refusals ?? []).length > 0) refuse('this claim does not match the protected matrix, so this authority will not sign a receipt over it: ' + (observation.matrix_fidelity.refusals.slice(0, 6).map(r => r.detail).join('; ')));
+            if (String(receipt.run?.id) !== String(process.env.RUN_ID)) refuse('this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.RUN_ID);
+            if (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main') refuse('this job is running on ' + process.env.EVENT + ' at ' + process.env.REF + ', which may not sign a receipt');
+            console.log('re-derived from the subject and from the controller s own observation: every admissibility ground is satisfied, verdict success, ' + terms.length + ' term(s) all permitted by their own manifest entries and all established by a controller-observed control run and ' + (observation.terms ?? []).reduce((n, t) => n + (t.mutants ?? []).length, 0) + ' required mutant(s), run ' + receipt.run?.id + ' dispatched on main');
+          "
+
+      # WHY EVERY THIRD-PARTY ACTION IN THIS WORKFLOW IS PINNED TO A COMMIT, AND WHY THAT MATTERS MOST HERE.
+      #
+      # A tag is a POINTER, and the person who can move it is not this repository. `@v1` resolves to whatever
+      # commit the action's owner last pointed that tag at, at the moment the run starts - so a workflow that
+      # says `@v1` is saying "run whatever code that account publishes under this name, whenever I next run".
+      # Every other input to this authority is named by content: the authority itself is checked out BY SHA,
+      # the candidate is checked out BY SHA and re-read with `git rev-parse` to prove it, the runner command
+      # comes from a protected enum rather than from any tree, and the capture is bound to a digest GitHub
+      # computed. A floating action tag was the one input left that could change under a rerun of an identical
+      # dispatch, with no line of this repository changing and nothing in any receipt recording that it had.
+      #
+      # In THIS job that is not a supply-chain abstraction, it is the signing key. This is the only job of this
+      # workflow holding `id-token: write` and `attestations: write`; the action below is what exchanges that
+      # token and signs the subject. Code that runs here can read the OIDC token from the runner environment
+      # and obtain a Sigstore signature that says "the verifier authority of this repository vouches for this",
+      # over any bytes it likes. A moved tag therefore does not merely change what this step does - it changes
+      # who can make this repository's attestation, after the fact, without touching this file. The whole point
+      # of the three-job split above is that the job holding the signing permission runs no code anyone
+      # supplied for this run; an unpinned action would hand that back through the one door left open.
+      #
+      # The pin is the commit; the `# vX.Y.Z` beside it is a human label and nothing checks it. Updating one
+      # means reading the diff between the pinned commit and the new one, not trusting the new tag - and the
+      # update is a commit on this repository, which is where a change to what this authority runs belongs.
+      - name: Attest the receipt
+        uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
+        with:
+          subject-path: receipt.json
