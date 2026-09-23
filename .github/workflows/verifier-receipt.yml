@@ -23,7 +23,12 @@ name: Verifier receipt
 #   emit    - checks out the authority by SHA and runs the emitter. It never checks out the candidate and never
 #             downloads any artifact into its workspace: it locates the measure job's artifact through the API by
 #             run id and name, checks the digest GitHub computed, and reads the capture out of the archive GitHub
-#             serves. The claim is fetched from the candidate commit through the contents API.
+#             serves. The claim is fetched from the candidate commit through the contents API. It holds NO
+#             signing permission: a review found the rehearsal posture running head-supplied code in a job that
+#             held `attestations: write`, so minting moved out of it.
+#   attest  - the only job holding `id-token: write` and `attestations: write`, and it runs only on a
+#             workflow_dispatch of the default branch. It re-reads admissibility out of the receipt it is about
+#             to sign. What that does and does not bind is written out in full at the job itself.
 on:
   workflow_dispatch:
     inputs:
@@ -45,12 +50,18 @@ on:
   # be exercised by dispatch until it merges. A pull_request run rehearses the whole chain for real - real job,
   # real artifact, real API - against the candidate fixed in the authority's own rehearsal file.
   #
-  # It can never mint anything, and here is exactly what enforces that, because an earlier version of this
-  # comment claimed an enforcer this repository does not have. The emitter marks such a receipt
-  # admissible_as_pin=false, and the emit job below refuses to attest a receipt carrying that mark - so a
-  # rehearsal produces an unsigned artifact and nothing else. There is NO second, independent enforcer in this
-  # repository: `verify-claim.yml` does not exist on this branch, and nothing here reads a pin. Any consumer of
-  # these receipts must read `provenance.admissible_as_pin` itself.
+  # WHAT STOPS A REHEARSAL FROM MINTING, and where that stops binding - because two versions of this comment
+  # have now claimed more than the files deliver. In this workflow AS WRITTEN: the emitter marks such a receipt
+  # admissible_as_pin=false; the gate refuses to publish an admissible output that disagrees with the receipt's
+  # own body; the emit job holds no signing permission at all; and the `attest` job, which holds the only one,
+  # runs only on a workflow_dispatch of the default branch and re-reads the field out of the subject.
+  #
+  # AND THE PART THAT IS NOT ENFORCED BY ANY OF THAT: on a pull_request event GitHub runs the workflow
+  # DEFINITION from the pull request head, so for such a run every line above is the candidate author's to
+  # rewrite. Nothing in this repository prevents that; what does is the repository's Actions settings and a
+  # consumer that requires provenance.admissible_as_pin, conclusion.verdict === 'success' and an attestation
+  # whose workflow REF is the protected branch. `verify-claim.yml` does not exist on this branch and nothing
+  # here reads a pin, so any consumer of these receipts must do all three itself.
   pull_request:
     paths:
       - .github/workflows/verifier-receipt.yml
@@ -276,8 +287,17 @@ jobs:
       # measured tests SHARE this output stream. A candidate whose test bodies print their own well-formed TAP
       # into stdout are hashed exactly as faithfully as the reporter's own lines. This step establishes that the
       # artifact holds the bytes the runner produced; it does not establish that those bytes are truthful, and
-      # nothing in this workflow can, because the measurement and the measured code write to one fd. See
-      # capture-stream.mjs for the full statement, including the background-process race that remains open.
+      # nothing in this workflow can, because the measurement and the measured code write to one fd.
+      #
+      # AND WHAT IS STILL OPEN, which a review ruled blocking rather than residual: everything in this step runs
+      # as ONE UID, so a candidate that detaches a process outliving its own suite rewrites suite.out and
+      # capture-meta.json together in the gap between this step and the upload below. What the capture program
+      # now does about it is bind the suite's exit status to the bytes - a trailer inside the hashed stream, and
+      # the same number published as this job's `exit` output for the emit job to cross-check - so that forgery
+      # is refused by name at `capture.suite_exit`. A forger that also appends to $GITHUB_OUTPUT beats that.
+      # Closing it takes a different uid for the measured suite (a `container:` with a USER it cannot escape, or
+      # `sudo -u nobody` with the capture directory owned by the runner user), which is an infrastructure change
+      # this branch does not make. See capture-stream.mjs for the full statement.
       - name: Run the protected runner against the candidate, hashing its output as it passes through
         id: suite
         env:
@@ -321,12 +341,20 @@ jobs:
     outputs:
       head: ${{ steps.candidate.outputs.head }}
       tree: ${{ steps.candidate.outputs.tree }}
+      # THE ONE FACT ABOUT THIS MEASUREMENT THAT DOES NOT TRAVEL INSIDE THE ARTIFACT, and the emit job below
+      # now reads it. A review found this output declared here with no consumer anywhere in the repository,
+      # which meant the suite's exit status reached the emitter only through capture-meta.json - a file the
+      # forgery that rewrites the capture rewrites beside it. The capture program takes it from waitpid, writes
+      # it into the hashed stream as the capture's trailer, and publishes it here; the emitter refuses any
+      # disagreement between the three by name.
       exit: ${{ steps.suite.outputs.exit }}
+      capture_sha256: ${{ steps.suite.outputs.capture_sha256 }}
+      body_sha256: ${{ steps.suite.outputs.body_sha256 }}
       artifact_id: ${{ steps.artifact.outputs.id }}
       artifact_digest: ${{ steps.artifact.outputs.digest }}
 
   emit:
-    name: Emit and attest the receipt from this run's own capture
+    name: Emit the receipt from this run's own capture, and judge it
     needs: [trust, measure]
     runs-on: ubuntu-latest
     # This job runs no candidate code - it fetches this run's own evidence through the API and judges it - so
@@ -334,11 +362,18 @@ jobs:
     # a candidate's suite. 15 minutes is well above anything observed and still refuses a wedged download
     # rather than holding a runner for six hours.
     timeout-minutes: 15
+    # NO SIGNING PERMISSION IN THE JOB THAT RUNS PULL-REQUEST-SUPPLIED CODE. A review put it exactly: until this
+    # authority exists on the default branch, the trust job's fallback runs the emitter, the capture program,
+    # the runner enum, the rehearsal pin AND the emitter's own test suite from the pull request head - and this
+    # job used to hold `id-token: write` and `attestations: write` while doing it. Minting is now a separate
+    # job below, which is the only job of this workflow that can sign anything and which cannot run on a
+    # pull_request event at all.
     permissions:
       contents: read
       actions: read
-      id-token: write
-      attestations: write
+    outputs:
+      admissible: ${{ steps.gate.outputs.admissible }}
+      receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
     steps:
       - name: Check out the authority at the trusted commit
         uses: actions/checkout@v4
@@ -366,6 +401,10 @@ jobs:
           MEASURE_ARTIFACT_NAME: measure-capture
           MEASURE_ARTIFACT_ID: ${{ needs.measure.outputs.artifact_id }}
           MEASURE_ARTIFACT_DIGEST: ${{ needs.measure.outputs.artifact_digest }}
+          # The measure job's own output, taken from waitpid in its trusted capture process. The emitter
+          # requires the capture's trailer and its meta to agree with this number, so a capture rewritten after
+          # the trusted job wrote it is refused at `capture.suite_exit` instead of being read as a measurement.
+          MEASURE_SUITE_EXIT: ${{ needs.measure.outputs.exit }}
           CANDIDATE_SHA: ${{ needs.measure.outputs.head }}
           CANDIDATE_TREE: ${{ needs.measure.outputs.tree }}
           RUNNER_KEY: ${{ needs.trust.outputs.runner_key }}
@@ -448,23 +487,73 @@ jobs:
               console.error('::error::named_tests_summary says named=' + JSON.stringify(summary.named) + ' pass=' + JSON.stringify(summary.pass) + ', but the receipt lists ' + rows.length + ' named test(s), ' + passingRows + ' passing');
               process.exit(1);
             }
+            // ONE MEASUREMENT MAY NOT BE THE EVIDENCE FOR TWO TERMS. Ten entries with distinct, well-formed ids
+            // all naming the SAME passing test reported ten terms established off one point - the pooling the
+            // commit before this one claimed to have closed, which it had closed only for reused IDS. The
+            // emitter refuses such a manifest by name; this is the second reader of the same rule, and it reads
+            // the rows rather than the count, so an emitter that ever stopped refusing is caught here.
+            const claimants = new Map();
+            for (const row of rows) claimants.set(row.name, new Set([...(claimants.get(row.name) ?? []), row.entry]));
+            const shared = [...claimants.entries()].filter(([, at]) => at.size > 1).map(([name, at]) => name + ' (entries ' + [...at].join(', ') + ')');
+            if (shared.length > 0) { console.error('::error::these named tests are the sole evidence for more than one term, so this receipt does not say which term each measurement establishes: ' + shared.join('; ')); process.exit(1); }
+            if (summary.distinct_names !== claimants.size) { console.error('::error::named_tests_summary says distinct_names=' + JSON.stringify(summary.distinct_names) + ', but the receipt lists ' + claimants.size + ' distinct measured name(s)'); process.exit(1); }
+            // A SUCCESS BESIDE A RED SUITE MUST SAY SO, AND EVERY RED TEST MUST BE OUTSIDE WHAT THE CLAIM RESTS
+            // ON. A review produced verdict success with reasons [] for a run the runner exited 1 on, with two
+            // failing tests in the same tree and nothing in the receipt a reader could act on. The verdict is
+            // still about the named tests - that is what a term is established by - but this step refuses to
+            // publish an admissible output for a red run unless the receipt enumerates its failing tests, says
+            // in its conclusion that the suite was red, and none of those failing tests is one the claim names.
+            const suite = receipt.suite ?? {};
+            const conclusion = receipt.conclusion ?? {};
+            const red = suite.state === 'red' || String(suite.exit) !== '0' || (suite.not_ok ?? 0) + (suite.cancelled ?? 0) > 0;
+            if (red) {
+              if (suite.state !== 'red' || conclusion.suite_state !== 'red') { console.error('::error::the measured suite is red, but this receipt does not say so: suite.state=' + JSON.stringify(suite.state) + ' conclusion.suite_state=' + JSON.stringify(conclusion.suite_state)); process.exit(1); }
+              if (!Array.isArray(conclusion.qualifications) || conclusion.qualifications.length === 0) { console.error('::error::this receipt records an UNQUALIFIED success beside a suite the runner reported red; a success beside a red run must state what it does and does not cover'); process.exit(1); }
+              const failing = suite.failing_tests;
+              if (!Array.isArray(failing)) { console.error('::error::the measured suite is red and this receipt does not enumerate which tests failed, so nothing shows they are outside what the claim rests on'); process.exit(1); }
+              if ((suite.not_ok ?? 0) > 0 && failing.length === 0) { console.error('::error::this receipt reports ' + suite.not_ok + ' failing point(s) and names none of them'); process.exit(1); }
+              const measured = new Set(rows.map(row => row.name));
+              const inside = failing.filter(name => measured.has(name));
+              if (inside.length > 0) { console.error('::error::these failing tests of the measured run ARE named by this claim, so this run establishes nothing about the terms that name them: ' + inside.join(', ')); process.exit(1); }
+              console.log('qualified success: the suite is red and all ' + failing.length + ' failing test(s) are outside the ' + measured.size + ' name(s) this claim rests on');
+            }
+            // AND THE ADMISSIBLE OUTPUT IS THE RECEIPT'S OWN FIELD, NOTHING ELSE. A review bypassed this by
+            // writing admissible=true beside a receipt whose body said false. That is caught here and again in
+            // the guard step below, which compares this output to the same field; the attest job re-reads it a
+            // third time out of the subject it is about to sign.
             const admissible = receipt.provenance?.admissible_as_pin === true;
+            if (admissible && verdict !== 'success') { console.error('::error::this receipt calls itself admissible as a pin while its verdict is ' + verdict); process.exit(1); }
             require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'admissible=' + admissible + '\n');
           "
 
-      # ATTESTATION IS NOT FOR REHEARSALS. A GitHub-signed provenance statement over a receipt reads as stronger
-      # than any field buried inside it, and a consumer that checks for the attestation rather than for
-      # `admissible_as_pin` would be misled by one. On a pull_request run the authority itself can come from the
-      # pull request head - the trust job says so, loudly, when it falls back - which means the emitter, the
-      # runner enum and the rehearsal pin are all the PR author's. Signing that is minting a credential for
-      # content the candidate's author controlled, so it is not signed at all.
-      #
-      # The job's permissions cannot be narrowed per step, so the refusal is the step condition.
-      - name: Attest the receipt
-        if: steps.gate.outputs.admissible == 'true'
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: receipt.json
+      # THE BYPASS, CAUGHT BY A STEP THAT READS BOTH SIDES. A review wrote `admissible=true` into the gate's
+      # own output beside a receipt whose body said `admissible_as_pin: false`, and the attest step's `if:`
+      # selected on it - the mark the emitter computes was not merely unenforced, it was bypassable. This step
+      # compares the output the attest job's condition reads against the field in the receipt itself, and turns
+      # a disagreement into a red job BEFORE anything can be signed. It is not the whole answer (see the note
+      # on the attest job below); it is the answer to a step output that does not match its own evidence.
+      - name: Refuse a gate output that disagrees with the receipt it was computed from
+        id: guard
+        env:
+          GATE_SAYS: ${{ steps.gate.outputs.admissible }}
+        run: |
+          set -euo pipefail
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const says = String(receipt.provenance?.admissible_as_pin === true);
+            const gate = String(process.env.GATE_SAYS || '');
+            if (gate !== says) {
+              console.error('::error::the gate published admissible=' + JSON.stringify(gate) + ' for a receipt whose own body says admissible_as_pin=' + says + '; nothing this run produced may be signed');
+              process.exit(1);
+            }
+            console.log('the gate output and the receipt agree: admissible_as_pin=' + says);
+          "
+
+      - name: Record the receipt's digest for the job that may sign it
+        id: receipt
+        run: |
+          set -euo pipefail
+          echo "sha256=$(sha256sum receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Say, in the log, why this receipt was not attested
         if: steps.gate.outputs.admissible != 'true'
@@ -505,3 +594,84 @@ jobs:
             echo "| receipt sha256 | sha256:${digest} |"
             echo "| admissible as pin | ${{ steps.gate.outputs.admissible }} (attested only when true) |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # THE ONLY JOB OF THIS AUTHORITY THAT CAN SIGN ANYTHING.
+  #
+  # It used to be a step of `emit`, selected by `if: steps.gate.outputs.admissible == 'true'`, in a job holding
+  # `id-token: write` and `attestations: write` for every run - including the pull-request rehearsals in which
+  # the emitter, the capture program, the runner enum, the rehearsal pin and the emitter's own test suite all
+  # come from the pull request head, because this authority is not yet on the default branch. A review wrote
+  # `admissible=true` into that step output beside a receipt whose body said `admissible_as_pin: false` and the
+  # attest step selected. Three things change here, and each is stated with what it is worth:
+  #
+  #   1. SIGNING IS ITS OWN JOB, and it is the only place in this workflow holding an attestation permission.
+  #      `emit` - the job that runs pull-request-supplied code - now holds none at all, so a rehearsal cannot
+  #      sign even by accident.
+  #   2. IT CANNOT RUN ON A REHEARSAL. Its condition is `workflow_dispatch` on `refs/heads/main`: facts about
+  #      the run, reported by GitHub, which no step of any job computes and no output can carry.
+  #   3. IT RE-READS THE SUBJECT IT IS ABOUT TO SIGN. The receipt is fetched as this run's own artifact, its
+  #      digest is checked against the one the emit job recorded, and `provenance.admissible_as_pin`,
+  #      `conclusion.verdict` and the run identity are read out of the file itself - not out of a job output.
+  #      The bypass therefore has to beat the receipt rather than the variable beside it.
+  #
+  # WHERE THIS STOPS, because the comment this replaces overstated exactly that. On a `pull_request` event
+  # GitHub runs the workflow DEFINITION from the pull request head, so for such a run this job's condition, its
+  # checks and its permissions block are all the candidate author's, and nothing written in this file binds
+  # them. What binds them is outside these files: whether this repository's Actions settings grant a pull
+  # request run `attestations: write` at all, whether such runs require approval - and, decisively for anyone
+  # consuming these receipts, that a consumer requires `provenance.admissible_as_pin === true`,
+  # `conclusion.verdict === 'success'` AND an attestation whose workflow ref is `refs/heads/main`, rather than
+  # treating the existence of an attestation as the trust anchor. That consumer change is specified in
+  # /home/bawes/work/consumer-required-changes.md and belongs to the branch that holds the consumer.
+  attest:
+    name: Attest a receipt this authority may vouch for
+    needs: [trust, measure, emit]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.emit.outputs.admissible == 'true'
+    runs-on: ubuntu-latest
+    # One download, one digest, one signature. Bounded like every other job of this workflow.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Fetch the receipt this run's emit job produced
+        uses: actions/download-artifact@v4
+        with:
+          name: verifier-receipt
+
+      - name: Refuse a subject that is not the receipt the emit job recorded
+        env:
+          EXPECTED: ${{ needs.emit.outputs.receipt_sha256 }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum receipt.json | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED" ]; then
+            echo "::error::the emit job recorded sha256:$EXPECTED for its receipt, but the artifact this job fetched hashes to sha256:$actual"
+            exit 1
+          fi
+          echo "subject receipt.json sha256:$actual, as the emit job recorded it"
+
+      - name: Read admissibility out of the subject itself, not out of a job output
+        env:
+          RUN_ID: ${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          node -e "
+            const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
+            const refuse = message => { console.error('::error::' + message); process.exit(1); };
+            if (receipt.provenance?.admissible_as_pin !== true) refuse('this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ', so this authority will not sign it: ' + JSON.stringify(receipt.provenance?.inadmissibility_reasons ?? []));
+            if (receipt.conclusion?.verdict !== 'success') refuse('this receipt records verdict ' + JSON.stringify(receipt.conclusion?.verdict) + ', so there is nothing in it to vouch for');
+            if (String(receipt.run?.id) !== String(process.env.RUN_ID)) refuse('this receipt was produced by run ' + JSON.stringify(receipt.run?.id) + ', not by run ' + process.env.RUN_ID);
+            if (receipt.workflow?.event !== 'workflow_dispatch' || receipt.workflow?.head_branch !== 'main') refuse('this receipt records event ' + JSON.stringify(receipt.workflow?.event) + ' on ' + JSON.stringify(receipt.workflow?.head_branch) + ', which is not a dispatch of the protected default branch');
+            if (process.env.EVENT !== 'workflow_dispatch' || process.env.REF !== 'refs/heads/main') refuse('this job is running on ' + process.env.EVENT + ' at ' + process.env.REF + ', which may not sign a receipt');
+            console.log('the receipt names itself admissible, verdict success, run ' + receipt.run?.id + ' dispatched on main');
+          "
+
+      - name: Attest the receipt
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: receipt.json

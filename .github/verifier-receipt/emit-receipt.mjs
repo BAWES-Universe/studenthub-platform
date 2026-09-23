@@ -16,6 +16,13 @@
 //     test bodies run in that step, as that user, so one of them renamed a forged stream over the capture and
 //     the trusted job hashed the forgery. Every check in this list authenticates WHICH JOB uploaded the
 //     artifact; this is the one that binds WHO WROTE THE BYTES INSIDE IT, as far as that can be bound at all;
+//   * the capture must end in the trusted process's own TRAILER - one line, the last line, carrying the exit
+//     status waitpid returned, the byte count and digest of the runner's own output, and this run's identity -
+//     and that trailer must agree with the exit status the measure job published as a JOB OUTPUT, which
+//     travels through GitHub rather than through the artifact. A review found that the one fact this emitter
+//     held from outside the stream reached it inside the file a forger rewrites, and that the out-of-band
+//     channel already existed with no consumer. Both ends are now read, and section 5b says exactly how far
+//     that goes and where it stops;
 //   * the artifact must carry the measure job's own capture-meta, and that meta must agree with the candidate
 //     commit, the candidate tree the API reports for it, the trusted authority commit, and the runner key and
 //     command taken from the protected enum - not from the candidate;
@@ -25,16 +32,20 @@
 // Nothing here is a path, a field, a command or an artifact the candidate chose. The candidate contributes the
 // code under test and the claim it commits, and nothing else reaches this process.
 //
-// AND HERE IS THE LIMIT OF THAT SENTENCE, because a review showed the earlier version of it to be false. The
-// candidate also writes bytes into the capture - it cannot not, since the capture IS its suite's output stream.
-// Streaming the hash in the trusted job closes the route by which a candidate replaced the measurement AFTER it
-// was taken. It does not, and no arrangement of jobs can, tell the reporter's lines from lines a test printed on
-// the same fd. A candidate whose test bodies print plausible, internally consistent TAP - a full run's worth of
-// points, a plan that matches, a summary that reconciles, and now an exit code that agrees with its own counts -
-// produces a capture this authority accepts, because that IS what the runner producing it would look like. What
-// this workflow proves is the ORIGIN of the bytes and the identity of the code they were taken over; what it
-// cannot prove is that a test named in the claim did the work the claim says it did. That boundary is recorded
-// in every receipt as `provenance.limits` so no consumer has to infer it from what this file does not say.
+// AND HERE IS THE LIMIT OF THAT SENTENCE, because two reviews have now shown versions of it to be false. The
+// candidate also writes bytes into the capture - it cannot not, since the capture IS its suite's output stream -
+// and a candidate that detaches a process outliving its own suite rewrites the capture and its meta together
+// after the trusted job has written them. That second route is OPEN, it is blocking, and no check in this file
+// closes it: only a uid boundary for the measured suite does. What this file adds against it is that the exit
+// status can no longer be asserted apart from the bytes (section 5b), so the forgery a review ran three times
+// out of three is now refused by name - and a forgery that also beats the job-output channel is not.
+//
+// Beneath both of those sits the limit no arrangement of jobs reaches: A TERM IS ESTABLISHED BY A NAME, AND THE
+// CANDIDATE WRITES THE TESTS. Three empty function bodies with the claim's names produce a genuine verdict of
+// success. What this workflow proves is the ORIGIN of the bytes and the identity of the code they were taken
+// over; what it cannot prove is that a test named in the claim did the work the claim says it did. Every one of
+// these is recorded in the receipt itself as `provenance.limits`, so no consumer has to infer any of them from
+// what this file does not say.
 //
 // WHICH CODE WAS MEASURED, AND WHAT THAT ESTABLISHES. Two more questions decide whether a verdict means
 // anything, and a review found both answered by a list GitHub truncates:
@@ -182,6 +193,18 @@ const candidateSha = need('CANDIDATE_SHA');
 const candidateTreeInput = need('CANDIDATE_TREE');
 const runnerKey = need('RUNNER_KEY');
 const runnerSpecPath = need('RUNNER_SPEC_PATH');
+// THE ONE FACT ABOUT THE MEASUREMENT THAT DOES NOT TRAVEL INSIDE THE ARTIFACT. The measure job takes the
+// runner's exit status from waitpid in its trusted capture process and publishes it as that job's own output;
+// the workflow passes it here. A review found this channel already built and unused - the job declared the
+// output and no step in the repository read it - so the single fact the emitter held from OUTSIDE the stream
+// reached it through capture-meta.json, i.e. through a file a candidate's detached process rewrites along with
+// the capture. Required, not optional: an emitter that silently skips this check when the workflow forgets to
+// pass it is an emitter with no out-of-band channel at all.
+const jobOutputExit = String(need('MEASURE_SUITE_EXIT'));
+if (!/^\d+$/.test(jobOutputExit)) {
+  refuse('measure_job.exit', `the measure job published ${JSON.stringify(jobOutputExit)} as the suite's exit `
+    + 'status, which is not a number a process exited with');
+}
 const outPath = env.OUT_PATH ?? path.join(process.cwd(), 'receipt.json');
 if (!/^[0-9a-f]{40}$/.test(candidateSha)) {
   refuse('candidate.sha', `not a full commit sha: ${candidateSha}`);
@@ -320,6 +343,93 @@ if (Number(meta.capture_bytes) !== captureBytes.length) {
     + `artifact holds ${captureBytes.length}`);
 }
 
+// 5b. THE TRAILER: THE ONE LINE OF THE CAPTURE THE MEASURED CODE DID NOT WRITE.
+//
+// A review put the previous arrangement precisely: the emitter's two strongest well-formedness invariants - a
+// non-zero exit must come with a failing point, a zero exit must come with none - were described in this file
+// as "the only two checks that read a fact from OUTSIDE the stream". They did not. They read `meta.suite_exit`,
+// i.e. a field of capture-meta.json, i.e. a file inside the artifact; and the forgery that rewrites the capture
+// rewrites the meta beside it, so both operands of both invariants were the forger's and both were satisfied.
+//
+// So the exit status is no longer a fact stated BESIDE the bytes. The trusted capture process appends one
+// trailer line to the stream after the runner is gone and hashes it with the rest, and this section requires:
+//
+//   * exactly one such line in the whole capture, and it is the LAST line. A test body that prints its own copy
+//     therefore makes the capture refused rather than making its own line the one that is read;
+//   * the capture is EXACTLY the runner's output followed by that trailer - reconstructed byte for byte from
+//     the trailer's own body length, not from anything the meta says;
+//   * the runner's output hashes to the digest the trailer carries;
+//   * the trailer's identity fields are this run, this job, this candidate, this runner;
+//   * the exit status agrees across all three channels it now travels in: the trailer (inside the hashed
+//     bytes), the meta (beside them) and the measure job's own output (through GitHub, outside the artifact).
+//
+// What that is worth, stated exactly: a forgery that rewrites suite.out and capture-meta.json together is now
+// refused at `capture.suite_exit`, because it cannot reach the job output. A forgery that ALSO appends to
+// $GITHUB_OUTPUT - which a same-uid process can locate through /proc - is not refused by anything here. That
+// residual is open, it is recorded in `provenance.limits`, and only a uid boundary for the measured suite
+// closes it.
+const TRAILER_PREFIX = '# verifier-capture v1 ';
+const TRAILER_FIELDS = ['exit', 'signal', 'body_bytes', 'body_sha256', 'run', 'attempt', 'job', 'candidate',
+  'tree', 'runner'];
+const trailer = (() => {
+  const whole = captureBytes.toString('utf8');
+  if (!whole.endsWith('\n')) {
+    refuse('capture.trailer', 'the capture does not end with a newline, so it does not end with the trailer the '
+      + 'trusted capture process appends after the runner is gone');
+  }
+  const lines = whole.slice(0, -1).split('\n');
+  const at = lines.flatMap((line, index) => (line.startsWith(TRAILER_PREFIX) ? [index] : []));
+  if (at.length === 0) {
+    refuse('capture.trailer', 'the capture carries no `' + TRAILER_PREFIX.trim() + '` line: this is not a capture '
+      + 'the trusted process of this authority wrote, or its bytes were replaced by ones that are not');
+  }
+  if (at.length > 1) {
+    refuse('capture.trailer', `the capture carries ${at.length} \`${TRAILER_PREFIX.trim()}\` lines, at lines `
+      + `${at.map(index => index + 1).join(', ')}; the trusted process writes exactly one, so a second is either `
+      + 'a line the measured code printed or two captures concatenated');
+  }
+  if (at[0] !== lines.length - 1) {
+    refuse('capture.trailer', `the capture's trailer is at line ${at[0] + 1} of ${lines.length}, not at the end; `
+      + 'the trusted process appends it after the runner\'s last byte, so anything after it was written later');
+  }
+  const line = lines[at[0]];
+  const pairs = line.slice(TRAILER_PREFIX.length).split(' ').map(part => {
+    const split = part.indexOf('=');
+    return split < 0 ? [part, null] : [part.slice(0, split), decodeURIComponent(part.slice(split + 1))];
+  });
+  if (JSON.stringify(pairs.map(([key]) => key)) !== JSON.stringify(TRAILER_FIELDS)) {
+    refuse('capture.trailer', `the capture's trailer carries ${JSON.stringify(pairs.map(([key]) => key))}, not `
+      + `the ${JSON.stringify(TRAILER_FIELDS)} the trusted process writes`);
+  }
+  const fields = Object.fromEntries(pairs);
+  if (!/^\d+$/.test(fields.body_bytes) || !/^[0-9a-f]{64}$/.test(fields.body_sha256)) {
+    refuse('capture.trailer', `the capture's trailer states body_bytes=${JSON.stringify(fields.body_bytes)} and `
+      + `body_sha256=${JSON.stringify(fields.body_sha256)}, which are not a byte count and a digest`);
+  }
+  // The split is taken from the TRAILER's own byte count - a number inside the hashed bytes - and then the
+  // remainder is required to be exactly the region the trusted process appends. Nothing here reads the meta:
+  // the capture is made to account for itself, byte for byte, before any field beside it is believed.
+  const bodyLength = Number(fields.body_bytes);
+  if (bodyLength > captureBytes.length) {
+    refuse('capture.trailer', `the capture's trailer states ${bodyLength} bytes of runner output, but the whole `
+      + `capture is ${captureBytes.length} bytes`);
+  }
+  const body = captureBytes.subarray(0, bodyLength);
+  const separator = body.length > 0 && body[body.length - 1] === 0x0a ? '' : '\n';
+  const expected = Buffer.from(`${separator}${line}\n`, 'utf8');
+  if (!captureBytes.subarray(bodyLength).equals(expected)) {
+    refuse('capture.trailer', `the capture is not ${bodyLength} bytes of runner output followed by this job's `
+      + 'trailer: what follows the runner\'s output is not the trailer line this capture carries');
+  }
+  const bodyDigest = sha256(body);
+  if (bodyDigest !== fields.body_sha256) {
+    refuse('capture.trailer.body_sha256', `the capture's trailer records ${fields.body_sha256} for the runner's `
+      + `own output, but those ${bodyLength} bytes hash to ${bodyDigest}`);
+  }
+  return { line, fields, body, bodyDigest };
+})();
+const captureBody = trailer.body;
+
 // 6. The meta must describe this run, this candidate, this authority and this runner. Each of these is a field
 //    the emitter also knows from somewhere else, so a capture lifted from another run fails one of them by name.
 const metaChecks = [
@@ -336,8 +446,69 @@ for (const [field, actual, expected, what] of metaChecks) {
     refuse(field, `the capture reports ${JSON.stringify(actual)} as ${what}, but this run requires ${JSON.stringify(expected)}`);
   }
 }
+
+// 6b. THE TRAILER SAYS WHICH MEASUREMENT THIS IS, AND THE EXIT STATUS AGREES ACROSS EVERY CHANNEL IT TRAVELS IN.
+//
+// The fields above bind the META to this run. These bind the bytes: a capture lifted whole from another run -
+// meta and all - now also has to carry a trailer naming that other run inside the hashed stream, and the
+// digest that covers the trailer is the digest GitHub computed for the artifact.
+const trailerChecks = [
+  ['capture.trailer.run', trailer.fields.run, runId, 'the run the capture was taken in'],
+  ['capture.trailer.attempt', trailer.fields.attempt, runAttempt, 'the attempt the capture was taken in'],
+  ['capture.trailer.job', trailer.fields.job, measureJobName, 'the job that took the capture'],
+  ['capture.trailer.candidate', trailer.fields.candidate, candidateSha, 'the candidate the capture measured'],
+  ['capture.trailer.runner', trailer.fields.runner, runnerKey, 'the runner key the measurement used'],
+];
+for (const [field, actual, expected, what] of trailerChecks) {
+  if (actual !== expected) {
+    refuse(field, `the capture's own trailer names ${JSON.stringify(actual)} as ${what}, but this run requires `
+      + `${JSON.stringify(expected)}`);
+  }
+}
+// The meta's account of the runner's output must be the trailer's account of it. Both are in the artifact, so
+// this is not independence - it is the check that stops the two halves of the artifact from disagreeing and
+// the emitter from picking whichever one it read first.
+const metaBodyChecks = [
+  ['capture.body_bytes', String(meta.capture_body_bytes ?? ''), trailer.fields.body_bytes, 'the bytes the runner wrote'],
+  ['capture.body_sha256', String(meta.capture_body_sha256 ?? ''), trailer.fields.body_sha256, 'the digest of the bytes the runner wrote'],
+  ['capture.trailer', String(meta.capture_trailer ?? ''), trailer.line, 'the trailer this job appended'],
+];
+for (const [field, actual, expected, what] of metaBodyChecks) {
+  if (actual !== expected) {
+    refuse(field, `the capture's meta records ${JSON.stringify(actual)} as ${what}, but the capture's own `
+      + `trailer records ${JSON.stringify(expected)}`);
+  }
+}
+if (meta.suite_exit_source !== 'waitpid') {
+  refuse('capture.suite_exit_source', `the capture records its suite exit status as coming from `
+    + `${JSON.stringify(meta.suite_exit_source ?? null)}, not from \`waitpid\`: this authority accepts only an `
+    + 'exit status the trusted capture process took from the runner itself, never one read back from a file or '
+    + 'a step output the measured code can append to');
+}
+
+// THE EXIT STATUS, TRIANGULATED. Three channels, and every one of them must say the same number:
+//
+//   * the trailer, INSIDE the hashed bytes, so it cannot be stated apart from the stream that justifies it;
+//   * the meta, beside them, which is what this file used to read and nothing else;
+//   * the measure job's own output, which travels through GitHub rather than through the artifact.
+//
+// The reviewer's forgery rewrites the first two together and is refused here by name. A forgery that also
+// beats the third is not, and that is stated in `provenance.limits` rather than implied to be closed.
+const trailerExit = trailer.fields.exit;
+if (!/^\d+$/.test(trailerExit)) {
+  refuse('capture.suite_exit', `the capture's trailer records no numeric suite exit code: ${JSON.stringify(trailerExit)}`);
+}
+if (trailerExit !== jobOutputExit) {
+  refuse('capture.suite_exit', `the measure job published exit ${jobOutputExit} as its own output, taken from `
+    + `waitpid in the trusted capture process, but the capture's trailer says ${trailerExit}; the bytes in this `
+    + 'artifact are not the bytes that run produced');
+}
 const suiteExit = String(meta.suite_exit ?? '');
 if (!/^\d+$/.test(suiteExit)) refuse('capture.suite_exit', `the capture records no numeric suite exit code: ${meta.suite_exit}`);
+if (suiteExit !== trailerExit) {
+  refuse('capture.suite_exit', `the capture's meta records suite exit ${suiteExit}, but the trailer inside the `
+    + `hashed bytes records ${trailerExit}`);
+}
 
 // 7. The candidate commit, read back from the API. The tree is GitHub's answer for that sha, so the receipt's
 //    tree is not a number the measure job could have mistyped.
@@ -355,6 +526,13 @@ if (!meta.candidate_tree) {
 if (meta.candidate_tree !== candidateTree) {
   refuse('capture.candidate_tree', `the capture records tree ${meta.candidate_tree}, but the API reports `
     + `${candidateTree} for ${candidateSha}`);
+}
+// And the same fact inside the hashed bytes. The tree is checked here rather than with the other trailer
+// fields in 6b because this is where the API's answer for the candidate is known: the meta's tree and the
+// trailer's tree are each compared to GitHub, not to one another.
+if (trailer.fields.tree !== candidateTree) {
+  refuse('capture.trailer.tree', `the capture's own trailer names tree ${trailer.fields.tree}, but the API `
+    + `reports ${candidateTree} for ${candidateSha}`);
 }
 
 // 8. A candidate that alters the receipt authority cannot be approved by a receipt this authority produces.
@@ -607,15 +785,45 @@ if (collisions.length > 0) {
 // manifest by name, and this keying is what makes pooling structurally impossible if that check is ever
 // relaxed. The index travels into the receipt as `entry`, on the term row and on every test attributed to it,
 // so a reader can see for themselves which entry each measurement was counted under.
+const entryTests = claimEntries.map(entry => [
+  ...(entry.control?.test_names ?? []).map(name => ({ kind: 'control', name })),
+  ...(entry.killing_mutants ?? []).filter(mutant => mutant.test_name)
+    .map(mutant => ({ kind: 'mutant', name: mutant.test_name })),
+]);
+
+// A NAMED TEST IS THE EVIDENCE OF ONE TERM, NOT OF AS MANY TERMS AS THE CLAIM CARES TO LIST.
+//
+// This is the finding the commit titled "coverage cannot pool" did not close, and the review that found it said
+// so exactly: the id refusal and the per-entry keying stop two entries SHARING a bucket, and nothing stopped
+// ten entries with distinct, well-formed ids from all naming the SAME single test. Ten terms then reported
+// `establishes: true` off one passing point, `terms_summary` said establishing 10 without_evidence [], and the
+// gate's reconciliation agreed with itself because there really were ten named_tests rows - one per entry, all
+// for one name. One measurement, ten terms established: the pooling the previous commit's title claimed.
+//
+// So a measured NAME may belong to exactly one entry. This is a rule about the claim, checked before anything
+// is measured, and it is refused rather than reported: a manifest in which two terms rest on one test does not
+// say which of them that test is evidence for, and a receipt that picked one would be inventing the answer.
+// A term may of course name several tests, and may name one test as both its control and the mutant that kills
+// it - what it may not do is be the second claimant of a name another term already rests on.
+const nameClaimants = new Map();
+entryTests.forEach((tests, index) => {
+  for (const test of tests) {
+    nameClaimants.set(test.name, [...new Set([...(nameClaimants.get(test.name) ?? []), index])]);
+  }
+});
+const sharedNames = [...nameClaimants.entries()].filter(([, at]) => at.length > 1)
+  .map(([name, at]) => `"${name}" (entries ${at.join(', ')}: ${at.map(index => claimEntries[index].id).join(', ')})`);
+if (sharedNames.length > 0) {
+  refuse('claim.entries.control.test_names', `${sharedNames.length} test name(s) in ${CLAIM_PATH} at `
+    + `${candidateSha.slice(0, 12)} are named by more than one entry, so one measurement would be the evidence `
+    + `for more than one term and this run cannot say which term it establishes: ${listing(sharedNames)}`);
+}
+
 const named = new Map();
 const claimTerms = [];
 claimEntries.forEach((entry, index) => {
   const term = entry.id;
-  const tests = [
-    ...(entry.control?.test_names ?? []).map(name => ({ kind: 'control', name })),
-    ...(entry.killing_mutants ?? []).filter(mutant => mutant.test_name)
-      .map(mutant => ({ kind: 'mutant', name: mutant.test_name })),
-  ];
+  const tests = entryTests[index];
   for (const test of tests) {
     named.set(`${index}\u0000${test.kind}\u0000${test.name}`,
       { entry: index, term, kind: test.kind, name: test.name });
@@ -636,7 +844,9 @@ claimEntries.forEach((entry, index) => {
 // nesting level whose count equals the points reported under it, a `type:` diagnostic on every point, the
 // reporter's `# duration_ms` footer, and a summary block whose counts reconcile with each other and with the
 // points enumerated. Diagnostics (`# ...`) and the contents of a point's YAML block are never read as evidence.
-const tap = captureBytes.toString('utf8');
+// THE RUNNER'S OWN OUTPUT, not the whole capture: the trailer this authority appended is not a line of the
+// measurement and is never read as one. It has already been accounted for, byte for byte, in section 5b.
+const tap = captureBody.toString('utf8');
 const SUMMARY_FIELD = { tests: 'tests', suites: 'suites', pass: 'ok', fail: 'not_ok', cancelled: 'cancelled', skipped: 'skipped', todo: 'todo' };
 const counts = { tests: null, suites: null, ok: null, not_ok: null, cancelled: null, skipped: null, todo: null };
 const observed = new Map();
@@ -842,9 +1052,16 @@ if (problems.length > 0) {
 //      failed or was cancelled, so a failure beside exit 0 means the exit code and the stream describe
 //      different runs.
 //
-// 8 and 9 are the only two checks in this file that read a fact from OUTSIDE the stream - the exit status the
-// trusted capture process took from waitpid - so they are the only well-formedness checks a candidate cannot
-// satisfy from inside its own output. They are refusals and not receipt `reasons` because a capture that
+// 8 and 9 reconcile the stream against the exit status the trusted capture process took from waitpid. A review
+// found the sentence that used to stand here - that these are "the only two checks in this file that read a
+// fact from OUTSIDE the stream, so they are the only well-formedness checks a candidate cannot satisfy from
+// inside its own output" - to be FALSE, and it was: the exit status was read from `meta.suite_exit`, a field of
+// a file inside the artifact, and the forgery that rewrites the capture rewrites the meta beside it, so both
+// operands were the forger's. Section 5b is what makes the statement true of anything: the exit status is now
+// required to agree across the trailer inside the hashed bytes, the meta, and the measure job's own output,
+// which travels through GitHub. The honest scope of that is written there and in `provenance.limits`: a
+// forgery that appends to $GITHUB_OUTPUT as well still satisfies these. They are refusals and not receipt
+// `reasons` because a capture that
 // contradicts itself is not a measurement to report a verdict about. The direction of the risk is stated
 // plainly: if some future runner legitimately exits non-zero with no failing point (a coverage threshold, say),
 // this refuses a genuine run rather than passing a forged one. That is the direction this authority errs in,
@@ -886,6 +1103,12 @@ const duplicatePoints = [...observed.entries()]
 const withStatus = status => perTest.filter(test => test.status === status);
 const summary = {
   named: perTest.length,
+  // THE COUNT THAT MAKES POOLING VISIBLE RATHER THAN ONLY REFUSED. A review established ten terms off one
+  // passing test and observed that nothing in the emitter, the receipt or the gate recorded the distinct-name
+  // count that would have exposed it: `named: 10` over one measured name reads exactly like ten measurements.
+  // The refusal above makes that manifest unreadable to this authority; this number is what a reader - and the
+  // gate, which recomputes it - can check for themselves.
+  distinct_names: new Set(perTest.map(test => test.name)).size,
   pass: withStatus('pass').length,
   fail: withStatus('fail').length,
   absent: withStatus('absent').length,
@@ -923,11 +1146,49 @@ const termReport = claimTerms.map(term => {
 });
 const uncoveredTerms = termReport.filter(term => term.named === 0).map(term => String(term.id));
 
+// THE SUITE'S OWN RESULT, AND WHAT A VERDICT MAY SAY BESIDE IT.
+//
+// A review produced `verdict: success` with `reasons: []` for a run the runner exited 1 on, with two failing
+// tests in the same tree, and put it plainly: a receipt must never carry an UNQUALIFIED success when the runner
+// reported failure. The verdict is computed over the claim's named tests - that is what a term is established
+// by, and widening it to the whole tree would make every receipt hostage to an unrelated flake - so the answer
+// is not to redefine the verdict but to stop it from being unqualified:
+//
+//   * the failing tests of the run are enumerated BY NAME in the receipt, from the capture's own points;
+//   * the receipt states, as a field rather than as an inference, whether the suite was green or red and
+//     whether every red test is outside the set of names the claim makes its case on;
+//   * a success beside a red suite carries that statement in `conclusion.qualifications`, so `reasons: []`
+//     is never the whole of what the receipt says about a red run;
+//   * and success is not reachable at all when a red test IS one the claim names - it never was, because such
+//     a test is recorded `fail` and its term establishes nothing, but it is now also stated in these terms and
+//     re-checked by the workflow's gate, which refuses to let such a receipt be attested.
+const failingPointNames = [...observed.entries()].filter(([, seen]) => seen.status === 'fail').map(([name]) => name);
+const namedSet = new Set(perTest.map(test => test.name));
+const redInsideTheClaim = failingPointNames.filter(name => namedSet.has(name));
+const redOutsideTheClaim = failingPointNames.filter(name => !namedSet.has(name));
+const suiteRed = exitCode !== 0 || unfinished > 0;
+const qualifications = [];
+if (suiteRed) {
+  qualifications.push(`the measured suite is RED: the runner exited ${suiteExit} and its summary reports `
+    + `${counts.not_ok} failing and ${counts.cancelled} cancelled point(s) out of ${counts.tests} test(s). This `
+    + `receipt's verdict is about the ${summary.named} test(s) this claim names and about nothing else in that `
+    + 'tree.');
+  qualifications.push(redInsideTheClaim.length === 0
+    ? `every failing test of that run is OUTSIDE the set of names this claim rests on: `
+      + `${redOutsideTheClaim.length} failing name(s), none of them named by any term `
+      + `(${listing(redOutsideTheClaim)})`
+    : `${redInsideTheClaim.length} failing test(s) of that run ARE named by this claim, so this run establishes `
+      + `nothing about the term(s) that name them: ${listing(redInsideTheClaim)}`);
+}
+
 // Success means: the claim lists terms, every term names at least one test, every named test was observed in
-// this run's capture, and every one passed. The suite's own exit code and counts travel with the receipt so an
-// unrelated failure is visible rather than smoothed over.
+// this run's capture, and every one passed - and, when the suite was red, that every red test is outside the
+// claim's own named set and the receipt says so. The last clause cannot fire on its own (a red named test is
+// recorded `fail`, which fails the clause before it), and it is written out anyway so that the rule the gate
+// re-checks is a rule this file states rather than one a reader has to derive.
 const established = termReport.length > 0 && termReport.every(term => term.establishes)
-  && summary.named > 0 && perTest.every(test => test.status === 'pass');
+  && summary.named > 0 && perTest.every(test => test.status === 'pass')
+  && (!suiteRed || redInsideTheClaim.length === 0);
 const reasons = [];
 if (termReport.length === 0) reasons.push('the claim lists no terms, so this run establishes nothing');
 if (summary.named === 0 && termReport.length > 0) {
@@ -937,7 +1198,9 @@ if (uncoveredTerms.length > 0) {
   reasons.push(`${uncoveredTerms.length} term(s) name no tests, so this run establishes nothing about them: `
     + uncoveredTerms.join(', '));
 }
-if (summary.fail > 0) reasons.push(`${summary.fail} named test(s) failed in the measured run`);
+if (summary.fail > 0) {
+  reasons.push(`${summary.fail} named test(s) failed in the measured run: ${listing(withStatus('fail').map(t => t.name))}`);
+}
 if (summary.absent > 0) reasons.push(`${summary.absent} named test(s) did not appear in the measured run`);
 if (summary.skipped > 0) {
   reasons.push(`${summary.skipped} named test(s) were reported with a \`# SKIP\` directive, so the runner `
@@ -965,17 +1228,47 @@ for (const duplicate of duplicatePoints) {
 // had to pass, but the authority the run executed was not necessarily the authority main holds. Such a receipt
 // may never be pinned.
 //
-// WHAT ENFORCES THAT, HONESTLY. On this branch the enforcement is here and in this workflow's own emit job,
-// which refuses to attest a receipt this block marks inadmissible. There is no second, independent enforcer in
-// this repository yet: `verify-claim.yml` does not exist on this branch, and an earlier version of this comment
-// stated that it refuses such a receipt independently, as present fact. It does not, because it is not here. A
-// consumer of this receipt must therefore read `admissible_as_pin` itself and refuse a false; nothing else in
-// this repository will do it for them.
+// WHAT ENFORCES THAT, AND WHERE THAT ENFORCEMENT STOPS. A review found the field unenforced and bypassable and
+// it was right on both counts, so what enforces it now is written here as a list of places rather than as a
+// claim:
+//
+//   * this block, which computes the field and refuses to call a run admissible on any of the grounds below;
+//   * the workflow's gate step, which re-reads the receipt and refuses to publish an `admissible` output that
+//     disagrees with the receipt's own body - a bypass that wrote `admissible=true` beside a receipt saying
+//     false is what the review used;
+//   * the workflow's separate `attest` job, which is the only job of this authority holding `attestations:
+//     write`, which runs at all only on a workflow_dispatch of the default branch, and which re-reads
+//     `provenance.admissible_as_pin` and `conclusion.verdict` out of the signed subject itself before signing.
+//
+// AND WHERE IT STOPS, because this file may not overstate it twice. On a `pull_request` event GitHub runs the
+// workflow DEFINITION from the pull request head, so every one of those enforcers is code the candidate's
+// author supplied for that run; no arrangement of this file can bind it. What binds it is outside this
+// repository's files: the repository's Actions settings (whether a pull request run is granted attestations at
+// all, and whether it needs approval), and a CONSUMER that requires `provenance.admissible_as_pin === true`,
+// `conclusion.verdict === 'success'` and an attestation whose workflow REF is the protected branch - not
+// merely the presence of an attestation. That consumer requirement is written out, edit by edit, in
+// /home/bawes/work/consumer-required-changes.md, because the consumer lives on another branch.
 const trustedOnMain = (() => {
   const compare = apiJson(`/repos/${repo}/compare/${trustedSha}...main`);
   return compare ? ['identical', 'ahead'].includes(compare.status) : false;
 })();
 const inadmissible = [];
+// A receipt that does not record a successful measurement has nothing in it to pin, so it is not merely
+// unattested for want of a dispatch - it is inadmissible on its own contents. Stated here so that the field a
+// consumer reads answers the whole question rather than only the question of where the run happened.
+if (!established) {
+  inadmissible.push(`this receipt's verdict is failure, so there is nothing in it for a manifest to pin`);
+}
+// SECTION 8 CANNOT DISTINGUISH "THE AUTHORITY IS INTACT" FROM "THE AUTHORITY IS NOWHERE", and a review found
+// this repository in exactly the second state: `.github/verifier-receipt` does not exist on the protected
+// branch, so `objectAt` answers null there, answers null at any candidate that does not carry it, and the
+// comparison of two nulls reports `touches_authority: false`. That is the state the FIRST receipts would be
+// produced in, so it is named here instead of passing quietly.
+const authorityAbsent = authorityIdentity.filter(entry => entry.protected_sha === null).map(entry => entry.path);
+if (authorityAbsent.length > 0) {
+  inadmissible.push(`the receipt authority is absent on ${PROTECTED_REF} (${listing(authorityAbsent)}), so this `
+    + 'run compared the candidate against nothing and cannot establish that it leaves the authority alone');
+}
 if (run.event !== 'workflow_dispatch') {
   inadmissible.push(`this run's event is ${run.event}; only a workflow_dispatch of ${WORKFLOW_PATH} may be pinned`);
 }
@@ -1027,16 +1320,39 @@ const receipt = {
     // replacement is refused at capture.sha256), but the deeper limit below is NOT closed and cannot be closed
     // by anything in this workflow, so it is stated as a field of every receipt this authority emits.
     limits: [
-      'the measured tests print into the very stream this capture is: a candidate whose test bodies emit '
-        + 'plausible, internally consistent TAP of their own put those bytes into the stream the trusted job '
-        + 'hashed, and this receipt cannot distinguish them from the reporter own lines. What is established is '
-        + 'the origin of the bytes, never the truthfulness of what they say.',
-      'the capture is written by a process running as the same user as the measured suite, so a candidate that '
-        + 'detaches a process outliving its own run could still race the write of the capture and its meta. Such '
-        + 'a forgery has to satisfy every field of the meta against the API, one at a time, but nothing here '
-        + 'makes the race impossible; only a different uid or a container the suite cannot escape would.',
-      'admissible_as_pin has no independent enforcer in this repository: this workflow refuses to attest a '
-        + 'receipt marked false, and nothing else reads the field. A consumer must read it themselves.',
+      'A TERM IS ESTABLISHED BY A NAME, AND THE CANDIDATE WRITES THE TESTS. Three empty function bodies named '
+        + 'exactly what a claim names produce a wholly genuine measurement that this authority accepts: every '
+        + 'provenance check passes and every one of them is telling the truth. This receipt says that the '
+        + 'protected runner reported those names passing on this tree. It does not say the tests did the work '
+        + 'the claim describes, and nothing in a receipt of this shape can; that would take coverage of the '
+        + 'term\'s own source attributed to the named test, a mutation run whose kill result the candidate does '
+        + 'not write, or a second independent measurement.',
+      'the measured tests print into the very stream this capture is, so a candidate whose test bodies emit '
+        + 'plausible TAP of their own put those bytes into the stream the trusted job hashed. A correction a '
+        + 'review measured and this file previously had backwards: at Node 22 `node --test --test-reporter=tap` '
+        + 'absorbs each test child\'s stdout AND stderr and re-emits every line as an escaped `# ` diagnostic, '
+        + 'which this emitter never reads as evidence - eight routes into the stream from inside a test body '
+        + 'were tried and all eight came back as diagnostics. That is undocumented, version-dependent reporter '
+        + 'behaviour and it is NOT a defence this authority relies on; it is recorded so that no consumer reads '
+        + 'this limit as the open one. The open one is the next item.',
+      'THE OPEN ONE, and it is blocking rather than residual: the capture is written by a process running as '
+        + 'the same user as the measured suite, so a candidate that detaches a process outliving its own run '
+        + 'rewrites suite.out and capture-meta.json together after the trusted write and before the upload. A '
+        + 'review did exactly that, three runs out of three, for a tree whose every named test really failed. '
+        + 'What this receipt now forces that forgery to do as well: write a trailer inside the hashed bytes '
+        + 'that agrees with the stream, and beat the exit status the measure job publishes as its own output '
+        + 'through GitHub (`capture.suite_exit` refuses any disagreement). A forger that also appends to '
+        + '$GITHUB_OUTPUT - whose path a same-uid process can read out of /proc - defeats that too. Only a '
+        + 'different uid for the measured suite, or a container it cannot escape, closes this.',
+      'admissible_as_pin is enforced in this producer by three places - this emitter, the gate step (which '
+        + 'refuses to publish an `admissible` output disagreeing with this receipt\'s body) and a separate '
+        + 'attest job that holds the only `attestations: write` in this workflow, runs only on a '
+        + 'workflow_dispatch of the default branch, and re-reads this field out of the subject before signing. '
+        + 'That enforcement is in workflow FILES, and on a pull_request event GitHub runs the workflow '
+        + 'definition from the pull request head, so for such a run all three are the candidate author\'s. A '
+        + 'consumer must therefore read this field itself, require conclusion.verdict === "success", and '
+        + 'require any attestation it trusts to name a workflow ref on the protected branch rather than merely '
+        + 'to exist.',
     ],
     measure_job: {
       name: measureJob.name,
@@ -1058,7 +1374,19 @@ const receipt = {
       file: CAPTURE_FILE,
       sha256: captureDigest,
       bytes: captureBytes.length,
+      // The runner's own output, apart from the one trailer line the trusted capture process appended to it.
+      // A third party re-checking this receipt splits the artifact at `body_bytes` and re-hashes both halves.
+      body_bytes: captureBody.length,
+      body_sha256: trailer.bodyDigest,
+      trailer: trailer.line,
       suite_exit: suiteExit,
+      // WHERE THE EXIT STATUS WAS READ, all three of them, because a number that agrees with itself in one
+      // place is what the forgery this closes looked like.
+      suite_exit_channels: {
+        trailer_in_the_hashed_stream: trailerExit,
+        capture_meta: String(meta.suite_exit ?? ''),
+        measure_job_output: jobOutputExit,
+      },
       // HOW the digest was taken, because it is the difference between a capture whose origin is established and
       // one whose bytes the measured code could have replaced after the fact. `stream` is the only value this
       // emitter accepts; a meta saying anything else is refused at capture.hash_source.
@@ -1096,6 +1424,13 @@ const receipt = {
   suite: {
     tests: counts.tests, suites: counts.suites, ok: counts.ok, not_ok: counts.not_ok,
     cancelled: counts.cancelled, skipped: counts.skipped, todo: counts.todo, exit: suiteExit,
+    // GREEN or RED, as a field rather than as something a consumer has to derive from two counts and an exit
+    // code - and, when red, WHICH tests were red, by name, from the capture's own points. A review found
+    // `verdict: success` with `reasons: []` beside a non-zero exit and two failing tests, and the receipt said
+    // nothing anywhere that a reader could act on. These three fields are that statement.
+    state: suiteRed ? 'red' : 'green',
+    failing_tests: failingPointNames,
+    failing_tests_named_by_the_claim: redInsideTheClaim,
   },
   structure_check: {
     kind: 'well-formedness',
@@ -1125,6 +1460,13 @@ const receipt = {
   conclusion: {
     verdict: established ? 'success' : 'failure',
     scope: 'the named tests of the claim this measured, as observed in this run\'s own capture',
+    // THE SUITE'S OWN RESULT, CARRIED IN THE CONCLUSION rather than only in the block above it, because the
+    // conclusion is the field every consumer reads. A `success` here is never unqualified beside a red suite:
+    // `suite_state` says the runner reported failure, and `qualifications` says, in words, what this verdict
+    // does and does not cover. The workflow's gate refuses to publish an `admissible` output for a receipt
+    // whose suite is red unless every red test is outside the claim's named set AND these fields say so.
+    suite_state: suiteRed ? 'red' : 'green',
+    qualifications,
     reasons,
   },
 };
@@ -1134,7 +1476,9 @@ fs.writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
 console.log(`receipt for ${candidateSha.slice(0, 12)} tree ${candidateTree.slice(0, 8)}: verdict `
   + `${receipt.conclusion.verdict}; named ${summary.named} pass ${summary.pass} fail ${summary.fail} `
   + `absent ${summary.absent} skipped ${summary.skipped} todo ${summary.todo} `
-  + `suite-points ${summary.suite_points}; suite exit ${suiteExit}, tests ${counts.tests}`);
+  + `suite-points ${summary.suite_points} over ${summary.distinct_names} distinct name(s); suite `
+  + `${receipt.suite.state} (exit ${suiteExit}, tests ${counts.tests})`);
+if (suiteRed) console.log(`qualified: ${qualifications.join(' ')}`);
 console.log(`terms: ${termReport.length} listed, ${receipt.terms_summary.establishing} established`
   + (uncoveredTerms.length > 0 ? `; naming no tests: ${uncoveredTerms.join(', ')}` : '')
   + (duplicatePoints.length > 0 ? `; repeated point names: ${duplicatePoints.map(d => `"${d.name}" x${d.points}`).join(', ')}` : ''));

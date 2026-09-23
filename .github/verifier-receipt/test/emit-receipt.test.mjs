@@ -26,7 +26,7 @@ test('provenance held: the trusted job\'s own capture for this run yields succes
   const receipt = world.receiptOf(built);
   assert.equal(receipt.conclusion.verdict, 'success');
   assert.deepEqual(receipt.named_tests_summary,
-    { named: 3, pass: 3, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0 });
+    { named: 3, distinct_names: 3, pass: 3, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0 });
   assert.equal(receipt.provenance.artifact.digest, built.archiveDigest);
   assert.equal(receipt.provenance.artifact.archive_sha256, built.archiveDigest);
   assert.equal(receipt.provenance.capture.sha256, built.meta.capture_sha256);
@@ -591,7 +591,7 @@ test('a test the runner reported `# SKIP` is not pass, and the marker is not par
     ['the coordinator refuses a stale head', 'pass'],
   ]);
   assert.deepEqual(receipt.named_tests_summary,
-    { named: 4, pass: 1, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1 });
+    { named: 4, distinct_names: 4, pass: 1, fail: 0, absent: 0, skipped: 1, todo: 1, suite_points: 1 });
   // Each of the three is a term this run establishes nothing about, and each is named as such.
   assert.deepEqual(receipt.terms.map(term => [term.id, term.establishes]),
     [['TERM-SKIP', false], ['TERM-SUITE', false], ['TERM-TODO', false], ['TERM-REAL', true]]);
@@ -698,7 +698,10 @@ test('a term whose only named test failed is marked as establishing nothing, by 
   assert.deepEqual(receipt.terms_summary.without_evidence, ['TERM-2']);
 });
 
-test('two terms naming one test are two entries, each attributed to its own term', () => {
+// H1, THE FINDING THE COMMIT TITLED "coverage cannot pool" DID NOT CLOSE. That commit refused two entries
+// SHARING a term id; it did nothing about two entries with distinct ids naming the same test. This is that
+// case at its smallest, and the ten-entry form the review actually ran is below.
+test('two terms resting on one test are refused: a measurement is the evidence for one term', () => {
   const claim = {
     code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
     entries: [
@@ -707,10 +710,45 @@ test('two terms naming one test are two entries, each attributed to its own term
     ],
   };
   const built = world.build({ claim, capture: world.tapFor(['the coordinator refuses a stale head']) });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries.control.test_names');
+  assert.match(result.stderr, /1 test name\(s\) in .* are named by more than one entry/);
+  assert.match(result.stderr, /"the coordinator refuses a stale head" \(entries 0, 1: TERM-A, TERM-B\)/);
+  assert.equal(fs.existsSync(built.receiptPath), false, 'a refusal writes no receipt for the gate to read');
+});
+
+// THE REVIEW'S OWN CASE, verbatim: ten DISTINCT, well-formed term ids, every one naming the SAME single passing
+// test. At the commit under review this produced `verdict success; named 10 pass 10; terms: 10 listed, 10
+// established; admissible as pin: true` over ONE measured name, and the gate agreed with it because there
+// really were ten rows - one per entry, all for that name.
+test('H1: ten distinct term ids naming ONE passing test are refused, by the name they share', () => {
+  const built = world.build({
+    claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+      entries: Array.from({ length: 10 }, (_, index) => ({ id: `TERM-${index}`,
+        control: { test_names: ['the coordinator refuses a stale head'] }, killing_mutants: [] })) },
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
+  const result = world.emit(built);
+  refusedOn(result, 'claim.entries.control.test_names');
+  assert.match(result.stderr, /entries 0, 1, 2, 3, 4, 5, 6, 7, 8, 9: TERM-0, TERM-1, TERM-2/);
+  assert.equal(fs.existsSync(built.receiptPath), false);
+});
+
+// A term may rest on the same test twice WITHIN itself - as the control it names and as the mutant that kills
+// it - which is the shape the default claim of this world carries. The rule is about one name serving two
+// TERMS, so this must still succeed, or the refusal above would be refusing real manifests.
+test('one entry may name a test as both its control and its killing mutant', () => {
+  const built = world.build({
+    claim: { code_revision: { head: world.CLAIM_HEAD, tree: world.CLAIM_TREE },
+      entries: [{ id: 'TERM-ONE', control: { test_names: ['the coordinator refuses a stale head'] },
+        killing_mutants: [{ test_name: 'the coordinator refuses a stale head' }] }] },
+    capture: world.tapFor(['the coordinator refuses a stale head']),
+  });
   assert.equal(world.emit(built).code, 0);
   const receipt = world.receiptOf(built);
-  assert.deepEqual(receipt.named_tests.map(test => test.term), ['TERM-A', 'TERM-B']);
-  assert.deepEqual(receipt.terms.map(term => [term.id, term.named]), [['TERM-A', 1], ['TERM-B', 1]]);
+  assert.deepEqual(receipt.named_tests.map(test => [test.entry, test.kind]), [[0, 'control'], [0, 'mutant']]);
+  assert.equal(receipt.named_tests_summary.named, 2);
+  assert.equal(receipt.named_tests_summary.distinct_names, 1);
   assert.equal(receipt.conclusion.verdict, 'success');
 });
 
@@ -742,7 +780,7 @@ test('every job of this workflow bounds how long it may hold a runner', () => {
     name: head[1],
     body: jobsBlock.slice(head.index, heads[index + 1]?.index ?? jobsBlock.length),
   }));
-  assert.deepEqual(jobs.map(job => job.name), ['trust', 'measure', 'emit'],
+  assert.deepEqual(jobs.map(job => job.name), ['trust', 'measure', 'emit', 'attest'],
     'the jobs this workflow declares - if this changed, the bounds below were not re-read');
   for (const job of jobs) {
     const bound = /^ {4}timeout-minutes: (\d+)$/m.exec(job.body);
@@ -952,8 +990,8 @@ const emitterWithoutShapeChecks = () => {
   const calls = source.match(/refuse\('claim\.entries/g) ?? [];
   // An exact count, deliberately: a shape refusal added or removed later must be looked at here rather than
   // silently left un-neutered, which would let this test pass on the refusal it was written to do without.
-  assert.equal(calls.length, 4,
-    `expected the four manifest-shape refusals to neuter, found ${calls.length}; this test is stale`);
+  assert.equal(calls.length, 5,
+    `expected the five manifest-shape refusals to neuter, found ${calls.length}; this test is stale`);
   neuteredEmitter = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'keying-')), 'emit.mjs');
   fs.writeFileSync(neuteredEmitter, source.replace(/refuse\('claim\.entries/g, '(() => {})(\'claim.entries'));
   return neuteredEmitter;
@@ -1060,8 +1098,11 @@ test('the capture program refuses rather than defaulting anything that identifie
 
 // The capture this authority really produces, fed to the emitter as the artifact's contents - so the two halves
 // of the chain are tested joined, not each against a fixture of the other.
+// `taken.bytes` are whole - the runner's output AND the trailer the capture program appended - so they are
+// handed to the world as they are rather than re-wrapped, and the meta is that program's own.
 const worldFromCapture = (taken, patch = {}) => world.build({
-  capture: taken.bytes,
+  wholeCapture: taken.bytes,
+  body: taken.bytes.slice(0, taken.meta.capture_body_bytes),
   meta: { ...taken.meta, ...(patch.meta ?? {}) },
   ...patch,
 });
@@ -1296,4 +1337,425 @@ test('the gate still passes a whole receipt this emitter produced, terms and row
   const gate = runGate(built);
   assert.equal(gate.code, 0, `${gate.stdout}${gate.stderr}`);
   assert.equal(gate.output, 'admissible=true\n');
+});
+
+// ---- the exit status is inside the bytes, and beside them, and both are read ---------------------------------
+
+// A review put the previous arrangement exactly: "the metadata channel is the only path for the out-of-stream
+// exit status, so the new invariants fall to the same forgery". The capture program now appends one trailer
+// line to the stream it hashes - carrying the exit status waitpid returned, the byte count and digest of the
+// runner's own output, and this run's identity - and publishes the same exit status as the measure job's own
+// output, which the workflow passes to the emitter. These tests are about both channels and about the one the
+// forger can still reach.
+
+test('the capture program appends one trailer, hashes it with the stream, and publishes the same exit status', () => {
+  const taken = world.runCapture({ fixture: 'claim-suite.mjs' });
+  assert.equal(taken.code, 0, `${taken.stdout}${taken.stderr}`);
+  const lines = taken.bytes.slice(0, -1).split('\n');
+  const trailer = lines[lines.length - 1];
+  // One trailer, and it is the last line of the capture.
+  assert.equal(lines.filter(line => line.startsWith('# verifier-capture v1 ')).length, 1);
+  assert.match(trailer, /^# verifier-capture v1 exit=0 signal=- body_bytes=\d+ body_sha256=[0-9a-f]{64} /);
+  assert.match(trailer, new RegExp(`run=${world.RUN_ID} attempt=1 job=measure candidate=${world.CANDIDATE_SHA} `
+    + `tree=${world.CANDIDATE_TREE} runner=${world.RUNNER_KEY}$`));
+  // The body is the runner's own output and the digests are over the two halves, each stated in the meta.
+  const body = Buffer.from(taken.bytes).subarray(0, taken.meta.capture_body_bytes);
+  assert.equal(crypto.createHash('sha256').update(body).digest('hex'), taken.meta.capture_body_sha256);
+  assert.equal(crypto.createHash('sha256').update(Buffer.from(taken.bytes)).digest('hex'), taken.meta.capture_sha256);
+  assert.equal(taken.meta.capture_trailer, trailer);
+  assert.equal(taken.meta.suite_exit_source, 'waitpid');
+  // AND THE SECOND CHANNEL, which the measure job publishes and the emit job reads. A review found this output
+  // declared by the workflow with no consumer anywhere in the repository.
+  assert.equal(taken.outputs.exit, '0');
+  assert.equal(taken.outputs.capture_sha256, taken.meta.capture_sha256);
+  assert.equal(taken.outputs.body_sha256, taken.meta.capture_body_sha256);
+});
+
+test('a capture carrying no trailer at all is refused, naming the trailer', () => {
+  const built = world.build({ wholeCapture: world.tapFor(world.NAMED_TESTS) });
+  const result = world.emit(built, { MEASURE_SUITE_EXIT: '0' });
+  refusedOn(result, 'capture.trailer');
+  assert.match(result.stderr, /carries no `# verifier-capture v1` line/);
+});
+
+test('a test body that prints its own copy of the trailer makes the capture refused, not substituted', () => {
+  const body = world.tapFor(world.NAMED_TESTS);
+  const forged = world.trailerFor({ body: 'anything', exit: '0' });
+  const built = world.build({ capture: `${forged}\n${body}` });
+  const result = world.emit(built, { MEASURE_SUITE_EXIT: '0' });
+  refusedOn(result, 'capture.trailer');
+  assert.match(result.stderr, /carries 2 `# verifier-capture v1` lines/);
+});
+
+test('a trailer that is not the last line of the capture is refused', () => {
+  const body = world.tapFor(world.NAMED_TESTS);
+  const trailer = world.trailerFor({ body, exit: '0' });
+  const built = world.build({ wholeCapture: `${body}${trailer}\n# something written after it\n`, body });
+  const result = world.emit(built, { MEASURE_SUITE_EXIT: '0' });
+  refusedOn(result, 'capture.trailer');
+  assert.match(result.stderr, /not at the end/);
+});
+
+test('a trailer whose digest is not the digest of the bytes before it is refused, naming that digest', () => {
+  const body = world.tapFor(world.NAMED_TESTS);
+  const trailer = world.trailerFor({ body: 'a different stream entirely', exit: '0' })
+    .replace(/body_bytes=\d+/, `body_bytes=${Buffer.byteLength(body)}`);
+  const built = world.build({ capture: body, trailer });
+  refusedOn(world.emit(built, { MEASURE_SUITE_EXIT: '0' }), 'capture.trailer.body_sha256');
+});
+
+test('a trailer naming another run, attempt, job, candidate or runner is refused, field by field', () => {
+  const body = world.tapFor(world.NAMED_TESTS);
+  for (const [patch, field] of [
+    [{ run: '34900000002' }, 'capture.trailer.run'],
+    [{ attempt: '2' }, 'capture.trailer.attempt'],
+    [{ job: 'measure-something-else' }, 'capture.trailer.job'],
+    [{ candidate: '9'.repeat(40) }, 'capture.trailer.candidate'],
+    [{ runner: 'coordinator-core' }, 'capture.trailer.runner'],
+    [{ tree: '8'.repeat(40) }, 'capture.trailer.tree'],
+  ]) {
+    const built = world.build({ capture: body, trailer: world.trailerFor({ body, exit: '0', ...patch }) });
+    refusedOn(world.emit(built, { MEASURE_SUITE_EXIT: '0' }), field);
+  }
+});
+
+test('a meta whose exit status disagrees with the trailer inside the hashed bytes is refused', () => {
+  const body = world.tapFor(world.NAMED_TESTS, { failing: [world.NAMED_TESTS[0]] });
+  // The trailer says 1, which is what that stream justifies; the meta beside it says 0.
+  const built = world.build({ capture: body, trailer: world.trailerFor({ body, exit: '1' }), meta: { suite_exit: '0' } });
+  const result = world.emit(built, { MEASURE_SUITE_EXIT: '1' });
+  refusedOn(result, 'capture.suite_exit');
+  assert.match(result.stderr, /the capture's meta records suite exit 0, but the trailer inside the hashed bytes records 1/);
+});
+
+test('a capture whose exit status disagrees with the measure job\'s own output is refused, both directions', () => {
+  for (const [capture, exit, published] of [
+    [world.tapFor(world.NAMED_TESTS), '0', '1'],
+    [world.tapFor(world.NAMED_TESTS, { failing: [world.NAMED_TESTS[0]] }), '1', '0'],
+  ]) {
+    const built = world.build({ capture, meta: { suite_exit: exit } });
+    const result = world.emit(built, { MEASURE_SUITE_EXIT: published });
+    refusedOn(result, 'capture.suite_exit');
+    assert.match(result.stderr, new RegExp(`the measure job published exit ${published} as its own output`));
+  }
+});
+
+test('the emitter refuses to run at all when the workflow does not pass the measure job\'s exit status', () => {
+  const built = world.build();
+  const result = world.emit(built, { MEASURE_SUITE_EXIT: '' });
+  refusedOn(result, 'env.MEASURE_SUITE_EXIT');
+});
+
+// THE COLD REVIEW'S B1, RUN FOR REAL. The fixture's three named tests fail, and a detached process rewrites
+// suite.out and capture-meta.json together after the trusted program has written them.
+const waitForForgery = taken => {
+  const sentinel = path.join(taken.runnerTemp, 'forged');
+  const deadline = Date.now() + 20000;
+  while (!fs.existsSync(sentinel)) {
+    if (Date.now() > deadline) assert.fail('the detached forger never rewrote the capture');
+    // A synchronous wait, because this test is about what is on disk after the step's process has exited.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  return {
+    bytes: fs.readFileSync(path.join(taken.captureDir, 'suite.out'), 'utf8'),
+    meta: JSON.parse(fs.readFileSync(path.join(taken.captureDir, 'capture-meta.json'), 'utf8')),
+  };
+};
+
+test('B1: the forgery that rewrites the capture AND its meta is refused, because it cannot reach the job output', () => {
+  const taken = world.runCapture({ fixture: 'detached-forger.mjs' });
+  // What the trusted process really saw, before anything was rewritten: every named test failed, exit 1.
+  assert.equal(taken.outputs.exit, '1');
+  assert.match(taken.stdout, /suite exit 1/);
+  const forged = waitForForgery(taken);
+  // The forgery is complete and internally consistent: the stream says three passes, the trailer agrees with
+  // the stream, and the meta agrees with both. Every check that reads only the artifact is satisfied.
+  assert.match(forged.bytes, /^ok 1 - the coordinator refuses a stale head$/m);
+  assert.equal(forged.meta.suite_exit, '0');
+  assert.equal(crypto.createHash('sha256').update(Buffer.from(forged.bytes)).digest('hex'), forged.meta.capture_sha256);
+  assert.notEqual(forged.meta.capture_sha256, taken.outputs.capture_sha256);
+
+  const built = world.build({ wholeCapture: forged.bytes,
+    body: forged.bytes.slice(0, forged.meta.capture_body_bytes), meta: forged.meta });
+  const result = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, forged.meta.runner_command),
+    MEASURE_SUITE_EXIT: taken.outputs.exit });
+  refusedOn(result, 'capture.suite_exit');
+  assert.match(result.stderr, /the measure job published exit 1 as its own output, taken from waitpid/);
+  assert.equal(fs.existsSync(built.receiptPath), false, 'a refusal writes no receipt for the gate to read');
+});
+
+// AND THE RESIDUAL, PINNED RATHER THAN IMPLIED CLOSED. $GITHUB_OUTPUT is a file whose path a same-uid process
+// can read out of /proc, and a later line for the same key wins - so a forger that appends `exit=0` to it as
+// well beats every channel this authority has. This test asserts that it DOES, so that nobody reads the test
+// above as closing the race. Closing it takes a uid the measured suite cannot reach out of; that is
+// infrastructure, and it is named as the open item in the record of this change.
+test('the open residual: a forger that also beats the job-output channel is NOT refused', () => {
+  const taken = world.runCapture({ fixture: 'detached-forger.mjs' });
+  const forged = waitForForgery(taken);
+  const built = world.build({ wholeCapture: forged.bytes,
+    body: forged.bytes.slice(0, forged.meta.capture_body_bytes), meta: forged.meta });
+  const result = world.emit(built, { RUNNER_SPEC_PATH: enumNaming(built, forged.meta.runner_command),
+    // What appending one line to $GITHUB_OUTPUT does: the job output says what the forger says.
+    MEASURE_SUITE_EXIT: '0' });
+  assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  assert.equal(world.receiptOf(built).conclusion.verdict, 'success');
+});
+
+// ---- a success may not be unqualified beside a suite the runner reported red ---------------------------------
+
+// A review produced `verdict: success` with `reasons: []` for a run the runner exited 1 on, with two failing
+// tests in the same tree, and ruled that a receipt must never carry an unqualified success when the runner
+// reported failure. The verdict stays scoped to the claim's named tests - that is what a term is established
+// by - and the receipt now says so out loud: the suite's own state, the failing tests by name, and a
+// qualification in the conclusion. Both directions are below, and the gate re-reads all of it.
+const RED_SUITE = [...world.NAMED_TESTS, 'an unrelated check of something else', 'a second unrelated check'];
+const redCapture = () => world.tapFor(RED_SUITE,
+  { failing: ['an unrelated check of something else', 'a second unrelated check'] });
+
+test('a red suite whose failures are outside the claim is a QUALIFIED success, and says which tests were red', () => {
+  const built = world.build({ capture: redCapture() });
+  const emitted = world.emit(built);
+  assert.equal(emitted.code, 0, `${emitted.stdout}${emitted.stderr}`);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'success');
+  // What the commit under review said about this run: nothing at all.
+  assert.equal(receipt.suite.state, 'red');
+  assert.equal(receipt.suite.exit, '1');
+  assert.deepEqual(receipt.suite.failing_tests,
+    ['an unrelated check of something else', 'a second unrelated check']);
+  assert.deepEqual(receipt.suite.failing_tests_named_by_the_claim, []);
+  assert.equal(receipt.conclusion.suite_state, 'red');
+  assert.equal(receipt.conclusion.qualifications.length, 2);
+  assert.match(receipt.conclusion.qualifications[0], /the measured suite is RED: the runner exited 1/);
+  assert.match(receipt.conclusion.qualifications[1],
+    /every failing test of that run is OUTSIDE the set of names this claim rests on/);
+  assert.match(emitted.stdout, /suite red \(exit 1, tests 5\)/);
+  // And the gate admits it - the exclusion is stated and it holds.
+  const gate = runGate(built);
+  assert.equal(gate.code, 0, `${gate.stdout}${gate.stderr}`);
+  assert.match(gate.stdout, /qualified success: the suite is red and all 2 failing test\(s\) are outside the 3 name\(s\)/);
+  assert.equal(gate.output, 'admissible=true\n');
+});
+
+test('a red suite whose failure IS named by the claim is a failure, and the gate refuses it', () => {
+  const built = world.build({ capture: world.tapFor(RED_SUITE, { failing: [world.NAMED_TESTS[0], 'a second unrelated check'] }) });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.deepEqual(receipt.suite.failing_tests_named_by_the_claim, [world.NAMED_TESTS[0]]);
+  assert.match(receipt.conclusion.qualifications.join(' | '),
+    /1 failing test\(s\) of that run ARE named by this claim/);
+  assert.match(receipt.conclusion.reasons.join(' | '), /1 named test\(s\) failed in the measured run/);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a receipt that claims success beside a red suite without qualifying it', () => {
+  const built = world.build({ capture: redCapture() });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  receipt.conclusion.qualifications = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /records an UNQUALIFIED success beside a suite the runner reported red/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a qualification that is not true: a red test the claim does name', () => {
+  const built = world.build({ capture: redCapture() });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // The receipt still says success, still carries its qualification - and its own list of failing tests holds
+  // a name the claim rests on. The gate recomputes the exclusion from the rows rather than believing it.
+  receipt.suite.failing_tests = [...receipt.suite.failing_tests, world.NAMED_TESTS[1]];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /these failing tests of the measured run ARE named by this claim/);
+  assert.match(gate.stderr, new RegExp(world.NAMED_TESTS[1]));
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a receipt whose suite is red while the receipt calls it green', () => {
+  const built = world.build({ capture: redCapture() });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  receipt.suite.state = 'green';
+  receipt.conclusion.suite_state = 'green';
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /the measured suite is red, but this receipt does not say so/);
+});
+
+// ---- one measurement is the evidence for one term, re-read by the gate ---------------------------------------
+
+test('the gate refuses named test rows that are the sole evidence for two terms', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // The shape the emitter now refuses outright, forged into a receipt so the second reader is exercised on its
+  // own: two entries, one measured name, every count reconciling because there really are two rows.
+  receipt.named_tests = [
+    { entry: 0, term: 'TERM-1', kind: 'control', name: 'the coordinator refuses a stale head', status: 'pass', points: 1 },
+    { entry: 1, term: 'TERM-2', kind: 'control', name: 'the coordinator refuses a stale head', status: 'pass', points: 1 },
+  ];
+  receipt.named_tests_summary = { named: 2, distinct_names: 2, pass: 2, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0 };
+  receipt.terms = [
+    { entry: 0, id: 'TERM-1', named: 1, pass: 1, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0, establishes: true },
+    { entry: 1, id: 'TERM-2', named: 1, pass: 1, fail: 0, absent: 0, skipped: 0, todo: 0, suite_points: 0, establishes: true },
+  ];
+  receipt.terms_summary = { total: 2, establishing: 2, naming_no_tests: 0, without_evidence: [] };
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /these named tests are the sole evidence for more than one term/);
+  assert.match(gate.stderr, /the coordinator refuses a stale head \(entries 0, 1\)/);
+  assert.equal(gate.output, '');
+});
+
+test('the gate refuses a distinct-name count that does not match the rows', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  receipt.named_tests_summary.distinct_names = 17;
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  assert.match(gate.stderr, /distinct_names=17, but the receipt lists 3 distinct measured name/);
+});
+
+// ---- admissible_as_pin is enforced, and the bypass that defeated it is refused --------------------------------
+
+// A review found the mark "unenforced AND bypassable": nothing outside this authority's own directory read it,
+// and a run could write `admissible=true` into the gate's step output beside a receipt whose body said false
+// and get the attest step's `if:` to select. Three places now enforce it and each is exercised here: the
+// emitter that computes it, the guard step that compares the output to the receipt, and the attest job, which
+// is the only job of this workflow that can sign and which cannot run on a rehearsal at all.
+
+// THE GUARD STEP, LIFTED OUT OF THE YAML the way the gate is, so what these tests run is what the workflow runs.
+const GUARD_SOURCE = (() => {
+  const step = WORKFLOW.indexOf('\n        id: guard\n');
+  assert.ok(step > 0, 'the workflow no longer declares a step with `id: guard`');
+  const opens = '\n          node -e "\n';
+  const from = WORKFLOW.indexOf(opens, step);
+  assert.ok(from > 0, 'the guard step no longer runs its body through `node -e`');
+  const rest = WORKFLOW.slice(from + opens.length);
+  const to = rest.indexOf('\n          "\n');
+  assert.ok(to > 0, 'the guard step\'s `node -e` body is not closed where this test expects it');
+  const body = rest.slice(0, to);
+  assert.ok(!body.includes('$('), 'the guard body gained a shell substitution this extraction does not model');
+  return body.replace(/\\`/g, '`');
+})();
+const runGuard = (built, gateSays) => world.runNode(['-e', GUARD_SOURCE],
+  { cwd: path.dirname(built.receiptPath), env: { GATE_SAYS: gateSays } });
+
+test('THE BYPASS: admissible=true beside a receipt whose body says false is refused before anything is signed', () => {
+  // A rehearsal's receipt: every provenance check passed, and it is not admissible as a pin.
+  const built = world.build({ run: { event: 'pull_request', head_branch: 'verifier/bootstrap-receipt-producer' } });
+  assert.equal(world.emit(built, { TRUSTED_SOURCE_ORIGIN: 'pull-request-head' }).code, 0);
+  assert.equal(world.receiptOf(built).provenance.admissible_as_pin, false);
+  // The gate, run honestly, publishes false.
+  assert.equal(runGate(built).output, 'admissible=false\n');
+  // And the bypass - the output written independently of the receipt - is a red job.
+  const bypassed = runGuard(built, 'true');
+  assert.equal(bypassed.code, 1, bypassed.stdout);
+  assert.match(bypassed.stderr, /the gate published admissible="true" for a receipt whose own body says admissible_as_pin=false/);
+  // The honest output passes it, so the guard is not simply refusing everything.
+  assert.equal(runGuard(built, 'false').code, 0);
+});
+
+test('the guard passes an admissible receipt and refuses the output that under-claims it too', () => {
+  const built = world.build();
+  assert.equal(world.emit(built).code, 0);
+  assert.equal(world.receiptOf(built).provenance.admissible_as_pin, true);
+  assert.equal(runGuard(built, 'true').code, 0);
+  assert.equal(runGuard(built, 'false').code, 1);
+});
+
+test('the gate refuses a receipt that calls itself admissible while its verdict is failure', () => {
+  const built = world.build({ capture: world.tapFor(world.NAMED_TESTS, { failing: [world.NAMED_TESTS[0]] }) });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  receipt.provenance.admissible_as_pin = true;
+  receipt.provenance.inadmissibility_reasons = [];
+  fs.writeFileSync(built.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  const gate = runGate(built);
+  assert.equal(gate.code, 1, gate.stdout);
+  // It refuses on the verdict first, which is the honest order; the admissibility rule is the belt below it.
+  assert.match(gate.stderr, /the receipt does not record a successful measurement/);
+  assert.equal(gate.output, '');
+});
+
+test('a receipt whose verdict is failure is not admissible as a pin, and says so by name', () => {
+  const built = world.build({ capture: world.tapFor(world.NAMED_TESTS, { failing: [world.NAMED_TESTS[0]] }) });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  assert.equal(receipt.conclusion.verdict, 'failure');
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  assert.match(receipt.provenance.inadmissibility_reasons.join(' | '),
+    /this receipt's verdict is failure, so there is nothing in it for a manifest to pin/);
+});
+
+// M2. `objectAt` answers null for a path that is not there, on either side, and null === null - so a
+// repository in which this authority does not exist on the protected branch reports `touches_authority: false`
+// against nothing at all. That is the state this repository is in today, and it is the state the FIRST receipts
+// would be produced in.
+test('an authority that is absent on the protected branch is not a pin, and the receipt names it', () => {
+  const built = world.build({ routes: {
+    [`/repos/${world.REPO}/contents/.github?ref=main`]: { json: [{ name: 'coordinator', type: 'dir', sha: '4d'.repeat(20) },
+      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+    [`/repos/${world.REPO}/contents/.github?ref=${world.CANDIDATE_SHA}`]: { json: [{ name: 'coordinator', type: 'dir', sha: '6f'.repeat(20) },
+      { name: 'workflows', type: 'dir', sha: '5e'.repeat(20) }] },
+  } });
+  assert.equal(world.emit(built).code, 0);
+  const receipt = world.receiptOf(built);
+  // Section 8 still reports the comparison it made - two nulls - and admissibility no longer reads that as
+  // "the candidate leaves the authority alone".
+  assert.deepEqual(receipt.candidate.authority_identity.map(entry => [entry.path, entry.protected_sha]),
+    [['.github/workflows/verifier-receipt.yml', world.AUTHORITY_WORKFLOW_SHA], ['.github/verifier-receipt', null]]);
+  assert.equal(receipt.provenance.admissible_as_pin, false);
+  assert.match(receipt.provenance.inadmissibility_reasons.join(' | '),
+    /the receipt authority is absent on main \(\.github\/verifier-receipt\), so this run compared the candidate against nothing/);
+});
+
+// ---- the mint path, read out of the workflow file ------------------------------------------------------------
+
+// A review's H2: the rehearsal posture runs the emitter, the capture program, the runner enum, the rehearsal
+// pin and the emitter's own test suite from the pull request head, IN A JOB HOLDING `attestations: write`.
+// These assertions are about the file, because that is where that fact lives.
+const JOBS = (() => {
+  const block = WORKFLOW.slice(WORKFLOW.indexOf('\njobs:\n') + 1);
+  const heads = [...block.matchAll(/^ {2}([a-z][\w-]*):$/gm)];
+  return Object.fromEntries(heads.map((head, index) => [head[1],
+    block.slice(head.index, heads[index + 1]?.index ?? block.length)]));
+})();
+
+test('only one job of this workflow can sign anything, and it is not the job that runs candidate-supplied code', () => {
+  const signing = Object.entries(JOBS).filter(([, body]) => /^ {6}attestations: write$/m.test(body)).map(([name]) => name);
+  assert.deepEqual(signing, ['attest'], 'exactly one job may hold `attestations: write`');
+  const idToken = Object.entries(JOBS).filter(([, body]) => /^ {6}id-token: write$/m.test(body)).map(([name]) => name);
+  assert.deepEqual(idToken, ['attest']);
+  // The job that runs the emitter - which, until this authority is on main, is the pull request head's emitter,
+  // its runner enum, its rehearsal pin and its own test suite - holds neither.
+  assert.doesNotMatch(JOBS.emit, /^ {6}(attestations|id-token): write$/m);
+  assert.match(JOBS.measure, /permissions:\n {6}contents: read\n/, 'the job that runs the candidate\'s suite holds only contents: read');
+});
+
+test('the signing job cannot run on a rehearsal, and re-reads admissibility out of the subject it signs', () => {
+  const condition = /^ {4}if: (.+)$/m.exec(JOBS.attest);
+  assert.ok(condition, 'the attest job declares no `if:` at all');
+  // Facts about the RUN, which no step computes and no job output carries.
+  assert.match(condition[1], /github\.event_name == 'workflow_dispatch'/);
+  assert.match(condition[1], /github\.ref == 'refs\/heads\/main'/);
+  assert.match(condition[1], /needs\.emit\.outputs\.admissible == 'true'/);
+  // And the subject is re-read rather than trusted: the receipt's own field, its verdict, and its run id.
+  assert.match(JOBS.attest, /receipt\.provenance\?\.admissible_as_pin !== true/);
+  assert.match(JOBS.attest, /receipt\.conclusion\?\.verdict !== 'success'/);
+  assert.match(JOBS.attest, /String\(receipt\.run\?\.id\) !== String\(process\.env\.RUN_ID\)/);
+  // The subject is the receipt the emit job recorded, by digest, not whatever arrives under that name.
+  assert.match(JOBS.attest, /needs\.emit\.outputs\.receipt_sha256/);
+  assert.match(JOBS.attest, /actions\/attest-build-provenance/);
 });

@@ -85,7 +85,12 @@ export const runCapture = ({ fixture, runnerCommand, preCreateDir = false, env: 
   const runnerTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-temp-'));
   const captureDir = path.join(runnerTemp, 'capture');
   if (preCreateDir) fs.mkdirSync(captureDir);
+  // The measure job's $GITHUB_OUTPUT, so the tests can read the channel that travels through GitHub rather
+  // than through the artifact - and so a fixture that forges the artifact can be shown NOT to have reached it.
+  const outputFile = path.join(runnerTemp, 'github-output');
+  fs.writeFileSync(outputFile, '');
   const childEnv = {
+    GITHUB_OUTPUT: outputFile,
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     RUNNER_TEMP: runnerTemp,
@@ -112,10 +117,14 @@ export const runCapture = ({ fixture, runnerCommand, preCreateDir = false, env: 
   }
   const capturePath = path.join(captureDir, 'suite.out');
   const metaPath = path.join(captureDir, 'capture-meta.json');
+  const outputs = Object.fromEntries(fs.readFileSync(outputFile, 'utf8').split('\n').filter(Boolean)
+    .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
   return {
     ...out,
     captureDir,
     runnerTemp,
+    outputs,
+    outputFile,
     entries: fs.existsSync(captureDir) ? fs.readdirSync(captureDir).sort() : [],
     bytes: fs.existsSync(capturePath) ? fs.readFileSync(capturePath, 'utf8') : null,
     meta: fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf8')) : null,
@@ -135,15 +144,40 @@ export const NAMED_TESTS = ['the coordinator refuses a stale head',
 
 // Build a world on disk. `patch` may replace any part of it before the artifact is zipped and the routes are
 // written, which is how each refusal below is provoked with one wrong fact and everything else intact.
+// THE TRAILER THE TRUSTED CAPTURE PROCESS APPENDS, rebuilt here exactly as capture-stream.mjs writes it. A
+// world builds the BODY - the bytes a runner produced - and this adds the one line the measured code did not
+// write, so every world below is the shape the emitter now requires and a test that wants a capture with no
+// trailer, two trailers or a forged one asks for that deliberately.
+const field = value => encodeURIComponent(String(value));
+export const trailerFor = ({ body, exit, signal = null, run = RUN_ID, attempt = RUN_ATTEMPT,
+  job = MEASURE_JOB_NAME, candidate = CANDIDATE_SHA, tree = CANDIDATE_TREE, runner = RUNNER_KEY } = {}) => {
+  const bytes = Buffer.from(body);
+  return `# verifier-capture v1 exit=${field(exit)} signal=${field(signal ?? '-')} `
+    + `body_bytes=${bytes.length} body_sha256=${sha256(bytes)} run=${field(run)} attempt=${field(attempt)} `
+    + `job=${field(job)} candidate=${field(candidate)} tree=${field(tree)} runner=${field(runner)}`;
+};
+export const withTrailer = (body, trailer) => {
+  const bytes = Buffer.from(body);
+  const separator = bytes.length > 0 && bytes[bytes.length - 1] === 0x0a ? '' : '\n';
+  return Buffer.concat([bytes, Buffer.from(`${separator}${trailer}\n`, 'utf8')]).toString('utf8');
+};
+
 export const build = (patch = {}) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-world-'));
   const captureDir = path.join(root, 'capture');
   fs.mkdirSync(captureDir);
 
-  const capture = patch.capture ?? tapFor(NAMED_TESTS);
+  // `capture` is the runner's own output; the world appends the trusted trailer to it, the way the measure job
+  // does. `wholeCapture` is for the two callers that hold real bytes a real capture program already wrote -
+  // the positive control over the pinned candidate's suite, and the tests that take a capture for real.
+  const body = patch.capture ?? tapFor(NAMED_TESTS);
+  const suiteExit = patch.meta?.suite_exit ?? exitFor(body);
+  const capture = patch.wholeCapture ?? withTrailer(body,
+    patch.trailer ?? trailerFor({ body, exit: suiteExit }));
   fs.writeFileSync(path.join(captureDir, 'suite.out'), capture);
+  const bodyBytes = Buffer.from(patch.wholeCapture ? (patch.body ?? body) : body);
   const meta = {
-    schema: 1,
+    schema: 2,
     job_name: MEASURE_JOB_NAME,
     run_id: RUN_ID,
     run_attempt: RUN_ATTEMPT,
@@ -156,12 +190,16 @@ export const build = (patch = {}) => {
     capture_file: 'suite.out',
     capture_bytes: Buffer.byteLength(capture),
     capture_sha256: sha256(Buffer.from(capture)),
+    capture_body_bytes: bodyBytes.length,
+    capture_body_sha256: sha256(bodyBytes),
+    capture_trailer: capture.slice(0, -1).split('\n').pop(),
+    suite_exit_source: 'waitpid',
     // The exit status the runner really returned, DERIVED FROM THE CAPTURE the world holds rather than fixed at
     // '0'. The emitter now refuses a capture whose counts contradict the exit code the trusted job recorded, so a
     // world whose capture reports a failing point beside `suite_exit: '0'` is a self-contradictory world and
     // would be refused on that rather than on the fact each test is about. `node --test` exits non-zero exactly
     // when it reports a failing or cancelled point, and this reproduces that rule.
-    suite_exit: exitFor(capture),
+    suite_exit: suiteExit,
     suite_signal: null,
     // The measure job hashes the stream as it passes through a trusted process and records that it did. The
     // emitter refuses any other value, because a digest taken over a file the measured suite could have replaced
@@ -254,6 +292,9 @@ export const emit = (world, envPatch = {}, emitter = EMITTER) => {
     MEASURE_ARTIFACT_NAME: ARTIFACT_NAME,
     MEASURE_ARTIFACT_ID: ARTIFACT_ID,
     MEASURE_ARTIFACT_DIGEST: world.archiveDigest,
+    // The exit status the trusted capture process published as the measure job's own output - the one fact the
+    // emitter holds from outside the artifact. A world's default is the one its own capture justifies.
+    MEASURE_SUITE_EXIT: world.meta.suite_exit,
     CANDIDATE_SHA,
     CANDIDATE_TREE,
     RUNNER_KEY,
