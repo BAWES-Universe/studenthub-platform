@@ -669,6 +669,10 @@ jobs:
           REF: ${{ github.ref }}
           THIS_RUN_ID: ${{ github.run_id }}
           TRUSTED_ORIGIN: ${{ needs.trust.outputs.trusted_origin }}
+          # THE ADMISSION PREDICATE ITSELF, from the TRUSTED checkout of the authority - the same file the
+          # emitter called. This step used to carry its own hand-written copy of the six grounds; two copies of
+          # a rule are two rules, and the copy a candidate would have to defeat is not the copy that decides.
+          ADMISSIBILITY: ${{ github.workspace }}/authority/.github/verifier-receipt/admissibility.mjs
           # THE MEASURE JOB'S OWN DIGESTS, through GitHub rather than through the artifact or the receipt. A
           # review found both of these declared as outputs of the measure job and read by nothing at all - work
           # that looks load-bearing and is not. They are what lets this step derive the measurement from bytes
@@ -966,27 +970,20 @@ jobs:
             if (fidelity.length > 0 && verdict === 'success') { console.error('::error::this claim does not match the protected matrix and this receipt still reports success: ' + fidelity.slice(0, 8).map(r => r.detail).join('; ')); process.exit(1); }
             console.log('derived from the controller s observation (' + observationBytes.length + ' bytes): ' + derivedEstablished.size + ' term(s) established by a passing control run and ' + (observation.terms ?? []).reduce((n, t) => n + (t.mutants ?? []).length, 0) + ' required mutant(s), ' + fidelity.length + ' matrix refusal(s)');
 
-            // AND ADMISSIBILITY IS RE-DERIVED FROM THE FACTS, NOT READ OFF THE FLAG. A review flipped
-            // provenance.admissible_as_pin to true on a receipt whose body still recorded the authority as
-            // ABSENT on main, and the gate, the guard and the attest job's subject re-read all passed it -
-            // because all three compared the computed boolean to itself. The six grounds the emitter computes
-            // that field from are each recorded in this receipt's own body, so they are recomputed here, and the
-            // flag is refused when it disagrees with them. Two of the six are checked against GitHub's own
-            // report of this run as well, which no field of the receipt can move.
-            const authority = receipt.candidate?.authority_identity;
-            if (!Array.isArray(authority) || authority.length === 0) { console.error('::error::the receipt carries no authority_identity, so nothing in it says whether this candidate left the authority alone'); process.exit(1); }
-            const absent = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
+            // AND ADMISSIBILITY IS RE-DERIVED FROM THE FACTS, NOT READ OFF THE FLAG - BY THE ONE MODULE THAT
+            // OWNS THAT RULE. A review flipped provenance.admissible_as_pin to true on a receipt whose body
+            // still recorded the authority as ABSENT on main, and the gate, the guard and the attest job's
+            // subject re-read all passed it, because all three compared the computed boolean to itself. The
+            // fix after that gave each of them its own hand-written copy of the grounds, which is a rule that
+            // can be tightened in one place and left behind in the others. This step now calls
+            // .github/verifier-receipt/admissibility.mjs, out of the TRUSTED authority checkout, which is the
+            // same file the emitter called and the same file the consumer checks against refs/heads/main
+            // before it re-derives. The flag is refused when it disagrees with what that module says. Two of
+            // its grounds are checked against GitHub's own report of this run as well, below, which no field
+            // of the receipt can move.
             const workflow = receipt.workflow ?? {};
-            const grounds = [
-              [verdict === 'success', 'this receipt s verdict is ' + JSON.stringify(verdict) + ', so there is nothing in it for a manifest to pin'],
-              [absent.length === 0, 'the receipt authority is absent on the protected branch (' + absent.join(', ') + '), so this run compared the candidate against nothing'],
-              [workflow.event === 'workflow_dispatch', 'this run s event is ' + JSON.stringify(workflow.event) + ', not a workflow_dispatch'],
-              [workflow.head_branch === 'main', 'this run was made on ' + JSON.stringify(workflow.head_branch) + ', not the protected default branch'],
-              [workflow.trusted_source_origin === 'protected-main', 'the authority files came from ' + JSON.stringify(workflow.trusted_source_origin) + ', not from protected main'],
-              [workflow.trusted_source_on_main === true, 'the authority commit this run used is not contained in main'],
-            ];
-            const failed = grounds.filter(ground => !ground[0]).map(ground => ground[1]);
-            const derived = failed.length === 0;
+            if (!process.env.ADMISSIBILITY) { console.error('::error::this step was not told where the admission predicate is, so it cannot judge this receipt against the rule the authority holds'); process.exit(1); }
+            const { admissible: derived, reasons: failed } = require(process.env.ADMISSIBILITY).deriveAdmissibility(receipt);
             const claimed = receipt.provenance?.admissible_as_pin === true;
             if (derived !== claimed) { console.error('::error::this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ', but its own body says ' + derived + ': ' + (failed.length === 0 ? 'every ground is satisfied' : failed.join('; ')) + '. Nothing this run produced may be signed.'); process.exit(1); }
             // AND AGAINST WHAT GITHUB SAYS ABOUT THIS RUN, which is the one input to this step that the receipt
@@ -1008,31 +1005,24 @@ jobs:
       # a receipt with ONLY that flag flipped - its body still recording the authority as absent on main - passed
       # here, at the gate, and at the attest job's subject re-read. One computation and two echoes.
       #
-      # So this step does not read the flag to decide. It derives admissibility from the SIX GROUNDS recorded in
-      # the receipt's body, in its own code, and then requires three things to agree: what it derived, what the
-      # receipt claims, and what the gate published. The ground that is live in this repository right now - the
-      # authority is absent on main - is one of the six, so the flipped-flag receipt is refused here by name.
+      # So this step does not read the flag to decide, and it no longer keeps its own copy of the grounds
+      # either: it calls the ONE module that owns the rule - .github/verifier-receipt/admissibility.mjs, out of
+      # the trusted authority checkout - and then requires three things to agree: what the rule derives, what
+      # the receipt claims, and what the gate published. Reading the rule from the same file the gate read is
+      # not a weakening of this step: what it exists to catch is a step OUTPUT that disagrees with the receipt,
+      # and that disagreement is between two values neither of which is the rule.
       - name: Refuse an admissibility that the receipt's own body does not support
         id: guard
         env:
           GATE_SAYS: ${{ steps.gate.outputs.admissible }}
+          ADMISSIBILITY: ${{ github.workspace }}/authority/.github/verifier-receipt/admissibility.mjs
         run: |
           set -euo pipefail
           node -e "
             const receipt = JSON.parse(require('node:fs').readFileSync('receipt.json', 'utf8'));
             const refuse = message => { console.error('::error::' + message); process.exit(1); };
-            const workflow = receipt.workflow || {};
-            const authority = receipt.candidate?.authority_identity;
-            if (!Array.isArray(authority) || authority.length === 0) refuse('this receipt carries no authority_identity, so nothing in it supports an admissibility either way');
-            const missing = authority.filter(entry => entry.protected_sha === null || entry.protected_sha === undefined).map(entry => entry.path);
-            const why = [];
-            if (receipt.conclusion?.verdict !== 'success') why.push('its verdict is ' + JSON.stringify(receipt.conclusion?.verdict));
-            if (missing.length > 0) why.push('the authority is absent on the protected branch (' + missing.join(', ') + ')');
-            if (workflow.event !== 'workflow_dispatch') why.push('its event is ' + JSON.stringify(workflow.event));
-            if (workflow.head_branch !== 'main') why.push('it was made on ' + JSON.stringify(workflow.head_branch));
-            if (workflow.trusted_source_origin !== 'protected-main') why.push('its authority came from ' + JSON.stringify(workflow.trusted_source_origin));
-            if (workflow.trusted_source_on_main !== true) why.push('its authority commit is not contained in main');
-            const derived = why.length === 0;
+            if (!process.env.ADMISSIBILITY) refuse('this step was not told where the admission predicate is, so it cannot judge this receipt against the rule the authority holds');
+            const { admissible: derived, reasons: why } = require(process.env.ADMISSIBILITY).deriveAdmissibility(receipt);
             const claimed = receipt.provenance?.admissible_as_pin === true;
             const gate = String(process.env.GATE_SAYS || '');
             if (claimed !== derived) refuse('this receipt says admissible_as_pin=' + JSON.stringify(receipt.provenance?.admissible_as_pin) + ' while its own body says ' + derived + ': ' + (derived ? 'every ground is satisfied' : why.join('; ')) + '; nothing this run produced may be signed');
@@ -1172,7 +1162,15 @@ jobs:
 
       # THE THIRD READING, AND IT RE-DERIVES RATHER THAN RE-READS. A review flipped only
       # `provenance.admissible_as_pin` on a receipt whose body still recorded the authority as absent on main and
-      # this check passed it, because it read the flag. It now recomputes the field from the six grounds in the
+      # this check passed it, because it read the flag.
+      #
+      # THIS ONE IS A SUBSET OF THE RULE, AND SAYS SO RATHER THAN IMPLYING IT IS THE RULE. The predicate itself
+      # lives in `.github/verifier-receipt/admissibility.mjs`, which the emitter, the gate and the guard all
+      # call; this job checks out no code at all - one download, one digest, one signature - so it has no copy
+      # of that module to call, and what it re-derives here is the six PROVENANCE grounds only, not the suite
+      # state. That is sound in one direction and only one: this job runs at all only when the gate, using the
+      # module, published `admissible=true`, so a subset check here can refuse a subject the module admitted
+      # and can never admit one the module refused. It recomputes the field from the six grounds in the
       # subject's own body - and refuses a subject any of whose terms is reported established while the term's
       # own manifest entry says BLOCK or `approvable: false`, which is what a receipt over this repository's real
       # manifest would be. Nothing signed here rests on a boolean another step computed.
