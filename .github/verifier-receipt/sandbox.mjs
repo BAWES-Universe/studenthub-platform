@@ -79,15 +79,40 @@ import crypto from 'node:crypto';
 //   through a setuid bit there, and cannot open a device node there. Those are exactly the escapes a writable
 //   directory would otherwise reopen, and `no-new-privileges` and `--cap-drop ALL` still stand behind them.
 //
-//   IT IS BOUNDED. `size=` is not decoration: a tmpfs is memory, and an unbounded one is a candidate's test
-//   body exhausting the runner rather than failing. The bound is measured, not guessed - see the record in
-//   /home/bawes/work/d1-tmpfs.json for the peak it was taken from - and the preflight fills it every run to
-//   prove the bound is the kernel's rather than this comment's.
+//   IT IS BOUNDED, AND THE BOUND IS A MEASUREMENT. `size=` is not decoration: a tmpfs is memory, and an
+//   unbounded one is a candidate's test body exhausting the runner rather than failing. THE NUMBER AND WHERE
+//   IT CAME FROM, because a bound nobody can trace is a guess wearing a unit:
+//
+//     * IN CONTAINER, THE PRODUCTION CONFIGURATION, THE WHOLE SUITE - the reading that decides this.
+//       Candidate 7e7ac70e, image node:22.22.3-bookworm @ sha256:2d178f27..., these exact flags, TMPDIR on
+//       the measurement scratch as measurementEnv() sets it, `du -sk /tmp` every 2s for the length of the
+//       run: PEAK 60 KiB over 34 samples in 68s, and `df -k /tmp` read 0 KiB before the suite and 12 KiB
+//       after it. The whole tmpfs belongs to that container, so that figure is the suite's literal-/tmp
+//       appetite and nothing else's. 34 samples is the run's own length at a 2s period, not a short sample
+//       of a long run.
+//     * ON THE HOST, the same command with TMPDIR off /tmp, sampling only the /tmp entries the window
+//       created: PEAK 5.23 MiB (5356 KiB) 27s in, over 464 samples. Two things make that a BOUND and not a
+//       measurement of this suite, and both push in opposite directions: the suite halted itself about 90s
+//       in (`# killed by B10_PREARM_UNRESTORED_HALTS_BY_NAME`), so only the first ~45 samples overlapped a
+//       live run; and the workstation's other processes create /tmp entries inside the same window, which
+//       inflates it. It is carried here as the LARGEST number any honest reading produced.
+//     * A FIRST HOST RUN REPORTED 686 GiB AND IS NOT EVIDENCE OF ANYTHING. That was our own fill probe,
+//       unbounded, writing to a /tmp that was real disk. It is why the probe is now bounded by construction
+//       (see tmpfsBoundBytes below) and why the figure appears here only to be excluded.
+//
+//   `size=64m` is 64 MiB: about 12x the largest real reading and about a thousand times the production one,
+//   and 0.4% of a runner's memory - large enough that a suite doing something reasonable never meets it,
+//   small enough that a suite doing something unreasonable meets it in a second instead of taking the runner
+//   down. The preflight fills it every run, so the bound proved is the kernel's rather than this comment's.
+//
+//   `size=512m` SHIPPED BEFORE ANY OF THIS WAS MEASURED, and no measurement ever produced it. It was a
+//   provisional value chosen to be obviously enough, and the comment that carried it cited a record that did
+//   not exist. Both are replaced here.
 //
 // WHAT THIS DOES NOT DO: it does not patch the call sites. Naming `/tmp` literally instead of `os.tmpdir()`
 // is still a defect in the measured repository, and moving those 218 call sites is a separate change on a
 // separate branch, made after the first genuine receipt and not before it.
-export const TMPFS_TMP = '/tmp:rw,noexec,nosuid,nodev,size=512m';
+export const TMPFS_TMP = '/tmp:rw,noexec,nosuid,nodev,size=64m';
 export const SANDBOX_FLAGS = Object.freeze([
   '--rm',
   '--user', '10001:10001',
@@ -102,7 +127,7 @@ export const SANDBOX_FLAGS = Object.freeze([
 
 // THE BOUND AS A NUMBER, SO THAT SOMETHING CAN CHECK THE KERNEL AGREES WITH THE FLAG.
 //
-// `size=512m` is a request. What the tmpfs actually got is a statfs away, and the preflight reads it back and
+// `size=64m` is a request. What the tmpfs actually got is a statfs away, and the preflight reads it back and
 // refuses a run where the two disagree - which catches a runtime that silently ignored the option as surely
 // as it catches an edit here. It is also what lets the fill probe be bounded BY CONSTRUCTION rather than by
 // the very flag it is testing: a probe that writes until ENOSPC is a probe that fills whatever it is pointed
@@ -114,7 +139,12 @@ export function tmpfsBoundBytes(spec = TMPFS_TMP) {
   const match = /^size=(\d+)([kmg])?$/i.exec(size ?? '');
   if (!match) throw new Error(`the tmpfs spec ${JSON.stringify(spec)} carries no size= this authority can read as a number of bytes`);
   // No suffix is bytes; k, m and g are BINARY, which is what mount(8) means by them and what the kernel
-  // reported back through statfs when this was measured (`size=512m` -> 536870912).
+  // reported back through statfs when this was measured. `size=512m` read back as 536870912 in runs
+  // 35842415093 and 35843658922 - 512 * 1024 * 1024, not 512 * 1000 * 1000. `size=64m`, the bound this
+  // sandbox now ships, read back as 67108864 when it was run through sandboxArgv() into the pinned image
+  // before shipping, with the bounded fill refusing ENOSPC at exactly that byte and the space returning
+  // when the fill file was removed. The preflight repeats the comparison every run and refuses the run if
+  // the kernel disagrees.
   const multiplier = { '': 1, k: 1024, m: 1048576, g: 1073741824 }[(match[2] ?? '').toLowerCase()];
   return Number(match[1]) * multiplier;
 }

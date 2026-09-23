@@ -154,7 +154,7 @@ test('the sandbox grants a writable /tmp, on exactly the options it says, and no
   assert.ok(at >= 0, '--tmpfs is absent, so /tmp is inside the read-only rootfs and every literal /tmp call site dies EROFS');
   // The exact string, written out here rather than imported into the comparison, so that an edit to
   // TMPFS_TMP has to be made in two places and read in both.
-  assert.equal(argv[at + 1], '/tmp:rw,noexec,nosuid,nodev,size=512m');
+  assert.equal(argv[at + 1], '/tmp:rw,noexec,nosuid,nodev,size=64m');
   assert.equal(argv[at + 1], TMPFS_TMP, 'the flag the sandbox ships and the constant it exports have drifted apart');
   // Exactly one tmpfs: a second one is a second writable directory nobody argued for.
   assert.equal(argv.filter((_, i) => argv[i - 1] === '--tmpfs').length, 1);
@@ -171,15 +171,15 @@ test('a loosened /tmp option is refused before anything runs, and the refusal na
     // Each option dropped one at a time. noexec is the one that matters most - without it a candidate can
     // drop a binary into /tmp and run it - but nosuid and nodev are refused by name too, because "which of
     // these three actually mattered" is not a question this authority wants to be having at a review.
-    ['/tmp:rw,nosuid,nodev,size=512m', /drops noexec/],
-    ['/tmp:rw,noexec,nodev,size=512m', /drops nosuid/],
-    ['/tmp:rw,noexec,nosuid,size=512m', /drops nodev/],
+    ['/tmp:rw,nosuid,nodev,size=64m', /drops noexec/],
+    ['/tmp:rw,noexec,nodev,size=64m', /drops nosuid/],
+    ['/tmp:rw,noexec,nosuid,size=64m', /drops nodev/],
     // The size bound removed: a tmpfs is memory, and an unbounded one is a test body exhausting the runner.
     ['/tmp:rw,noexec,nosuid,nodev', /carries no size= bound/],
     // And the mount point moved. A tmpfs SHADOWS its mount point, so one at /src would cover the read-only
     // source and one at /scratch would cover the directory the uid boundary rests on.
-    ['/src:rw,noexec,nosuid,nodev,size=512m', /a tmpfs is mounted at \/src/],
-    ['/scratch:rw,noexec,nosuid,nodev,size=512m', /a tmpfs is mounted at \/scratch/],
+    ['/src:rw,noexec,nosuid,nodev,size=64m', /a tmpfs is mounted at \/src/],
+    ['/scratch:rw,noexec,nosuid,nodev,size=64m', /a tmpfs is mounted at \/scratch/],
   ];
   for (const [spec, expected] of loosenings) {
     assert.throws(() => assertNoEscape(withTmpfs(spec)), error => {
@@ -190,7 +190,7 @@ test('a loosened /tmp option is refused before anything runs, and the refusal na
   }
   // The flag removed outright, and a SECOND tmpfs added beside the sound one.
   assert.throws(() => assertNoEscape(sound.filter((part, i) => part !== '--tmpfs' && sound[i - 1] !== '--tmpfs')),
-    /--tmpfs \/tmp:rw,noexec,nosuid,nodev,size=512m is absent/);
+    /--tmpfs \/tmp:rw,noexec,nosuid,nodev,size=64m is absent/);
   assert.throws(() => assertNoEscape([...sound.slice(0, 1), '--tmpfs', '/scratch:rw,size=1g', ...sound.slice(1)]),
     /carries 2 tmpfs mounts/);
 });
@@ -199,9 +199,17 @@ test('a loosened /tmp option is refused before anything runs, and the refusal na
 // that disagrees. If this parse is wrong the comparison always fails and the fill never runs, so the proof
 // that the tmpfs is bounded would quietly stop being taken.
 test('the size= bound reads back as the number of bytes the kernel reports for it', () => {
-  // 512m is 512 MiB, not 512 MB: mount(8)'s suffixes are binary, and this is the value statfs reported for
-  // this exact flag in a real container - 536870912, observed in run 35842415093.
-  assert.equal(tmpfsBoundBytes(), 536870912);
+  // m is MiB, not MB: mount(8)'s suffixes are binary. Neither number here is an assumption. `size=512m` -
+  // the provisional bound this sandbox shipped before the appetite was ever measured - read back from statfs
+  // as 536870912 in a real container in runs 35842415093 and 35843658922. The shipped bound is now 64 MiB,
+  // taken from a measurement (peak 60 KiB in container over the whole suite, 5.23 MiB on the host at its
+  // most contaminated), and it was run through this authority's own sandboxArgv() into the pinned image
+  // before it shipped: statfs reported 67108864, a bounded fill refused with ENOSPC at exactly 67108864
+  // bytes with 0 free, and the space came back when the fill file was removed. The preflight repeats that
+  // comparison on every dispatch and refuses the run if the kernel reports something else, so the shipped
+  // value is checked by the boundary and not only by this test.
+  assert.equal(tmpfsBoundBytes(), 67108864);
+  assert.equal(tmpfsBoundBytes('/tmp:rw,noexec,nosuid,nodev,size=512m'), 536870912);
   assert.equal(tmpfsBoundBytes('/tmp:rw,size=1g'), 1073741824);
   assert.equal(tmpfsBoundBytes('/tmp:rw,size=262144k'), 268435456);
   assert.equal(tmpfsBoundBytes('/tmp:rw,size=1048576'), 1048576);
