@@ -95,10 +95,13 @@ for (const [label, index, before, after, code] of [
   docs[index] = docs[index].replace(before, after);
   assert.throws(() => assertDocumentation(...docs), error => error.name === 'AssertionError' && error.message.startsWith(`${code}:`), `${code}: mutation must die by name`);
 });
+// The committed scope is now the ONE-fixture scope, deliberately: Orchestrator
+// v1 rests on the owner-approved dispatch_scope ["SHU-140"] and max_dispatch 1.
+// This pin follows those values; the dispatch gate stays off as before.
 function assertDispatch(config) {
   assert.equal(config.enable_dispatch, false, 'RECON_CONFIG_GATE: committed dispatch must remain off');
-  assert.equal(config.max_dispatch, 2, 'RECON_CONFIG_CAPACITY: committed capacity must remain two');
-  assert.deepEqual(config.dispatch_scope.issue_ids, ['SHU-140', 'SHU-254'], 'RECON_CONFIG_SCOPE: committed pair must remain unchanged');
+  assert.equal(config.max_dispatch, 1, 'RECON_CONFIG_CAPACITY: committed capacity must remain one');
+  assert.deepEqual(config.dispatch_scope.issue_ids, ['SHU-140'], 'RECON_CONFIG_SCOPE: committed single lane must remain unchanged');
 }
 test('RECON_CONFIG_POSITIVE: committed gates and scope remain fixed', () => {
   assertDispatch(JSON.parse(fs.readFileSync(new URL('../../config.json', import.meta.url))));
