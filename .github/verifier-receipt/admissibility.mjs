@@ -106,6 +106,32 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
         ? 'this receipt does not name them'
         : named.length === 0 ? 'this receipt names none of them' : listing(named)));
   }
+
+  // D7. EVERY PLACE THE BODY RECORDS A FAILURE IS READ, AND A BODY THAT DISAGREES WITH ITSELF IS REFUSED.
+  //
+  // The block above counts failures from `suite.not_ok` alone, so a body carrying `not_ok: 0` beside a
+  // non-empty `failing_tests` read as CLEAN: a review produced exactly that, changing one integer in a forged
+  // body and leaving every name it had failed on in place. A counter and a list that contradict each other are
+  // not a pass in either direction, so the list is read too - and so is the claim-scoped list beside it, and
+  // the `fail` rows of `named_tests` - and a counter that UNDERSTATES what the same body names is the
+  // disagreement it is. Understating is the only direction checked here: a list shorter than the counter is
+  // already a refusal through `not_ok > 0`, and requiring exact agreement would refuse a receipt whose emitter
+  // truncated a long list, which is a different defect and not this one.
+  const failureLists = [
+    ['suite.failing_tests', Array.isArray(suite.failing_tests) ? suite.failing_tests.map(String) : null],
+    ['suite.failing_tests_named_by_the_claim',
+      Array.isArray(suite.failing_tests_named_by_the_claim)
+        ? suite.failing_tests_named_by_the_claim.map(String) : null],
+    ['named_tests', Array.isArray(receipt?.named_tests)
+      ? receipt.named_tests.filter(row => row?.status === 'fail').map(row => String(row?.name)) : null],
+  ];
+  for (const [where, names] of failureLists) {
+    if (names === null || names.length === 0) continue;
+    if (failing !== null && failing >= names.length) continue;
+    reasons.push(`this receipt records suite.not_ok=${quote(suite.not_ok)} and names ${names.length} failing `
+      + `test(s) in ${where}, which is a receipt disagreeing with itself about whether anything failed: `
+      + `${listing(names.map(quote))}`);
+  }
   const cancelled = readCount(suite, 'cancelled', reasons, 'suite');
   if (cancelled !== null && cancelled > 0) {
     reasons.push(`the measured run did not finish: the runner reported ${cancelled} cancelled point(s), and a `
@@ -120,13 +146,30 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
   // THE SKIPS, BY NAME. A skip is tolerable only when it is written down in the authorized list, so the rule
   // needs the NAMES; a receipt that counts skips without naming them cannot be judged against that list, and
   // an unjudgeable skip is a refusal rather than a pass.
+  //
+  // D15. BOTH SHAPES THE BODY CAN CARRY A SKIPPED NAME IN ARE MESHED, because reading one OR the other left a
+  // gap that cost nothing to walk through. A receipt carries skipped names either as `suite.skipped_tests` or
+  // as `named_tests` rows whose status is `skip`; this used to prefer the first whenever it was an ARRAY, so a
+  // body with `skipped_tests: []` beside a `skip` row was judged against an empty set - and the row itself is
+  // invisible to the every-other-exclusion block below, which exempts `skip` on the understanding that this
+  // block handles it. One line exempted the status and another never consulted the rows. So the two sources
+  // are UNIONED: a skipped named test is visible to the authorization rule whichever shape carries it.
+  //
+  // The union is by name, so two records of the same skip count once. That can only LOWER the number of skips
+  // this rule can name against `suite.skipped`, which is the closed direction: an unnameable skip is a reason.
   const authorized = loadToleratedSkips(toleratedSkipsPath);
   const skipped = readCount(suite, 'skipped', reasons, 'suite');
-  const namedSkips = Array.isArray(suite.skipped_tests)
-    ? suite.skipped_tests.map(String)
-    : (Array.isArray(receipt?.named_tests)
-      ? receipt.named_tests.filter(row => row?.status === 'skip').map(row => String(row?.name)) : []);
-  if (skipped !== null && skipped > 0 && authorized.problem) reasons.push(authorized.problem);
+  const namedSkips = [...new Set([
+    ...(Array.isArray(suite.skipped_tests) ? suite.skipped_tests.map(String) : []),
+    ...(Array.isArray(receipt?.named_tests)
+      ? receipt.named_tests.filter(row => row?.status === 'skip').map(row => String(row?.name)) : []),
+  ])];
+  // A list that cannot be read matters as soon as there is anything to judge against it, which is a counted
+  // skip OR a named one - the count alone used to gate this, and D15's whole point is that the count and the
+  // names need not both be there.
+  if (authorized.problem && ((skipped !== null && skipped > 0) || namedSkips.length > 0)) {
+    reasons.push(authorized.problem);
+  }
   const unauthorized = namedSkips.filter(name => !authorized.names.has(name));
   if (unauthorized.length > 0) {
     reasons.push(`${unauthorized.length} skipped test(s) are not in the authorized list `
@@ -143,6 +186,11 @@ const suiteIsClean = (receipt, reasons, toleratedSkipsPath) => {
   // `unbound` (reported with no location at all, so nothing ties the point to the test its claim describes),
   // `unclaimed`, `absent`, `suite`, and the `fail`/`skip`/`todo` rows the blocks above also count. Each is
   // listed here under its own status, so the refusal says which exclusion it is.
+  //
+  // `skip` is exempted HERE because the skip block above judges it against the authorized list - and after
+  // D15 that is true of a `skip` row whatever shape the body carries its names in, which is what makes the
+  // exemption safe. `fail` is not exempted: it is a reason here and a disagreement above when the counter
+  // denies it.
   const rows = receipt?.named_tests;
   if (!Array.isArray(rows)) {
     reasons.push(`this receipt carries no \`named_tests\` list (${quote(rows === undefined ? null : typeof rows)}), `

@@ -131,6 +131,87 @@ test('A SKIP IS A REFUSAL UNLESS THE AUTHORIZED LIST NAMES IT: the file is permi
   assert.match(why, /are not in the authorized list/);
 });
 
+// D7. A review produced a body carrying `not_ok: 0` beside a non-empty `failing_tests` and this rule read it
+// as clean, because failures were counted from the counter alone: one integer, forged, and every name the
+// same body had failed on became invisible. Every place the body records a failure is now read, and a counter
+// that understates what the body itself names is refused as the disagreement it is.
+test('D7: a non-empty failing list beside a zero counter is a disagreement, not a pass', () => {
+  const forged = withSuite({ not_ok: 0, ok: 4, state: 'green',
+    failing_tests: ['a check that failed', 'a second check that failed'] });
+  const why = joined(forged);
+  assert.match(why, /records suite\.not_ok=0 and names 2 failing test\(s\) in suite\.failing_tests, which is a receipt disagreeing with itself/);
+  assert.match(why, /"a check that failed", "a second check that failed"/);
+  assert.equal(deriveAdmissibility(forged).admissible, false);
+
+  // The claim-scoped list the emitter writes beside it is read too, and so are the `fail` rows of
+  // `named_tests`: a body cannot hide a failure by recording it somewhere the counter does not look.
+  assert.match(joined(withSuite({ not_ok: 0, failing_tests_named_by_the_claim: ['a term the claim names'] })),
+    /records suite\.not_ok=0 and names 1 failing test\(s\) in suite\.failing_tests_named_by_the_claim/);
+  const rows = admissibleBody({ named_tests: [{ name: 'a control', status: 'pass' },
+    { name: 'a named test that failed', status: 'fail' }] });
+  assert.match(joined(rows), /records suite\.not_ok=0 and names 1 failing test\(s\) in named_tests/);
+
+  // A counter that AGREES with the names is not a disagreement: the red-suite reason above is the one that
+  // fires, and this check adds nothing to it.
+  const honest = withSuite({ not_ok: 2, ok: 2, state: 'red', exit: '1',
+    failing_tests: ['a check that failed', 'a second check that failed'] });
+  honest.conclusion.suite_state = 'red';
+  assert.doesNotMatch(joined(honest), /disagreeing with itself/);
+
+  // Nor is a counter that names MORE than the list: a truncated list is a different defect, and `not_ok > 0`
+  // has already refused this body. Only understating is read as a disagreement.
+  const truncated = withSuite({ not_ok: 9, ok: 1, state: 'red', exit: '1', failing_tests: ['one of nine'] });
+  truncated.conclusion.suite_state = 'red';
+  assert.doesNotMatch(joined(truncated), /disagreeing with itself/);
+  assert.match(joined(truncated), /reports 9 failing test\(s\) out of 4/);
+});
+
+// D15. A `named_tests` row whose status is `skip` was invisible whenever `suite.skipped_tests` was present as
+// an ARRAY: one line exempted `skip` from the every-other-exclusion block on the understanding that the skip
+// block judged it, and the skip block then read only the first source it found. `skipped_tests: []` beside a
+// skip row therefore authorised nothing and refused nothing. The two shapes are now meshed.
+test('D15: a skipped named test is visible whichever shape the body carries it in', () => {
+  // The seam itself: an EMPTY `skipped_tests` array beside a `skip` row in `named_tests`.
+  const hidden = admissibleBody({
+    suite: { ...admissibleBody().suite, skipped: 1, ok: 3, skipped_tests: [] },
+    named_tests: [{ name: 'a control', status: 'pass' },
+      { name: 'a check that needs a docker daemon', status: 'skip' }],
+  });
+  const why = joined(hidden);
+  assert.match(why, /1 skipped test\(s\) are not in the authorized list[^|]*"a check that needs a docker daemon"/);
+  assert.equal(deriveAdmissibility(hidden).admissible, false);
+
+  // And it is judged against the list rather than merely refused: named there, with a reason and an
+  // authorizer, the same body is admissible again.
+  const authorized = listing([{ test: 'a check that needs a docker daemon',
+    reason: 'the runner image has no docker daemon', authorized_by: 'the owner, in this test and nowhere else' }]);
+  assert.deepEqual(deriveAdmissibility(hidden, { toleratedSkipsPath: authorized }).reasons, []);
+
+  // The two sources are UNIONED, not preferred: a skip named in each is judged, and both count towards the
+  // number of skips this rule can name against `suite.skipped`.
+  const both = admissibleBody({
+    suite: { ...admissibleBody().suite, skipped: 2, ok: 2, skipped_tests: ['a skip only the suite names'] },
+    named_tests: [{ name: 'a skip only the rows name', status: 'skip' }],
+  });
+  const union = joined(both);
+  assert.match(union, /2 skipped test\(s\) are not in the authorized list/);
+  assert.match(union, /"a skip only the suite names"/);
+  assert.match(union, /"a skip only the rows name"/);
+  assert.doesNotMatch(union, /cannot be checked against/);
+
+  // A skip row with no counter beside it at all is still judged: `suite.skipped: 0` is not permission.
+  const uncounted = admissibleBody({
+    named_tests: [{ name: 'a skip the suite did not count', status: 'skip' }],
+  });
+  assert.match(joined(uncounted), /1 skipped test\(s\) are not in the authorized list[^|]*"a skip the suite did not count"/);
+
+  // And an unreadable permission list is reported as soon as there is a NAMED skip to judge, not only when
+  // the counter is above zero.
+  const unreadable = deriveAdmissibility(uncounted,
+    { toleratedSkipsPath: path.join(os.tmpdir(), 'no-such-tolerated-skips.json') }).reasons.join(' | ');
+  assert.match(unreadable, /the authorized-skip list[^|]*could not be read/);
+});
+
 test('a skip the receipt COUNTS but does not NAME cannot be authorized, so it is refused', () => {
   // The real receipt is in exactly this state: `suite.skipped: 8` with no list of names anywhere in the body.
   const counted = withSuite({ skipped: 8, ok: 4, tests: 12 });

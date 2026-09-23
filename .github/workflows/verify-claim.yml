@@ -21,10 +21,13 @@ permissions:
   attestations: read
 
 jobs:
-  # The tool that turns a pin into evidence is itself checked, from the protected checkout, before any pin is
-  # judged. Its tests stub `gh`, so they need no token and no network, and they assert the refusals: a run that
-  # is not a dispatch of this workflow on main, an artifact GitHub never digested, a receipt with no
-  # attestation, a receipt belonging to another run, and an attestation naming another workflow.
+  # The tools that turn a pin into evidence are themselves checked, from the protected checkout, before any pin
+  # is judged. Their tests stub `gh`, so they need no token and no network, and they assert the refusals: a run
+  # that is not a dispatch of this workflow on main, an archive whose bytes are not the ones GitHub digested, a
+  # receipt with no attestation, a receipt belonging to another run, an attestation naming another workflow, a
+  # rule whose fetched bytes disagree with the blob id the API reports, a fetch the API will not serve, a run
+  # that is not the protected branch's (which emits no pin at all), and a manifest carrying no pin for the run
+  # being verified.
   selftest:
     runs-on: ubuntu-latest
     steps:
@@ -93,36 +96,31 @@ jobs:
             echo "::group::verifying run $run"
             # The authority's own fetch tool, run from the protected ref: it reads the run, the artifact and
             # the attestation back from the API and refuses anything that does not match.
+            #
+            # It also refuses to emit a pin unless the run it is part of is itself on the protected branch,
+            # reading GITHUB_REF and GITHUB_EVENT_NAME, which Actions sets before node starts. This workflow
+            # is workflow_dispatch-only and is dispatched on main, so those are refs/heads/main and
+            # workflow_dispatch here. A copy of this workflow running from a pull request head would get an
+            # advisory report on stderr and a non-zero exit instead, which is the intended outcome: on a
+            # pull_request event the tool and every file it reads are the candidate's.
             node ../verifier/.github/verifier-receipt/fetch-receipt.mjs --repo "$REPO" --run "$run" \
               --out "/tmp/pin-$run.json"
             # The pin the candidate wrote must be the pin the API produces, field for field, or the candidate
-            # is asking to be judged on a run that does not say what it claims.
-            node -e "
-              const fs = require('fs');
-              const fetched = JSON.parse(fs.readFileSync('/tmp/pin-$run.json', 'utf8'));
-              const body = JSON.parse(fs.readFileSync('.github/coordinator/service/verifier-receipts.json', 'utf8'));
-              const pins = Array.isArray(body) ? body : body.pins ?? [];
-              const claimed = pins.find(pin => String(pin.run_id) === String(fetched.run_id));
-              const fields = ['workflow_path', 'workflow_ref', 'workflow_head_sha', 'run_id', 'run_attempt',
-                'artifact_name', 'artifact_digest', 'receipt_digest'];
-              const wrong = fields.filter(field => String(claimed[field]) !== String(fetched[field]));
-              if (wrong.length > 0) {
-                console.error('::error::the claimed pin disagrees with the run it names on: ' + wrong.join(', '));
-                process.exit(1);
-              }
-              const claimedVerdict = claimed.receipt?.conclusion?.verdict ?? null;
-              if (claimedVerdict !== fetched.receipt?.conclusion?.verdict) {
-                console.error('::error::the claimed pin reports a different verdict than the receipt it names');
-                process.exit(1);
-              }
-              console.log('pin for run ' + fetched.run_id + ' matches the API, verdict ' + claimedVerdict);
-            "
+            # is asking to be judged on a run that does not say what it claims. The comparison is the
+            # verifier's own module, run from the protected checkout like the fetch tool beside it: it used to
+            # be a `node -e` string here, and a string in a step body is a thing no test can reach.
+            node ../verifier/.github/verifier-receipt/compare-pin.mjs \
+              --fetched "/tmp/pin-$run.json" \
+              --manifest .github/coordinator/service/verifier-receipts.json
             echo "::endgroup::"
           done
 
       - name: Report what this proves
         working-directory: candidate
         run: |
-          echo "Every pin in this candidate's manifest describes a run that exists, whose artifact digest"
-          echo "GitHub computed, whose receipt hashes to that artifact's digest, and whose recorded tests and"
-          echo "verdict match what the candidate claims. Terms with no pin remain BLOCK."
+          echo "Every pin in this candidate's manifest describes a run that exists; whose artifact digest"
+          echo "GitHub computed and whose downloaded archive hashes to it; whose receipt was taken out of that"
+          echo "archive, is attested by GitHub under the protected workflow ref, and is admissible under the"
+          echo "rule fetched from refs/heads/main; and whose recorded verdict and identity fields match what"
+          echo "the candidate committed. The receipt's own hash is the attestation's subject and is NOT the"
+          echo "artifact digest - the two are hashes of different objects. Terms with no pin remain BLOCK."

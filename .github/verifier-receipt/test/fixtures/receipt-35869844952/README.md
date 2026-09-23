@@ -62,7 +62,20 @@ The run itself is `{"event":"workflow_dispatch","head_branch":"main","status":"c
 `"conclusion":"failure","head_sha":"01409cc7e4ad5ab9aab2c24a9e3b1f6f45df2a1e","run_attempt":1}`. The
 **failure** conclusion is the run's, and the consumer refuses on it before reading any receipt at all -
 which is why the admissibility case in `fetch-receipt.test.mjs` stages this run with `conclusion: "success"`
-and says so in the one place it departs from the API's record. Everything else it stages is the API's.
+and says so where it departs from the API's record.
+
+It departs in **two** fields, and both are named rather than implied:
+
+* `run.conclusion`, for the reason just given;
+* `artifact.digest`. The consumer now hashes the downloaded archive and requires it to equal the digest
+  GitHub reports - which is the check the table below is the evidence for: GitHub reports
+  `sha256:b6c84e83...` for this artifact and the `artifact.zip` it served is 61,770 bytes hashing to exactly
+  that, so a real archive really does satisfy it. That 61,770-byte archive is **not in this repository** -
+  only this trimmed receipt is - so the test builds an archive around the trimmed bytes and stages the
+  digest of the archive it built. A staged digest of `b6c84e83...` over an archive that is not GitHub's
+  would test nothing except that the test can contradict itself.
+
+Everything else the case stages is the API's.
 
 | object | bytes | sha256 |
 | --- | --- | --- |

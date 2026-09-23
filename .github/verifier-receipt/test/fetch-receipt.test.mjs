@@ -22,13 +22,19 @@
 //     boolean with itself;
 //   * a body every ground of which is satisfied, with the flag saying false or absent, is refused too, as the
 //     disagreement it is: a flag that understates is reported, not resolved in the pin's favour;
-//   * the predicate module itself is checked by git blob id against refs/heads/main, and a mismatch is
-//     refused naming both ids - on a pull_request event the checked-out code is the candidate's, so a
-//     consumer that trusted its own copy of the rule would let a candidate supply the rule that judges it.
+//   * the predicate module is FETCHED from refs/heads/main over the contents API, verified against the blob
+//     id the API reports for it, and imported from outside the tree - so the module that decides is never a
+//     file of the checkout. On a pull_request event the checked-out code is the candidate's, so a consumer
+//     that imported its own copy would let a candidate supply the rule that judges it, and it would do so
+//     BEFORE the check meant to catch that ran, because ESM evaluates a dependency's top level at load;
+//   * and a run that is not the protected branch's emits no pin at all, whatever it found. That ground is
+//     structural rather than a check, which is what makes the import-time attack above unable to produce a
+//     pin even in principle.
 //
 // The suite reaches for no network and no git history: it runs under actions/checkout at fetch-depth 1. The
-// blob ids it expects are computed from this repository's own files rather than pinned as constants, so the
-// rule and its permission list can be edited without a stale expectation silently passing here.
+// blob ids and contents it serves are computed from this repository's own files rather than pinned as
+// constants, so the rule and its permission list can be edited without a stale expectation silently passing
+// here.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -77,27 +83,53 @@ const RUN = { path: WORKFLOW, event: 'workflow_dispatch', head_branch: 'main', s
 const ARTIFACT = { id: 77, name: 'verifier-receipt', expired: false,
   digest: `sha256:${'d'.repeat(64)}`, workflow_run: { head_sha: HEAD } };
 
-// THE PROTECTED BRANCH'S ANSWER FOR THE RULE ITSELF. The consumer hashes the predicate module it loaded the
-// way git hashes a blob and asks the API what blob `refs/heads/main` holds for that path; these are the
-// answers a healthy world gives, computed from the very files this repository holds so that an edit to the
-// rule changes them here too rather than leaving a stale constant behind.
+// THE PROTECTED BRANCH'S ANSWER FOR THE RULE ITSELF. The consumer no longer hashes a module it loaded off
+// disk: it FETCHES the rule and its permission list from refs/heads/main over the contents API, requires the
+// answer to be base64 with the decoded bytes hashing to the `sha` the API reports, and imports the result from
+// a temp directory outside the tree. So the healthy answer staged here carries CONTENT as well as a sha, both
+// computed from the very files this repository holds - an edit to the rule changes them here too rather than
+// leaving a stale constant behind, and a case that wants the fetch to disagree edits one of the two.
 const gitBlobId = bytes => crypto.createHash('sha1')
   .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`, 'utf8'), bytes])).digest('hex');
 const RULE_FILES = {
   '.github/verifier-receipt/admissibility.mjs': path.join(import.meta.dirname, '..', 'admissibility.mjs'),
   '.github/verifier-receipt/tolerated-skips.json': path.join(import.meta.dirname, '..', 'tolerated-skips.json'),
 };
-const blobOf = repoPath => gitBlobId(fs.readFileSync(RULE_FILES[repoPath]));
-const contentsAnswer = repoPath => ({ type: 'file', path: repoPath, sha: blobOf(repoPath) });
+const bytesOf = repoPath => fs.readFileSync(RULE_FILES[repoPath]);
+const blobOf = repoPath => gitBlobId(bytesOf(repoPath));
+const contentsAnswer = repoPath => ({ type: 'file', path: repoPath, sha: blobOf(repoPath),
+  encoding: 'base64', content: bytesOf(repoPath).toString('base64'), size: bytesOf(repoPath).length });
 
 // Prepare a directory holding the stub, its answers and optionally a real zip of the receipt. `zip` is either
 // an object, which is serialised, or a string, which is written as the receipt's bytes unchanged.
+//
+// THE ARCHIVE'S DIGEST IS THE ARCHIVE'S. The tool now hashes the downloaded zip and requires it to equal
+// `artifact.digest`, so a world staged with a zip gets the digest of the zip THIS FUNCTION BUILT written into
+// the artifact record, replacing whatever the caller's artifact fixture carried. `keepDigest: true` opts out,
+// which is what the case for a substituted archive needs.
 const stage = ({ run = RUN, artifacts = { artifacts: [ARTIFACT] }, zip = null, attestations = [],
-  runId = '4242', repo = REPO, contents = {} } = {}) => {
+  runId = '4242', repo = REPO, contents = {}, keepDigest = false } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-'));
+  const staged = JSON.parse(JSON.stringify(artifacts));
+  if (zip) {
+    const receiptPath = path.join(dir, 'receipt.json');
+    fs.writeFileSync(receiptPath, typeof zip === 'string' ? zip : JSON.stringify(zip));
+    execFileSync('python3', ['-c', [
+      'import sys, zipfile',
+      'with zipfile.ZipFile(sys.argv[1], "w") as archive:',
+      '    archive.write(sys.argv[2], "receipt.json")',
+    ].join('\n'), path.join(dir, 'zip.bin'), receiptPath]);
+    if (!keepDigest) {
+      const digest = `sha256:${crypto.createHash('sha256')
+        .update(fs.readFileSync(path.join(dir, 'zip.bin'))).digest('hex')}`;
+      for (const record of staged.artifacts ?? []) {
+        if (record.name === 'verifier-receipt' && record.digest) record.digest = digest;
+      }
+    }
+  }
   const answers = {
     [`/repos/${repo}/actions/runs/${runId}`]: run,
-    [`/repos/${repo}/actions/runs/${runId}/artifacts`]: artifacts,
+    [`/repos/${repo}/actions/runs/${runId}/artifacts`]: staged,
   };
   for (const repoPath of Object.keys(RULE_FILES)) {
     answers[`/repos/${repo}/contents/${repoPath}?ref=refs/heads/main`] =
@@ -108,22 +140,16 @@ const stage = ({ run = RUN, artifacts = { artifacts: [ARTIFACT] }, zip = null, a
   fs.copyFileSync(STUB, path.join(dir, 'gh.cjs'));
   fs.writeFileSync(path.join(dir, 'gh'), `#!/bin/sh\nexec node "${path.join(dir, 'gh.cjs')}" "$@"\n`);
   fs.chmodSync(path.join(dir, 'gh'), 0o755);
-  if (zip) {
-    const receiptPath = path.join(dir, 'receipt.json');
-    fs.writeFileSync(receiptPath, typeof zip === 'string' ? zip : JSON.stringify(zip));
-    execFileSync('python3', ['-c', [
-      'import sys, zipfile',
-      'with zipfile.ZipFile(sys.argv[1], "w") as archive:',
-      '    archive.write(sys.argv[2], "receipt.json")',
-    ].join('\n'), path.join(dir, 'zip.bin'), receiptPath]);
-  }
   return dir;
 };
 
-const runTool = (dir, { runId = '4242', repo = REPO } = {}) => {
+// THE RUN THE TOOL IS PART OF. The tool refuses to emit a pin unless its OWN run is on the protected branch,
+// so every case that expects a pin has to say it is one; a case that wants the refusal overrides `env`.
+const PROTECTED_RUN = { GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch' };
+const runTool = (dir, { runId = '4242', repo = REPO, env = PROTECTED_RUN } = {}) => {
   try {
     return { code: 0, stdout: execFileSync('node', [TOOL, '--run', runId, '--repo', repo],
-      { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } }), stderr: '' };
+      { encoding: 'utf8', env: { ...process.env, ...env, PATH: `${dir}:${process.env.PATH}` } }), stderr: '' };
   } catch (error) {
     return { code: error.status ?? 1, stdout: error.stdout?.toString() ?? '',
       stderr: error.stderr?.toString() ?? '' };
@@ -315,40 +341,166 @@ test('MUTANT: the flag says true while one ground of the body says no, and the r
   }
 });
 
-// THE RULE THAT JUDGES A RECEIPT MAY NOT BE A RULE THE JUDGED PARTY SUPPLIED. On a pull_request event the
-// workflow definition and the checked-out code are the candidate's, so a consumer that trusted its own copy
-// of the predicate would let a candidate write the rule that judges it. The tool hashes the module it loaded
-// the way git hashes a blob and compares that with the blob refs/heads/main holds for the same path.
-test('the fetch tool refuses when the predicate it loaded is not the blob main holds', () => {
-  const real = blobOf('.github/verifier-receipt/admissibility.mjs');
-  const other = 'd'.repeat(40);
-  const mismatched = runTool(stage({ zip: receipt, attestations: [envelope()],
-    contents: { '.github/verifier-receipt/admissibility.mjs':
-      { type: 'file', path: '.github/verifier-receipt/admissibility.mjs', sha: other } } }));
-  assert.notEqual(mismatched.code, 0, 'a module that is not main\'s must be refused');
-  // BOTH ids are named: the one this process loaded, and the one the protected branch holds.
-  assert.ok(mismatched.stderr.includes(real) && mismatched.stderr.includes(other),
-    `the refusal must name both blob ids, gave: ${mismatched.stderr}`);
-  assert.match(mismatched.stderr, /the rule that judges a receipt may not be a rule the judged party supplied/);
-  assert.equal(mismatched.stdout, '', 'a refused module emits no pin');
+// THE MODULE VERIFICATION MUST VERIFY THE MODULE THAT DECIDES.
+//
+// The previous round imported `./admissibility.mjs` at the top of the tool and checked its blob id 160 lines
+// later. ESM evaluates a dependency's top level at LOAD, so the candidate's module ran first, in the same
+// process, and eight lines of it - patching `fs.readFileSync` to hand back the protected bytes for its own
+// path - made that check report exactly what it wanted. The tool now FETCHES the rule from refs/heads/main
+// over the contents API and imports it from a temp directory outside the tree, so the module that decides is
+// bytes the API served and never a file of the checkout. The cases below are the ways that fetch can fail.
+const MODULE = '.github/verifier-receipt/admissibility.mjs';
+const SKIPS = '.github/verifier-receipt/tolerated-skips.json';
+const healthy = repoPath => JSON.parse(JSON.stringify(contentsAnswer(repoPath)));
 
-  // The permission list is checked the same way, for the same reason: a candidate that could rewrite it
-  // would be authorising its own skips.
+test('the fetch tool refuses a rule whose fetched bytes disagree with the sha the API reports', () => {
+  // The decisive case: the API serves CONTENT and a SHA, and this world's content is not what its sha names.
+  // Nothing here is the checkout's - the tool is deciding from what it was served, so what it was served has
+  // to hash to what it was told, or the rule's content and its identity disagree and neither is usable.
+  const tampered = healthy(MODULE);
+  tampered.content = Buffer.from('export const deriveAdmissibility = () => ({ admissible: true, reasons: [] });\n')
+    .toString('base64');
+  const result = runTool(stage({ zip: receipt, attestations: [envelope()],
+    contents: { [MODULE]: tampered } }));
+  assert.notEqual(result.code, 0, 'bytes that do not hash to their reported blob must be refused');
+  // BOTH ids are named: the blob the served bytes hash to, and the blob the API reports for that path.
+  assert.match(result.stderr,
+    /the \.github\/verifier-receipt\/admissibility\.mjs bytes refs\/heads\/main served are \d+ bytes hashing to blob [0-9a-f]{40}, but the API reports blob [0-9a-f]{40}/);
+  assert.ok(result.stderr.includes(blobOf(MODULE)), `the refusal must name main's blob: ${result.stderr}`);
+  assert.match(result.stderr, /the content and the identity of the rule that decides disagree/);
+  assert.equal(result.stdout, '', 'a refused rule emits no pin');
+
+  // The permission list travels the same way and is checked the same way: it is permission, so it must come
+  // from the branch that grants it, and a candidate that could rewrite it would authorise its own skips.
+  const forgedSkips = healthy(SKIPS);
+  forgedSkips.content = Buffer.from(JSON.stringify({ authorized: [
+    { test: 'anything at all', reason: 'because the candidate says so', authorized_by: 'the candidate' }] }))
+    .toString('base64');
   const skips = runTool(stage({ zip: receipt, attestations: [envelope()],
-    contents: { '.github/verifier-receipt/tolerated-skips.json':
-      { type: 'file', path: '.github/verifier-receipt/tolerated-skips.json', sha: other } } }));
-  assert.match(skips.stderr, /tolerated-skips\.json this tool loaded is blob [0-9a-f]{40}, but refs\/heads\/main holds blob d{40}/);
+    contents: { [SKIPS]: forgedSkips } }));
+  assert.notEqual(skips.code, 0, 'a permission list that is not main\'s must be refused');
+  assert.match(skips.stderr,
+    /the \.github\/verifier-receipt\/tolerated-skips\.json bytes refs\/heads\/main served are \d+ bytes hashing to blob [0-9a-f]{40}/);
+  assert.equal(skips.stdout, '', 'a refused permission list emits no pin');
+});
 
-  // An answer that is not a file blob, and an API that will not answer at all, are refusals rather than
-  // assumptions: neither establishes that the rule this tool loaded is the protected one.
+test('the fetch tool refuses a fetch the API will not serve, or will not serve as base64', () => {
+  // An API that answers nothing at all. There is then no protected copy of the rule, and a tool that decided
+  // anyway would be deciding with the checkout's - which on a pull_request event is the candidate's.
+  const unanswered = runTool(stage({ zip: receipt, attestations: [envelope()],
+    contents: { [MODULE]: undefined } }));
+  assert.notEqual(unanswered.code, 0, 'an unanswered fetch must be refused');
+  assert.match(unanswered.stderr,
+    /refs\/heads\/main would not serve \.github\/verifier-receipt\/admissibility\.mjs/);
+  assert.match(unanswered.stderr, /will not decide with an unprotected one/);
+  assert.equal(unanswered.stdout, '', 'an unanswered fetch emits no pin');
+
+  const skipsUnanswered = runTool(stage({ zip: receipt, attestations: [envelope()],
+    contents: { [SKIPS]: undefined } }));
+  assert.match(skipsUnanswered.stderr,
+    /refs\/heads\/main would not serve \.github\/verifier-receipt\/tolerated-skips\.json/);
+
+  // An answer that is not a file blob establishes nothing either.
   const notAFile = runTool(stage({ zip: receipt, attestations: [envelope()],
-    contents: { '.github/verifier-receipt/admissibility.mjs': { type: 'dir', sha: null } } }));
+    contents: { [MODULE]: { type: 'dir', sha: null } } }));
   assert.match(notAFile.stderr, /reports no file blob for \.github\/verifier-receipt\/admissibility\.mjs/);
 
-  const unanswered = runTool(stage({ zip: receipt, attestations: [envelope()],
-    contents: { '.github/verifier-receipt/admissibility.mjs': undefined } }));
-  assert.match(unanswered.stderr,
-    /refs\/heads\/main could not be asked what blob it holds for \.github\/verifier-receipt\/admissibility\.mjs/);
+  // GitHub answers `"encoding": "none"` with an empty `content` for a file it will not inline. Decoding that
+  // writes a zero-byte module, which imports happily and decides nothing, so the shape is refused.
+  const notInlined = healthy(MODULE);
+  notInlined.encoding = 'none';
+  notInlined.content = '';
+  const none = runTool(stage({ zip: receipt, attestations: [envelope()], contents: { [MODULE]: notInlined } }));
+  assert.notEqual(none.code, 0, 'a non-base64 answer must be refused');
+  assert.match(none.stderr,
+    /would not inline \.github\/verifier-receipt\/admissibility\.mjs \(encoding "none", not base64\)/);
+  assert.equal(none.stdout, '', 'a non-base64 answer emits no pin');
+});
+
+test('the fetch tool refuses a checkout whose rule disagrees with the rule that decided, naming both', () => {
+  // The fetched bytes decide; the checkout is compared and never used. A tree that disagrees with the rule
+  // judging it is refused even though the decision was made with the protected bytes - and the refusal names
+  // both blob ids, so a reader can see which two objects were not the same.
+  const main = healthy(MODULE);
+  const other = Buffer.from('// a rule that is not this repository\'s\n');
+  main.content = other.toString('base64');
+  main.sha = gitBlobId(other);
+  const result = runTool(stage({ zip: receipt, attestations: [envelope()], contents: { [MODULE]: main } }));
+  assert.notEqual(result.code, 0, 'a checkout that disagrees with main must be refused');
+  assert.ok(result.stderr.includes(blobOf(MODULE)) && result.stderr.includes(main.sha),
+    `the refusal must name both blob ids, gave: ${result.stderr}`);
+  assert.match(result.stderr, /the rule that judges a receipt may not be a rule the judged party supplied/);
+  assert.match(result.stderr, /it decided with the protected bytes and not with these/);
+  assert.equal(result.stdout, '', 'a disagreeing checkout emits no pin');
+});
+
+// A CANDIDATE'S OWN RUN MAY NOT PRODUCE A PIN. Every round before this one wrote that down in prose. It is
+// now the structural ground: on a pull_request event this tool, the rule it applies and every file it reads
+// are the candidate's, so no arrangement of them is evidence - which is what makes the import-time patch
+// above unable to produce a pin even in principle, rather than merely unable to fool one check.
+test('the fetch tool emits no pin on a run that is not the protected branch\'s, and says why', () => {
+  for (const [what, env] of [
+    ['a pull request', { GITHUB_REF: 'refs/pull/167/merge', GITHUB_EVENT_NAME: 'pull_request' }],
+    ['another branch', { GITHUB_REF: 'refs/heads/topic', GITHUB_EVENT_NAME: 'push' }],
+    ['a tag', { GITHUB_REF: 'refs/tags/v1', GITHUB_EVENT_NAME: 'push' }],
+    ['an event that is not a push or a dispatch', { GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'schedule' }],
+    ['no run at all', { GITHUB_REF: '', GITHUB_EVENT_NAME: '' }],
+  ]) {
+    const result = runTool(stage({ zip: receipt, attestations: [envelope()] }), { env });
+    assert.notEqual(result.code, 0, `${what} must emit no pin`);
+    assert.equal(result.stdout, '', `${what} emitted something on the pin channel: ${result.stdout}`);
+    assert.match(result.stderr, /REFUSING TO PIN/, `${what} gave: ${result.stderr}`);
+    assert.match(result.stderr, /a pin may be emitted only by a run that is itself on the protected branch/,
+      `${what} gave: ${result.stderr}`);
+    assert.match(result.stderr, /this tool, the rule it applies and every file it reads are the candidate's/);
+    // It may still REPORT, clearly labelled, and nothing it reports is shaped like a pin.
+    assert.match(result.stderr, /ADVISORY - what this run found, which is a report and not evidence/);
+    assert.match(result.stderr, /ADVISORY - no pin was emitted/);
+  }
+
+  // A world in which everything else is healthy: the refusal is the ground, not a defect of the evidence.
+  const wouldHavePinned = runTool(stage({ zip: receipt, attestations: [envelope()] }));
+  assert.equal(wouldHavePinned.code, 0, `expected success on main, got: ${wouldHavePinned.stderr}`);
+
+  // And no `--out` file is written on such a run, so nothing downstream can pick one up off the filesystem.
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  const outPath = path.join(dir, 'pin.json');
+  const spawned = (() => {
+    try {
+      execFileSync('node', [TOOL, '--run', '4242', '--repo', REPO, '--out', outPath], { encoding: 'utf8',
+        env: { ...process.env, GITHUB_REF: 'refs/pull/167/merge', GITHUB_EVENT_NAME: 'pull_request',
+          PATH: `${dir}:${process.env.PATH}` } });
+      return 0;
+    } catch (error) {
+      return error.status ?? 1;
+    }
+  })();
+  assert.notEqual(spawned, 0, 'a pull request run must exit non-zero');
+  assert.equal(fs.existsSync(outPath), false, 'a pull request run must write no pin file');
+});
+
+// THE CONTAINER IS THE ONE GITHUB SERVED. `artifact.digest` is computed by GitHub over the ZIP it stored, so
+// the downloaded archive must hash to it. This is the check the header used to CLAIM and the code did not
+// perform - the old sentence said the receipt's hash must equal the artifact's digest, which could not hold:
+// the digest is over the zip and the hash is over `receipt.json` inside it.
+test('the fetch tool refuses an archive whose bytes are not the ones GitHub digested', () => {
+  const substituted = runTool(stage({ zip: receipt, attestations: [envelope()], keepDigest: true }));
+  assert.notEqual(substituted.code, 0, 'an archive that is not the digested one must be refused');
+  assert.match(substituted.stderr,
+    /the verifier-receipt archive downloaded for run 4242 is \d+ bytes hashing to sha256:[0-9a-f]{64}, but GitHub reports sha256:d{64} for artifact 77/);
+  assert.match(substituted.stderr, /these are not the bytes GitHub served/);
+  assert.equal(substituted.stdout, '', 'a substituted archive emits no pin');
+
+  // And the two quantities stay distinct: the receipt's own digest is the ATTESTATION's subject and is never
+  // required to equal the artifact's. A healthy world has them different, and is accepted.
+  const dir = stage({ zip: receipt, attestations: [envelope()] });
+  const ok = runTool(dir);
+  assert.equal(ok.code, 0, `expected success, got: ${ok.stderr}`);
+  const pin = JSON.parse(ok.stdout);
+  assert.notEqual(pin.receipt_digest, pin.artifact_digest,
+    'the receipt hash and the artifact digest are hashes of different objects');
+  assert.equal(pin.artifact_digest, `sha256:${crypto.createHash('sha256')
+    .update(fs.readFileSync(path.join(dir, 'zip.bin'))).digest('hex')}`);
 });
 
 test('the fetch tool emits a pin when the run, the receipt and the attestation agree', () => {
@@ -363,13 +515,17 @@ test('the fetch tool emits a pin when the run, the receipt and the attestation a
   assert.equal(pin.workflow_head_sha, HEAD);
   assert.equal(pin.attestation_workflow_ref, 'refs/heads/main');
   assert.equal(pin.artifact_name, 'verifier-receipt');
-  assert.equal(pin.artifact_digest, `sha256:${'d'.repeat(64)}`);
+  // The digest of the archive the world served, which the tool hashed and required to match before opening it.
+  assert.equal(pin.artifact_digest, `sha256:${crypto.createHash('sha256')
+    .update(fs.readFileSync(path.join(dir, 'zip.bin'))).digest('hex')}`);
   // The receipt digest is computed from the bytes inside the artifact, never taken from the candidate.
   const expected = crypto.createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
   assert.equal(pin.receipt_digest, `sha256:${expected}`);
   assert.equal(pin.attestation_digest, pin.receipt_digest);
   // The pin states the basis it was admitted on rather than leaving a reader to take it on trust: the rule
-  // that admitted it, by the blob id checked against refs/heads/main, and the derivation it came back with.
+  // that admitted it, by the blob id of THE BYTES THAT DECIDED - fetched from refs/heads/main and verified
+  // against the sha the API reported - and the derivation it came back with. In a healthy world those bytes
+  // are also what this checkout holds, which is why the expectation can be computed from the file here.
   assert.equal(pin.admissibility.module, '.github/verifier-receipt/admissibility.mjs');
   assert.equal(pin.admissibility.module_blob, blobOf('.github/verifier-receipt/admissibility.mjs'));
   assert.equal(pin.admissibility.tolerated_skips_blob,
@@ -436,7 +592,14 @@ test('the real receipt of run 35869844952 is refused as a pin, in the authority\
     // the case below asserts is refused on its own. It is flipped here so that the RECEIPT's body is what
     // decides, which is the whole point of the fixture - admissibility is not a restatement of the run's
     // conclusion, and a consumer that only read the run would have nothing to say about a green run whose
-    // receipt says it may not be pinned. Every other field is the API's own.
+    // receipt says it may not be pinned.
+    //
+    // AND ONE MORE, WHICH `stage` MAKES RATHER THAN THIS CASE: the tool now requires the downloaded archive to
+    // hash to `artifact.digest`, and the archive staged here is one `stage` builds around the TRIMMED receipt.
+    // It is not GitHub's 61,770-byte `artifact.zip` - that file is not in this repository, only its digest is
+    // (see the fixture's README.md, where `sha256:b6c84e83...` is recorded as the digest of the archive as
+    // GitHub served it, which is the measurement that says this check can hold at all). So `stage` writes the
+    // digest of the archive it built into REAL_ARTIFACT's record. Every other field below is the API's own.
     run: { ...REAL_RUN, conclusion: 'success' },
     artifacts: { artifacts: [REAL_ARTIFACT] },
     zip: bytes.toString('utf8'),
